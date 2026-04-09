@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sync"
 
-	pb "debuglet/pkg/protocol"
+	pb "debuglet/protocol"
 
 	"github.com/google/uuid"
 )

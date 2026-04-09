@@ -18,7 +18,7 @@ import (
 	"io"
 	"log"
 
-	pb "debuglet/pkg/protocol"
+	pb "debuglet/protocol"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

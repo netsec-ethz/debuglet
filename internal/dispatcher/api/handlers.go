@@ -19,7 +19,7 @@ import (
 	"net/http"
 
 	"debuglet/internal/dispatcher"
-	"debuglet/pkg/protocol"
+	"debuglet/protocol"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"

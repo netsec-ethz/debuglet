@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"debuglet/pkg/debuglet"
-	pb "debuglet/pkg/protocol"
+	"debuglet/internal/executor/engine"
+	pb "debuglet/protocol"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -40,7 +40,7 @@ type Executor struct {
 	version string
 
 	mu        sync.RWMutex
-	debuglets map[string]*debuglet.Debuglet
+	debuglets map[string]*engine.Debuglet
 
 	stdoutWg sync.WaitGroup
 }
@@ -85,7 +85,7 @@ func NewExecutor(cfg *Config, logger *zap.Logger) (*Executor, error) {
 		conn:      conn,
 		logger:    logger,
 		version:   cfg.Version,
-		debuglets: make(map[string]*debuglet.Debuglet),
+		debuglets: make(map[string]*engine.Debuglet),
 	}, nil
 }
 
@@ -150,7 +150,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 	}
 
 	e.mu.Lock()
-	db := debuglet.NewDebuglet(e.logger)
+	db := engine.NewDebuglet(e.logger)
 	err = db.Init(assign.Code, assign.Addresses)
 	if err != nil {
 		e.mu.Unlock()
@@ -192,7 +192,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 	}()
 }
 
-func (e *Executor) flushDebugletOutput(assign *pb.DebugletAssignment, db *debuglet.Debuglet, session pb.DebugletDispatcher_SessionStreamClient, sessionId string) {
+func (e *Executor) flushDebugletOutput(assign *pb.DebugletAssignment, db *engine.Debuglet, session pb.DebugletDispatcher_SessionStreamClient, sessionId string) {
 	defer e.stdoutWg.Done()
 	for stdout := range db.StdOutBuffer {
 		session.Send(&pb.SessionMessage{

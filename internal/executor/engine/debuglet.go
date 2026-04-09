@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package debuglet
+package engine
 
 import (
 	"context"
-	"debuglet/pkg/shared"
+	"debuglet/internal/platform"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -135,7 +135,7 @@ func (e *Debuglet) startServers() error {
 	// 	return nil, nil, nil, fmt.Errorf("failed to start TCP listener: %w", err)
 	// }
 
-	scionHost, err := shared.GetScionAddr()
+	scionHost, err := platform.GetScionAddr()
 	if err != nil {
 		return fmt.Errorf("failed to get SCION address: %w", err)
 	}

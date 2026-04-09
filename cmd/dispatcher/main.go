@@ -30,7 +30,7 @@ import (
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/api"
-	pb "debuglet/pkg/protocol"
+	pb "debuglet/protocol"
 )
 
 func main() {
