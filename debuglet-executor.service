@@ -1,0 +1,22 @@
+[Unit]
+Description=Debuglet Executor Background Service
+After=network.target
+
+[Service]
+Type=simple
+User=debuglet
+Group=debuglet
+
+ExecStart=/usr/local/bin/debuglet-executor
+
+# Logs automatically go to journalctl
+StandardOutput=journal
+StandardError=journal
+StandardOutput=append:/var/log/debuglet/executor.log
+StandardError=append:/var/log/debuglet/executor.log
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,104 @@
+// Copyright 2025 ETH Zurich
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+package debuglet.protocol;
+option go_package = "/protocol";
+
+// ============================================================
+// ================ CONTROL STREAM MESSAGES ====================
+// ============================================================
+
+message ExecutorHello {
+  string executor_id = 1; // Unique ID for this executor instance
+  string version = 2;     // Optional: software version or capabilities
+}
+
+message ExecutorHeartbeat {
+  string executor_id = 1;
+  int64 timestamp = 2;
+}
+
+message DebugletAssignment {
+  string session_id = 1;
+  string measurement_id = 2;
+  bytes code = 3;
+  repeated string addresses = 4; // e.g., SCION or network endpoints
+}
+
+message NoOp {
+  string message = 1;
+}
+
+message ControlMessage {
+  oneof msg {
+    ExecutorHello hello = 1;
+    ExecutorHeartbeat heartbeat = 2;
+    DebugletAssignment assignment = 3;
+    NoOp noop = 4; // Optional, for testing or idle pings
+  }
+}
+
+// ============================================================
+// ================ SESSION STREAM MESSAGES ====================
+// ============================================================
+
+enum DispatcherCommandType {
+  START_EXECUTION = 0;
+  TEARDOWN_EXECUTION = 1;
+}
+
+message DispatcherCommand {
+  string session_id = 1;
+  DispatcherCommandType type = 2;
+}
+
+message DebugletReady {
+  string session_id = 1;
+  string executor_id = 2;
+  string measurement_id = 3;
+  string scion_addr = 4;
+}
+
+message DebugletStdout {
+  string session_id = 1;
+  bytes stdout = 2;
+}
+
+message DebugletExit {
+  string session_id = 1;
+  int32 exit_code = 2;
+  bytes result = 3; // Final result bytes
+}
+
+message SessionMessage {
+  oneof msg {
+    DispatcherCommand dispatcher_cmd = 1;
+    DebugletReady ready = 2;
+    DebugletStdout stdout = 3;
+    DebugletExit exit = 4;
+  }
+}
+
+// ============================================================
+// ====================== SERVICE DEFS =========================
+// ============================================================
+
+service DebugletDispatcher {
+  // Persistent control channel for executor registration, heartbeat, and task assignment
+  rpc ControlStream (stream ControlMessage) returns (stream ControlMessage);
+
+  // Per-session bidirectional stream for debuglet execution
+  rpc SessionStream (stream SessionMessage) returns (stream SessionMessage);
+}

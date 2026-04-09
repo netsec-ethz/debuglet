@@ -1,0 +1,245 @@
+// Copyright 2025 ETH Zurich
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"log"
+	"sync"
+	"time"
+
+	"debuglet/pkg/debuglet"
+	pb "debuglet/pkg/protocol"
+
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+)
+
+type Executor struct {
+	id     string
+	client pb.DebugletDispatcherClient
+	conn   *grpc.ClientConn
+	logger *zap.Logger
+
+	version string
+
+	mu        sync.RWMutex
+	debuglets map[string]*debuglet.Debuglet
+
+	stdoutWg sync.WaitGroup
+}
+
+func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
+	// Load client certificate
+	cert, err := tls.LoadX509KeyPair(
+		cfg.Credentials.ClientCert,
+		cfg.Credentials.ClientKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true, // skip server cert verification - insecure! TODO: server authentication
+		// RootCAs:      nil,
+		// ClientCAs:  nil,
+		// ClientAuth: tls.RequireAndVerifyClientCert,
+		// MinVersion: tls.VersionTLS13,
+	}
+
+	creds := credentials.NewTLS(tlsConfig)
+	return creds, nil
+}
+
+func NewExecutor(cfg *Config, logger *zap.Logger) (*Executor, error) {
+	creds, err := getClientCredentials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(cfg.DispatcherAddr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("Connected to dispatcher", zap.String("address", cfg.DispatcherAddr))
+	client := pb.NewDebugletDispatcherClient(conn)
+	return &Executor{
+		id:        cfg.ExecutorID,
+		client:    client,
+		conn:      conn,
+		logger:    logger,
+		version:   cfg.Version,
+		debuglets: make(map[string]*debuglet.Debuglet),
+	}, nil
+}
+
+func (e *Executor) Start(ctx context.Context) error {
+	controlStream, err := e.client.ControlStream(ctx)
+	if err != nil {
+		return err
+	}
+	e.logger.Info("Executor started", zap.String("executor_id", e.id))
+
+	// Send hello
+	controlStream.Send(&pb.ControlMessage{
+		Msg: &pb.ControlMessage_Hello{Hello: &pb.ExecutorHello{
+			ExecutorId: e.id,
+			Version:    e.version,
+		}},
+	})
+
+	// Heartbeat loop
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(60 * time.Second):
+				controlStream.Send(&pb.ControlMessage{
+					Msg: &pb.ControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
+						ExecutorId: e.id,
+						Timestamp:  time.Now().UnixNano(),
+					}},
+				})
+			}
+		}
+	}()
+
+	// Listen for assignments
+	for {
+		msg, err := controlStream.Recv()
+		if err == io.EOF {
+			e.logger.Info("Control stream closed", zap.Error(err))
+			return nil
+		}
+		if err != nil {
+			e.logger.Error("Error receiving", zap.Error(err))
+			return err
+		}
+
+		if assign := msg.GetAssignment(); assign != nil {
+			e.logger.Info("Received assignment", zap.String("session_id", assign.SessionId))
+			// TODO: check error
+			go e.handleAssignment(ctx, assign)
+		}
+	}
+}
+
+func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssignment) {
+	session, err := e.client.SessionStream(ctx)
+
+	if err != nil {
+		e.logger.Error("Failed to open session", zap.Error(err))
+		return
+	}
+
+	e.mu.Lock()
+	db := debuglet.NewDebuglet(e.logger)
+	err = db.Init(assign.Code, assign.Addresses)
+	if err != nil {
+		e.mu.Unlock()
+		e.logger.Error("Failed to init debuglet", zap.String("session_id", assign.SessionId), zap.Error(err))
+		return
+	}
+	e.debuglets[assign.SessionId] = db
+	e.mu.Unlock()
+	e.logger.Info("Debuglet created", zap.String("session_id", assign.SessionId))
+
+	session.Send(&pb.SessionMessage{
+		Msg: &pb.SessionMessage_Ready{
+			Ready: &pb.DebugletReady{
+				SessionId:     assign.SessionId,
+				ExecutorId:    e.id,
+				MeasurementId: assign.MeasurementId,
+				ScionAddr:     db.GetScionAddr(),
+			},
+		},
+	})
+
+	// Listen for dispatcher commands
+	go func() {
+		for {
+			in, err := session.Recv()
+			if err == io.EOF {
+				log.Printf("[EXECUTOR] Session stream closed: %v", err)
+				return
+			}
+			if err != nil {
+				log.Printf("[EXECUTOR] Session recv error: %v", err)
+				return
+			}
+			cmd := in.GetDispatcherCmd()
+			if cmd != nil && cmd.Type == pb.DispatcherCommandType_START_EXECUTION {
+				e.runDebuglet(assign, session)
+			}
+		}
+	}()
+}
+
+func (e *Executor) flushDebugletOutput(assign *pb.DebugletAssignment, db *debuglet.Debuglet, session pb.DebugletDispatcher_SessionStreamClient, sessionId string) {
+	defer e.stdoutWg.Done()
+	for stdout := range db.StdOutBuffer {
+		session.Send(&pb.SessionMessage{
+			Msg: &pb.SessionMessage_Stdout{
+				Stdout: &pb.DebugletStdout{
+					SessionId: assign.SessionId,
+					Stdout:    stdout,
+				},
+			},
+		})
+	}
+}
+
+func (e *Executor) runDebuglet(assign *pb.DebugletAssignment, session pb.DebugletDispatcher_SessionStreamClient) {
+	e.mu.Lock()
+	db, exists := e.debuglets[assign.SessionId]
+	e.mu.Unlock()
+	if !exists {
+		e.logger.Error("Debuglet not found", zap.String("session_id", assign.SessionId))
+		session.Send(&pb.SessionMessage{
+			Msg: &pb.SessionMessage_Exit{
+				Exit: &pb.DebugletExit{SessionId: assign.SessionId, ExitCode: -1},
+			},
+		})
+		return
+	}
+
+	e.stdoutWg.Add(1)
+	go e.flushDebugletOutput(assign, db, session, assign.SessionId)
+
+	result, err := db.Run()
+	e.stdoutWg.Wait()
+	if err != nil {
+		session.Send(&pb.SessionMessage{
+			Msg: &pb.SessionMessage_Exit{
+				Exit: &pb.DebugletExit{SessionId: assign.SessionId, ExitCode: 1},
+			},
+		})
+		return
+	}
+	session.Send(&pb.SessionMessage{
+		Msg: &pb.SessionMessage_Exit{
+			Exit: &pb.DebugletExit{SessionId: assign.SessionId, ExitCode: 0, Result: result},
+		},
+	})
+	e.mu.Lock()
+	delete(e.debuglets, assign.SessionId)
+	e.mu.Unlock()
+	db.Close()
+}

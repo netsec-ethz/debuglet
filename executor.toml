@@ -1,0 +1,10 @@
+# /etc/debuglet/executor/executor.toml
+
+executor_id = "executor"
+version = "1.0.0"
+dispatcher_addr = ""
+
+[credentials]
+ca_cert = "/etc/debuglet/executor/ca.crt"
+client_cert = "/etc/debuglet/executor/client.crt"
+client_key = "/etc/debuglet/executor/client.key"
