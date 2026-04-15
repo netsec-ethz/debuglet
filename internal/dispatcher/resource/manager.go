@@ -15,22 +15,24 @@ type ResourceManager struct {
 	// Non-default max capacities of an executor
 	executorCapacities map[string]int64
 	// Keeps track of the floors added by jobs to later remove them again from executorUsages
-	assignmentFloors map[string]int64
-	assignmentCeils  map[string]int64
-	destinations     *DestinationsUsage
+	originalFloors map[string]int64
+	originalCeils  map[string]int64
+	destinations   *DestinationsUsage
 	// What jobs have been adjustments since the last fairshare.
 	// Enables for only the fairshare updates to be returned that have actually changed.
-	adjustments map[string]map[string]int64
+	adjustments  map[string]map[string]int64
+	IDtoExecutor map[string]string
 }
 
 func New() *ResourceManager {
 	return &ResourceManager{
 		executorUsages:     make(map[string]int64),
 		executorCapacities: make(map[string]int64),
-		assignmentFloors:   make(map[string]int64),
-		assignmentCeils:    make(map[string]int64),
+		originalFloors:     make(map[string]int64),
+		originalCeils:      make(map[string]int64),
 		destinations:       NewDestinations(HARDCODED_CAPACITY),
 		adjustments:        make(map[string]map[string]int64),
+		IDtoExecutor:       make(map[string]string),
 	}
 }
 
@@ -53,12 +55,13 @@ func (r *ResourceManager) CheckCapacity(executorID string, floor, ceil int64, de
 	return nil
 }
 
-func (r *ResourceManager) RegisterAssignment(assignment *pb.DebugletAssignment) (map[string]int64, error) {
+func (r *ResourceManager) RegisterAssignment(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
 	r.executorUsages[assignment.SessionId] += assignment.Policy.FloorBw
-	r.assignmentFloors[assignment.SessionId] = assignment.Policy.FloorBw
-	r.assignmentCeils[assignment.SessionId] = assignment.Policy.CeilBw
+	r.originalFloors[assignment.SessionId] = assignment.Policy.FloorBw
+	r.originalCeils[assignment.SessionId] = assignment.Policy.CeilBw
+	r.IDtoExecutor[assignment.SessionId] = executorID
 
-	var updates map[string]int64 = make(map[string]int64)
+	var rawUpdates map[string][]*pb.DestinationUpdates_Update
 
 	for i, dest := range assignment.Policy.Destinations {
 
@@ -77,18 +80,35 @@ func (r *ResourceManager) RegisterAssignment(assignment *pb.DebugletAssignment) 
 		}
 
 		for assignID, newCeil := range r.destinations.Fairshare(dest) {
-			if newCeil >= r.assignmentCeils[assignID] {
+			executor, exists := r.IDtoExecutor[assignID]
+			if !exists {
+				continue
+			}
+			if newCeil >= r.originalCeils[assignID] {
 				if _, exists := adjusted[assignID]; exists {
 					// job previously had a lower ceil for this dest. Now its back to its default value again
 					delete(r.adjustments, assignID)
-					updates[assignID] = min(newCeil, r.assignmentCeils[assignID])
+					rawUpdates[executor] = append(rawUpdates[executor], &pb.DestinationUpdates_Update{
+						AssignmentId: assignID,
+						Destination:  dest,
+						NewCeilBw:    min(newCeil, r.originalCeils[assignID]),
+					})
+
 				}
 			} else {
-				updates[assignID] = newCeil
 				adjusted[assignID] = newCeil
+				rawUpdates[executor] = append(rawUpdates[executor], &pb.DestinationUpdates_Update{
+					AssignmentId: assignID,
+					Destination:  dest,
+					NewCeilBw:    newCeil,
+				})
 			}
 		}
 	}
 
+	var updates map[string]*pb.DestinationUpdates = make(map[string]*pb.DestinationUpdates)
+	for exec, update := range rawUpdates {
+		updates[exec] = &pb.DestinationUpdates{Updates: update}
+	}
 	return updates, nil
 }

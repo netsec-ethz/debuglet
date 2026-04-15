@@ -29,6 +29,7 @@ type Executor struct {
 	Ready       bool                        `json:"ready"`
 	LastSeen    int64                       `json:"last_seen"`
 	Assignments chan *pb.DebugletAssignment `json:"-"`
+	Updates     chan *pb.DestinationUpdates `json:"-"`
 }
 
 type Dispatcher struct {
@@ -143,6 +144,21 @@ func (d *Dispatcher) CheckCapacity(executorID string, assignment *pb.DebugletAss
 	return d.resource.CheckCapacity(executorID, assignment.Policy.FloorBw, assignment.Policy.CeilBw, assignment.Policy.Destinations)
 }
 
-func (d *Dispatcher) RegisterAssignment(assignment *pb.DebugletAssignment) (map[string]int64, error) {
-	return d.resource.RegisterAssignment(assignment)
+func (d *Dispatcher) RegisterAssignment(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
+	return d.resource.RegisterAssignment(executorID, assignment)
+}
+
+func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {
+	d.mu.RLock()
+	exec, ok := d.executors[executorID]
+	d.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("executor %s not found", executorID)
+	}
+	select {
+	case exec.Updates <- updates:
+		return nil
+	default:
+		return fmt.Errorf("executor %s updates queue full", executorID)
+	}
 }

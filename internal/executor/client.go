@@ -137,6 +137,8 @@ func (e *Executor) Start(ctx context.Context) error {
 			e.logger.Info("Received assignment", zap.String("session_id", assign.SessionId))
 			// TODO: check error
 			go e.handleAssignment(ctx, assign)
+		} else if update := msg.GetUpdates(); update != nil {
+			// TODO: handle destination updates
 		}
 	}
 }

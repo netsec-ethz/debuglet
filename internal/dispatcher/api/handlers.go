@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	"debuglet/internal/dispatcher"
-	"debuglet/protocol"
+	pb "debuglet/protocol"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -71,12 +71,12 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			h.logger.Error("failed to decode wasm code", zap.Error(err))
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid wasm code")
 		}
-		assignment := protocol.DebugletAssignment{
+		assignment := pb.DebugletAssignment{
 			SessionId:     sessionId,
 			MeasurementId: measurementId,
 			Code:          code,
 			Addresses:     db.Addresses,
-			Policy: &protocol.DebugletAssignment_Policy{
+			Policy: &pb.DebugletAssignment_Policy{
 				FloorBw:      db.Policy.FloorBW,
 				CeilBw:       db.Policy.CeilBW,
 				Timeout:      db.Policy.Timeout,
@@ -93,18 +93,14 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 				h.logger.Error("insufficient capacity in executor", zap.Error(err))
 				return echo.NewHTTPError(http.StatusServiceUnavailable, "insufficient capacity")
 			}
-			updates, err := h.dispatcher.RegisterAssignment(&assignment)
+			destinationUpdates, err := h.dispatcher.RegisterAssignment(db.ExecutorID, &assignment)
 			if err != nil {
 				h.logger.Error("failed to register assignment", zap.Error(err))
 				return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 			}
 
-			for ID, newCeilBW := range updates {
-				_, _ = ID, newCeilBW
-				// TODO
-				// 1. which executor is running assignment ID
-				// 2. send destination updates for assignment
-				// h.UpdateExecutor()
+			for executorID, updates := range destinationUpdates {
+				h.dispatcher.UpdateDestinations(executorID, updates)
 			}
 			return nil
 		}(); err != nil {

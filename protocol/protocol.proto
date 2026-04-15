@@ -50,12 +50,22 @@ message NoOp {
   string message = 1;
 }
 
+message DestinationUpdates {
+  message Update {
+    string assignment_id = 1;
+    string destination = 2;
+    int64 new_ceil_bw = 3;
+  }
+  repeated Update updates = 1;
+}
+
 message ControlMessage {
   oneof msg {
     ExecutorHello hello = 1;
     ExecutorHeartbeat heartbeat = 2;
     DebugletAssignment assignment = 3;
     NoOp noop = 4; // Optional, for testing or idle pings
+    DestinationUpdates updates = 5;
   }
 }
 

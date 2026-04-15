@@ -81,6 +81,10 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 						stream.Send(&pb.ControlMessage{
 							Msg: &pb.ControlMessage_Assignment{Assignment: assign},
 						})
+					case updates := <-exec.Updates:
+						stream.Send(&pb.ControlMessage{
+							Msg: &pb.ControlMessage_Updates{Updates: updates},
+						})
 					case <-ctx.Done():
 						return
 					}
