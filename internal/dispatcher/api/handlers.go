@@ -17,6 +17,7 @@ package api
 import (
 	"encoding/base64"
 	"net/http"
+	"sync"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/protocol"
@@ -30,6 +31,7 @@ import (
 type Handler struct {
 	dispatcher *dispatcher.Dispatcher
 	logger     *zap.Logger
+	mu         sync.Mutex
 }
 
 func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
@@ -69,7 +71,7 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			h.logger.Error("failed to decode wasm code", zap.Error(err))
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid wasm code")
 		}
-		err = h.dispatcher.DispatchTask(db.ExecutorID, measurement, &protocol.DebugletAssignment{
+		assignment := protocol.DebugletAssignment{
 			SessionId:     sessionId,
 			MeasurementId: measurementId,
 			Code:          code,
@@ -80,7 +82,36 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 				Timeout:      db.Policy.Timeout,
 				Destinations: db.Policy.Destinations,
 			},
-		})
+		}
+
+		if err := func() *echo.HTTPError {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+
+			err = h.dispatcher.CheckCapacity(db.ExecutorID, &assignment)
+			if err != nil {
+				h.logger.Error("insufficient capacity in executor", zap.Error(err))
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "insufficient capacity")
+			}
+			updates, err := h.dispatcher.RegisterAssignment(&assignment)
+			if err != nil {
+				h.logger.Error("failed to register assignment", zap.Error(err))
+				return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			}
+
+			for ID, newCeilBW := range updates {
+				_, _ = ID, newCeilBW
+				// TODO
+				// 1. which executor is running assignment ID
+				// 2. send destination updates for assignment
+				// h.UpdateExecutor()
+			}
+			return nil
+		}(); err != nil {
+			return err
+		}
+
+		err = h.dispatcher.DispatchTask(db.ExecutorID, measurement, &assignment)
 		if err != nil {
 			h.logger.Error("failed to create measurement", zap.Error(err))
 			h.dispatcher.RemoveMeasurement(measurementId)

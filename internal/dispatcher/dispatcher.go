@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sync"
 
+	"debuglet/internal/dispatcher/resource"
 	pb "debuglet/protocol"
 
 	"github.com/google/uuid"
@@ -34,12 +35,14 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	executors    map[string]*Executor
 	measurements map[string]*Measurement
+	resource     *resource.ResourceManager
 }
 
 func NewDispatcher() *Dispatcher {
 	return &Dispatcher{
 		executors:    make(map[string]*Executor),
 		measurements: make(map[string]*Measurement),
+		resource:     resource.New(),
 	}
 }
 
@@ -134,4 +137,12 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 	default:
 		return fmt.Errorf("executor %s assignment queue full", executorID)
 	}
+}
+
+func (d *Dispatcher) CheckCapacity(executorID string, assignment *pb.DebugletAssignment) error {
+	return d.resource.CheckCapacity(executorID, assignment.Policy.FloorBw, assignment.Policy.CeilBw, assignment.Policy.Destinations)
+}
+
+func (d *Dispatcher) RegisterAssignment(assignment *pb.DebugletAssignment) (map[string]int64, error) {
+	return d.resource.RegisterAssignment(assignment)
 }
