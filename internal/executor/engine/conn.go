@@ -15,84 +15,52 @@
 package engine
 
 import (
-	"context"
 	"crypto/tls"
-	"fmt"
+	"io"
 	"net"
-	"net/netip"
-
-	"github.com/netsec-ethz/scion-apps/pkg/pan"
-	"go.uber.org/zap"
 )
 
-// Wrapper for TCP/TLS connection objects
-type ConnWrapper struct {
-	conn *interface{}
+// SocketType identifies the transport layer of a Socket.
+type SocketType int
 
-	tcpConn *net.TCPConn
-	tlsConn *tls.Conn
-	tls     bool
+const (
+	SocketTypeTCP SocketType = iota
+	SocketTypeTLS
+	// Future: SocketTypeUDP, SocketTypeRaw
+)
+
+// Socket is the common interface for all stream-oriented socket types
+// exposed to WASM modules.
+type Socket interface {
+	io.ReadWriteCloser
+	// Type returns the transport type of this socket.
+	Type() SocketType
 }
 
-// Wrapper for SCION connection objects
-type ScionDialWrapper struct {
-	conn     *pan.Conn
-	selector *DebugletSelector
-	failed   bool
+// TCPSocket wraps a raw TCP connection.
+type TCPSocket struct {
+	conn *net.TCPConn
 }
 
-func (c ConnWrapper) Read(data []byte) (int, error) {
-	if c.tls {
-		return c.tlsConn.Read(data)
-	}
-	return c.tcpConn.Read(data)
+func NewTCPSocket(conn *net.TCPConn) *TCPSocket {
+	return &TCPSocket{conn: conn}
 }
 
-func (c ConnWrapper) Write(data []byte) (int, error) {
-	if c.tls {
-		return c.tlsConn.Write(data)
-	}
-	return c.tcpConn.Write(data)
+func (s *TCPSocket) Type() SocketType          { return SocketTypeTCP }
+func (s *TCPSocket) Read(b []byte) (int, error) { return s.conn.Read(b) }
+func (s *TCPSocket) Write(b []byte) (int, error) { return s.conn.Write(b) }
+func (s *TCPSocket) Close() error               { return s.conn.Close() }
+
+// TLSSocket wraps a TLS-over-TCP connection.
+type TLSSocket struct {
+	conn *tls.Conn
 }
 
-func (c ConnWrapper) Close() error {
-	if c.tls {
-		return c.tlsConn.Close()
-	}
-	return c.tcpConn.Close()
+func NewTLSSocket(conn *tls.Conn) *TLSSocket {
+	return &TLSSocket{conn: conn}
 }
 
-// Returned a dialled SCION connection to the given address (given as an index).
-// If the address is already dialed (i.e. present in dialedScionConnections), the corresponding connection is returned.
-// Otherwise a new connection is dialled.
-func dialScion(
-	dialedScionConnections *[]*ScionDialWrapper,
-	addresses []string,
-	address int32,
-	ctx context.Context,
-	sugar *zap.SugaredLogger,
-) (*ScionDialWrapper, error) {
-	if (*dialedScionConnections)[address] != nil {
-		return (*dialedScionConnections)[address], nil
-	}
-
-	udpAddr, err := pan.ResolveUDPAddr(ctx, addresses[address])
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch SCION address: %w", err)
-	}
-
-	sugar.Debugw("dialScion dialling", "udpAddr", udpAddr)
-
-	selector := NewDebugletSelector()
-
-	conn, err := pan.DialUDP(ctx, netip.AddrPort{}, udpAddr, nil, selector)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial the given address: %w", err)
-	}
-
-	(*dialedScionConnections)[address] = &ScionDialWrapper{
-		conn:     &conn,
-		selector: selector,
-	}
-	return (*dialedScionConnections)[address], nil
-}
+func (s *TLSSocket) Type() SocketType          { return SocketTypeTLS }
+func (s *TLSSocket) Read(b []byte) (int, error) { return s.conn.Read(b) }
+func (s *TLSSocket) Write(b []byte) (int, error) { return s.conn.Write(b) }
+func (s *TLSSocket) Close() error               { return s.conn.Close() }

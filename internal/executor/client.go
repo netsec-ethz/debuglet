@@ -167,7 +167,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 				SessionId:     assign.SessionId,
 				ExecutorId:    e.id,
 				MeasurementId: assign.MeasurementId,
-				ScionAddr:     db.GetScionAddr(),
+				ScionAddr:     db.GetSCIONAddr(),
 			},
 		},
 	})
@@ -194,7 +194,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 
 func (e *Executor) flushDebugletOutput(assign *pb.DebugletAssignment, db *engine.Debuglet, session pb.DebugletDispatcher_SessionStreamClient, sessionId string) {
 	defer e.stdoutWg.Done()
-	for stdout := range db.StdOutBuffer {
+	for stdout := range db.StdoutChan() {
 		session.Send(&pb.SessionMessage{
 			Msg: &pb.SessionMessage_Stdout{
 				Stdout: &pb.DebugletStdout{
