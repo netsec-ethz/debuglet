@@ -1,0 +1,7 @@
+http_port = 9000
+grpc_port = 9001
+
+[tls]
+cert_file = "local-config/dispatcher/cert"
+key_file = "local-config/dispatcher/key"
+# ca_file = "local-config/dispatcher/ca"
