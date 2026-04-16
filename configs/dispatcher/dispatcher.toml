@@ -1,0 +1,9 @@
+# /etc/debuglet/dispatcher/dispatcher.toml
+
+dispatcher_id = "dispatcher"
+version = "1.0.0"
+
+[credentials]
+ca_cert = "/etc/debuglet/dispatcher/ca.crt"
+server_cert = "/etc/debuglet/dispatcher/server.crt"
+server_key = "/etc/debuglet/dispatcher/server.key"
