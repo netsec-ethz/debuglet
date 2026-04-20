@@ -74,6 +74,12 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			MeasurementId: measurementId,
 			Code:          code,
 			Addresses:     db.Addresses,
+			Policy: &protocol.DebugletAssignment_Policy{
+				FloorBw:      db.Policy.FloorBW,
+				CeilBw:       db.Policy.CeilBW,
+				Timeout:      db.Policy.Timeout,
+				Destinations: db.Policy.Destinations,
+			},
 		})
 		if err != nil {
 			h.logger.Error("failed to create measurement", zap.Error(err))

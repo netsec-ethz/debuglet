@@ -14,6 +14,7 @@
 
 syntax = "proto3";
 package debuglet.protocol;
+
 option go_package = "/protocol";
 
 // ============================================================
@@ -22,7 +23,7 @@ option go_package = "/protocol";
 
 message ExecutorHello {
   string executor_id = 1; // Unique ID for this executor instance
-  string version = 2;     // Optional: software version or capabilities
+  string version = 2; // Optional: software version or capabilities
 }
 
 message ExecutorHeartbeat {
@@ -35,6 +36,14 @@ message DebugletAssignment {
   string measurement_id = 2;
   bytes code = 3;
   repeated string addresses = 4; // e.g., SCION or network endpoints
+
+  message Policy {
+    int64 floor_bw = 1; // min bits/s required
+    int64 ceil_bw = 2; // max bits/s it could use
+    int64 timeout = 3; // timeout in ms
+    repeated string destinations = 4;
+  }
+  Policy policy = 5;
 }
 
 message NoOp {
@@ -97,8 +106,8 @@ message SessionMessage {
 
 service DebugletDispatcher {
   // Persistent control channel for executor registration, heartbeat, and task assignment
-  rpc ControlStream (stream ControlMessage) returns (stream ControlMessage);
+  rpc ControlStream(stream ControlMessage) returns (stream ControlMessage);
 
   // Per-session bidirectional stream for debuglet execution
-  rpc SessionStream (stream SessionMessage) returns (stream SessionMessage);
+  rpc SessionStream(stream SessionMessage) returns (stream SessionMessage);
 }
