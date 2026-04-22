@@ -138,6 +138,7 @@ func (e *Executor) Start(ctx context.Context) error {
 			// TODO: check error
 			go e.handleAssignment(ctx, assign)
 		} else if update := msg.GetUpdates(); update != nil {
+			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
 			// TODO: handle destination updates
 		}
 	}

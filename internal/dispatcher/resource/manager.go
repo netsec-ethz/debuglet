@@ -69,8 +69,12 @@ func (r *ResourceManager) RegisterAssignment(executorID string, assignment *pb.D
 			// reset previous insertions and reject because of error
 			for _, prevDest := range assignment.Policy.Destinations[:i] {
 				r.destinations.Remove(prevDest, assignment.SessionId)
-				return nil, err
 			}
+			r.executorUsages[assignment.SessionId] -= assignment.Policy.FloorBw
+			delete(r.originalFloors, assignment.SessionId)
+			delete(r.originalCeils, assignment.SessionId)
+			delete(r.IDtoExecutor, assignment.SessionId)
+			return nil, err
 		}
 
 		adjusted, exists := r.adjustments[dest]
