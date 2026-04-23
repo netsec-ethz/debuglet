@@ -11,14 +11,14 @@ func TestResourceManager_CheckCapacity(t *testing.T) {
 	rm := resource.New()
 
 	t.Run("Success within capacity", func(t *testing.T) {
-		err := rm.CheckCapacity("exec-1", 500_000, 1_000_000, []string{"dest-1", "dest-2"})
+		err := rm.CheckPolicy("exec-1", 500_000, 1_000_000, []string{"dest-1", "dest-2"})
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
 	})
 
 	t.Run("Executor capacity exceeded", func(t *testing.T) {
-		err := rm.CheckCapacity("exec-2", resource.HARDCODED_CAPACITY+1, resource.HARDCODED_CAPACITY+100, []string{"dest-1"})
+		err := rm.CheckPolicy("exec-2", resource.HARDCODED_CAPACITY+1, resource.HARDCODED_CAPACITY+100, []string{"dest-1"})
 		if err == nil {
 			t.Fatal("Expected capacity exceeded error, got nil")
 		}
@@ -37,7 +37,7 @@ func TestResourceManager_RegisterAssignment_Success(t *testing.T) {
 		},
 	}
 
-	updates, err := rm.RegisterAssignment("exec-1", assignment)
+	updates, err := rm.RegisterPolicy("exec-1", assignment)
 	if err != nil {
 		t.Fatalf("Expected no error during registration, got %v", err)
 	}
@@ -59,7 +59,7 @@ func TestResourceManager_RegisterAssignment_MultipleDestinations(t *testing.T) {
 		},
 	}
 
-	updates, err := rm.RegisterAssignment("exec-2", assignment)
+	updates, err := rm.RegisterPolicy("exec-2", assignment)
 	if err != nil {
 		t.Fatalf("Expected no error during registration, got %v", err)
 	}

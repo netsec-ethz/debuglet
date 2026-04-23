@@ -140,12 +140,12 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 	}
 }
 
-func (d *Dispatcher) CheckCapacity(executorID string, assignment *pb.DebugletAssignment) error {
-	return d.resource.CheckCapacity(executorID, assignment.Policy.FloorBw, assignment.Policy.CeilBw, assignment.Policy.Destinations)
+func (d *Dispatcher) CheckPolicy(executorID string, assignment *pb.DebugletAssignment) error {
+	return d.resource.CheckPolicy(executorID, assignment.Policy.FloorBw, assignment.Policy.CeilBw, assignment.Policy.Destinations)
 }
 
-func (d *Dispatcher) RegisterAssignment(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
-	return d.resource.RegisterAssignment(executorID, assignment)
+func (d *Dispatcher) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
+	return d.resource.RegisterPolicy(executorID, assignment)
 }
 
 func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {

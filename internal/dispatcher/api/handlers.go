@@ -88,12 +88,12 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 
-			err = h.dispatcher.CheckCapacity(db.ExecutorID, &assignment)
+			err = h.dispatcher.CheckPolicy(db.ExecutorID, &assignment)
 			if err != nil {
 				h.logger.Error("insufficient capacity in executor", zap.Error(err))
 				return echo.NewHTTPError(http.StatusServiceUnavailable, "insufficient capacity")
 			}
-			destinationUpdates, err := h.dispatcher.RegisterAssignment(db.ExecutorID, &assignment)
+			destinationUpdates, err := h.dispatcher.RegisterPolicy(db.ExecutorID, &assignment)
 			if err != nil {
 				h.logger.Error("failed to register assignment", zap.Error(err))
 				return echo.NewHTTPError(http.StatusInternalServerError, err.Error())

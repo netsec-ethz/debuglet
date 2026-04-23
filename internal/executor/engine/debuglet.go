@@ -91,6 +91,7 @@ type Debuglet struct {
 
 	// stdoutCh buffers WASI stdout/stderr chunks while the debuglet runs.
 	stdoutCh chan []byte
+	closed   bool
 }
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
@@ -110,6 +111,14 @@ func NewDebuglet(logger *zap.Logger) *Debuglet {
 // published while the debuglet executes.
 func (d *Debuglet) StdoutChan() <-chan []byte {
 	return d.stdoutCh
+}
+
+func (d *Debuglet) CloseStdoutChan() {
+	if !d.closed {
+		return
+	}
+	close(d.stdoutCh)
+	d.closed = true
 }
 
 // Init starts the network servers and compiles and instantiates the WASM
@@ -396,7 +405,7 @@ func (d *Debuglet) Close() {
 	if d.wasmerInstance != nil {
 		d.wasmerInstance.Close()
 	}
-	close(d.stdoutCh)
+	d.CloseStdoutChan()
 }
 
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
@@ -462,6 +471,7 @@ StreamLoop:
 		case err := <-done:
 			d.flushWASIOutput()
 			retErr = err
+			d.CloseStdoutChan()
 			break StreamLoop
 		case <-ticker.C:
 			// Flush available stdout/stderr — do NOT break the loop here.

@@ -36,7 +36,7 @@ func New() *ResourceManager {
 	}
 }
 
-func (r *ResourceManager) CheckCapacity(executorID string, floor, ceil int64, destinations []string) error {
+func (r *ResourceManager) CheckPolicy(executorID string, floor, ceil int64, destinations []string) error {
 	execCapacity, exists := r.executorCapacities[executorID]
 	if !exists {
 		execCapacity = HARDCODED_CAPACITY
@@ -55,7 +55,7 @@ func (r *ResourceManager) CheckCapacity(executorID string, floor, ceil int64, de
 	return nil
 }
 
-func (r *ResourceManager) RegisterAssignment(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
+func (r *ResourceManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
 	r.executorUsages[assignment.SessionId] += assignment.Policy.FloorBw
 	r.originalFloors[assignment.SessionId] = assignment.Policy.FloorBw
 	r.originalCeils[assignment.SessionId] = assignment.Policy.CeilBw
