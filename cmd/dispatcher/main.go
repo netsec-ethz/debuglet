@@ -30,6 +30,7 @@ import (
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/api"
+	"debuglet/internal/dispatcher/db"
 	pb "debuglet/protocol"
 )
 
@@ -44,6 +45,12 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to load dispatcher config: %v", zap.Error(err))
 	}
+
+	userDB, err := db.NewUserDB(cfg.Database.Path)
+	if err != nil {
+		logger.Fatal("failed to open user database", zap.Error(err))
+	}
+	defer userDB.Close()
 
 	manager := dispatcher.NewDispatcher()
 
@@ -61,7 +68,7 @@ func main() {
 	// ---- Start HTTP Server ----
 	go func() {
 		defer wg.Done()
-		if err := startHTTPServer(manager, cfg, logger); err != nil {
+		if err := startHTTPServer(manager, userDB, cfg, logger); err != nil {
 			logger.Fatal("failed to start HTTP server", zap.Error(err))
 		}
 	}()
@@ -140,9 +147,9 @@ func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 }
 
 // startHTTPServer runs the Echo-based HTTP API
-func startHTTPServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
+func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
 	port := cfg.HTTPPort
-	handler := api.NewHandler(manager, logger)
+	handler := api.NewHandler(manager, userDB, logger)
 
 	e := echo.New()
 	e.HideBanner = true

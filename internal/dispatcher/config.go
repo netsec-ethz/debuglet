@@ -27,10 +27,15 @@ type TLSConfig struct {
 	CAFile   string `toml:"ca_file,omitempty"` // optional for client cert validation
 }
 
+type DatabaseConfig struct {
+	Path string `toml:"path"`
+}
+
 type DispatcherConfig struct {
-	GRPCPort int       `toml:"grpc_port"`
-	HTTPPort int       `toml:"http_port"`
-	TLS      TLSConfig `toml:"tls"`
+	GRPCPort int            `toml:"grpc_port"`
+	HTTPPort int            `toml:"http_port"`
+	TLS      TLSConfig      `toml:"tls"`
+	Database DatabaseConfig `toml:"database"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it

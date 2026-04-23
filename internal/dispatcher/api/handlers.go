@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/db"
 	"debuglet/protocol"
 
 	"github.com/google/uuid"
@@ -29,18 +30,32 @@ import (
 
 type Handler struct {
 	dispatcher *dispatcher.Dispatcher
+	db         *db.UserDB
 	logger     *zap.Logger
 }
 
-func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
-	return &Handler{dispatcher: d, logger: l}
+func NewHandler(d *dispatcher.Dispatcher, userDB *db.UserDB, l *zap.Logger) *Handler {
+	return &Handler{dispatcher: d, db: userDB, logger: l}
 }
 
 // Register all routes
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
+	e.POST("/users", h.CreateUser)
 	e.GET("/executors", h.GetExecutors)
 	e.POST("/measurements", h.CreateMeasurement)
 	e.GET("/measurements/:id/start", h.StartMeasurementStream)
+}
+
+// POST /users — create a new user with a random ID and auth key
+func (h *Handler) CreateUser(c echo.Context) error {
+	userID := uuid.New().String()
+	authKey := uuid.New().String()
+	if err := h.db.CreateUser(userID, authKey); err != nil {
+		h.logger.Error("failed to create user", zap.Error(err))
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create user")
+	}
+	h.logger.Info("created user", zap.String("user_id", userID))
+	return c.JSON(http.StatusCreated, CreateUserResponse{UserID: userID, AuthKey: authKey})
 }
 
 // GET /executors
@@ -54,6 +69,15 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 	var req MeasurementRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
+	}
+
+	ok, err := h.db.Authenticate(req.UserID, req.AuthKey)
+	if err != nil {
+		h.logger.Error("authentication error", zap.Error(err))
+		return echo.NewHTTPError(http.StatusInternalServerError, "authentication error")
+	}
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "invalid credentials")
 	}
 
 	numDebuglets := len(req.Debuglets)
@@ -86,7 +110,8 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 }
 
 // GET /measurements/:id/start
-// Uses Server-Sent Events (SSE) to stream logs/results
+// Uses WebSocket to stream logs/results. The measurement UUID acts as a
+// capability token — only a caller who authenticated at creation time knows it.
 func (h *Handler) StartMeasurementStream(c echo.Context) error {
 	measurementId := c.Param("id")
 	measurement := h.dispatcher.GetMeasurement(measurementId)

@@ -21,7 +21,14 @@ type DebugletRequest struct {
 }
 
 type MeasurementRequest struct {
+	UserID    string            `json:"user_id"`
+	AuthKey   string            `json:"auth_key"`
 	Debuglets []DebugletRequest `json:"debuglets"`
+}
+
+type CreateUserResponse struct {
+	UserID  string `json:"user_id"`
+	AuthKey string `json:"auth_key"`
 }
 
 type MeasurementResponse struct {
