@@ -1,6 +1,7 @@
 executor_id = "executor"
 version = "1.0.0"
 dispatcher_addr = "localhost:9001"
+log_level = "debug"
 
 [credentials]
 ca_cert = "local-config/executor/ca.crt"

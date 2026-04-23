@@ -116,3 +116,14 @@ func (r *ResourceManager) RegisterAssignment(executorID string, assignment *pb.D
 	}
 	return updates, nil
 }
+
+func (r *ResourceManager) RemoveAssignment(assignmentID string) map[string]*pb.DestinationUpdates {
+	originalFloor := r.originalFloors[assignmentID]
+	r.executorUsages[assignmentID] -= originalFloor
+	delete(r.originalFloors, assignmentID)
+	delete(r.originalCeils, assignmentID)
+	delete(r.IDtoExecutor, assignmentID)
+
+	// TODO: updates
+	return nil
+}

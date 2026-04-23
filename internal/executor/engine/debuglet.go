@@ -116,7 +116,7 @@ func (d *Debuglet) StdoutChan() <-chan []byte {
 // module. It must be called exactly once before Run.
 func (d *Debuglet) Init(wasmBytes []byte, addresses []string) error {
 	if err := d.startServers(); err != nil {
-		return err
+		d.logger.Warnw("failed to start up server(s)", "err", err)
 	}
 	if err := d.createWASMInstance(wasmBytes); err != nil {
 		return err
@@ -128,6 +128,9 @@ func (d *Debuglet) Init(wasmBytes []byte, addresses []string) error {
 // GetSCIONAddr returns the local SCION address of the server listener started
 // during Init.
 func (d *Debuglet) GetSCIONAddr() string {
+	if d.scionServer == nil {
+		return ""
+	}
 	return d.scionServer.LocalAddr().String()
 }
 
@@ -137,6 +140,9 @@ func (d *Debuglet) GetSCIONAddr() string {
 func (d *Debuglet) startServers() error {
 	d.logger.Debugw("startServers: starting")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// -- Placeholder for future UDP server --
 	// udpServer, err := net.ListenPacket("udp", ":0")
 
@@ -144,7 +150,7 @@ func (d *Debuglet) startServers() error {
 	// addr, err := net.ResolveTCPAddr("tcp", ":0")
 	// tcpServer, err := net.ListenTCP("tcp", addr)
 
-	scionHost, err := platform.GetScionAddr()
+	scionHost, err := platform.GetScionAddr(ctx)
 	if err != nil {
 		return fmt.Errorf("startServers: failed to get SCION address: %w", err)
 	}
@@ -158,6 +164,7 @@ func (d *Debuglet) startServers() error {
 		return fmt.Errorf("startServers: failed to set SCION listen addr: %w", err)
 	}
 
+	d.logger.Debug("startServers: starting scion UDP listener")
 	scionServer, err := pan.ListenUDP(context.Background(), listen.Get(), nil)
 	if err != nil {
 		return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
@@ -177,6 +184,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 		return fmt.Errorf("createWASMInstance: bytecode is probably malformed: %w", err)
 	}
 
+	d.logger.Debug("producing new debuglet WasiEnvironment")
 	wasiEnv, err := wasmer.NewWasiStateBuilder("debuglet").
 		CaptureStdout().
 		CaptureStderr().
@@ -186,6 +194,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	}
 	d.wasiEnv = *wasiEnv
 
+	d.logger.Debug("generating new debuglet import object")
 	importObject, err := d.wasiEnv.GenerateImportObject(d.store, module)
 	if err != nil {
 		return fmt.Errorf("createWASMInstance: generate import object failed: %w", err)
@@ -196,6 +205,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	socketRegistry := &SocketRegistry{}
 	var lastReceived net.Addr
 
+	d.logger.Debug("registering host functions for WASM")
 	d.registerHostFunctions(importObject, scionConns, socketRegistry, &lastReceived)
 
 	instance, err := wasmer.NewInstance(module, importObject)
@@ -416,6 +426,7 @@ func (d *Debuglet) Run() ([]byte, error) {
 			}
 		}()
 
+		d.logger.Debug("starting execution")
 		if _, runErr := runFunc(); runErr != nil {
 			d.logger.Warnw("Run: execution error", "err", runErr)
 			done <- fmt.Errorf("error running debuglet: %w", runErr)

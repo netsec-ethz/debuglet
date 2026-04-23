@@ -152,6 +152,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		return
 	}
 
+	e.logger.Debug("Locking")
 	e.mu.Lock()
 	db := engine.NewDebuglet(e.logger)
 	err = db.Init(assign.Code, assign.Addresses)

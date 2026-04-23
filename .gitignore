@@ -1,3 +1,6 @@
 *.crt
 *.key
 debuglet-executor*
+dispatcher
+executor
+__debug*

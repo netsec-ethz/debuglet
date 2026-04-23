@@ -26,6 +26,7 @@ type Config struct {
 	ExecutorID     string `toml:"executor_id"`
 	Version        string `toml:"version"`
 	DispatcherAddr string `toml:"dispatcher_addr"`
+	LogLevel       string `toml:"log_level"`
 
 	Credentials CredentialConfig `toml:"credentials"`
 }
@@ -50,6 +51,10 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
 	}
 
 	// Basic validation

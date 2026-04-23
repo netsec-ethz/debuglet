@@ -1,5 +1,6 @@
 http_port = 9000
 grpc_port = 9001
+log_level = "debug"
 
 [tls]
 cert_file = "local-config/dispatcher/cert"
