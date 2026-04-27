@@ -1,3 +1,4 @@
+// Bandwidth resource management on a destination-level running on the dispatcher
 package resource
 
 import (
@@ -9,7 +10,7 @@ import (
 const HARDCODED_CAPACITY = 1_000_000_000 // 1gb
 
 // Keeps track of how much capacity is used/free for executors and destinations
-type ResourceManager struct {
+type DispatcherManager struct {
 	// The floor usages of all jobs running on an executor
 	executorUsages map[string]int64
 	// Non-default max capacities of an executor
@@ -25,8 +26,8 @@ type ResourceManager struct {
 	IDtoExecutor map[string]string
 }
 
-func New() *ResourceManager {
-	return &ResourceManager{
+func New() *DispatcherManager {
+	return &DispatcherManager{
 		executorUsages:       make(map[string]int64),
 		executorCapacities:   make(map[string]int64),
 		originalFloors:       make(map[string]int64),
@@ -38,18 +39,18 @@ func New() *ResourceManager {
 	}
 }
 
-func (r *ResourceManager) CheckPolicy(executorID string, floor, ceil int64, destinations []string) error {
-	execCapacity, exists := r.executorCapacities[executorID]
+func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, destinations []string) error {
+	execCapacity, exists := d.executorCapacities[executorID]
 	if !exists {
 		execCapacity = HARDCODED_CAPACITY
 	}
-	execUsage := r.executorUsages[executorID]
+	execUsage := d.executorUsages[executorID]
 	if x := execUsage + floor; x > execCapacity {
 		return fmt.Errorf("%s executor capacity exceeded (want %d, have %d): %w", executorID, floor, execCapacity-execUsage, ErrCapacityFull)
 	}
 
 	for _, dest := range destinations {
-		if err := r.destinations.CheckCapacity(dest, floor); err != nil {
+		if err := d.destinations.CheckCapacity(dest, floor); err != nil {
 			return err
 		}
 	}
@@ -57,7 +58,7 @@ func (r *ResourceManager) CheckPolicy(executorID string, floor, ceil int64, dest
 	return nil
 }
 
-func (r *ResourceManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
+func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
 	assignmentID := assignment.GetSessionId()
 	policy := assignment.GetPolicy()
 	if policy == nil {
@@ -65,75 +66,75 @@ func (r *ResourceManager) RegisterPolicy(executorID string, assignment *pb.Debug
 	}
 	destinations := policy.GetDestinations()
 
-	r.executorUsages[assignmentID] += policy.GetFloorBw()
-	r.originalFloors[assignmentID] = policy.GetFloorBw()
-	r.originalCeils[assignmentID] = policy.GetCeilBw()
-	r.originalDestinations[assignmentID] = destinations
-	r.IDtoExecutor[assignmentID] = executorID
+	d.executorUsages[assignmentID] += policy.GetFloorBw()
+	d.originalFloors[assignmentID] = policy.GetFloorBw()
+	d.originalCeils[assignmentID] = policy.GetCeilBw()
+	d.originalDestinations[assignmentID] = destinations
+	d.IDtoExecutor[assignmentID] = executorID
 
 	// insert to dests
 	for i, dest := range destinations {
-		if err := r.destinations.Insert(dest, assignmentID, policy.GetFloorBw(), policy.GetCeilBw()); err != nil {
+		if err := d.destinations.Insert(dest, assignmentID, policy.GetFloorBw(), policy.GetCeilBw()); err != nil {
 			// reset previous insertions and reject because of error
 			for _, prevDest := range destinations[:i] {
-				r.destinations.Remove(prevDest, assignmentID)
+				d.destinations.Remove(prevDest, assignmentID)
 			}
-			r.executorUsages[assignmentID] -= policy.GetFloorBw()
-			delete(r.originalFloors, assignmentID)
-			delete(r.originalCeils, assignmentID)
-			delete(r.IDtoExecutor, assignmentID)
+			d.executorUsages[assignmentID] -= policy.GetFloorBw()
+			delete(d.originalFloors, assignmentID)
+			delete(d.originalCeils, assignmentID)
+			delete(d.IDtoExecutor, assignmentID)
 			return nil, err
 		}
 	}
 
-	updates := r.determineUpdates(destinations)
+	updates := d.determineUpdates(destinations)
 	return updates, nil
 }
 
-func (r *ResourceManager) RemoveAssignment(assignmentID string) (map[string]*pb.DestinationUpdates, error) {
-	destinations, exists := r.originalDestinations[assignmentID]
+func (d *DispatcherManager) RemovePolicy(assignmentID string) (map[string]*pb.DestinationUpdates, error) {
+	destinations, exists := d.originalDestinations[assignmentID]
 	if !exists {
 		return nil, fmt.Errorf("assignment ID not found, id=%s", assignmentID)
 	}
-	originalFloor := r.originalFloors[assignmentID]
-	r.executorUsages[assignmentID] -= originalFloor
+	originalFloor := d.originalFloors[assignmentID]
+	d.executorUsages[assignmentID] -= originalFloor
 
-	for _, dest := range r.originalDestinations[assignmentID] {
-		r.destinations.Remove(dest, assignmentID)
+	for _, dest := range d.originalDestinations[assignmentID] {
+		d.destinations.Remove(dest, assignmentID)
 	}
 
-	delete(r.originalFloors, assignmentID)
-	delete(r.originalCeils, assignmentID)
-	delete(r.IDtoExecutor, assignmentID)
-	delete(r.originalDestinations, assignmentID)
+	delete(d.originalFloors, assignmentID)
+	delete(d.originalCeils, assignmentID)
+	delete(d.IDtoExecutor, assignmentID)
+	delete(d.originalDestinations, assignmentID)
 
-	updates := r.determineUpdates(destinations)
+	updates := d.determineUpdates(destinations)
 	return updates, nil
 }
 
-func (r *ResourceManager) determineUpdates(destinations []string) map[string]*pb.DestinationUpdates {
+func (d *DispatcherManager) determineUpdates(destinations []string) map[string]*pb.DestinationUpdates {
 	var rawUpdates map[string][]*pb.DestinationUpdates_Update = make(map[string][]*pb.DestinationUpdates_Update)
 
 	for _, dest := range destinations {
-		adjusted, exists := r.adjustments[dest]
+		adjusted, exists := d.adjustments[dest]
 		if !exists {
 			adjusted = make(map[string]int64)
-			r.adjustments[dest] = adjusted
+			d.adjustments[dest] = adjusted
 		}
 
-		for assignID, newCeil := range r.destinations.Fairshare(dest) {
-			executor, exists := r.IDtoExecutor[assignID]
+		for assignID, newCeil := range d.destinations.Fairshare(dest) {
+			executor, exists := d.IDtoExecutor[assignID]
 			if !exists {
 				continue
 			}
-			if newCeil >= r.originalCeils[assignID] {
+			if newCeil >= d.originalCeils[assignID] {
 				if _, exists := adjusted[assignID]; exists {
 					// job previously had a lower ceil for this dest. Now its back to its default value again
-					delete(r.adjustments, assignID)
+					delete(d.adjustments, assignID)
 					rawUpdates[executor] = append(rawUpdates[executor], &pb.DestinationUpdates_Update{
 						AssignmentId: assignID,
 						Destination:  dest,
-						NewCeilBw:    min(newCeil, r.originalCeils[assignID]),
+						NewCeilBw:    min(newCeil, d.originalCeils[assignID]),
 					})
 
 				}

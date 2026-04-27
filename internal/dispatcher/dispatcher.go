@@ -36,7 +36,7 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	executors    map[string]*Executor
 	measurements map[string]*Measurement
-	resource     *resource.ResourceManager
+	resource     *resource.DispatcherManager
 }
 
 func NewDispatcher() *Dispatcher {

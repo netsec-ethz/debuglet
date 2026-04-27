@@ -129,7 +129,7 @@ func TestMinimalUpdates(t *testing.T) {
 		}
 	}
 
-	updates, err = rm.RemoveAssignment("session-2")
+	updates, err = rm.RemovePolicy("session-2")
 	if up := updates["exec-1"]; err != nil || up == nil || len(up.Updates) != 1 {
 		t.Fatalf("Expected no error and 1 update, got %v and updates=%v", err, up)
 	} else {
@@ -145,7 +145,7 @@ func TestMinimalUpdates(t *testing.T) {
 func TestRemoveAssignment(t *testing.T) {
 	rm := resource.New()
 
-	_, err := rm.RemoveAssignment("random-id")
+	_, err := rm.RemovePolicy("random-id")
 	if err == nil {
 		t.Fatalf("Expected nonexistent ID to return error, got nil")
 	}
@@ -159,7 +159,7 @@ func TestRemoveAssignment(t *testing.T) {
 		t.Fatalf("Expected no error and no updates, got %v, updates=%v", err, updates)
 	}
 
-	updates, err = rm.RemoveAssignment("session-1")
+	updates, err = rm.RemovePolicy("session-1")
 	if len(updates) > 0 || err != nil {
 		t.Fatalf("Expected no updates, got %v", updates)
 	}
