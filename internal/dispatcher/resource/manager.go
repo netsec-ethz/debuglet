@@ -62,7 +62,7 @@ func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.Deb
 	assignmentID := assignment.GetSessionId()
 	policy := assignment.GetPolicy()
 	if policy == nil {
-		return nil, fmt.Errorf("Expected assignment policy, got nil")
+		return nil, fmt.Errorf("expected assignment policy, got nil")
 	}
 	destinations := policy.GetDestinations()
 

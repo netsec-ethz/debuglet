@@ -2,19 +2,22 @@ package resource
 
 import (
 	"debuglet/internal/util/avl"
+	"errors"
 	"fmt"
 	"iter"
 )
 
-var ErrMinGreater = fmt.Errorf("minimum is greater than maximum bandwidth limit")
-var ErrCapacityFull = fmt.Errorf("insufficient capacity")
+var (
+	ErrMinGreater   = errors.New("minimum is greater than maximum bandwidth limit")
+	ErrCapacityFull = errors.New("insufficient capacity")
+)
 
 type jobKey struct {
 	jobId, destination string
 }
 
 type DestinationsUsage struct {
-	// The residual (limit-minimum) bandwidths of jobs for fairsharing
+	// The residual (limit-minimum) bandwidths of assignments available for fairsharing
 	trees map[string]*avl.AVL[string]
 	// The explicit TOTAL destination capacities
 	capacities map[string]int64
@@ -120,9 +123,11 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, int6
 	fairshare := tree.Fairshare(cap - usage)
 	return func(yield func(string, int64) bool) {
 		for n := range tree.Range(avl.Unbounded, avl.Unbounded) {
-			jk := jobKey{jobId: n.Id, destination: destination}
+			jk := jobKey{jobId: n.ID, destination: destination}
 			actualLimit := min(d.maximums[jk], fairshare+d.minimums[jk])
-			yield(n.Id, actualLimit)
+			if !yield(n.ID, actualLimit) {
+				return
+			}
 		}
 	}
 }

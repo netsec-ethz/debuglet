@@ -7,7 +7,7 @@ import (
 )
 
 type Node[T comparable] struct {
-	Id T
+	ID T
 	// Sum/Count of all (recursive) children+itself
 	sum, count int64
 	// h is the height of its children. 0 if it has no children.
@@ -20,12 +20,12 @@ func newNode[T comparable](par *Node[T], v int64, id T) *Node[T] {
 		Value: v,
 		sum:   v,
 		count: 1,
-		Id:    id,
+		ID:    id,
 	}
 }
 
 func (n Node[T]) String() string {
-	return fmt.Sprintf("Node[%v]", n.Id)
+	return fmt.Sprintf("Node[%v]", n.ID)
 }
 
 func (n Node[T]) Detailed() string {
@@ -34,16 +34,16 @@ func (n Node[T]) Detailed() string {
 
 func (n Node[T]) GraphDot() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\"%v\" [label=\"id=%v,\\nval=%d\\nbal=%d\\nheight=%d\\nsum=%d\\ncount=%d\"];", n.Id, n.Id, n.Value, n.bal, n.h, n.sum, n.count)
+	fmt.Fprintf(&b, "\"%v\" [label=\"id=%v,\\nval=%d\\nbal=%d\\nheight=%d\\nsum=%d\\ncount=%d\"];", n.ID, n.ID, n.Value, n.bal, n.h, n.sum, n.count)
 	if n.L != nil {
 		b.WriteByte('\n')
 		b.WriteString(n.L.GraphDot())
-		fmt.Fprintf(&b, "\n\"%v\" -> \"%v\" [label=\"L\"]", n.Id, n.L.Id)
+		fmt.Fprintf(&b, "\n\"%v\" -> \"%v\" [label=\"L\"]", n.ID, n.L.ID)
 	}
 	if n.R != nil {
 		b.WriteByte('\n')
 		b.WriteString(n.R.GraphDot())
-		fmt.Fprintf(&b, "\n\"%v\" -> \"%v\" [label=\"R\"]", n.Id, n.R.Id)
+		fmt.Fprintf(&b, "\n\"%v\" -> \"%v\" [label=\"R\"]", n.ID, n.R.ID)
 	}
 	return b.String()
 }
@@ -155,9 +155,9 @@ func (toDelete *Node[T]) deleteNode() *Node[T] {
 	toReplace := toDelete.R.minNode()
 
 	toDelete.Value = toReplace.Value
-	toDelete.Id = toReplace.Id
+	toDelete.ID = toReplace.ID
 
-	toDelete.R = toDelete.R.delete(toReplace.Value, toReplace.Id)
+	toDelete.R = toDelete.R.delete(toReplace.Value, toReplace.ID)
 
 	toDelete.recompute()
 	return toDelete.rotate()
@@ -167,7 +167,7 @@ func (n *Node[T]) delete(v int64, id T) *Node[T] {
 	if n == nil {
 		return nil
 	}
-	if v == n.Value && id == n.Id {
+	if v == n.Value && id == n.ID {
 		return n.deleteNode()
 	} else if v <= n.Value {
 		n.L = n.L.delete(v, id)
@@ -212,6 +212,9 @@ func (a *AVL[T]) Insert(v int64, id T) {
 		a.root = newNode(nil, v, id)
 		return
 	}
+	if v < 0 {
+		panic("negative values are unsupported")
+	}
 	a.root = a.root.insert(v, id)
 }
 
@@ -219,7 +222,7 @@ func (a *AVL[T]) Delete(v int64, id T) {
 	if a.root == nil {
 		return
 	}
-	if a.root.Value == v && a.root.Id == id {
+	if a.root.Value == v && a.root.ID == id {
 		a.root = a.root.deleteNode()
 	} else {
 		a.root = a.root.delete(v, id)
@@ -252,7 +255,9 @@ func (n *Node[T]) yieldRange(yield func(*Node[T]) bool, from, to int64) bool {
 	return true
 }
 
-// Returns an iterator for Nodes with values in the range [from, to)
+// Range returns an iterator of nodes with values in the range [from, to).
+// avl.Unbounded may be passed in to either argument to include all elements
+// from either range.
 func (a AVL[T]) Range(from, to int64) iter.Seq[*Node[T]] {
 	return func(yield func(*Node[T]) bool) {
 		if a.root == nil {
@@ -267,7 +272,7 @@ func (a AVL[T]) Find(v int64, id T) *Node[T] {
 		return nil
 	}
 	for n := range a.Range(v, v+1) {
-		if n.Id == id {
+		if n.ID == id {
 			return n
 		}
 	}
@@ -303,6 +308,7 @@ func (n *Node[T]) fairshare(cap int64, leftSum int64, rightCount int64) int64 {
 	}
 }
 
+// Fairshare determines the maximum allowed capacity for all added nodes to be fairshared.
 func (a AVL[T]) Fairshare(cap int64) int64 {
 	if a.root == nil {
 		return 0
