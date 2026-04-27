@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"debuglet/internal/executor/engine"
+	"debuglet/internal/executor/resource"
 	pb "debuglet/protocol"
 
 	"go.uber.org/zap"
@@ -43,6 +44,8 @@ type Executor struct {
 	debuglets map[string]*engine.Debuglet
 
 	stdoutWg sync.WaitGroup
+
+	manager *resource.ExecutorManager
 }
 
 func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
@@ -86,6 +89,7 @@ func NewExecutor(cfg *Config, logger *zap.Logger) (*Executor, error) {
 		logger:    logger,
 		version:   cfg.Version,
 		debuglets: make(map[string]*engine.Debuglet),
+		manager:   resource.New(cfg.Capacity),
 	}, nil
 }
 
