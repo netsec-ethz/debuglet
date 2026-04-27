@@ -80,7 +80,7 @@ func (d *DestinationsUsage) Insert(destination, jobId string, minimum, maximum i
 	jk := jobKey{jobId: jobId, destination: destination}
 	d.minimums[jk] = minimum
 	d.maximums[jk] = maximum
-	tree.Insert(maximum-minimum, jobId)
+	tree.Insert(jobId, maximum-minimum)
 	return nil
 }
 
@@ -93,7 +93,7 @@ func (d *DestinationsUsage) Remove(destination, jobId string) {
 	jk := jobKey{jobId: jobId, destination: destination}
 	minimum := d.minimums[jk]
 	maximum := d.maximums[jk]
-	tree.Delete(maximum-minimum, jobId)
+	tree.Delete(jobId, maximum-minimum)
 	if tree.Len() == 0 {
 		delete(d.trees, destination)
 	}

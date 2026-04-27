@@ -47,7 +47,7 @@ func (e *ExecutorManager) RegisterAssignment(assignmentID string, minimum, maxim
 
 	e.assignMin[assignmentID] = minimum
 	e.assignMax[assignmentID] = maximum
-	e.tree.Insert(maximum-minimum, assignmentID)
+	e.tree.Insert(assignmentID, maximum-minimum)
 	e.minUsedCapacity += minimum
 	e.maxUsedCapacity += maximum
 
@@ -63,7 +63,7 @@ func (e *ExecutorManager) RemoveAssignment(assignmentID string) (fairshareRequir
 
 	delete(e.assignMax, assignmentID)
 	delete(e.assignMin, assignmentID)
-	e.tree.Delete(maximum-minimum, assignmentID)
+	e.tree.Delete(assignmentID, maximum-minimum)
 	e.minUsedCapacity -= minimum
 	e.maxUsedCapacity -= maximum
 

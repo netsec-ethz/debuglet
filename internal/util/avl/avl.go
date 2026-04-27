@@ -111,18 +111,18 @@ func (n *Node[T]) rotate() *Node[T] {
 	return newRoot
 }
 
-func (n *Node[T]) insert(v int64, id T) *Node[T] {
+func (n *Node[T]) insert(id T, v int64) *Node[T] {
 	if v <= n.Value {
 		if n.L == nil {
 			n.L = newNode(n, v, id)
 		} else {
-			n.L = n.L.insert(v, id)
+			n.L = n.L.insert(id, v)
 		}
 	} else {
 		if n.R == nil {
 			n.R = newNode(n, v, id)
 		} else {
-			n.R = n.R.insert(v, id)
+			n.R = n.R.insert(id, v)
 		}
 	}
 	n.recompute()
@@ -157,22 +157,22 @@ func (toDelete *Node[T]) deleteNode() *Node[T] {
 	toDelete.Value = toReplace.Value
 	toDelete.ID = toReplace.ID
 
-	toDelete.R = toDelete.R.delete(toReplace.Value, toReplace.ID)
+	toDelete.R = toDelete.R.delete(toReplace.ID, toReplace.Value)
 
 	toDelete.recompute()
 	return toDelete.rotate()
 }
 
-func (n *Node[T]) delete(v int64, id T) *Node[T] {
+func (n *Node[T]) delete(id T, v int64) *Node[T] {
 	if n == nil {
 		return nil
 	}
 	if v == n.Value && id == n.ID {
 		return n.deleteNode()
 	} else if v <= n.Value {
-		n.L = n.L.delete(v, id)
+		n.L = n.L.delete(id, v)
 	} else if v > n.Value {
-		n.R = n.R.delete(v, id)
+		n.R = n.R.delete(id, v)
 	}
 
 	n.recompute()
@@ -207,7 +207,7 @@ func (a AVL[T]) GraphDot() string {
 	return fmt.Sprintf("digraph G {\n%s\n}", a.root.GraphDot())
 }
 
-func (a *AVL[T]) Insert(v int64, id T) {
+func (a *AVL[T]) Insert(id T, v int64) {
 	if a.root == nil {
 		a.root = newNode(nil, v, id)
 		return
@@ -215,23 +215,23 @@ func (a *AVL[T]) Insert(v int64, id T) {
 	if v < 0 {
 		panic("negative values are unsupported")
 	}
-	a.root = a.root.insert(v, id)
+	a.root = a.root.insert(id, v)
 }
 
-func (a *AVL[T]) Delete(v int64, id T) {
+func (a *AVL[T]) Delete(id T, v int64) {
 	if a.root == nil {
 		return
 	}
 	if a.root.Value == v && a.root.ID == id {
 		a.root = a.root.deleteNode()
 	} else {
-		a.root = a.root.delete(v, id)
+		a.root = a.root.delete(id, v)
 	}
 }
 
-func (a *AVL[T]) Replace(v int64, id T) {
-	a.Delete(v, id)
-	a.Insert(v, id)
+func (a *AVL[T]) Replace(id T, v int64) {
+	a.Delete(id, v)
+	a.Insert(id, v)
 }
 
 func (n *Node[T]) yieldRange(yield func(*Node[T]) bool, from, to int64) bool {

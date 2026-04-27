@@ -27,11 +27,11 @@ func TestInsertDelete(t *testing.T) {
 
 func TestRange(t *testing.T) {
 	tree := AVL[string]{}
-	tree.Insert(7, "7")
-	tree.Insert(2, "2")
-	tree.Insert(9, "9")
-	tree.Insert(10, "10")
-	tree.Insert(8, "8")
+	tree.Insert("7", 7)
+	tree.Insert("2", 2)
+	tree.Insert("9", 9)
+	tree.Insert("10", 10)
+	tree.Insert("8", 8)
 	rng := slices.Collect(tree.Range(3, 9))
 	if len(rng) != 2 || rng[0].ID != "7" || rng[1].ID != "8" {
 		t.Fatalf("Expected range of [7,8], got %v", rng)
@@ -42,7 +42,7 @@ func TestUnbounded(t *testing.T) {
 	tree := AVL[int]{}
 	tree.Insert(7, 7)
 	tree.Insert(2, 2)
-	tree.Insert(2, 22)
+	tree.Insert(22, 2)
 	tree.Insert(9, 9)
 	tree.Insert(10, 10)
 	tree.Insert(8, 8)
@@ -60,11 +60,11 @@ func TestUnbounded(t *testing.T) {
 
 func TestFind(t *testing.T) {
 	tree := AVL[string]{}
-	tree.Insert(7, "7")
-	tree.Insert(2, "2")
-	tree.Insert(9, "9")
-	tree.Insert(10, "10")
-	tree.Insert(8, "SOLUTION")
+	tree.Insert("7", 7)
+	tree.Insert("2", 2)
+	tree.Insert("9", 9)
+	tree.Insert("10", 10)
+	tree.Insert("SOLUTION", 8)
 	if x := tree.Find(8, "SOLUTION"); x == nil || x.ID != "SOLUTION" {
 		t.Fatalf("Expected to find Node with id=\"SOLUTION\", got %v", x)
 	}
@@ -95,7 +95,7 @@ func TestFairshare(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tree := AVL[string]{}
 			for i, v := range tc.values {
-				tree.Insert(v, fmt.Sprintf("%d-%d", v, i))
+				tree.Insert(fmt.Sprintf("%d-%d", v, i), v)
 			}
 			if got := tree.Fairshare(tc.cap); got != tc.want {
 				t.Fatalf("Expected fairshare=%d, got %d", tc.want, got)
