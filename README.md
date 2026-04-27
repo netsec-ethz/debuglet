@@ -73,16 +73,6 @@ sequenceDiagram
 
     Client->>Dispatcher: createMeasurement <br/> (POST http /api/measurements)
     activate Dispatcher
-    Dispatcher->>Dispatcher: CheckPolicy() & RegisterPolicy()
-
-    rect rgba(255, 255, 0, 0.3)
-    Dispatcher->>Executor: Update1(Assignment, Destination)
-    Dispatcher-->>Executor: Update2(Assignment, Destination)
-    Dispatcher-->>Executor: Update3(Assignment, Destination)
-    Executor->>Dispatcher: ack1
-    Executor-->>Dispatcher: ack2
-    Executor-->>Dispatcher: ack3
-    end
 
     Dispatcher->>Executor: DispatchTask() <br/> [ControlMessage]: Assignment
     activate Executor
@@ -100,6 +90,18 @@ sequenceDiagram
 
     Client->>Dispatcher: ws:start
     activate Dispatcher
+
+    rect rgba(255, 255, 0, 0.3)
+    Dispatcher->>Dispatcher: CheckPolicy() & RegisterPolicy()
+
+    Dispatcher->>Executor: Update1(Assignment, Destination)
+    Dispatcher-->>Executor: Update2(Assignment, Destination)
+    Dispatcher-->>Executor: Update3(Assignment, Destination)
+    Executor->>Dispatcher: ack1
+    Executor-->>Dispatcher: ack2
+    Executor-->>Dispatcher: ack3
+    end
+
     Dispatcher->>Dispatcher: measurement.Start()
 
     Dispatcher->>Executor: DebugletSession1.Start() <br/> [SessionMessage]: START_EXECUTION
@@ -107,9 +109,14 @@ sequenceDiagram
     Dispatcher-->>Executor: DebugletSession2.Start() <br/> [SessionMessage]: START_EXECUTION
     Dispatcher-->>Executor: DebugletSession3.Start() <br/> [SessionMessage]: START_EXECUTION
 
+    rect rgba(255, 255, 0, 0.3)
+    Executor->>Executor: RegisterAssignment1()
     Executor->>Executor: runDebuglet1()
-    Executor-->>Executor: runDebuglet2()
-    Executor-->>Executor: runDebuglet3()
+    Executor->>Executor: RemoveAssignment1()
+
+    Executor-->>Executor: Register, Run, Remove 2()
+    Executor-->>Executor: Register, Run, Remove 3()
+    end
 
     Executor-->>Dispatcher: [SessionMessage] Stdout1(Stdout)
     Executor-->>Dispatcher: [SessionMessage] Stdout2(Stdout)
