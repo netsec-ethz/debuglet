@@ -15,9 +15,10 @@ type ResourceManager struct {
 	// Non-default max capacities of an executor
 	executorCapacities map[string]int64
 	// Keeps track of the floors added by jobs to later remove them again from executorUsages
-	originalFloors map[string]int64
-	originalCeils  map[string]int64
-	destinations   *DestinationsUsage
+	originalFloors       map[string]int64
+	originalCeils        map[string]int64
+	destinations         *DestinationsUsage
+	originalDestinations map[string][]string
 	// What jobs have been adjustments since the last fairshare.
 	// Enables for only the fairshare updates to be returned that have actually changed.
 	adjustments  map[string]map[string]int64
@@ -26,13 +27,14 @@ type ResourceManager struct {
 
 func New() *ResourceManager {
 	return &ResourceManager{
-		executorUsages:     make(map[string]int64),
-		executorCapacities: make(map[string]int64),
-		originalFloors:     make(map[string]int64),
-		originalCeils:      make(map[string]int64),
-		destinations:       NewDestinations(HARDCODED_CAPACITY),
-		adjustments:        make(map[string]map[string]int64),
-		IDtoExecutor:       make(map[string]string),
+		executorUsages:       make(map[string]int64),
+		executorCapacities:   make(map[string]int64),
+		originalFloors:       make(map[string]int64),
+		originalCeils:        make(map[string]int64),
+		originalDestinations: make(map[string][]string),
+		destinations:         NewDestinations(HARDCODED_CAPACITY),
+		adjustments:          make(map[string]map[string]int64),
+		IDtoExecutor:         make(map[string]string),
 	}
 }
 
@@ -56,27 +58,63 @@ func (r *ResourceManager) CheckPolicy(executorID string, floor, ceil int64, dest
 }
 
 func (r *ResourceManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
-	r.executorUsages[assignment.SessionId] += assignment.Policy.FloorBw
-	r.originalFloors[assignment.SessionId] = assignment.Policy.FloorBw
-	r.originalCeils[assignment.SessionId] = assignment.Policy.CeilBw
-	r.IDtoExecutor[assignment.SessionId] = executorID
+	assignmentID := assignment.GetSessionId()
+	policy := assignment.GetPolicy()
+	if policy == nil {
+		return nil, fmt.Errorf("Expected assignment policy, got nil")
+	}
+	destinations := policy.GetDestinations()
 
-	var rawUpdates map[string][]*pb.DestinationUpdates_Update
+	r.executorUsages[assignmentID] += policy.GetFloorBw()
+	r.originalFloors[assignmentID] = policy.GetFloorBw()
+	r.originalCeils[assignmentID] = policy.GetCeilBw()
+	r.originalDestinations[assignmentID] = destinations
+	r.IDtoExecutor[assignmentID] = executorID
 
-	for i, dest := range assignment.Policy.Destinations {
-
-		if err := r.destinations.Insert(dest, assignment.SessionId, assignment.Policy.FloorBw, assignment.Policy.CeilBw); err != nil {
+	// insert to dests
+	for i, dest := range destinations {
+		if err := r.destinations.Insert(dest, assignmentID, policy.GetFloorBw(), policy.GetCeilBw()); err != nil {
 			// reset previous insertions and reject because of error
-			for _, prevDest := range assignment.Policy.Destinations[:i] {
-				r.destinations.Remove(prevDest, assignment.SessionId)
+			for _, prevDest := range destinations[:i] {
+				r.destinations.Remove(prevDest, assignmentID)
 			}
-			r.executorUsages[assignment.SessionId] -= assignment.Policy.FloorBw
-			delete(r.originalFloors, assignment.SessionId)
-			delete(r.originalCeils, assignment.SessionId)
-			delete(r.IDtoExecutor, assignment.SessionId)
+			r.executorUsages[assignmentID] -= policy.GetFloorBw()
+			delete(r.originalFloors, assignmentID)
+			delete(r.originalCeils, assignmentID)
+			delete(r.IDtoExecutor, assignmentID)
 			return nil, err
 		}
+	}
 
+	updates := r.determineUpdates(destinations)
+	return updates, nil
+}
+
+func (r *ResourceManager) RemoveAssignment(assignmentID string) (map[string]*pb.DestinationUpdates, error) {
+	destinations, exists := r.originalDestinations[assignmentID]
+	if !exists {
+		return nil, fmt.Errorf("assignment ID not found, id=%s", assignmentID)
+	}
+	originalFloor := r.originalFloors[assignmentID]
+	r.executorUsages[assignmentID] -= originalFloor
+
+	for _, dest := range r.originalDestinations[assignmentID] {
+		r.destinations.Remove(dest, assignmentID)
+	}
+
+	delete(r.originalFloors, assignmentID)
+	delete(r.originalCeils, assignmentID)
+	delete(r.IDtoExecutor, assignmentID)
+	delete(r.originalDestinations, assignmentID)
+
+	updates := r.determineUpdates(destinations)
+	return updates, nil
+}
+
+func (r *ResourceManager) determineUpdates(destinations []string) map[string]*pb.DestinationUpdates {
+	var rawUpdates map[string][]*pb.DestinationUpdates_Update = make(map[string][]*pb.DestinationUpdates_Update)
+
+	for _, dest := range destinations {
 		adjusted, exists := r.adjustments[dest]
 		if !exists {
 			adjusted = make(map[string]int64)
@@ -114,16 +152,5 @@ func (r *ResourceManager) RegisterPolicy(executorID string, assignment *pb.Debug
 	for exec, update := range rawUpdates {
 		updates[exec] = &pb.DestinationUpdates{Updates: update}
 	}
-	return updates, nil
-}
-
-func (r *ResourceManager) RemoveAssignment(assignmentID string) map[string]*pb.DestinationUpdates {
-	originalFloor := r.originalFloors[assignmentID]
-	r.executorUsages[assignmentID] -= originalFloor
-	delete(r.originalFloors, assignmentID)
-	delete(r.originalCeils, assignmentID)
-	delete(r.IDtoExecutor, assignmentID)
-
-	// TODO: updates
-	return nil
+	return updates
 }

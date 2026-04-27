@@ -100,6 +100,7 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			}
 
 			for executorID, updates := range destinationUpdates {
+				h.logger.Info("sending destination updates to executor", zap.String("executorID", executorID), zap.Int("updatesLen", len(updates.Updates)))
 				h.dispatcher.UpdateDestinations(executorID, updates)
 			}
 			return nil
