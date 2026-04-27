@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"time"
 
@@ -185,17 +184,32 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		for {
 			in, err := session.Recv()
 			if err == io.EOF {
-				log.Printf("[EXECUTOR] Session stream closed: %v", err)
+				e.logger.Error("Session stream closed", zap.Error(err))
 				return
 			}
 			if err != nil {
-				log.Printf("[EXECUTOR] Session recv error: %v", err)
+				e.logger.Error("Session recv error", zap.Error(err))
 				return
 			}
-			cmd := in.GetDispatcherCmd()
-			if cmd != nil && cmd.Type == pb.DispatcherCommandType_START_EXECUTION {
-				e.runDebuglet(assign, session)
+			if cmd := in.GetDispatcherCmd(); cmd == nil || cmd.Type != pb.DispatcherCommandType_START_EXECUTION {
+				continue
 			}
+			e.mu.Lock()
+			fairRequired, err := e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
+			e.mu.Unlock()
+			if err != nil {
+				e.logger.Error("Failed to register assignment", zap.Error(err))
+				// TODO: send error to dispatcher
+			}
+			if fairRequired {
+				// TODO: fairshare other debuglets
+			}
+
+			e.runDebuglet(assign, session)
+
+			e.mu.Lock()
+			e.manager.RemoveAssignment(assign.SessionId)
+			e.mu.Unlock()
 		}
 	}()
 }
