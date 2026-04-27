@@ -36,6 +36,7 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	executors    map[string]*Executor
 	measurements map[string]*Measurement
+	assignments  map[string]*pb.DebugletAssignment
 	resource     *resource.DispatcherManager
 }
 
@@ -43,6 +44,7 @@ func NewDispatcher() *Dispatcher {
 	return &Dispatcher{
 		executors:    make(map[string]*Executor),
 		measurements: make(map[string]*Measurement),
+		assignments:  make(map[string]*pb.DebugletAssignment),
 		resource:     resource.New(),
 	}
 }
@@ -54,6 +56,32 @@ func (d *Dispatcher) CreateMeasurement(numDebuglets int) (string, *Measurement) 
 	measurement := NewMeasurement(numDebuglets)
 	d.measurements[measurementId] = measurement
 	return measurementId, measurement
+}
+
+func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for _, session := range measurement.sessions {
+		assignment := session.Assignment
+		policy := assignment.GetPolicy()
+		executorID := session.ExecutorID
+
+		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), policy.GetDestinations())
+		if err != nil {
+			return err
+		}
+		destinationUpdates, err := d.resource.RegisterPolicy(executorID, assignment)
+		if err != nil {
+			return err
+		}
+
+		for executorID, updates := range destinationUpdates {
+			d.UpdateDestinations(executorID, updates)
+		}
+	}
+
+	return measurement.Start()
 }
 
 func (d *Dispatcher) GetMeasurement(id string) *Measurement {
@@ -71,7 +99,19 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 	if m == nil {
 		return
 	}
+
+	for _, session := range m.sessions {
+		destinationUpdates := d.resource.RemovePolicy(session.Assignment.SessionId)
+		if destinationUpdates == nil {
+			continue
+		}
+		for executorID, updates := range destinationUpdates {
+			d.UpdateDestinations(executorID, updates)
+		}
+	}
+
 	m.Close()
+
 	delete(d.measurements, id)
 }
 
@@ -131,21 +171,13 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 	if !ok {
 		return fmt.Errorf("executor %s not found", executorID)
 	}
-	measurement.Assign(assignment)
+	measurement.Assign(executorID, assignment)
 	select {
 	case exec.Assignments <- assignment:
 		return nil
 	default:
 		return fmt.Errorf("executor %s assignment queue full", executorID)
 	}
-}
-
-func (d *Dispatcher) CheckPolicy(executorID string, assignment *pb.DebugletAssignment) error {
-	return d.resource.CheckPolicy(executorID, assignment.Policy.FloorBw, assignment.Policy.CeilBw, assignment.Policy.Destinations)
-}
-
-func (d *Dispatcher) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
-	return d.resource.RegisterPolicy(executorID, assignment)
 }
 
 func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {

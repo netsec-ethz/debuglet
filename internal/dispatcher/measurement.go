@@ -23,8 +23,9 @@ import (
 
 type DebugletSession struct {
 	sessionStream pb.DebugletDispatcher_SessionStreamServer
-	SessionId     string
+	Assignment    *pb.DebugletAssignment
 	MeasurementId string
+	ExecutorID    string
 }
 
 func (s *DebugletSession) Register(stream pb.DebugletDispatcher_SessionStreamServer) {
@@ -35,13 +36,13 @@ func (s *DebugletSession) Start() error {
 	err := s.sessionStream.Send(&pb.SessionMessage{
 		Msg: &pb.SessionMessage_DispatcherCmd{
 			DispatcherCmd: &pb.DispatcherCommand{
-				SessionId: s.SessionId,
+				SessionId: s.Assignment.SessionId,
 				Type:      pb.DispatcherCommandType_START_EXECUTION,
 			},
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to start session %s: %w", s.SessionId, err)
+		return fmt.Errorf("failed to start session %s: %w", s.Assignment.SessionId, err)
 	}
 	return nil
 }
@@ -78,18 +79,19 @@ func (m *Measurement) Start() error {
 	for _, s := range m.sessions {
 		err := s.Start()
 		if err != nil {
-			return fmt.Errorf("failed to start session %s: %w", s.SessionId, err)
+			return fmt.Errorf("failed to start session %s: %w", s.Assignment.SessionId, err)
 		}
 	}
 	return nil
 }
 
-func (m *Measurement) Assign(assignment *pb.DebugletAssignment) {
+func (m *Measurement) Assign(executorID string, assignment *pb.DebugletAssignment) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions[assignment.SessionId] = &DebugletSession{
 		MeasurementId: assignment.MeasurementId,
-		SessionId:     assignment.SessionId,
+		Assignment:    assignment,
+		ExecutorID:    executorID,
 	}
 }
 

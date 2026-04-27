@@ -91,10 +91,10 @@ func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.Deb
 	return updates, nil
 }
 
-func (d *DispatcherManager) RemovePolicy(assignmentID string) (map[string]*pb.DestinationUpdates, error) {
+func (d *DispatcherManager) RemovePolicy(assignmentID string) map[string]*pb.DestinationUpdates {
 	destinations, exists := d.originalDestinations[assignmentID]
 	if !exists {
-		return nil, fmt.Errorf("assignment ID not found, id=%s", assignmentID)
+		return nil
 	}
 	originalFloor := d.originalFloors[assignmentID]
 	d.executorUsages[assignmentID] -= originalFloor
@@ -109,7 +109,7 @@ func (d *DispatcherManager) RemovePolicy(assignmentID string) (map[string]*pb.De
 	delete(d.originalDestinations, assignmentID)
 
 	updates := d.determineUpdates(destinations)
-	return updates, nil
+	return updates
 }
 
 func (d *DispatcherManager) determineUpdates(destinations []string) map[string]*pb.DestinationUpdates {

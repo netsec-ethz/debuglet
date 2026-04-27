@@ -129,8 +129,11 @@ func TestMinimalUpdates(t *testing.T) {
 		}
 	}
 
-	updates, err = rm.RemovePolicy("session-2")
-	if up := updates["exec-1"]; err != nil || up == nil || len(up.Updates) != 1 {
+	updates = rm.RemovePolicy("session-2")
+	if updates == nil {
+		t.Fatalf("Expected map to return, got nil")
+	}
+	if up := updates["exec-1"]; up == nil || len(up.Updates) != 1 {
 		t.Fatalf("Expected no error and 1 update, got %v and updates=%v", err, up)
 	} else {
 		for _, update := range up.Updates {
@@ -145,11 +148,6 @@ func TestMinimalUpdates(t *testing.T) {
 func TestRemoveAssignment(t *testing.T) {
 	rm := resource.New()
 
-	_, err := rm.RemovePolicy("random-id")
-	if err == nil {
-		t.Fatalf("Expected nonexistent ID to return error, got nil")
-	}
-
 	job1 := &pb.DebugletAssignment{
 		SessionId: "session-1",
 		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000, Destinations: []string{"dest-1"}},
@@ -159,8 +157,8 @@ func TestRemoveAssignment(t *testing.T) {
 		t.Fatalf("Expected no error and no updates, got %v, updates=%v", err, updates)
 	}
 
-	updates, err = rm.RemovePolicy("session-1")
-	if len(updates) > 0 || err != nil {
+	updates = rm.RemovePolicy("session-1")
+	if updates == nil || len(updates) > 0 {
 		t.Fatalf("Expected no updates, got %v", updates)
 	}
 

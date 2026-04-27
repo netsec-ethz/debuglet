@@ -84,30 +84,6 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			},
 		}
 
-		if err := func() *echo.HTTPError {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-
-			err = h.dispatcher.CheckPolicy(db.ExecutorID, &assignment)
-			if err != nil {
-				h.logger.Error("insufficient capacity in executor", zap.Error(err))
-				return echo.NewHTTPError(http.StatusServiceUnavailable, "insufficient capacity")
-			}
-			destinationUpdates, err := h.dispatcher.RegisterPolicy(db.ExecutorID, &assignment)
-			if err != nil {
-				h.logger.Error("failed to register assignment", zap.Error(err))
-				return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-			}
-
-			for executorID, updates := range destinationUpdates {
-				h.logger.Info("sending destination updates to executor", zap.String("executorID", executorID), zap.Int("updatesLen", len(updates.Updates)))
-				h.dispatcher.UpdateDestinations(executorID, updates)
-			}
-			return nil
-		}(); err != nil {
-			return err
-		}
-
 		err = h.dispatcher.DispatchTask(db.ExecutorID, measurement, &assignment)
 		if err != nil {
 			h.logger.Error("failed to create measurement", zap.Error(err))
@@ -153,7 +129,8 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 			switch string(msg) {
 			case "start":
 				h.logger.Info("received start event", zap.String("measurement_id", measurementId))
-				if err := measurement.Start(); err != nil {
+
+				if err := h.dispatcher.StartMeasurement(measurement); err != nil {
 					h.logger.Error("failed to start measurement", zap.Error(err))
 					conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 				}
