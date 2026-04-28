@@ -144,6 +144,17 @@ func (d *Dispatcher) SetExecutor(id string, lastSeen int64) error {
 	return nil
 }
 
+func (d *Dispatcher) SetExecutorCapacity(id string, capacity int64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, exists := d.executors[id]
+	if !exists {
+		return fmt.Errorf("executor %s not found", id)
+	}
+	d.resource.SetExecutorCapacity(id, capacity)
+	return nil
+}
+
 func (d *Dispatcher) GetExecutor(id string) *Executor {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

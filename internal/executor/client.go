@@ -106,6 +106,11 @@ func (e *Executor) Start(ctx context.Context) error {
 			Version:    e.version,
 		}},
 	})
+	controlStream.Send(&pb.ControlMessage{
+		Msg: &pb.ControlMessage_Resources{Resources: &pb.ExecutorResources{
+			BandwidthCapacity: 1_000_000_000,
+		}},
+	})
 
 	// Heartbeat loop
 	go func() {
@@ -116,8 +121,7 @@ func (e *Executor) Start(ctx context.Context) error {
 			case <-time.After(60 * time.Second):
 				controlStream.Send(&pb.ControlMessage{
 					Msg: &pb.ControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
-						ExecutorId: e.id,
-						Timestamp:  time.Now().UnixNano(),
+						Timestamp: time.Now().UnixNano(),
 					}},
 				})
 			}

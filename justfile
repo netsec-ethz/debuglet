@@ -18,3 +18,9 @@ proto:
       --go_out=. --go_opt=paths=source_relative,Mschema.proto=. \
       --go-grpc_out=. --go-grpc_opt=paths=source_relative,Mschema.proto=. \
       protocol/protocol.proto
+
+test:
+    go test $(go list ./... | grep -v /local/)
+
+coverage:
+    go test -coverprofile .testCoverage.txt $(go list ./... | grep -v /local/)

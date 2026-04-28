@@ -6,9 +6,6 @@ import (
 	"fmt"
 )
 
-// TODO: Replace with dynamic capacity map
-const HARDCODED_CAPACITY = 1_000_000_000 // 1gb
-
 // Keeps track of how much capacity is used/free for executors and destinations
 type DispatcherManager struct {
 	// The floor usages of all jobs running on an executor
@@ -33,7 +30,7 @@ func New() *DispatcherManager {
 		originalFloors:       make(map[string]int64),
 		originalCeils:        make(map[string]int64),
 		originalDestinations: make(map[string][]string),
-		destinations:         NewDestinations(HARDCODED_CAPACITY),
+		destinations:         NewDestinations(1_000_000_000), // 1gb/s
 		adjustments:          make(map[string]map[string]int64),
 		IDtoExecutor:         make(map[string]string),
 	}
@@ -42,7 +39,7 @@ func New() *DispatcherManager {
 func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, destinations []string) error {
 	execCapacity, exists := d.executorCapacities[executorID]
 	if !exists {
-		execCapacity = HARDCODED_CAPACITY
+		return fmt.Errorf("executor %s has no capacity set", executorID)
 	}
 	execUsage := d.executorUsages[executorID]
 	if x := execUsage + floor; x > execCapacity {
@@ -154,4 +151,8 @@ func (d *DispatcherManager) determineUpdates(destinations []string) map[string]*
 		updates[exec] = &pb.DestinationUpdates{Updates: update}
 	}
 	return updates
+}
+
+func (d *DispatcherManager) SetExecutorCapacity(id string, capacity int64) {
+	d.executorCapacities[id] = capacity
 }

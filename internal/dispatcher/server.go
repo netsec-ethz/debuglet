@@ -26,12 +26,12 @@ import (
 
 type DispatcherServer struct {
 	pb.UnimplementedDebugletDispatcherServer
-	manager *Dispatcher
-	logger  *zap.Logger
+	dispatcher *Dispatcher
+	logger     *zap.Logger
 }
 
 func NewDispatcherServer(m *Dispatcher, logger *zap.Logger) *DispatcherServer {
-	return &DispatcherServer{manager: m, logger: logger}
+	return &DispatcherServer{dispatcher: m, logger: logger}
 }
 
 // ControlStream handles executor registration, heartbeat, and task assignment
@@ -42,7 +42,7 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 	go func() {
 		<-ctx.Done()
 		if executorID != "" {
-			s.manager.RemoveExecutor(executorID)
+			s.dispatcher.RemoveExecutor(executorID)
 			s.logger.Info("Executor disconnected", zap.String("executor_id", executorID))
 		}
 	}()
@@ -65,7 +65,7 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 		switch msg := in.Msg.(type) {
 		case *pb.ControlMessage_Hello:
 			executorID = msg.Hello.ExecutorId
-			s.manager.RegisterExecutor(executorID)
+			s.dispatcher.RegisterExecutor(executorID)
 			s.logger.Info("Executor connected", zap.String("executor_id", executorID))
 
 			// Optional acknowledgment
@@ -75,7 +75,7 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 
 			// Start assignment push loop
 			go func(id string) {
-				exec := s.manager.executors[id]
+				exec := s.dispatcher.executors[id]
 				for {
 					select {
 					case assign := <-exec.Assignments:
@@ -93,8 +93,14 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 			}(executorID)
 
 		case *pb.ControlMessage_Heartbeat:
-			s.logger.Debug("Heartbeat received", zap.String("executor_id", msg.Heartbeat.ExecutorId), zap.Int64("timestamp", msg.Heartbeat.Timestamp))
-			s.manager.SetExecutor(msg.Heartbeat.ExecutorId, msg.Heartbeat.Timestamp)
+			s.logger.Debug("Heartbeat received", zap.String("executor_id", executorID), zap.Int64("timestamp", msg.Heartbeat.Timestamp))
+			s.dispatcher.SetExecutor(executorID, msg.Heartbeat.Timestamp)
+
+		case *pb.ControlMessage_Resources:
+			if bw := msg.Resources.GetBandwidthCapacity(); bw > 0 {
+				s.logger.Debug("Updating executor bandwidth capacity", zap.String("executor_id", executorID), zap.Int64("new_bandwidth", bw))
+				s.dispatcher.SetExecutorCapacity(executorID, bw)
+			}
 
 		default:
 			s.logger.Warn("Unknown control message")
@@ -121,7 +127,7 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 		case *pb.SessionMessage_Ready:
 			sessionId := msg.Ready.SessionId
 			measurementId := msg.Ready.MeasurementId
-			measurement = s.manager.GetMeasurement(measurementId)
+			measurement = s.dispatcher.GetMeasurement(measurementId)
 			if measurement == nil {
 				s.logger.Warn("Measurement not found", zap.String("measurement_id", measurementId), zap.String("session_id", sessionId))
 				return status.Errorf(codes.NotFound, "measurement %s not found", measurementId)

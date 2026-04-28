@@ -9,6 +9,9 @@ import (
 
 func TestCapacityCheck(t *testing.T) {
 	rm := resource.New()
+	var gbs int64 = 1_000_000_000
+	rm.SetExecutorCapacity("exec-1", gbs)
+	rm.SetExecutorCapacity("exec-2", gbs)
 
 	t.Run("Success within capacity", func(t *testing.T) {
 		err := rm.CheckPolicy("exec-1", 500_000, 1_000_000, []string{"dest-1", "dest-2"})
@@ -18,7 +21,7 @@ func TestCapacityCheck(t *testing.T) {
 	})
 
 	t.Run("Executor capacity exceeded", func(t *testing.T) {
-		err := rm.CheckPolicy("exec-2", resource.HARDCODED_CAPACITY+1, resource.HARDCODED_CAPACITY+100, []string{"dest-1"})
+		err := rm.CheckPolicy("exec-2", gbs+1, gbs+100, []string{"dest-1"})
 		if err == nil {
 			t.Fatal("Expected capacity exceeded error, got nil")
 		}

@@ -69,6 +69,9 @@ sequenceDiagram
     participant SCION
 
     Executor->>Dispatcher: [ControlMessage] Hello
+    rect rgba(255, 255, 0, 0.3)
+    Executor->>Dispatcher: [ControlMessage] Resources (set bw capacity)
+    end
     Executor->>Dispatcher: [ControlMessage] Heartbeat (repeats /60s)
 
     Client->>Dispatcher: createMeasurement <br/> (POST http /api/measurements)
