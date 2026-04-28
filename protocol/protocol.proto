@@ -40,7 +40,7 @@ message DebugletAssignment {
   message Policy {
     int64 floor_bw = 1; // min bits/s required
     int64 ceil_bw = 2; // max bits/s it could use
-    int64 timeout = 3; // timeout in ms
+    int64 timeout_ms = 3; // timeout in ms
     repeated string destinations = 4;
   }
   Policy policy = 5;

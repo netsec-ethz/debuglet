@@ -827,9 +827,9 @@ func (*SessionMessage_Exit) isSessionMessage_Msg() {}
 
 type DebugletAssignment_Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"` // min bits/s required
-	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`    // max bits/s it could use
-	Timeout       int64                  `protobuf:"varint,3,opt,name=timeout,proto3" json:"timeout,omitempty"`                // timeout in ms
+	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"`       // min bits/s required
+	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`          // max bits/s it could use
+	TimeoutMs     int64                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // timeout in ms
 	Destinations  []string               `protobuf:"bytes,4,rep,name=destinations,proto3" json:"destinations,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -879,9 +879,9 @@ func (x *DebugletAssignment_Policy) GetCeilBw() int64 {
 	return 0
 }
 
-func (x *DebugletAssignment_Policy) GetTimeout() int64 {
+func (x *DebugletAssignment_Policy) GetTimeoutMs() int64 {
 	if x != nil {
-		return x.Timeout
+		return x.TimeoutMs
 	}
 	return 0
 }
@@ -965,18 +965,19 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x11ExecutorHeartbeat\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xce\x02\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xd3\x02\n" +
 	"\x12DebugletAssignment\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
 	"\x0emeasurement_id\x18\x02 \x01(\tR\rmeasurementId\x12\x12\n" +
 	"\x04code\x18\x03 \x01(\fR\x04code\x12\x1c\n" +
 	"\taddresses\x18\x04 \x03(\tR\taddresses\x12D\n" +
-	"\x06policy\x18\x05 \x01(\v2,.debuglet.protocol.DebugletAssignment.PolicyR\x06policy\x1az\n" +
+	"\x06policy\x18\x05 \x01(\v2,.debuglet.protocol.DebugletAssignment.PolicyR\x06policy\x1a\x7f\n" +
 	"\x06Policy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
-	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x18\n" +
-	"\atimeout\x18\x03 \x01(\x03R\atimeout\x12\"\n" +
+	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\"\n" +
 	"\fdestinations\x18\x04 \x03(\tR\fdestinations\" \n" +
 	"\x04NoOp\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\xcd\x01\n" +

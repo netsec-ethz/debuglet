@@ -79,7 +79,7 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			Policy: &pb.DebugletAssignment_Policy{
 				FloorBw:      db.Policy.FloorBW,
 				CeilBw:       db.Policy.CeilBW,
-				Timeout:      db.Policy.Timeout,
+				TimeoutMs:    db.Policy.TimeoutMS,
 				Destinations: db.Policy.Destinations,
 			},
 		}
