@@ -1,9 +1,14 @@
 # https://just.systems
 
 alias d := dispatcher
+
 dispatcher:
-    go run cmd/dispatcher/main.go -config local-config/dispatcher.toml
+    go run cmd/dispatcher/main.go -config local/configs/dispatcher.toml
 
 alias e := executor
+
 executor:
-    go run cmd/executor/main.go -config local-config/executor.toml
+    go run cmd/executor/main.go -config local/configs/executor.toml
+
+wasm SAMPLE_DIR:
+    GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o {{ SAMPLE_DIR }}/debuglet.wasm {{ SAMPLE_DIR }}/main.go

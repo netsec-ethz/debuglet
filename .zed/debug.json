@@ -9,6 +9,6 @@
     "mode": "debug",
     "program": "${ZED_WORKTREE_ROOT}/cmd/executor/main.go",
     "request": "launch",
-    "args": ["-config", "local-config/executor.toml"],
+    "args": ["-config", "local/configs/executor.toml"],
   },
 ]
