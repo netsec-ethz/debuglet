@@ -47,9 +47,9 @@ docker-down:
 generate-certs:
 	@mkdir -p configs/executor configs/dispatcher
 	@echo "Generating executor certificates..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout configs/executor/client.key -out configs/executor/client.crt -subj "/CN=executor"
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/executor/client.key -out local/configs/executor/client.crt -subj "/CN=executor"
 	@echo "Generating dispatcher certificates..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout configs/dispatcher/server.key -out configs/dispatcher/server.crt -subj "/CN=dispatcher"
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/dispatcher/server.key -out local/configs/dispatcher/server.crt -subj "/CN=dispatcher"
 
 # --------------------------------------------------------------------
 # Clean local build artifacts

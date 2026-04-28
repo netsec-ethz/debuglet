@@ -414,6 +414,15 @@ func (d *Debuglet) Close() {
 func (d *Debuglet) Run() ([]byte, error) {
 	instance := d.wasmerInstance
 
+	// Optional initialization
+	initFunc, err := instance.Exports.GetFunction("_initialize")
+	if err == nil {
+		if _, initErr := initFunc(); initErr != nil {
+			d.logger.Warnw("Run: initialization error", "err", initErr)
+			return nil, fmt.Errorf("failed to initialize Go runtime: %w", initErr)
+		}
+	}
+
 	runFunc, err := instance.Exports.GetFunction("run_debuglet")
 	if err != nil {
 		d.logger.Warnw("Run: 'run_debuglet' not exported", "err", err)
