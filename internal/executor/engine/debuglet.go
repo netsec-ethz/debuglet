@@ -16,6 +16,7 @@ package engine
 
 import (
 	"context"
+	"debuglet/internal/executor/resource"
 	"debuglet/internal/platform"
 	"encoding/binary"
 	"fmt"
@@ -47,7 +48,8 @@ type hostFunction func(environment interface{}, args []wasmer.Value) ([]wasmer.V
 // HostEnvironment carries the execution context for the current debuglet
 // session. It is passed by value to each host function.
 type HostEnvironment struct {
-	ctx context.Context
+	ctx     context.Context
+	manager *resource.ExecutorManager
 }
 
 // checkContextExpired returns a descriptive error if the HostEnvironment's
@@ -99,7 +101,7 @@ type Debuglet struct {
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger) *Debuglet {
+func NewDebuglet(logger *zap.Logger, manager *resource.ExecutorManager) *Debuglet {
 	eng := wasmer.NewEngine()
 	return &Debuglet{
 		logger:    logger.Sugar(),
@@ -107,7 +109,7 @@ func NewDebuglet(logger *zap.Logger) *Debuglet {
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
-		hostEnv:   &HostEnvironment{},
+		hostEnv:   &HostEnvironment{manager: manager},
 	}
 }
 
