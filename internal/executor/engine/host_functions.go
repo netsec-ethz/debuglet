@@ -187,11 +187,22 @@ func hostReceiveTCPData(
 		return nil, fmt.Errorf("receive_tcp_data: %w", err)
 	}
 
-	buf, err := extractSlice(instance, "tcp_receive_buffer", 0, args[1].I32())
+	size := args[1].I32()
+	ptr := args[2].I32()
+
+	memory, err := instance.Exports.GetMemory("memory")
 	if err != nil {
-		sugar.Warnw("hostReceiveTCPData: failed to extract buffer", "err", err)
-		return nil, fmt.Errorf("receive_tcp_data: failed to extract tcp_receive_buffer: %w", err)
+		sugar.Errorw("hostReceiveTCPData: failed to extract memory", "err", err)
+		return nil, fmt.Errorf("receive_tcp_data: failed to extract memory: %w", err)
 	}
+	data := memory.Data()
+	buf := data[ptr : ptr+size]
+
+	// buf, err := extractSlice(instance, "tcp_receive_buffer", 0, args[1].I32())
+	// if err != nil {
+	// 	sugar.Warnw("hostReceiveTCPData: failed to extract buffer", "err", err)
+	// 	return nil, fmt.Errorf("receive_tcp_data: failed to extract tcp_receive_buffer: %w", err)
+	// }
 
 	n, err := sock.Read(buf)
 	if err != nil {
@@ -223,14 +234,25 @@ func hostSendTCPData(
 	}
 
 	size := args[1].I32()
-	offset := args[2].I32()
-	data, err := extractSlice(instance, "tcp_send_buffer", offset, offset+size)
-	if err != nil {
-		sugar.Warnw("hostSendTCPData: failed to extract buffer", "err", err)
-		return nil, fmt.Errorf("send_tcp_data: failed to extract tcp_send_buffer: %w", err)
-	}
+	ptr := args[2].I32()
 
-	if _, err = sock.Write(data); err != nil {
+	memory, err := instance.Exports.GetMemory("memory")
+	if err != nil {
+		sugar.Errorw("hostSendTCPData: failed to extract memory", "err", err)
+		return nil, fmt.Errorf("send_tcp_data: failed to extract memory: %w", err)
+	}
+	data := memory.Data()
+	message := data[ptr : ptr+size]
+
+	sugar.Debugw("hostSendTCPData: sending tcp message", "message", string(message))
+
+	// data, err := extractSlice(instance, "tcp_send_buffer", offset, offset+size)
+	// if err != nil {
+	// 	sugar.Warnw("hostSendTCPData: failed to extract buffer", "err", err)
+	// 	return nil, fmt.Errorf("send_tcp_data: failed to extract tcp_send_buffer: %w", err)
+	// }
+
+	if _, err = sock.Write(message); err != nil {
 		sugar.Warnw("hostSendTCPData: write error", "err", err)
 		return nil, fmt.Errorf("send_tcp_data: write error: %w", err)
 	}

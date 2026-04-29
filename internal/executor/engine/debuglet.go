@@ -294,7 +294,7 @@ func (d *Debuglet) registerHostFunctions(
 			},
 		),
 
-		"receive_tcp_data": d.wrapHostFn(in(i32, i32), out(i32),
+		"receive_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				return hostReceiveTCPData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
