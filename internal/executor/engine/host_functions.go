@@ -41,7 +41,7 @@ import (
 // hostWaitStart verifies the execution context is still active.
 // WASM key: "wait_start"
 func hostWaitStart(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func hostWaitStart(environment interface{}, args []wasmer.Value) ([]wasmer.Value
 // hostGetTimestamp returns the current wall-clock time as a Unix nanosecond timestamp.
 // WASM key: "get_timestamp"
 func hostGetTimestamp(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func hostGetTimestamp(environment interface{}, args []wasmer.Value) ([]wasmer.Va
 // context is cancelled.
 // WASM key: "wait_until"
 func hostWaitUntil(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func hostConnectTCP(
 	sugar *zap.SugaredLogger,
 	registry *SocketRegistry,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func hostConnectTLS(
 	registry *SocketRegistry,
 	tlsCfg *tls.Config,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func hostAcceptTCP(
 	sugar *zap.SugaredLogger,
 	registry *SocketRegistry,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func hostReceiveTCPData(
 	registry *SocketRegistry,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func hostSendTCPData(
 	registry *SocketRegistry,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -245,7 +245,7 @@ func hostCloseTCP(
 	sugar *zap.SugaredLogger,
 	registry *SocketRegistry,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func hostSendUDPPacket(
 	instance *wasmer.Instance,
 	udpServer *net.PacketConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -299,7 +299,7 @@ func hostReceiveUDPPacket(
 	instance *wasmer.Instance,
 	udpServer *net.PacketConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -335,7 +335,7 @@ func hostAnswerUDPPacket(
 	instance *wasmer.Instance,
 	udpServer *net.PacketConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -379,7 +379,7 @@ func hostSendSCIONUDPPacket(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -430,7 +430,7 @@ func hostReceiveSCIONServerUDPPacket(
 	instance *wasmer.Instance,
 	scionServer *pan.ListenConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -478,7 +478,7 @@ func hostAnswerSCIONUDPPacket(
 	instance *wasmer.Instance,
 	scionServer *pan.ListenConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -541,7 +541,7 @@ func hostSCIONAvailablePaths(
 	addresses []string,
 	sugar *zap.SugaredLogger,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -568,7 +568,7 @@ func hostSCIONPathLength(
 	addresses []string,
 	sugar *zap.SugaredLogger,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -598,7 +598,7 @@ func hostSCIONGetInterfaceDetails(
 	addresses []string,
 	sugar *zap.SugaredLogger,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -639,7 +639,7 @@ func hostSCIONSelectPath(
 	addresses []string,
 	sugar *zap.SugaredLogger,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -675,7 +675,7 @@ func hostReadWriteBuffer(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]byte, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -730,7 +730,7 @@ func hostWriteI32(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -748,7 +748,7 @@ func hostWriteI64(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -766,7 +766,7 @@ func hostWriteI32Hex(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -784,7 +784,7 @@ func hostWriteI64Hex(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -801,7 +801,7 @@ func hostWriteDeltaTimestamp(
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -825,7 +825,7 @@ func hostDumpResult(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(HostEnvironment)
+	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}

@@ -23,8 +23,8 @@ import (
 )
 
 // newHostEnv is a convenience helper that wraps a context in a HostEnvironment.
-func newHostEnv(ctx context.Context) HostEnvironment {
-	return HostEnvironment{ctx: ctx}
+func newHostEnv(ctx context.Context) *HostEnvironment {
+	return &HostEnvironment{ctx: ctx}
 }
 
 // =============================================================================

@@ -52,7 +52,10 @@ type HostEnvironment struct {
 
 // checkContextExpired returns a descriptive error if the HostEnvironment's
 // context has been cancelled or has exceeded its deadline.
-func checkContextExpired(env HostEnvironment) error {
+func checkContextExpired(env *HostEnvironment) error {
+	if env == nil {
+		return nil
+	}
 	select {
 	case <-env.ctx.Done():
 	default:
@@ -84,7 +87,7 @@ type Debuglet struct {
 	addresses []string
 
 	started bool
-	hostEnv HostEnvironment
+	hostEnv *HostEnvironment
 
 	createdAt time.Time
 	mu        sync.Mutex
@@ -104,6 +107,7 @@ func NewDebuglet(logger *zap.Logger) *Debuglet {
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
+		hostEnv:   &HostEnvironment{},
 	}
 }
 
@@ -149,7 +153,7 @@ func (d *Debuglet) GetSCIONAddr() string {
 func (d *Debuglet) startServers() error {
 	d.logger.Debugw("startServers: starting")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// -- Placeholder for future UDP server --
@@ -431,7 +435,7 @@ func (d *Debuglet) Run() ([]byte, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultExecTimeout)
 	defer cancel()
-	d.hostEnv = HostEnvironment{ctx}
+	d.hostEnv.ctx = ctx
 
 	done := make(chan error, 1)
 	var result []byte
