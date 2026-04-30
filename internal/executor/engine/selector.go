@@ -21,93 +21,93 @@ import (
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 )
 
-type DebugletSelector struct {
-	mutex   sync.Mutex
+// PathSelector implements pan.Selector and provides the WASM module with
+// control over which SCION path is used for a given connection.
+// It replaces the former DebugletSelector.
+type PathSelector struct {
+	mu      sync.Mutex
 	paths   []*pan.Path
 	current int
 
+	// forcedPath holds a path index pinned by ForcePath, or -1 if not forced.
 	forcedPath int
 }
 
-func NewDebugletSelector() *DebugletSelector {
-	return &DebugletSelector{forcedPath: -1}
+func NewPathSelector() *PathSelector {
+	return &PathSelector{forcedPath: -1}
 }
 
-func (s *DebugletSelector) ForcePath(i int) {
+// ForcePath pins the selector to the path at index i.
+func (s *PathSelector) ForcePath(i int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.forcedPath = i
 }
 
-func (s *DebugletSelector) Path() *pan.Path {
-
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+// Path returns the currently selected SCION path.
+func (s *PathSelector) Path() *pan.Path {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if len(s.paths) == 0 {
 		return nil
 	}
-
-	//fmt.Printf("pan.Path offsets: current %d forced %d\n", s.current, s.forcedPath)
-
-	if s.forcedPath >= 0 && len(s.paths) > s.forcedPath {
-		//	fmt.Printf("returning forced path %s\n", s.paths[s.forcedPath].String())
-
+	if s.forcedPath >= 0 && s.forcedPath < len(s.paths) {
 		return s.paths[s.forcedPath]
 	}
-
-	//fmt.Printf("returning path %s\n", s.paths[s.current].String())
-
 	return s.paths[s.current]
 }
 
-func (s *DebugletSelector) Initialize(local, remote pan.UDPAddr, paths []*pan.Path) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+// Paths returns a snapshot of all known paths.
+func (s *PathSelector) Paths() []*pan.Path {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot := make([]*pan.Path, len(s.paths))
+	copy(snapshot, s.paths)
+	return snapshot
+}
 
+func (s *PathSelector) Initialize(local, remote pan.UDPAddr, paths []*pan.Path) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.paths = paths
 	s.current = 0
 }
 
-func (s *DebugletSelector) Refresh(paths []*pan.Path) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (s *PathSelector) Refresh(paths []*pan.Path) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	newcurrent := 0
+	newCurrent := 0
 	if len(s.paths) > 0 {
 		currentFingerprint := s.paths[s.current].Fingerprint
 		for i, p := range paths {
 			if p.Fingerprint == currentFingerprint {
-				newcurrent = i
+				newCurrent = i
 				break
 			}
 		}
 	}
 	s.paths = paths
-	s.current = newcurrent
+	s.current = newCurrent
 }
 
-func (s *DebugletSelector) PathDown(pf pan.PathFingerprint, pi pan.PathInterface) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (s *PathSelector) PathDown(pf pan.PathFingerprint, pi pan.PathInterface) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	current := s.paths[s.current]
 	if isInterfaceOnPath(current, pi) || pf == current.Fingerprint {
-		fmt.Println("down:", s.current, len(s.paths))
-
-		//TODO fix path updating
-
-		//better := stats.FirstMoreAlive(current, s.paths)
-		//if better >= 0 {
-		//	// Try next path. Note that this will keep cycling if we get down notifications
-		//	s.current = better
-		//	fmt.Println("failover:", s.current, len(s.paths))
-		//}
+		fmt.Println("path down:", s.current, len(s.paths))
+		// TODO: implement automatic failover to next alive path
 	}
 }
 
-func (s *DebugletSelector) Close() error {
+func (s *PathSelector) Close() error {
 	return nil
 }
 
+// isInterfaceOnPath reports whether the given interface is on the path.
 func isInterfaceOnPath(p *pan.Path, pi pan.PathInterface) bool {
 	for _, c := range p.Metadata.Interfaces {
 		if c == pi {

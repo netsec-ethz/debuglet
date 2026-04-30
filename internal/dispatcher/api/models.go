@@ -18,6 +18,13 @@ type DebugletRequest struct {
 	ExecutorID string   `json:"executor_id"`
 	Code       string   `json:"code"`
 	Addresses  []string `json:"addresses"`
+
+	Policy struct {
+		FloorBW      int64    `json:"floor_bw"`
+		CeilBW       int64    `json:"ceil_bw"`
+		TimeoutMS    int64    `json:"timeout_ms"`
+		Destinations []string `json:"destinations"`
+	} `json:"policy"`
 }
 
 type MeasurementRequest struct {

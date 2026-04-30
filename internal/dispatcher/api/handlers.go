@@ -17,10 +17,11 @@ package api
 import (
 	"encoding/base64"
 	"net/http"
+	"sync"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/db"
-	"debuglet/protocol"
+	pb "debuglet/protocol"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -32,6 +33,7 @@ type Handler struct {
 	dispatcher *dispatcher.Dispatcher
 	db         *db.UserDB
 	logger     *zap.Logger
+	mu         sync.Mutex
 }
 
 func NewHandler(d *dispatcher.Dispatcher, userDB *db.UserDB, l *zap.Logger) *Handler {
@@ -93,12 +95,20 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			h.logger.Error("failed to decode wasm code", zap.Error(err))
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid wasm code")
 		}
-		err = h.dispatcher.DispatchTask(db.ExecutorID, measurement, &protocol.DebugletAssignment{
+		assignment := pb.DebugletAssignment{
 			SessionId:     sessionId,
 			MeasurementId: measurementId,
 			Code:          code,
 			Addresses:     db.Addresses,
-		})
+			Policy: &pb.DebugletAssignment_Policy{
+				FloorBw:      db.Policy.FloorBW,
+				CeilBw:       db.Policy.CeilBW,
+				TimeoutMs:    db.Policy.TimeoutMS,
+				Destinations: db.Policy.Destinations,
+			},
+		}
+
+		err = h.dispatcher.DispatchTask(db.ExecutorID, measurement, &assignment)
 		if err != nil {
 			h.logger.Error("failed to create measurement", zap.Error(err))
 			h.dispatcher.RemoveMeasurement(measurementId)
@@ -144,7 +154,8 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 			switch string(msg) {
 			case "start":
 				h.logger.Info("received start event", zap.String("measurement_id", measurementId))
-				if err := measurement.Start(); err != nil {
+
+				if err := h.dispatcher.StartMeasurement(measurement); err != nil {
 					h.logger.Error("failed to start measurement", zap.Error(err))
 					conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 				}

@@ -41,13 +41,20 @@ func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/dispatcher/dispatcher.toml", "Path to dispatcher configuration file")
 	flag.Parse()
 
-	logger, _ := zap.NewProduction()
-	defer logger.Sync()
-
 	cfg, err := dispatcher.LoadConfig(*cfgPath)
 	if err != nil {
-		logger.Fatal("Failed to load dispatcher config: %v", zap.Error(err))
+		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
 	}
+
+	logLevel, err := zap.ParseAtomicLevel(cfg.LogLevel)
+	if err != nil {
+		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	logCfg := zap.NewProductionConfig()
+	logCfg.Level = logLevel
+	logCfg.OutputPaths = []string{"stdout"}
+	logger, _ := logCfg.Build()
+	defer logger.Sync()
 
 	userDB, err := db.NewUserDB(cfg.Database.Path)
 	if err != nil {
@@ -90,7 +97,7 @@ func main() {
 	wg.Wait()
 }
 
-func getServerCredentials(cfg *dispatcher.DispatcherConfig) (credentials.TransportCredentials, error) {
+func getServerCredentials(cfg *dispatcher.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
 	// Load the server's certificate and key
 	serverCert, err := tls.LoadX509KeyPair(
 		cfg.TLS.CertFile,
@@ -121,7 +128,10 @@ func getServerCredentials(cfg *dispatcher.DispatcherConfig) (credentials.Transpo
 			}
 
 			// Example: extract Common Name (executor ID)
-			fmt.Printf("Client connected with CN=%s, Subject=%s\n", cert.Subject.CommonName, cert.Subject)
+			logger.Info("Client connected",
+				zap.String("CN", cert.Subject.CommonName),
+				zap.String("Subject", cert.Subject.String()),
+			)
 
 			// You could check against a known list of executor IDs:
 			// if !isKnownExecutor(cert.Subject.CommonName) {
@@ -145,12 +155,12 @@ func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
-	creds, err := getServerCredentials(cfg)
+	creds, err := getServerCredentials(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("failed to get server credentials: %w", err)
 	}
 	srv := grpc.NewServer(grpc.Creds(creds))
-	pb.RegisterDebugletDispatcherServer(srv, dispatcher.NewDispatcherServer(manager))
+	pb.RegisterDebugletDispatcherServer(srv, dispatcher.NewDispatcherServer(manager, logger))
 
 	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))
 	if err := srv.Serve(lis); err != nil {
@@ -177,8 +187,11 @@ func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, cfg *dis
 
 	e := echo.New()
 	e.HideBanner = true
+	e.HidePort = true
 	e.Use(middleware.Recover())
-	e.Use(middleware.Logger())
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Format: `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n",
+	}))
 	e.Use(middleware.CORS()) // TODO: specify CORS origin
 
 	handler.RegisterRoutes(e)

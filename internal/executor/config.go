@@ -26,6 +26,8 @@ type Config struct {
 	ExecutorID     string `toml:"executor_id"`
 	Version        string `toml:"version"`
 	DispatcherAddr string `toml:"dispatcher_addr"`
+	LogLevel       string `toml:"log_level"`
+	Capacity       int64  `toml:"capacity"`
 
 	Credentials CredentialConfig `toml:"credentials"`
 }
@@ -52,9 +54,17 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
+	}
+
 	// Basic validation
-	if cfg.ExecutorID == "" || cfg.DispatcherAddr == "" {
-		return nil, fmt.Errorf("invalid config: missing executor_id or dispatcher_addr")
+	if cfg.Capacity == 0 {
+		return nil, fmt.Errorf("invalid config: missing capacity")
+	} else if cfg.ExecutorID == "" {
+		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
+	} else if cfg.DispatcherAddr == "" {
+		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
 	}
 
 	return &cfg, nil

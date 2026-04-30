@@ -16,41 +16,82 @@ package engine
 
 import "fmt"
 
-type WasmExitCode struct {
+// WASMExitError represents an error code returned from a WASM host function
+// call. Error codes are partitioned by transport protocol family.
+type WASMExitError struct {
 	code int32
 }
 
-func (self *WasmExitCode) Error() string {
-	switch self.code {
+func NewWASMExitError(code int32) *WASMExitError {
+	return &WASMExitError{code: code}
+}
+
+func (e *WASMExitError) Code() int32 { return e.code }
+
+func (e *WASMExitError) Error() string {
+	switch e.code {
+	// ----- UDP (IP) -----
 	case 1:
-		return "Failed to write to specified UDP address"
+		return "failed to write to specified UDP address"
 	case 2:
-		return "Failed to set read/write deadline"
+		return "failed to set read/write deadline"
+
+	// ----- TCP -----
 	case 3:
-		return "Failed to resolve TCP address"
+		return "failed to resolve TCP address"
 	case 4:
-		return "Failed to dial TCP address"
+		return "failed to dial TCP address"
 	case 5:
-		return "Failed to accept TCP connection"
+		return "failed to accept TCP connection"
 	case 6:
-		return "Failed to read TCP data"
+		return "failed to read TCP data"
 	case 7:
-		return "Failed to write TCP data"
+		return "failed to write TCP data"
 	case 8:
-		return "Failed to close TCP connection"
+		return "failed to close TCP connection"
+
+	// ----- TLS -----
+	case 10:
+		return "failed to dial TLS address"
+	case 11:
+		return "failed to perform TLS handshake"
+	case 12:
+		return "failed to read TLS data"
+	case 13:
+		return "failed to write TLS data"
+	case 14:
+		return "failed to close TLS connection"
+
+	// ----- UDP socket (future) -----
+	case 20:
+		return "failed to dial UDP address"
+	case 21:
+		return "failed to read UDP data"
+	case 22:
+		return "failed to write UDP data"
+
+	// ----- Raw socket (future) -----
+	case 30:
+		return "failed to open raw socket"
+	case 31:
+		return "failed to read raw socket data"
+	case 32:
+		return "failed to write raw socket data"
+
+	// ----- SCION -----
 	case 100:
-		return "Failed to dial SCION address"
+		return "failed to dial SCION address"
 	case 101:
-		return "Failed to read SCION packet"
+		return "failed to read SCION packet"
 	case 102:
-		return "Failed to write SCION packet"
+		return "failed to write SCION packet"
 
+	// ----- WASM memory -----
 	case 500:
-		return "Memory buffer is not correctly exported"
+		return "memory buffer is not correctly exported"
 	case 501:
-		return "Global memory is not correctly exported"
-
+		return "global memory is not correctly exported"
 	}
 
-	return fmt.Sprintf("exit code: %d", self.code)
+	return fmt.Sprintf("unknown exit code: %d", e.code)
 }

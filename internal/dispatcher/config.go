@@ -40,6 +40,7 @@ type SuiConfig struct {
 type DispatcherConfig struct {
 	GRPCPort int            `toml:"grpc_port"`
 	HTTPPort int            `toml:"http_port"`
+	LogLevel string    		`toml:"log_level"`
 	TLS      TLSConfig      `toml:"tls"`
 	Database DatabaseConfig `toml:"database"`
 	Sui      SuiConfig      `toml:"sui"`
@@ -54,6 +55,10 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 	var cfg DispatcherConfig
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal toml: %w", err)
+	}
+
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
 	}
 
 	return &cfg, nil

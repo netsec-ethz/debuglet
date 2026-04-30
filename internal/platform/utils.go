@@ -49,12 +49,12 @@ func C2[T, U interface{}](res T, res2 U, err error) (T, U) {
 	return res, res2
 }
 
-func GetScionAddr() (string, error) {
+func GetScionAddr(ctx context.Context) (string, error) {
 	daemonAddr := os.Getenv("SCION_DAEMON_ADDRESS")
 	if daemonAddr == "" {
 		return "", serrors.New("SCION_DAEMON_ADDRESS not set")
 	}
-	ctx := context.Background()
+
 	sd, err := daemon.NewService(daemonAddr).Connect(ctx)
 	if err != nil {
 		return "", serrors.WrapStr("connecting to SCION Daemon", err)

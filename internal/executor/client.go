@@ -19,11 +19,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"time"
 
 	"debuglet/internal/executor/engine"
+	"debuglet/internal/executor/resource"
 	pb "debuglet/protocol"
 
 	"go.uber.org/zap"
@@ -43,6 +43,8 @@ type Executor struct {
 	debuglets map[string]*engine.Debuglet
 
 	stdoutWg sync.WaitGroup
+
+	manager *resource.ExecutorManager
 }
 
 func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
@@ -86,6 +88,7 @@ func NewExecutor(cfg *Config, logger *zap.Logger) (*Executor, error) {
 		logger:    logger,
 		version:   cfg.Version,
 		debuglets: make(map[string]*engine.Debuglet),
+		manager:   resource.New(cfg.Capacity),
 	}, nil
 }
 
@@ -103,6 +106,11 @@ func (e *Executor) Start(ctx context.Context) error {
 			Version:    e.version,
 		}},
 	})
+	controlStream.Send(&pb.ControlMessage{
+		Msg: &pb.ControlMessage_Resources{Resources: &pb.ExecutorResources{
+			BandwidthCapacity: 1_000_000_000,
+		}},
+	})
 
 	// Heartbeat loop
 	go func() {
@@ -113,8 +121,7 @@ func (e *Executor) Start(ctx context.Context) error {
 			case <-time.After(60 * time.Second):
 				controlStream.Send(&pb.ControlMessage{
 					Msg: &pb.ControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
-						ExecutorId: e.id,
-						Timestamp:  time.Now().UnixNano(),
+						Timestamp: time.Now().UnixNano(),
 					}},
 				})
 			}
@@ -137,6 +144,9 @@ func (e *Executor) Start(ctx context.Context) error {
 			e.logger.Info("Received assignment", zap.String("session_id", assign.SessionId))
 			// TODO: check error
 			go e.handleAssignment(ctx, assign)
+		} else if update := msg.GetUpdates(); update != nil {
+			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
+			// TODO: handle destination updates
 		}
 	}
 }
@@ -149,8 +159,9 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		return
 	}
 
+	e.logger.Debug("Locking")
 	e.mu.Lock()
-	db := engine.NewDebuglet(e.logger)
+	db := engine.NewDebuglet(e.logger, e.manager)
 	err = db.Init(assign.Code, assign.Addresses)
 	if err != nil {
 		e.mu.Unlock()
@@ -167,7 +178,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 				SessionId:     assign.SessionId,
 				ExecutorId:    e.id,
 				MeasurementId: assign.MeasurementId,
-				ScionAddr:     db.GetScionAddr(),
+				ScionAddr:     db.GetSCIONAddr(),
 			},
 		},
 	})
@@ -177,24 +188,39 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		for {
 			in, err := session.Recv()
 			if err == io.EOF {
-				log.Printf("[EXECUTOR] Session stream closed: %v", err)
+				e.logger.Error("Session stream closed", zap.Error(err))
 				return
 			}
 			if err != nil {
-				log.Printf("[EXECUTOR] Session recv error: %v", err)
+				e.logger.Error("Session recv error", zap.Error(err))
 				return
 			}
-			cmd := in.GetDispatcherCmd()
-			if cmd != nil && cmd.Type == pb.DispatcherCommandType_START_EXECUTION {
-				e.runDebuglet(assign, session)
+			if cmd := in.GetDispatcherCmd(); cmd == nil || cmd.Type != pb.DispatcherCommandType_START_EXECUTION {
+				continue
 			}
+			e.mu.Lock()
+			fairRequired, err := e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
+			e.mu.Unlock()
+			if err != nil {
+				e.logger.Error("Failed to register assignment", zap.Error(err))
+				// TODO: send error to dispatcher
+			}
+			if fairRequired {
+				// TODO: fairshare other debuglets
+			}
+
+			e.runDebuglet(assign, session)
+
+			e.mu.Lock()
+			e.manager.RemoveAssignment(assign.SessionId)
+			e.mu.Unlock()
 		}
 	}()
 }
 
 func (e *Executor) flushDebugletOutput(assign *pb.DebugletAssignment, db *engine.Debuglet, session pb.DebugletDispatcher_SessionStreamClient, sessionId string) {
 	defer e.stdoutWg.Done()
-	for stdout := range db.StdOutBuffer {
+	for stdout := range db.StdoutChan() {
 		session.Send(&pb.SessionMessage{
 			Msg: &pb.SessionMessage_Stdout{
 				Stdout: &pb.DebugletStdout{
