@@ -40,8 +40,16 @@ func NewUserDB(path string) (*UserDB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create users table: %w", err)
 	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS state (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("create state table: %w", err)
+	}
 	return &UserDB{db: db}, nil
 }
+
 
 func (u *UserDB) Close() error {
 	return u.db.Close()
@@ -56,6 +64,44 @@ func (u *UserDB) CreateUser(userID, authKey string) error {
 	_, err = u.db.Exec(`INSERT INTO users (user_id, auth_key_hash) VALUES (?, ?)`, userID, string(hash))
 	if err != nil {
 		return fmt.Errorf("insert user: %w", err)
+	}
+	return nil
+}
+
+// AddBalance adds delta to the balance of an existing user.
+func (u *UserDB) AddBalance(userID string, delta int64) error {
+	res, err := u.db.Exec(`UPDATE users SET balance = balance + ? WHERE user_id = ?`, delta, userID)
+	if err != nil {
+		return fmt.Errorf("update balance: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found: %s", userID)
+	}
+	return nil
+}
+
+// GetState returns the value for key, or "" if the key does not exist.
+func (u *UserDB) GetState(key string) (string, error) {
+	var value string
+	err := u.db.QueryRow(`SELECT value FROM state WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get state %q: %w", key, err)
+	}
+	return value, nil
+}
+
+// SetState upserts a key-value pair in the state table.
+func (u *UserDB) SetState(key, value string) error {
+	_, err := u.db.Exec(
+		`INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	if err != nil {
+		return fmt.Errorf("set state %q: %w", key, err)
 	}
 	return nil
 }

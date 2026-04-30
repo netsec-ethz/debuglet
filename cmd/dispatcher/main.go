@@ -15,12 +15,14 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -31,6 +33,7 @@ import (
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/api"
 	"debuglet/internal/dispatcher/db"
+	"debuglet/internal/dispatcher/sui"
 	pb "debuglet/protocol"
 )
 
@@ -72,6 +75,17 @@ func main() {
 			logger.Fatal("failed to start HTTP server", zap.Error(err))
 		}
 	}()
+
+	// ---- Start Sui Event Listener (optional) ----
+	if cfg.Sui.RPCURL != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := startSuiListener(userDB, cfg, logger); err != nil {
+				logger.Fatal("sui event listener failed", zap.Error(err))
+			}
+		}()
+	}
 
 	wg.Wait()
 }
@@ -144,6 +158,16 @@ func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 	}
 
 	return nil
+}
+
+// startSuiListener polls the Sui RPC for DebugletPurchase events and credits user balances.
+func startSuiListener(userDB *db.UserDB, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
+	interval := time.Duration(cfg.Sui.PollIntervalSecs) * time.Second
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.PackageID, userDB, logger, interval)
+	return l.Start(context.Background())
 }
 
 // startHTTPServer runs the Echo-based HTTP API

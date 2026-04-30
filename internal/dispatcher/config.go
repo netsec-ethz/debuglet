@@ -31,11 +31,18 @@ type DatabaseConfig struct {
 	Path string `toml:"path"`
 }
 
+type SuiConfig struct {
+	RPCURL           string `toml:"rpc_url"`
+	PackageID        string `toml:"package_id"`
+	PollIntervalSecs int    `toml:"poll_interval_seconds"`
+}
+
 type DispatcherConfig struct {
 	GRPCPort int            `toml:"grpc_port"`
 	HTTPPort int            `toml:"http_port"`
 	TLS      TLSConfig      `toml:"tls"`
 	Database DatabaseConfig `toml:"database"`
+	Sui      SuiConfig      `toml:"sui"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it
