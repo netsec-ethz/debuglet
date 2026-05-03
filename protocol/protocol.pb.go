@@ -179,7 +179,7 @@ func (x *ExecutorHeartbeat) GetTimestamp() int64 {
 
 type ExecutorResources struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	BandwidthCapacity int64                  `protobuf:"varint,1,opt,name=bandwidth_capacity,json=bandwidthCapacity,proto3" json:"bandwidth_capacity,omitempty"` // Bandwidth capacity the executor can handle
+	BandwidthCapacity int64                  `protobuf:"varint,1,opt,name=bandwidth_capacity,json=bandwidthCapacity,proto3" json:"bandwidth_capacity,omitempty"` // Bandwidth capacity the executor can handle per second
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }

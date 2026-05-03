@@ -31,7 +31,7 @@ message ExecutorHeartbeat {
 }
 
 message ExecutorResources {
-  int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle
+  int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle per second
 }
 
 message DebugletAssignment {

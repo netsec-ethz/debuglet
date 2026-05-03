@@ -48,8 +48,10 @@ type hostFunction func(environment interface{}, args []wasmer.Value) ([]wasmer.V
 // HostEnvironment carries the execution context for the current debuglet
 // session. It is passed by value to each host function.
 type HostEnvironment struct {
-	ctx     context.Context
-	manager *resource.ExecutorManager
+	ctx       context.Context
+	sessionID string
+	tracker   *resource.UsageTracker
+	manager   *resource.LimitManager
 }
 
 // checkContextExpired returns a descriptive error if the HostEnvironment's
@@ -101,7 +103,7 @@ type Debuglet struct {
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger, manager *resource.ExecutorManager) *Debuglet {
+func NewDebuglet(logger *zap.Logger, tracker *resource.UsageTracker, manager *resource.LimitManager, sessionID string) *Debuglet {
 	eng := wasmer.NewEngine()
 	return &Debuglet{
 		logger:    logger.Sugar(),
@@ -109,7 +111,7 @@ func NewDebuglet(logger *zap.Logger, manager *resource.ExecutorManager) *Debugle
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
-		hostEnv:   &HostEnvironment{manager: manager},
+		hostEnv:   &HostEnvironment{tracker: tracker, manager: manager, sessionID: sessionID},
 	}
 }
 
@@ -234,10 +236,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 
 // wrapHostFn wraps a hostFunction with the session's HostEnvironment and
 // converts it into a *wasmer.Function ready for registration.
-func (d *Debuglet) wrapHostFn(
-	input, output []*wasmer.ValueType,
-	fn hostFunction,
-) *wasmer.Function {
+func (d *Debuglet) wrapHostFn(input, output []*wasmer.ValueType, fn hostFunction) *wasmer.Function {
 	return wasmer.NewFunctionWithEnvironment(
 		d.store,
 		wasmer.NewFunctionType(input, output),
@@ -249,12 +248,7 @@ func (d *Debuglet) wrapHostFn(
 // registerHostFunctions populates the importObject with all host functions
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
-func (d *Debuglet) registerHostFunctions(
-	importObject *wasmer.ImportObject,
-	scionConns *SCIONConnRegistry,
-	sockets *SocketRegistry,
-	lastReceived *net.Addr,
-) {
+func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scionConns *SCIONConnRegistry, sockets *SocketRegistry, lastReceived *net.Addr) {
 	i32 := wasmer.I32
 	i64 := wasmer.I64
 	in := wasmer.NewValueTypes

@@ -6,3 +6,5 @@ debuglet-executor*
 /dispatcher
 /executor
 __debug*
+
+.testCoverage.txt

@@ -57,7 +57,7 @@ func (u *UsageTracker) register(dir TransferDirection, ID, destination string, l
 		usage = u.usageOut
 	}
 
-	_, exists := usage[ID]
+	old, exists := usage[ID]
 	if !exists {
 		usage[ID] = map[string]*rate.Limiter{
 			destination: rate.NewLimiter(
@@ -67,6 +67,11 @@ func (u *UsageTracker) register(dir TransferDirection, ID, destination string, l
 				rate.Limit(limits.ExecutorRatelimit), int(limits.ExecutorBurst),
 			),
 		}
+	} else {
+		old[destination].SetLimit(rate.Limit(limits.DestinationRatelimit))
+		old[destination].SetBurst(int(limits.DestinationBurst))
+		old[ExecutorUsageKey].SetLimit(rate.Limit(limits.ExecutorRatelimit))
+		old[ExecutorUsageKey].SetBurst(int(limits.ExecutorBurst))
 	}
 }
 

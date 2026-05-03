@@ -2,10 +2,10 @@
 
 ## Prerequisite
 
-- SCION endhost stack
-- Docker & Docker Compose
-- OpenSSL (for generating test certificates locally)
-- Go (optional, for local standalone development)
+- Go (for local standalone development and compiling WASM)
+- SCION endhost stack (optional, for using SCION-specific functionality)
+- Docker & Docker Compose (optional)
+- OpenSSL (optional, for generating new test certificates locally)
 
 ## Deployment
 

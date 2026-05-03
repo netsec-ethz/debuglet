@@ -44,7 +44,11 @@ type Executor struct {
 
 	stdoutWg sync.WaitGroup
 
-	manager *resource.ExecutorManager
+	// manager keeps track of the maximum bandwidth a destination is allowed to use on a destination-level
+	// and in total on the executor
+	manager *resource.LimitManager
+	// tracker keeps of how much bandwidth is actively being used by a debuglet
+	tracker *resource.UsageTracker
 }
 
 func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
@@ -106,6 +110,7 @@ func (e *Executor) Start(ctx context.Context) error {
 			Version:    e.version,
 		}},
 	})
+	// Initialize executor to have a bandwidth capacity of 1gbit/s
 	controlStream.Send(&pb.ControlMessage{
 		Msg: &pb.ControlMessage_Resources{Resources: &pb.ExecutorResources{
 			BandwidthCapacity: 1_000_000_000,
@@ -146,7 +151,9 @@ func (e *Executor) Start(ctx context.Context) error {
 			go e.handleAssignment(ctx, assign)
 		} else if update := msg.GetUpdates(); update != nil {
 			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
-			// TODO: handle destination updates
+			for _, up := range update.GetUpdates() {
+				e.manager.SetDestinationLimit(up.GetAssignmentId(), up.GetDestination(), up.GetNewCeilBw())
+			}
 		}
 	}
 }
@@ -161,7 +168,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 
 	e.logger.Debug("Locking")
 	e.mu.Lock()
-	db := engine.NewDebuglet(e.logger, e.manager)
+	db := engine.NewDebuglet(e.logger, e.tracker, e.manager, assign.SessionId)
 	err = db.Init(assign.Code, assign.Addresses)
 	if err != nil {
 		e.mu.Unlock()
@@ -199,14 +206,11 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 				continue
 			}
 			e.mu.Lock()
-			fairRequired, err := e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
+			err = e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
 			e.mu.Unlock()
 			if err != nil {
 				e.logger.Error("Failed to register assignment", zap.Error(err))
-				// TODO: send error to dispatcher
-			}
-			if fairRequired {
-				// TODO: fairshare other debuglets
+				return
 			}
 
 			e.runDebuglet(assign, session)

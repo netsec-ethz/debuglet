@@ -1,4 +1,4 @@
-// Bandwidth management on a job-basis running on the executor
+// Bandwidth limit management on a job-basis running on the executor
 package resource
 
 import (
@@ -12,7 +12,7 @@ var (
 	ErrCapacityFull = errors.New("insufficient capacity")
 )
 
-type ExecutorManager struct {
+type LimitManager struct {
 	assignMax map[string]int64
 	assignMin map[string]int64
 	// The residual (limit-minimum) bandwidths of assignments available for fairsharing
@@ -21,10 +21,12 @@ type ExecutorManager struct {
 	minUsedCapacity   int64
 	maxUsedCapacity   int64
 	previousFairshare int64
+
+	destinationLimit map[string]map[string]int64
 }
 
-func New(capacity int64) *ExecutorManager {
-	return &ExecutorManager{
+func New(capacity int64) *LimitManager {
+	return &LimitManager{
 		tree:              &avl.AVL[string]{},
 		assignMax:         make(map[string]int64),
 		assignMin:         make(map[string]int64),
@@ -37,66 +39,94 @@ func New(capacity int64) *ExecutorManager {
 // when starting a new assignment or after receiving an update from the
 // dispatcher.
 // Returns true if fairsharing is required.
-func (e *ExecutorManager) RegisterAssignment(assignmentID string, minimum, maximum int64) (bool, error) {
+func (m *LimitManager) RegisterAssignment(assignmentID string, minimum, maximum int64) error {
 	if minimum > maximum {
-		return false, ErrMinGreater
+		return ErrMinGreater
 	}
-	if minimum > e.capacity-e.minUsedCapacity {
-		return false, ErrCapacityFull
+	if minimum > m.capacity-m.minUsedCapacity {
+		return ErrCapacityFull
 	}
 
-	e.assignMin[assignmentID] = minimum
-	e.assignMax[assignmentID] = maximum
-	e.tree.Insert(assignmentID, maximum-minimum)
-	e.minUsedCapacity += minimum
-	e.maxUsedCapacity += maximum
+	m.assignMin[assignmentID] = minimum
+	m.assignMax[assignmentID] = maximum
+	m.tree.Insert(assignmentID, maximum-minimum)
+	m.minUsedCapacity += minimum
+	m.maxUsedCapacity += maximum
 
-	return e.maxUsedCapacity > e.capacity, nil
+	return nil
 }
 
-func (e *ExecutorManager) RemoveAssignment(assignmentID string) (fairshareRequired bool) {
-	minimum, exists := e.assignMin[assignmentID]
+func (m *LimitManager) SetDestinationLimit(assignmentID, destination string, maximum int64) {
+	_, exists := m.destinationLimit[assignmentID]
+	if !exists {
+		m.destinationLimit[assignmentID] = make(map[string]int64)
+	}
+	m.destinationLimit[assignmentID][destination] = maximum
+}
+
+func (m *LimitManager) RemoveAssignment(assignmentID string) (fairshareRequired bool) {
+	minimum, exists := m.assignMin[assignmentID]
 	if !exists {
 		return false
 	}
-	maximum := e.assignMax[assignmentID]
+	maximum := m.assignMax[assignmentID]
 
-	delete(e.assignMax, assignmentID)
-	delete(e.assignMin, assignmentID)
-	e.tree.Delete(assignmentID, maximum-minimum)
-	e.minUsedCapacity -= minimum
-	e.maxUsedCapacity -= maximum
+	delete(m.assignMax, assignmentID)
+	delete(m.assignMin, assignmentID)
+	m.tree.Delete(assignmentID, maximum-minimum)
+	m.minUsedCapacity -= minimum
+	m.maxUsedCapacity -= maximum
 
-	return e.maxUsedCapacity > e.capacity
+	return m.maxUsedCapacity > m.capacity
 }
 
-func (e *ExecutorManager) UpdateCapacity(newCapacity int64) (fairshareRequired bool) {
-	if newCapacity == e.capacity {
+func (m *LimitManager) UpdateCapacity(newCapacity int64) (fairshareRequired bool) {
+	if newCapacity == m.capacity {
 		return
 	}
-	e.capacity = newCapacity
-	return e.maxUsedCapacity > e.capacity
+	m.capacity = newCapacity
+	return m.maxUsedCapacity > m.capacity
 }
 
-func (e *ExecutorManager) Fairshare() iter.Seq2[string, int64] {
+func (m *LimitManager) Fairshare() iter.Seq2[string, int64] {
 	return func(yield func(string, int64) bool) {
-		fairshare := e.tree.Fairshare(e.capacity - e.minUsedCapacity)
-		defer func() { e.previousFairshare = fairshare }()
+		fairshare := m.tree.Fairshare(m.capacity - m.minUsedCapacity)
+		defer func() { m.previousFairshare = fairshare }()
 
-		if e.previousFairshare != -1 && fairshare > e.previousFairshare {
+		if m.previousFairshare != -1 && fairshare > m.previousFairshare {
 			// reset previously fairshared nodes
-			for n := range e.tree.Range(e.previousFairshare, fairshare) {
-				if !yield(n.ID, e.assignMax[n.ID]) {
+			for n := range m.tree.Range(m.previousFairshare, fairshare) {
+				if !yield(n.ID, m.assignMax[n.ID]) {
 					return
 				}
 			}
 		}
 
-		for n := range e.tree.Range(fairshare, avl.Unbounded) {
-			actualLimit := min(e.assignMax[n.ID], fairshare+e.assignMin[n.ID])
+		for n := range m.tree.Range(fairshare, avl.Unbounded) {
+			actualLimit := min(m.assignMax[n.ID], fairshare+m.assignMin[n.ID])
 			if !yield(n.ID, actualLimit) {
 				return
 			}
 		}
 	}
+}
+
+func (m *LimitManager) GetMaximumExecutor(ID string) int64 {
+	maximum, exists := m.assignMax[ID]
+	if !exists {
+		return 0
+	}
+	minimum, exists := m.assignMin[ID]
+	if !exists {
+		return 0
+	}
+	if m.previousFairshare == -1 {
+		// no fairshare
+		return maximum
+	}
+	return min(maximum, m.previousFairshare+minimum)
+}
+
+func (m *LimitManager) GetMaximumDestination(ID, destination string) int64 {
+	return m.destinationLimit[ID][destination]
 }

@@ -24,6 +24,7 @@ package engine
 
 import (
 	"crypto/tls"
+	"debuglet/internal/executor/resource"
 	"fmt"
 	"net"
 	"os"
@@ -110,6 +111,16 @@ func hostConnectTCP(
 		return nil, fmt.Errorf("connect_tcp: failed to dial %q: %w", addr, err)
 	}
 
+	executorLimit := env.manager.GetMaximumExecutor(env.sessionID)
+	destinationLimit := env.manager.GetMaximumDestination(env.sessionID, addr)
+	limits := resource.UsageLimits{
+		ExecutorRatelimit:    executorLimit,
+		ExecutorBurst:        executorLimit,
+		DestinationRatelimit: destinationLimit,
+		DestinationBurst:     destinationLimit,
+	}
+	env.tracker.Register(env.sessionID, addr, limits)
+
 	handle := registry.Add(NewTCPSocket(conn))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
@@ -195,6 +206,11 @@ func hostReceiveTCPData(
 		sugar.Errorw("hostReceiveTCPData: failed to extract memory", "err", err)
 		return nil, fmt.Errorf("receive_tcp_data: failed to extract memory: %w", err)
 	}
+
+	// TODO: need to get addr here somehow
+	addr := ""
+	env.tracker.Wait(env.ctx, resource.TransferIn, env.sessionID, addr, int64(size))
+
 	data := memory.Data()
 	buf := data[ptr : ptr+size]
 
