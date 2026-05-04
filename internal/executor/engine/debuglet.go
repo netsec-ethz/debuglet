@@ -48,10 +48,11 @@ type hostFunction func(environment interface{}, args []wasmer.Value) ([]wasmer.V
 // HostEnvironment carries the execution context for the current debuglet
 // session. It is passed by value to each host function.
 type HostEnvironment struct {
-	ctx       context.Context
-	sessionID string
-	tracker   *resource.UsageTracker
-	manager   *resource.LimitManager
+	ctx          context.Context
+	sessionID    string
+	tracker      *resource.UsageTracker
+	manager      *resource.LimitManager
+	handleToAddr map[int32]string
 }
 
 // checkContextExpired returns a descriptive error if the HostEnvironment's
@@ -103,7 +104,7 @@ type Debuglet struct {
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger, tracker *resource.UsageTracker, manager *resource.LimitManager, sessionID string) *Debuglet {
+func NewDebuglet(logger *zap.Logger, manager *resource.LimitManager, sessionID string) *Debuglet {
 	eng := wasmer.NewEngine()
 	return &Debuglet{
 		logger:    logger.Sugar(),
@@ -111,7 +112,12 @@ func NewDebuglet(logger *zap.Logger, tracker *resource.UsageTracker, manager *re
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
-		hostEnv:   &HostEnvironment{tracker: tracker, manager: manager, sessionID: sessionID},
+		hostEnv: &HostEnvironment{
+			tracker:      resource.NewUsageTracker(),
+			manager:      manager,
+			sessionID:    sessionID,
+			handleToAddr: make(map[int32]string),
+		},
 	}
 }
 

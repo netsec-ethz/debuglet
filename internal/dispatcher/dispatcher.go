@@ -75,7 +75,6 @@ func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
 		if err != nil {
 			return err
 		}
-
 		for executorID, updates := range destinationUpdates {
 			d.UpdateDestinations(executorID, updates)
 		}

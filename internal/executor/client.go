@@ -48,7 +48,6 @@ type Executor struct {
 	// and in total on the executor
 	manager *resource.LimitManager
 	// tracker keeps of how much bandwidth is actively being used by a debuglet
-	tracker *resource.UsageTracker
 }
 
 func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
@@ -168,7 +167,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 
 	e.logger.Debug("Locking")
 	e.mu.Lock()
-	db := engine.NewDebuglet(e.logger, e.tracker, e.manager, assign.SessionId)
+	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId)
 	err = db.Init(assign.Code, assign.Addresses)
 	if err != nil {
 		e.mu.Unlock()

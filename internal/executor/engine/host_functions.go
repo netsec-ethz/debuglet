@@ -111,17 +111,8 @@ func hostConnectTCP(
 		return nil, fmt.Errorf("connect_tcp: failed to dial %q: %w", addr, err)
 	}
 
-	executorLimit := env.manager.GetMaximumExecutor(env.sessionID)
-	destinationLimit := env.manager.GetMaximumDestination(env.sessionID, addr)
-	limits := resource.UsageLimits{
-		ExecutorRatelimit:    executorLimit,
-		ExecutorBurst:        executorLimit,
-		DestinationRatelimit: destinationLimit,
-		DestinationBurst:     destinationLimit,
-	}
-	env.tracker.Register(env.sessionID, addr, limits)
-
 	handle := registry.Add(NewTCPSocket(conn))
+	env.handleToAddr[handle] = addr
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
@@ -192,7 +183,8 @@ func hostReceiveTCPData(
 		return nil, err
 	}
 
-	sock, err := registry.Get(args[0].I32())
+	sockID := args[0].I32()
+	sock, err := registry.Get(sockID)
 	if err != nil {
 		sugar.Warnw("hostReceiveTCPData: invalid handle", "handle", args[0].I32(), "err", err)
 		return nil, fmt.Errorf("receive_tcp_data: %w", err)
@@ -207,9 +199,29 @@ func hostReceiveTCPData(
 		return nil, fmt.Errorf("receive_tcp_data: failed to extract memory: %w", err)
 	}
 
-	// TODO: need to get addr here somehow
-	addr := ""
-	env.tracker.Wait(env.ctx, resource.TransferIn, env.sessionID, addr, int64(size))
+	addr := env.handleToAddr[sockID]
+	// Lazily update the tracker every time
+	executorLimit := env.manager.GetAllowedExecutor(env.sessionID)
+	destinationLimit := env.manager.GetAllowedDestination(env.sessionID, addr)
+	if destinationLimit == 0 {
+		// if there's no destination-specific ratelimit, allow it to use its full executor ratelimitted bandwidth
+		destinationLimit = executorLimit
+	}
+	limits := resource.UsageLimits{
+		ExecutorRatelimit:    executorLimit,
+		ExecutorBurst:        executorLimit,
+		DestinationRatelimit: destinationLimit,
+		DestinationBurst:     destinationLimit,
+	}
+	sugar.Debugw("registering limits", "session_id", env.sessionID, "limits", limits)
+	env.tracker.Register(addr, limits)
+
+	// Blocks until data can be received
+	err = env.tracker.Wait(env.ctx, resource.TransferIn, addr, int64(size))
+	if err != nil {
+		sugar.Warnw("hostReceiveTCPData: wait error", "err", err)
+		return nil, fmt.Errorf("receive_tcp_data: wait error: %w", err)
+	}
 
 	data := memory.Data()
 	buf := data[ptr : ptr+size]

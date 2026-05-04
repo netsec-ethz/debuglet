@@ -111,22 +111,15 @@ func (m *LimitManager) Fairshare() iter.Seq2[string, int64] {
 	}
 }
 
-func (m *LimitManager) GetMaximumExecutor(ID string) int64 {
-	maximum, exists := m.assignMax[ID]
-	if !exists {
-		return 0
-	}
-	minimum, exists := m.assignMin[ID]
-	if !exists {
-		return 0
-	}
+func (m *LimitManager) GetAllowedExecutor(ID string) int64 {
+	maximum := m.assignMax[ID]
 	if m.previousFairshare == -1 {
 		// no fairshare
 		return maximum
 	}
-	return min(maximum, m.previousFairshare+minimum)
+	return min(maximum, m.previousFairshare+m.assignMin[ID])
 }
 
-func (m *LimitManager) GetMaximumDestination(ID, destination string) int64 {
+func (m *LimitManager) GetAllowedDestination(ID, destination string) int64 {
 	return m.destinationLimit[ID][destination]
 }

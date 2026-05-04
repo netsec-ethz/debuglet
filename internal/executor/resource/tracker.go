@@ -3,6 +3,7 @@ package resource
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -18,20 +19,20 @@ const (
 )
 
 type UsageTracker struct {
-	// ID: { destination: rateLimit }
-	usageIn map[string]map[string]*rate.Limiter
-	// ID: { destination: rateLimit }
-	usageOut map[string]map[string]*rate.Limiter
-	capacity map[string]map[string]int64
+	// { destination: rateLimit }
+	usageIn map[string]*rate.Limiter
+	// { destination: rateLimit }
+	usageOut map[string]*rate.Limiter
+	capacity map[string]int64
 
 	mu sync.Mutex
 }
 
 func NewUsageTracker() *UsageTracker {
 	return &UsageTracker{
-		usageIn:  make(map[string]map[string]*rate.Limiter),
-		usageOut: make(map[string]map[string]*rate.Limiter),
-		capacity: make(map[string]map[string]int64),
+		usageIn:  make(map[string]*rate.Limiter),
+		usageOut: make(map[string]*rate.Limiter),
+		capacity: make(map[string]int64),
 	}
 }
 
@@ -42,36 +43,35 @@ type UsageLimits struct {
 	DestinationBurst     int64
 }
 
-func (u *UsageTracker) Register(ID, destination string, limits UsageLimits) {
+func (u *UsageTracker) Register(destination string, limits UsageLimits) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.register(TransferIn, ID, destination, limits)
-	u.register(TransferOut, ID, destination, limits)
+	u.register(TransferIn, destination, limits)
+	u.register(TransferOut, destination, limits)
 }
 
-func (u *UsageTracker) register(dir TransferDirection, ID, destination string, limits UsageLimits) {
-	var usage map[string]map[string]*rate.Limiter
+func (u *UsageTracker) register(dir TransferDirection, destination string, limits UsageLimits) {
+	var usage map[string]*rate.Limiter
 	if dir == TransferIn {
 		usage = u.usageIn
 	} else {
 		usage = u.usageOut
 	}
 
-	old, exists := usage[ID]
-	if !exists {
-		usage[ID] = map[string]*rate.Limiter{
-			destination: rate.NewLimiter(
-				rate.Limit(limits.DestinationRatelimit), int(limits.DestinationBurst),
-			),
-			ExecutorUsageKey: rate.NewLimiter(
-				rate.Limit(limits.ExecutorRatelimit), int(limits.ExecutorBurst),
-			),
-		}
+	destinationUsage, dExists := usage[destination]
+	executorUsage, eExists := usage[destination]
+	if !dExists || !eExists {
+		usage[destination] = rate.NewLimiter(
+			rate.Limit(limits.DestinationRatelimit), int(limits.DestinationBurst),
+		)
+		usage[ExecutorUsageKey] = rate.NewLimiter(
+			rate.Limit(limits.ExecutorRatelimit), int(limits.ExecutorBurst),
+		)
 	} else {
-		old[destination].SetLimit(rate.Limit(limits.DestinationRatelimit))
-		old[destination].SetBurst(int(limits.DestinationBurst))
-		old[ExecutorUsageKey].SetLimit(rate.Limit(limits.ExecutorRatelimit))
-		old[ExecutorUsageKey].SetBurst(int(limits.ExecutorBurst))
+		destinationUsage.SetLimit(rate.Limit(limits.DestinationRatelimit))
+		destinationUsage.SetBurst(int(limits.DestinationBurst))
+		executorUsage.SetLimit(rate.Limit(limits.ExecutorRatelimit))
+		executorUsage.SetBurst(int(limits.ExecutorBurst))
 	}
 }
 
@@ -80,40 +80,36 @@ func (u *UsageTracker) Unregister(ID, destination string) {
 }
 
 // Wait uses a token bucket to sleep until either the context finishes or a packet of a given size has enough space
-func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, ID, destination string, size int64) error {
+func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destination string, size int64) error {
 	reserveDestination, reserveExecutor, err := func() (*rate.Reservation, *rate.Reservation, error) {
 		u.mu.Lock()
 		defer u.mu.Unlock()
 
-		var usage map[string]map[string]*rate.Limiter
+		var usage map[string]*rate.Limiter
 		if dir == TransferIn {
 			usage = u.usageIn
 		} else {
 			usage = u.usageOut
 		}
 
-		dests, exists := usage[ID]
-		if !exists {
-			return nil, nil, errors.New("cannot track usage, unknown ID")
-		}
-		limiterDestination, exists := dests[destination]
+		limiterDestination, exists := usage[destination]
 		if !exists {
 			return nil, nil, errors.New("cannot track destination usage, unregistered destination")
 		}
-		limiterExecutor, exists := dests[destination]
+		limiterExecutor, exists := usage[ExecutorUsageKey]
 		if !exists {
 			return nil, nil, errors.New("cannot track executor usage, not registered")
 		}
 
 		reserveDestination := limiterDestination.ReserveN(time.Now(), int(size))
 		if !reserveDestination.OK() {
-			return nil, nil, errors.New("cannot reserve destination, size is greater than burst")
+			return nil, nil, fmt.Errorf("cannot reserve destination, size is greater than burst (Got %d, Want %d)", int(size), limiterDestination.Burst())
 		}
 
 		reserveExecutor := limiterExecutor.ReserveN(time.Now(), int(size))
 		if !reserveExecutor.OK() {
 			reserveDestination.Cancel()
-			return nil, nil, errors.New("cannot reserve executor, size is greater than burst")
+			return nil, nil, fmt.Errorf("cannot reserve executor, size is greater than burst (Got %d, Want %d)", int(size), limiterExecutor.Burst())
 		}
 
 		return reserveDestination, reserveExecutor, nil
