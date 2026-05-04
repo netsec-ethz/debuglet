@@ -99,6 +99,12 @@ func hostConnectTCP(
 	}
 
 	addr := addresses[args[0].I32()]
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		sugar.Warnw("hostConnectTCP: failed to determine host from address", "addr", addr, "err", err)
+		return nil, fmt.Errorf("connect_tcp: failed to determine host from address %q: %w", addr, err)
+	}
+
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		sugar.Warnw("hostConnectTCP: failed to resolve address", "addr", addr, "err", err)
@@ -110,9 +116,8 @@ func hostConnectTCP(
 		sugar.Warnw("hostConnectTCP: failed to dial", "addr", tcpAddr, "err", err)
 		return nil, fmt.Errorf("connect_tcp: failed to dial %q: %w", addr, err)
 	}
-
 	handle := registry.Add(NewTCPSocket(conn))
-	env.handleToAddr[handle] = addr
+	env.handleToAddr[handle] = host
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 

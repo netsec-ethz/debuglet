@@ -94,6 +94,9 @@ func (d *Dispatcher) GetMeasurement(id string) *Measurement {
 }
 
 func (d *Dispatcher) RemoveMeasurement(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	m := d.GetMeasurement(id)
 	if m == nil {
 		return
@@ -121,6 +124,7 @@ func (d *Dispatcher) RegisterExecutor(id string) {
 		d.executors[id] = &Executor{
 			ID:          id,
 			Assignments: make(chan *pb.DebugletAssignment, 1),
+			Updates:     make(chan *pb.DestinationUpdates, 1),
 		}
 	}
 }
@@ -191,9 +195,7 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 }
 
 func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {
-	d.mu.RLock()
 	exec, ok := d.executors[executorID]
-	d.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("executor %s not found", executorID)
 	}

@@ -151,6 +151,7 @@ func (e *Executor) Start(ctx context.Context) error {
 		} else if update := msg.GetUpdates(); update != nil {
 			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
 			for _, up := range update.GetUpdates() {
+				e.logger.Debug("Updating destination limit", zap.String("destination", up.GetDestination()), zap.String("assignment_id", up.GetAssignmentId()), zap.Int64("new_ceil", up.GetNewCeilBw()))
 				e.manager.SetDestinationLimit(up.GetAssignmentId(), up.GetDestination(), up.GetNewCeilBw())
 			}
 		}

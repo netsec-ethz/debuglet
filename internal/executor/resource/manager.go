@@ -27,11 +27,14 @@ type LimitManager struct {
 
 func New(capacity int64) *LimitManager {
 	return &LimitManager{
+		assignMax: make(map[string]int64),
+		assignMin: make(map[string]int64),
+
 		tree:              &avl.AVL[string]{},
-		assignMax:         make(map[string]int64),
-		assignMin:         make(map[string]int64),
 		capacity:          capacity,
 		previousFairshare: -1,
+
+		destinationLimit: make(map[string]map[string]int64),
 	}
 }
 
@@ -120,6 +123,6 @@ func (m *LimitManager) GetAllowedExecutor(ID string) int64 {
 	return min(maximum, m.previousFairshare+m.assignMin[ID])
 }
 
-func (m *LimitManager) GetAllowedDestination(ID, destination string) int64 {
-	return m.destinationLimit[ID][destination]
+func (m *LimitManager) GetAllowedDestination(assignmentID, destination string) int64 {
+	return m.destinationLimit[assignmentID][destination]
 }

@@ -11,4 +11,12 @@
     "request": "launch",
     "args": ["-config", "local/configs/executor.toml"],
   },
+  {
+    "label": "Debug Dispatcher",
+    "adapter": "Delve",
+    "mode": "debug",
+    "program": "${ZED_WORKTREE_ROOT}/cmd/dispatcher/main.go",
+    "request": "launch",
+    "args": ["-config", "local/configs/dispatcher.toml"],
+  },
 ]
