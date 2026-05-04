@@ -326,6 +326,225 @@ func hostCloseTCP(
 }
 
 // =============================================================================
+// IP socket API
+// WASM keys: "connect_ip", "accept_ip", "receive_ip_data",
+//            "send_ip_data", "close_ip"
+// =============================================================================
+
+// hostConnectIP dials an IP connection to addresses[args[0]] and registers
+// it in the SocketRegistry. Returns the socket handle as I32.
+// WASM key: "connect_ip"
+func hostConnectIP(
+	environment interface{},
+	args []wasmer.Value,
+	addresses []string,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	addr := addresses[args[0].I32()]
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil { // strip port
+		host = addr
+	}
+
+	ipAddr, err := net.ResolveIPAddr("ip", addr)
+	if err != nil {
+		sugar.Warnw("hostConnectIP: failed to resolve address", "addr", addr, "err", err)
+		return nil, fmt.Errorf("connect_ip: failed to resolve %q: %w", addr, err)
+	}
+
+	conn, err := net.DialIP("ip", nil, ipAddr)
+	if err != nil {
+		sugar.Warnw("hostConnectIP: failed to dial", "addr", ipAddr, "err", err)
+		return nil, fmt.Errorf("connect_ip: failed to dial %q: %w", addr, err)
+	}
+	handle := registry.Add(NewIPSocket(conn))
+	env.handleToAddr[handle] = host
+	return []wasmer.Value{wasmer.NewI32(handle)}, nil
+}
+
+// hostAcceptIP accepts one incoming IP connection on the server and registers
+// it in the SocketRegistry. Returns the socket handle as I32.
+// WASM key: "accept_ip"
+func hostAcceptIP(
+	environment interface{},
+	args []wasmer.Value,
+	ipServer net.Listener,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	conn, err := ipServer.Accept()
+	if err != nil {
+		sugar.Warnw("hostAcceptIP: failed to accept", "err", err)
+		return nil, fmt.Errorf("accept_ip: %w", err)
+	}
+
+	ipConn, ok := conn.(*net.IPConn)
+	if !ok {
+		return nil, fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn)
+	}
+
+	handle := registry.Add(NewIPSocket(ipConn))
+	return []wasmer.Value{wasmer.NewI32(handle)}, nil
+}
+
+// hostReceiveIPData reads up to args[1] bytes from the socket at args[0] into
+// the WASM ip_receive_buffer. Returns the number of bytes read as I32.
+// WASM key: "receive_ip_data"
+func hostReceiveIPData(
+	environment interface{},
+	args []wasmer.Value,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+	instance *wasmer.Instance,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	sockID := args[0].I32()
+	sock, err := registry.Get(sockID)
+	if err != nil {
+		sugar.Warnw("hostReceiveIPData: invalid handle", "handle", args[0].I32(), "err", err)
+		return nil, fmt.Errorf("receive_ip_data: %w", err)
+	}
+
+	size := args[1].I32()
+	ptr := args[2].I32()
+
+	memory, err := instance.Exports.GetMemory("memory")
+	if err != nil {
+		sugar.Errorw("hostReceiveIPData: failed to extract memory", "err", err)
+		return nil, fmt.Errorf("receive_ip_data: failed to extract memory: %w", err)
+	}
+
+	addr := env.handleToAddr[sockID]
+	executorLimit := env.manager.GetAllowedExecutor(env.sessionID)
+	destinationLimit := env.manager.GetAllowedDestination(env.sessionID, addr)
+	if destinationLimit == 0 {
+		destinationLimit = executorLimit
+	}
+	limits := resource.UsageLimits{
+		ExecutorRatelimit:    executorLimit,
+		ExecutorBurst:        executorLimit,
+		DestinationRatelimit: destinationLimit,
+		DestinationBurst:     destinationLimit,
+	}
+	sugar.Debugw("registering limits", "session_id", env.sessionID, "limits", limits)
+	env.tracker.Register(addr, limits)
+
+	err = env.tracker.Wait(env.ctx, resource.TransferIn, addr, int64(size))
+	if err != nil {
+		sugar.Warnw("hostReceiveIPData: wait error", "err", err)
+		return nil, fmt.Errorf("receive_ip_data: wait error: %w", err)
+	}
+
+	data := memory.Data()
+	buf := data[ptr : ptr+size]
+
+	n, err := sock.Read(buf)
+	if err != nil {
+		sugar.Warnw("hostReceiveIPData: read error", "err", err)
+		return nil, fmt.Errorf("receive_ip_data: read error: %w", err)
+	}
+	return []wasmer.Value{wasmer.NewI32(int32(n))}, nil
+}
+
+// hostSendIPData writes args[1] bytes starting at offset args[2] from the WASM
+// ip_send_buffer to the socket at args[0].
+// WASM key: "send_ip_data"
+func hostSendIPData(
+	environment interface{},
+	args []wasmer.Value,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+	instance *wasmer.Instance,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	sockID := args[0].I32()
+	sock, err := registry.Get(sockID)
+	if err != nil {
+		sugar.Warnw("hostSendIPData: invalid handle", "handle", args[0].I32(), "err", err)
+		return nil, fmt.Errorf("send_ip_data: %w", err)
+	}
+
+	size := args[1].I32()
+	ptr := args[2].I32()
+
+	memory, err := instance.Exports.GetMemory("memory")
+	if err != nil {
+		sugar.Errorw("hostSendIPData: failed to extract memory", "err", err)
+		return nil, fmt.Errorf("send_ip_data: failed to extract memory: %w", err)
+	}
+	data := memory.Data()
+	message := data[ptr : ptr+size]
+
+	addr := env.handleToAddr[sockID]
+	executorLimit := env.manager.GetAllowedExecutor(env.sessionID)
+	destinationLimit := env.manager.GetAllowedDestination(env.sessionID, addr)
+	if destinationLimit == 0 {
+		destinationLimit = executorLimit
+	}
+	limits := resource.UsageLimits{
+		ExecutorRatelimit:    executorLimit,
+		ExecutorBurst:        executorLimit,
+		DestinationRatelimit: destinationLimit,
+		DestinationBurst:     destinationLimit,
+	}
+	sugar.Debugw("registering limits", "session_id", env.sessionID, "limits", limits)
+	env.tracker.Register(addr, limits)
+
+	err = env.tracker.Wait(env.ctx, resource.TransferOut, addr, int64(size))
+	if err != nil {
+		sugar.Warnw("hostSendIPData: wait error", "err", err)
+		return nil, fmt.Errorf("send_ip_data: wait error: %w", err)
+	}
+
+	sugar.Debugw("hostSendIPData: sending ip message", "message", string(message))
+
+	if _, err = sock.Write(message); err != nil {
+		sugar.Warnw("hostSendIPData: write error", "err", err)
+		return nil, fmt.Errorf("send_ip_data: write error: %w", err)
+	}
+	return []wasmer.Value{}, nil
+}
+
+// hostCloseIP closes the socket at handle args[0].
+// WASM key: "close_ip"
+func hostCloseIP(
+	environment interface{},
+	args []wasmer.Value,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	if err := registry.Close(args[0].I32()); err != nil {
+		sugar.Warnw("hostCloseIP: close error", "handle", args[0].I32(), "err", err)
+		return nil, fmt.Errorf("close_ip: %w", err)
+	}
+	return []wasmer.Value{}, nil
+}
+
+// =============================================================================
 // UDP (plain IP) socket API  — !!! NOT YET REGISTERED — infrastructure only !!!
 // WASM keys: "send_udp_packet", "receive_udp_packet", "answer_udp_packet"
 // =============================================================================

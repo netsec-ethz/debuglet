@@ -87,6 +87,7 @@ type Debuglet struct {
 	scionServer pan.ListenConn
 	udpServer   net.PacketConn
 	tcpServer   *net.TCPListener
+	ipServer    net.Listener
 
 	// addresses is the list of peer addresses made available to the WASM module.
 	addresses []string
@@ -172,6 +173,10 @@ func (d *Debuglet) startServers() error {
 	// -- Placeholder for future TCP server --
 	// addr, err := net.ResolveTCPAddr("tcp", ":0")
 	// tcpServer, err := net.ListenTCP("tcp", addr)
+
+	// -- Placeholder for future IP server --
+	// ipAddr, err := net.ResolveIPAddr("ip", ":0")
+	// ipServer, err := net.ListenIP("ip", ipAddr)
 
 	scionHost, err := platform.GetScionAddr(ctx)
 	if err != nil {
@@ -314,6 +319,37 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 			},
 		),
 
+		// ---- IP socket API ----
+		"connect_ip": d.wrapHostFn(in(i32), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostConnectIP(env, args, d.addresses, d.logger, sockets)
+			},
+		),
+
+		"accept_ip": d.wrapHostFn(in(), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostAcceptIP(env, args, d.ipServer, d.logger, sockets)
+			},
+		),
+
+		"receive_ip_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostReceiveIPData(env, args, d.logger, sockets, d.wasmerInstance)
+			},
+		),
+
+		"send_ip_data": d.wrapHostFn(in(i32, i32, i32), out(),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostSendIPData(env, args, d.logger, sockets, d.wasmerInstance)
+			},
+		),
+
+		"close_ip": d.wrapHostFn(in(i32), out(),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostCloseIP(env, args, d.logger, sockets)
+			},
+		),
+
 		// ---- SCION-UDP API ----
 		"send_scion_udp_packet": d.wrapHostFn(in(i32, i32), out(i64),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
@@ -407,6 +443,9 @@ func (d *Debuglet) Close() {
 	}
 	if d.tcpServer != nil {
 		_ = d.tcpServer.Close()
+	}
+	if d.ipServer != nil {
+		_ = d.ipServer.Close()
 	}
 	if d.wasmerInstance != nil {
 		d.wasmerInstance.Close()
