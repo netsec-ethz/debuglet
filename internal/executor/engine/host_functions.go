@@ -205,7 +205,7 @@ func hostReceiveTCPData(
 	}
 
 	addr := env.handleToAddr[sockID]
-	// Lazily update the tracker every time
+	// Greedily update the tracker every time
 	executorLimit := env.manager.GetAllowedExecutor(env.sessionID)
 	destinationLimit := env.manager.GetAllowedDestination(env.sessionID, addr)
 	if destinationLimit == 0 {
@@ -231,12 +231,6 @@ func hostReceiveTCPData(
 	data := memory.Data()
 	buf := data[ptr : ptr+size]
 
-	// buf, err := extractSlice(instance, "tcp_receive_buffer", 0, args[1].I32())
-	// if err != nil {
-	// 	sugar.Warnw("hostReceiveTCPData: failed to extract buffer", "err", err)
-	// 	return nil, fmt.Errorf("receive_tcp_data: failed to extract tcp_receive_buffer: %w", err)
-	// }
-
 	n, err := sock.Read(buf)
 	if err != nil {
 		sugar.Warnw("hostReceiveTCPData: read error", "err", err)
@@ -260,7 +254,8 @@ func hostSendTCPData(
 		return nil, err
 	}
 
-	sock, err := registry.Get(args[0].I32())
+	sockID := args[0].I32()
+	sock, err := registry.Get(sockID)
 	if err != nil {
 		sugar.Warnw("hostSendTCPData: invalid handle", "handle", args[0].I32(), "err", err)
 		return nil, fmt.Errorf("send_tcp_data: %w", err)
@@ -277,13 +272,31 @@ func hostSendTCPData(
 	data := memory.Data()
 	message := data[ptr : ptr+size]
 
-	sugar.Debugw("hostSendTCPData: sending tcp message", "message", string(message))
+	addr := env.handleToAddr[sockID]
+	// Greedily update the tracker every time
+	executorLimit := env.manager.GetAllowedExecutor(env.sessionID)
+	destinationLimit := env.manager.GetAllowedDestination(env.sessionID, addr)
+	if destinationLimit == 0 {
+		// if there's no destination-specific ratelimit, allow it to use its full executor ratelimitted bandwidth
+		destinationLimit = executorLimit
+	}
+	limits := resource.UsageLimits{
+		ExecutorRatelimit:    executorLimit,
+		ExecutorBurst:        executorLimit,
+		DestinationRatelimit: destinationLimit,
+		DestinationBurst:     destinationLimit,
+	}
+	sugar.Debugw("registering limits", "session_id", env.sessionID, "limits", limits)
+	env.tracker.Register(addr, limits)
 
-	// data, err := extractSlice(instance, "tcp_send_buffer", offset, offset+size)
-	// if err != nil {
-	// 	sugar.Warnw("hostSendTCPData: failed to extract buffer", "err", err)
-	// 	return nil, fmt.Errorf("send_tcp_data: failed to extract tcp_send_buffer: %w", err)
-	// }
+	// Blocks until data can be received
+	err = env.tracker.Wait(env.ctx, resource.TransferOut, addr, int64(size))
+	if err != nil {
+		sugar.Warnw("hostReceiveTCPData: wait error", "err", err)
+		return nil, fmt.Errorf("receive_tcp_data: wait error: %w", err)
+	}
+
+	sugar.Debugw("hostSendTCPData: sending tcp message", "message", string(message))
 
 	if _, err = sock.Write(message); err != nil {
 		sugar.Warnw("hostSendTCPData: write error", "err", err)
