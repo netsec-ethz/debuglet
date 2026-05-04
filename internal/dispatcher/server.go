@@ -150,7 +150,7 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 
 		case *pb.SessionMessage_Stdout:
 			stdout := string(msg.Stdout.Stdout)
-			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId), zap.String("stdout", stdout))
+			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId))
 			measurement.EventChan <- StdoutEvent{
 				Event:     "stdout",
 				SessionId: msg.Stdout.SessionId,
@@ -158,9 +158,9 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 			}
 
 		case *pb.SessionMessage_Exit:
-			s.logger.Info("Session finished", zap.String("session_id", msg.Exit.SessionId), zap.Int32("exit_code", msg.Exit.ExitCode))
+			s.logger.Info("Session finished", zap.String("session_id", msg.Exit.GetSessionId()), zap.Int32("exit_code", msg.Exit.GetExitCode()))
+			measurement.EventChan <- ExitEvent{}
 			return nil
-
 		default:
 			s.logger.Warn("Unknown session message type")
 		}

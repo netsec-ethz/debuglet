@@ -77,10 +77,9 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			Code:          code,
 			Addresses:     db.Addresses,
 			Policy: &pb.DebugletAssignment_Policy{
-				FloorBw:      db.Policy.FloorBW,
-				CeilBw:       db.Policy.CeilBW,
-				TimeoutMs:    db.Policy.TimeoutMS,
-				Destinations: db.Policy.Destinations,
+				FloorBw:   db.Policy.FloorBW,
+				CeilBw:    db.Policy.CeilBW,
+				TimeoutMs: db.Policy.TimeoutMS,
 			},
 		}
 
@@ -129,7 +128,6 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 			switch string(msg) {
 			case "start":
 				h.logger.Info("received start event", zap.String("measurement_id", measurementId))
-
 				if err := h.dispatcher.StartMeasurement(measurement); err != nil {
 					h.logger.Error("failed to start measurement", zap.Error(err))
 					conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
@@ -141,7 +139,15 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 	}()
 
 	// Stream events
+	exitsReceived := 0
 	for ev := range measurement.EventChan {
+		if _, ok := ev.(dispatcher.ExitEvent); ok {
+			exitsReceived++
+			if exitsReceived == measurement.Len() {
+				break
+			}
+			continue
+		}
 		if err := conn.WriteJSON(ev); err != nil {
 			h.logger.Warn("failed to send websocket message", zap.Error(err))
 			break
@@ -150,7 +156,6 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 
 	// Close connection
 	conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Measurement completed."))
-	conn.Close()
 
 	// Cleanup
 	h.logger.Info("measurement stream ended", zap.String("measurement_id", measurementId))

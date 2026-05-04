@@ -128,7 +128,7 @@ func (d *Debuglet) StdoutChan() <-chan []byte {
 }
 
 func (d *Debuglet) CloseStdoutChan() {
-	if !d.closed {
+	if d.closed {
 		return
 	}
 	close(d.stdoutCh)
@@ -482,6 +482,7 @@ StreamLoop:
 		select {
 		case <-ctx.Done():
 			retErr = ctx.Err()
+			d.CloseStdoutChan()
 			break StreamLoop
 		case err := <-done:
 			d.flushWASIOutput()

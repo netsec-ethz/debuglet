@@ -67,7 +67,7 @@ func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
 		policy := assignment.GetPolicy()
 		executorID := session.ExecutorID
 
-		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), policy.GetDestinations())
+		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), assignment.GetAddresses())
 		if err != nil {
 			return err
 		}
@@ -94,9 +94,6 @@ func (d *Dispatcher) GetMeasurement(id string) *Measurement {
 }
 
 func (d *Dispatcher) RemoveMeasurement(id string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	m := d.GetMeasurement(id)
 	if m == nil {
 		return

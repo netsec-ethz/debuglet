@@ -20,10 +20,9 @@ type DebugletRequest struct {
 	Addresses  []string `json:"addresses"`
 
 	Policy struct {
-		FloorBW      int64    `json:"floor_bw"`
-		CeilBW       int64    `json:"ceil_bw"`
-		TimeoutMS    int64    `json:"timeout_ms"`
-		Destinations []string `json:"destinations"`
+		FloorBW   int64 `json:"floor_bw"`
+		CeilBW    int64 `json:"ceil_bw"`
+		TimeoutMS int64 `json:"timeout_ms"`
 	} `json:"policy"`
 }
 

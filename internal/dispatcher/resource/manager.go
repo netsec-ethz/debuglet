@@ -4,6 +4,7 @@ package resource
 import (
 	pb "debuglet/protocol"
 	"fmt"
+	"net"
 )
 
 // Keeps track of how much capacity is used/free for executors and destinations
@@ -36,6 +37,14 @@ func New() *DispatcherManager {
 	}
 }
 
+func stripPort(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return host
+}
+
 func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, destinations []string) error {
 	execCapacity, exists := d.executorCapacities[executorID]
 	if !exists {
@@ -47,6 +56,7 @@ func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, de
 	}
 
 	for _, dest := range destinations {
+		dest = stripPort(dest)
 		if err := d.destinations.CheckCapacity(dest, floor); err != nil {
 			return err
 		}
@@ -61,16 +71,17 @@ func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.Deb
 	if policy == nil {
 		return nil, fmt.Errorf("expected assignment policy, got nil")
 	}
-	destinations := policy.GetDestinations()
+	destinations := assignment.GetAddresses()
 
 	d.executorUsages[assignmentID] += policy.GetFloorBw()
 	d.originalFloors[assignmentID] = policy.GetFloorBw()
 	d.originalCeils[assignmentID] = policy.GetCeilBw()
-	d.originalDestinations[assignmentID] = destinations
 	d.IDtoExecutor[assignmentID] = executorID
 
 	// insert to dests
 	for i, dest := range destinations {
+		dest = stripPort(dest)
+		d.originalDestinations[assignmentID] = append(d.originalDestinations[assignmentID], dest)
 		if err := d.destinations.Insert(dest, assignmentID, policy.GetFloorBw(), policy.GetCeilBw()); err != nil {
 			// reset previous insertions and reject because of error
 			for _, prevDest := range destinations[:i] {
@@ -113,6 +124,7 @@ func (d *DispatcherManager) determineUpdates(destinations []string) map[string]*
 	var rawUpdates map[string][]*pb.DestinationUpdates_Update = make(map[string][]*pb.DestinationUpdates_Update)
 
 	for _, dest := range destinations {
+		dest = stripPort(dest)
 		adjusted, exists := d.adjustments[dest]
 		if !exists {
 			adjusted = make(map[string]int64)
