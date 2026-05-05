@@ -285,13 +285,13 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 		// ---- TCP socket API ----
 		"connect_tcp": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectTCP(env, args, d.addresses, d.logger, sockets)
+				return hostConnect(SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
 		"connect_tls": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectTLS(env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
@@ -303,26 +303,26 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 
 		"receive_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostReceiveTCPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"send_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendTCPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"close_tcp": d.wrapHostFn(in(i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostCloseTCP(env, args, d.logger, sockets)
+				return hostClose(env, args, d.logger, sockets)
 			},
 		),
 
 		// ---- IP socket API ----
 		"connect_ip": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectIP(env, args, d.addresses, d.logger, sockets)
+				return hostConnect(SocketTypeIP, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
@@ -334,19 +334,19 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 
 		"receive_ip_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostReceiveIPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"send_ip_data": d.wrapHostFn(in(i32, i32, i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendIPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"close_ip": d.wrapHostFn(in(i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostCloseIP(env, args, d.logger, sockets)
+				return hostClose(env, args, d.logger, sockets)
 			},
 		),
 

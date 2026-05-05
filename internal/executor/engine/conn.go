@@ -27,6 +27,7 @@ const (
 	SocketTypeTCP SocketType = iota
 	SocketTypeTLS
 	SocketTypeIP
+	SocketTypeUDP
 	// Future: SocketTypeUDP, SocketTypeRaw
 )
 
@@ -37,6 +38,20 @@ type Socket interface {
 	// Type returns the transport type of this socket.
 	Type() SocketType
 }
+
+type GenericSocket struct {
+	conn       net.Conn
+	socketType SocketType
+}
+
+func NewGenericSocket(conn net.Conn, socketType SocketType) *GenericSocket {
+	return &GenericSocket{conn: conn, socketType: socketType}
+}
+
+func (s *GenericSocket) Type() SocketType            { return s.socketType }
+func (s *GenericSocket) Read(b []byte) (int, error)  { return s.conn.Read(b) }
+func (s *GenericSocket) Write(b []byte) (int, error) { return s.conn.Write(b) }
+func (s *GenericSocket) Close() error                { return s.conn.Close() }
 
 // TCPSocket wraps a raw TCP connection.
 type TCPSocket struct {
