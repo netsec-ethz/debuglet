@@ -19,11 +19,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"time"
 
 	"debuglet/internal/executor/engine"
+	"debuglet/internal/executor/resource"
 	pb "debuglet/protocol"
 
 	"go.uber.org/zap"
@@ -43,6 +43,11 @@ type Executor struct {
 	debuglets map[string]*engine.Debuglet
 
 	stdoutWg sync.WaitGroup
+
+	// manager keeps track of the maximum bandwidth a destination is allowed to use on a destination-level
+	// and in total on the executor
+	manager *resource.LimitManager
+	// tracker keeps of how much bandwidth is actively being used by a debuglet
 }
 
 func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
@@ -86,6 +91,7 @@ func NewExecutor(cfg *Config, logger *zap.Logger) (*Executor, error) {
 		logger:    logger,
 		version:   cfg.Version,
 		debuglets: make(map[string]*engine.Debuglet),
+		manager:   resource.New(cfg.Capacity),
 	}, nil
 }
 
@@ -103,6 +109,12 @@ func (e *Executor) Start(ctx context.Context) error {
 			Version:    e.version,
 		}},
 	})
+	// Initialize executor to have a bandwidth capacity of 1gbit/s
+	controlStream.Send(&pb.ControlMessage{
+		Msg: &pb.ControlMessage_Resources{Resources: &pb.ExecutorResources{
+			BandwidthCapacity: 1_000_000_000,
+		}},
+	})
 
 	// Heartbeat loop
 	go func() {
@@ -113,8 +125,7 @@ func (e *Executor) Start(ctx context.Context) error {
 			case <-time.After(60 * time.Second):
 				controlStream.Send(&pb.ControlMessage{
 					Msg: &pb.ControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
-						ExecutorId: e.id,
-						Timestamp:  time.Now().UnixNano(),
+						Timestamp: time.Now().UnixNano(),
 					}},
 				})
 			}
@@ -137,6 +148,12 @@ func (e *Executor) Start(ctx context.Context) error {
 			e.logger.Info("Received assignment", zap.String("session_id", assign.SessionId))
 			// TODO: check error
 			go e.handleAssignment(ctx, assign)
+		} else if update := msg.GetUpdates(); update != nil {
+			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
+			for _, up := range update.GetUpdates() {
+				e.logger.Debug("Updating destination limit", zap.String("destination", up.GetDestination()), zap.String("assignment_id", up.GetAssignmentId()), zap.Int64("new_ceil", up.GetNewCeilBw()))
+				e.manager.SetDestinationLimit(up.GetAssignmentId(), up.GetDestination(), up.GetNewCeilBw())
+			}
 		}
 	}
 }
@@ -149,8 +166,9 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		return
 	}
 
+	e.logger.Debug("Locking")
 	e.mu.Lock()
-	db := engine.NewDebuglet(e.logger)
+	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId)
 	err = db.Init(assign.Code, assign.Addresses)
 	if err != nil {
 		e.mu.Unlock()
@@ -177,17 +195,29 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		for {
 			in, err := session.Recv()
 			if err == io.EOF {
-				log.Printf("[EXECUTOR] Session stream closed: %v", err)
+				e.logger.Error("Session stream closed", zap.Error(err))
 				return
 			}
 			if err != nil {
-				log.Printf("[EXECUTOR] Session recv error: %v", err)
+				e.logger.Error("Session recv error", zap.Error(err))
 				return
 			}
-			cmd := in.GetDispatcherCmd()
-			if cmd != nil && cmd.Type == pb.DispatcherCommandType_START_EXECUTION {
-				e.runDebuglet(assign, session)
+			if cmd := in.GetDispatcherCmd(); cmd == nil || cmd.Type != pb.DispatcherCommandType_START_EXECUTION {
+				continue
 			}
+			e.mu.Lock()
+			err = e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
+			e.mu.Unlock()
+			if err != nil {
+				e.logger.Error("Failed to register assignment", zap.Error(err))
+				return
+			}
+
+			e.runDebuglet(assign, session)
+
+			e.mu.Lock()
+			e.manager.RemoveAssignment(assign.SessionId)
+			e.mu.Unlock()
 		}
 	}()
 }

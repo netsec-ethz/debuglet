@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 
 	"go.uber.org/zap"
@@ -30,14 +31,20 @@ func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	flag.Parse()
 
-	logger, _ := zap.NewProduction()
-	defer logger.Sync()
-
 	cfg, err := executor.LoadConfig(*cfgPath)
 	if err != nil {
-		logger.Fatal("Failed to load executor config", zap.Error(err))
-		return
+		panic(fmt.Sprintf("Failed to load executor config: %v", err))
 	}
+
+	logLevel, err := zap.ParseAtomicLevel(cfg.LogLevel)
+	if err != nil {
+		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	logCfg := zap.NewProductionConfig()
+	logCfg.Level = logLevel
+	logCfg.OutputPaths = []string{"stdout"}
+	logger, _ := logCfg.Build()
+	defer logger.Sync()
 
 	var envFlags scionFlag.SCIONEnvironment
 	if err := envFlags.LoadExternalVars(); err != nil {

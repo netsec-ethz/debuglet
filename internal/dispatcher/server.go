@@ -16,21 +16,22 @@ package dispatcher
 
 import (
 	"io"
-	"log"
 
 	pb "debuglet/protocol"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type DispatcherServer struct {
 	pb.UnimplementedDebugletDispatcherServer
-	manager *Dispatcher
+	dispatcher *Dispatcher
+	logger     *zap.Logger
 }
 
-func NewDispatcherServer(m *Dispatcher) *DispatcherServer {
-	return &DispatcherServer{manager: m}
+func NewDispatcherServer(m *Dispatcher, logger *zap.Logger) *DispatcherServer {
+	return &DispatcherServer{dispatcher: m, logger: logger}
 }
 
 // ControlStream handles executor registration, heartbeat, and task assignment
@@ -41,8 +42,8 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 	go func() {
 		<-ctx.Done()
 		if executorID != "" {
-			s.manager.RemoveExecutor(executorID)
-			log.Printf("[DISPATCHER] Executor %s disconnected", executorID)
+			s.dispatcher.RemoveExecutor(executorID)
+			s.logger.Info("Executor disconnected", zap.String("executor_id", executorID))
 		}
 	}()
 
@@ -54,18 +55,18 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 		if err != nil {
 			st := status.Convert(err)
 			if st.Code() == codes.Canceled {
-				log.Printf("[DISPATCHER] Executor %s disconnected (context canceled)", executorID)
+				s.logger.Info("Executor disconnected (context canceled)", zap.String("executor_id", executorID))
 				return nil
 			}
-			log.Printf("[DISPATCHER] ControlStream error: %v", err)
+			s.logger.Error("ControlStream error", zap.Error(err))
 			return err
 		}
 
 		switch msg := in.Msg.(type) {
 		case *pb.ControlMessage_Hello:
 			executorID = msg.Hello.ExecutorId
-			s.manager.RegisterExecutor(executorID)
-			log.Printf("[DISPATCHER] Executor %s connected", executorID)
+			s.dispatcher.RegisterExecutor(executorID)
+			s.logger.Info("Executor connected", zap.String("executor_id", executorID))
 
 			// Optional acknowledgment
 			stream.Send(&pb.ControlMessage{
@@ -74,12 +75,16 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 
 			// Start assignment push loop
 			go func(id string) {
-				exec := s.manager.executors[id]
+				exec := s.dispatcher.executors[id]
 				for {
 					select {
 					case assign := <-exec.Assignments:
 						stream.Send(&pb.ControlMessage{
 							Msg: &pb.ControlMessage_Assignment{Assignment: assign},
+						})
+					case updates := <-exec.Updates:
+						stream.Send(&pb.ControlMessage{
+							Msg: &pb.ControlMessage_Updates{Updates: updates},
 						})
 					case <-ctx.Done():
 						return
@@ -88,11 +93,17 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 			}(executorID)
 
 		case *pb.ControlMessage_Heartbeat:
-			log.Printf("[DISPATCHER] Heartbeat from %s at %d", msg.Heartbeat.ExecutorId, msg.Heartbeat.Timestamp)
-			s.manager.SetExecutor(msg.Heartbeat.ExecutorId, msg.Heartbeat.Timestamp)
+			s.logger.Debug("Heartbeat received", zap.String("executor_id", executorID), zap.Int64("timestamp", msg.Heartbeat.Timestamp))
+			s.dispatcher.SetExecutor(executorID, msg.Heartbeat.Timestamp)
+
+		case *pb.ControlMessage_Resources:
+			if bw := msg.Resources.GetBandwidthCapacity(); bw > 0 {
+				s.logger.Debug("Updating executor bandwidth capacity", zap.String("executor_id", executorID), zap.Int64("new_bandwidth", bw))
+				s.dispatcher.SetExecutorCapacity(executorID, bw)
+			}
 
 		default:
-			log.Printf("[DISPATCHER] Unknown control message")
+			s.logger.Warn("Unknown control message")
 		}
 	}
 }
@@ -104,11 +115,11 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 	for {
 		in, err := stream.Recv()
 		if err == io.EOF {
-			log.Printf("[SESSION] Stream closed: %v", err)
+			s.logger.Info("Stream closed", zap.Error(err))
 			return nil
 		}
 		if err != nil {
-			log.Printf("[SESSION] Error: %v", err)
+			s.logger.Error("Stream error", zap.Error(err))
 			return err
 		}
 
@@ -116,14 +127,14 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 		case *pb.SessionMessage_Ready:
 			sessionId := msg.Ready.SessionId
 			measurementId := msg.Ready.MeasurementId
-			measurement = s.manager.GetMeasurement(measurementId)
+			measurement = s.dispatcher.GetMeasurement(measurementId)
 			if measurement == nil {
-				log.Printf("[SESSION] Measurement %s not found for session %s", measurementId, sessionId)
+				s.logger.Warn("Measurement not found", zap.String("measurement_id", measurementId), zap.String("session_id", sessionId))
 				return status.Errorf(codes.NotFound, "measurement %s not found", measurementId)
 			}
 			session = measurement.GetSession(sessionId)
 			if session == nil {
-				log.Printf("[SESSION] Session %s not found in measurement %s", sessionId, measurementId)
+				s.logger.Warn("Session not found in measurement", zap.String("session_id", sessionId), zap.String("measurement_id", measurementId))
 				return status.Errorf(codes.NotFound, "session %s not found", sessionId)
 			}
 			session.Register(stream)
@@ -135,11 +146,11 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 				ExecutorId:    msg.Ready.ExecutorId,
 				ScionAddr:     msg.Ready.ScionAddr,
 			}
-			log.Printf("[SESSION] Executor %s ready for session %s", msg.Ready.ExecutorId, msg.Ready.SessionId)
+			s.logger.Info("Executor ready for session", zap.String("executor_id", msg.Ready.ExecutorId), zap.String("session_id", msg.Ready.SessionId))
 
 		case *pb.SessionMessage_Stdout:
 			stdout := string(msg.Stdout.Stdout)
-			log.Printf("[SESSION] STDOUT from %s: %s", msg.Stdout.SessionId, stdout)
+			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId))
 			measurement.EventChan <- StdoutEvent{
 				Event:     "stdout",
 				SessionId: msg.Stdout.SessionId,
@@ -147,11 +158,11 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 			}
 
 		case *pb.SessionMessage_Exit:
-			log.Printf("[SESSION] Session %s finished with code %d", msg.Exit.SessionId, msg.Exit.ExitCode)
+			s.logger.Info("Session finished", zap.String("session_id", msg.Exit.GetSessionId()), zap.Int32("exit_code", msg.Exit.GetExitCode()))
+			measurement.EventChan <- ExitEvent{}
 			return nil
-
 		default:
-			log.Printf("[SESSION] Unknown message type")
+			s.logger.Warn("Unknown session message type")
 		}
 	}
 }

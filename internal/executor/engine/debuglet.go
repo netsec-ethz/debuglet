@@ -16,6 +16,7 @@ package engine
 
 import (
 	"context"
+	"debuglet/internal/executor/resource"
 	"debuglet/internal/platform"
 	"encoding/binary"
 	"fmt"
@@ -47,12 +48,19 @@ type hostFunction func(environment interface{}, args []wasmer.Value) ([]wasmer.V
 // HostEnvironment carries the execution context for the current debuglet
 // session. It is passed by value to each host function.
 type HostEnvironment struct {
-	ctx context.Context
+	ctx          context.Context
+	sessionID    string
+	tracker      *resource.UsageTracker
+	manager      *resource.LimitManager
+	handleToAddr map[int32]string
 }
 
 // checkContextExpired returns a descriptive error if the HostEnvironment's
 // context has been cancelled or has exceeded its deadline.
-func checkContextExpired(env HostEnvironment) error {
+func checkContextExpired(env *HostEnvironment) error {
+	if env == nil {
+		return nil
+	}
 	select {
 	case <-env.ctx.Done():
 	default:
@@ -84,18 +92,19 @@ type Debuglet struct {
 	addresses []string
 
 	started bool
-	hostEnv HostEnvironment
+	hostEnv *HostEnvironment
 
 	createdAt time.Time
 	mu        sync.Mutex
 
 	// stdoutCh buffers WASI stdout/stderr chunks while the debuglet runs.
 	stdoutCh chan []byte
+	closed   bool
 }
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger) *Debuglet {
+func NewDebuglet(logger *zap.Logger, manager *resource.LimitManager, sessionID string) *Debuglet {
 	eng := wasmer.NewEngine()
 	return &Debuglet{
 		logger:    logger.Sugar(),
@@ -103,6 +112,12 @@ func NewDebuglet(logger *zap.Logger) *Debuglet {
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
+		hostEnv: &HostEnvironment{
+			tracker:      resource.NewUsageTracker(),
+			manager:      manager,
+			sessionID:    sessionID,
+			handleToAddr: make(map[int32]string),
+		},
 	}
 }
 
@@ -112,11 +127,19 @@ func (d *Debuglet) StdoutChan() <-chan []byte {
 	return d.stdoutCh
 }
 
+func (d *Debuglet) CloseStdoutChan() {
+	if d.closed {
+		return
+	}
+	close(d.stdoutCh)
+	d.closed = true
+}
+
 // Init starts the network servers and compiles and instantiates the WASM
 // module. It must be called exactly once before Run.
 func (d *Debuglet) Init(wasmBytes []byte, addresses []string) error {
 	if err := d.startServers(); err != nil {
-		return err
+		d.logger.Warnw("failed to start up server(s)", "err", err)
 	}
 	if err := d.createWASMInstance(wasmBytes); err != nil {
 		return err
@@ -128,6 +151,9 @@ func (d *Debuglet) Init(wasmBytes []byte, addresses []string) error {
 // GetSCIONAddr returns the local SCION address of the server listener started
 // during Init.
 func (d *Debuglet) GetSCIONAddr() string {
+	if d.scionServer == nil {
+		return ""
+	}
 	return d.scionServer.LocalAddr().String()
 }
 
@@ -137,6 +163,9 @@ func (d *Debuglet) GetSCIONAddr() string {
 func (d *Debuglet) startServers() error {
 	d.logger.Debugw("startServers: starting")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	// -- Placeholder for future UDP server --
 	// udpServer, err := net.ListenPacket("udp", ":0")
 
@@ -144,7 +173,7 @@ func (d *Debuglet) startServers() error {
 	// addr, err := net.ResolveTCPAddr("tcp", ":0")
 	// tcpServer, err := net.ListenTCP("tcp", addr)
 
-	scionHost, err := platform.GetScionAddr()
+	scionHost, err := platform.GetScionAddr(ctx)
 	if err != nil {
 		return fmt.Errorf("startServers: failed to get SCION address: %w", err)
 	}
@@ -158,6 +187,7 @@ func (d *Debuglet) startServers() error {
 		return fmt.Errorf("startServers: failed to set SCION listen addr: %w", err)
 	}
 
+	d.logger.Debug("startServers: starting scion UDP listener")
 	scionServer, err := pan.ListenUDP(context.Background(), listen.Get(), nil)
 	if err != nil {
 		return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
@@ -177,6 +207,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 		return fmt.Errorf("createWASMInstance: bytecode is probably malformed: %w", err)
 	}
 
+	d.logger.Debug("producing new debuglet WasiEnvironment")
 	wasiEnv, err := wasmer.NewWasiStateBuilder("debuglet").
 		CaptureStdout().
 		CaptureStderr().
@@ -186,6 +217,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	}
 	d.wasiEnv = *wasiEnv
 
+	d.logger.Debug("generating new debuglet import object")
 	importObject, err := d.wasiEnv.GenerateImportObject(d.store, module)
 	if err != nil {
 		return fmt.Errorf("createWASMInstance: generate import object failed: %w", err)
@@ -196,6 +228,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	socketRegistry := &SocketRegistry{}
 	var lastReceived net.Addr
 
+	d.logger.Debug("registering host functions for WASM")
 	d.registerHostFunctions(importObject, scionConns, socketRegistry, &lastReceived)
 
 	instance, err := wasmer.NewInstance(module, importObject)
@@ -209,10 +242,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 
 // wrapHostFn wraps a hostFunction with the session's HostEnvironment and
 // converts it into a *wasmer.Function ready for registration.
-func (d *Debuglet) wrapHostFn(
-	input, output []*wasmer.ValueType,
-	fn hostFunction,
-) *wasmer.Function {
+func (d *Debuglet) wrapHostFn(input, output []*wasmer.ValueType, fn hostFunction) *wasmer.Function {
 	return wasmer.NewFunctionWithEnvironment(
 		d.store,
 		wasmer.NewFunctionType(input, output),
@@ -224,12 +254,7 @@ func (d *Debuglet) wrapHostFn(
 // registerHostFunctions populates the importObject with all host functions
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
-func (d *Debuglet) registerHostFunctions(
-	importObject *wasmer.ImportObject,
-	scionConns *SCIONConnRegistry,
-	sockets *SocketRegistry,
-	lastReceived *net.Addr,
-) {
+func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scionConns *SCIONConnRegistry, sockets *SocketRegistry, lastReceived *net.Addr) {
 	i32 := wasmer.I32
 	i64 := wasmer.I64
 	in := wasmer.NewValueTypes
@@ -271,7 +296,7 @@ func (d *Debuglet) registerHostFunctions(
 			},
 		),
 
-		"receive_tcp_data": d.wrapHostFn(in(i32, i32), out(i32),
+		"receive_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				return hostReceiveTCPData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
@@ -386,7 +411,7 @@ func (d *Debuglet) Close() {
 	if d.wasmerInstance != nil {
 		d.wasmerInstance.Close()
 	}
-	close(d.stdoutCh)
+	d.CloseStdoutChan()
 }
 
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
@@ -394,6 +419,15 @@ func (d *Debuglet) Close() {
 // result buffer.
 func (d *Debuglet) Run() ([]byte, error) {
 	instance := d.wasmerInstance
+
+	// Optional initialization
+	initFunc, err := instance.Exports.GetFunction("_initialize")
+	if err == nil {
+		if _, initErr := initFunc(); initErr != nil {
+			d.logger.Warnw("Run: initialization error", "err", initErr)
+			return nil, fmt.Errorf("failed to initialize Go runtime: %w", initErr)
+		}
+	}
 
 	runFunc, err := instance.Exports.GetFunction("run_debuglet")
 	if err != nil {
@@ -403,7 +437,7 @@ func (d *Debuglet) Run() ([]byte, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultExecTimeout)
 	defer cancel()
-	d.hostEnv = HostEnvironment{ctx}
+	d.hostEnv.ctx = ctx
 
 	done := make(chan error, 1)
 	var result []byte
@@ -416,6 +450,7 @@ func (d *Debuglet) Run() ([]byte, error) {
 			}
 		}()
 
+		d.logger.Debug("starting execution")
 		if _, runErr := runFunc(); runErr != nil {
 			d.logger.Warnw("Run: execution error", "err", runErr)
 			done <- fmt.Errorf("error running debuglet: %w", runErr)
@@ -447,10 +482,12 @@ StreamLoop:
 		select {
 		case <-ctx.Done():
 			retErr = ctx.Err()
+			d.CloseStdoutChan()
 			break StreamLoop
 		case err := <-done:
 			d.flushWASIOutput()
 			retErr = err
+			d.CloseStdoutChan()
 			break StreamLoop
 		case <-ticker.C:
 			// Flush available stdout/stderr — do NOT break the loop here.

@@ -1,0 +1,7 @@
+[tools]
+go = "1.24.13"
+"go:github.com/aarzilli/gdlv" = "latest"
+"go:github.com/go-delve/delve/cmd/dlv" = "latest"
+protoc = "34.0"
+protoc-gen-go = "1.36.11"
+protoc-gen-go-grpc = "1.6.1"
