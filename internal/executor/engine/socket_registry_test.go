@@ -154,10 +154,3 @@ func TestSocketRegistryCloseAllIdempotent(t *testing.T) {
 	reg.CloseAll()
 	reg.CloseAll() // second call must not panic or error
 }
-
-// TestSocketTypesImplementInterface ensures both concrete socket types satisfy
-// the Socket interface at compile time (caught by the compiler, not at runtime).
-var (
-	_ Socket = (*TCPSocket)(nil)
-	_ Socket = (*TLSSocket)(nil)
-)

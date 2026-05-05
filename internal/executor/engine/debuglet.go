@@ -320,31 +320,31 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 		),
 
 		// ---- IP socket API ----
-		"connect_ip": d.wrapHostFn(in(i32), out(i32),
+		"connect_icmp4": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeIP, env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
-		"accept_ip": d.wrapHostFn(in(), out(i32),
+		"accept_icmp4": d.wrapHostFn(in(), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				return hostAcceptIP(env, args, d.ipServer, d.logger, sockets)
 			},
 		),
 
-		"receive_ip_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
+		"receive_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
-		"send_ip_data": d.wrapHostFn(in(i32, i32, i32), out(),
+		"send_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
-		"close_ip": d.wrapHostFn(in(i32), out(),
+		"close_icmp4": d.wrapHostFn(in(i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				return hostClose(env, args, d.logger, sockets)
 			},

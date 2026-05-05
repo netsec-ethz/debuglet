@@ -98,8 +98,8 @@ func hostConnect(
 	switch socketType {
 	case SocketTypeTLS:
 		network = "tcp"
-	case SocketTypeIP:
-		network = "ip"
+	case SocketTypeICMP4:
+		network = "ip4:icmp"
 	case SocketTypeTCP:
 		network = "tcp"
 	case SocketTypeUDP:
@@ -150,7 +150,7 @@ func hostAcceptTCP(
 		return nil, fmt.Errorf("accept_tcp: %w", err)
 	}
 
-	handle := registry.Add(NewTCPSocket(conn))
+	handle := registry.Add(NewGenericSocket(conn, SocketTypeTCP))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
@@ -202,7 +202,7 @@ func hostReceiveData(
 
 // hostSendData writes args[1] bytes starting at offset args[2] from the WASM
 // tcp_send_buffer to the socket at args[0].
-// WASM key: "send_tcp_data", "send_ip_data"
+// WASM key: "send_tcp_data", "send_icmp4_data"
 func hostSendData(
 	environment interface{},
 	args []wasmer.Value,
@@ -298,7 +298,7 @@ func hostAcceptIP(
 		return nil, fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn)
 	}
 
-	handle := registry.Add(NewIPSocket(ipConn))
+	handle := registry.Add(NewGenericSocket(ipConn, SocketTypeICMP4))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
