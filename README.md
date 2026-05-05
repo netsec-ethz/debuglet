@@ -28,9 +28,9 @@ make executor # or make e
 #### Generate a WASM binary
 
 ```bash
-make wasm SAMPLE_DIR=local/wasm-samples/helloworld
+make wasm SAMPLE_DIR=local/wasm_samples/helloworld
 # or
-make wasm SAMPLE_DIR=local/wasm-samples/send_tcp
+make wasm SAMPLE_DIR=local/wasm_samples/send_tcp
 ```
 
 #### Build new proto files
