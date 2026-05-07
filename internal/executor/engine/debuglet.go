@@ -87,6 +87,7 @@ type Debuglet struct {
 	scionServer pan.ListenConn
 	udpServer   net.PacketConn
 	tcpServer   *net.TCPListener
+	ipServer    net.Listener
 
 	// addresses is the list of peer addresses made available to the WASM module.
 	addresses []string
@@ -172,6 +173,10 @@ func (d *Debuglet) startServers() error {
 	// -- Placeholder for future TCP server --
 	// addr, err := net.ResolveTCPAddr("tcp", ":0")
 	// tcpServer, err := net.ListenTCP("tcp", addr)
+
+	// -- Placeholder for future IP server --
+	// ipAddr, err := net.ResolveIPAddr("ip", ":0")
+	// ipServer, err := net.ListenIP("ip", ipAddr)
 
 	scionHost, err := platform.GetScionAddr(ctx)
 	if err != nil {
@@ -277,16 +282,20 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 			hostWaitUntil,
 		),
 
+		"sleep": d.wrapHostFn(in(i64), out(),
+			hostSleep,
+		),
+
 		// ---- TCP socket API ----
 		"connect_tcp": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectTCP(env, args, d.addresses, d.logger, sockets)
+				return hostConnect(SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
 		"connect_tls": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectTLS(env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
@@ -298,19 +307,50 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 
 		"receive_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostReceiveTCPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"send_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendTCPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"close_tcp": d.wrapHostFn(in(i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostCloseTCP(env, args, d.logger, sockets)
+				return hostClose(env, args, d.logger, sockets)
+			},
+		),
+
+		// ---- IP socket API ----
+		"connect_icmp4": d.wrapHostFn(in(i32), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostConnect(SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil)
+			},
+		),
+
+		"accept_icmp4": d.wrapHostFn(in(), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostAcceptIP(env, args, d.ipServer, d.logger, sockets)
+			},
+		),
+
+		"receive_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
+			},
+		),
+
+		"send_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
+			},
+		),
+
+		"close_icmp4": d.wrapHostFn(in(i32), out(),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostClose(env, args, d.logger, sockets)
 			},
 		),
 
@@ -407,6 +447,9 @@ func (d *Debuglet) Close() {
 	}
 	if d.tcpServer != nil {
 		_ = d.tcpServer.Close()
+	}
+	if d.ipServer != nil {
+		_ = d.ipServer.Close()
 	}
 	if d.wasmerInstance != nil {
 		d.wasmerInstance.Close()

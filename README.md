@@ -28,9 +28,9 @@ make executor # or make e
 #### Generate a WASM binary
 
 ```bash
-make wasm SAMPLE_DIR=local/wasm-samples/helloworld
+make wasm SAMPLE_DIR=local/wasm_samples/helloworld
 # or
-make wasm SAMPLE_DIR=local/wasm-samples/send_tcp
+make wasm SAMPLE_DIR=local/wasm_samples/send_tcp
 ```
 
 #### Build new proto files
@@ -39,13 +39,21 @@ make wasm SAMPLE_DIR=local/wasm-samples/send_tcp
 make proto
 ```
 
-### SCION
-
-SCION is a soft-dependency for measurements. If a measurement doesn't try to call any SCION-specific functions, you can simply let the executor time-out when it tries to establish a SCION connection.
-
 ### Submitting measurements
 
 Use the debuglet-dashboard to submit measurements.
+
+### Optional Requirements
+
+The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.
+
+#### ICMP
+
+For icmp to work, the executor has to be run as root.
+
+#### SCION
+
+SCION is a soft-dependency for measurements. If a measurement doesn't try to call any SCION-specific functions, you can simply let the executor time-out when it tries to establish a SCION connection.
 
 ---
 
