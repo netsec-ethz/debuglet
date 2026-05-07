@@ -77,6 +77,27 @@ func hostWaitUntil(environment interface{}, args []wasmer.Value) ([]wasmer.Value
 	return []wasmer.Value{}, nil
 }
 
+// hostSleep blocks for the given Unix nanosecond amount of time, or until the
+// context is cancelled.
+// WASM key: "sleep"
+func hostSleep(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-time.After(time.Nanosecond * time.Duration(args[0].I64())):
+	case <-env.ctx.Done():
+		return nil, checkContextExpired(env)
+	}
+	return []wasmer.Value{}, nil
+}
+
+// =============================================================================
+// Generic socket API
+// =============================================================================
+
 // hostConnect dials a IP/UDP/TCP(+TLS) connection to addresses[args[0]] and registers
 // it in the SocketRegistry. Returns the socket handle as I32.
 // WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
@@ -126,31 +147,6 @@ func hostConnect(
 	socket := NewGenericSocket(conn, socketType)
 	handle := registry.Add(socket)
 	env.handleToAddr[handle] = addr
-	return []wasmer.Value{wasmer.NewI32(handle)}, nil
-}
-
-// hostAcceptTCP accepts one incoming TCP connection on the server and registers
-// it in the SocketRegistry. Returns the socket handle as I32.
-// WASM key: "accept_tcp"
-func hostAcceptTCP(
-	environment interface{},
-	args []wasmer.Value,
-	tcpServer *net.TCPListener,
-	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
-) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
-	if err := checkContextExpired(env); err != nil {
-		return nil, err
-	}
-
-	conn, err := tcpServer.AcceptTCP()
-	if err != nil {
-		sugar.Warnw("hostAcceptTCP: failed to accept", "err", err)
-		return nil, fmt.Errorf("accept_tcp: %w", err)
-	}
-
-	handle := registry.Add(NewGenericSocket(conn, SocketTypeTCP))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
@@ -264,6 +260,35 @@ func hostClose(
 		return nil, fmt.Errorf("close_tcp: %w", err)
 	}
 	return []wasmer.Value{}, nil
+}
+
+// =============================================================================
+// TCP socket API
+// =============================================================================
+
+// hostAcceptTCP accepts one incoming TCP connection on the server and registers
+// it in the SocketRegistry. Returns the socket handle as I32.
+// WASM key: "accept_tcp"
+func hostAcceptTCP(
+	environment interface{},
+	args []wasmer.Value,
+	tcpServer *net.TCPListener,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	conn, err := tcpServer.AcceptTCP()
+	if err != nil {
+		sugar.Warnw("hostAcceptTCP: failed to accept", "err", err)
+		return nil, fmt.Errorf("accept_tcp: %w", err)
+	}
+
+	handle := registry.Add(NewGenericSocket(conn, SocketTypeTCP))
+	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
 // =============================================================================

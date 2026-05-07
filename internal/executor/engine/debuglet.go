@@ -282,6 +282,10 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 			hostWaitUntil,
 		),
 
+		"sleep": d.wrapHostFn(in(i64), out(),
+			hostSleep,
+		),
+
 		// ---- TCP socket API ----
 		"connect_tcp": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {

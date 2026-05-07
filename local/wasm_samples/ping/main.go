@@ -9,6 +9,9 @@ import (
 	"unsafe"
 )
 
+//go:wasmimport env sleep
+func sleep(ts int64)
+
 //go:wasmimport env connect_icmp4
 func connect_icmp4(addrPtr int32) int32
 
@@ -39,7 +42,7 @@ func run_debuglet() int32 {
 		if err != nil {
 			panic(err)
 		}
-		time.Sleep(time.Second - min(time.Second, taken))
+		sleep(int64(time.Second - min(time.Second, taken)))
 	}
 
 	return 0
