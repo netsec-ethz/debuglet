@@ -288,13 +288,24 @@ func BenchmarkReceive(b *testing.B) {
 	registry := MockSocketRegistry{socketType: SocketTypeTCP}
 	instance := createDummyWasmerInstance(b)
 
-	b.ResetTimer()
-	for b.Loop() {
-		value, err := hostReceiveData(env, args, sugar, &registry, instance)
-		if value == nil || err != nil {
-			b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+	b.Run("RatelimitOn", func(b *testing.B) {
+		disableRatelimit = false
+		for b.Loop() {
+			value, err := hostReceiveData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
 		}
-	}
+	})
+	b.Run("RatelimitOff", func(b *testing.B) {
+		disableRatelimit = true
+		for b.Loop() {
+			value, err := hostReceiveData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
 }
 
 func BenchmarkSend(b *testing.B) {
@@ -315,11 +326,23 @@ func BenchmarkSend(b *testing.B) {
 	registry := MockSocketRegistry{socketType: SocketTypeTCP}
 	instance := createDummyWasmerInstance(b)
 
-	b.ResetTimer()
-	for b.Loop() {
-		value, err := hostSendData(env, args, sugar, &registry, instance)
-		if value == nil || err != nil {
-			b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+	b.Run("RatelimitOn", func(b *testing.B) {
+		disableRatelimit = false
+		for b.Loop() {
+			value, err := hostSendData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
 		}
-	}
+	})
+	b.Run("RatelimitOff", func(b *testing.B) {
+		disableRatelimit = true
+		for b.Loop() {
+			value, err := hostSendData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+
 }

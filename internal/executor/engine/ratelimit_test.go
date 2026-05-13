@@ -26,7 +26,7 @@ func BenchmarkRatelimit(b *testing.B) {
 		env.manager.Fairshare()
 
 		return func(b *testing.B) {
-			b.ResetTimer()
+			disableRatelimit = false
 			for b.Loop() {
 				if err := ratelimit(env, direction, 0, 1, sugar); err != nil {
 					b.Fatalf("Expected no error, got %v", err)

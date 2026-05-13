@@ -54,6 +54,11 @@ test:
 coverage:
 	$(GO) test -coverprofile .testCoverage.txt $$($(GO) list ./... | grep -v /local/)
 
+benchmark:
+	mkdir -p benchmarks
+	$(GO) test $$($(GO) list ./... | grep -v /local/) -bench=. -count=10 -benchtime=5s | tee benchmarks/bench.txt
+	benchstat benchmarks/bench.txt
+
 # --------------------------------------------------------------------
 # Docker orchestration
 # --------------------------------------------------------------------
