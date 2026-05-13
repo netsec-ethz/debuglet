@@ -9,13 +9,13 @@ import (
 func TestRegisterSimple(t *testing.T) {
 	e := resource.New(1000)
 
-	fairshareReq, err := e.RegisterAssignment("1", 100, 1000)
-	if fairshareReq || err != nil {
-		t.Fatalf("Expected no fairshare or error, got fairshare=%v, err=%v", fairshareReq, err)
+	err := e.RegisterAssignment("1", 100, 1000)
+	if err != nil {
+		t.Fatalf("Expected no fairshare or error, got err=%v", err)
 	}
-	fairshareReq, err = e.RegisterAssignment("2", 300, 1000)
-	if !fairshareReq || err != nil {
-		t.Fatalf("Expected fairshare and no error, got fairshare=%v, err=%v", fairshareReq, err)
+	err = e.RegisterAssignment("2", 300, 1000)
+	if err != nil {
+		t.Fatalf("Expected fairshare and no error, got err=%v", err)
 	}
 
 	fairshares := maps.Collect(e.Fairshare())
@@ -34,14 +34,14 @@ func TestRegisterSimple(t *testing.T) {
 
 func TestMinimalUpdates(t *testing.T) {
 	e := resource.New(1000)
-	if req, err := e.RegisterAssignment("1", 100, 100); req || err != nil {
-		t.Fatalf("Expected no fairshare or error, got fairshare=%v, err=%v", req, err)
+	if err := e.RegisterAssignment("1", 100, 100); err != nil {
+		t.Fatalf("Expected no fairshare or error, got err=%v", err)
 	}
-	if req, err := e.RegisterAssignment("2", 100, 500); req || err != nil {
-		t.Fatalf("Expected no fairshare or error, got fairshare=%v, err=%v", req, err)
+	if err := e.RegisterAssignment("2", 100, 500); err != nil {
+		t.Fatalf("Expected no fairshare or error, got err=%v", err)
 	}
-	if req, err := e.RegisterAssignment("3", 100, 500); !req || err != nil {
-		t.Fatalf("Expected fairshare and no error, got fairshare=%v, err=%v", req, err)
+	if err := e.RegisterAssignment("3", 100, 500); err != nil {
+		t.Fatalf("Expected fairshare and no error, got err=%v", err)
 	}
 	fairshares := maps.Collect(e.Fairshare())
 	if len(fairshares) != 2 {
@@ -52,13 +52,13 @@ func TestMinimalUpdates(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	e := resource.New(1000)
-	if req, err := e.RegisterAssignment("1", 100, 100); req || err != nil {
-		t.Fatalf("Expected no fairshare or error, got fairshare=%v, err=%v", req, err)
+	if err := e.RegisterAssignment("1", 100, 100); err != nil {
+		t.Fatalf("Expected no fairshare or error, got err=%v", err)
 	}
 	if req := e.RemoveAssignment("1"); req {
 		t.Fatalf("Expected no fairshare, got fairshare=%v", req)
 	}
-	if req, err := e.RegisterAssignment("2", 1000, 1000); req || err != nil {
-		t.Fatalf("Expected no fairshare or error, got fairshare=%v, err=%v", req, err)
+	if err := e.RegisterAssignment("2", 1000, 1000); err != nil {
+		t.Fatalf("Expected no fairshare or error, got err=%v", err)
 	}
 }

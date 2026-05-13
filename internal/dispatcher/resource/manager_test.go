@@ -33,10 +33,10 @@ func TestRegisterSingle(t *testing.T) {
 
 	assignment := &pb.DebugletAssignment{
 		SessionId: "session-1",
+		Addresses: []string{"dest-1"},
 		Policy: &pb.DebugletAssignment_Policy{
-			FloorBw:      100_000,
-			CeilBw:       500_000,
-			Destinations: []string{"dest-1"},
+			FloorBw: 100_000,
+			CeilBw:  500_000,
 		},
 	}
 
@@ -55,10 +55,10 @@ func TestMultipleDestinations(t *testing.T) {
 
 	assignment := &pb.DebugletAssignment{
 		SessionId: "session-2",
+		Addresses: []string{"dest-1", "dest-2", "dest-3"},
 		Policy: &pb.DebugletAssignment_Policy{
-			FloorBw:      200_000,
-			CeilBw:       800_000,
-			Destinations: []string{"dest-1", "dest-2", "dest-3"},
+			FloorBw: 200_000,
+			CeilBw:  800_000,
 		},
 	}
 
@@ -78,7 +78,8 @@ func TestUpdates(t *testing.T) {
 
 	job1 := &pb.DebugletAssignment{
 		SessionId: "session-1",
-		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000, Destinations: []string{"dest-1"}},
+		Addresses: []string{"dest-1"},
+		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000},
 	}
 	updates, err := rm.RegisterPolicy("exec-1", job1)
 	if err != nil || len(updates) > 0 {
@@ -87,7 +88,8 @@ func TestUpdates(t *testing.T) {
 
 	job2 := &pb.DebugletAssignment{
 		SessionId: "session-2",
-		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000, Destinations: []string{"dest-1"}},
+		Addresses: []string{"dest-1"},
+		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000},
 	}
 	updates, err = rm.RegisterPolicy("exec-1", job2)
 	if err != nil {
@@ -108,9 +110,9 @@ func TestUpdates(t *testing.T) {
 func TestMinimalUpdates(t *testing.T) {
 	rm := resource.New()
 
-	job1 := &pb.DebugletAssignment{SessionId: "session-1", Policy: &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000, Destinations: []string{"dest-1"}}}
-	job2 := &pb.DebugletAssignment{SessionId: "session-2", Policy: &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000, Destinations: []string{"dest-1"}}}
-	job3 := &pb.DebugletAssignment{SessionId: "session-3", Policy: &pb.DebugletAssignment_Policy{FloorBw: 100_000_000, CeilBw: 100_000_000, Destinations: []string{"dest-1"}}}
+	job1 := &pb.DebugletAssignment{SessionId: "session-1", Addresses: []string{"dest-1"}, Policy: &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000}}
+	job2 := &pb.DebugletAssignment{SessionId: "session-2", Addresses: []string{"dest-1"}, Policy: &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000}}
+	job3 := &pb.DebugletAssignment{SessionId: "session-3", Addresses: []string{"dest-1"}, Policy: &pb.DebugletAssignment_Policy{FloorBw: 100_000_000, CeilBw: 100_000_000}}
 
 	_, err := rm.RegisterPolicy("exec-1", job1)
 	if err != nil {
@@ -153,7 +155,8 @@ func TestRemoveAssignment(t *testing.T) {
 
 	job1 := &pb.DebugletAssignment{
 		SessionId: "session-1",
-		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000, Destinations: []string{"dest-1"}},
+		Addresses: []string{"dest-1"},
+		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000},
 	}
 	updates, err := rm.RegisterPolicy("exec-1", job1)
 	if err != nil || len(updates) > 0 {
@@ -167,7 +170,8 @@ func TestRemoveAssignment(t *testing.T) {
 
 	job2 := &pb.DebugletAssignment{
 		SessionId: "session-2",
-		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000, Destinations: []string{"dest-1"}},
+		Addresses: []string{"dest-1"},
+		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000},
 	}
 	updates, err = rm.RegisterPolicy("exec-1", job2)
 	if err != nil || len(updates) > 0 {

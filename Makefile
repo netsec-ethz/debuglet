@@ -5,7 +5,7 @@ DISPATCHER_BINARY = debuglet-dispatcher
 # Go command
 GO ?= go
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto test coverage
 
 all: deps build
 
@@ -22,6 +22,31 @@ deps:
 build:
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
 	$(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
+
+# --------------------------------------------------------------------
+# Run locally
+# --------------------------------------------------------------------
+dispatcher d:
+	@$(GO) run cmd/dispatcher/main.go -config local/configs/dispatcher.toml
+
+executor e:
+	@$(GO) run cmd/executor/main.go -config local/configs/executor.toml
+
+wasm:
+	@if [ -z "$(SAMPLE_DIR)" ]; then echo "SAMPLE_DIR is required. Usage: make wasm SAMPLE_DIR=..."; exit 1; fi
+	GOOS=wasip1 GOARCH=wasm $(GO) build -buildmode=c-shared -o $(SAMPLE_DIR)/debuglet.wasm $(SAMPLE_DIR)/main.go
+
+proto:
+	protoc \
+	  --go_out=. --go_opt=paths=source_relative,Mschema.proto=. \
+	  --go-grpc_out=. --go-grpc_opt=paths=source_relative,Mschema.proto=. \
+	  protocol/protocol.proto
+
+test:
+	$(GO) test $$($(GO) list ./... | grep -v /local/)
+
+coverage:
+	$(GO) test -coverprofile .testCoverage.txt $$($(GO) list ./... | grep -v /local/)
 
 # --------------------------------------------------------------------
 # Docker orchestration

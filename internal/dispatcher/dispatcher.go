@@ -67,7 +67,7 @@ func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
 		policy := assignment.GetPolicy()
 		executorID := session.ExecutorID
 
-		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), policy.GetDestinations())
+		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), assignment.GetAddresses())
 		if err != nil {
 			return err
 		}
@@ -75,7 +75,6 @@ func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
 		if err != nil {
 			return err
 		}
-
 		for executorID, updates := range destinationUpdates {
 			d.UpdateDestinations(executorID, updates)
 		}
@@ -122,6 +121,7 @@ func (d *Dispatcher) RegisterExecutor(id string) {
 		d.executors[id] = &Executor{
 			ID:          id,
 			Assignments: make(chan *pb.DebugletAssignment, 1),
+			Updates:     make(chan *pb.DestinationUpdates, 1),
 		}
 	}
 }
@@ -192,9 +192,7 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 }
 
 func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {
-	d.mu.RLock()
 	exec, ok := d.executors[executorID]
-	d.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("executor %s not found", executorID)
 	}

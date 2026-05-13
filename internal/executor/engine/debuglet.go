@@ -48,8 +48,11 @@ type hostFunction func(environment interface{}, args []wasmer.Value) ([]wasmer.V
 // HostEnvironment carries the execution context for the current debuglet
 // session. It is passed by value to each host function.
 type HostEnvironment struct {
-	ctx     context.Context
-	manager *resource.ExecutorManager
+	ctx          context.Context
+	sessionID    string
+	tracker      *resource.UsageTracker
+	manager      *resource.LimitManager
+	handleToAddr map[int32]string
 }
 
 // checkContextExpired returns a descriptive error if the HostEnvironment's
@@ -84,6 +87,7 @@ type Debuglet struct {
 	scionServer pan.ListenConn
 	udpServer   net.PacketConn
 	tcpServer   *net.TCPListener
+	ipServer    net.Listener
 
 	// addresses is the list of peer addresses made available to the WASM module.
 	addresses []string
@@ -101,7 +105,7 @@ type Debuglet struct {
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger, manager *resource.ExecutorManager) *Debuglet {
+func NewDebuglet(logger *zap.Logger, manager *resource.LimitManager, sessionID string) *Debuglet {
 	eng := wasmer.NewEngine()
 	return &Debuglet{
 		logger:    logger.Sugar(),
@@ -109,7 +113,12 @@ func NewDebuglet(logger *zap.Logger, manager *resource.ExecutorManager) *Debugle
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
-		hostEnv:   &HostEnvironment{manager: manager},
+		hostEnv: &HostEnvironment{
+			tracker:      resource.NewUsageTracker(),
+			manager:      manager,
+			sessionID:    sessionID,
+			handleToAddr: make(map[int32]string),
+		},
 	}
 }
 
@@ -120,7 +129,7 @@ func (d *Debuglet) StdoutChan() <-chan []byte {
 }
 
 func (d *Debuglet) CloseStdoutChan() {
-	if !d.closed {
+	if d.closed {
 		return
 	}
 	close(d.stdoutCh)
@@ -164,6 +173,10 @@ func (d *Debuglet) startServers() error {
 	// -- Placeholder for future TCP server --
 	// addr, err := net.ResolveTCPAddr("tcp", ":0")
 	// tcpServer, err := net.ListenTCP("tcp", addr)
+
+	// -- Placeholder for future IP server --
+	// ipAddr, err := net.ResolveIPAddr("ip", ":0")
+	// ipServer, err := net.ListenIP("ip", ipAddr)
 
 	scionHost, err := platform.GetScionAddr(ctx)
 	if err != nil {
@@ -234,10 +247,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 
 // wrapHostFn wraps a hostFunction with the session's HostEnvironment and
 // converts it into a *wasmer.Function ready for registration.
-func (d *Debuglet) wrapHostFn(
-	input, output []*wasmer.ValueType,
-	fn hostFunction,
-) *wasmer.Function {
+func (d *Debuglet) wrapHostFn(input, output []*wasmer.ValueType, fn hostFunction) *wasmer.Function {
 	return wasmer.NewFunctionWithEnvironment(
 		d.store,
 		wasmer.NewFunctionType(input, output),
@@ -249,12 +259,7 @@ func (d *Debuglet) wrapHostFn(
 // registerHostFunctions populates the importObject with all host functions
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
-func (d *Debuglet) registerHostFunctions(
-	importObject *wasmer.ImportObject,
-	scionConns *SCIONConnRegistry,
-	sockets *SocketRegistry,
-	lastReceived *net.Addr,
-) {
+func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scionConns *SCIONConnRegistry, sockets *SocketRegistry, lastReceived *net.Addr) {
 	i32 := wasmer.I32
 	i64 := wasmer.I64
 	in := wasmer.NewValueTypes
@@ -277,16 +282,20 @@ func (d *Debuglet) registerHostFunctions(
 			hostWaitUntil,
 		),
 
+		"sleep": d.wrapHostFn(in(i64), out(),
+			hostSleep,
+		),
+
 		// ---- TCP socket API ----
 		"connect_tcp": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectTCP(env, args, d.addresses, d.logger, sockets)
+				return hostConnect(SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
 		"connect_tls": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnectTLS(env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil)
 			},
 		),
 
@@ -298,19 +307,50 @@ func (d *Debuglet) registerHostFunctions(
 
 		"receive_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostReceiveTCPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"send_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendTCPData(env, args, d.logger, sockets, d.wasmerInstance)
+				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
 		"close_tcp": d.wrapHostFn(in(i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostCloseTCP(env, args, d.logger, sockets)
+				return hostClose(env, args, d.logger, sockets)
+			},
+		),
+
+		// ---- IP socket API ----
+		"connect_icmp4": d.wrapHostFn(in(i32), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostConnect(SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil)
+			},
+		),
+
+		"accept_icmp4": d.wrapHostFn(in(), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostAcceptIP(env, args, d.ipServer, d.logger, sockets)
+			},
+		),
+
+		"receive_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
+			},
+		),
+
+		"send_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
+			},
+		),
+
+		"close_icmp4": d.wrapHostFn(in(i32), out(),
+			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+				return hostClose(env, args, d.logger, sockets)
 			},
 		),
 
@@ -408,6 +448,9 @@ func (d *Debuglet) Close() {
 	if d.tcpServer != nil {
 		_ = d.tcpServer.Close()
 	}
+	if d.ipServer != nil {
+		_ = d.ipServer.Close()
+	}
 	if d.wasmerInstance != nil {
 		d.wasmerInstance.Close()
 	}
@@ -482,6 +525,7 @@ StreamLoop:
 		select {
 		case <-ctx.Done():
 			retErr = ctx.Err()
+			d.CloseStdoutChan()
 			break StreamLoop
 		case err := <-done:
 			d.flushWASIOutput()

@@ -3,6 +3,9 @@
 
 # binaries
 debuglet-executor*
+debuglet-dispatcher*
 /dispatcher
 /executor
 __debug*
+
+.testCoverage.txt

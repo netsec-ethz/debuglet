@@ -68,6 +68,10 @@ func NewMeasurement(numDebuglets int) *Measurement {
 	}
 }
 
+func (m *Measurement) Len() int {
+	return len(m.sessions)
+}
+
 func (m *Measurement) SessionReady() {
 	m.wg.Done()
 }

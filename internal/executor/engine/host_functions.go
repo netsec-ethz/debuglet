@@ -24,6 +24,7 @@ package engine
 
 import (
 	"crypto/tls"
+	"debuglet/internal/executor/resource"
 	"fmt"
 	"net"
 	"os"
@@ -76,48 +77,32 @@ func hostWaitUntil(environment interface{}, args []wasmer.Value) ([]wasmer.Value
 	return []wasmer.Value{}, nil
 }
 
-// =============================================================================
-// TCP socket API
-// WASM keys: "connect_tcp", "accept_tcp", "receive_tcp_data",
-//            "send_tcp_data", "close_tcp"
-// =============================================================================
-
-// hostConnectTCP dials a TCP connection to addresses[args[0]] and registers
-// it in the SocketRegistry. Returns the socket handle as I32.
-// WASM key: "connect_tcp"
-func hostConnectTCP(
-	environment interface{},
-	args []wasmer.Value,
-	addresses []string,
-	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
-) ([]wasmer.Value, error) {
+// hostSleep blocks for the given Unix nanosecond amount of time, or until the
+// context is cancelled.
+// WASM key: "sleep"
+func hostSleep(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	addr := addresses[args[0].I32()]
-	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
-	if err != nil {
-		sugar.Warnw("hostConnectTCP: failed to resolve address", "addr", addr, "err", err)
-		return nil, fmt.Errorf("connect_tcp: failed to resolve %q: %w", addr, err)
+	select {
+	case <-time.After(time.Nanosecond * time.Duration(args[0].I64())):
+	case <-env.ctx.Done():
+		return nil, checkContextExpired(env)
 	}
-
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		sugar.Warnw("hostConnectTCP: failed to dial", "addr", tcpAddr, "err", err)
-		return nil, fmt.Errorf("connect_tcp: failed to dial %q: %w", addr, err)
-	}
-
-	handle := registry.Add(NewTCPSocket(conn))
-	return []wasmer.Value{wasmer.NewI32(handle)}, nil
+	return []wasmer.Value{}, nil
 }
 
-// hostConnectTLS dials a TLS connection to addresses[args[0]] and registers
+// =============================================================================
+// Generic socket API
+// =============================================================================
+
+// hostConnect dials a IP/UDP/TCP(+TLS) connection to addresses[args[0]] and registers
 // it in the SocketRegistry. Returns the socket handle as I32.
-// WASM key: "connect_tls"
-func hostConnectTLS(
+// WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
+func hostConnect(
+	socketType SocketType,
 	environment interface{},
 	args []wasmer.Value,
 	addresses []string,
@@ -130,16 +115,156 @@ func hostConnectTLS(
 		return nil, err
 	}
 
-	addr := addresses[args[0].I32()]
-	conn, err := tls.Dial("tcp", addr, tlsCfg)
-	if err != nil {
-		sugar.Warnw("hostConnectTLS: failed to dial", "addr", addr, "err", err)
-		return nil, fmt.Errorf("connect_tls: failed to dial %q: %w", addr, err)
+	var network string
+	switch socketType {
+	case SocketTypeTLS:
+		network = "tcp"
+	case SocketTypeICMP4:
+		network = "ip4:icmp"
+	case SocketTypeTCP:
+		network = "tcp"
+	case SocketTypeUDP:
+		network = "udp"
+	default:
+		return nil, fmt.Errorf("connect: unknown SocketType %d", socketType)
 	}
 
-	handle := registry.Add(NewTLSSocket(conn))
+	addr := addresses[args[0].I32()]
+
+	var conn net.Conn
+	var err error
+
+	if socketType == SocketTypeTLS {
+		conn, err = tls.Dial("tcp", addr, tlsCfg)
+	} else {
+		conn, err = net.Dial(network, addr)
+	}
+	if err != nil {
+		sugar.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
+		return nil, fmt.Errorf("connect: failed to dial %q: %w", addr, err)
+	}
+
+	socket := NewGenericSocket(conn, socketType)
+	handle := registry.Add(socket)
+	env.handleToAddr[handle] = addr
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
+
+// hostReceiveData reads up to args[1] bytes from the socket at args[0] into
+// the buffer at pointer args[2]. Returns the number of bytes read as I32.
+// WASM key: "receive_tcp_data", "receive_ip_data"
+func hostReceiveData(
+	environment interface{},
+	args []wasmer.Value,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+	instance *wasmer.Instance,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	sockID := args[0].I32()
+	sock, err := registry.Get(sockID)
+	if err != nil {
+		sugar.Warnw("hostReceiveData: invalid handle", "handle", args[0].I32(), "err", err)
+		return nil, fmt.Errorf("receive_data: %w", err)
+	}
+
+	size := args[1].I32()
+	ptr := args[2].I32()
+
+	memory, err := instance.Exports.GetMemory("memory")
+	if err != nil {
+		sugar.Errorw("hostReceiveData: failed to extract memory", "err", err)
+		return nil, fmt.Errorf("receive_data: failed to extract memory: %w", err)
+	}
+
+	if err := ratelimit(env, resource.TransferIn, sockID, size, sugar); err != nil {
+		return nil, err
+	}
+
+	data := memory.Data()
+	buf := data[ptr : ptr+size]
+
+	n, err := sock.Read(buf)
+	if err != nil {
+		sugar.Warnw("hostReceiveData: read error", "err", err)
+		return nil, fmt.Errorf("receive_data: read error: %w", err)
+	}
+	return []wasmer.Value{wasmer.NewI32(int32(n))}, nil
+}
+
+// hostSendData writes args[1] bytes starting at offset args[2] from the WASM
+// tcp_send_buffer to the socket at args[0].
+// WASM key: "send_tcp_data", "send_icmp4_data"
+func hostSendData(
+	environment interface{},
+	args []wasmer.Value,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+	instance *wasmer.Instance,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	sockID := args[0].I32()
+	sock, err := registry.Get(sockID)
+	if err != nil {
+		sugar.Warnw("hostSendData: invalid handle", "handle", args[0].I32(), "err", err)
+		return nil, fmt.Errorf("send_data: %w", err)
+	}
+
+	size := args[1].I32()
+	ptr := args[2].I32()
+
+	memory, err := instance.Exports.GetMemory("memory")
+	if err != nil {
+		sugar.Errorw("hostSendData: failed to extract memory", "err", err)
+		return nil, fmt.Errorf("send_data: failed to extract memory: %w", err)
+	}
+	data := memory.Data()
+	message := data[ptr : ptr+size]
+
+	if err := ratelimit(env, resource.TransferOut, sockID, size, sugar); err != nil {
+		return nil, err
+	}
+
+	sugar.Debugw("hostSendData: sending tcp message", "message", string(message))
+
+	if _, err = sock.Write(message); err != nil {
+		sugar.Warnw("hostSendData: write error", "err", err)
+		return nil, fmt.Errorf("send_data: write error: %w", err)
+	}
+	return []wasmer.Value{}, nil
+}
+
+// hostClose closes the socket at handle args[0].
+// WASM key: "close_tcp", "close_ip"
+func hostClose(
+	environment interface{},
+	args []wasmer.Value,
+	sugar *zap.SugaredLogger,
+	registry *SocketRegistry,
+) ([]wasmer.Value, error) {
+	env := environment.(*HostEnvironment)
+	if err := checkContextExpired(env); err != nil {
+		return nil, err
+	}
+
+	if err := registry.Close(args[0].I32()); err != nil {
+		sugar.Warnw("hostClose: close error", "handle", args[0].I32(), "err", err)
+		return nil, fmt.Errorf("close_tcp: %w", err)
+	}
+	return []wasmer.Value{}, nil
+}
+
+// =============================================================================
+// TCP socket API
+// =============================================================================
 
 // hostAcceptTCP accepts one incoming TCP connection on the server and registers
 // it in the SocketRegistry. Returns the socket handle as I32.
@@ -162,108 +287,23 @@ func hostAcceptTCP(
 		return nil, fmt.Errorf("accept_tcp: %w", err)
 	}
 
-	handle := registry.Add(NewTCPSocket(conn))
+	handle := registry.Add(NewGenericSocket(conn, SocketTypeTCP))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
-// hostReceiveTCPData reads up to args[1] bytes from the socket at args[0] into
-// the WASM tcp_receive_buffer. Returns the number of bytes read as I32.
-// WASM key: "receive_tcp_data"
-func hostReceiveTCPData(
+// =============================================================================
+// IP socket API
+// WASM keys: "connect_ip", "accept_ip", "receive_ip_data",
+//            "send_ip_data", "close_ip"
+// =============================================================================
+
+// hostAcceptIP accepts one incoming IP connection on the server and registers
+// it in the SocketRegistry. Returns the socket handle as I32.
+// WASM key: "accept_ip"
+func hostAcceptIP(
 	environment interface{},
 	args []wasmer.Value,
-	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
-	instance *wasmer.Instance,
-) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
-	if err := checkContextExpired(env); err != nil {
-		return nil, err
-	}
-
-	sock, err := registry.Get(args[0].I32())
-	if err != nil {
-		sugar.Warnw("hostReceiveTCPData: invalid handle", "handle", args[0].I32(), "err", err)
-		return nil, fmt.Errorf("receive_tcp_data: %w", err)
-	}
-
-	size := args[1].I32()
-	ptr := args[2].I32()
-
-	memory, err := instance.Exports.GetMemory("memory")
-	if err != nil {
-		sugar.Errorw("hostReceiveTCPData: failed to extract memory", "err", err)
-		return nil, fmt.Errorf("receive_tcp_data: failed to extract memory: %w", err)
-	}
-	data := memory.Data()
-	buf := data[ptr : ptr+size]
-
-	// buf, err := extractSlice(instance, "tcp_receive_buffer", 0, args[1].I32())
-	// if err != nil {
-	// 	sugar.Warnw("hostReceiveTCPData: failed to extract buffer", "err", err)
-	// 	return nil, fmt.Errorf("receive_tcp_data: failed to extract tcp_receive_buffer: %w", err)
-	// }
-
-	n, err := sock.Read(buf)
-	if err != nil {
-		sugar.Warnw("hostReceiveTCPData: read error", "err", err)
-		return nil, fmt.Errorf("receive_tcp_data: read error: %w", err)
-	}
-	return []wasmer.Value{wasmer.NewI32(int32(n))}, nil
-}
-
-// hostSendTCPData writes args[1] bytes starting at offset args[2] from the WASM
-// tcp_send_buffer to the socket at args[0].
-// WASM key: "send_tcp_data"
-func hostSendTCPData(
-	environment interface{},
-	args []wasmer.Value,
-	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
-	instance *wasmer.Instance,
-) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
-	if err := checkContextExpired(env); err != nil {
-		return nil, err
-	}
-
-	sock, err := registry.Get(args[0].I32())
-	if err != nil {
-		sugar.Warnw("hostSendTCPData: invalid handle", "handle", args[0].I32(), "err", err)
-		return nil, fmt.Errorf("send_tcp_data: %w", err)
-	}
-
-	size := args[1].I32()
-	ptr := args[2].I32()
-
-	memory, err := instance.Exports.GetMemory("memory")
-	if err != nil {
-		sugar.Errorw("hostSendTCPData: failed to extract memory", "err", err)
-		return nil, fmt.Errorf("send_tcp_data: failed to extract memory: %w", err)
-	}
-	data := memory.Data()
-	message := data[ptr : ptr+size]
-
-	sugar.Debugw("hostSendTCPData: sending tcp message", "message", string(message))
-
-	// data, err := extractSlice(instance, "tcp_send_buffer", offset, offset+size)
-	// if err != nil {
-	// 	sugar.Warnw("hostSendTCPData: failed to extract buffer", "err", err)
-	// 	return nil, fmt.Errorf("send_tcp_data: failed to extract tcp_send_buffer: %w", err)
-	// }
-
-	if _, err = sock.Write(message); err != nil {
-		sugar.Warnw("hostSendTCPData: write error", "err", err)
-		return nil, fmt.Errorf("send_tcp_data: write error: %w", err)
-	}
-	return []wasmer.Value{}, nil
-}
-
-// hostCloseTCP closes the socket at handle args[0].
-// WASM key: "close_tcp"
-func hostCloseTCP(
-	environment interface{},
-	args []wasmer.Value,
+	ipServer net.Listener,
 	sugar *zap.SugaredLogger,
 	registry *SocketRegistry,
 ) ([]wasmer.Value, error) {
@@ -272,11 +312,19 @@ func hostCloseTCP(
 		return nil, err
 	}
 
-	if err := registry.Close(args[0].I32()); err != nil {
-		sugar.Warnw("hostCloseTCP: close error", "handle", args[0].I32(), "err", err)
-		return nil, fmt.Errorf("close_tcp: %w", err)
+	conn, err := ipServer.Accept()
+	if err != nil {
+		sugar.Warnw("hostAcceptIP: failed to accept", "err", err)
+		return nil, fmt.Errorf("accept_ip: %w", err)
 	}
-	return []wasmer.Value{}, nil
+
+	ipConn, ok := conn.(*net.IPConn)
+	if !ok {
+		return nil, fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn)
+	}
+
+	handle := registry.Add(NewGenericSocket(ipConn, SocketTypeICMP4))
+	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
 // =============================================================================

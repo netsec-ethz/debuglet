@@ -27,3 +27,5 @@ type StdoutEvent struct {
 	SessionId string `json:"session_id"`
 	Stdout    string `json:"stdout"`
 }
+
+type ExitEvent struct{}

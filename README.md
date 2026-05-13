@@ -2,10 +2,60 @@
 
 ## Prerequisite
 
-- SCION endhost stack
-- Docker & Docker Compose
-- OpenSSL (for generating test certificates locally)
-- Go (optional, for local standalone development)
+- Go (for local standalone development and compiling WASM)
+- SCION endhost stack (optional, for using SCION-specific functionality)
+- Docker & Docker Compose (optional)
+- OpenSSL (optional, for generating new test certificates locally)
+
+## Local Development
+
+[mise](https://mise.jdx.dev/) is given as a helpful tool for managing the correct language versions for local development.
+
+The `Makefile` includes helper-targets to run certain _longer_ commands:
+
+#### Start the dispatcher
+
+```bash
+make dispatcher # or make d
+```
+
+#### Start a executor
+
+```bash
+make executor # or make e
+```
+
+#### Generate a WASM binary
+
+```bash
+make wasm SAMPLE_DIR=local/wasm_samples/helloworld
+# or
+make wasm SAMPLE_DIR=local/wasm_samples/send_tcp
+```
+
+#### Build new proto files
+
+```bash
+make proto
+```
+
+### Submitting measurements
+
+Use the debuglet-dashboard to submit measurements.
+
+### Optional Requirements
+
+The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.
+
+#### ICMP
+
+For icmp to work, the executor has to be run as root.
+
+#### SCION
+
+SCION is a soft-dependency for measurements. If a measurement doesn't try to call any SCION-specific functions, you can simply let the executor time-out when it tries to establish a SCION connection.
+
+---
 
 ## Deployment
 
@@ -49,15 +99,6 @@ The Debuglet ecosystem (Dispatcher and Executor) is containerized via Docker for
    ```bash
    make docker-down
    ```
-
-## Local Development (Optional)
-
-If you need to build the Go binaries locally outside of Docker:
-
-```bash
-make deps
-make build
-```
 
 ## Flow
 
