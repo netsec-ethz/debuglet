@@ -27,6 +27,13 @@ import (
 	"debuglet/pkg/tagger"
 )
 
+type ISocketRegistry interface {
+	Add(s Socket) int32
+	Close(handle int32) error
+	CloseAll()
+	Get(handle int32) (Socket, error)
+}
+
 // SocketRegistry manages the lifecycle of all open sockets within a single
 // WASM execution. Handles are stable int32 indices into the registry.
 type SocketRegistry struct {

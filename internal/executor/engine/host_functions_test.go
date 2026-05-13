@@ -16,15 +16,45 @@ package engine
 
 import (
 	"context"
+	"debuglet/internal/executor/resource"
 	"testing"
 	"time"
 
 	"github.com/wasmerio/wasmer-go/wasmer"
+	"go.uber.org/zap"
 )
 
 // newHostEnv is a convenience helper that wraps a context in a HostEnvironment.
 func newHostEnv(ctx context.Context) *HostEnvironment {
-	return &HostEnvironment{ctx: ctx}
+	manager := resource.New(1000000)
+	manager.RegisterAssignment("session-1", 1000000, 1000000)
+	return &HostEnvironment{
+		ctx:          ctx,
+		sessionID:    "session-1",
+		tracker:      resource.NewUsageTracker(),
+		manager:      manager,
+		handleToAddr: make(map[int32]string),
+	}
+}
+
+func createDummyWasmerInstance(t *testing.T) *wasmer.Instance {
+	engine := wasmer.NewEngine()
+	store := wasmer.NewStore(engine)
+
+	// A tiny Wasm module that just creates and exports 1 page of memory
+	wat := `(module (memory (export "memory") 1))`
+	module, err := wasmer.NewModule(store, []byte(wat))
+	if err != nil {
+		t.Fatalf("Failed to compile dummy module: %v", err)
+	}
+
+	importObject := wasmer.NewImportObject()
+	instance, err := wasmer.NewInstance(module, importObject)
+	if err != nil {
+		t.Fatalf("Failed to instantiate dummy module: %v", err)
+	}
+
+	return instance
 }
 
 // =============================================================================
@@ -222,4 +252,49 @@ func TestWASMExitErrorUnknownCode(t *testing.T) {
 	if e.Error() == "" {
 		t.Error("Error() returned empty string for unknown code")
 	}
+}
+
+// =============================================================================
+// Send/receive
+// =============================================================================
+
+type MockSocket struct{ socketType SocketType }
+
+func (m *MockSocket) Close() error                      { return nil }
+func (m *MockSocket) Read(p []byte) (n int, err error)  { return len(p), nil }
+func (m *MockSocket) Write(p []byte) (n int, err error) { return len(p), nil }
+func (m *MockSocket) Type() SocketType                  { return m.socketType }
+
+type MockSocketRegistry struct{ socketType SocketType }
+
+func (r *MockSocketRegistry) Add(s Socket) int32       { return 0 }
+func (r *MockSocketRegistry) Close(handle int32) error { return nil }
+func (r *MockSocketRegistry) CloseAll()                {}
+func (r *MockSocketRegistry) Get(handle int32) (Socket, error) {
+	return &MockSocket{socketType: r.socketType}, nil
+}
+
+func TestReceive(t *testing.T) {
+	sockID := 0
+	bufferSize := 4096
+	pointer := 0
+	args := []wasmer.Value{
+		wasmer.NewI32(sockID),
+		wasmer.NewI32(bufferSize),
+		wasmer.NewI32(pointer),
+	}
+	env := newHostEnv(t.Context())
+	sugar := zap.NewNop().Sugar()
+
+	registry := MockSocketRegistry{socketType: SocketTypeTCP}
+	instance := createDummyWasmerInstance(t)
+
+	value, err := hostReceiveData(env, args, sugar, &registry, instance)
+	if value == nil || err != nil {
+		t.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+	}
+}
+
+func TestSend(t *testing.T) {
+
 }

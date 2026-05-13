@@ -49,7 +49,7 @@ setcaps: build
 	sudo setcap cap_net_admin,cap_bpf+ep ./$(EXECUTOR_BINARY)
 
 test:
-	$(GO) test $$($(GO) list ./... | grep -v /local/)
+	$(GO) test $$($(GO) list ./... | grep -v /local/) -v
 
 coverage:
 	$(GO) test -coverprofile .testCoverage.txt $$($(GO) list ./... | grep -v /local/)
