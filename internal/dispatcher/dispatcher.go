@@ -28,8 +28,13 @@ type Executor struct {
 	ID          string                      `json:"id"`
 	Ready       bool                        `json:"ready"`
 	LastSeen    int64                       `json:"last_seen"`
+	PricePerBW  float64                     `json:"price_per_bw"`
 	Assignments chan *pb.DebugletAssignment `json:"-"`
 	Updates     chan *pb.DestinationUpdates `json:"-"`
+}
+
+func (e *Executor) GetPrice(floorBW int64) int64 {
+	return int64(e.PricePerBW)* floorBW
 }
 
 type Dispatcher struct {
@@ -114,12 +119,13 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 	delete(d.measurements, id)
 }
 
-func (d *Dispatcher) RegisterExecutor(id string) {
+func (d *Dispatcher) RegisterExecutor(id string, pricePerBW float64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
 		d.executors[id] = &Executor{
 			ID:          id,
+			PricePerBW:  pricePerBW,
 			Assignments: make(chan *pb.DebugletAssignment, 1),
 			Updates:     make(chan *pb.DestinationUpdates, 1),
 		}

@@ -24,6 +24,7 @@ option go_package = "/protocol";
 message ExecutorHello {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
+  double price_per_bw = 3; // Price per bit/s of bandwidth
 }
 
 message ExecutorHeartbeat {

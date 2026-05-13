@@ -208,7 +208,7 @@ func (l *Listener) processEvent(ev suiEvent) {
 		return
 	}
 
-	if err := l.db.AddBalance(username, balance); err != nil {
+	if err := l.db.UpdateBalance(username, balance); err != nil {
 		l.logger.Error("failed to credit balance from DebugletPurchase",
 			zap.String("tx", ev.ID.TxDigest),
 			zap.String("username", username),

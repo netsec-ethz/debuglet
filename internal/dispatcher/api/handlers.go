@@ -42,13 +42,14 @@ func NewHandler(d *dispatcher.Dispatcher, userDB *db.UserDB, l *zap.Logger) *Han
 
 // Register all routes
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
-	e.POST("/users", h.CreateUser)
+	e.POST("/user/new", h.CreateUser)
+	e.GET("/user/balance", h.GetBalance)
 	e.GET("/executors", h.GetExecutors)
 	e.POST("/measurements", h.CreateMeasurement)
 	e.GET("/measurements/:id/start", h.StartMeasurementStream)
 }
 
-// POST /users — create a new user with a random ID and auth key
+// POST /user/new — create a new user with a random ID and auth key
 func (h *Handler) CreateUser(c echo.Context) error {
 	userID := uuid.New().String()
 	authKey := uuid.New().String()
@@ -58,6 +59,22 @@ func (h *Handler) CreateUser(c echo.Context) error {
 	}
 	h.logger.Info("created user", zap.String("user_id", userID))
 	return c.JSON(http.StatusCreated, CreateUserResponse{UserID: userID, AuthKey: authKey})
+}
+
+//GET /user/balance
+func (h *Handler) GetBalance(c echo.Context) error {
+	userID := c.Param("uid")
+	authkey := c.Param("authkey")
+	ok, _ := h.db.Authenticate(userID,authkey)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, "Forbidden")
+	}
+	bal, err := h.db.GetBalance(userID)
+	if(err!=nil){
+		return c.JSON(http.StatusOK, bal)
+	}else {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to fetch balance")
+	}
 }
 
 // GET /executors
@@ -88,6 +105,18 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 	}
 	measurementId, measurement := h.dispatcher.CreateMeasurement(numDebuglets)
 	h.logger.Info("created measurement", zap.String("measurement_id", measurementId))
+
+	var totalCost int64
+	bal,err := h.db.GetBalance(req.UserID)
+	for _, db := range req.Debuglets{
+		executor := h.dispatcher.GetExecutor(db.ExecutorID)
+		totalCost += executor.GetPrice(db.Policy.FloorBW)
+	}
+
+	if err!= nil || totalCost > int64(bal){
+		return echo.NewHTTPError(http.StatusBadRequest, "insufficient balance");
+	}
+
 	for _, db := range req.Debuglets {
 		sessionId := uuid.New().String()
 		code, err := base64.StdEncoding.DecodeString(db.Code)
@@ -112,6 +141,8 @@ func (h *Handler) CreateMeasurement(c echo.Context) error {
 			h.logger.Error("failed to create measurement", zap.Error(err))
 			h.dispatcher.RemoveMeasurement(measurementId)
 			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}else{
+			h.db.UpdateBalance(req.UserID, -h.dispatcher.GetExecutor(db.ExecutorID).GetPrice(db.Policy.FloorBW))
 		}
 	}
 

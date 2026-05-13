@@ -83,8 +83,9 @@ func (DispatcherCommandType) EnumDescriptor() ([]byte, []int) {
 
 type ExecutorHello struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ExecutorId    string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"` // Unique ID for this executor instance
-	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                         // Optional: software version or capabilities
+	ExecutorId    string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`     // Unique ID for this executor instance
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                             // Optional: software version or capabilities
+	PricePerBw    float64                `protobuf:"fixed64,3,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"` // Price per bit/s of bandwidth
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -131,6 +132,13 @@ func (x *ExecutorHello) GetVersion() string {
 		return x.Version
 	}
 	return ""
+}
+
+func (x *ExecutorHello) GetPricePerBw() float64 {
+	if x != nil {
+		return x.PricePerBw
+	}
+	return 0
 }
 
 type ExecutorHeartbeat struct {
@@ -1001,11 +1009,13 @@ var File_protocol_protocol_proto protoreflect.FileDescriptor
 
 const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
-	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"J\n" +
+	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"l\n" +
 	"\rExecutorHello\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\"1\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
+	"\fprice_per_bw\x18\x03 \x01(\x01R\n" +
+	"pricePerBw\"1\n" +
 	"\x11ExecutorHeartbeat\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"B\n" +
 	"\x11ExecutorResources\x12-\n" +

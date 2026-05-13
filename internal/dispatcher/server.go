@@ -65,7 +65,7 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 		switch msg := in.Msg.(type) {
 		case *pb.ControlMessage_Hello:
 			executorID = msg.Hello.ExecutorId
-			s.dispatcher.RegisterExecutor(executorID)
+			s.dispatcher.RegisterExecutor(executorID, msg.Hello.PricePerBw)
 			s.logger.Info("Executor connected", zap.String("executor_id", executorID))
 
 			// Optional acknowledgment

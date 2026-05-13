@@ -68,8 +68,8 @@ func (u *UserDB) CreateUser(userID, authKey string) error {
 	return nil
 }
 
-// AddBalance adds delta to the balance of an existing user.
-func (u *UserDB) AddBalance(userID string, delta int64) error {
+// UpdateBalance adds delta to the balance of an existing user.
+func (u *UserDB) UpdateBalance(userID string, delta int64) error {
 	res, err := u.db.Exec(`UPDATE users SET balance = balance + ? WHERE user_id = ?`, delta, userID)
 	if err != nil {
 		return fmt.Errorf("update balance: %w", err)
@@ -80,6 +80,20 @@ func (u *UserDB) AddBalance(userID string, delta int64) error {
 	}
 	return nil
 }
+
+
+func (u *UserDB) GetBalance(userID string) (int, error) {
+	var value int
+	err := u.db.QueryRow(`SELECT balance FROM users where user_id = ?`, userID).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows){
+		return 0, nil
+	}
+	if err != nil {
+		return 0,fmt.Errorf("Failed to get balance for user %q: %w", userID, err)
+	}
+	return value, nil
+}
+
 
 // GetState returns the value for key, or "" if the key does not exist.
 func (u *UserDB) GetState(key string) (string, error) {

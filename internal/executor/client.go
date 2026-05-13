@@ -107,6 +107,7 @@ func (e *Executor) Start(ctx context.Context) error {
 		Msg: &pb.ControlMessage_Hello{Hello: &pb.ExecutorHello{
 			ExecutorId: e.id,
 			Version:    e.version,
+			PricePerBw: 1.0,
 		}},
 	})
 	// Initialize executor to have a bandwidth capacity of 1gbit/s

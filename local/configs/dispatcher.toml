@@ -6,3 +6,11 @@ log_level = "debug"
 cert_file = "local/configs/dispatcher/cert"
 key_file = "local/configs/dispatcher/key"
 # ca_file = "local/configs/dispatcher/ca"
+
+[database]
+path = "/var/lib/debuglet/users.db"
+
+[sui]
+rpc_url             = "https://fullnode.testnet.sui.io:443"
+package_id          = "0x8154aeb7a304ad3813bc02756484b253497eaba6bd4a6cac2c023da95f756905"
+poll_interval_seconds = 30
