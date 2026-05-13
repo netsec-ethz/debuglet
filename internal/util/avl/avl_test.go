@@ -2,6 +2,7 @@ package avl
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"testing"
 )
@@ -99,6 +100,40 @@ func TestFairshare(t *testing.T) {
 			}
 			if got := tree.Fairshare(tc.cap); got != tc.want {
 				t.Fatalf("Expected fairshare=%d, got %d", tc.want, got)
+			}
+		})
+	}
+}
+
+func BenchmarkInsert(b *testing.B) {
+	sizes := []int{10_000, 100_000, 1_000_000, 10_000_000} // 100_000_000 (100_000_000 nodes uses up around 8gb of ram)
+	batchSize := 1000
+
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("Size_%d", size), func(b *testing.B) {
+			tree := AVL[int]{}
+
+			r := rand.New(rand.NewPCG(1, 1024))
+			for range size {
+				val := r.IntN(size * 10)
+				tree.Insert(val, int64(val))
+			}
+
+			insertVals := make([]int, b.N)
+			for i := range b.N {
+				insertVals[i] = r.IntN(size * 10)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i += batchSize {
+				for j := i; j < min(b.N, i+batchSize); j++ {
+					tree.Insert(insertVals[j], int64(insertVals[j]))
+				}
+				b.StopTimer()
+				for j := i; j < min(b.N, i+batchSize); j++ {
+					tree.Delete(insertVals[j], int64(insertVals[j]))
+				}
+				b.StartTimer()
 			}
 		})
 	}
