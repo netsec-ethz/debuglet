@@ -4,7 +4,6 @@ package resource
 import (
 	"debuglet/internal/util/avl"
 	"errors"
-	"iter"
 )
 
 var (
@@ -91,36 +90,18 @@ func (m *LimitManager) UpdateCapacity(newCapacity int64) (fairshareRequired bool
 	return m.maxUsedCapacity > m.capacity
 }
 
-func (m *LimitManager) Fairshare() iter.Seq2[string, int64] {
-	return func(yield func(string, int64) bool) {
-		fairshare := m.tree.Fairshare(m.capacity - m.minUsedCapacity)
-		defer func() { m.previousFairshare = fairshare }()
-
-		if m.previousFairshare != -1 && fairshare > m.previousFairshare {
-			// reset previously fairshared nodes
-			for n := range m.tree.Range(m.previousFairshare, fairshare) {
-				if !yield(n.ID, m.assignMax[n.ID]) {
-					return
-				}
-			}
-		}
-
-		for n := range m.tree.Range(fairshare, avl.Unbounded) {
-			actualLimit := min(m.assignMax[n.ID], fairshare+m.assignMin[n.ID])
-			if !yield(n.ID, actualLimit) {
-				return
-			}
-		}
-	}
+// Fairshare computes the fairshare value with the currently registered assignments
+func (m *LimitManager) Fairshare() {
+	m.previousFairshare = m.tree.Fairshare(m.capacity - m.minUsedCapacity)
 }
 
-func (m *LimitManager) GetAllowedExecutor(ID string) int64 {
-	maximum := m.assignMax[ID]
+func (m *LimitManager) GetAllowedExecutor(assignmentID string) int64 {
+	maximum := m.assignMax[assignmentID]
 	if m.previousFairshare == -1 {
 		// no fairshare
 		return maximum
 	}
-	return min(maximum, m.previousFairshare+m.assignMin[ID])
+	return min(maximum, m.previousFairshare+m.assignMin[assignmentID])
 }
 
 func (m *LimitManager) GetAllowedDestination(assignmentID, destination string) int64 {

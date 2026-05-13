@@ -183,10 +183,13 @@ func (e *Executor) Start(ctx context.Context) error {
 			go e.handleAssignment(ctx, assign)
 		} else if update := msg.GetUpdates(); update != nil {
 			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
+			e.mu.Lock()
 			for _, up := range update.GetUpdates() {
 				e.logger.Debug("Updating destination limit", zap.String("destination", up.GetDestination()), zap.String("assignment_id", up.GetAssignmentId()), zap.Int64("new_ceil", up.GetNewCeilBw()))
 				e.manager.SetDestinationLimit(up.GetAssignmentId(), up.GetDestination(), up.GetNewCeilBw())
 			}
+			e.manager.Fairshare()
+			e.mu.Unlock()
 		}
 	}
 }
@@ -240,6 +243,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 			}
 			e.mu.Lock()
 			err = e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
+			e.manager.Fairshare()
 			e.mu.Unlock()
 			if err != nil {
 				e.logger.Error("Failed to register assignment", zap.Error(err))
@@ -250,6 +254,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 
 			e.mu.Lock()
 			e.manager.RemoveAssignment(assign.SessionId)
+			e.manager.Fairshare()
 			e.mu.Unlock()
 		}
 	}()

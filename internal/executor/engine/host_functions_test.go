@@ -26,18 +26,15 @@ import (
 
 // newHostEnv is a convenience helper that wraps a context in a HostEnvironment.
 func newHostEnv(ctx context.Context) *HostEnvironment {
-	manager := resource.New(1000000)
-	manager.RegisterAssignment("session-1", 1000000, 1000000)
 	return &HostEnvironment{
 		ctx:          ctx,
 		sessionID:    "session-1",
 		tracker:      resource.NewUsageTracker(),
-		manager:      manager,
 		handleToAddr: make(map[int32]string),
 	}
 }
 
-func createDummyWasmerInstance(t *testing.T) *wasmer.Instance {
+func createDummyWasmerInstance(b *testing.B) *wasmer.Instance {
 	engine := wasmer.NewEngine()
 	store := wasmer.NewStore(engine)
 
@@ -45,13 +42,13 @@ func createDummyWasmerInstance(t *testing.T) *wasmer.Instance {
 	wat := `(module (memory (export "memory") 1))`
 	module, err := wasmer.NewModule(store, []byte(wat))
 	if err != nil {
-		t.Fatalf("Failed to compile dummy module: %v", err)
+		b.Fatalf("Failed to compile dummy module: %v", err)
 	}
 
 	importObject := wasmer.NewImportObject()
 	instance, err := wasmer.NewInstance(module, importObject)
 	if err != nil {
-		t.Fatalf("Failed to instantiate dummy module: %v", err)
+		b.Fatalf("Failed to instantiate dummy module: %v", err)
 	}
 
 	return instance
@@ -274,27 +271,55 @@ func (r *MockSocketRegistry) Get(handle int32) (Socket, error) {
 	return &MockSocket{socketType: r.socketType}, nil
 }
 
-func TestReceive(t *testing.T) {
+func BenchmarkReceive(b *testing.B) {
 	sockID := 0
-	bufferSize := 4096
+	bufferSize := 1
 	pointer := 0
 	args := []wasmer.Value{
 		wasmer.NewI32(sockID),
 		wasmer.NewI32(bufferSize),
 		wasmer.NewI32(pointer),
 	}
-	env := newHostEnv(t.Context())
+	env := newHostEnv(b.Context())
+	env.manager = resource.New(1e15)
+	env.manager.RegisterAssignment("session-1", 1e9, 1e9)
 	sugar := zap.NewNop().Sugar()
 
 	registry := MockSocketRegistry{socketType: SocketTypeTCP}
-	instance := createDummyWasmerInstance(t)
+	instance := createDummyWasmerInstance(b)
 
-	value, err := hostReceiveData(env, args, sugar, &registry, instance)
-	if value == nil || err != nil {
-		t.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+	b.ResetTimer()
+	for b.Loop() {
+		value, err := hostReceiveData(env, args, sugar, &registry, instance)
+		if value == nil || err != nil {
+			b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+		}
 	}
 }
 
-func TestSend(t *testing.T) {
+func BenchmarkSend(b *testing.B) {
+	sockID := 0
+	bufferSize := 1
+	pointer := 0
+	args := []wasmer.Value{
+		wasmer.NewI32(sockID),
+		wasmer.NewI32(bufferSize),
+		wasmer.NewI32(pointer),
+	}
+	env := newHostEnv(b.Context())
+	env.manager = resource.New(1e15)
+	env.manager.RegisterAssignment("session-1", 1e9, 1e9)
 
+	sugar := zap.NewNop().Sugar()
+
+	registry := MockSocketRegistry{socketType: SocketTypeTCP}
+	instance := createDummyWasmerInstance(b)
+
+	b.ResetTimer()
+	for b.Loop() {
+		value, err := hostSendData(env, args, sugar, &registry, instance)
+		if value == nil || err != nil {
+			b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+		}
+	}
 }

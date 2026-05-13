@@ -2,7 +2,6 @@ package resource_test
 
 import (
 	"debuglet/internal/executor/resource"
-	"maps"
 	"testing"
 )
 
@@ -17,18 +16,15 @@ func TestRegisterSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected fairshare and no error, got err=%v", err)
 	}
+	e.Fairshare()
 
-	fairshares := maps.Collect(e.Fairshare())
-	if len(fairshares) != 2 {
-		t.Fatalf("Expected fairshare to update both jobs, got len=%d", len(fairshares))
+	first := e.GetAllowedExecutor("1")
+	second := e.GetAllowedExecutor("2")
+	if first != 400 {
+		t.Fatalf("Expected job '1' to get 400, got %d", first)
 	}
-	for id, newCeil := range fairshares {
-		if id == "1" && newCeil != 400 {
-			t.Fatalf("Expected job '1' to get 400, got %d", newCeil)
-		}
-		if id == "2" && newCeil != 600 {
-			t.Fatalf("Expected job '2' to get 600, got %d", newCeil)
-		}
+	if second != 600 {
+		t.Fatalf("Expected job '2' to get 600, got %d", second)
 	}
 }
 
@@ -43,11 +39,20 @@ func TestMinimalUpdates(t *testing.T) {
 	if err := e.RegisterAssignment("3", 100, 500); err != nil {
 		t.Fatalf("Expected fairshare and no error, got err=%v", err)
 	}
-	fairshares := maps.Collect(e.Fairshare())
-	if len(fairshares) != 2 {
-		t.Fatalf("Expected fairshare to only update two jobs, got len=%d", len(fairshares))
-	}
+	e.Fairshare()
 
+	first := e.GetAllowedExecutor("1")
+	second := e.GetAllowedExecutor("2")
+	third := e.GetAllowedExecutor("3")
+	if first != 100 {
+		t.Fatalf("Expected job '1' to get 100, got %d", first)
+	}
+	if second != 450 {
+		t.Fatalf("Expected job '2' to get 450, got %d", second)
+	}
+	if third != 450 {
+		t.Fatalf("Expected job '3' to get 450, got %d", third)
+	}
 }
 
 func TestRemove(t *testing.T) {
@@ -60,5 +65,15 @@ func TestRemove(t *testing.T) {
 	}
 	if err := e.RegisterAssignment("2", 1000, 1000); err != nil {
 		t.Fatalf("Expected no fairshare or error, got err=%v", err)
+	}
+	e.Fairshare()
+
+	first := e.GetAllowedExecutor("1")
+	second := e.GetAllowedExecutor("2")
+	if first != 0 {
+		t.Fatalf("Expected job '1' to get 0, got %d", first)
+	}
+	if second != 1000 {
+		t.Fatalf("Expected job '2' to get 1000, got %d", second)
 	}
 }
