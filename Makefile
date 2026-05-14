@@ -59,6 +59,11 @@ benchmark:
 	$(GO) test $$($(GO) list ./... | grep -v /local/) -bench=. -count=10 -benchtime=5s | tee benchmarks/bench.txt
 	benchstat benchmarks/bench.txt
 
+memory:
+	mkdir -p benchmarks
+	$(GO) test ./internal/executor/engine/ -bench=. -memprofile benchmarks/engine-mem.out
+	$(GO) tool pprof -http=:8080 benchmarks/engine-mem.out
+
 # --------------------------------------------------------------------
 # Docker orchestration
 # --------------------------------------------------------------------

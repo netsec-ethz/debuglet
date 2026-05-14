@@ -120,13 +120,14 @@ func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destinat
 	}
 
 	waitFor := max(reserveDestination.Delay(), reserveExecutor.Delay())
-
-	select {
-	case <-time.After(waitFor):
-	case <-ctx.Done():
-		reserveDestination.Cancel()
-		reserveExecutor.Cancel()
-		return errors.New("context closed")
+	if waitFor > 0 {
+		select {
+		case <-time.After(waitFor):
+		case <-ctx.Done():
+			reserveDestination.Cancel()
+			reserveExecutor.Cancel()
+			return errors.New("context closed")
+		}
 	}
 
 	return nil
