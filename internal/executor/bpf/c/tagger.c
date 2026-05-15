@@ -148,8 +148,7 @@ int debuglet_tag(struct __sk_buff *skb) {
         return TC_ACT_OK;
 
     __u64 hash = siphash24(ak->k0, ak->k1, buf, copy_len);
-    // __u16 tag  = (__u16)(hash & 0xFFFF);
-    __u16 tag  = 0xFFFF;
+    __u16 tag  = (__u16)(hash & 0xFFFF);
 
     // Write tag into IPID field (offset 4 from start of IP header).
     __u32 ipid_off = off + offsetof(struct iphdr, id);
