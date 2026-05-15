@@ -61,20 +61,22 @@ func (h *Handler) CreateUser(c echo.Context) error {
 	return c.JSON(http.StatusCreated, CreateUserResponse{UserID: userID, AuthKey: authKey})
 }
 
-//GET /user/balance
+// GET /user/balance?uid=<id>&authkey=<key>
 func (h *Handler) GetBalance(c echo.Context) error {
-	userID := c.Param("uid")
-	authkey := c.Param("authkey")
-	ok, _ := h.db.Authenticate(userID,authkey)
+	userID := c.QueryParam("uid")
+	authkey := c.QueryParam("authkey")
+	ok, err := h.db.Authenticate(userID, authkey)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "authentication error")
+	}
 	if !ok {
 		return c.JSON(http.StatusUnauthorized, "Forbidden")
 	}
 	bal, err := h.db.GetBalance(userID)
-	if(err!=nil){
-		return c.JSON(http.StatusOK, bal)
-	}else {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to fetch balance")
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fetch balance")
 	}
+	return c.JSON(http.StatusOK, bal)
 }
 
 // GET /executors

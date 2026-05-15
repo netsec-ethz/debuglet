@@ -93,7 +93,7 @@ type Listener struct {
 func NewListener(rpcURL, packageID string, userDB *db.UserDB, logger *zap.Logger, pollInterval time.Duration) *Listener {
 	return &Listener{
 		rpcURL:       rpcURL,
-		eventType:    fmt.Sprintf("%s::contracts::DebugletPurchase", packageID),
+		eventType:    fmt.Sprintf("%s::debuglet_tokens::DebugletPurchase", packageID),
 		db:           userDB,
 		logger:       logger,
 		pollInterval: pollInterval,

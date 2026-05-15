@@ -12,5 +12,5 @@ path = "/var/lib/debuglet/users.db"
 
 [sui]
 rpc_url             = "https://fullnode.testnet.sui.io:443"
-package_id          = "0x8154aeb7a304ad3813bc02756484b253497eaba6bd4a6cac2c023da95f756905"
+package_id          = "0x0c2c3d2b4132d805b2bd11442efb57e8fdb937239083d7b6a815102a4b1ddfcd"
 poll_interval_seconds = 30
