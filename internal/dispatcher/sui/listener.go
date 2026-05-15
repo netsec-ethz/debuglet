@@ -85,6 +85,7 @@ type rpcResponse struct {
 type Listener struct {
 	rpcURL       string
 	eventType    string
+	cursorKey    string // keyed by package ID so a redeploy starts fresh automatically
 	db           *db.UserDB
 	logger       *zap.Logger
 	pollInterval time.Duration
@@ -94,6 +95,7 @@ func NewListener(rpcURL, packageID string, userDB *db.UserDB, logger *zap.Logger
 	return &Listener{
 		rpcURL:       rpcURL,
 		eventType:    fmt.Sprintf("%s::debuglet_tokens::DebugletPurchase", packageID),
+		cursorKey:    "sui_event_cursor:" + packageID,
 		db:           userDB,
 		logger:       logger,
 		pollInterval: pollInterval,
@@ -101,7 +103,7 @@ func NewListener(rpcURL, packageID string, userDB *db.UserDB, logger *zap.Logger
 }
 
 func (l *Listener) Start(ctx context.Context) error {
-	raw, err := l.db.GetState("sui_event_cursor")
+	raw, err := l.db.GetState(l.cursorKey)
 	if err != nil {
 		return fmt.Errorf("load sui cursor: %w", err)
 	}
@@ -148,7 +150,7 @@ func (l *Listener) pollAll(cursor *eventCursor) (*eventCursor, error) {
 		cursor = result.NextCursor
 		if cursor != nil {
 			raw, _ := json.Marshal(cursor)
-			if err := l.db.SetState("sui_event_cursor", string(raw)); err != nil {
+			if err := l.db.SetState(l.cursorKey, string(raw)); err != nil {
 				l.logger.Error("failed to persist sui cursor", zap.Error(err))
 			}
 		}
