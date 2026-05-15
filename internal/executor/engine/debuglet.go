@@ -16,13 +16,19 @@ package engine
 
 import (
 	"context"
-	"debuglet/internal/executor/resource"
-	"debuglet/internal/platform"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
+	"runtime"
 	"sync"
 	"time"
+
+	"debuglet/internal/executor/bpf"
+	"debuglet/internal/executor/resource"
+	"debuglet/internal/platform"
+	"debuglet/pkg/tagger"
+	"debuglet/pkg/tesla"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/wasmerio/wasmer-go/wasmer"
@@ -89,6 +95,8 @@ type Debuglet struct {
 	tcpServer   *net.TCPListener
 	ipServer    net.Listener
 
+	pktTagger tagger.TaggerInterface
+
 	// addresses is the list of peer addresses made available to the WASM module.
 	addresses []string
 
@@ -105,14 +113,44 @@ type Debuglet struct {
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger, manager *resource.LimitManager, sessionID string) *Debuglet {
+func NewDebuglet(logger *zap.Logger, manager *resource.LimitManager, sessionID string, schedule *tesla.KeySchedule, measurementID []byte) *Debuglet {
 	eng := wasmer.NewEngine()
+
+	var pktTagger tagger.TaggerInterface
+	if runtime.GOOS == "linux" {
+		iface := os.Getenv("DEBUGLET_IFACE")
+		if iface == "" {
+			iface = "eth0"
+		}
+		// Try to initialize eBPF tagger.
+		if bt, err := bpf.NewBPFTagger(iface, schedule, measurementID); err == nil {
+			pktTagger = bt
+		} else {
+			fmt.Printf("bpf: failed to initialize BPF tagger on %s: %v. Falling back to Go tagger.\n", iface, err)
+			// Fallback to lo if eth0 failed and we are local
+			if iface == "eth0" {
+				if bt, err := bpf.NewBPFTagger("lo", schedule, measurementID); err == nil {
+					pktTagger = bt
+					fmt.Printf("bpf: successfully fell back to lo\n")
+				}
+			}
+		}
+
+		if pktTagger == nil {
+			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
+			pktTagger = tagger.New(schedule, measurementID)
+		}
+	} else {
+		pktTagger = tagger.New(schedule, measurementID)
+	}
+
 	return &Debuglet{
 		logger:    logger.Sugar(),
 		engine:    eng,
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
+		pktTagger: pktTagger,
 		hostEnv: &HostEnvironment{
 			tracker:      resource.NewUsageTracker(),
 			manager:      manager,
@@ -289,13 +327,13 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 		// ---- TCP socket API ----
 		"connect_tcp": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
 			},
 		),
 
 		"connect_tls": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
 			},
 		),
 
@@ -326,7 +364,7 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 		// ---- IP socket API ----
 		"connect_icmp4": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil)
+				return hostConnect(SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
 			},
 		),
 

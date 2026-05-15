@@ -28,6 +28,8 @@ type Config struct {
 	DispatcherAddr string `toml:"dispatcher_addr"`
 	LogLevel       string `toml:"log_level"`
 	Capacity       int64  `toml:"capacity"`
+	TeslaSeed      string `toml:"tesla_seed"`
+	TeslaDelay     int64  `toml:"tesla_delay"` // in seconds
 
 	Credentials CredentialConfig `toml:"credentials"`
 }
@@ -65,6 +67,10 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
 	} else if cfg.DispatcherAddr == "" {
 		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
+	}
+
+	if cfg.TeslaDelay == 0 {
+		cfg.TeslaDelay = 3600 // default 1 hour epochs
 	}
 
 	return &cfg, nil

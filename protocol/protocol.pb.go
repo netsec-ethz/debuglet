@@ -85,6 +85,7 @@ type ExecutorHello struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ExecutorId    string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"` // Unique ID for this executor instance
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                         // Optional: software version or capabilities
+	SourceIp      string                 `protobuf:"bytes,3,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`       // Source IP for packet attribution
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -129,6 +130,13 @@ func (x *ExecutorHello) GetExecutorId() string {
 func (x *ExecutorHello) GetVersion() string {
 	if x != nil {
 		return x.Version
+	}
+	return ""
+}
+
+func (x *ExecutorHello) GetSourceIp() string {
+	if x != nil {
+		return x.SourceIp
 	}
 	return ""
 }
@@ -763,6 +771,74 @@ func (x *DebugletExit) GetResult() []byte {
 	return nil
 }
 
+type TeslaKeyDisclosure struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	MeasurementId string                 `protobuf:"bytes,2,opt,name=measurement_id,json=measurementId,proto3" json:"measurement_id,omitempty"`
+	KeyEpoch      int64                  `protobuf:"varint,3,opt,name=key_epoch,json=keyEpoch,proto3" json:"key_epoch,omitempty"`
+	Key           []byte                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TeslaKeyDisclosure) Reset() {
+	*x = TeslaKeyDisclosure{}
+	mi := &file_protocol_protocol_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TeslaKeyDisclosure) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TeslaKeyDisclosure) ProtoMessage() {}
+
+func (x *TeslaKeyDisclosure) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TeslaKeyDisclosure.ProtoReflect.Descriptor instead.
+func (*TeslaKeyDisclosure) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TeslaKeyDisclosure) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TeslaKeyDisclosure) GetMeasurementId() string {
+	if x != nil {
+		return x.MeasurementId
+	}
+	return ""
+}
+
+func (x *TeslaKeyDisclosure) GetKeyEpoch() int64 {
+	if x != nil {
+		return x.KeyEpoch
+	}
+	return 0
+}
+
+func (x *TeslaKeyDisclosure) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
 type SessionMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Msg:
@@ -771,6 +847,7 @@ type SessionMessage struct {
 	//	*SessionMessage_Ready
 	//	*SessionMessage_Stdout
 	//	*SessionMessage_Exit
+	//	*SessionMessage_TeslaKey
 	Msg           isSessionMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -778,7 +855,7 @@ type SessionMessage struct {
 
 func (x *SessionMessage) Reset() {
 	*x = SessionMessage{}
-	mi := &file_protocol_protocol_proto_msgTypes[11]
+	mi := &file_protocol_protocol_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -790,7 +867,7 @@ func (x *SessionMessage) String() string {
 func (*SessionMessage) ProtoMessage() {}
 
 func (x *SessionMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[11]
+	mi := &file_protocol_protocol_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -803,7 +880,7 @@ func (x *SessionMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionMessage.ProtoReflect.Descriptor instead.
 func (*SessionMessage) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{11}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SessionMessage) GetMsg() isSessionMessage_Msg {
@@ -849,6 +926,15 @@ func (x *SessionMessage) GetExit() *DebugletExit {
 	return nil
 }
 
+func (x *SessionMessage) GetTeslaKey() *TeslaKeyDisclosure {
+	if x != nil {
+		if x, ok := x.Msg.(*SessionMessage_TeslaKey); ok {
+			return x.TeslaKey
+		}
+	}
+	return nil
+}
+
 type isSessionMessage_Msg interface {
 	isSessionMessage_Msg()
 }
@@ -869,6 +955,10 @@ type SessionMessage_Exit struct {
 	Exit *DebugletExit `protobuf:"bytes,4,opt,name=exit,proto3,oneof"`
 }
 
+type SessionMessage_TeslaKey struct {
+	TeslaKey *TeslaKeyDisclosure `protobuf:"bytes,5,opt,name=tesla_key,json=teslaKey,proto3,oneof"`
+}
+
 func (*SessionMessage_DispatcherCmd) isSessionMessage_Msg() {}
 
 func (*SessionMessage_Ready) isSessionMessage_Msg() {}
@@ -876,6 +966,8 @@ func (*SessionMessage_Ready) isSessionMessage_Msg() {}
 func (*SessionMessage_Stdout) isSessionMessage_Msg() {}
 
 func (*SessionMessage_Exit) isSessionMessage_Msg() {}
+
+func (*SessionMessage_TeslaKey) isSessionMessage_Msg() {}
 
 type DebugletAssignment_Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -888,7 +980,7 @@ type DebugletAssignment_Policy struct {
 
 func (x *DebugletAssignment_Policy) Reset() {
 	*x = DebugletAssignment_Policy{}
-	mi := &file_protocol_protocol_proto_msgTypes[12]
+	mi := &file_protocol_protocol_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -900,7 +992,7 @@ func (x *DebugletAssignment_Policy) String() string {
 func (*DebugletAssignment_Policy) ProtoMessage() {}
 
 func (x *DebugletAssignment_Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[12]
+	mi := &file_protocol_protocol_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -948,7 +1040,7 @@ type DestinationUpdates_Update struct {
 
 func (x *DestinationUpdates_Update) Reset() {
 	*x = DestinationUpdates_Update{}
-	mi := &file_protocol_protocol_proto_msgTypes[13]
+	mi := &file_protocol_protocol_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +1052,7 @@ func (x *DestinationUpdates_Update) String() string {
 func (*DestinationUpdates_Update) ProtoMessage() {}
 
 func (x *DestinationUpdates_Update) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[13]
+	mi := &file_protocol_protocol_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1001,11 +1093,12 @@ var File_protocol_protocol_proto protoreflect.FileDescriptor
 
 const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
-	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"J\n" +
+	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"g\n" +
 	"\rExecutorHello\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\"1\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1b\n" +
+	"\tsource_ip\x18\x03 \x01(\tR\bsourceIp\"1\n" +
 	"\x11ExecutorHeartbeat\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"B\n" +
 	"\x11ExecutorResources\x12-\n" +
@@ -1060,12 +1153,19 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x16\n" +
-	"\x06result\x18\x03 \x01(\fR\x06result\"\x94\x02\n" +
+	"\x06result\x18\x03 \x01(\fR\x06result\"\x89\x01\n" +
+	"\x12TeslaKeyDisclosure\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
+	"\x0emeasurement_id\x18\x02 \x01(\tR\rmeasurementId\x12\x1b\n" +
+	"\tkey_epoch\x18\x03 \x01(\x03R\bkeyEpoch\x12\x10\n" +
+	"\x03key\x18\x04 \x01(\fR\x03key\"\xda\x02\n" +
 	"\x0eSessionMessage\x12M\n" +
 	"\x0edispatcher_cmd\x18\x01 \x01(\v2$.debuglet.protocol.DispatcherCommandH\x00R\rdispatcherCmd\x128\n" +
 	"\x05ready\x18\x02 \x01(\v2 .debuglet.protocol.DebugletReadyH\x00R\x05ready\x12;\n" +
 	"\x06stdout\x18\x03 \x01(\v2!.debuglet.protocol.DebugletStdoutH\x00R\x06stdout\x125\n" +
-	"\x04exit\x18\x04 \x01(\v2\x1f.debuglet.protocol.DebugletExitH\x00R\x04exitB\x05\n" +
+	"\x04exit\x18\x04 \x01(\v2\x1f.debuglet.protocol.DebugletExitH\x00R\x04exit\x12D\n" +
+	"\ttesla_key\x18\x05 \x01(\v2%.debuglet.protocol.TeslaKeyDisclosureH\x00R\bteslaKeyB\x05\n" +
 	"\x03msg*D\n" +
 	"\x15DispatcherCommandType\x12\x13\n" +
 	"\x0fSTART_EXECUTION\x10\x00\x12\x16\n" +
@@ -1087,7 +1187,7 @@ func file_protocol_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_protocol_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_protocol_protocol_proto_goTypes = []any{
 	(DispatcherCommandType)(0),        // 0: debuglet.protocol.DispatcherCommandType
 	(*ExecutorHello)(nil),             // 1: debuglet.protocol.ExecutorHello
@@ -1101,13 +1201,14 @@ var file_protocol_protocol_proto_goTypes = []any{
 	(*DebugletReady)(nil),             // 9: debuglet.protocol.DebugletReady
 	(*DebugletStdout)(nil),            // 10: debuglet.protocol.DebugletStdout
 	(*DebugletExit)(nil),              // 11: debuglet.protocol.DebugletExit
-	(*SessionMessage)(nil),            // 12: debuglet.protocol.SessionMessage
-	(*DebugletAssignment_Policy)(nil), // 13: debuglet.protocol.DebugletAssignment.Policy
-	(*DestinationUpdates_Update)(nil), // 14: debuglet.protocol.DestinationUpdates.Update
+	(*TeslaKeyDisclosure)(nil),        // 12: debuglet.protocol.TeslaKeyDisclosure
+	(*SessionMessage)(nil),            // 13: debuglet.protocol.SessionMessage
+	(*DebugletAssignment_Policy)(nil), // 14: debuglet.protocol.DebugletAssignment.Policy
+	(*DestinationUpdates_Update)(nil), // 15: debuglet.protocol.DestinationUpdates.Update
 }
 var file_protocol_protocol_proto_depIdxs = []int32{
-	13, // 0: debuglet.protocol.DebugletAssignment.policy:type_name -> debuglet.protocol.DebugletAssignment.Policy
-	14, // 1: debuglet.protocol.DestinationUpdates.updates:type_name -> debuglet.protocol.DestinationUpdates.Update
+	14, // 0: debuglet.protocol.DebugletAssignment.policy:type_name -> debuglet.protocol.DebugletAssignment.Policy
+	15, // 1: debuglet.protocol.DestinationUpdates.updates:type_name -> debuglet.protocol.DestinationUpdates.Update
 	1,  // 2: debuglet.protocol.ControlMessage.hello:type_name -> debuglet.protocol.ExecutorHello
 	2,  // 3: debuglet.protocol.ControlMessage.heartbeat:type_name -> debuglet.protocol.ExecutorHeartbeat
 	4,  // 4: debuglet.protocol.ControlMessage.assignment:type_name -> debuglet.protocol.DebugletAssignment
@@ -1119,15 +1220,16 @@ var file_protocol_protocol_proto_depIdxs = []int32{
 	9,  // 10: debuglet.protocol.SessionMessage.ready:type_name -> debuglet.protocol.DebugletReady
 	10, // 11: debuglet.protocol.SessionMessage.stdout:type_name -> debuglet.protocol.DebugletStdout
 	11, // 12: debuglet.protocol.SessionMessage.exit:type_name -> debuglet.protocol.DebugletExit
-	7,  // 13: debuglet.protocol.DebugletDispatcher.ControlStream:input_type -> debuglet.protocol.ControlMessage
-	12, // 14: debuglet.protocol.DebugletDispatcher.SessionStream:input_type -> debuglet.protocol.SessionMessage
-	7,  // 15: debuglet.protocol.DebugletDispatcher.ControlStream:output_type -> debuglet.protocol.ControlMessage
-	12, // 16: debuglet.protocol.DebugletDispatcher.SessionStream:output_type -> debuglet.protocol.SessionMessage
-	15, // [15:17] is the sub-list for method output_type
-	13, // [13:15] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	12, // 13: debuglet.protocol.SessionMessage.tesla_key:type_name -> debuglet.protocol.TeslaKeyDisclosure
+	7,  // 14: debuglet.protocol.DebugletDispatcher.ControlStream:input_type -> debuglet.protocol.ControlMessage
+	13, // 15: debuglet.protocol.DebugletDispatcher.SessionStream:input_type -> debuglet.protocol.SessionMessage
+	7,  // 16: debuglet.protocol.DebugletDispatcher.ControlStream:output_type -> debuglet.protocol.ControlMessage
+	13, // 17: debuglet.protocol.DebugletDispatcher.SessionStream:output_type -> debuglet.protocol.SessionMessage
+	16, // [16:18] is the sub-list for method output_type
+	14, // [14:16] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
@@ -1143,11 +1245,12 @@ func file_protocol_protocol_proto_init() {
 		(*ControlMessage_Updates)(nil),
 		(*ControlMessage_Resources)(nil),
 	}
-	file_protocol_protocol_proto_msgTypes[11].OneofWrappers = []any{
+	file_protocol_protocol_proto_msgTypes[12].OneofWrappers = []any{
 		(*SessionMessage_DispatcherCmd)(nil),
 		(*SessionMessage_Ready)(nil),
 		(*SessionMessage_Stdout)(nil),
 		(*SessionMessage_Exit)(nil),
+		(*SessionMessage_TeslaKey)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1155,7 +1258,7 @@ func file_protocol_protocol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocol_protocol_proto_rawDesc), len(file_protocol_protocol_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

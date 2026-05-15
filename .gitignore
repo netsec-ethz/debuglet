@@ -1,9 +1,11 @@
 *.crt
 *.key
+*.pcap
 
 # binaries
 debuglet-executor*
 debuglet-dispatcher*
+tagger.o
 /dispatcher
 /executor
 __debug*

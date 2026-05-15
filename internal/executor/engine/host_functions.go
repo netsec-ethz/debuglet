@@ -25,6 +25,7 @@ package engine
 import (
 	"crypto/tls"
 	"debuglet/internal/executor/resource"
+	"debuglet/pkg/tagger"
 	"fmt"
 	"net"
 	"os"
@@ -109,6 +110,7 @@ func hostConnect(
 	sugar *zap.SugaredLogger,
 	registry *SocketRegistry,
 	tlsCfg *tls.Config,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
@@ -142,6 +144,26 @@ func hostConnect(
 	if err != nil {
 		sugar.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
 		return nil, fmt.Errorf("connect: failed to dial %q: %w", addr, err)
+	}
+
+	// If using eBPF, we need to set the socket mark so the kernel can match the packet to the key.
+	if pktTagger != nil {
+		// Try to set SO_MARK
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			rawConn, err := tcpConn.SyscallConn()
+			if err == nil {
+				rawConn.Control(func(fd uintptr) {
+					pktTagger.SetSocketMark(int(fd))
+				})
+			}
+		} else if ipConn, ok := conn.(*net.IPConn); ok {
+			rawConn, err := ipConn.SyscallConn()
+			if err == nil {
+				rawConn.Control(func(fd uintptr) {
+					pktTagger.SetSocketMark(int(fd))
+				})
+			}
+		}
 	}
 
 	socket := NewGenericSocket(conn, socketType)

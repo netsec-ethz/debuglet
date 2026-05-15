@@ -65,8 +65,8 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 		switch msg := in.Msg.(type) {
 		case *pb.ControlMessage_Hello:
 			executorID = msg.Hello.ExecutorId
-			s.dispatcher.RegisterExecutor(executorID)
-			s.logger.Info("Executor connected", zap.String("executor_id", executorID))
+			s.dispatcher.RegisterExecutor(executorID, msg.Hello.SourceIp)
+			s.logger.Info("Executor connected", zap.String("executor_id", executorID), zap.String("source_ip", msg.Hello.SourceIp))
 
 			// Optional acknowledgment
 			stream.Send(&pb.ControlMessage{
@@ -150,7 +150,7 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 
 		case *pb.SessionMessage_Stdout:
 			stdout := string(msg.Stdout.Stdout)
-			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId))
+			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId), zap.String("stdout", stdout)	)
 			measurement.EventChan <- StdoutEvent{
 				Event:     "stdout",
 				SessionId: msg.Stdout.SessionId,
@@ -161,6 +161,11 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 			s.logger.Info("Session finished", zap.String("session_id", msg.Exit.GetSessionId()), zap.Int32("exit_code", msg.Exit.GetExitCode()))
 			measurement.EventChan <- ExitEvent{}
 			return nil
+
+		case *pb.SessionMessage_TeslaKey:
+			disclosure := msg.TeslaKey
+			s.dispatcher.KeyStore.Store(disclosure.SessionId, disclosure.MeasurementId, disclosure.KeyEpoch, disclosure.Key)
+			s.logger.Debug("Stored TESLA key", zap.String("session_id", disclosure.SessionId), zap.Int64("epoch", disclosure.KeyEpoch))
 		default:
 			s.logger.Warn("Unknown session message type")
 		}

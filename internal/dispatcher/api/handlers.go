@@ -16,12 +16,17 @@ package api
 
 import (
 	"encoding/base64"
+	"io"
 	"net/http"
 	"sync"
 
 	"debuglet/internal/dispatcher"
+	"debuglet/pkg/tesla"
 	pb "debuglet/protocol"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcapgo"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -43,6 +48,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/executors", h.GetExecutors)
 	e.POST("/measurements", h.CreateMeasurement)
 	e.GET("/measurements/:id/start", h.StartMeasurementStream)
+	e.POST("/verify", h.Verify)
 }
 
 // GET /executors
@@ -161,4 +167,104 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 	h.logger.Info("measurement stream ended", zap.String("measurement_id", measurementId))
 	h.dispatcher.RemoveMeasurement(measurementId)
 	return nil
+}
+// POST /verify
+func (h *Handler) Verify(c echo.Context) error {
+	measurementId := c.FormValue("measurement_id")
+	if measurementId == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "measurement_id is required")
+	}
+
+	file, err := c.FormFile("pcap")
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "pcap file is required")
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	pcapReader, err := pcapgo.NewReader(src)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid pcap file: "+err.Error())
+	}
+
+	type result struct {
+		Timestamp string `json:"timestamp"`
+		SourceIP  string `json:"source_ip"`
+		DestIP    string `json:"dest_ip"`
+		Tag       uint16 `json:"tag"`
+		Valid     bool   `json:"valid"`
+		Error     string `json:"error,omitempty"`
+	}
+	var results []result
+
+	for {
+		data, ci, err := pcapReader.ReadPacketData()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			h.logger.Error("failed to read packet", zap.Error(err))
+			break
+		}
+
+		packet := gopacket.NewPacket(data, layers.LayerTypeEthernet, gopacket.Default)
+		ipLayer := packet.Layer(layers.LayerTypeIPv4)
+		if ipLayer == nil {
+			continue
+		}
+		ip, _ := ipLayer.(*layers.IPv4)
+
+		executorId := h.dispatcher.GetExecutorByIP(ip.SrcIP.String())
+		if executorId == "" {
+			results = append(results, result{
+				Timestamp: ci.Timestamp.String(),
+				SourceIP:  ip.SrcIP.String(),
+				DestIP:    ip.DstIP.String(),
+				Tag:       ip.Id,
+				Valid:     false,
+				Error:     "unknown executor",
+			})
+			continue
+		}
+
+		// Infer epoch from packet timestamp.
+		// Note: This assumes the dispatcher's view of time matches the executor's epoch 0.
+		// In a production system, epoch 0 is usually a fixed wall-clock time.
+		// Here we assume epoch duration of 1 hour for simplicity if not specified.
+		// Ideally the KeyStore would handle time-based lookup.
+		epoch := ci.Timestamp.Unix() / 3600
+
+		key, ok := h.dispatcher.KeyStore.Get(executorId, measurementId, epoch)
+		if !ok {
+			// Try previous epoch just in case of clock drift
+			key, ok = h.dispatcher.KeyStore.Get(executorId, measurementId, epoch-1)
+		}
+
+		if !ok {
+			results = append(results, result{
+				Timestamp: ci.Timestamp.String(),
+				SourceIP:  ip.SrcIP.String(),
+				DestIP:    ip.DstIP.String(),
+				Tag:       ip.Id,
+				Valid:     false,
+				Error:     "key not found",
+			})
+			continue
+		}
+
+		valid, err := tesla.VerifyBPFTag(key, epoch, []byte(measurementId), ip.BaseLayer.Contents, ip.Id)
+		results = append(results, result{
+			Timestamp: ci.Timestamp.String(),
+			SourceIP:  ip.SrcIP.String(),
+			DestIP:    ip.DstIP.String(),
+			Tag:       ip.Id,
+			Valid:     valid,
+		})
+	}
+
+	return c.JSON(http.StatusOK, results)
 }

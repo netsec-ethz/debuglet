@@ -38,6 +38,9 @@ type Dispatcher struct {
 	measurements map[string]*Measurement
 	assignments  map[string]*pb.DebugletAssignment
 	resource     *resource.DispatcherManager
+
+	KeyStore     *KeyStore
+	ipToExecutor map[string]string // source_ip -> executor_id
 }
 
 func NewDispatcher() *Dispatcher {
@@ -46,6 +49,8 @@ func NewDispatcher() *Dispatcher {
 		measurements: make(map[string]*Measurement),
 		assignments:  make(map[string]*pb.DebugletAssignment),
 		resource:     resource.New(),
+		KeyStore:     NewKeyStore(),
+		ipToExecutor: make(map[string]string),
 	}
 }
 
@@ -114,7 +119,7 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 	delete(d.measurements, id)
 }
 
-func (d *Dispatcher) RegisterExecutor(id string) {
+func (d *Dispatcher) RegisterExecutor(id string, ip string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
@@ -124,6 +129,15 @@ func (d *Dispatcher) RegisterExecutor(id string) {
 			Updates:     make(chan *pb.DestinationUpdates, 1),
 		}
 	}
+	if ip != "" {
+		d.ipToExecutor[ip] = id
+	}
+}
+
+func (d *Dispatcher) GetExecutorByIP(ip string) string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.ipToExecutor[ip]
 }
 
 func (d *Dispatcher) RemoveExecutor(id string) {

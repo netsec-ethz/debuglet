@@ -24,6 +24,7 @@ option go_package = "/protocol";
 message ExecutorHello {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
+  string source_ip = 3; // Source IP for packet attribution
 }
 
 message ExecutorHeartbeat {
@@ -104,12 +105,20 @@ message DebugletExit {
   bytes result = 3; // Final result bytes
 }
 
+message TeslaKeyDisclosure {
+  string session_id = 1;
+  string measurement_id = 2;
+  int64 key_epoch = 3;
+  bytes key = 4;
+}
+
 message SessionMessage {
   oneof msg {
     DispatcherCommand dispatcher_cmd = 1;
     DebugletReady ready = 2;
     DebugletStdout stdout = 3;
     DebugletExit exit = 4;
+    TeslaKeyDisclosure tesla_key = 5;
   }
 }
 

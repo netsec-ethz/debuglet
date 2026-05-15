@@ -24,6 +24,7 @@ import (
 
 	"debuglet/internal/executor/engine"
 	"debuglet/internal/executor/resource"
+	"debuglet/pkg/tesla"
 	pb "debuglet/protocol"
 
 	"go.uber.org/zap"
@@ -48,6 +49,8 @@ type Executor struct {
 	// and in total on the executor
 	manager *resource.LimitManager
 	// tracker keeps of how much bandwidth is actively being used by a debuglet
+
+	teslaSchedule *tesla.KeySchedule
 }
 
 func getClientCredentials(cfg *Config) (credentials.TransportCredentials, error) {
@@ -84,14 +87,23 @@ func NewExecutor(cfg *Config, logger *zap.Logger) (*Executor, error) {
 	}
 	logger.Info("Connected to dispatcher", zap.String("address", cfg.DispatcherAddr))
 	client := pb.NewDebugletDispatcherClient(conn)
+	schedule, err := tesla.NewKeySchedule(tesla.Config{
+		Seed:  []byte(cfg.TeslaSeed),
+		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &Executor{
-		id:        cfg.ExecutorID,
-		client:    client,
-		conn:      conn,
-		logger:    logger,
-		version:   cfg.Version,
-		debuglets: make(map[string]*engine.Debuglet),
-		manager:   resource.New(cfg.Capacity),
+		id:            cfg.ExecutorID,
+		client:        client,
+		conn:          conn,
+		logger:        logger,
+		version:       cfg.Version,
+		debuglets:     make(map[string]*engine.Debuglet),
+		manager:       resource.New(cfg.Capacity),
+		teslaSchedule: schedule,
 	}, nil
 }
 
@@ -107,6 +119,7 @@ func (e *Executor) Start(ctx context.Context) error {
 		Msg: &pb.ControlMessage_Hello{Hello: &pb.ExecutorHello{
 			ExecutorId: e.id,
 			Version:    e.version,
+			SourceIp:   "127.0.0.1", // TODO: detect public IP
 		}},
 	})
 	// Initialize executor to have a bandwidth capacity of 1gbit/s
@@ -168,7 +181,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 
 	e.logger.Debug("Locking")
 	e.mu.Lock()
-	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId)
+	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId, e.teslaSchedule, []byte(assign.MeasurementId))
 	err = db.Init(assign.Code, assign.Addresses)
 	if err != nil {
 		e.mu.Unlock()
@@ -218,6 +231,33 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 			e.mu.Lock()
 			e.manager.RemoveAssignment(assign.SessionId)
 			e.mu.Unlock()
+		}
+	}()
+
+	// Disclosure loop
+	go func() {
+		ticker := time.NewTicker(e.teslaSchedule.Config().Delay / 2)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				epoch, key, ok := e.teslaSchedule.DisclosedKey(time.Now())
+				if !ok {
+					continue
+				}
+				session.Send(&pb.SessionMessage{
+					Msg: &pb.SessionMessage_TeslaKey{
+						TeslaKey: &pb.TeslaKeyDisclosure{
+							SessionId:     assign.SessionId,
+							MeasurementId: assign.MeasurementId,
+							KeyEpoch:      epoch,
+							Key:           key,
+						},
+					},
+				})
+			}
 		}
 	}()
 }

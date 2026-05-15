@@ -116,22 +116,26 @@ int debuglet_tag(struct __sk_buff *skb) {
     void *data     = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
 
-    // Parse Ethernet header.
+    bpf_printk("tagger: packet len=%d protocol=0x%x\n", skb->len, bpf_ntohs(skb->protocol));
+
+    __u32 ip_off = 0;
     struct ethhdr *eth = data;
-    if ((void *)(eth + 1) > data_end)
-        return TC_ACT_OK;
+    if ((void *)(eth + 1) <= data_end && bpf_ntohs(eth->h_proto) == ETH_P_IP) {
+        ip_off = sizeof(struct ethhdr);
+    } else {
+        // Not Ethernet. Check if it's raw IPv4.
+        struct iphdr *iph = data;
+        if ((void *)(iph + 1) <= data_end && iph->version == 4) {
+            ip_off = 0;
+        } else {
+            return TC_ACT_OK;
+        }
+    }
 
-    if (bpf_ntohs(eth->h_proto) != ETH_P_IP)
-        return TC_ACT_OK;
-
-    // Parse IPv4 header.
-    struct iphdr *iph = (void *)(eth + 1);
+    struct iphdr *iph = (void *)(data + ip_off);
     if ((void *)(iph + 1) > data_end)
         return TC_ACT_OK;
 
-    // The Go side computes a hash of the measurement ID and sets SO_MARK on the
-    // socket. The kernel propagates this mark to the skb, allowing us to map
-    // the packet to the correct per-measurement TESLA key.
     __u32 map_key = skb->mark;
     struct ak_entry *ak = bpf_map_lookup_elem(&ak_map, &map_key);
     if (!ak)
@@ -140,30 +144,41 @@ int debuglet_tag(struct __sk_buff *skb) {
     // Compute SipHash over the IP header + first 56 bytes of payload.
     __u8 buf[64] = {};
     __u32 pkt_len = skb->len;
-    if (pkt_len < sizeof(struct ethhdr))
+    if (pkt_len < ip_off)
         return TC_ACT_OK;
-    pkt_len -= sizeof(struct ethhdr);
+    pkt_len -= ip_off;
 
     __u32 copy_len = pkt_len;
     if (copy_len > 64)
         copy_len = 64;
+    if (copy_len == 0)
+        return TC_ACT_OK;
 
-    if (copy_len > 0) {
-        if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr), buf, copy_len & 0x7fffffff) < 0)
-            return TC_ACT_OK;
-    }
+    // BPF Verifier trick: force the range to [1, 64] to avoid "invalid zero-sized read"
+    // and satisfy scalar tracking.
+    copy_len = ((copy_len - 1) & 63) + 1;
+
+    if (bpf_skb_load_bytes(skb, ip_off, buf, copy_len) < 0)
+        return TC_ACT_OK;
 
     __u64 hash = siphash24(ak->k0, ak->k1, buf, copy_len);
     __u16 tag  = (__u16)(hash & 0xFFFF);
 
-    // Write tag into IPID field (offset 4 from start of IP header = 4+14 from frame).
-    __u32 ipid_off = sizeof(struct ethhdr) + offsetof(struct iphdr, id);
+    // Write tag into IPID field (offset 4 from start of IP header).
+    __u32 ipid_off = ip_off + offsetof(struct iphdr, id);
+    __be16 old_id = 0;
+    bpf_skb_load_bytes(skb, ipid_off, &old_id, 2);
+
     __be16 tag_be  = bpf_htons(tag);
+    bpf_printk("tagger: tagging packet at off=%d old_id=0x%x new_id=0x%x\n", ipid_off, bpf_ntohs(old_id), bpf_ntohs(tag_be));
+
     if (bpf_skb_store_bytes(skb, ipid_off, &tag_be, sizeof(tag_be),
-                            BPF_F_RECOMPUTE_CSUM) < 0)
+                            BPF_F_RECOMPUTE_CSUM) < 0) {
+        bpf_printk("tagger: bpf_skb_store_bytes failed at off=%d\n", ipid_off);
         return TC_ACT_OK;
+    }
 
     return TC_ACT_OK;
 }
 
-char _license[] SEC("license") = "Apache-2.0";
+char _license[] SEC("license") = "Dual MIT/GPL";

@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
 
 	"github.com/labstack/echo/v4"
@@ -161,11 +162,23 @@ func startHTTPServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
 		Format: `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n",
 	}))
-	e.Use(middleware.CORS()) // TODO: specify CORS origin
+	e.Use(middleware.CORS())
 
 	handler.RegisterRoutes(e)
 
 	addr := fmt.Sprintf(":%d", port)
 	logger.Info("Dispatcher HTTP API started", zap.Int("port", port))
-	return e.StartTLS(addr, cfg.TLS.CertFile, cfg.TLS.KeyFile)
+
+	// Explicit TLS configuration for the HTTP server
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12, // More compatible than forcing 1.3
+	}
+
+	server := &http.Server{
+		Addr:      addr,
+		Handler:   e,
+		TLSConfig: tlsConfig,
+	}
+
+	return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
 }
