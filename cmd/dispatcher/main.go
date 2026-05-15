@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -170,13 +169,9 @@ func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 	return nil
 }
 
-// startSuiListener polls the Sui RPC for DebugletPurchase events and credits user balances.
+// startSuiListener subscribes to Sui DebugletPurchase events via gRPC and credits user balances.
 func startSuiListener(userDB *db.UserDB, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
-	interval := time.Duration(cfg.Sui.PollIntervalSecs) * time.Second
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.PackageID, userDB, logger, interval)
+	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.PackageID, userDB, logger)
 	return l.Start(context.Background())
 }
 
