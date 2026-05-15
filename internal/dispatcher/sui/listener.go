@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const mistPerSui = 1_000_000_000
+
 
 // uint64Str handles Sui JSON's u64 encoding, which may be a number or a quoted string.
 type uint64Str uint64
@@ -197,20 +197,19 @@ func (l *Listener) fetchPage(cursor *eventCursor) (*queryResult, error) {
 }
 
 func (l *Listener) processEvent(ev suiEvent) {
-	amount := uint64(ev.ParsedJSON.Amount)
-	balance := int64(100*amount / mistPerSui)
+	amount := int64(ev.ParsedJSON.Amount)
 	username := ev.ParsedJSON.Username
 
-	if balance <= 0 {
-		l.logger.Warn("DebugletPurchase below 1 SUI threshold, no balance credited",
+	if amount <= 0 {
+		l.logger.Warn("DebugletPurchase negative amount, no balance credited",
 			zap.String("tx", ev.ID.TxDigest),
 			zap.String("username", username),
-			zap.Uint64("mist", amount),
+			zap.Int64("mist", amount),
 		)
 		return
 	}
 
-	if err := l.db.UpdateBalance(username, balance); err != nil {
+	if err := l.db.UpdateBalance(username, amount); err != nil {
 		l.logger.Error("failed to credit balance from DebugletPurchase",
 			zap.String("tx", ev.ID.TxDigest),
 			zap.String("username", username),
@@ -223,7 +222,6 @@ func (l *Listener) processEvent(ev suiEvent) {
 	l.logger.Info("credited balance from DebugletPurchase",
 		zap.String("tx", ev.ID.TxDigest),
 		zap.String("username", username),
-		zap.Uint64("mist", amount),
-		zap.Int64("balance_delta", balance),
+		zap.Int64("balance_delta", amount),
 	)
 }
