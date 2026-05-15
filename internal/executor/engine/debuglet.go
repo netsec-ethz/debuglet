@@ -395,38 +395,38 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 		// ---- SCION-UDP API ----
 		"send_scion_udp_packet": d.wrapHostFn(in(i32, i32), out(i64),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendSCIONUDPPacket(env, args, scionConns, d.addresses, d.logger, d.wasmerInstance)
+				return hostSendSCIONUDPPacket(env, args, scionConns, d.addresses, d.logger, d.wasmerInstance, d.pktTagger)
 			},
 		),
 
 		"receive_scion_server_udp_packet": d.wrapHostFn(in(i32), out(i32, i64),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
 				d.markStarted()
-				return hostReceiveSCIONServerUDPPacket(env, args, lastReceived, d.logger, d.wasmerInstance, &d.scionServer)
+				return hostReceiveSCIONServerUDPPacket(env, args, lastReceived, d.logger, d.wasmerInstance, &d.scionServer, d.pktTagger)
 			},
 		),
 
 		"scion_available_paths": d.wrapHostFn(in(i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONAvailablePaths(env, args, scionConns, d.addresses, d.logger)
+				return hostSCIONAvailablePaths(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
 		"scion_path_length": d.wrapHostFn(in(i32, i32), out(i32),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONPathLength(env, args, scionConns, d.addresses, d.logger)
+				return hostSCIONPathLength(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
 		"scion_get_interface_details": d.wrapHostFn(in(i32, i32, i32), out(i64, i64),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONGetInterfaceDetails(env, args, scionConns, d.addresses, d.logger)
+				return hostSCIONGetInterfaceDetails(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
 		"scion_select_path": d.wrapHostFn(in(i32, i32), out(),
 			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONSelectPath(env, args, scionConns, d.addresses, d.logger)
+				return hostSCIONSelectPath(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 

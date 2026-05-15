@@ -19,9 +19,12 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"syscall"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
+
+	"debuglet/pkg/tagger"
 )
 
 // SocketRegistry manages the lifecycle of all open sockets within a single
@@ -106,6 +109,7 @@ func (r *SCIONConnRegistry) GetOrDial(
 	addresses []string,
 	addrIdx int32,
 	sugar *zap.SugaredLogger,
+	pktTagger tagger.TaggerInterface,
 ) (*SCIONConn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -129,6 +133,17 @@ func (r *SCIONConnRegistry) GetOrDial(
 	conn, err := pan.DialUDP(ctx, netip.AddrPort{}, udpAddr, nil, selector)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial SCION address %q: %w", addresses[addrIdx], err)
+	}
+
+	if pktTagger != nil {
+		if sc, ok := conn.(interface{ SyscallConn() (syscall.RawConn, error) }); ok {
+			rawConn, err := sc.SyscallConn()
+			if err == nil {
+				rawConn.Control(func(fd uintptr) {
+					pktTagger.SetSocketMark(int(fd))
+				})
+			}
+		}
 	}
 
 	sc := &SCIONConn{conn: &conn, selector: selector}

@@ -233,5 +233,6 @@ func (bt *BPFTagger) SetSocketMark(fd int) error {
 	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_MARK, int(mark)); err != nil {
 		return fmt.Errorf("setsockopt SO_MARK: %w", err)
 	}
+	fmt.Printf("bpf: set socket mark to %x\n", mark)
 	return nil
 }

@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -136,34 +137,26 @@ func hostConnect(
 	var conn net.Conn
 	var err error
 
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+	}
+
+	if pktTagger != nil {
+		dialer.Control = func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				pktTagger.SetSocketMark(int(fd))
+			})
+		}
+	}
+
 	if socketType == SocketTypeTLS {
-		conn, err = tls.Dial("tcp", addr, tlsCfg)
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
 	} else {
-		conn, err = net.Dial(network, addr)
+		conn, err = dialer.DialContext(env.ctx, network, addr)
 	}
 	if err != nil {
 		sugar.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
 		return nil, fmt.Errorf("connect: failed to dial %q: %w", addr, err)
-	}
-
-	// If using eBPF, we need to set the socket mark so the kernel can match the packet to the key.
-	if pktTagger != nil {
-		// Try to set SO_MARK
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			rawConn, err := tcpConn.SyscallConn()
-			if err == nil {
-				rawConn.Control(func(fd uintptr) {
-					pktTagger.SetSocketMark(int(fd))
-				})
-			}
-		} else if ipConn, ok := conn.(*net.IPConn); ok {
-			rawConn, err := ipConn.SyscallConn()
-			if err == nil {
-				rawConn.Control(func(fd uintptr) {
-					pktTagger.SetSocketMark(int(fd))
-				})
-			}
-		}
 	}
 
 	socket := NewGenericSocket(conn, socketType)
@@ -470,6 +463,7 @@ func hostSendSCIONUDPPacket(
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
@@ -479,7 +473,7 @@ func hostSendSCIONUDPPacket(
 	addrIdx := args[0].I32()
 	size := args[1].I32()
 
-	sc, err := scionConns.GetOrDial(env.ctx, addresses, addrIdx, sugar)
+	sc, err := scionConns.GetOrDial(env.ctx, addresses, addrIdx, sugar, pktTagger)
 	if err != nil {
 		if ctxErr := checkContextExpired(env); ctxErr != nil {
 			return nil, ctxErr
@@ -521,6 +515,7 @@ func hostReceiveSCIONServerUDPPacket(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 	scionServer *pan.ListenConn,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
@@ -569,6 +564,7 @@ func hostAnswerSCIONUDPPacket(
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 	scionServer *pan.ListenConn,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
@@ -610,7 +606,7 @@ func hostAnswerSCIONUDPPacket(
 	} else {
 		sugar.Warnln("hostAnswerSCIONUDPPacket: lastReceived is nil, falling back to dial")
 		addrIdx := args[0].I32()
-		sc, err := scionConns.GetOrDial(env.ctx, addresses, addrIdx, sugar)
+		sc, err := scionConns.GetOrDial(env.ctx, addresses, addrIdx, sugar, pktTagger)
 		if err != nil {
 			sugar.Warnw("hostAnswerSCIONUDPPacket: dial failed", "err", err)
 			return nil, fmt.Errorf("answer_scion_udp_packet: %w", err)
@@ -632,13 +628,14 @@ func hostSCIONAvailablePaths(
 	scionConns *SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar)
+	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar, pktTagger)
 	if err != nil {
 		if ctxErr := checkContextExpired(env); ctxErr != nil {
 			return nil, ctxErr
@@ -659,13 +656,14 @@ func hostSCIONPathLength(
 	scionConns *SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar)
+	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar, pktTagger)
 	if err != nil {
 		if ctxErr := checkContextExpired(env); ctxErr != nil {
 			return nil, ctxErr
@@ -689,13 +687,14 @@ func hostSCIONGetInterfaceDetails(
 	scionConns *SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar)
+	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar, pktTagger)
 	if err != nil {
 		if ctxErr := checkContextExpired(env); ctxErr != nil {
 			return nil, ctxErr
@@ -730,13 +729,14 @@ func hostSCIONSelectPath(
 	scionConns *SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
+	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar)
+	sc, err := scionConns.GetOrDial(env.ctx, addresses, args[0].I32(), sugar, pktTagger)
 	if err != nil {
 		if ctxErr := checkContextExpired(env); ctxErr != nil {
 			return nil, ctxErr

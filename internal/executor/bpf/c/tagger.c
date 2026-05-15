@@ -91,23 +91,6 @@ static __always_inline __u64 siphash24(__u64 k0, __u64 k1,
 }
 
 // ---------------------------------------------------------------------------
-// IPv4 checksum helper
-// ---------------------------------------------------------------------------
-
-static __always_inline __u16 ipv4_csum(struct iphdr *iph) {
-    __u32 sum = 0;
-    __u16 *p = (__u16 *)iph;
-    // IPv4 header is at most 60 bytes; standard header is 20 bytes (10 words).
-#pragma unroll
-    for (int i = 0; i < 10; i++) {
-        sum += bpf_ntohs(p[i]);
-    }
-    while (sum >> 16)
-        sum = (sum & 0xffff) + (sum >> 16);
-    return bpf_htons(~(__u16)sum);
-}
-
-// ---------------------------------------------------------------------------
 // Main TC egress program
 // ---------------------------------------------------------------------------
 
@@ -115,38 +98,41 @@ SEC("tc/egress")
 int debuglet_tag(struct __sk_buff *skb) {
     void *data     = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
-
-    bpf_printk("tagger: packet len=%d protocol=0x%x\n", skb->len, bpf_ntohs(skb->protocol));
-
-    __u32 ip_off = 0;
+    
     struct ethhdr *eth = data;
+    struct iphdr  *iph;
+    __u32 off;
+
+    // Determine if we have an Ethernet header or raw IP.
     if ((void *)(eth + 1) <= data_end && bpf_ntohs(eth->h_proto) == ETH_P_IP) {
-        ip_off = sizeof(struct ethhdr);
+        off = sizeof(struct ethhdr);
+        iph = (void *)(eth + 1);
     } else {
-        // Not Ethernet. Check if it's raw IPv4.
-        struct iphdr *iph = data;
-        if ((void *)(iph + 1) <= data_end && iph->version == 4) {
-            ip_off = 0;
-        } else {
-            return TC_ACT_OK;
-        }
+        iph = data;
+        off = 0;
     }
 
-    struct iphdr *iph = (void *)(data + ip_off);
-    if ((void *)(iph + 1) > data_end)
+    // Safety check for IP header access.
+    if ((void *)(iph + 1) > data_end || iph->version != 4)
         return TC_ACT_OK;
 
     __u32 map_key = skb->mark;
     struct ak_entry *ak = bpf_map_lookup_elem(&ak_map, &map_key);
-    if (!ak)
+    if (!ak) {
+        if (map_key != 0) {
+            bpf_printk("tagger: lookup failed for mark=0x%x\n", map_key);
+        }
         return TC_ACT_OK; // No key installed — pass through unmodified.
+    }
+
+    bpf_printk("tagger: found ak for mark=0x%x, tagging...\n", map_key);
 
     // Compute SipHash over the IP header + first 56 bytes of payload.
     __u8 buf[64] = {};
     __u32 pkt_len = skb->len;
-    if (pkt_len < ip_off)
+    if (pkt_len < off)
         return TC_ACT_OK;
-    pkt_len -= ip_off;
+    pkt_len -= off;
 
     __u32 copy_len = pkt_len;
     if (copy_len > 64)
@@ -158,22 +144,34 @@ int debuglet_tag(struct __sk_buff *skb) {
     // and satisfy scalar tracking.
     copy_len = ((copy_len - 1) & 63) + 1;
 
-    if (bpf_skb_load_bytes(skb, ip_off, buf, copy_len) < 0)
+    if (bpf_skb_load_bytes(skb, off, buf, copy_len) < 0)
         return TC_ACT_OK;
 
     __u64 hash = siphash24(ak->k0, ak->k1, buf, copy_len);
-    __u16 tag  = (__u16)(hash & 0xFFFF);
+    // __u16 tag  = (__u16)(hash & 0xFFFF);
+    __u16 tag  = 0xFFFF;
 
     // Write tag into IPID field (offset 4 from start of IP header).
-    __u32 ipid_off = ip_off + offsetof(struct iphdr, id);
+    __u32 ipid_off = off + offsetof(struct iphdr, id);
     __be16 old_id = 0;
     bpf_skb_load_bytes(skb, ipid_off, &old_id, 2);
 
-    __be16 tag_be  = bpf_htons(tag);
-    bpf_printk("tagger: tagging packet at off=%d old_id=0x%x new_id=0x%x\n", ipid_off, bpf_ntohs(old_id), bpf_ntohs(tag_be));
+    __be16 tag_be = bpf_htons(tag);
+    __be16 frag_off_be = 0;
+    bpf_skb_load_bytes(skb, off + offsetof(struct iphdr, frag_off), &frag_off_be, 2);
+    __u16 frag_off = bpf_ntohs(frag_off_be);
+    __u16 flags = frag_off >> 13;
 
-    if (bpf_skb_store_bytes(skb, ipid_off, &tag_be, sizeof(tag_be),
-                            BPF_F_RECOMPUTE_CSUM) < 0) {
+    bpf_printk("tagger: tagging packet at off=%d old_id=0x%x new_id=0x%x flags=0x%x\n", 
+               ipid_off, bpf_ntohs(old_id), bpf_ntohs(tag_be), flags);
+
+    __u32 csum_off = off + offsetof(struct iphdr, check);
+    if (bpf_l3_csum_replace(skb, csum_off, old_id, tag_be, 2) < 0) {
+        bpf_printk("tagger: checksum update failed\n");
+        return TC_ACT_OK;
+    }
+
+    if (bpf_skb_store_bytes(skb, ipid_off, &tag_be, sizeof(tag_be), 0) < 0) {
         bpf_printk("tagger: bpf_skb_store_bytes failed at off=%d\n", ipid_off);
         return TC_ACT_OK;
     }
