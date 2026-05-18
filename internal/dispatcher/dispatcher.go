@@ -155,6 +155,9 @@ func (d *Dispatcher) GetMeasurement(id string) *Measurement {
 }
 
 func (d *Dispatcher) RemoveMeasurement(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	m := d.GetMeasurement(id)
 	if m == nil {
 		return

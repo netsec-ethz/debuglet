@@ -117,10 +117,10 @@ func (e *Executor) Start(ctx context.Context) error {
 	// Send hello
 	controlStream.Send(&pb.ControlMessage{
 		Msg: &pb.ControlMessage_Hello{Hello: &pb.ExecutorHello{
-			ExecutorId:              e.id,
-			Version:                 e.version,
-			SourceIp:                "127.0.0.1", // TODO: detect public IP
-			TeslaDelaySec:           int64(e.teslaSchedule.Config().Delay.Seconds()),
+			ExecutorId:             e.id,
+			Version:                e.version,
+			SourceIp:               "127.0.0.1", // TODO: detect public IP
+			TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
 			TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 			TeslaAnchorKey:         e.teslaSchedule.Anchor(),
 		}},
@@ -301,7 +301,6 @@ func (e *Executor) runDebuglet(assign *pb.DebugletAssignment, session pb.Debugle
 	delete(e.debuglets, assign.SessionId)
 	e.mu.Unlock()
 	db.Close()
-
 	e.stdoutWg.Wait()
 
 	if err != nil {
