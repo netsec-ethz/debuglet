@@ -147,6 +147,14 @@ int debuglet_tag(struct __sk_buff *skb) {
     if (bpf_skb_load_bytes(skb, off, buf, copy_len) < 0)
         return TC_ACT_OK;
 
+    // Canonical form: zero mutable IP header fields before hashing (IPID at 4-5, checksum at 10-11).
+    if (copy_len >= 12) {
+        buf[4] = 0;
+        buf[5] = 0;
+        buf[10] = 0;
+        buf[11] = 0;
+    }
+
     __u64 hash = siphash24(ak->k0, ak->k1, buf, copy_len);
     __u16 tag  = (__u16)(hash & 0xFFFF);
 

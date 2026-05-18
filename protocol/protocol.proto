@@ -25,10 +25,14 @@ message ExecutorHello {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
   string source_ip = 3; // Source IP for packet attribution
+  int64 tesla_delay_sec = 4; // TESLA epoch delay in seconds
+  int64 tesla_anchor_timestamp_ns = 5; // Reference wall-clock time for epoch 0
 }
 
 message ExecutorHeartbeat {
   int64 timestamp = 2;
+  int64 tesla_key_epoch = 3;
+  bytes tesla_key = 4;
 }
 
 message ExecutorResources {
@@ -61,6 +65,7 @@ message DestinationUpdates {
   }
   repeated Update updates = 1;
 }
+
 
 message ControlMessage {
   oneof msg {
@@ -105,20 +110,12 @@ message DebugletExit {
   bytes result = 3; // Final result bytes
 }
 
-message TeslaKeyDisclosure {
-  string session_id = 1;
-  string measurement_id = 2;
-  int64 key_epoch = 3;
-  bytes key = 4;
-}
-
 message SessionMessage {
   oneof msg {
     DispatcherCommand dispatcher_cmd = 1;
     DebugletReady ready = 2;
     DebugletStdout stdout = 3;
     DebugletExit exit = 4;
-    TeslaKeyDisclosure tesla_key = 5;
   }
 }
 

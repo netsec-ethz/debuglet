@@ -115,9 +115,9 @@ func (ks *KeySchedule) Config() Config {
 func (ks *KeySchedule) epochOf(t time.Time) int64 {
 	elapsed := t.Sub(ks.cfg.Epoch)
 	if elapsed < 0 {
-		return 0
+		return 1
 	}
-	return int64(elapsed / ks.cfg.Delay)
+	return int64(elapsed/ks.cfg.Delay) + 1
 }
 
 // keyForEpoch computes k_epoch by applying the hash function epoch times to
@@ -336,6 +336,36 @@ func siphash24(k0, k1 uint64, data []byte) uint64 {
 	return v0 ^ v1 ^ v2 ^ v3
 }
 
+// ComputeBPFTag computes the BPF SipHash-2-4 tag for a packet payload.
+// It does not perform packet canonicalization (which should be done by the caller or
+// on raw packet payloads).
+func ComputeBPFTag(ak, payload []byte) (uint16, error) {
+	if len(ak) < 16 {
+		return 0, fmt.Errorf("tesla: ak too short")
+	}
+	k0 := binary.LittleEndian.Uint64(ak[0:8])
+	k1 := binary.LittleEndian.Uint64(ak[8:16])
+	
+	hashLength := len(payload)
+	if hashLength > 64 {
+		hashLength = 64
+	}
+	
+	hash := siphash24(k0, k1, payload[:hashLength])
+	return uint16(hash & 0xFFFF), nil
+}
+
+// ComputeBPFTagForPacket derives ak from the chain key at time t and then
+// computes the BPF SipHash-2-4 tag over payload.
+func (ks *KeySchedule) ComputeBPFTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
+	k := ks.CurrentKey(t)
+	ak, err := DeriveAK(k, measurementID)
+	if err != nil {
+		return 0, err
+	}
+	return ComputeBPFTag(ak, payload)
+}
+
 // VerifyBPFTag checks whether tag matches the expected SipHash for the packet
 func VerifyBPFTag(disclosedKey []byte, epoch int64, measurementID, packet []byte, tag uint16) (bool, error) {
 	if len(packet) >= 20 && (packet[0]>>4) == 4 {
@@ -351,20 +381,9 @@ func VerifyBPFTag(disclosedKey []byte, epoch int64, measurementID, packet []byte
 	if err != nil {
 		return false, err
 	}
-	
-	if len(ak) < 16 {
-		return false, fmt.Errorf("ak too short")
+	expected, err := ComputeBPFTag(ak, packet)
+	if err != nil {
+		return false, err
 	}
-	
-	k0 := binary.LittleEndian.Uint64(ak[0:8])
-	k1 := binary.LittleEndian.Uint64(ak[8:16])
-	
-	hashLength := len(packet)
-	if hashLength > 64 {
-		hashLength = 64
-	}
-	
-	hash := siphash24(k0, k1, packet[:hashLength])
-	expected := uint16(hash & 0xFFFF)
 	return expected == tag, nil
 }

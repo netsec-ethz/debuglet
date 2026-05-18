@@ -65,7 +65,7 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 		switch msg := in.Msg.(type) {
 		case *pb.ControlMessage_Hello:
 			executorID = msg.Hello.ExecutorId
-			s.dispatcher.RegisterExecutor(executorID, msg.Hello.SourceIp)
+			s.dispatcher.RegisterExecutor(executorID, msg.Hello.SourceIp, msg.Hello.TeslaDelaySec, msg.Hello.TeslaAnchorTimestampNs)
 			s.logger.Info("Executor connected", zap.String("executor_id", executorID), zap.String("source_ip", msg.Hello.SourceIp))
 
 			// Optional acknowledgment
@@ -93,8 +93,14 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 			}(executorID)
 
 		case *pb.ControlMessage_Heartbeat:
-			s.logger.Debug("Heartbeat received", zap.String("executor_id", executorID), zap.Int64("timestamp", msg.Heartbeat.Timestamp))
+			s.logger.Debug("Heartbeat received", zap.String("executor_id", executorID), zap.Int64("timestamp", msg.Heartbeat.Timestamp), zap.Int64("epoch", msg.Heartbeat.TeslaKeyEpoch), zap.Binary("key", msg.Heartbeat.TeslaKey))
 			s.dispatcher.SetExecutor(executorID, msg.Heartbeat.Timestamp)
+			if msg.Heartbeat.TeslaKey != nil {
+				err := s.dispatcher.KeyStore.Store(executorID, msg.Heartbeat.TeslaKeyEpoch, msg.Heartbeat.TeslaKey)
+				if err != nil {
+					s.logger.Error("Failed to store TESLA key from heartbeat", zap.Error(err), zap.String("executor_id", executorID), zap.Int64("epoch", msg.Heartbeat.TeslaKeyEpoch))
+				}
+			}
 
 		case *pb.ControlMessage_Resources:
 			if bw := msg.Resources.GetBandwidthCapacity(); bw > 0 {
@@ -150,7 +156,7 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 
 		case *pb.SessionMessage_Stdout:
 			stdout := string(msg.Stdout.Stdout)
-			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId), zap.String("stdout", stdout)	)
+			s.logger.Debug("STDOUT from session", zap.String("session_id", msg.Stdout.SessionId))
 			measurement.EventChan <- StdoutEvent{
 				Event:     "stdout",
 				SessionId: msg.Stdout.SessionId,
@@ -162,10 +168,6 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 			measurement.EventChan <- ExitEvent{}
 			return nil
 
-		case *pb.SessionMessage_TeslaKey:
-			disclosure := msg.TeslaKey
-			s.dispatcher.KeyStore.Store(disclosure.SessionId, disclosure.MeasurementId, disclosure.KeyEpoch, disclosure.Key)
-			s.logger.Debug("Stored TESLA key", zap.String("session_id", disclosure.SessionId), zap.Int64("epoch", disclosure.KeyEpoch))
 		default:
 			s.logger.Warn("Unknown session message type")
 		}

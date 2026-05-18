@@ -174,6 +174,7 @@ func (bt *BPFTagger) updateKey() error {
 	if err != nil {
 		return fmt.Errorf("DeriveAK: %w", err)
 	}
+	fmt.Printf("bpf: key: 0x%x, derived AK: 0x%x for measure ID: 0x%x\n", k, ak, bt.measureID)
 	entry := akFromKey(ak)
 	key := bt.MapKey()
 	return bt.objs.AkMap.Put(&key, &entry)

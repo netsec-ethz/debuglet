@@ -216,26 +216,32 @@ func TestCurrentKeyAdvances(t *testing.T) {
 func TestDisclosedKey(t *testing.T) {
 	delay := time.Second
 	ks := newTestSchedule(t, delay)
-	epoch := ks.cfg.Epoch
+	anchor := ks.cfg.Epoch
 
-	// At epoch 0 there is no disclosable key.
-	_, _, ok := ks.DisclosedKey(epoch)
-	if ok {
-		t.Error("expected no disclosable key at epoch 0")
+	// At start (Epoch 1) the anchor key (Epoch 0) should be disclosable.
+	idx, key, ok := ks.DisclosedKey(anchor)
+	if !ok {
+		t.Error("expected disclosable key (epoch 0) at start")
+	}
+	if idx != 0 {
+		t.Errorf("expected disclosable epoch 0, got %d", idx)
+	}
+	expected0 := ks.keyForEpoch(0)
+	if !bytes.Equal(key, expected0) {
+		t.Errorf("disclosed key mismatch: got %x, want %x", key, expected0)
 	}
 
-	// At epoch 2 the key for epoch 1 should be disclosable.
-	_, idx, key, ok2 := ks.cfg.Epoch, int64(0), []byte(nil), false
-	idx, key, ok2 = ks.DisclosedKey(epoch.Add(2 * delay))
-	if !ok2 {
-		t.Error("expected disclosable key at epoch 2")
+	// At Epoch 3 (anchor + 2*delay), the key for Epoch 2 should be disclosable.
+	idx, key, ok = ks.DisclosedKey(anchor.Add(2 * delay))
+	if !ok {
+		t.Error("expected disclosable key at Epoch 3")
 	}
-	if idx != 1 {
-		t.Errorf("expected disclosable epoch 1, got %d", idx)
+	if idx != 2 {
+		t.Errorf("expected disclosable epoch 2, got %d", idx)
 	}
-	expected := ks.keyForEpoch(1)
-	if !bytes.Equal(key, expected) {
-		t.Errorf("disclosed key mismatch: got %x, want %x", key, expected)
+	expected2 := ks.keyForEpoch(2)
+	if !bytes.Equal(key, expected2) {
+		t.Errorf("disclosed key mismatch: got %x, want %x", key, expected2)
 	}
 }
 

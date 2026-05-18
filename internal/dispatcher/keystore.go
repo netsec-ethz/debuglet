@@ -32,21 +32,34 @@ func NewKeyStore() *KeyStore {
 	}
 }
 
-func (ks *KeyStore) key(executorID, measurementID string, epoch int64) string {
-	return fmt.Sprintf("%s:%s:%d", executorID, measurementID, epoch)
+func (ks *KeyStore) key(executorID string, epoch int64) string {
+	return fmt.Sprintf("%s:%d", executorID, epoch)
 }
 
 // Store saves a disclosed key.
-func (ks *KeyStore) Store(executorID, measurementID string, epoch int64, key []byte) {
+func (ks *KeyStore) Store(executorID string, epoch int64, key []byte) error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
-	ks.keys[ks.key(executorID, measurementID, epoch)] = key
+	if _, ok := ks.keys[ks.key(executorID, epoch)]; ok {
+		return nil
+	}	
+	ks.keys[ks.key(executorID, epoch)] = key
+	return nil
 }
 
 // Get retrieves a disclosed key.
-func (ks *KeyStore) Get(executorID, measurementID string, epoch int64) ([]byte, bool) {
+func (ks *KeyStore) Get(executorID string, epoch int64) ([]byte, bool) {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	k, ok := ks.keys[ks.key(executorID, measurementID, epoch)]
+	k, ok := ks.keys[ks.key(executorID, epoch)]
 	return k, ok
+}
+
+func (ks *KeyStore) PrintKeys() {
+	fmt.Println("Stored keys:")
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	for k, v := range ks.keys {
+		fmt.Printf("%s: %x\n", k, v)
+	}
 }

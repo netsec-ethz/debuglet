@@ -30,6 +30,9 @@ type Executor struct {
 	LastSeen    int64                       `json:"last_seen"`
 	Assignments chan *pb.DebugletAssignment `json:"-"`
 	Updates     chan *pb.DestinationUpdates `json:"-"`
+
+	TeslaDelaySec           int64 `json:"tesla_delay_sec"`
+	TeslaAnchorTimestampNs int64 `json:"tesla_anchor_timestamp_ns"`
 }
 
 type Dispatcher struct {
@@ -119,7 +122,7 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 	delete(d.measurements, id)
 }
 
-func (d *Dispatcher) RegisterExecutor(id string, ip string) {
+func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay int64, teslaAnchor int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
@@ -129,6 +132,9 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string) {
 			Updates:     make(chan *pb.DestinationUpdates, 1),
 		}
 	}
+	exec := d.executors[id]
+	exec.TeslaDelaySec = teslaDelay
+	exec.TeslaAnchorTimestampNs = teslaAnchor
 	if ip != "" {
 		d.ipToExecutor[ip] = id
 	}

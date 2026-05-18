@@ -117,9 +117,11 @@ func (e *Executor) Start(ctx context.Context) error {
 	// Send hello
 	controlStream.Send(&pb.ControlMessage{
 		Msg: &pb.ControlMessage_Hello{Hello: &pb.ExecutorHello{
-			ExecutorId: e.id,
-			Version:    e.version,
-			SourceIp:   "127.0.0.1", // TODO: detect public IP
+			ExecutorId:              e.id,
+			Version:                 e.version,
+			SourceIp:                "127.0.0.1", // TODO: detect public IP
+			TeslaDelaySec:           int64(e.teslaSchedule.Config().Delay.Seconds()),
+			TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		}},
 	})
 	// Initialize executor to have a bandwidth capacity of 1gbit/s
@@ -129,18 +131,35 @@ func (e *Executor) Start(ctx context.Context) error {
 		}},
 	})
 
+	sendHeartbeat := func() {
+		now := time.Now()
+		epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
+		controlStream.Send(&pb.ControlMessage{
+			Msg: &pb.ControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
+				Timestamp:     now.UnixNano(),
+				TeslaKeyEpoch: epoch,
+				TeslaKey:      key,
+			}},
+		})
+	}
+
+	// Send initial heartbeat
+	sendHeartbeat()
+
 	// Heartbeat loop
 	go func() {
+		interval := 30 * time.Second
+		if disclosureInterval := e.teslaSchedule.Config().Delay / 2; disclosureInterval < interval {
+			interval = disclosureInterval
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(60 * time.Second):
-				controlStream.Send(&pb.ControlMessage{
-					Msg: &pb.ControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
-						Timestamp: time.Now().UnixNano(),
-					}},
-				})
+			case <-ticker.C:
+				sendHeartbeat()
 			}
 		}
 	}()
@@ -231,33 +250,6 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 			e.mu.Lock()
 			e.manager.RemoveAssignment(assign.SessionId)
 			e.mu.Unlock()
-		}
-	}()
-
-	// Disclosure loop
-	go func() {
-		ticker := time.NewTicker(e.teslaSchedule.Config().Delay / 2)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				epoch, key, ok := e.teslaSchedule.DisclosedKey(time.Now())
-				if !ok {
-					continue
-				}
-				session.Send(&pb.SessionMessage{
-					Msg: &pb.SessionMessage_TeslaKey{
-						TeslaKey: &pb.TeslaKeyDisclosure{
-							SessionId:     assign.SessionId,
-							MeasurementId: assign.MeasurementId,
-							KeyEpoch:      epoch,
-							Key:           key,
-						},
-					},
-				})
-			}
 		}
 	}()
 }

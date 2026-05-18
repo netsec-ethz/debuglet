@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/pkg/tesla"
@@ -201,6 +202,8 @@ func (h *Handler) Verify(c echo.Context) error {
 	}
 	var results []result
 
+	// Print all keys for debugging
+	h.dispatcher.KeyStore.PrintKeys()
 	for {
 		data, ci, err := pcapReader.ReadPacketData()
 		if err == io.EOF {
@@ -220,6 +223,7 @@ func (h *Handler) Verify(c echo.Context) error {
 
 		executorId := h.dispatcher.GetExecutorByIP(ip.SrcIP.String())
 		if executorId == "" {
+			h.logger.Error("unknown executor", zap.String("source_ip", ip.SrcIP.String()))
 			results = append(results, result{
 				Timestamp: ci.Timestamp.String(),
 				SourceIP:  ip.SrcIP.String(),
@@ -231,17 +235,67 @@ func (h *Handler) Verify(c echo.Context) error {
 			continue
 		}
 
-		// Infer epoch from packet timestamp.
-		// Note: This assumes the dispatcher's view of time matches the executor's epoch 0.
-		// In a production system, epoch 0 is usually a fixed wall-clock time.
-		// Here we assume epoch duration of 1 hour for simplicity if not specified.
-		// Ideally the KeyStore would handle time-based lookup.
-		epoch := ci.Timestamp.Unix() / 3600
+		// Infer epoch from packet timestamp using the executor's synchronized Tesla parameters.
+		exec := h.dispatcher.GetExecutor(executorId)
+		if exec == nil || exec.TeslaDelaySec == 0 {
+			results = append(results, result{
+				Timestamp: ci.Timestamp.String(),
+				SourceIP:  ip.SrcIP.String(),
+				DestIP:    ip.DstIP.String(),
+				Tag:       ip.Id,
+				Valid:     false,
+				Error:     "executor tesla config not found",
+			})
+			continue
+		}
 
-		key, ok := h.dispatcher.KeyStore.Get(executorId, measurementId, epoch)
-		if !ok {
-			// Try previous epoch just in case of clock drift
-			key, ok = h.dispatcher.KeyStore.Get(executorId, measurementId, epoch-1)
+		anchor := time.Unix(0, exec.TeslaAnchorTimestampNs)
+		delay := time.Duration(exec.TeslaDelaySec) * time.Second
+		elapsed := ci.Timestamp.Sub(anchor)
+		epoch := int64(1)
+		if elapsed > 0 {
+			epoch = int64(elapsed/delay) + 1
+		}
+
+		// Reconstruct the full IPv4 packet (header + payload)
+		ipPacketBytes := make([]byte, len(ip.BaseLayer.Contents)+len(ip.BaseLayer.Payload))
+		copy(ipPacketBytes, ip.BaseLayer.Contents)
+		copy(ipPacketBytes[len(ip.BaseLayer.Contents):], ip.BaseLayer.Payload)
+
+		// Define a helper to retrieve or derive the key for any target epoch
+		deriveKeyForEpoch := func(targetEpoch int64) ([]byte, bool) {
+			if k, ok := h.dispatcher.KeyStore.Get(executorId, targetEpoch); ok {
+				return k, true
+			}
+			for e := targetEpoch - 1; e >= 0; e-- {
+				if k, ok := h.dispatcher.KeyStore.Get(executorId, e); ok {
+					derived, err := tesla.DeriveFromDisclosed(k, e, targetEpoch)
+					if err == nil {
+						return derived, true
+					}
+				}
+			}
+			return nil, false
+		}
+
+		var valid bool
+		var ok bool
+
+		// Try to verify with target epoch
+		key, ok := deriveKeyForEpoch(epoch)
+		if ok {
+			valid, _ = tesla.VerifyBPFTag(key, epoch, []byte(measurementId), ipPacketBytes, ip.Id)
+		}
+
+		// If verify failed or key wasn't found, try epoch-1 as clock-drift fallback
+		if !valid || !ok {
+			if prevKey, okPrev := deriveKeyForEpoch(epoch - 1); okPrev {
+				validPrev, errPrev := tesla.VerifyBPFTag(prevKey, epoch-1, []byte(measurementId), ipPacketBytes, ip.Id)
+				if errPrev == nil && validPrev {
+					valid = true
+					ok = true
+				}
+			}
 		}
 
 		if !ok {
@@ -256,7 +310,6 @@ func (h *Handler) Verify(c echo.Context) error {
 			continue
 		}
 
-		valid, err := tesla.VerifyBPFTag(key, epoch, []byte(measurementId), ip.BaseLayer.Contents, ip.Id)
 		results = append(results, result{
 			Timestamp: ci.Timestamp.String(),
 			SourceIP:  ip.SrcIP.String(),
