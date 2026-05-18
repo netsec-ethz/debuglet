@@ -10,4 +10,7 @@ tagger.o
 /executor
 __debug*
 
+# Python env
+.venv
+
 .testCoverage.txt
