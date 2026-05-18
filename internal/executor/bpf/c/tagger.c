@@ -96,6 +96,16 @@ static __always_inline __u64 siphash24(__u64 k0, __u64 k1,
 
 SEC("tc/egress")
 int debuglet_tag(struct __sk_buff *skb) {
+    // 1. Fast path: check socket mark to immediately bypass untagged traffic
+    __u32 map_key = skb->mark;
+    if (map_key == 0)
+        return TC_ACT_OK;
+
+    // 2. Perform map lookup only for marked packets
+    struct ak_entry *ak = bpf_map_lookup_elem(&ak_map, &map_key);
+    if (!ak)
+        return TC_ACT_OK;
+
     void *data     = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
     
@@ -115,17 +125,6 @@ int debuglet_tag(struct __sk_buff *skb) {
     // Safety check for IP header access.
     if ((void *)(iph + 1) > data_end || iph->version != 4)
         return TC_ACT_OK;
-
-    __u32 map_key = skb->mark;
-    struct ak_entry *ak = bpf_map_lookup_elem(&ak_map, &map_key);
-    if (!ak) {
-        if (map_key != 0) {
-            bpf_printk("tagger: lookup failed for mark=0x%x\n", map_key);
-        }
-        return TC_ACT_OK; // No key installed — pass through unmodified.
-    }
-
-    bpf_printk("tagger: found ak for mark=0x%x, tagging...\n", map_key);
 
     // Compute SipHash over the IP header + first 56 bytes of payload.
     __u8 buf[64] = {};
@@ -174,7 +173,6 @@ int debuglet_tag(struct __sk_buff *skb) {
 
     __u32 csum_off = off + offsetof(struct iphdr, check);
     if (bpf_l3_csum_replace(skb, csum_off, old_id, tag_be, 2) < 0) {
-        bpf_printk("tagger: checksum update failed\n");
         return TC_ACT_OK;
     }
 

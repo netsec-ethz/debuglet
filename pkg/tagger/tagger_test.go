@@ -228,10 +228,10 @@ func TestAccountabilityBPFRoundTrip(t *testing.T) {
 }
 
 // TestAccountabilityRealDelayedDisclosure simulates the real delayed key disclosure flow:
-//  1. Tag a packet at time T = now + delay (Epoch 2).
-//  2. At time T = now + delay (Epoch 2), the disclosed key is for Epoch 1.
-//  3. Derive Epoch 2's key from the disclosed Epoch 1 key.
-//  4. Verify the Epoch 2 packet using the derived key.
+//  1. Tag a packet at time T = now + delay (Epoch 1).
+//  2. At time T = now + 3*delay (Epoch 3), the disclosed key is for Epoch 2.
+//  3. Derive Epoch 1's key from the disclosed Epoch 2 key.
+//  4. Verify the Epoch 1 packet using the derived key.
 func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 	delay := 100 * time.Millisecond
 	now := time.Now()
@@ -248,7 +248,7 @@ func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 	binary.BigEndian.PutUint16(pkt[4:6], 0)
 	binary.BigEndian.PutUint16(pkt[10:12], 0)
 
-	// Tag packet at T = now + delay (Epoch 2)
+	// Tag packet at T = now + delay (Epoch 1)
 	tag, err := ks.ComputeTagForPacket(now.Add(delay), testMeasurementID, pkt)
 	if err != nil {
 		t.Fatalf("ComputeTagForPacket: %v", err)
@@ -258,23 +258,23 @@ func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 
 	observedTag := ReadIPID(pkt)
 
-	// At T = now + delay (Epoch 2), the disclosed key is for Epoch 1.
-	disclosedEpoch, disclosedKey, ok := ks.DisclosedKey(now.Add(delay))
+	// At T = now + 3*delay (Epoch 3), the disclosed key is for Epoch 2.
+	disclosedEpoch, disclosedKey, ok := ks.DisclosedKey(now.Add(3 * delay))
 	if !ok {
-		t.Fatal("expected disclosed key at Epoch 2")
+		t.Fatal("expected disclosed key at Epoch 3")
 	}
-	if disclosedEpoch != 1 {
-		t.Fatalf("expected disclosed epoch index 1, got %d", disclosedEpoch)
+	if disclosedEpoch != 2 {
+		t.Fatalf("expected disclosed epoch index 2, got %d", disclosedEpoch)
 	}
 
-	// We want to verify the packet from Epoch 2.
-	// We derive the key for Epoch 2 from the disclosed Epoch 1 key.
-	targetKey, err := tesla.DeriveFromDisclosed(disclosedKey, disclosedEpoch, 2)
+	// We want to verify the packet from Epoch 1.
+	// We derive the key for Epoch 1 from the disclosed Epoch 2 key.
+	targetKey, err := tesla.DeriveFromDisclosed(disclosedKey, disclosedEpoch, 1)
 	if err != nil {
 		t.Fatalf("DeriveFromDisclosed: %v", err)
 	}
 
-	ok, err = tesla.VerifyTag(targetKey, 2, testMeasurementID, pkt, observedTag)
+	ok, err = tesla.VerifyTag(targetKey, 1, testMeasurementID, pkt, observedTag)
 	if err != nil {
 		t.Fatalf("VerifyTag: %v", err)
 	}
@@ -284,9 +284,9 @@ func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 }
 
 // TestAccountabilityBPFRealDelayedDisclosure simulates the real delayed disclosure flow for BPF tags:
-//  1. Compute BPF tag at time T = now + delay (Epoch 2).
-//  2. Get disclosed key for Epoch 1.
-//  3. Derive Epoch 2's key from the disclosed Epoch 1 key.
+//  1. Compute BPF tag at time T = now + delay (Epoch 1).
+//  2. At time T = now + 3*delay (Epoch 3), the disclosed key is for Epoch 2.
+//  3. Derive Epoch 1's key from the disclosed Epoch 2 key.
 //  4. Verify the BPF tag using the derived key.
 func TestAccountabilityBPFRealDelayedDisclosure(t *testing.T) {
 	delay := 100 * time.Millisecond
@@ -304,7 +304,7 @@ func TestAccountabilityBPFRealDelayedDisclosure(t *testing.T) {
 	binary.BigEndian.PutUint16(pkt[4:6], 0)
 	binary.BigEndian.PutUint16(pkt[10:12], 0)
 
-	// Compute BPF tag at T = now + delay (Epoch 2)
+	// Compute BPF tag at T = now + delay (Epoch 1)
 	tag, err := ks.ComputeBPFTagForPacket(now.Add(delay), testMeasurementID, pkt)
 	if err != nil {
 		t.Fatalf("ComputeBPFTagForPacket: %v", err)
@@ -314,22 +314,22 @@ func TestAccountabilityBPFRealDelayedDisclosure(t *testing.T) {
 
 	observedTag := ReadIPID(pkt)
 
-	// At T = now + delay (Epoch 2), the disclosed key is for Epoch 1.
-	disclosedEpoch, disclosedKey, ok := ks.DisclosedKey(now.Add(delay))
+	// At T = now + 3*delay (Epoch 3), the disclosed key is for Epoch 2.
+	disclosedEpoch, disclosedKey, ok := ks.DisclosedKey(now.Add(3 * delay))
 	if !ok {
-		t.Fatal("expected disclosed key at Epoch 2")
+		t.Fatal("expected disclosed key at Epoch 3")
 	}
-	if disclosedEpoch != 1 {
-		t.Fatalf("expected disclosed epoch index 1, got %d", disclosedEpoch)
+	if disclosedEpoch != 2 {
+		t.Fatalf("expected disclosed epoch index 2, got %d", disclosedEpoch)
 	}
 
-	// Derive target key for Epoch 2 from disclosed Epoch 1 key
-	targetKey, err := tesla.DeriveFromDisclosed(disclosedKey, disclosedEpoch, 2)
+	// Derive target key for Epoch 1 from disclosed Epoch 2 key
+	targetKey, err := tesla.DeriveFromDisclosed(disclosedKey, disclosedEpoch, 1)
 	if err != nil {
 		t.Fatalf("DeriveFromDisclosed: %v", err)
 	}
 
-	ok, err = tesla.VerifyBPFTag(targetKey, 2, testMeasurementID, pkt, observedTag)
+	ok, err = tesla.VerifyBPFTag(targetKey, 1, testMeasurementID, pkt, observedTag)
 	if err != nil {
 		t.Fatalf("VerifyBPFTag: %v", err)
 	}
