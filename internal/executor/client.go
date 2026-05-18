@@ -122,6 +122,7 @@ func (e *Executor) Start(ctx context.Context) error {
 			SourceIp:                "127.0.0.1", // TODO: detect public IP
 			TeslaDelaySec:           int64(e.teslaSchedule.Config().Delay.Seconds()),
 			TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
+			TeslaAnchorKey:         e.teslaSchedule.Anchor(),
 		}},
 	})
 	// Initialize executor to have a bandwidth capacity of 1gbit/s

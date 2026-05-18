@@ -65,7 +65,7 @@ func (s *DispatcherServer) ControlStream(stream pb.DebugletDispatcher_ControlStr
 		switch msg := in.Msg.(type) {
 		case *pb.ControlMessage_Hello:
 			executorID = msg.Hello.ExecutorId
-			s.dispatcher.RegisterExecutor(executorID, msg.Hello.SourceIp, msg.Hello.TeslaDelaySec, msg.Hello.TeslaAnchorTimestampNs)
+			s.dispatcher.RegisterExecutor(executorID, msg.Hello.SourceIp, msg.Hello.TeslaDelaySec, msg.Hello.TeslaAnchorTimestampNs, msg.Hello.TeslaAnchorKey)
 			s.logger.Info("Executor connected", zap.String("executor_id", executorID), zap.String("source_ip", msg.Hello.SourceIp))
 
 			// Optional acknowledgment

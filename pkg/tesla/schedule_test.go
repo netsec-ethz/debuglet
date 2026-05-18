@@ -16,6 +16,7 @@ package tesla
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -25,20 +26,63 @@ import (
 var testMeasurementID = []byte("test-measurement-id-001")
 
 // fixedSeed gives deterministic results across runs.
+// This is the secret tail k_L of the backward hash chain.
 var fixedSeed = bytes.Repeat([]byte{0xAB}, 32)
 
 func newTestSchedule(t *testing.T, delay time.Duration) *KeySchedule {
 	t.Helper()
 	epoch := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	ks, err := NewKeySchedule(Config{
-		Seed:  fixedSeed,
-		Delay: delay,
-		Epoch: epoch,
+		Seed:        fixedSeed,
+		ChainLength: 100, // small chain for fast tests
+		Delay:       delay,
+		Epoch:       epoch,
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}
 	return ks
+}
+
+// TestBackwardChainDirection verifies the core invariant of the TESLA backward
+// chain: k_i = H(k_{i+1}).
+func TestBackwardChainDirection(t *testing.T) {
+	ks := newTestSchedule(t, time.Second)
+
+	// For each epoch i, hashing k_{i+1} once must yield k_i.
+	h := sha256.New()
+	for i := int64(0); i < 20; i++ {
+		ki := ks.keyForEpoch(i)
+		ki1 := ks.keyForEpoch(i + 1)
+
+		h.Reset()
+		h.Write(ki1)
+		expected := h.Sum(nil)
+
+		if !bytes.Equal(ki, expected) {
+			t.Errorf("epoch %d: k_%d ≠ H(k_%d): backward chain direction violated", i, i, i+1)
+		}
+	}
+}
+
+// TestAnchorIsHashOfChain verifies that k_0 == H^L(k_L) (the seed).
+func TestAnchorIsHashOfChain(t *testing.T) {
+	ks := newTestSchedule(t, time.Second)
+	L := ks.cfg.ChainLength
+
+	// Hash the seed L times to reproduce k_0.
+	key := make([]byte, len(fixedSeed))
+	copy(key, fixedSeed)
+	h := sha256.New()
+	for i := int64(0); i < L; i++ {
+		h.Reset()
+		h.Write(key)
+		key = h.Sum(nil)
+	}
+
+	if !bytes.Equal(key, ks.anchor) {
+		t.Errorf("anchor mismatch: H^%d(seed) = %x, anchor = %x", L, key, ks.anchor)
+	}
 }
 
 // TestKeyChainDeterminism ensures the same seed always produces the same chain.
@@ -68,44 +112,90 @@ func TestKeyChainUniqueness(t *testing.T) {
 	}
 }
 
-// TestDeriveFromDisclosed verifies that a verifier can reconstruct a target
-// epoch key from a later disclosed key by hashing forward.
-func TestDeriveFromDisclosed(t *testing.T) {
+// TestVerifyChain verifies the VerifyChain helper against the public anchor.
+func TestVerifyChain(t *testing.T) {
 	ks := newTestSchedule(t, time.Second)
+	anchor := ks.Anchor()
 
-	// Compute expected key at epoch 3 directly.
-	expected := ks.keyForEpoch(3)
-
-	// Simulate disclosure: executor discloses key at epoch 3.
-	disclosed := ks.keyForEpoch(3)
-
-	// Derive epoch 3 from epoch 3 (trivial: should be equal).
-	derived, err := DeriveFromDisclosed(disclosed, 3, 3)
-	if err != nil {
-		t.Fatalf("DeriveFromDisclosed(3→3): %v", err)
-	}
-	if !bytes.Equal(derived, expected) {
-		t.Errorf("DeriveFromDisclosed(3→3): got %x, want %x", derived, expected)
+	for _, epoch := range []int64{0, 1, 5, 10, 20} {
+		k := ks.keyForEpoch(epoch)
+		if !VerifyChain(anchor, k, epoch) {
+			t.Errorf("VerifyChain failed for epoch %d", epoch)
+		}
 	}
 
-	// Derive epoch 5 from epoch 3 (forward 2 hashes).
-	expected5 := ks.keyForEpoch(5)
-	derived5, err := DeriveFromDisclosed(disclosed, 3, 5)
-	if err != nil {
-		t.Fatalf("DeriveFromDisclosed(3→5): %v", err)
-	}
-	if !bytes.Equal(derived5, expected5) {
-		t.Errorf("DeriveFromDisclosed(3→5): got %x, want %x", derived5, expected5)
+	// A tampered key must fail.
+	k := ks.keyForEpoch(5)
+	tampered := make([]byte, len(k))
+	copy(tampered, k)
+	tampered[0] ^= 0xFF
+	if VerifyChain(anchor, tampered, 5) {
+		t.Error("VerifyChain passed for a tampered key")
 	}
 }
 
-// TestDeriveFromDisclosedError ensures attempting to go backwards returns an error.
+// TestDeriveFromDisclosed verifies that a verifier can reconstruct an earlier
+// epoch key from a later disclosed key by hashing forward (backward-chain
+// semantics: disclosed key is at a higher epoch index).
+func TestDeriveFromDisclosed(t *testing.T) {
+	ks := newTestSchedule(t, time.Second)
+
+	// Executor discloses k_5 (epoch 5).
+	disclosed := ks.keyForEpoch(5)
+
+	// Reconstruct k_5 from k_5 (trivial).
+	derived, err := DeriveFromDisclosed(disclosed, 5, 5)
+	if err != nil {
+		t.Fatalf("DeriveFromDisclosed(5→5): %v", err)
+	}
+	if !bytes.Equal(derived, ks.keyForEpoch(5)) {
+		t.Errorf("DeriveFromDisclosed(5→5): got %x, want %x", derived, ks.keyForEpoch(5))
+	}
+
+	// Reconstruct k_3 from k_5 (hash k_5 forward 2 steps: k_3 = H^2(k_5)).
+	derived3, err := DeriveFromDisclosed(disclosed, 5, 3)
+	if err != nil {
+		t.Fatalf("DeriveFromDisclosed(5→3): %v", err)
+	}
+	if !bytes.Equal(derived3, ks.keyForEpoch(3)) {
+		t.Errorf("DeriveFromDisclosed(5→3): got %x, want %x", derived3, ks.keyForEpoch(3))
+	}
+
+	// Reconstruct k_0 from k_5 (hash forward 5 steps).
+	derived0, err := DeriveFromDisclosed(disclosed, 5, 0)
+	if err != nil {
+		t.Fatalf("DeriveFromDisclosed(5→0): %v", err)
+	}
+	if !bytes.Equal(derived0, ks.keyForEpoch(0)) {
+		t.Errorf("DeriveFromDisclosed(5→0): got %x, want %x", derived0, ks.keyForEpoch(0))
+	}
+}
+
+// TestDeriveFromDisclosedError ensures attempting to derive a later epoch from
+// an earlier disclosed key returns an error (forbidden in backward chain).
 func TestDeriveFromDisclosedError(t *testing.T) {
 	ks := newTestSchedule(t, time.Second)
-	disclosed := ks.keyForEpoch(5)
-	_, err := DeriveFromDisclosed(disclosed, 5, 3)
+	disclosed := ks.keyForEpoch(3)
+	_, err := DeriveFromDisclosed(disclosed, 3, 5)
 	if err == nil {
-		t.Error("expected error when deriving earlier epoch from later key, got nil")
+		t.Error("expected error when deriving later epoch from earlier disclosed key, got nil")
+	}
+}
+
+// TestDeriveFromDisclosedMatchesVerifyChain checks that a reconstructed key
+// also passes VerifyChain, providing end-to-end verification semantics.
+func TestDeriveFromDisclosedMatchesVerifyChain(t *testing.T) {
+	ks := newTestSchedule(t, time.Second)
+	anchor := ks.Anchor()
+
+	// Suppose epoch 10 is disclosed; reconstruct epoch 7.
+	disclosed := ks.keyForEpoch(10)
+	reconstructed, err := DeriveFromDisclosed(disclosed, 10, 7)
+	if err != nil {
+		t.Fatalf("DeriveFromDisclosed: %v", err)
+	}
+	if !VerifyChain(anchor, reconstructed, 7) {
+		t.Error("reconstructed key failed VerifyChain")
 	}
 }
 
@@ -218,10 +308,16 @@ func TestDisclosedKey(t *testing.T) {
 	ks := newTestSchedule(t, delay)
 	anchor := ks.cfg.Epoch
 
-	// At start (Epoch 1) the anchor key (Epoch 0) should be disclosable.
-	idx, key, ok := ks.DisclosedKey(anchor)
+	// At start (epoch 0), no key is disclosable yet.
+	_, _, ok := ks.DisclosedKey(anchor)
+	if ok {
+		t.Error("expected no disclosable key at epoch 0")
+	}
+
+	// At epoch 1 (anchor + 1*delay), the key for epoch 0 should be disclosable.
+	idx, key, ok := ks.DisclosedKey(anchor.Add(delay))
 	if !ok {
-		t.Error("expected disclosable key (epoch 0) at start")
+		t.Error("expected disclosable key (epoch 0) at epoch 1")
 	}
 	if idx != 0 {
 		t.Errorf("expected disclosable epoch 0, got %d", idx)
@@ -231,10 +327,10 @@ func TestDisclosedKey(t *testing.T) {
 		t.Errorf("disclosed key mismatch: got %x, want %x", key, expected0)
 	}
 
-	// At Epoch 3 (anchor + 2*delay), the key for Epoch 2 should be disclosable.
-	idx, key, ok = ks.DisclosedKey(anchor.Add(2 * delay))
+	// At epoch 3 (anchor + 3*delay), the key for epoch 2 should be disclosable.
+	idx, key, ok = ks.DisclosedKey(anchor.Add(3 * delay))
 	if !ok {
-		t.Error("expected disclosable key at Epoch 3")
+		t.Error("expected disclosable key at epoch 3")
 	}
 	if idx != 2 {
 		t.Errorf("expected disclosable epoch 2, got %d", idx)
@@ -257,5 +353,49 @@ func TestTagFitsIn16Bits(t *testing.T) {
 		}
 		// tag is uint16 — no need to check range, Go's type system guarantees it.
 		_ = tag
+	}
+}
+
+// TestFullVerificationFlow simulates the complete TESLA verification workflow:
+// executor tags a probe, discloses the key later, verifier reconstructs and checks.
+func TestFullVerificationFlow(t *testing.T) {
+	ks := newTestSchedule(t, time.Second)
+	anchor := ks.Anchor()
+
+	// Executor tags a probe at epoch 5.
+	probeEpoch := int64(5)
+	k5 := ks.keyForEpoch(probeEpoch)
+	payload := []byte("probe payload data")
+	ak5, err := DeriveAK(k5, testMeasurementID)
+	if err != nil {
+		t.Fatalf("DeriveAK: %v", err)
+	}
+	tag, err := ComputeTag(ak5, payload)
+	if err != nil {
+		t.Fatalf("ComputeTag: %v", err)
+	}
+
+	// After disclosure delay, executor reveals k_10 (τ = 10).
+	disclosedEpoch := int64(10)
+	disclosedKey := ks.keyForEpoch(disclosedEpoch)
+
+	// Verifier reconstructs k_5 from k_10: k_5 = H^(10-5)(k_10).
+	reconstructed, err := DeriveFromDisclosed(disclosedKey, disclosedEpoch, probeEpoch)
+	if err != nil {
+		t.Fatalf("DeriveFromDisclosed: %v", err)
+	}
+
+	// Verifier confirms consistency: H^5(k_5) == k_0.
+	if !VerifyChain(anchor, reconstructed, probeEpoch) {
+		t.Fatal("VerifyChain failed for reconstructed key")
+	}
+
+	// Verifier derives ak and checks the tag.
+	ok, err := VerifyTag(reconstructed, probeEpoch, testMeasurementID, payload, tag)
+	if err != nil {
+		t.Fatalf("VerifyTag: %v", err)
+	}
+	if !ok {
+		t.Error("full verification flow failed: tag mismatch")
 	}
 }

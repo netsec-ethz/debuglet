@@ -69,9 +69,5 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
 	}
 
-	if cfg.TeslaDelay == 0 {
-		cfg.TeslaDelay = 3600 // default 1 hour epochs
-	}
-
 	return &cfg, nil
 }

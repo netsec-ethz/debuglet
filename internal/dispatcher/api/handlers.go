@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -47,6 +48,8 @@ func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
 // Register all routes
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/executors", h.GetExecutors)
+	e.GET("/executors/by-ip", h.GetExecutorByIP)
+	e.GET("/executors/:id/tesla", h.GetExecutorTesla)
 	e.POST("/measurements", h.CreateMeasurement)
 	e.GET("/measurements/:id/start", h.StartMeasurementStream)
 	e.POST("/verify", h.Verify)
@@ -56,6 +59,68 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 func (h *Handler) GetExecutors(c echo.Context) error {
 	executors := h.dispatcher.ListExecutors()
 	return c.JSON(http.StatusOK, executors)
+}
+
+// GET /executors/by-ip?ip=<ip>[&n=<count>]
+//
+// Returns the executor ID and the last n measurement IDs dispatched to the
+// executor whose source IP matches the query parameter. n defaults to 10 and
+// can be overridden by the caller.
+func (h *Handler) GetExecutorByIP(c echo.Context) error {
+	ip := c.QueryParam("ip")
+	if ip == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "ip query parameter is required")
+	}
+
+	// Parse optional ?n= limit.
+	n := 0
+	if nStr := c.QueryParam("n"); nStr != "" {
+		parsed, err := strconv.Atoi(nStr)
+		if err != nil || parsed <= 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "n must be a positive integer")
+		}
+		n = parsed
+	}
+
+	exec := h.dispatcher.GetExecutorByIPFull(ip)
+	if exec == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "no executor found for IP "+ip)
+	}
+
+	return c.JSON(http.StatusOK, ExecutorByIPResponse{
+		ExecutorID:     exec.ID,
+		MeasurementIDs: exec.RecentMeasurementIDs(n),
+	})
+}
+
+// GET /executors/:id/tesla
+//
+// Returns the TESLA key schedule parameters for the given executor, including
+// the public anchor key k_0 and the latest disclosed key k_τ. External
+// verifiers use these to reconstruct chain keys and validate packet tags.
+func (h *Handler) GetExecutorTesla(c echo.Context) error {
+	id := c.Param("id")
+	exec := h.dispatcher.GetExecutor(id)
+	if exec == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "executor not found: "+id)
+	}
+
+	resp := ExecutorTeslaResponse{
+		ExecutorID:        exec.ID,
+		AnchorTimestampNs: exec.TeslaAnchorTimestampNs,
+		DelaySec:          exec.TeslaDelaySec,
+	}
+	if len(exec.TeslaAnchorKey) > 0 {
+		resp.AnchorKey = base64.StdEncoding.EncodeToString(exec.TeslaAnchorKey)
+	}
+
+	// Attach the latest disclosed key if one exists.
+	if epoch, key, ok := h.dispatcher.KeyStore.LatestDisclosed(id); ok {
+		resp.DisclosedEpoch = epoch
+		resp.DisclosedKey = base64.StdEncoding.EncodeToString(key)
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // POST /measurements
@@ -169,6 +234,7 @@ func (h *Handler) StartMeasurementStream(c echo.Context) error {
 	h.dispatcher.RemoveMeasurement(measurementId)
 	return nil
 }
+
 // POST /verify
 func (h *Handler) Verify(c echo.Context) error {
 	measurementId := c.FormValue("measurement_id")
@@ -262,14 +328,17 @@ func (h *Handler) Verify(c echo.Context) error {
 		copy(ipPacketBytes, ip.BaseLayer.Contents)
 		copy(ipPacketBytes[len(ip.BaseLayer.Contents):], ip.BaseLayer.Payload)
 
-		// Define a helper to retrieve or derive the key for any target epoch
+		// Define a helper to retrieve or derive the key for any target epoch.
+		// In the backward chain, a later disclosed key can derive an earlier epoch key.
 		deriveKeyForEpoch := func(targetEpoch int64) ([]byte, bool) {
 			if k, ok := h.dispatcher.KeyStore.Get(executorId, targetEpoch); ok {
 				return k, true
 			}
-			for e := targetEpoch - 1; e >= 0; e-- {
-				if k, ok := h.dispatcher.KeyStore.Get(executorId, e); ok {
-					derived, err := tesla.DeriveFromDisclosed(k, e, targetEpoch)
+			// Walk from higher disclosed epochs downward to find one we can
+			// hash forward to reach targetEpoch.
+			if latestEpoch, latestKey, ok := h.dispatcher.KeyStore.LatestDisclosed(executorId); ok {
+				if latestEpoch >= targetEpoch {
+					derived, err := tesla.DeriveFromDisclosed(latestKey, latestEpoch, targetEpoch)
 					if err == nil {
 						return derived, true
 					}

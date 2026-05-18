@@ -24,6 +24,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// maxMeasurementHistory is the default number of recent measurement IDs to
+// retain per executor. The caller can override it via HTTP query parameters.
+const maxMeasurementHistory = 10
+
+// Executor represents a registered executor and its metadata.
 type Executor struct {
 	ID          string                      `json:"id"`
 	Ready       bool                        `json:"ready"`
@@ -31,8 +36,46 @@ type Executor struct {
 	Assignments chan *pb.DebugletAssignment `json:"-"`
 	Updates     chan *pb.DestinationUpdates `json:"-"`
 
-	TeslaDelaySec           int64 `json:"tesla_delay_sec"`
-	TeslaAnchorTimestampNs int64 `json:"tesla_anchor_timestamp_ns"`
+	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
+	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
+	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
+
+	// measurementIDs is a ring buffer of the last maxMeasurementHistory
+	// measurement IDs that were dispatched to this executor.
+	measurementIDs []string
+}
+
+// RecentMeasurementIDs returns up to n recent measurement IDs for this
+// executor, newest first. If n ≤ 0 the default (maxMeasurementHistory) is
+// used.
+func (e *Executor) RecentMeasurementIDs(n int) []string {
+	if n <= 0 {
+		n = maxMeasurementHistory
+	}
+	if len(e.measurementIDs) == 0 {
+		return []string{}
+	}
+	start := 0
+	if len(e.measurementIDs) > n {
+		start = len(e.measurementIDs) - n
+	}
+	// Return a copy, newest first.
+	slice := e.measurementIDs[start:]
+	out := make([]string, len(slice))
+	for i, v := range slice {
+		out[len(slice)-1-i] = v
+	}
+	return out
+}
+
+// appendMeasurementID adds id to the executor's history, trimming old entries
+// so the total length stays within 2× the maximum to bound memory usage.
+func (e *Executor) appendMeasurementID(id string) {
+	e.measurementIDs = append(e.measurementIDs, id)
+	// Keep at most 2× the default to avoid unbounded growth.
+	if trim := 2 * maxMeasurementHistory; len(e.measurementIDs) > trim {
+		e.measurementIDs = e.measurementIDs[len(e.measurementIDs)-trim:]
+	}
 }
 
 type Dispatcher struct {
@@ -43,7 +86,7 @@ type Dispatcher struct {
 	resource     *resource.DispatcherManager
 
 	KeyStore     *KeyStore
-	ipToExecutor map[string]string // source_ip -> executor_id
+	ipToExecutor map[string]string // source_ip → executor_id
 }
 
 func NewDispatcher() *Dispatcher {
@@ -122,7 +165,9 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 	delete(d.measurements, id)
 }
 
-func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay int64, teslaAnchor int64) {
+// RegisterExecutor creates or updates the executor record for id. anchorKey is
+// k_0, the public TESLA chain anchor published by the executor at startup.
+func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay int64, teslaAnchor int64, anchorKey []byte) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
@@ -135,6 +180,9 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay int64, te
 	exec := d.executors[id]
 	exec.TeslaDelaySec = teslaDelay
 	exec.TeslaAnchorTimestampNs = teslaAnchor
+	if len(anchorKey) > 0 {
+		exec.TeslaAnchorKey = anchorKey
+	}
 	if ip != "" {
 		d.ipToExecutor[ip] = id
 	}
@@ -144,6 +192,18 @@ func (d *Dispatcher) GetExecutorByIP(ip string) string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.ipToExecutor[ip]
+}
+
+// GetExecutorByIPFull returns the full Executor record for the given source IP,
+// or nil if no executor is registered with that IP.
+func (d *Dispatcher) GetExecutorByIPFull(ip string) *Executor {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	id, ok := d.ipToExecutor[ip]
+	if !ok {
+		return nil
+	}
+	return d.executors[id]
 }
 
 func (d *Dispatcher) RemoveExecutor(id string) {
@@ -203,6 +263,12 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 		return fmt.Errorf("executor %s not found", executorID)
 	}
 	measurement.Assign(executorID, assignment)
+
+	// Record this measurement ID in the executor's history.
+	d.mu.Lock()
+	exec.appendMeasurementID(assignment.MeasurementId)
+	d.mu.Unlock()
+
 	select {
 	case exec.Assignments <- assignment:
 		return nil

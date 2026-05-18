@@ -17,21 +17,29 @@
 //
 // # Key Schedule Overview
 //
-// Keys form a backward hash chain anchored at a random seed:
+// Keys form a backward hash chain: the executor generates a random secret
+// seed k_L (the tail) and hashes it L times to obtain the public anchor k_0:
 //
-//	k_0 (seed, never disclosed)
-//	k_{i+1} = H(k_i)
+//	k_0 = H^L(k_L)          (public anchor, published at setup)
+//	k_i = H(k_{i+1})        (each key is the hash of the next one)
 //
-// Each key k_i is kept secret for a configurable delay period D. After D has
-// elapsed the executor publishes k_i so that any observer who buffered packets
-// can retroactively verify their authentication tags.
+// The executor uses key k_i during epoch i and discloses it after a
+// configurable disclosure delay d has elapsed. A verifier who has buffered
+// packets from epoch i can verify them once k_i is published by checking:
+//
+//	H^i(k_i) == k_0
+//
+// Given a disclosed key k_τ, the key for an earlier epoch t (t ≤ τ) is
+// reconstructed by hashing forward τ-t times:
+//
+//	k_t = H^(τ-t)(k_τ)
 //
 // # Per-Measurement Derivation
 //
 // Because a single executor may service multiple measurements concurrently, an
 // additional per-measurement key ak is derived from the current chain key:
 //
-//	ak = HKDF-SHA256(k_i, info = measurement_id)
+//	ak = HKDF-SHA256(secret=k_i, info=measurement_id, length=32)
 //
 // # Authentication Tag
 //
@@ -55,11 +63,20 @@ import (
 
 // Config carries the tuneable parameters of the TESLA key schedule.
 type Config struct {
-	// Seed is the root secret of the hash chain (k_0). If nil, a random
+	// Seed is the secret tail k_L of the hash chain. If nil, a random
 	// 32-byte seed is generated on the first call to NewKeySchedule.
+	// The seed is NEVER disclosed; it is only used internally to derive
+	// keys by hashing backwards toward k_0.
 	Seed []byte
 
-	// Delay is how long a key is kept secret before it is disclosed.
+	// ChainLength L is the total number of epochs supported by this
+	// schedule. The keys k_0 … k_L are generated; k_0 is the public
+	// anchor and k_L is derived from the seed.
+	// Defaults to 3600 (one hour at 1-second intervals).
+	ChainLength int64
+
+	// Delay is the interval duration I (one epoch). A key disclosed after
+	// the disclosure delay d (expressed as a number of epochs) has elapsed.
 	// Defaults to 10 seconds.
 	Delay time.Duration
 
@@ -70,23 +87,31 @@ type Config struct {
 
 // KeySchedule is a thread-safe TESLA hash-chain key schedule.
 //
-// Keys are indexed by epoch number:
+// Keys are indexed by epoch number t where t ∈ [0, L]:
 //
-//	epoch i covers the time interval [Epoch + i*Delay, Epoch + (i+1)*Delay).
+//	epoch t covers the time interval [Epoch + t*Delay, Epoch + (t+1)*Delay).
 //
-// The "current" key is the one whose epoch interval contains now.
-// A key becomes "disclosable" once its epoch interval ended and an additional
-// Delay has elapsed (i.e., after 2*Delay from its start time).
+// The chain direction is backward: k_0 is the public anchor and k_L is the
+// private seed tail. Key k_t is used during epoch t and disclosed after the
+// disclosure delay d has elapsed (i.e., once epoch t+d has started).
 type KeySchedule struct {
 	cfg Config
 
+	// anchor is k_0 = H^L(seed), computed once at construction time.
+	anchor []byte
+
 	mu    sync.RWMutex
-	cache map[int64][]byte // epoch → derived key (memoised)
+	cache map[int64][]byte // epoch → chain key (memoised)
 }
 
-// NewKeySchedule creates a KeySchedule from cfg. If cfg.Seed is empty a
-// cryptographically random 32-byte seed is generated. If cfg.Delay is zero
-// it defaults to 10 seconds.
+// NewKeySchedule creates a KeySchedule from cfg.
+//
+// The chain direction is backward (k_i = H(k_{i+1})). The private seed k_L is
+// stored internally and the public anchor k_0 = H^L(seed) is computed once.
+//
+// If cfg.Seed is empty a cryptographically random 32-byte seed is generated.
+// If cfg.ChainLength is zero it defaults to 3600.
+// If cfg.Delay is zero it defaults to 10 seconds.
 func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 	if len(cfg.Seed) == 0 {
 		cfg.Seed = make([]byte, 32)
@@ -94,15 +119,36 @@ func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 			return nil, fmt.Errorf("tesla: failed to generate seed: %w", err)
 		}
 	}
+	if cfg.ChainLength == 0 {
+		cfg.ChainLength = 3600
+	}
 	if cfg.Delay == 0 {
 		cfg.Delay = 10 * time.Second
 	}
 	if cfg.Epoch.IsZero() {
 		cfg.Epoch = time.Now()
 	}
+
+	// Pre-compute the full backward chain and store all keys.
+	// k_L = seed (private tail), k_i = H(k_{i+1}) for i = L-1 … 0.
+	cache := make(map[int64][]byte, cfg.ChainLength+1)
+
+	key := make([]byte, len(cfg.Seed))
+	copy(key, cfg.Seed)
+	cache[cfg.ChainLength] = key
+
+	h := sha256.New()
+	for i := cfg.ChainLength - 1; i >= 0; i-- {
+		h.Reset()
+		h.Write(key)
+		key = h.Sum(nil)
+		cache[i] = key
+	}
+
 	return &KeySchedule{
-		cfg:   cfg,
-		cache: make(map[int64][]byte),
+		cfg:    cfg,
+		anchor: cache[0],
+		cache:  cache,
 	}, nil
 }
 
@@ -111,70 +157,45 @@ func (ks *KeySchedule) Config() Config {
 	return ks.cfg
 }
 
+// Anchor returns k_0, the public anchor that should be published at setup.
+// Verifiers use it to check consistency: H^t(k_t) == k_0.
+func (ks *KeySchedule) Anchor() []byte {
+	out := make([]byte, len(ks.anchor))
+	copy(out, ks.anchor)
+	return out
+}
+
 // epochOf returns the epoch index for a given wall-clock time.
 func (ks *KeySchedule) epochOf(t time.Time) int64 {
 	elapsed := t.Sub(ks.cfg.Epoch)
 	if elapsed < 0 {
-		return 1
+		return 0
 	}
-	return int64(elapsed/ks.cfg.Delay) + 1
+	e := int64(elapsed / ks.cfg.Delay)
+	if e > ks.cfg.ChainLength {
+		e = ks.cfg.ChainLength
+	}
+	return e
 }
 
-// keyForEpoch computes k_epoch by applying the hash function epoch times to
-// the seed. Results are memoised so repeated calls are O(1) amortised.
-//
-// The key chain is constructed forward:
-//
-//	k_0 = seed
-//	k_{n+1} = SHA-256(k_n)
+// keyForEpoch returns the chain key k_epoch. Results are already fully cached
+// during construction so this is always O(1).
 func (ks *KeySchedule) keyForEpoch(epoch int64) []byte {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-
-	if k, ok := ks.cache[epoch]; ok {
-		return k
-	}
-
-	// Find the closest memoised predecessor.
-	var start int64
-	var key []byte
-
-	// Walk backwards to find a cached ancestor.
-	for i := epoch - 1; i >= 0; i-- {
-		if k, ok := ks.cache[i]; ok {
-			start = i
-			key = k
-			break
-		}
-	}
-	if key == nil {
-		// No cache hit: start from seed (epoch 0).
-		key = make([]byte, len(ks.cfg.Seed))
-		copy(key, ks.cfg.Seed)
-		start = 0
-	}
-
-	// Hash forward from start to epoch.
-	h := sha256.New()
-	for i := start; i < epoch; i++ {
-		h.Reset()
-		h.Write(key)
-		key = h.Sum(nil)
-	}
-
-	// Cache the computed key.
-	ks.cache[epoch] = key
-	return key
+	ks.mu.RLock()
+	k := ks.cache[epoch]
+	ks.mu.RUnlock()
+	return k
 }
 
-// CurrentKey returns the current TESLA key (the one for time t).
+// CurrentKey returns the chain key k_t for the epoch that contains time t.
 func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
 	return ks.keyForEpoch(ks.epochOf(t))
 }
 
 // DisclosedKey returns the epoch index and key that should be disclosed at
-// time t. A key for epoch i is disclosed once the epoch for (i + 1) has
-// started, i.e. after Delay has elapsed since epoch i ended.
+// time t. A key for epoch τ is disclosed once d disclosure-delay epochs have
+// elapsed after τ. With d=1, the key for epoch (current−1) is disclosed when
+// epoch current starts.
 //
 // If t is still within epoch 0 (no key is disclosable yet), ok is false.
 func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bool) {
@@ -182,38 +203,52 @@ func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bo
 	if current < 1 {
 		return 0, nil, false
 	}
-	// Disclose the key one epoch behind the current one.
+	// Disclose the key one epoch behind the current one (disclosure delay d=1).
 	disclosable := current - 1
 	return disclosable, ks.keyForEpoch(disclosable), true
 }
 
-// KeyAtEpoch returns the raw key for the given epoch index. This is used by
-// verifiers who received a disclosed key and want to reconstruct an older one.
+// KeyAtEpoch returns the chain key for the given epoch index.
 func (ks *KeySchedule) KeyAtEpoch(epoch int64) ([]byte, error) {
-	if epoch < 0 {
-		return nil, fmt.Errorf("tesla: negative epoch %d", epoch)
+	if epoch < 0 || epoch > ks.cfg.ChainLength {
+		return nil, fmt.Errorf("tesla: epoch %d out of range [0, %d]", epoch, ks.cfg.ChainLength)
 	}
 	return ks.keyForEpoch(epoch), nil
 }
 
-// DeriveFromDisclosed reconstructs the key at targetEpoch given a disclosed
-// key at disclosedEpoch. Any verifier can call this without access to the
-// seed, by hashing the disclosed key forward (disclosedEpoch → targetEpoch).
-//
-// Because keys are a forward hash chain, you can only derive keys at epochs
-// ≥ disclosedEpoch. To reconstruct an earlier key you need a key from an
-// even later epoch and hash forward from there, which requires the seed.
-//
-// In practice the executor discloses keys in order so observers always receive
-// a later key and hash it forward to fill in gaps.
-func DeriveFromDisclosed(disclosedKey []byte, disclosedEpoch, targetEpoch int64) ([]byte, error) {
-	if targetEpoch < disclosedEpoch {
-		return nil, fmt.Errorf("tesla: cannot derive epoch %d from disclosed epoch %d (target must be ≥ disclosed)", targetEpoch, disclosedEpoch)
+// VerifyChain checks that H^t(k_t) == k_0 (the public anchor).
+// A verifier calls this after reconstructing k_t to confirm its authenticity.
+func VerifyChain(anchor, key []byte, t int64) bool {
+	h := sha256.New()
+	cur := make([]byte, len(key))
+	copy(cur, key)
+	for i := int64(0); i < t; i++ {
+		h.Reset()
+		h.Write(cur)
+		cur = h.Sum(nil)
 	}
+	return hmac.Equal(cur, anchor)
+}
+
+// DeriveFromDisclosed reconstructs the key at targetEpoch given a disclosed
+// key at disclosedEpoch. Because the chain runs backward (k_i = H(k_{i+1})),
+// a verifier can only derive keys at epochs ≤ disclosedEpoch by hashing the
+// disclosed key forward (disclosedEpoch → targetEpoch, t ≤ disclosedEpoch):
+//
+//	k_t = H^(disclosedEpoch - t)(k_disclosedEpoch)
+//
+// To reconstruct a later (newer) key you would need an even newer disclosed
+// key, since the chain cannot be inverted.
+func DeriveFromDisclosed(disclosedKey []byte, disclosedEpoch, targetEpoch int64) ([]byte, error) {
+	if targetEpoch > disclosedEpoch {
+		return nil, fmt.Errorf("tesla: cannot derive epoch %d from disclosed epoch %d "+
+			"(target must be ≤ disclosed in a backward chain)", targetEpoch, disclosedEpoch)
+	}
+	steps := disclosedEpoch - targetEpoch
 	key := make([]byte, len(disclosedKey))
 	copy(key, disclosedKey)
 	h := sha256.New()
-	for i := disclosedEpoch; i < targetEpoch; i++ {
+	for i := int64(0); i < steps; i++ {
 		h.Reset()
 		h.Write(key)
 		key = h.Sum(nil)
@@ -345,12 +380,12 @@ func ComputeBPFTag(ak, payload []byte) (uint16, error) {
 	}
 	k0 := binary.LittleEndian.Uint64(ak[0:8])
 	k1 := binary.LittleEndian.Uint64(ak[8:16])
-	
+
 	hashLength := len(payload)
 	if hashLength > 64 {
 		hashLength = 64
 	}
-	
+
 	hash := siphash24(k0, k1, payload[:hashLength])
 	return uint16(hash & 0xFFFF), nil
 }

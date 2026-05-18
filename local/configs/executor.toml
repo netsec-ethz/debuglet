@@ -3,6 +3,7 @@ version = "1.0.0"
 dispatcher_addr = "localhost:9001"
 log_level = "debug"
 capacity = 1_000_000_000
+TeslaDelay = 10
 
 [credentials]
 ca_cert = "local/configs/executor/ca.crt"

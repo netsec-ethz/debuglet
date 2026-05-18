@@ -88,6 +88,7 @@ type ExecutorHello struct {
 	SourceIp               string                 `protobuf:"bytes,3,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`                                                // Source IP for packet attribution
 	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
+	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -155,6 +156,13 @@ func (x *ExecutorHello) GetTeslaAnchorTimestampNs() int64 {
 		return x.TeslaAnchorTimestampNs
 	}
 	return 0
+}
+
+func (x *ExecutorHello) GetTeslaAnchorKey() []byte {
+	if x != nil {
+		return x.TeslaAnchorKey
+	}
+	return nil
 }
 
 type ExecutorHeartbeat struct {
@@ -1041,14 +1049,15 @@ var File_protocol_protocol_proto protoreflect.FileDescriptor
 
 const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
-	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"\xca\x01\n" +
+	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"\xf4\x01\n" +
 	"\rExecutorHello\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1b\n" +
 	"\tsource_ip\x18\x03 \x01(\tR\bsourceIp\x12&\n" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
-	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\"v\n" +
+	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
+	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\"v\n" +
 	"\x11ExecutorHeartbeat\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12&\n" +
 	"\x0ftesla_key_epoch\x18\x03 \x01(\x03R\rteslaKeyEpoch\x12\x1b\n" +
