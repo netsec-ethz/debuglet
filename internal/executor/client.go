@@ -196,13 +196,16 @@ func (e *Executor) Start(ctx context.Context) error {
 
 func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssignment) {
 	session, err := e.client.SessionStream(ctx)
-
 	if err != nil {
 		e.logger.Error("Failed to open session", zap.Error(err))
 		return
 	}
 
 	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId, e.teslaSchedule, []byte(assign.MeasurementId))
+	session.Send(&pb.SessionMessage{
+		Msg: &pb.SessionMessage_Hello{Hello: &pb.DebugletHello{MeasurementId: assign.MeasurementId}},
+	})
+
 	err = db.Init(ctx, assign.Code, assign.Addresses)
 	if err != nil {
 		e.logger.Error("Failed to init debuglet", zap.String("session_id", assign.SessionId), zap.Error(err))
