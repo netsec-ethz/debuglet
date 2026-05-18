@@ -155,13 +155,13 @@ func (d *Dispatcher) GetMeasurement(id string) *Measurement {
 }
 
 func (d *Dispatcher) RemoveMeasurement(id string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	m := d.GetMeasurement(id)
 	if m == nil {
 		return
 	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	for _, session := range m.sessions {
 		destinationUpdates := d.resource.RemovePolicy(session.Assignment.SessionId)
@@ -239,8 +239,9 @@ func (d *Dispatcher) SetExecutor(id string, lastSeen int64) error {
 
 func (d *Dispatcher) SetExecutorCapacity(id string, capacity int64) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	_, exists := d.executors[id]
+	d.mu.Unlock()
+
 	if !exists {
 		return fmt.Errorf("executor %s not found", id)
 	}

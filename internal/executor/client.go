@@ -202,17 +202,17 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 		return
 	}
 
-	e.logger.Debug("Locking")
-	e.mu.Lock()
 	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId, e.teslaSchedule, []byte(assign.MeasurementId))
-	err = db.Init(assign.Code, assign.Addresses)
+	err = db.Init(ctx, assign.Code, assign.Addresses)
 	if err != nil {
-		e.mu.Unlock()
 		e.logger.Error("Failed to init debuglet", zap.String("session_id", assign.SessionId), zap.Error(err))
 		return
 	}
+
+	e.mu.Lock()
 	e.debuglets[assign.SessionId] = db
 	e.mu.Unlock()
+
 	e.logger.Info("Debuglet created", zap.String("session_id", assign.SessionId))
 
 	session.Send(&pb.SessionMessage{
