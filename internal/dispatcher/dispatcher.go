@@ -111,25 +111,35 @@ func (d *Dispatcher) CreateMeasurement(numDebuglets int) (string, *Measurement) 
 
 func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
+	measurement.mu.RLock()
+	sessions := make([]*DebugletSession, 0, len(measurement.sessions))
 	for _, session := range measurement.sessions {
+		sessions = append(sessions, session)
+	}
+	measurement.mu.RUnlock()
+
+	for _, session := range sessions {
 		assignment := session.Assignment
 		policy := assignment.GetPolicy()
 		executorID := session.ExecutorID
 
 		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), assignment.GetAddresses())
 		if err != nil {
+			d.mu.Unlock()
 			return err
 		}
 		destinationUpdates, err := d.resource.RegisterPolicy(executorID, assignment)
 		if err != nil {
+			d.mu.Unlock()
 			return err
 		}
 		for executorID, updates := range destinationUpdates {
-			d.UpdateDestinations(executorID, updates)
+			go d.UpdateDestinations(executorID, updates)
 		}
 	}
+
+	d.mu.Unlock()
 
 	return measurement.Start()
 }
@@ -173,8 +183,8 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay int64, te
 	if _, exists := d.executors[id]; !exists {
 		d.executors[id] = &Executor{
 			ID:          id,
-			Assignments: make(chan *pb.DebugletAssignment, 1),
-			Updates:     make(chan *pb.DestinationUpdates, 1),
+			Assignments: make(chan *pb.DebugletAssignment),
+			Updates:     make(chan *pb.DestinationUpdates),
 		}
 	}
 	exec := d.executors[id]
@@ -269,12 +279,8 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 	exec.appendMeasurementID(assignment.MeasurementId)
 	d.mu.Unlock()
 
-	select {
-	case exec.Assignments <- assignment:
-		return nil
-	default:
-		return fmt.Errorf("executor %s assignment queue full", executorID)
-	}
+	exec.Assignments <- assignment
+	return nil
 }
 
 func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {

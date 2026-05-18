@@ -194,7 +194,7 @@ func (d *Debuglet) GetSCIONAddr() string {
 func (d *Debuglet) startServers() error {
 	d.logger.Debugw("startServers: starting")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	// -- Placeholder for future UDP server --

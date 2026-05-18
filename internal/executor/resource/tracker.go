@@ -15,7 +15,11 @@ type TransferDirection = int
 const (
 	TransferIn TransferDirection = iota
 	TransferOut
+)
+
+const (
 	ExecutorUsageKey string = ""
+	RatelimitBurst   int    = 4096
 )
 
 type UsageTracker struct {
@@ -61,17 +65,11 @@ func (u *UsageTracker) register(dir TransferDirection, destination string, limit
 	destinationUsage, dExists := usage[destination]
 	executorUsage, eExists := usage[destination]
 	if !dExists || !eExists {
-		usage[destination] = rate.NewLimiter(
-			rate.Limit(limits.DestinationRatelimit), int(limits.DestinationBurst),
-		)
-		usage[ExecutorUsageKey] = rate.NewLimiter(
-			rate.Limit(limits.ExecutorRatelimit), int(limits.ExecutorBurst),
-		)
+		usage[destination] = rate.NewLimiter(rate.Limit(limits.DestinationRatelimit), RatelimitBurst)
+		usage[ExecutorUsageKey] = rate.NewLimiter(rate.Limit(limits.ExecutorRatelimit), RatelimitBurst)
 	} else {
 		destinationUsage.SetLimit(rate.Limit(limits.DestinationRatelimit))
-		destinationUsage.SetBurst(int(limits.DestinationBurst))
 		executorUsage.SetLimit(rate.Limit(limits.ExecutorRatelimit))
-		executorUsage.SetBurst(int(limits.ExecutorBurst))
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	pb "debuglet/protocol"
 	"fmt"
 	"net"
+	"sync"
 )
 
 // Keeps track of how much capacity is used/free for executors and destinations
@@ -22,6 +23,7 @@ type DispatcherManager struct {
 	// Enables for only the fairshare updates to be returned that have actually changed.
 	adjustments  map[string]map[string]int64
 	IDtoExecutor map[string]string
+	mu           sync.RWMutex
 }
 
 func New() *DispatcherManager {
@@ -46,6 +48,9 @@ func stripPort(addr string) string {
 }
 
 func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, destinations []string) error {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
 	execCapacity, exists := d.executorCapacities[executorID]
 	if !exists {
 		return fmt.Errorf("executor %s has no capacity set", executorID)
@@ -66,6 +71,9 @@ func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, de
 }
 
 func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	assignmentID := assignment.GetSessionId()
 	policy := assignment.GetPolicy()
 	if policy == nil {
@@ -100,6 +108,9 @@ func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.Deb
 }
 
 func (d *DispatcherManager) RemovePolicy(assignmentID string) map[string]*pb.DestinationUpdates {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	destinations, exists := d.originalDestinations[assignmentID]
 	if !exists {
 		return nil
@@ -166,5 +177,8 @@ func (d *DispatcherManager) determineUpdates(destinations []string) map[string]*
 }
 
 func (d *DispatcherManager) SetExecutorCapacity(id string, capacity int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	d.executorCapacities[id] = capacity
 }

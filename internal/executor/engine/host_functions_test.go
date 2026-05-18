@@ -361,7 +361,7 @@ func BenchmarkHostFunctionOverhead(b *testing.B) {
 	// Baseline: Measure the cost of calling the Go function directly.
 	b.Run("DirectGoCall", func(b *testing.B) {
 		args := []wasmer.Value{}
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = dummyHostFunction(args)
 		}
 	})

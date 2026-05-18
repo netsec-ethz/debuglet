@@ -187,7 +187,7 @@ func hostReceiveData(
 		return nil, fmt.Errorf("receive_data: %w", err)
 	}
 
-	size := args[1].I32()
+	size := min(args[1].I32(), int32(resource.RatelimitBurst))
 	ptr := args[2].I32()
 
 	memory, err := instance.Exports.GetMemory("memory")
@@ -233,7 +233,7 @@ func hostSendData(
 		return nil, fmt.Errorf("send_data: %w", err)
 	}
 
-	size := args[1].I32()
+	size := min(args[1].I32(), int32(resource.RatelimitBurst))
 	ptr := args[2].I32()
 
 	memory, err := instance.Exports.GetMemory("memory")
