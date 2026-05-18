@@ -87,7 +87,7 @@ type Debuglet struct {
 	engine *wasmer.Engine
 	store  *wasmer.Store
 
-	wasiEnv        wasmer.WasiEnvironment
+	wasiEnv        *wasmer.WasiEnvironment
 	wasmerInstance *wasmer.Instance
 
 	scionServer pan.ListenConn
@@ -164,14 +164,6 @@ func NewDebuglet(logger *zap.Logger, manager *resource.LimitManager, sessionID s
 // published while the debuglet executes.
 func (d *Debuglet) StdoutChan() <-chan []byte {
 	return d.stdoutCh
-}
-
-func (d *Debuglet) CloseStdoutChan() {
-	if d.closed {
-		return
-	}
-	close(d.stdoutCh)
-	d.closed = true
 }
 
 // Init starts the network servers and compiles and instantiates the WASM
@@ -258,7 +250,7 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("createWASMInstance: WASI finalize failed: %w", err)
 	}
-	d.wasiEnv = *wasiEnv
+	d.wasiEnv = wasiEnv
 
 	d.logger.Debug("generating new debuglet import object")
 	importObject, err := d.wasiEnv.GenerateImportObject(d.store, module)
@@ -477,6 +469,9 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 
 // Close shuts down all network listeners and the wasmer instance.
 func (d *Debuglet) Close() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	if d.scionServer != nil {
 		_ = d.scionServer.Close()
 	}
@@ -490,9 +485,18 @@ func (d *Debuglet) Close() {
 		_ = d.ipServer.Close()
 	}
 	if d.wasmerInstance != nil {
-		d.wasmerInstance.Close()
+		inst := d.wasmerInstance
+		d.wasmerInstance = nil // nil first so flushWASIOutput sees it immediately
+		inst.Close()
 	}
-	d.CloseStdoutChan()
+	if d.pktTagger != nil {
+		d.pktTagger.Close()
+	}
+
+	if !d.closed {
+		close(d.stdoutCh)
+		d.closed = true
+	}
 }
 
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
@@ -563,12 +567,10 @@ StreamLoop:
 		select {
 		case <-ctx.Done():
 			retErr = ctx.Err()
-			d.CloseStdoutChan()
 			break StreamLoop
 		case err := <-done:
 			d.flushWASIOutput()
 			retErr = err
-			d.CloseStdoutChan()
 			break StreamLoop
 		case <-ticker.C:
 			// Flush available stdout/stderr — do NOT break the loop here.
@@ -588,7 +590,17 @@ func (d *Debuglet) markStarted() {
 }
 
 // flushWASIOutput drains the WASI stdout buffer and forwards it to stdoutCh.
+// ReadStdout is called while the mutex is held so that a concurrent Close()
+// cannot free the underlying C memory between the nil-check and the read.
 func (d *Debuglet) flushWASIOutput() {
+	d.mu.Lock()
+	if d.closed || d.wasmerInstance == nil || d.wasiEnv == nil {
+		d.mu.Unlock()
+		return
+	}
 	buf := d.wasiEnv.ReadStdout()
-	d.stdoutCh <- buf
+	d.mu.Unlock()
+	if len(buf) > 0 {
+		d.stdoutCh <- buf
+	}
 }

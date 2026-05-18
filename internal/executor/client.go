@@ -287,7 +287,18 @@ func (e *Executor) runDebuglet(assign *pb.DebugletAssignment, session pb.Debugle
 	go e.flushDebugletOutput(assign, db, session, assign.SessionId)
 
 	result, err := db.Run()
+
+	// Close the debuglet before waiting: db.Close() closes stdoutCh, which
+	// unblocks the range loop in flushDebugletOutput so stdoutWg.Wait() can
+	// return. Closing before Wait() also prevents a race where flushWASIOutput
+	// could call ReadStdout() on an already-freed wasmer instance.
+	e.mu.Lock()
+	delete(e.debuglets, assign.SessionId)
+	e.mu.Unlock()
+	db.Close()
+
 	e.stdoutWg.Wait()
+
 	if err != nil {
 		session.Send(&pb.SessionMessage{
 			Msg: &pb.SessionMessage_Exit{
@@ -301,8 +312,4 @@ func (e *Executor) runDebuglet(assign *pb.DebugletAssignment, session pb.Debugle
 			Exit: &pb.DebugletExit{SessionId: assign.SessionId, ExitCode: 0, Result: result},
 		},
 	})
-	e.mu.Lock()
-	delete(e.debuglets, assign.SessionId)
-	e.mu.Unlock()
-	db.Close()
 }
