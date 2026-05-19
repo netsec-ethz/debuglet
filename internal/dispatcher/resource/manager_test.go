@@ -1,6 +1,8 @@
 package resource_test
 
 import (
+	"fmt"
+	"runtime"
 	"testing"
 
 	"debuglet/internal/dispatcher/resource"
@@ -176,5 +178,195 @@ func TestRemoveAssignment(t *testing.T) {
 	updates, err = rm.RegisterPolicy("exec-1", job2)
 	if err != nil || len(updates) > 0 {
 		t.Fatalf("Expected no error and no updates, got %v, updates=%v", err, updates)
+	}
+}
+
+const (
+	benchExecutorID       = "exec-1"
+	benchCapacity   int64 = 10_000_000_000
+	benchFloor      int64 = 100
+	benchCeil       int64 = 500
+)
+
+func newAssignment(id string, dests []string, floor, ceil int64) *pb.DebugletAssignment {
+	return &pb.DebugletAssignment{
+		SessionId: id,
+		Addresses: dests,
+		Policy: &pb.DebugletAssignment_Policy{
+			FloorBw: floor,
+			CeilBw:  ceil,
+		},
+	}
+}
+
+func seedAssignments(rm *resource.DispatcherManager, executorID string, n int, dests []string, floor, ceil int64) error {
+	for i := range n {
+		if i%1000 == 0 {
+			fmt.Println(i)
+		}
+		id := fmt.Sprintf("seed-%d", i)
+		if _, err := rm.RegisterPolicy(executorID, newAssignment(id, dests, floor, ceil)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readMemStats() runtime.MemStats {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return stats
+}
+
+func reportHeapStats(b *testing.B, label string, current runtime.MemStats) {
+	b.ReportMetric(float64(current.HeapAlloc), label+"heap_alloc_bytes")
+	b.ReportMetric(float64(current.HeapInuse), label+"heap_inuse_bytes")
+	b.ReportMetric(float64(current.Sys), label+"sys_bytes")
+}
+
+func BenchmarkCheckPolicy(b *testing.B) {
+	cases := []struct {
+		name     string
+		existing int
+		dests    []string
+	}{
+		{name: "N=0/single-dest", existing: 0, dests: []string{"dest-1"}},
+		{name: "N=1000/single-dest", existing: 1000, dests: []string{"dest-1"}},
+		{name: "N=100_000/single-dest", existing: 100_000, dests: []string{"dest-1"}},
+		{name: "N=1_000_000/single-dest", existing: 1_000_000, dests: []string{"dest-1"}},
+		{name: "N=100_000/multi-dest-3", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			rm := resource.New()
+			rm.SetExecutorCapacity(benchExecutorID, benchCapacity)
+
+			runtime.GC()
+			if err := seedAssignments(rm, benchExecutorID, tc.existing, tc.dests, benchFloor, benchCeil); err != nil {
+				b.Fatalf("seed failed: %v", err)
+			}
+			runtime.GC()
+			seedStats := readMemStats()
+			reportHeapStats(b, "seed_", seedStats)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := rm.CheckPolicy(benchExecutorID, benchFloor, benchCeil, tc.dests); err != nil {
+					b.Fatalf("CheckPolicy failed: %v", err)
+				}
+			}
+			b.StopTimer()
+
+			runtime.GC()
+			postStats := readMemStats()
+			reportHeapStats(b, "post_", postStats)
+		})
+	}
+}
+
+func BenchmarkRegisterPolicy(b *testing.B) {
+	cases := []struct {
+		name     string
+		existing int
+		dests    []string
+	}{
+		{name: "N=0/single-dest", existing: 0, dests: []string{"dest-1"}},
+		{name: "N=1000/single-dest", existing: 1000, dests: []string{"dest-1"}},
+		{name: "N=100_000/single-dest", existing: 100_000, dests: []string{"dest-1"}},
+		{name: "N=1_000_000/single-dest", existing: 1_000_000, dests: []string{"dest-1"}},
+		{name: "N=100_000/multi-dest-3", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			rm := resource.New()
+			rm.SetExecutorCapacity(benchExecutorID, benchCapacity)
+
+			runtime.GC()
+			if err := seedAssignments(rm, benchExecutorID, tc.existing, tc.dests, benchFloor, benchCeil); err != nil {
+				b.Fatalf("seed failed: %v", err)
+			}
+			runtime.GC()
+			seedStats := readMemStats()
+			reportHeapStats(b, "seed_", seedStats)
+
+			ids := make([]string, b.N)
+			assignments := make([]*pb.DebugletAssignment, b.N)
+			for i := 0; i < b.N; i++ {
+				id := fmt.Sprintf("bench-%d", i)
+				ids[i] = id
+				assignments[i] = newAssignment(id, tc.dests, benchFloor, benchCeil)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				id := ids[i]
+				if _, err := rm.RegisterPolicy(benchExecutorID, assignments[i]); err != nil {
+					b.Fatalf("RegisterPolicy failed: %v", err)
+				}
+
+				b.StopTimer()
+				rm.RemovePolicy(id)
+				b.StartTimer()
+			}
+			b.StopTimer()
+
+			runtime.GC()
+			postStats := readMemStats()
+			reportHeapStats(b, "post_", postStats)
+		})
+	}
+}
+
+func BenchmarkRemovePolicy(b *testing.B) {
+	cases := []struct {
+		name     string
+		existing int
+		dests    []string
+	}{
+		{name: "N=0/single-dest", existing: 0, dests: []string{"dest-1"}},
+		{name: "N=1000/single-dest", existing: 1000, dests: []string{"dest-1"}},
+		{name: "N=100_000/single-dest", existing: 100_000, dests: []string{"dest-1"}},
+		{name: "N=1_000_000/single-dest", existing: 1_000_000, dests: []string{"dest-1"}},
+		{name: "N=100_000/multi-dest-3", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			rm := resource.New()
+			rm.SetExecutorCapacity(benchExecutorID, benchCapacity)
+
+			runtime.GC()
+			if err := seedAssignments(rm, benchExecutorID, tc.existing, tc.dests, benchFloor, benchCeil); err != nil {
+				b.Fatalf("seed failed: %v", err)
+			}
+			targetID := "bench-target"
+			targetAssignment := newAssignment(targetID, tc.dests, benchFloor, benchCeil)
+			if _, err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
+				b.Fatalf("RegisterPolicy failed: %v", err)
+			}
+			runtime.GC()
+			seedStats := readMemStats()
+			reportHeapStats(b, "seed_", seedStats)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if updates := rm.RemovePolicy(targetID); updates == nil {
+					b.Fatalf("RemovePolicy returned nil updates")
+				}
+
+				b.StopTimer()
+				if _, err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
+					b.Fatalf("RegisterPolicy failed: %v", err)
+				}
+				b.StartTimer()
+			}
+			b.StopTimer()
+
+			runtime.GC()
+			postStats := readMemStats()
+			reportHeapStats(b, "post_", postStats)
+		})
 	}
 }
