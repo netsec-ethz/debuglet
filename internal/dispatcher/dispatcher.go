@@ -109,16 +109,10 @@ func (d *Dispatcher) CreateMeasurement(numDebuglets int) (string, *Measurement) 
 	return measurementId, measurement
 }
 
-func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
+func (d *Dispatcher) StartMeasurement(measurement IMeasurement) error {
 	d.mu.Lock()
 
-	measurement.mu.RLock()
-	sessions := make([]*DebugletSession, 0, len(measurement.sessions))
-	for _, session := range measurement.sessions {
-		sessions = append(sessions, session)
-	}
-	measurement.mu.RUnlock()
-
+	sessions := measurement.Sessions()
 	for _, session := range sessions {
 		assignment := session.Assignment
 		policy := assignment.GetPolicy()
@@ -129,18 +123,18 @@ func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
 			d.mu.Unlock()
 			return err
 		}
-		destinationUpdates, err := d.resource.RegisterPolicy(executorID, assignment)
+		err = d.resource.RegisterPolicy(executorID, assignment)
 		if err != nil {
 			d.mu.Unlock()
 			return err
 		}
+		destinationUpdates := d.resource.Updates(session.Assignment.GetAddresses())
 		for executorID, updates := range destinationUpdates {
 			go d.UpdateDestinations(executorID, updates)
 		}
 	}
 
 	d.mu.Unlock()
-
 	return measurement.Start()
 }
 
@@ -164,7 +158,8 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 	defer d.mu.Unlock()
 
 	for _, session := range m.sessions {
-		destinationUpdates := d.resource.RemovePolicy(session.Assignment.SessionId)
+		d.resource.RemovePolicy(session.Assignment.SessionId)
+		destinationUpdates := d.resource.Updates(session.Assignment.GetAddresses())
 		if destinationUpdates == nil {
 			continue
 		}
@@ -292,10 +287,6 @@ func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.Destinati
 	if !ok {
 		return fmt.Errorf("executor %s not found", executorID)
 	}
-	select {
-	case exec.Updates <- updates:
-		return nil
-	default:
-		return fmt.Errorf("executor %s updates queue full", executorID)
-	}
+	exec.Updates <- updates
+	return nil
 }
