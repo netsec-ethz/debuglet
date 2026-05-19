@@ -125,13 +125,25 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 
 	b.ResetTimer()
 	b.StopTimer()
-	for i := 0; i < b.N; i++ {
-		dest := benchDests[i]
+	const batchSize = 1024
+	for i := 0; i < b.N; {
+		batch := batchSize
+		if remaining := b.N - i; remaining < batch {
+			batch = remaining
+		}
+
 		b.StartTimer()
-		if err := d.Insert(dest, "bench-job", 1, 100); err != nil {
-			b.Fatalf("benchmark insert failed at %d: %v", i, err)
+		for j := 0; j < batch; j++ {
+			dest := benchDests[i+j]
+			if err := d.Insert(dest, "bench-job", 1, 100); err != nil {
+				b.Fatalf("benchmark insert failed at %d: %v", i+j, err)
+			}
 		}
 		b.StopTimer()
-		d.Remove(dest, "bench-job")
+
+		for j := 0; j < batch; j++ {
+			d.Remove(benchDests[i+j], "bench-job")
+		}
+		i += batch
 	}
 }
