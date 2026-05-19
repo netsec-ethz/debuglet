@@ -70,14 +70,14 @@ func (d *DispatcherManager) CheckPolicy(executorID string, floor, ceil int64, de
 	return nil
 }
 
-func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) (map[string]*pb.DestinationUpdates, error) {
+func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.DebugletAssignment) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	assignmentID := assignment.GetSessionId()
 	policy := assignment.GetPolicy()
 	if policy == nil {
-		return nil, fmt.Errorf("expected assignment policy, got nil")
+		return fmt.Errorf("expected assignment policy, got nil")
 	}
 	destinations := assignment.GetAddresses()
 
@@ -99,21 +99,20 @@ func (d *DispatcherManager) RegisterPolicy(executorID string, assignment *pb.Deb
 			delete(d.originalFloors, assignmentID)
 			delete(d.originalCeils, assignmentID)
 			delete(d.IDtoExecutor, assignmentID)
-			return nil, err
+			return err
 		}
 	}
 
-	updates := d.determineUpdates(destinations)
-	return updates, nil
+	return nil
 }
 
-func (d *DispatcherManager) RemovePolicy(assignmentID string) map[string]*pb.DestinationUpdates {
+func (d *DispatcherManager) RemovePolicy(assignmentID string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	destinations, exists := d.originalDestinations[assignmentID]
+	_, exists := d.originalDestinations[assignmentID]
 	if !exists {
-		return nil
+		return
 	}
 	originalFloor := d.originalFloors[assignmentID]
 	d.executorUsages[assignmentID] -= originalFloor
@@ -126,12 +125,9 @@ func (d *DispatcherManager) RemovePolicy(assignmentID string) map[string]*pb.Des
 	delete(d.originalCeils, assignmentID)
 	delete(d.IDtoExecutor, assignmentID)
 	delete(d.originalDestinations, assignmentID)
-
-	updates := d.determineUpdates(destinations)
-	return updates
 }
 
-func (d *DispatcherManager) determineUpdates(destinations []string) map[string]*pb.DestinationUpdates {
+func (d *DispatcherManager) Updates(destinations []string) map[string]*pb.DestinationUpdates {
 	var rawUpdates map[string][]*pb.DestinationUpdates_Update = make(map[string][]*pb.DestinationUpdates_Update)
 
 	for _, dest := range destinations {

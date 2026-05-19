@@ -42,10 +42,11 @@ func TestRegisterSingle(t *testing.T) {
 		},
 	}
 
-	updates, err := rm.RegisterPolicy("exec-1", assignment)
+	err := rm.RegisterPolicy("exec-1", assignment)
 	if err != nil {
 		t.Fatalf("Expected no error during registration, got %v", err)
 	}
+	updates := rm.Updates(assignment.Addresses)
 
 	if updates == nil {
 		t.Fatal("Expected updates map to not be nil")
@@ -64,10 +65,11 @@ func TestMultipleDestinations(t *testing.T) {
 		},
 	}
 
-	updates, err := rm.RegisterPolicy("exec-2", assignment)
+	err := rm.RegisterPolicy("exec-2", assignment)
 	if err != nil {
 		t.Fatalf("Expected no error during registration, got %v", err)
 	}
+	updates := rm.Updates(assignment.Addresses)
 
 	if updates == nil {
 		t.Fatal("Expected updates map to not be nil")
@@ -83,9 +85,14 @@ func TestUpdates(t *testing.T) {
 		Addresses: []string{"dest-1"},
 		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000},
 	}
-	updates, err := rm.RegisterPolicy("exec-1", job1)
-	if err != nil || len(updates) > 0 {
-		t.Fatalf("Expected no error and no updates, got %v, updates=%v", err, updates)
+	err := rm.RegisterPolicy("exec-1", job1)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	updates := rm.Updates(job1.Addresses)
+	if len(updates) > 0 {
+		t.Fatalf("Expected no updates, got %v", updates)
 	}
 
 	job2 := &pb.DebugletAssignment{
@@ -93,10 +100,11 @@ func TestUpdates(t *testing.T) {
 		Addresses: []string{"dest-1"},
 		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000},
 	}
-	updates, err = rm.RegisterPolicy("exec-1", job2)
+	err = rm.RegisterPolicy("exec-1", job2)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
+	updates = rm.Updates(job2.Addresses)
 	if up := updates["exec-1"]; up == nil || len(updates["exec-1"].Updates) != 2 {
 		t.Fatalf("Expected 2 updates, got %v", updates["exec-1"])
 	} else {
@@ -116,18 +124,29 @@ func TestMinimalUpdates(t *testing.T) {
 	job2 := &pb.DebugletAssignment{SessionId: "session-2", Addresses: []string{"dest-1"}, Policy: &pb.DebugletAssignment_Policy{FloorBw: 200_000_000, CeilBw: 800_000_000}}
 	job3 := &pb.DebugletAssignment{SessionId: "session-3", Addresses: []string{"dest-1"}, Policy: &pb.DebugletAssignment_Policy{FloorBw: 100_000_000, CeilBw: 100_000_000}}
 
-	_, err := rm.RegisterPolicy("exec-1", job1)
+	err := rm.RegisterPolicy("exec-1", job1)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	updates, err := rm.RegisterPolicy("exec-1", job2)
-	if up := updates["exec-1"]; err != nil || up == nil || len(up.Updates) != 2 {
-		t.Fatalf("Expected no error and 2 updates, got %v and updates=%v", err, up)
+	err = rm.RegisterPolicy("exec-1", job2)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
 	}
+
+	updates := rm.Updates(job2.Addresses)
+	if up := updates["exec-1"]; up == nil || len(up.Updates) != 2 {
+		t.Fatalf("Expected 2 updates, got %v", updates)
+	}
+
 	// job3 should not receive an update
-	updates, err = rm.RegisterPolicy("exec-1", job3)
-	if up := updates["exec-1"]; err != nil || up == nil || len(up.Updates) != 2 {
-		t.Fatalf("Expected no error and 2 updates, got %v and updates=%v", err, up)
+	err = rm.RegisterPolicy("exec-1", job3)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	updates = rm.Updates(job3.Addresses)
+	if up := updates["exec-1"]; up == nil || len(up.Updates) != 2 {
+		t.Fatalf("Expected 2 updates, got %v", up)
 	} else {
 		for _, update := range up.Updates {
 			if update.AssignmentId == "session-3" {
@@ -136,10 +155,9 @@ func TestMinimalUpdates(t *testing.T) {
 		}
 	}
 
-	updates = rm.RemovePolicy("session-2")
-	if updates == nil {
-		t.Fatalf("Expected map to return, got nil")
-	}
+	rm.RemovePolicy("session-2")
+	updates = rm.Updates(job2.Addresses)
+
 	if up := updates["exec-1"]; up == nil || len(up.Updates) != 1 {
 		t.Fatalf("Expected no error and 1 update, got %v and updates=%v", err, up)
 	} else {
@@ -160,24 +178,29 @@ func TestRemoveAssignment(t *testing.T) {
 		Addresses: []string{"dest-1"},
 		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000},
 	}
-	updates, err := rm.RegisterPolicy("exec-1", job1)
-	if err != nil || len(updates) > 0 {
-		t.Fatalf("Expected no error and no updates, got %v, updates=%v", err, updates)
+	err := rm.RegisterPolicy("exec-1", job1)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
 	}
-
-	updates = rm.RemovePolicy("session-1")
-	if updates == nil || len(updates) > 0 {
+	updates := rm.Updates(job1.Addresses)
+	if len(updates) > 0 {
 		t.Fatalf("Expected no updates, got %v", updates)
 	}
+
+	rm.RemovePolicy("session-1")
 
 	job2 := &pb.DebugletAssignment{
 		SessionId: "session-2",
 		Addresses: []string{"dest-1"},
 		Policy:    &pb.DebugletAssignment_Policy{FloorBw: 1_000_000_000, CeilBw: 1_000_000_000},
 	}
-	updates, err = rm.RegisterPolicy("exec-1", job2)
-	if err != nil || len(updates) > 0 {
+	err = rm.RegisterPolicy("exec-1", job2)
+	if err != nil {
 		t.Fatalf("Expected no error and no updates, got %v, updates=%v", err, updates)
+	}
+	updates = rm.Updates(job1.Addresses)
+	if len(updates) > 0 {
+		t.Fatalf("Expected no updates, got %v", updates)
 	}
 }
 
@@ -201,11 +224,8 @@ func newAssignment(id string, dests []string, floor, ceil int64) *pb.DebugletAss
 
 func seedAssignments(rm *resource.DispatcherManager, executorID string, n int, dests []string, floor, ceil int64) error {
 	for i := range n {
-		if i%1000 == 0 {
-			fmt.Println(i)
-		}
 		id := fmt.Sprintf("seed-%d", i)
-		if _, err := rm.RegisterPolicy(executorID, newAssignment(id, dests, floor, ceil)); err != nil {
+		if err := rm.RegisterPolicy(executorID, newAssignment(id, dests, floor, ceil)); err != nil {
 			return err
 		}
 	}
@@ -302,7 +322,7 @@ func BenchmarkRegisterPolicy(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				id := ids[i]
-				if _, err := rm.RegisterPolicy(benchExecutorID, assignments[i]); err != nil {
+				if err := rm.RegisterPolicy(benchExecutorID, assignments[i]); err != nil {
 					b.Fatalf("RegisterPolicy failed: %v", err)
 				}
 
@@ -343,7 +363,7 @@ func BenchmarkRemovePolicy(b *testing.B) {
 			}
 			targetID := "bench-target"
 			targetAssignment := newAssignment(targetID, tc.dests, benchFloor, benchCeil)
-			if _, err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
+			if err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
 				b.Fatalf("RegisterPolicy failed: %v", err)
 			}
 			runtime.GC()
@@ -352,15 +372,63 @@ func BenchmarkRemovePolicy(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if updates := rm.RemovePolicy(targetID); updates == nil {
-					b.Fatalf("RemovePolicy returned nil updates")
-				}
+				rm.RemovePolicy(targetID)
 
 				b.StopTimer()
-				if _, err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
+				if err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
 					b.Fatalf("RegisterPolicy failed: %v", err)
 				}
 				b.StartTimer()
+			}
+			b.StopTimer()
+
+			runtime.GC()
+			postStats := readMemStats()
+			reportHeapStats(b, "post_", postStats)
+		})
+	}
+}
+
+func BenchmarkUpdates(b *testing.B) {
+	const (
+		overFloor int64 = 200_000_000
+		overCeil  int64 = 800_000_000
+	)
+
+	cases := []struct {
+		name     string
+		existing int
+		dests    []string
+		floor    int64
+		ceil     int64
+	}{
+		{name: "N=0/single-dest/under-capacity", existing: 0, dests: []string{"dest-1"}, floor: benchFloor, ceil: benchCeil},
+		{name: "N=1000/single-dest/over-capacity", existing: 1000, dests: []string{"dest-1"}, floor: overFloor, ceil: overCeil},
+		{name: "N=100_000/single-dest/over-capacity", existing: 100_000, dests: []string{"dest-1"}, floor: overFloor, ceil: overCeil},
+		{name: "N=1_000_000/single-dest/over-capacity", existing: 1_000_000, dests: []string{"dest-1"}, floor: overFloor, ceil: overCeil},
+		{name: "N=100_000/multi-dest-3/over-capacity", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}, floor: overFloor, ceil: overCeil},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			rm := resource.New()
+			rm.SetExecutorCapacity(benchExecutorID, benchCapacity)
+
+			runtime.GC()
+			if err := seedAssignments(rm, benchExecutorID, tc.existing, tc.dests, tc.floor, tc.ceil); err != nil {
+				b.Fatalf("seed failed: %v", err)
+			}
+			runtime.GC()
+			seedStats := readMemStats()
+			reportHeapStats(b, "seed_", seedStats)
+
+			_ = rm.Updates(tc.dests)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if updates := rm.Updates(tc.dests); updates == nil {
+					b.Fatalf("Updates returned nil")
+				}
 			}
 			b.StopTimer()
 
