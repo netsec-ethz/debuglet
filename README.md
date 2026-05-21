@@ -105,6 +105,7 @@ The Debuglet ecosystem (Dispatcher and Executor) is containerized via Docker for
 ```mermaid
 sequenceDiagram
     participant Client
+    participant SuiBlockchain
     participant Dispatcher
     participant Executor
     participant SCION
@@ -114,6 +115,15 @@ sequenceDiagram
     Executor->>Dispatcher: [ControlMessage] Resources (set bw capacity)
     end
     Executor->>Dispatcher: [ControlMessage] Heartbeat (repeats /60s)
+    
+    rect rgba(255,0,0,0.3)
+    Client->>Dispatcher: createUser <br/> (POST https /api/users)
+    Dispatcher->>Client: UserId, AuthKey
+
+    Client->>SuiBlockchain: buyTokens(UserID,Amount)
+    SuiBlockchain->>Dispatcher: notifyPayment(UserID, Amount)
+    Dispatcher->>Dispatcher: updateBalance
+    end
 
     Client->>Dispatcher: createMeasurement <br/> (POST http /api/measurements)
     activate Dispatcher
