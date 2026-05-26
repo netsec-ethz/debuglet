@@ -278,7 +278,7 @@ func BenchmarkGetExecutor(b *testing.B) {
 }
 
 func BenchmarkListExecutors(b *testing.B) {
-	cases := []int{1, 10, 100, 1000, 10000}
+	cases := []int{1, 10, 100, 1000, 10000, 100000}
 	for _, n := range cases {
 		b.Run("N="+strconv.Itoa(n), func(b *testing.B) {
 			d := NewDispatcher()

@@ -252,8 +252,11 @@ func BenchmarkCheckPolicy(b *testing.B) {
 	}{
 		{name: "N=0/single-dest", existing: 0, dests: []string{"dest-1"}},
 		{name: "N=1000/single-dest", existing: 1000, dests: []string{"dest-1"}},
+		{name: "N=10000/single-dest", existing: 10000, dests: []string{"dest-1"}},
 		{name: "N=100_000/single-dest", existing: 100_000, dests: []string{"dest-1"}},
 		{name: "N=1_000_000/single-dest", existing: 1_000_000, dests: []string{"dest-1"}},
+		{name: "N=1000/multi-dest-3", existing: 1000, dests: []string{"dest-1", "dest-2", "dest-3"}},
+		{name: "N=10_000/multi-dest-3", existing: 10000, dests: []string{"dest-1", "dest-2", "dest-3"}},
 		{name: "N=100_000/multi-dest-3", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}},
 	}
 
@@ -293,8 +296,11 @@ func BenchmarkRegisterPolicy(b *testing.B) {
 	}{
 		{name: "N=0/single-dest", existing: 0, dests: []string{"dest-1"}},
 		{name: "N=1000/single-dest", existing: 1000, dests: []string{"dest-1"}},
+		{name: "N=10000/single-dest", existing: 10000, dests: []string{"dest-1"}},
 		{name: "N=100_000/single-dest", existing: 100_000, dests: []string{"dest-1"}},
 		{name: "N=1_000_000/single-dest", existing: 1_000_000, dests: []string{"dest-1"}},
+		{name: "N=1000/multi-dest-3", existing: 1000, dests: []string{"dest-1", "dest-2", "dest-3"}},
+		{name: "N=10_000/multi-dest-3", existing: 10000, dests: []string{"dest-1", "dest-2", "dest-3"}},
 		{name: "N=100_000/multi-dest-3", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}},
 	}
 
@@ -319,16 +325,27 @@ func BenchmarkRegisterPolicy(b *testing.B) {
 				assignments[i] = newAssignment(id, tc.dests, benchFloor, benchCeil)
 			}
 
+			batchSize := 256
+			batchSize = min(batchSize, b.N)
+
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				id := ids[i]
-				if err := rm.RegisterPolicy(benchExecutorID, assignments[i]); err != nil {
-					b.Fatalf("RegisterPolicy failed: %v", err)
+			for i := 0; i < b.N; i += batchSize {
+				end := i + batchSize
+				end = min(end, b.N)
+
+				for j := i; j < end; j++ {
+					if err := rm.RegisterPolicy(benchExecutorID, assignments[j]); err != nil {
+						b.Fatalf("RegisterPolicy failed: %v", err)
+					}
 				}
 
 				b.StopTimer()
-				rm.RemovePolicy(id)
-				b.StartTimer()
+				for j := i; j < end; j++ {
+					rm.RemovePolicy(ids[j])
+				}
+				if end < b.N {
+					b.StartTimer()
+				}
 			}
 			b.StopTimer()
 
@@ -347,8 +364,11 @@ func BenchmarkRemovePolicy(b *testing.B) {
 	}{
 		{name: "N=0/single-dest", existing: 0, dests: []string{"dest-1"}},
 		{name: "N=1000/single-dest", existing: 1000, dests: []string{"dest-1"}},
+		{name: "N=10000/single-dest", existing: 10000, dests: []string{"dest-1"}},
 		{name: "N=100_000/single-dest", existing: 100_000, dests: []string{"dest-1"}},
 		{name: "N=1_000_000/single-dest", existing: 1_000_000, dests: []string{"dest-1"}},
+		{name: "N=1000/multi-dest-3", existing: 1000, dests: []string{"dest-1", "dest-2", "dest-3"}},
+		{name: "N=10_000/multi-dest-3", existing: 10000, dests: []string{"dest-1", "dest-2", "dest-3"}},
 		{name: "N=100_000/multi-dest-3", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}},
 	}
 
@@ -361,24 +381,42 @@ func BenchmarkRemovePolicy(b *testing.B) {
 			if err := seedAssignments(rm, benchExecutorID, tc.existing, tc.dests, benchFloor, benchCeil); err != nil {
 				b.Fatalf("seed failed: %v", err)
 			}
-			targetID := "bench-target"
-			targetAssignment := newAssignment(targetID, tc.dests, benchFloor, benchCeil)
-			if err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
-				b.Fatalf("RegisterPolicy failed: %v", err)
+
+			batchSize := 256
+			batchSize = min(batchSize, b.N)
+
+			targetIDs := make([]string, batchSize)
+			targetAssignments := make([]*pb.DebugletAssignment, batchSize)
+			for i := 0; i < batchSize; i++ {
+				id := fmt.Sprintf("bench-target-%d", i)
+				targetIDs[i] = id
+				targetAssignments[i] = newAssignment(id, tc.dests, benchFloor, benchCeil)
+				if err := rm.RegisterPolicy(benchExecutorID, targetAssignments[i]); err != nil {
+					b.Fatalf("RegisterPolicy failed: %v", err)
+				}
 			}
 			runtime.GC()
 			seedStats := readMemStats()
 			reportHeapStats(b, "seed_", seedStats)
 
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				rm.RemovePolicy(targetID)
+			for i := 0; i < b.N; i += batchSize {
+				end := i + batchSize
+				end = min(end, b.N)
+				count := end - i
+				for j := range count {
+					rm.RemovePolicy(targetIDs[j])
+				}
 
 				b.StopTimer()
-				if err := rm.RegisterPolicy(benchExecutorID, targetAssignment); err != nil {
-					b.Fatalf("RegisterPolicy failed: %v", err)
+				for j := range count {
+					if err := rm.RegisterPolicy(benchExecutorID, targetAssignments[j]); err != nil {
+						b.Fatalf("RegisterPolicy failed: %v", err)
+					}
 				}
-				b.StartTimer()
+				if end < b.N {
+					b.StartTimer()
+				}
 			}
 			b.StopTimer()
 
@@ -391,8 +429,7 @@ func BenchmarkRemovePolicy(b *testing.B) {
 
 func BenchmarkUpdates(b *testing.B) {
 	const (
-		overFloor int64 = 200_000_000
-		overCeil  int64 = 800_000_000
+		overCeil int64 = 800_000_000
 	)
 
 	cases := []struct {
@@ -403,10 +440,13 @@ func BenchmarkUpdates(b *testing.B) {
 		ceil     int64
 	}{
 		{name: "N=0/single-dest/under-capacity", existing: 0, dests: []string{"dest-1"}, floor: benchFloor, ceil: benchCeil},
-		{name: "N=1000/single-dest/over-capacity", existing: 1000, dests: []string{"dest-1"}, floor: overFloor, ceil: overCeil},
-		{name: "N=100_000/single-dest/over-capacity", existing: 100_000, dests: []string{"dest-1"}, floor: overFloor, ceil: overCeil},
-		{name: "N=1_000_000/single-dest/over-capacity", existing: 1_000_000, dests: []string{"dest-1"}, floor: overFloor, ceil: overCeil},
-		{name: "N=100_000/multi-dest-3/over-capacity", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}, floor: overFloor, ceil: overCeil},
+		{name: "N=1000/single-dest/over-capacity", existing: 1000, dests: []string{"dest-1"}, floor: benchFloor, ceil: overCeil},
+		{name: "N=10000/single-dest/over-capacity", existing: 10000, dests: []string{"dest-1"}, floor: benchFloor, ceil: overCeil},
+		{name: "N=100_000/single-dest/over-capacity", existing: 100_000, dests: []string{"dest-1"}, floor: benchFloor, ceil: overCeil},
+		{name: "N=1_000_000/single-dest/over-capacity", existing: 1_000_000, dests: []string{"dest-1"}, floor: benchFloor, ceil: overCeil},
+		{name: "N=1000/multi-dest-3/over-capacity", existing: 1000, dests: []string{"dest-1", "dest-2", "dest-3"}, floor: benchFloor, ceil: overCeil},
+		{name: "N=10_000/multi-dest-3/over-capacity", existing: 10000, dests: []string{"dest-1", "dest-2", "dest-3"}, floor: benchFloor, ceil: overCeil},
+		{name: "N=100_000/multi-dest-3/over-capacity", existing: 100_000, dests: []string{"dest-1", "dest-2", "dest-3"}, floor: benchFloor, ceil: overCeil},
 	}
 
 	for _, tc := range cases {
