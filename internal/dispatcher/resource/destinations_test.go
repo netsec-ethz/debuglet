@@ -97,3 +97,53 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("Expected sole job j2 to have the full 100, got %v", jobCaps)
 	}
 }
+
+func BenchmarkDestinationsInsert(b *testing.B) {
+	for _, initial := range []int{0, 10_000, 100_000, 1_000_000} {
+		b.Run(fmt.Sprintf("Initial%d", initial), func(b *testing.B) {
+			benchmarkInsertDestinations(b, initial)
+		})
+	}
+}
+
+func benchmarkInsertDestinations(b *testing.B, initial int) {
+	b.Helper()
+	b.ReportAllocs()
+
+	d := resource.NewDestinations(100)
+	for i := range initial {
+		dest := fmt.Sprintf("prefill-%d", i)
+		if err := d.Insert(dest, "prefill-job", 1, 100); err != nil {
+			b.Fatalf("prefill insert failed at %d: %v", i, err)
+		}
+	}
+
+	benchDests := make([]string, b.N)
+	for i := 0; i < b.N; i++ {
+		benchDests[i] = fmt.Sprintf("bench-%d", i)
+	}
+
+	b.ResetTimer()
+	b.StopTimer()
+	const batchSize = 1024
+	for i := 0; i < b.N; {
+		batch := batchSize
+		if remaining := b.N - i; remaining < batch {
+			batch = remaining
+		}
+
+		b.StartTimer()
+		for j := 0; j < batch; j++ {
+			dest := benchDests[i+j]
+			if err := d.Insert(dest, "bench-job", 1, 100); err != nil {
+				b.Fatalf("benchmark insert failed at %d: %v", i+j, err)
+			}
+		}
+		b.StopTimer()
+
+		for j := 0; j < batch; j++ {
+			d.Remove(benchDests[i+j], "bench-job")
+		}
+		i += batch
+	}
+}

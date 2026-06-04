@@ -168,8 +168,8 @@ func (d *Debuglet) StdoutChan() <-chan []byte {
 
 // Init starts the network servers and compiles and instantiates the WASM
 // module. It must be called exactly once before Run.
-func (d *Debuglet) Init(wasmBytes []byte, addresses []string) error {
-	if err := d.startServers(); err != nil {
+func (d *Debuglet) Init(ctx context.Context, wasmBytes []byte, addresses []string) error {
+	if err := d.startServers(ctx); err != nil {
 		d.logger.Warnw("failed to start up server(s)", "err", err)
 	}
 	if err := d.createWASMInstance(wasmBytes); err != nil {
@@ -191,10 +191,10 @@ func (d *Debuglet) GetSCIONAddr() string {
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
-func (d *Debuglet) startServers() error {
+func (d *Debuglet) startServers(ctx context.Context) error {
 	d.logger.Debugw("startServers: starting")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 
 	// -- Placeholder for future UDP server --
@@ -223,7 +223,7 @@ func (d *Debuglet) startServers() error {
 	}
 
 	d.logger.Debug("startServers: starting scion UDP listener")
-	scionServer, err := pan.ListenUDP(context.Background(), listen.Get(), nil)
+	scionServer, err := pan.ListenUDP(ctx, listen.Get(), nil)
 	if err != nil {
 		return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
 	}

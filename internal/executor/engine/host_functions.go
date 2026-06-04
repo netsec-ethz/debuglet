@@ -109,7 +109,7 @@ func hostConnect(
 	args []wasmer.Value,
 	addresses []string,
 	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
+	registry ISocketRegistry,
 	tlsCfg *tls.Config,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
@@ -156,7 +156,7 @@ func hostConnect(
 	}
 	if err != nil {
 		sugar.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
-		return nil, fmt.Errorf("connect: failed to dial %q: %w", addr, err)
+		return []wasmer.Value{wasmer.NewI32(-1)}, nil
 	}
 
 	socket := NewGenericSocket(conn, socketType)
@@ -172,7 +172,7 @@ func hostReceiveData(
 	environment interface{},
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
+	registry ISocketRegistry,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
@@ -187,7 +187,7 @@ func hostReceiveData(
 		return nil, fmt.Errorf("receive_data: %w", err)
 	}
 
-	size := args[1].I32()
+	size := min(args[1].I32(), int32(resource.RatelimitBurst))
 	ptr := args[2].I32()
 
 	memory, err := instance.Exports.GetMemory("memory")
@@ -218,7 +218,7 @@ func hostSendData(
 	environment interface{},
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
+	registry ISocketRegistry,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
@@ -233,7 +233,7 @@ func hostSendData(
 		return nil, fmt.Errorf("send_data: %w", err)
 	}
 
-	size := args[1].I32()
+	size := min(args[1].I32(), int32(resource.RatelimitBurst))
 	ptr := args[2].I32()
 
 	memory, err := instance.Exports.GetMemory("memory")
@@ -263,7 +263,7 @@ func hostClose(
 	environment interface{},
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
+	registry ISocketRegistry,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
@@ -289,7 +289,7 @@ func hostAcceptTCP(
 	args []wasmer.Value,
 	tcpServer *net.TCPListener,
 	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
+	registry ISocketRegistry,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
@@ -320,7 +320,7 @@ func hostAcceptIP(
 	args []wasmer.Value,
 	ipServer net.Listener,
 	sugar *zap.SugaredLogger,
-	registry *SocketRegistry,
+	registry ISocketRegistry,
 ) ([]wasmer.Value, error) {
 	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {

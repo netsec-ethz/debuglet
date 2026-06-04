@@ -16,15 +16,44 @@ package engine
 
 import (
 	"context"
+	"debuglet/internal/executor/resource"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/wasmerio/wasmer-go/wasmer"
+	"go.uber.org/zap"
 )
 
 // newHostEnv is a convenience helper that wraps a context in a HostEnvironment.
 func newHostEnv(ctx context.Context) *HostEnvironment {
-	return &HostEnvironment{ctx: ctx}
+	return &HostEnvironment{
+		ctx:          ctx,
+		sessionID:    "session-1",
+		tracker:      resource.NewUsageTracker(),
+		handleToAddr: make(map[int32]string),
+	}
+}
+
+func createDummyWasmerInstance(b *testing.B) *wasmer.Instance {
+	engine := wasmer.NewEngine()
+	store := wasmer.NewStore(engine)
+
+	// A tiny Wasm module that just creates and exports 1 page of memory
+	wat := `(module (memory (export "memory") 1))`
+	module, err := wasmer.NewModule(store, []byte(wat))
+	if err != nil {
+		b.Fatalf("Failed to compile dummy module: %v", err)
+	}
+
+	importObject := wasmer.NewImportObject()
+	instance, err := wasmer.NewInstance(module, importObject)
+	if err != nil {
+		b.Fatalf("Failed to instantiate dummy module: %v", err)
+	}
+
+	return instance
 }
 
 // =============================================================================
@@ -222,4 +251,259 @@ func TestWASMExitErrorUnknownCode(t *testing.T) {
 	if e.Error() == "" {
 		t.Error("Error() returned empty string for unknown code")
 	}
+}
+
+// =============================================================================
+// Send/receive
+// =============================================================================
+
+type MockSocket struct{ socketType SocketType }
+
+func (m *MockSocket) Close() error                      { return nil }
+func (m *MockSocket) Read(p []byte) (n int, err error)  { return len(p), nil }
+func (m *MockSocket) Write(p []byte) (n int, err error) { return len(p), nil }
+func (m *MockSocket) Type() SocketType                  { return m.socketType }
+
+type MockSocketRegistry struct{ socketType SocketType }
+
+func (r *MockSocketRegistry) Add(s Socket) int32       { return 0 }
+func (r *MockSocketRegistry) Close(handle int32) error { return nil }
+func (r *MockSocketRegistry) CloseAll()                {}
+func (r *MockSocketRegistry) Get(handle int32) (Socket, error) {
+	return &MockSocket{socketType: r.socketType}, nil
+}
+
+func BenchmarkReceive(b *testing.B) {
+	sockID := 0
+	bufferSize := 1
+	pointer := 0
+	args := []wasmer.Value{
+		wasmer.NewI32(sockID),
+		wasmer.NewI32(bufferSize),
+		wasmer.NewI32(pointer),
+	}
+	env := newHostEnv(b.Context())
+	env.manager = resource.New(1e15)
+	env.manager.RegisterAssignment("session-1", 1e9, 1e9)
+	sugar := zap.NewNop().Sugar()
+
+	registry := MockSocketRegistry{socketType: SocketTypeTCP}
+	instance := createDummyWasmerInstance(b)
+
+	b.Run("RatelimitOn", func(b *testing.B) {
+		disableRatelimit = false
+		for b.Loop() {
+			value, err := hostReceiveData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+	b.Run("RatelimitOff", func(b *testing.B) {
+		disableRatelimit = true
+		for b.Loop() {
+			value, err := hostReceiveData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+}
+
+func BenchmarkSend(b *testing.B) {
+	sockID := 0
+	bufferSize := 1
+	pointer := 0
+	args := []wasmer.Value{
+		wasmer.NewI32(sockID),
+		wasmer.NewI32(bufferSize),
+		wasmer.NewI32(pointer),
+	}
+	env := newHostEnv(b.Context())
+	env.manager = resource.New(1e15)
+	env.manager.RegisterAssignment("session-1", 1e9, 1e9)
+
+	sugar := zap.NewNop().Sugar()
+
+	registry := MockSocketRegistry{socketType: SocketTypeTCP}
+	instance := createDummyWasmerInstance(b)
+
+	b.Run("RatelimitOn", func(b *testing.B) {
+		disableRatelimit = false
+		for b.Loop() {
+			value, err := hostSendData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+	b.Run("RatelimitOff", func(b *testing.B) {
+		disableRatelimit = true
+		for b.Loop() {
+			value, err := hostSendData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+
+}
+
+// =============================================================================
+// WASM Overhead
+// =============================================================================
+
+func dummyHostFunction([]wasmer.Value) ([]wasmer.Value, error) {
+	return []wasmer.Value{wasmer.NewI32(0)}, nil
+}
+
+func BenchmarkHostFunctionOverhead(b *testing.B) {
+	// Baseline: Measure the cost of calling the Go function directly.
+	b.Run("DirectGoCall", func(b *testing.B) {
+		args := []wasmer.Value{}
+		for b.Loop() {
+			_, _ = dummyHostFunction(args)
+		}
+	})
+
+	// Measure the cost of calling the host function inside WASM
+	b.Run("WasmWATCall", func(b *testing.B) {
+		engine := wasmer.NewEngine()
+		store := wasmer.NewStore(engine)
+
+		// Define the host function
+		hostFunc := wasmer.NewFunction(
+			store,
+			wasmer.NewFunctionType(wasmer.NewValueTypes(), wasmer.NewValueTypes(wasmer.I32)),
+			dummyHostFunction,
+		)
+
+		// This Wasm module takes an i32 parameter (b.N) and loops that many times,
+		// calling the host function on every iteration.
+		wat := `(module
+					(import "env" "host_func" (func $host_func (result i32)))
+					(func (export "loop_call_host") (param $count i32)
+						(local $i i32)
+						(local.set $i (i32.const 0))
+						(block $exit
+							(loop $loop
+								;; if i >= count, exit the loop
+								(br_if $exit (i32.ge_u (local.get $i) (local.get $count)))
+
+								;; call host function
+								call $host_func
+
+								;; i++
+								(local.set $i (i32.add (local.get $i) (i32.const 1)))
+
+								;; continue loop
+								br $loop
+							)
+						)
+					)
+				)`
+		module, err := wasmer.NewModule(store, []byte(wat))
+		if err != nil {
+			b.Fatalf("Failed to compile module: %v", err)
+		}
+
+		importObject := wasmer.NewImportObject()
+		importObject.Register("env", map[string]wasmer.IntoExtern{
+			"host_func": hostFunc,
+		})
+
+		instance, err := wasmer.NewInstance(module, importObject)
+		if err != nil {
+			b.Fatalf("Failed to instantiate module: %v", err)
+		}
+
+		callHost, err := instance.Exports.GetFunction("loop_call_host")
+		if err != nil {
+			b.Fatalf("Failed to get exported function: %v", err)
+		}
+
+		b.ResetTimer()
+		_, err = callHost(b.N)
+		b.StopTimer()
+		if err != nil {
+			b.Fatalf("Error calling exported function: %v", err)
+		}
+
+		// Prevents go from garbage collecting wasm objects it believes are not used anymore before the test finishes
+		runtime.KeepAlive(instance)
+		runtime.KeepAlive(module)
+		runtime.KeepAlive(store)
+		runtime.KeepAlive(engine)
+		runtime.KeepAlive(importObject)
+	})
+
+	b.Run("WasmGoCall", func(b *testing.B) {
+		wasmBytes, err := os.ReadFile("../../../benchmarks/wasm/bench.wasm")
+		if err != nil {
+			b.Fatalf("Failed to read wasm file: %v", err)
+		}
+
+		engine := wasmer.NewEngine()
+		store := wasmer.NewStore(engine)
+
+		// Create the host function matching the signature () -> ()
+		hostFunc := wasmer.NewFunction(
+			store,
+			wasmer.NewFunctionType(wasmer.NewValueTypes(), wasmer.NewValueTypes(wasmer.I32)),
+			func(args []wasmer.Value) ([]wasmer.Value, error) {
+				return dummyHostFunction(args)
+			},
+		)
+
+		module, err := wasmer.NewModule(store, wasmBytes)
+		if err != nil {
+			b.Fatalf("Failed to compile module: %v", err)
+		}
+
+		wasiEnv, err := wasmer.NewWasiStateBuilder("bench").Finalize()
+		if err != nil {
+			b.Fatalf("Failed to create WASI env: %v", err)
+		}
+
+		importObject, err := wasiEnv.GenerateImportObject(store, module)
+		if err != nil {
+			b.Fatalf("Failed to generate WASI import object: %v", err)
+		}
+
+		importObject.Register("env", map[string]wasmer.IntoExtern{
+			"host_func": hostFunc,
+		})
+
+		instance, err := wasmer.NewInstance(module, importObject)
+		if err != nil {
+			b.Fatalf("Failed to instantiate module: %v", err)
+		}
+
+		initialize, err := instance.Exports.GetFunction("_initialize")
+		if err == nil {
+			_, err = initialize()
+			if err != nil {
+				b.Fatalf("Failed to initialize: %v", err)
+			}
+		}
+
+		loopCallHost, err := instance.Exports.GetFunction("loop_call_host")
+		if err != nil {
+			b.Fatalf("Failed to get exported function: %v", err)
+		}
+
+		b.ResetTimer()
+
+		// Pass b.N to the Wasm function to handle the loop internally
+		_, err = loopCallHost(b.N)
+		if err != nil {
+			b.Fatalf("Error calling Wasm function: %v", err)
+		}
+
+		runtime.KeepAlive(instance)
+		runtime.KeepAlive(module)
+		runtime.KeepAlive(store)
+		runtime.KeepAlive(engine)
+		runtime.KeepAlive(importObject)
+	})
 }

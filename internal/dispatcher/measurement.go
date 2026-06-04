@@ -28,6 +28,11 @@ type DebugletSession struct {
 	ExecutorID    string
 }
 
+type IMeasurement interface {
+	Start() error
+	Sessions() []*DebugletSession
+}
+
 func (s *DebugletSession) Register(stream pb.DebugletDispatcher_SessionStreamServer) {
 	s.sessionStream = stream
 }
@@ -70,6 +75,16 @@ func NewMeasurement(numDebuglets int) *Measurement {
 
 func (m *Measurement) Len() int {
 	return len(m.sessions)
+}
+
+func (m *Measurement) Sessions() []*DebugletSession {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sessions := make([]*DebugletSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	return sessions
 }
 
 func (m *Measurement) SessionReady() {

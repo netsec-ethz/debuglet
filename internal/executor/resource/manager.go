@@ -4,7 +4,7 @@ package resource
 import (
 	"debuglet/internal/util/avl"
 	"errors"
-	"iter"
+	"sync"
 )
 
 var (
@@ -23,6 +23,8 @@ type LimitManager struct {
 	previousFairshare int64
 
 	destinationLimit map[string]map[string]int64
+
+	mu sync.RWMutex
 }
 
 func New(capacity int64) *LimitManager {
@@ -46,10 +48,14 @@ func (m *LimitManager) RegisterAssignment(assignmentID string, minimum, maximum 
 	if minimum > maximum {
 		return ErrMinGreater
 	}
+	m.mu.RLock()
 	if minimum > m.capacity-m.minUsedCapacity {
 		return ErrCapacityFull
 	}
+	m.mu.RUnlock()
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.assignMin[assignmentID] = minimum
 	m.assignMax[assignmentID] = maximum
 	m.tree.Insert(assignmentID, maximum-minimum)
@@ -60,6 +66,8 @@ func (m *LimitManager) RegisterAssignment(assignmentID string, minimum, maximum 
 }
 
 func (m *LimitManager) SetDestinationLimit(assignmentID, destination string, maximum int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	_, exists := m.destinationLimit[assignmentID]
 	if !exists {
 		m.destinationLimit[assignmentID] = make(map[string]int64)
@@ -68,6 +76,8 @@ func (m *LimitManager) SetDestinationLimit(assignmentID, destination string, max
 }
 
 func (m *LimitManager) RemoveAssignment(assignmentID string) (fairshareRequired bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	minimum, exists := m.assignMin[assignmentID]
 	if !exists {
 		return false
@@ -84,6 +94,8 @@ func (m *LimitManager) RemoveAssignment(assignmentID string) (fairshareRequired 
 }
 
 func (m *LimitManager) UpdateCapacity(newCapacity int64) (fairshareRequired bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if newCapacity == m.capacity {
 		return
 	}
@@ -91,38 +103,28 @@ func (m *LimitManager) UpdateCapacity(newCapacity int64) (fairshareRequired bool
 	return m.maxUsedCapacity > m.capacity
 }
 
-func (m *LimitManager) Fairshare() iter.Seq2[string, int64] {
-	return func(yield func(string, int64) bool) {
-		fairshare := m.tree.Fairshare(m.capacity - m.minUsedCapacity)
-		defer func() { m.previousFairshare = fairshare }()
-
-		if m.previousFairshare != -1 && fairshare > m.previousFairshare {
-			// reset previously fairshared nodes
-			for n := range m.tree.Range(m.previousFairshare, fairshare) {
-				if !yield(n.ID, m.assignMax[n.ID]) {
-					return
-				}
-			}
-		}
-
-		for n := range m.tree.Range(fairshare, avl.Unbounded) {
-			actualLimit := min(m.assignMax[n.ID], fairshare+m.assignMin[n.ID])
-			if !yield(n.ID, actualLimit) {
-				return
-			}
-		}
-	}
+// Fairshare computes the fairshare value with the currently registered assignments
+func (m *LimitManager) Fairshare() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.previousFairshare = m.tree.Fairshare(m.capacity - m.minUsedCapacity)
 }
 
-func (m *LimitManager) GetAllowedExecutor(ID string) int64 {
-	maximum := m.assignMax[ID]
+func (m *LimitManager) GetAllowedExecutor(assignmentID string) int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	maximum := m.assignMax[assignmentID]
 	if m.previousFairshare == -1 {
 		// no fairshare
 		return maximum
 	}
-	return min(maximum, m.previousFairshare+m.assignMin[ID])
+	return min(maximum, m.previousFairshare+m.assignMin[assignmentID])
 }
 
 func (m *LimitManager) GetAllowedDestination(assignmentID, destination string) int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return m.destinationLimit[assignmentID][destination]
 }

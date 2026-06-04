@@ -28,6 +28,10 @@ func init() {
 func run_debuglet() int32 {
 	// requires addresses[0] to be "127.0.0.1:5173"
 	connID := connect_tcp(0)
+	if connID < 0 {
+		fmt.Println("failed to connect")
+		return 1
+	}
 	fmt.Println("connID", connID)
 
 	msg := []byte("GET / HTTP/1.1\r\nHost: localhost:5173\r\nUser-Agent: nc/0.0.1\r\nAccept: */*\r\n\r\n")

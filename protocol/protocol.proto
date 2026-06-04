@@ -111,12 +111,17 @@ message DebugletExit {
   bytes result = 3; // Final result bytes
 }
 
+message DebugletHello {
+  string measurement_id = 1;
+}
+
 message SessionMessage {
   oneof msg {
     DispatcherCommand dispatcher_cmd = 1;
     DebugletReady ready = 2;
     DebugletStdout stdout = 3;
     DebugletExit exit = 4;
+    DebugletHello hello = 5;
   }
 }
 

@@ -122,22 +122,30 @@ func (s *DispatcherServer) SessionStream(stream pb.DebugletDispatcher_SessionStr
 		in, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.Info("Stream closed", zap.Error(err))
+			if measurement != nil {
+				measurement.EventChan <- ExitEvent{}
+			}
 			return nil
 		}
 		if err != nil {
 			s.logger.Error("Stream error", zap.Error(err))
+			if measurement != nil {
+				measurement.EventChan <- ExitEvent{}
+			}
 			return err
 		}
 
 		switch msg := in.Msg.(type) {
-		case *pb.SessionMessage_Ready:
-			sessionId := msg.Ready.SessionId
-			measurementId := msg.Ready.MeasurementId
+		case *pb.SessionMessage_Hello:
+			measurementId := msg.Hello.MeasurementId
 			measurement = s.dispatcher.GetMeasurement(measurementId)
 			if measurement == nil {
-				s.logger.Warn("Measurement not found", zap.String("measurement_id", measurementId), zap.String("session_id", sessionId))
+				s.logger.Warn("Measurement not found", zap.String("measurement_id", measurementId))
 				return status.Errorf(codes.NotFound, "measurement %s not found", measurementId)
 			}
+		case *pb.SessionMessage_Ready:
+			measurementId := msg.Ready.MeasurementId
+			sessionId := msg.Ready.SessionId
 			session = measurement.GetSession(sessionId)
 			if session == nil {
 				s.logger.Warn("Session not found in measurement", zap.String("session_id", sessionId), zap.String("measurement_id", measurementId))

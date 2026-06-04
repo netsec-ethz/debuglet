@@ -109,28 +109,32 @@ func (d *Dispatcher) CreateMeasurement(numDebuglets int) (string, *Measurement) 
 	return measurementId, measurement
 }
 
-func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
+func (d *Dispatcher) StartMeasurement(measurement IMeasurement) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
-	for _, session := range measurement.sessions {
+	sessions := measurement.Sessions()
+	for _, session := range sessions {
 		assignment := session.Assignment
 		policy := assignment.GetPolicy()
 		executorID := session.ExecutorID
 
 		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), assignment.GetAddresses())
 		if err != nil {
+			d.mu.Unlock()
 			return err
 		}
-		destinationUpdates, err := d.resource.RegisterPolicy(executorID, assignment)
+		err = d.resource.RegisterPolicy(executorID, assignment)
 		if err != nil {
+			d.mu.Unlock()
 			return err
 		}
+		destinationUpdates := d.resource.Updates(session.Assignment.GetAddresses())
 		for executorID, updates := range destinationUpdates {
-			d.UpdateDestinations(executorID, updates)
+			go d.UpdateDestinations(executorID, updates)
 		}
 	}
 
+	d.mu.Unlock()
 	return measurement.Start()
 }
 
@@ -150,8 +154,12 @@ func (d *Dispatcher) RemoveMeasurement(id string) {
 		return
 	}
 
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	for _, session := range m.sessions {
-		destinationUpdates := d.resource.RemovePolicy(session.Assignment.SessionId)
+		d.resource.RemovePolicy(session.Assignment.SessionId)
+		destinationUpdates := d.resource.Updates(session.Assignment.GetAddresses())
 		if destinationUpdates == nil {
 			continue
 		}
@@ -173,8 +181,8 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay int64, te
 	if _, exists := d.executors[id]; !exists {
 		d.executors[id] = &Executor{
 			ID:          id,
-			Assignments: make(chan *pb.DebugletAssignment, 1),
-			Updates:     make(chan *pb.DestinationUpdates, 1),
+			Assignments: make(chan *pb.DebugletAssignment),
+			Updates:     make(chan *pb.DestinationUpdates),
 		}
 	}
 	exec := d.executors[id]
@@ -226,8 +234,9 @@ func (d *Dispatcher) SetExecutor(id string, lastSeen int64) error {
 
 func (d *Dispatcher) SetExecutorCapacity(id string, capacity int64) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	_, exists := d.executors[id]
+	d.mu.Unlock()
+
 	if !exists {
 		return fmt.Errorf("executor %s not found", id)
 	}
@@ -269,12 +278,8 @@ func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, a
 	exec.appendMeasurementID(assignment.MeasurementId)
 	d.mu.Unlock()
 
-	select {
-	case exec.Assignments <- assignment:
-		return nil
-	default:
-		return fmt.Errorf("executor %s assignment queue full", executorID)
-	}
+	exec.Assignments <- assignment
+	return nil
 }
 
 func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {
@@ -282,10 +287,6 @@ func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.Destinati
 	if !ok {
 		return fmt.Errorf("executor %s not found", executorID)
 	}
-	select {
-	case exec.Updates <- updates:
-		return nil
-	default:
-		return fmt.Errorf("executor %s updates queue full", executorID)
-	}
+	exec.Updates <- updates
+	return nil
 }

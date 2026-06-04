@@ -7,8 +7,14 @@ import (
 	"go.uber.org/zap"
 )
 
+var disableRatelimit = false
+
 // ratelimit blocks until the given environment is allowed to transfer up/down for the given socket and size
 func ratelimit(env *HostEnvironment, direction resource.TransferDirection, sockID, size int32, sugar *zap.SugaredLogger) error {
+	if disableRatelimit {
+		return nil
+	}
+
 	addr := env.handleToAddr[sockID]
 	// Greedily update the tracker every time
 	executorLimit := env.manager.GetAllowedExecutor(env.sessionID)

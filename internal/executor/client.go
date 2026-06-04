@@ -117,10 +117,10 @@ func (e *Executor) Start(ctx context.Context) error {
 	// Send hello
 	controlStream.Send(&pb.ControlMessage{
 		Msg: &pb.ControlMessage_Hello{Hello: &pb.ExecutorHello{
-			ExecutorId:              e.id,
-			Version:                 e.version,
-			SourceIp:                "127.0.0.1", // TODO: detect public IP
-			TeslaDelaySec:           int64(e.teslaSchedule.Config().Delay.Seconds()),
+			ExecutorId:             e.id,
+			Version:                e.version,
+			SourceIp:               "127.0.0.1", // TODO: detect public IP
+			TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
 			TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 			TeslaAnchorKey:         e.teslaSchedule.Anchor(),
 		}},
@@ -183,33 +183,39 @@ func (e *Executor) Start(ctx context.Context) error {
 			go e.handleAssignment(ctx, assign)
 		} else if update := msg.GetUpdates(); update != nil {
 			e.logger.Debug("Received destination update", zap.Int("len", len(update.Updates)))
+			e.mu.Lock()
 			for _, up := range update.GetUpdates() {
 				e.logger.Debug("Updating destination limit", zap.String("destination", up.GetDestination()), zap.String("assignment_id", up.GetAssignmentId()), zap.Int64("new_ceil", up.GetNewCeilBw()))
 				e.manager.SetDestinationLimit(up.GetAssignmentId(), up.GetDestination(), up.GetNewCeilBw())
 			}
+			e.manager.Fairshare()
+			e.mu.Unlock()
 		}
 	}
 }
 
 func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssignment) {
 	session, err := e.client.SessionStream(ctx)
-
 	if err != nil {
 		e.logger.Error("Failed to open session", zap.Error(err))
 		return
 	}
 
-	e.logger.Debug("Locking")
-	e.mu.Lock()
 	db := engine.NewDebuglet(e.logger, e.manager, assign.SessionId, e.teslaSchedule, []byte(assign.MeasurementId))
-	err = db.Init(assign.Code, assign.Addresses)
+	session.Send(&pb.SessionMessage{
+		Msg: &pb.SessionMessage_Hello{Hello: &pb.DebugletHello{MeasurementId: assign.MeasurementId}},
+	})
+
+	err = db.Init(ctx, assign.Code, assign.Addresses)
 	if err != nil {
-		e.mu.Unlock()
 		e.logger.Error("Failed to init debuglet", zap.String("session_id", assign.SessionId), zap.Error(err))
 		return
 	}
+
+	e.mu.Lock()
 	e.debuglets[assign.SessionId] = db
 	e.mu.Unlock()
+
 	e.logger.Info("Debuglet created", zap.String("session_id", assign.SessionId))
 
 	session.Send(&pb.SessionMessage{
@@ -240,6 +246,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 			}
 			e.mu.Lock()
 			err = e.manager.RegisterAssignment(assign.SessionId, assign.Policy.FloorBw, assign.Policy.CeilBw)
+			e.manager.Fairshare()
 			e.mu.Unlock()
 			if err != nil {
 				e.logger.Error("Failed to register assignment", zap.Error(err))
@@ -250,6 +257,7 @@ func (e *Executor) handleAssignment(ctx context.Context, assign *pb.DebugletAssi
 
 			e.mu.Lock()
 			e.manager.RemoveAssignment(assign.SessionId)
+			e.manager.Fairshare()
 			e.mu.Unlock()
 		}
 	}()
@@ -296,7 +304,6 @@ func (e *Executor) runDebuglet(assign *pb.DebugletAssignment, session pb.Debugle
 	delete(e.debuglets, assign.SessionId)
 	e.mu.Unlock()
 	db.Close()
-
 	e.stdoutWg.Wait()
 
 	if err != nil {
