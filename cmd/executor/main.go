@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 
 	"debuglet/internal/executor"
+	"debuglet/internal/executor/config"
 
 	scionFlag "github.com/scionproto/scion/private/app/flag"
 )
@@ -31,7 +32,7 @@ func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	flag.Parse()
 
-	cfg, err := executor.LoadConfig(*cfgPath)
+	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load executor config: %v", err))
 	}
@@ -55,7 +56,7 @@ func main() {
 
 	logger.Info("Starting executor:", zap.String("executor_id", cfg.ExecutorID), zap.String("dispatcher_addr", cfg.DispatcherAddr))
 
-	exec, err := executor.NewExecutor(cfg, logger)
+	exec, err := executor.New(cfg, logger)
 	if err != nil {
 		logger.Fatal("Failed to create executor", zap.Error(err))
 		return

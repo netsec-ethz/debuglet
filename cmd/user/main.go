@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	measurement "debuglet/internal/user"
+	measurement "debuglet/internal/v1/user"
 	"flag"
 	"log"
 	"sync"

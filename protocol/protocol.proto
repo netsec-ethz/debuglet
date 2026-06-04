@@ -31,7 +31,7 @@ message ExecutorHello {
 }
 
 message ExecutorHeartbeat {
-  int64 timestamp = 2;
+  int64 timestamp_ns = 2;
   int64 tesla_key_epoch = 3;
   bytes tesla_key = 4;
 }
@@ -40,42 +40,31 @@ message ExecutorResources {
   int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle per second
 }
 
-message DebugletAssignment {
+message Debuglet {
   string session_id = 1;
-  string measurement_id = 2;
-  bytes code = 3;
-  repeated string addresses = 4; // e.g., SCION or network endpoints
+  bytes wasm = 3;
 
   message Policy {
     int64 floor_bw = 1; // min bits/s required
     int64 ceil_bw = 2; // max bits/s it could use
     int64 timeout_ms = 3; // timeout in ms
+    repeated string addresses = 4; // e.g., SCION or network endpoints
   }
   Policy policy = 5;
 }
 
-message NoOp {
-  string message = 1;
-}
-
-message DestinationUpdates {
-  message Update {
-    string assignment_id = 1;
-    string destination = 2;
-    int64 new_ceil_bw = 3;
-  }
-  repeated Update updates = 1;
-}
-
-
-message ControlMessage {
+// Executor -> Dispatcher
+message ExecutorControlMessage {
   oneof msg {
     ExecutorHello hello = 1;
     ExecutorHeartbeat heartbeat = 2;
-    DebugletAssignment assignment = 3;
-    NoOp noop = 4; // Optional, for testing or idle pings
-    DestinationUpdates updates = 5;
-    ExecutorResources resources = 6;
+  }
+}
+
+// Dispatcher -> Executor
+message DispatcherControlMessage {
+  oneof msg {
+    Debuglet upload = 1;
   }
 }
 
@@ -83,56 +72,14 @@ message ControlMessage {
 // ================ SESSION STREAM MESSAGES ====================
 // ============================================================
 
-enum DispatcherCommandType {
-  START_EXECUTION = 0;
-  TEARDOWN_EXECUTION = 1;
-}
-
-message DispatcherCommand {
-  string session_id = 1;
-  DispatcherCommandType type = 2;
-}
-
-message DebugletReady {
-  string session_id = 1;
-  string executor_id = 2;
-  string measurement_id = 3;
-  string scion_addr = 4;
-}
-
-message DebugletStdout {
-  string session_id = 1;
-  bytes stdout = 2;
-}
-
-message DebugletExit {
-  string session_id = 1;
-  int32 exit_code = 2;
-  bytes result = 3; // Final result bytes
-}
-
-message DebugletHello {
-  string measurement_id = 1;
-}
-
-message SessionMessage {
-  oneof msg {
-    DispatcherCommand dispatcher_cmd = 1;
-    DebugletReady ready = 2;
-    DebugletStdout stdout = 3;
-    DebugletExit exit = 4;
-    DebugletHello hello = 5;
-  }
-}
-
 // ============================================================
 // ====================== SERVICE DEFS =========================
 // ============================================================
 
-service DebugletDispatcher {
+service DispatcherService {
   // Persistent control channel for executor registration, heartbeat, and task assignment
-  rpc ControlStream(stream ControlMessage) returns (stream ControlMessage);
+  rpc ControlStream(stream ExecutorControlMessage) returns (stream DispatcherControlMessage);
 
   // Per-session bidirectional stream for debuglet execution
-  rpc SessionStream(stream SessionMessage) returns (stream SessionMessage);
+  // rpc SessionStream(stream SessionMessage) returns (stream SessionMessage);
 }
