@@ -13,7 +13,7 @@ import (
 )
 
 type Server struct {
-	pb.UnimplementedDispatcherServiceServer
+	pb.UnsafeDispatcherServiceServer
 	logger   *zap.Logger
 	handler  dispatcher.ControlHandler
 	registry *StreamRegistry

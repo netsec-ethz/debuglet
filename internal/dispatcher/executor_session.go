@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type debugletHistory struct {
@@ -62,6 +64,9 @@ func (e *Executor) RecentDebugletIDs(n int) []string {
 // appendMeasurementID adds id to the executor's history, trimming old entries
 // so the total length stays within 2× the maximum to bound memory usage.
 func (e *Executor) appendMeasurementID(id string) {
+	if e.history == nil {
+		panic("history not initialized")
+	}
 	e.history.mu.Lock()
 	defer e.history.mu.Unlock()
 
@@ -69,6 +74,28 @@ func (e *Executor) appendMeasurementID(id string) {
 	// Keep at most 2× the default to avoid unbounded growth.
 	if trim := 2 * lastDebugletHistory; len(e.history.ids) > trim {
 		e.history.ids = e.history.ids[len(e.history.ids)-trim:]
+	}
+}
+
+// RegisterExecutor creates or updates the executor record for id. anchorKey is
+// k_0, the public TESLA chain anchor published by the executor at startup.
+func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte) {
+	d.logger.Info("Registering executor", zap.String("id", id), zap.String("ip", ip))
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, exists := d.executors[id]; !exists {
+		d.executors[id] = &Executor{history: &debugletHistory{}}
+	} else {
+		d.logger.Debug("Executor is already registered", zap.String("id", id))
+	}
+	exec := d.executors[id]
+	exec.TeslaDelay = teslaDelay
+	exec.TeslaAnchorTimestamp = teslaAnchor
+	if len(anchorKey) > 0 {
+		exec.TeslaAnchorKey = anchorKey
+	}
+	if ip != "" {
+		d.ipToExecutor[ip] = id
 	}
 }
 

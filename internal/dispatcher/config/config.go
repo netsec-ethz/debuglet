@@ -28,10 +28,11 @@ type TLSConfig struct {
 }
 
 type DispatcherConfig struct {
-	GRPCPort int       `toml:"grpc_port"`
-	HTTPPort int       `toml:"http_port"`
-	LogLevel string    `toml:"log_level"`
-	TLS      TLSConfig `toml:"tls"`
+	GRPCPort   int       `toml:"grpc_port"`
+	HTTPPort   int       `toml:"http_port"`
+	LogLevel   string    `toml:"log_level"`
+	DisableTLS bool      `toml:"disable_tls"`
+	TLS        TLSConfig `toml:"tls"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it

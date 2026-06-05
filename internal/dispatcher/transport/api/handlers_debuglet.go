@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"go.uber.org/zap"
 )
 
 // POST /submitDebuglets
@@ -26,11 +25,9 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	for i, req := range reqs {
 		decoded, err := base64.StdEncoding.DecodeString(req.Wasm)
 		if err != nil {
-			h.logger.Error("failed to decode wasm code", zap.Int("i", i), zap.Error(err))
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid wasm code (i=%d)", i))
 		}
 		if strings.TrimSpace(req.ExecutorID) == "" {
-			h.logger.Error("missing executor ID", zap.Int("i", i))
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("missing executor ID (i=%d)", i))
 		}
 
@@ -48,7 +45,6 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
-		h.logger.Error("failed to initialize debuglets", zap.Error(err))
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets:"+err.Error())
 	} else {
 		return c.JSON(http.StatusOK, IDs)

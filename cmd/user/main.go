@@ -1,8 +1,7 @@
 package main
 
 import (
-	"context"
-	measurement "debuglet/internal/v1/user"
+	"debuglet/internal/user"
 	"flag"
 	"log"
 	"sync"
@@ -23,7 +22,7 @@ func main() {
 	for i := range *measurementAmount {
 		go func(i int) {
 			log.Printf("creating measurement i=%d\n", i)
-			measurementID := measurement.CreateMeasurement(
+			debugletIDs := user.CreateMeasurement(
 				*wasmPath,
 				*debugletAmount,
 				"executor-1",
@@ -32,13 +31,16 @@ func main() {
 				7000,
 				[]string{"google.com:80"},
 			)
-			log.Printf("created measurement i=%d, ID=%s\n", i, measurementID)
+			log.Printf("added debuglets i=%d, len=%d\n", i, len(debugletIDs))
+			for j, m := range debugletIDs {
+				log.Printf("\t%d. %s\n", j, m)
+			}
 
-			start := measurement.ConnectMeasurement(measurementID)
-			log.Printf("connected to measurement websocket ID=%s\n", measurementID)
+			// start := user.ConnectMeasurement(debugletIDs)
+			// log.Printf("connected to measurement websocket ID=%s\n", debugletIDs)
 
-			log.Printf("starting measurement ID=%s\n", measurementID)
-			start(context.TODO())
+			// log.Printf("starting measurement ID=%s\n", debugletIDs)
+			// start(context.TODO())
 
 			wg.Done()
 		}(i)

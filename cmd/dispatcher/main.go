@@ -55,17 +55,16 @@ func main() {
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
-	manager := dispatcher.New()
-	grpcServer := rpc.NewServer(logger, manager)
-	manager.SetExecutorSender(grpcServer)
-
+	disp := dispatcher.New(logger)
+	server := rpc.NewServer(logger, disp)
+	disp.SetExecutorSender(server)
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// ---- Start gRPC Server ----
 	go func() {
 		defer wg.Done()
-		if err := startGRPCServer(grpcServer, cfg, logger); err != nil {
+		if err := startGRPCServer(server, cfg, logger); err != nil {
 			logger.Fatal("failed to start gRPC server", zap.Error(err))
 		}
 	}()
@@ -73,7 +72,7 @@ func main() {
 	// ---- Start HTTP Server ----
 	go func() {
 		defer wg.Done()
-		if err := startHTTPServer(manager, cfg, logger); err != nil {
+		if err := startHTTPServer(disp, cfg, logger); err != nil {
 			logger.Fatal("failed to start HTTP server", zap.Error(err))
 		}
 	}()
@@ -184,6 +183,9 @@ func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfi
 		Handler:   e,
 		TLSConfig: tlsConfig,
 	}
-
-	return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	if cfg.DisableTLS {
+		return server.ListenAndServe()
+	} else {
+		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	}
 }

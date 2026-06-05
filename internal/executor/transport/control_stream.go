@@ -15,10 +15,15 @@ import (
 )
 
 type ControlClient struct {
-	client  pb.DispatcherServiceClient
-	stream  grpc.BidiStreamingClient[pb.ExecutorControlMessage, pb.DispatcherControlMessage]
-	logger  *zap.Logger
-	handler ControlHandler
+	client     pb.DispatcherServiceClient
+	stream     grpc.BidiStreamingClient[pb.ExecutorControlMessage, pb.DispatcherControlMessage]
+	logger     *zap.Logger
+	handler    ControlHandler
+	streamOpen chan struct{}
+
+	// handles concurrent sending of messages
+	sendCh chan *pb.ExecutorControlMessage
+	done   chan struct{}
 }
 
 func NewControlClient(cfg *config.Config, l *zap.Logger, h ControlHandler) (*ControlClient, error) {
@@ -34,10 +39,26 @@ func NewControlClient(cfg *config.Config, l *zap.Logger, h ControlHandler) (*Con
 	client := pb.NewDispatcherServiceClient(conn)
 
 	return &ControlClient{
-		client:  client,
-		logger:  l,
-		handler: h,
+		client:     client,
+		logger:     l,
+		handler:    h,
+		streamOpen: make(chan struct{}, 1),
+		sendCh:     make(chan *pb.ExecutorControlMessage, 32),
+		done:       make(chan struct{}),
 	}, nil
+}
+
+// Wait blocks until the stream has successfully opened
+func (c *ControlClient) Wait(ctx context.Context) error {
+	if c.stream != nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-c.streamOpen:
+	}
+	return nil
 }
 
 func getClientCredentials(cfg *config.Config) (credentials.TransportCredentials, error) {
@@ -69,6 +90,8 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 		return err
 	}
 	c.stream = stream
+	go c.sendLoop()
+	c.streamOpen <- struct{}{}
 
 	for {
 		msg, err := stream.Recv()
@@ -84,9 +107,10 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 		switch m := msg.GetMsg().(type) {
 		case *pb.DispatcherControlMessage_Upload:
 			debuglet := m.Upload
+			// TODO: return error
 			go c.handler.HandleUpload(Upload{
-				SessionID: debuglet.GetSessionId(),
-				Wasm:      debuglet.GetWasm(),
+				DebugletID: debuglet.GetId(),
+				Wasm:       debuglet.GetWasm(),
 				Policy: DebugletPolicy{
 					FloorBW:   debuglet.Policy.GetFloorBw(),
 					CeilBW:    debuglet.Policy.GetCeilBw(),
@@ -96,7 +120,6 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 			})
 		case nil:
 			c.logger.Warn("received control message with empty msg")
-
 		default:
 			c.logger.Warn("unknown control message type", zap.Any("type", m))
 		}

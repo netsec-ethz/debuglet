@@ -4,18 +4,33 @@ import (
 	"context"
 	"debuglet/internal/executor/config"
 	"debuglet/internal/executor/transport"
+	"debuglet/pkg/tesla"
+	"errors"
+	"time"
 
 	"go.uber.org/zap"
 )
 
 type Executor struct {
-	control *transport.ControlClient
+	cfg           config.Config
+	control       *transport.ControlClient
+	teslaSchedule *tesla.KeySchedule
+	logger        *zap.Logger
 }
 
-func New(cfg *config.Config, logger *zap.Logger) (*Executor, error) {
-	executor := &Executor{}
+func New(cfg *config.Config, l *zap.Logger) (*Executor, error) {
+	schedule, err := tesla.NewKeySchedule(tesla.Config{
+		Seed:  []byte(cfg.TeslaSeed),
+		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
+	})
 
-	client, err := transport.NewControlClient(cfg, logger, executor)
+	executor := &Executor{
+		teslaSchedule: schedule,
+		logger:        l,
+		cfg:           *cfg,
+	}
+
+	client, err := transport.NewControlClient(cfg, l, executor)
 	if err != nil {
 		return nil, err
 	}
@@ -24,5 +39,52 @@ func New(cfg *config.Config, logger *zap.Logger) (*Executor, error) {
 }
 
 func (e *Executor) Start(ctx context.Context) error {
-	return e.control.Listen(ctx)
+	ctx, cancel := context.WithCancelCause(ctx)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- e.control.Listen(ctx)
+		cancel(errors.New("failed to open control stream"))
+		e.control.Close()
+	}()
+
+	if err := e.control.Wait(ctx); err != nil {
+		return err
+	}
+	e.hello()
+	go e.startHeartbeatLoop(ctx)
+
+	return <-errCh
+}
+
+func (e *Executor) hello() error {
+	h := transport.Hello{
+		ExecutorID:           e.cfg.ExecutorID,
+		Version:              e.cfg.Version,
+		SourceIP:             "127.0.0.1", // TODO: detect public IP
+		TeslaDelay:           e.teslaSchedule.Config().Delay,
+		TeslaAnchorTimestamp: e.teslaSchedule.Config().Epoch,
+		TeslaAnchorKey:       e.teslaSchedule.Anchor(),
+	}
+	return e.control.SendHello(h)
+}
+
+func (e *Executor) startHeartbeatLoop(ctx context.Context) {
+	interval := 30 * time.Second
+	if disclosureInterval := e.teslaSchedule.Config().Delay / 2; disclosureInterval < interval {
+		interval = disclosureInterval
+	}
+	e.logger.Info("Starting heartbeat loop", zap.Duration("interval", interval))
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := e.control.SendHeartbeat(e.teslaSchedule); err != nil {
+				e.logger.Error("Failed to send heartbeat", zap.Error(err))
+			}
+		}
+	}
 }

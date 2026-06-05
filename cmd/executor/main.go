@@ -62,7 +62,8 @@ func main() {
 		return
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if err := exec.Start(ctx); err != nil {
 		logger.Fatal("Failed to start executor", zap.Error(err))
 		return

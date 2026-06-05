@@ -14,7 +14,16 @@ type DebugletPolicy struct {
 }
 
 type Upload struct {
-	SessionID string
-	Wasm      []byte
-	Policy    DebugletPolicy
+	DebugletID string
+	Wasm       []byte
+	Policy     DebugletPolicy
+}
+
+type Hello struct {
+	ExecutorID           string
+	Version              string
+	SourceIP             string
+	TeslaDelay           time.Duration
+	TeslaAnchorTimestamp time.Time
+	TeslaAnchorKey       []byte
 }

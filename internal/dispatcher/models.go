@@ -9,12 +9,6 @@ type ExecutorSender interface {
 	UploadDebuglet(ctx context.Context, debugletID string, d DebugletSpec) error
 }
 
-type ControlHandler interface {
-	HandleHello(ctx context.Context, h Hello) error
-	HandleHeartbeat(ctx context.Context, hb Heartbeat) error
-	HandleDisconnect(ctx context.Context, executorID string)
-}
-
 type Hello struct {
 	ExecutorID           string
 	Version              string
