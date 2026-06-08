@@ -15,6 +15,7 @@ type DebugletPolicy struct {
 
 type Upload struct {
 	DebugletID string
+	StartTime  *time.Time
 	Wasm       []byte
 	Policy     DebugletPolicy
 }

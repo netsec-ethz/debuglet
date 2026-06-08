@@ -23,6 +23,7 @@ package protocol
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -223,29 +224,30 @@ func (x *ExecutorResources) GetBandwidthCapacity() int64 {
 	return 0
 }
 
-type Debuglet struct {
+type DebugletSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	StartTime     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=start_time,json=startTime,proto3,oneof" json:"start_time,omitempty"`
 	Wasm          []byte                 `protobuf:"bytes,3,opt,name=wasm,proto3" json:"wasm,omitempty"`
-	Policy        *Debuglet_Policy       `protobuf:"bytes,5,opt,name=policy,proto3" json:"policy,omitempty"`
+	Policy        *DebugletSpec_Policy   `protobuf:"bytes,5,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Debuglet) Reset() {
-	*x = Debuglet{}
+func (x *DebugletSpec) Reset() {
+	*x = DebugletSpec{}
 	mi := &file_protocol_protocol_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Debuglet) String() string {
+func (x *DebugletSpec) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Debuglet) ProtoMessage() {}
+func (*DebugletSpec) ProtoMessage() {}
 
-func (x *Debuglet) ProtoReflect() protoreflect.Message {
+func (x *DebugletSpec) ProtoReflect() protoreflect.Message {
 	mi := &file_protocol_protocol_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -257,26 +259,33 @@ func (x *Debuglet) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Debuglet.ProtoReflect.Descriptor instead.
-func (*Debuglet) Descriptor() ([]byte, []int) {
+// Deprecated: Use DebugletSpec.ProtoReflect.Descriptor instead.
+func (*DebugletSpec) Descriptor() ([]byte, []int) {
 	return file_protocol_protocol_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *Debuglet) GetSessionId() string {
+func (x *DebugletSpec) GetId() string {
 	if x != nil {
-		return x.SessionId
+		return x.Id
 	}
 	return ""
 }
 
-func (x *Debuglet) GetWasm() []byte {
+func (x *DebugletSpec) GetStartTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartTime
+	}
+	return nil
+}
+
+func (x *DebugletSpec) GetWasm() []byte {
 	if x != nil {
 		return x.Wasm
 	}
 	return nil
 }
 
-func (x *Debuglet) GetPolicy() *Debuglet_Policy {
+func (x *DebugletSpec) GetPolicy() *DebugletSpec_Policy {
 	if x != nil {
 		return x.Policy
 	}
@@ -414,7 +423,7 @@ func (x *DispatcherControlMessage) GetMsg() isDispatcherControlMessage_Msg {
 	return nil
 }
 
-func (x *DispatcherControlMessage) GetUpload() *Debuglet {
+func (x *DispatcherControlMessage) GetUpload() *DebugletSpec {
 	if x != nil {
 		if x, ok := x.Msg.(*DispatcherControlMessage_Upload); ok {
 			return x.Upload
@@ -428,12 +437,12 @@ type isDispatcherControlMessage_Msg interface {
 }
 
 type DispatcherControlMessage_Upload struct {
-	Upload *Debuglet `protobuf:"bytes,1,opt,name=upload,proto3,oneof"`
+	Upload *DebugletSpec `protobuf:"bytes,1,opt,name=upload,proto3,oneof"`
 }
 
 func (*DispatcherControlMessage_Upload) isDispatcherControlMessage_Msg() {}
 
-type Debuglet_Policy struct {
+type DebugletSpec_Policy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"`       // min bits/s required
 	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`          // max bits/s it could use
@@ -443,20 +452,20 @@ type Debuglet_Policy struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Debuglet_Policy) Reset() {
-	*x = Debuglet_Policy{}
+func (x *DebugletSpec_Policy) Reset() {
+	*x = DebugletSpec_Policy{}
 	mi := &file_protocol_protocol_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Debuglet_Policy) String() string {
+func (x *DebugletSpec_Policy) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Debuglet_Policy) ProtoMessage() {}
+func (*DebugletSpec_Policy) ProtoMessage() {}
 
-func (x *Debuglet_Policy) ProtoReflect() protoreflect.Message {
+func (x *DebugletSpec_Policy) ProtoReflect() protoreflect.Message {
 	mi := &file_protocol_protocol_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -468,33 +477,33 @@ func (x *Debuglet_Policy) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Debuglet_Policy.ProtoReflect.Descriptor instead.
-func (*Debuglet_Policy) Descriptor() ([]byte, []int) {
+// Deprecated: Use DebugletSpec_Policy.ProtoReflect.Descriptor instead.
+func (*DebugletSpec_Policy) Descriptor() ([]byte, []int) {
 	return file_protocol_protocol_proto_rawDescGZIP(), []int{3, 0}
 }
 
-func (x *Debuglet_Policy) GetFloorBw() int64 {
+func (x *DebugletSpec_Policy) GetFloorBw() int64 {
 	if x != nil {
 		return x.FloorBw
 	}
 	return 0
 }
 
-func (x *Debuglet_Policy) GetCeilBw() int64 {
+func (x *DebugletSpec_Policy) GetCeilBw() int64 {
 	if x != nil {
 		return x.CeilBw
 	}
 	return 0
 }
 
-func (x *Debuglet_Policy) GetTimeoutMs() int64 {
+func (x *DebugletSpec_Policy) GetTimeoutMs() int64 {
 	if x != nil {
 		return x.TimeoutMs
 	}
 	return 0
 }
 
-func (x *Debuglet_Policy) GetAddresses() []string {
+func (x *DebugletSpec_Policy) GetAddresses() []string {
 	if x != nil {
 		return x.Addresses
 	}
@@ -505,7 +514,7 @@ var File_protocol_protocol_proto protoreflect.FileDescriptor
 
 const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
-	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\"\xf4\x01\n" +
+	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf4\x01\n" +
 	"\rExecutorHello\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -519,24 +528,26 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x0ftesla_key_epoch\x18\x03 \x01(\x03R\rteslaKeyEpoch\x12\x1b\n" +
 	"\ttesla_key\x18\x04 \x01(\fR\bteslaKey\"B\n" +
 	"\x11ExecutorResources\x12-\n" +
-	"\x12bandwidth_capacity\x18\x01 \x01(\x03R\x11bandwidthCapacity\"\xf4\x01\n" +
-	"\bDebuglet\x12\x1d\n" +
+	"\x12bandwidth_capacity\x18\x01 \x01(\x03R\x11bandwidthCapacity\"\xbc\x02\n" +
+	"\fDebugletSpec\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
-	"\x04wasm\x18\x03 \x01(\fR\x04wasm\x12:\n" +
-	"\x06policy\x18\x05 \x01(\v2\".debuglet.protocol.Debuglet.PolicyR\x06policy\x1ay\n" +
+	"start_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\tstartTime\x88\x01\x01\x12\x12\n" +
+	"\x04wasm\x18\x03 \x01(\fR\x04wasm\x12>\n" +
+	"\x06policy\x18\x05 \x01(\v2&.debuglet.protocol.DebugletSpec.PolicyR\x06policy\x1ay\n" +
 	"\x06Policy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
 	"\n" +
 	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\x1c\n" +
-	"\taddresses\x18\x04 \x03(\tR\taddresses\"\x9f\x01\n" +
+	"\taddresses\x18\x04 \x03(\tR\taddressesB\r\n" +
+	"\v_start_time\"\x9f\x01\n" +
 	"\x16ExecutorControlMessage\x128\n" +
 	"\x05hello\x18\x01 \x01(\v2 .debuglet.protocol.ExecutorHelloH\x00R\x05hello\x12D\n" +
 	"\theartbeat\x18\x02 \x01(\v2$.debuglet.protocol.ExecutorHeartbeatH\x00R\theartbeatB\x05\n" +
-	"\x03msg\"X\n" +
-	"\x18DispatcherControlMessage\x125\n" +
-	"\x06upload\x18\x01 \x01(\v2\x1b.debuglet.protocol.DebugletH\x00R\x06uploadB\x05\n" +
+	"\x03msg\"\\\n" +
+	"\x18DispatcherControlMessage\x129\n" +
+	"\x06upload\x18\x01 \x01(\v2\x1f.debuglet.protocol.DebugletSpecH\x00R\x06uploadB\x05\n" +
 	"\x03msg2\x80\x01\n" +
 	"\x11DispatcherService\x12k\n" +
 	"\rControlStream\x12).debuglet.protocol.ExecutorControlMessage\x1a+.debuglet.protocol.DispatcherControlMessage(\x010\x01B\vZ\t/protocolb\x06proto3"
@@ -558,23 +569,25 @@ var file_protocol_protocol_proto_goTypes = []any{
 	(*ExecutorHello)(nil),            // 0: debuglet.protocol.ExecutorHello
 	(*ExecutorHeartbeat)(nil),        // 1: debuglet.protocol.ExecutorHeartbeat
 	(*ExecutorResources)(nil),        // 2: debuglet.protocol.ExecutorResources
-	(*Debuglet)(nil),                 // 3: debuglet.protocol.Debuglet
+	(*DebugletSpec)(nil),             // 3: debuglet.protocol.DebugletSpec
 	(*ExecutorControlMessage)(nil),   // 4: debuglet.protocol.ExecutorControlMessage
 	(*DispatcherControlMessage)(nil), // 5: debuglet.protocol.DispatcherControlMessage
-	(*Debuglet_Policy)(nil),          // 6: debuglet.protocol.Debuglet.Policy
+	(*DebugletSpec_Policy)(nil),      // 6: debuglet.protocol.DebugletSpec.Policy
+	(*timestamppb.Timestamp)(nil),    // 7: google.protobuf.Timestamp
 }
 var file_protocol_protocol_proto_depIdxs = []int32{
-	6, // 0: debuglet.protocol.Debuglet.policy:type_name -> debuglet.protocol.Debuglet.Policy
-	0, // 1: debuglet.protocol.ExecutorControlMessage.hello:type_name -> debuglet.protocol.ExecutorHello
-	1, // 2: debuglet.protocol.ExecutorControlMessage.heartbeat:type_name -> debuglet.protocol.ExecutorHeartbeat
-	3, // 3: debuglet.protocol.DispatcherControlMessage.upload:type_name -> debuglet.protocol.Debuglet
-	4, // 4: debuglet.protocol.DispatcherService.ControlStream:input_type -> debuglet.protocol.ExecutorControlMessage
-	5, // 5: debuglet.protocol.DispatcherService.ControlStream:output_type -> debuglet.protocol.DispatcherControlMessage
-	5, // [5:6] is the sub-list for method output_type
-	4, // [4:5] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	7, // 0: debuglet.protocol.DebugletSpec.start_time:type_name -> google.protobuf.Timestamp
+	6, // 1: debuglet.protocol.DebugletSpec.policy:type_name -> debuglet.protocol.DebugletSpec.Policy
+	0, // 2: debuglet.protocol.ExecutorControlMessage.hello:type_name -> debuglet.protocol.ExecutorHello
+	1, // 3: debuglet.protocol.ExecutorControlMessage.heartbeat:type_name -> debuglet.protocol.ExecutorHeartbeat
+	3, // 4: debuglet.protocol.DispatcherControlMessage.upload:type_name -> debuglet.protocol.DebugletSpec
+	4, // 5: debuglet.protocol.DispatcherService.ControlStream:input_type -> debuglet.protocol.ExecutorControlMessage
+	5, // 6: debuglet.protocol.DispatcherService.ControlStream:output_type -> debuglet.protocol.DispatcherControlMessage
+	6, // [6:7] is the sub-list for method output_type
+	5, // [5:6] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
@@ -582,6 +595,7 @@ func file_protocol_protocol_proto_init() {
 	if File_protocol_protocol_proto != nil {
 		return
 	}
+	file_protocol_protocol_proto_msgTypes[3].OneofWrappers = []any{}
 	file_protocol_protocol_proto_msgTypes[4].OneofWrappers = []any{
 		(*ExecutorControlMessage_Hello)(nil),
 		(*ExecutorControlMessage_Heartbeat)(nil),

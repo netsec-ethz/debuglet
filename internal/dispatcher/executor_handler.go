@@ -1,6 +1,8 @@
 package dispatcher
 
-import "context"
+import (
+	"context"
+)
 
 type ControlHandler interface {
 	HandleHello(ctx context.Context, h Hello) error

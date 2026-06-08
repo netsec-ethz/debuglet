@@ -9,12 +9,14 @@ import (
 
 type Dispatcher struct {
 	executors    map[string]*Executor
+	ipToExecutor map[string]string
 	mu           sync.RWMutex
 	keystore     *tag.KeyStore
 	sender       ExecutorSender
-	ipToExecutor map[string]string
 	logger       *zap.Logger
 }
+
+var _ ControlHandler = (*Dispatcher)(nil)
 
 func New(l *zap.Logger) *Dispatcher {
 	return &Dispatcher{

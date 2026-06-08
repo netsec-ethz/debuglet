@@ -19,6 +19,8 @@ type Server struct {
 	registry *StreamRegistry
 }
 
+var _ dispatcher.ExecutorSender = (*Server)(nil)
+
 func NewServer(logger *zap.Logger, h dispatcher.ControlHandler) *Server {
 	return &Server{
 		logger:   logger,

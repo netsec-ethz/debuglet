@@ -1,7 +1,9 @@
 package executor
 
-import "debuglet/internal/executor/transport"
+import (
+	"debuglet/internal/executor/transport"
+)
 
-func (e *Executor) HandleUpload(transport.Upload) error {
-	return nil
+func (e *Executor) HandleUpload(upload transport.Upload) error {
+	return e.storage.Insert(upload)
 }

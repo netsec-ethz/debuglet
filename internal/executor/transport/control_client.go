@@ -107,9 +107,15 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 		switch m := msg.GetMsg().(type) {
 		case *pb.DispatcherControlMessage_Upload:
 			debuglet := m.Upload
+			var startTime *time.Time
+			if st := debuglet.GetStartTime(); st != nil {
+				tmp := st.AsTime()
+				startTime = &tmp
+			}
 			// TODO: return error
 			go c.handler.HandleUpload(Upload{
 				DebugletID: debuglet.GetId(),
+				StartTime:  startTime,
 				Wasm:       debuglet.GetWasm(),
 				Policy: DebugletPolicy{
 					FloorBW:   debuglet.Policy.GetFloorBw(),

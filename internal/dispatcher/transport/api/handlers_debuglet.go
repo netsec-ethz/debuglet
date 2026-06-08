@@ -11,7 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// POST /submitDebuglets
+// POST /submit
 func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	var reqs []DebugletRequest
 	if err := c.Bind(&reqs); err != nil {
@@ -31,8 +31,14 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("missing executor ID (i=%d)", i))
 		}
 
+		var startTime *time.Time
+		if st := req.StartTimestamp; st != nil {
+			tmp := time.Unix(*st, 0)
+			startTime = &tmp
+		}
+
 		specs = append(specs, dispatcher.DebugletSpec{
-			StartTime:  req.StartTime,
+			StartTime:  startTime,
 			ExecutorID: req.ExecutorID,
 			Wasm:       decoded,
 			Policy: dispatcher.DebugletPolicy{

@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/db"
 	"debuglet/internal/executor/transport"
 	"debuglet/pkg/tesla"
 	"errors"
@@ -16,9 +17,12 @@ type Executor struct {
 	control       *transport.ControlClient
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
+	storage       db.Storage
 }
 
-func New(cfg *config.Config, l *zap.Logger) (*Executor, error) {
+var _ transport.ControlHandler = (*Executor)(nil)
+
+func New(cfg *config.Config, l *zap.Logger, s db.Storage) (*Executor, error) {
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:  []byte(cfg.TeslaSeed),
 		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
@@ -28,7 +32,11 @@ func New(cfg *config.Config, l *zap.Logger) (*Executor, error) {
 		teslaSchedule: schedule,
 		logger:        l,
 		cfg:           *cfg,
+		storage:       s,
 	}
+
+	s.RegisterOnStart(executor.OnStart)
+	s.RegisterOnError(executor.OnError)
 
 	client, err := transport.NewControlClient(cfg, l, executor)
 	if err != nil {

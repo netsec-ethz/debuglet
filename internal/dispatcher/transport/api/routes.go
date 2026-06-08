@@ -27,5 +27,4 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/executors/by-ip", h.GetExecutorByIP)
 	e.GET("/executors/:id/tesla", h.GetExecutorTesla)
 	// payment
-
 }

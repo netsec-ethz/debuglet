@@ -22,8 +22,6 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	}
 	d.mu.RUnlock()
 
-	// TODO: check and allocate policy
-
 	for i, spec := range specs {
 		debugletID := uuid.New().String()
 		debugletIDS[i] = debugletID
