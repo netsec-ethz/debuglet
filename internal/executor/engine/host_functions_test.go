@@ -1,0 +1,509 @@
+// Copyright 2025 ETH Zurich
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package engine
+
+import (
+	"context"
+	"debuglet/internal/executor/resource"
+	"os"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/wasmerio/wasmer-go/wasmer"
+	"go.uber.org/zap"
+)
+
+// newHostEnv is a convenience helper that wraps a context in a HostEnvironment.
+func newHostEnv(ctx context.Context) *HostEnvironment {
+	return &HostEnvironment{
+		ctx:          ctx,
+		sessionID:    "session-1",
+		tracker:      resource.NewUsageTracker(),
+		handleToAddr: make(map[int32]string),
+	}
+}
+
+func createDummyWasmerInstance(b *testing.B) *wasmer.Instance {
+	engine := wasmer.NewEngine()
+	store := wasmer.NewStore(engine)
+
+	// A tiny Wasm module that just creates and exports 1 page of memory
+	wat := `(module (memory (export "memory") 1))`
+	module, err := wasmer.NewModule(store, []byte(wat))
+	if err != nil {
+		b.Fatalf("Failed to compile dummy module: %v", err)
+	}
+
+	importObject := wasmer.NewImportObject()
+	instance, err := wasmer.NewInstance(module, importObject)
+	if err != nil {
+		b.Fatalf("Failed to instantiate dummy module: %v", err)
+	}
+
+	return instance
+}
+
+// =============================================================================
+// checkContextExpired
+// =============================================================================
+
+// TestCheckContextExpiredActive verifies that an active context does not return
+// an error.
+func TestCheckContextExpiredActive(t *testing.T) {
+	env := newHostEnv(context.Background())
+	if err := checkContextExpired(env); err != nil {
+		t.Errorf("expected nil error for active context, got: %v", err)
+	}
+}
+
+// TestCheckContextExpiredCancelled verifies that a cancelled context returns a
+// non-nil error.
+func TestCheckContextExpiredCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	env := newHostEnv(ctx)
+	if err := checkContextExpired(env); err == nil {
+		t.Error("expected error for cancelled context, got nil")
+	}
+}
+
+// TestCheckContextExpiredDeadlineExceeded verifies that an already-expired
+// deadline returns the correct error message.
+func TestCheckContextExpiredDeadlineExceeded(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	env := newHostEnv(ctx)
+	err := checkContextExpired(env)
+	if err == nil {
+		t.Fatal("expected error for exceeded deadline, got nil")
+	}
+	want := "debuglet exceeded maximum allowed runtime"
+	if err.Error() != want {
+		t.Errorf("error message: want %q, got %q", want, err.Error())
+	}
+}
+
+// =============================================================================
+// hostWaitStart
+// =============================================================================
+
+func TestHostWaitStartActive(t *testing.T) {
+	env := newHostEnv(context.Background())
+	vals, err := hostWaitStart(env, []wasmer.Value{})
+	if err != nil {
+		t.Fatalf("hostWaitStart returned error: %v", err)
+	}
+	if len(vals) != 0 {
+		t.Errorf("expected empty return values, got %d", len(vals))
+	}
+}
+
+func TestHostWaitStartCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	env := newHostEnv(ctx)
+	_, err := hostWaitStart(env, []wasmer.Value{})
+	if err == nil {
+		t.Error("expected error for cancelled context, got nil")
+	}
+}
+
+// =============================================================================
+// hostGetTimestamp
+// =============================================================================
+
+// TestHostGetTimestamp verifies that the returned nanosecond timestamp is close
+// to time.Now().
+func TestHostGetTimestamp(t *testing.T) {
+	env := newHostEnv(context.Background())
+	before := time.Now().UnixNano()
+
+	vals, err := hostGetTimestamp(env, []wasmer.Value{})
+	if err != nil {
+		t.Fatalf("hostGetTimestamp returned error: %v", err)
+	}
+	if len(vals) != 1 {
+		t.Fatalf("expected 1 return value, got %d", len(vals))
+	}
+
+	ts := vals[0].I64()
+	after := time.Now().UnixNano()
+
+	if ts < before || ts > after {
+		t.Errorf("timestamp %d outside expected range [%d, %d]", ts, before, after)
+	}
+}
+
+// =============================================================================
+// hostWaitUntil
+// =============================================================================
+
+// TestHostWaitUntilPast verifies that waiting until a past timestamp returns
+// immediately.
+func TestHostWaitUntilPast(t *testing.T) {
+	env := newHostEnv(context.Background())
+	pastNs := wasmer.NewI64(time.Now().Add(-time.Second).UnixNano())
+
+	start := time.Now()
+	_, err := hostWaitUntil(env, []wasmer.Value{pastNs})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("hostWaitUntil returned error: %v", err)
+	}
+	if elapsed > 50*time.Millisecond {
+		t.Errorf("hostWaitUntil for past timestamp took too long: %v", elapsed)
+	}
+}
+
+// TestHostWaitUntilShortFuture verifies that waiting a short duration
+// blocks for approximately the right amount of time.
+func TestHostWaitUntilShortFuture(t *testing.T) {
+	env := newHostEnv(context.Background())
+	wait := 50 * time.Millisecond
+	targetNs := wasmer.NewI64(time.Now().Add(wait).UnixNano())
+
+	start := time.Now()
+	_, err := hostWaitUntil(env, []wasmer.Value{targetNs})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("hostWaitUntil returned error: %v", err)
+	}
+	// Allow generous tolerance for CI environments.
+	if elapsed < wait/2 {
+		t.Errorf("hostWaitUntil returned too early: elapsed %v, expected ~%v", elapsed, wait)
+	}
+}
+
+// TestHostWaitUntilContextCancelled verifies that a cancelled context
+// interrupts a long wait.
+func TestHostWaitUntilContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	env := newHostEnv(ctx)
+
+	// Schedule cancellation after 20 ms.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	// Wait until 10 seconds in the future — should be interrupted.
+	targetNs := wasmer.NewI64(time.Now().Add(10 * time.Second).UnixNano())
+	start := time.Now()
+	_, err := hostWaitUntil(env, []wasmer.Value{targetNs})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Error("expected error when context is cancelled, got nil")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("hostWaitUntil did not respect context cancellation: elapsed %v", elapsed)
+	}
+}
+
+// =============================================================================
+// WASMExitError
+// =============================================================================
+
+func TestWASMExitErrorKnownCodes(t *testing.T) {
+	cases := []struct {
+		code    int32
+		wantMsg string
+	}{
+		{1, "failed to write to specified UDP address"},
+		{4, "failed to dial TCP address"},
+		{10, "failed to dial TLS address"},
+		{20, "failed to dial UDP address"},
+		{30, "failed to open raw socket"},
+		{100, "failed to dial SCION address"},
+		{500, "memory buffer is not correctly exported"},
+	}
+
+	for _, c := range cases {
+		e := NewWASMExitError(c.code)
+		if e.Error() != c.wantMsg {
+			t.Errorf("code %d: want %q, got %q", c.code, c.wantMsg, e.Error())
+		}
+		if e.Code() != c.code {
+			t.Errorf("Code() for %d: want %d, got %d", c.code, c.code, e.Code())
+		}
+	}
+}
+
+func TestWASMExitErrorUnknownCode(t *testing.T) {
+	e := NewWASMExitError(9999)
+	if e.Error() == "" {
+		t.Error("Error() returned empty string for unknown code")
+	}
+}
+
+// =============================================================================
+// Send/receive
+// =============================================================================
+
+type MockSocket struct{ socketType SocketType }
+
+func (m *MockSocket) Close() error                      { return nil }
+func (m *MockSocket) Read(p []byte) (n int, err error)  { return len(p), nil }
+func (m *MockSocket) Write(p []byte) (n int, err error) { return len(p), nil }
+func (m *MockSocket) Type() SocketType                  { return m.socketType }
+
+type MockSocketRegistry struct{ socketType SocketType }
+
+func (r *MockSocketRegistry) Add(s Socket) int32       { return 0 }
+func (r *MockSocketRegistry) Close(handle int32) error { return nil }
+func (r *MockSocketRegistry) CloseAll()                {}
+func (r *MockSocketRegistry) Get(handle int32) (Socket, error) {
+	return &MockSocket{socketType: r.socketType}, nil
+}
+
+func BenchmarkReceive(b *testing.B) {
+	sockID := 0
+	bufferSize := 1
+	pointer := 0
+	args := []wasmer.Value{
+		wasmer.NewI32(sockID),
+		wasmer.NewI32(bufferSize),
+		wasmer.NewI32(pointer),
+	}
+	env := newHostEnv(b.Context())
+	env.manager = resource.New(1e15)
+	env.manager.RegisterAssignment("session-1", 1e9, 1e9)
+	sugar := zap.NewNop().Sugar()
+
+	registry := MockSocketRegistry{socketType: SocketTypeTCP}
+	instance := createDummyWasmerInstance(b)
+
+	b.Run("RatelimitOn", func(b *testing.B) {
+		disableRatelimit = false
+		for b.Loop() {
+			value, err := hostReceiveData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+	b.Run("RatelimitOff", func(b *testing.B) {
+		disableRatelimit = true
+		for b.Loop() {
+			value, err := hostReceiveData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+}
+
+func BenchmarkSend(b *testing.B) {
+	sockID := 0
+	bufferSize := 1
+	pointer := 0
+	args := []wasmer.Value{
+		wasmer.NewI32(sockID),
+		wasmer.NewI32(bufferSize),
+		wasmer.NewI32(pointer),
+	}
+	env := newHostEnv(b.Context())
+	env.manager = resource.New(1e15)
+	env.manager.RegisterAssignment("session-1", 1e9, 1e9)
+
+	sugar := zap.NewNop().Sugar()
+
+	registry := MockSocketRegistry{socketType: SocketTypeTCP}
+	instance := createDummyWasmerInstance(b)
+
+	b.Run("RatelimitOn", func(b *testing.B) {
+		disableRatelimit = false
+		for b.Loop() {
+			value, err := hostSendData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+	b.Run("RatelimitOff", func(b *testing.B) {
+		disableRatelimit = true
+		for b.Loop() {
+			value, err := hostSendData(env, args, sugar, &registry, instance)
+			if value == nil || err != nil {
+				b.Fatalf("Expected value and no error, got value=%v, err=%v", value, err)
+			}
+		}
+	})
+
+}
+
+// =============================================================================
+// WASM Overhead
+// =============================================================================
+
+func dummyHostFunction([]wasmer.Value) ([]wasmer.Value, error) {
+	return []wasmer.Value{wasmer.NewI32(0)}, nil
+}
+
+func BenchmarkHostFunctionOverhead(b *testing.B) {
+	// Baseline: Measure the cost of calling the Go function directly.
+	b.Run("DirectGoCall", func(b *testing.B) {
+		args := []wasmer.Value{}
+		for b.Loop() {
+			_, _ = dummyHostFunction(args)
+		}
+	})
+
+	// Measure the cost of calling the host function inside WASM
+	b.Run("WasmWATCall", func(b *testing.B) {
+		engine := wasmer.NewEngine()
+		store := wasmer.NewStore(engine)
+
+		// Define the host function
+		hostFunc := wasmer.NewFunction(
+			store,
+			wasmer.NewFunctionType(wasmer.NewValueTypes(), wasmer.NewValueTypes(wasmer.I32)),
+			dummyHostFunction,
+		)
+
+		// This Wasm module takes an i32 parameter (b.N) and loops that many times,
+		// calling the host function on every iteration.
+		wat := `(module
+					(import "env" "host_func" (func $host_func (result i32)))
+					(func (export "loop_call_host") (param $count i32)
+						(local $i i32)
+						(local.set $i (i32.const 0))
+						(block $exit
+							(loop $loop
+								;; if i >= count, exit the loop
+								(br_if $exit (i32.ge_u (local.get $i) (local.get $count)))
+
+								;; call host function
+								call $host_func
+
+								;; i++
+								(local.set $i (i32.add (local.get $i) (i32.const 1)))
+
+								;; continue loop
+								br $loop
+							)
+						)
+					)
+				)`
+		module, err := wasmer.NewModule(store, []byte(wat))
+		if err != nil {
+			b.Fatalf("Failed to compile module: %v", err)
+		}
+
+		importObject := wasmer.NewImportObject()
+		importObject.Register("env", map[string]wasmer.IntoExtern{
+			"host_func": hostFunc,
+		})
+
+		instance, err := wasmer.NewInstance(module, importObject)
+		if err != nil {
+			b.Fatalf("Failed to instantiate module: %v", err)
+		}
+
+		callHost, err := instance.Exports.GetFunction("loop_call_host")
+		if err != nil {
+			b.Fatalf("Failed to get exported function: %v", err)
+		}
+
+		b.ResetTimer()
+		_, err = callHost(b.N)
+		b.StopTimer()
+		if err != nil {
+			b.Fatalf("Error calling exported function: %v", err)
+		}
+
+		// Prevents go from garbage collecting wasm objects it believes are not used anymore before the test finishes
+		runtime.KeepAlive(instance)
+		runtime.KeepAlive(module)
+		runtime.KeepAlive(store)
+		runtime.KeepAlive(engine)
+		runtime.KeepAlive(importObject)
+	})
+
+	b.Run("WasmGoCall", func(b *testing.B) {
+		wasmBytes, err := os.ReadFile("../../../benchmarks/wasm/bench.wasm")
+		if err != nil {
+			b.Fatalf("Failed to read wasm file: %v", err)
+		}
+
+		engine := wasmer.NewEngine()
+		store := wasmer.NewStore(engine)
+
+		// Create the host function matching the signature () -> ()
+		hostFunc := wasmer.NewFunction(
+			store,
+			wasmer.NewFunctionType(wasmer.NewValueTypes(), wasmer.NewValueTypes(wasmer.I32)),
+			func(args []wasmer.Value) ([]wasmer.Value, error) {
+				return dummyHostFunction(args)
+			},
+		)
+
+		module, err := wasmer.NewModule(store, wasmBytes)
+		if err != nil {
+			b.Fatalf("Failed to compile module: %v", err)
+		}
+
+		wasiEnv, err := wasmer.NewWasiStateBuilder("bench").Finalize()
+		if err != nil {
+			b.Fatalf("Failed to create WASI env: %v", err)
+		}
+
+		importObject, err := wasiEnv.GenerateImportObject(store, module)
+		if err != nil {
+			b.Fatalf("Failed to generate WASI import object: %v", err)
+		}
+
+		importObject.Register("env", map[string]wasmer.IntoExtern{
+			"host_func": hostFunc,
+		})
+
+		instance, err := wasmer.NewInstance(module, importObject)
+		if err != nil {
+			b.Fatalf("Failed to instantiate module: %v", err)
+		}
+
+		initialize, err := instance.Exports.GetFunction("_initialize")
+		if err == nil {
+			_, err = initialize()
+			if err != nil {
+				b.Fatalf("Failed to initialize: %v", err)
+			}
+		}
+
+		loopCallHost, err := instance.Exports.GetFunction("loop_call_host")
+		if err != nil {
+			b.Fatalf("Failed to get exported function: %v", err)
+		}
+
+		b.ResetTimer()
+
+		// Pass b.N to the Wasm function to handle the loop internally
+		_, err = loopCallHost(b.N)
+		if err != nil {
+			b.Fatalf("Error calling Wasm function: %v", err)
+		}
+
+		runtime.KeepAlive(instance)
+		runtime.KeepAlive(module)
+		runtime.KeepAlive(store)
+		runtime.KeepAlive(engine)
+		runtime.KeepAlive(importObject)
+	})
+}
