@@ -23,6 +23,8 @@ option go_package = "/protocol";
 // ================ CONTROL STREAM MESSAGES ====================
 // ============================================================
 
+// ================ EXECUTOR -> DISPATCHER =====================
+
 message ExecutorHello {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
@@ -42,6 +44,23 @@ message ExecutorResources {
   int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle per second
 }
 
+// Errors on the executor side before a debuglet is started, i.e. during uploading
+message ExecutorError {
+  optional string debuglet_id = 1;
+  string error = 2;
+}
+
+// Executor -> Dispatcher
+message ExecutorControlMessage {
+  oneof msg {
+    ExecutorHello hello = 1;
+    ExecutorHeartbeat heartbeat = 2;
+    ExecutorError error = 3;
+  }
+}
+
+// ================ DISPATCHER -> EXECUTOR =====================
+
 message DebugletSpec {
   string id = 1;
   optional google.protobuf.Timestamp start_time = 2;
@@ -56,14 +75,6 @@ message DebugletSpec {
   Policy policy = 5;
 }
 
-// Executor -> Dispatcher
-message ExecutorControlMessage {
-  oneof msg {
-    ExecutorHello hello = 1;
-    ExecutorHeartbeat heartbeat = 2;
-  }
-}
-
 // Dispatcher -> Executor
 message DispatcherControlMessage {
   oneof msg {
@@ -72,7 +83,7 @@ message DispatcherControlMessage {
 }
 
 // ============================================================
-// ================ SESSION STREAM MESSAGES ====================
+// ================ DEBUGLET STREAM MESSAGES ====================
 // ============================================================
 
 // ============================================================

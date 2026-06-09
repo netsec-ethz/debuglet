@@ -34,3 +34,15 @@ func (c *ControlClient) SendHello(h Hello) error {
 		}},
 	})
 }
+
+func (c *ControlClient) SendError(debugletID *string, err error) error {
+	c.logger.Debug("Sending 'error'", zap.Stringp("id", debugletID), zap.Error(err))
+	return c.Send(&pb.ExecutorControlMessage{
+		Msg: &pb.ExecutorControlMessage_Error{
+			Error: &pb.ExecutorError{
+				DebugletId: debugletID,
+				Error:      err.Error(),
+			},
+		}},
+	)
+}

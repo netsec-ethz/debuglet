@@ -2,12 +2,15 @@ package dispatcher
 
 import (
 	"context"
+
+	"go.uber.org/zap"
 )
 
 type ControlHandler interface {
 	HandleHello(ctx context.Context, h Hello) error
 	HandleHeartbeat(ctx context.Context, hb Heartbeat) error
 	HandleDisconnect(ctx context.Context, executorID string)
+	HandleError(ctx context.Context, debugletID *string, err error)
 }
 
 func (d *Dispatcher) HandleHello(ctx context.Context, h Hello) error {
@@ -19,4 +22,7 @@ func (d *Dispatcher) HandleHeartbeat(ctx context.Context, hb Heartbeat) error {
 }
 func (d *Dispatcher) HandleDisconnect(ctx context.Context, executorID string) {
 	d.RemoveExecutor(executorID)
+}
+func (d *Dispatcher) HandleError(ctx context.Context, debugletID *string, err error) {
+	d.logger.Error("Got executor error", zap.Stringp("debugletID", debugletID), zap.Error(err))
 }

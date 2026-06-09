@@ -3,7 +3,7 @@ package transport
 import "time"
 
 type ControlHandler interface {
-	HandleUpload(Upload) error
+	HandleUpload(Upload)
 }
 
 type DebugletPolicy struct {

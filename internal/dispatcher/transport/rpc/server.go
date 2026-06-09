@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"errors"
 	"io"
 	"time"
 
@@ -76,6 +77,12 @@ func (s *Server) ControlStream(stream pb.DispatcherService_ControlStreamServer) 
 			if err := s.handler.HandleHeartbeat(ctx, hh); err != nil {
 				s.logger.Error("Failed to handle heartbeat", zap.Error(err))
 			}
+		case *pb.ExecutorControlMessage_Error:
+			var debugletID *string
+			if s := msg.Error.GetDebugletId(); s != "" {
+				debugletID = &s
+			}
+			s.handler.HandleError(ctx, debugletID, errors.New(msg.Error.GetError()))
 		default:
 			s.logger.Warn("Unknown control message")
 		}
