@@ -10,7 +10,7 @@ import (
 )
 
 type MemoryStorage struct {
-	onStart func(context.Context, rpc.Upload)
+	onStart func(context.Context, rpc.Spec)
 
 	wakeup chan struct{}
 	mu     sync.RWMutex
@@ -26,7 +26,7 @@ func NewStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) Insert(u rpc.Upload) error {
+func (m *MemoryStorage) Insert(u rpc.Spec) error {
 	m.mu.Lock()
 	m.tq.Push(u)
 	m.mu.Unlock()
@@ -43,7 +43,7 @@ func (m *MemoryStorage) Remove(debugletID string) bool {
 	return true
 }
 
-func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, rpc.Upload)) {
+func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, rpc.Spec)) {
 	m.onStart = onStart
 }
 

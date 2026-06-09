@@ -75,7 +75,7 @@ func main() {
 		}
 	}()
 
-	if err := exec.Start(ctx); err != nil {
+	if err := exec.Listen(ctx); err != nil {
 		logger.Fatal("Failed to start executor", zap.Error(err))
 	}
 }

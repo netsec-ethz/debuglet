@@ -16,11 +16,12 @@ import (
 )
 
 type ControlClient struct {
-	client     pb.DispatcherServiceClient
-	stream     grpc.BidiStreamingClient[pb.ExecutorControlMessage, pb.DispatcherControlMessage]
-	logger     *zap.Logger
-	handler    ExecutorControlHandler
-	streamOpen chan struct{}
+	client  pb.DispatcherServiceClient
+	stream  pb.DispatcherService_ControlStreamClient
+	logger  *zap.Logger
+	handler ExecutorControlHandler
+
+	streamReady chan struct{} // Closed when stream is listening
 
 	// handles concurrent sending of messages
 	sendCh    chan *pb.ExecutorControlMessage
@@ -41,26 +42,22 @@ func NewControlClient(cfg *config.Config, l *zap.Logger, h ExecutorControlHandle
 	client := pb.NewDispatcherServiceClient(conn)
 
 	return &ControlClient{
-		client:     client,
-		logger:     l,
-		handler:    h,
-		streamOpen: make(chan struct{}, 1),
-		sendCh:     make(chan *pb.ExecutorControlMessage, 32),
-		done:       make(chan struct{}),
+		client:      client,
+		logger:      l,
+		handler:     h,
+		streamReady: make(chan struct{}),
+		sendCh:      make(chan *pb.ExecutorControlMessage, 32),
+		done:        make(chan struct{}),
 	}, nil
 }
 
-// Wait blocks until the stream has successfully opened
-func (c *ControlClient) Wait(ctx context.Context) error {
-	if c.stream != nil {
-		return nil
-	}
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-c.streamOpen:
-	}
-	return nil
+func (c *ControlClient) GRPCClient() *pb.DispatcherServiceClient {
+	return &c.client
+}
+
+// Ready returns a channel which is closed and falls through when the client has opened the stream and is listening
+func (c *ControlClient) Ready() <-chan struct{} {
+	return c.streamReady
 }
 
 func getClientCredentials(cfg *config.Config) (credentials.TransportCredentials, error) {
@@ -93,7 +90,7 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 	}
 	c.stream = stream
 	go c.sendLoop()
-	c.streamOpen <- struct{}{}
+	close(c.streamReady)
 
 	for {
 		msg, err := stream.Recv()
@@ -102,6 +99,9 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 			return nil
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
 			c.logger.Error("Error receiving", zap.Error(err))
 			return err
 		}
@@ -114,7 +114,7 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 				tmp := st.AsTime()
 				startTime = &tmp
 			}
-			go c.handler.HandleUpload(Upload{
+			go c.handler.HandleUpload(Spec{
 				DebugletID: debuglet.GetId(),
 				StartTime:  startTime,
 				Wasm:       debuglet.GetWasm(),

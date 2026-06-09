@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (e *Executor) HandleUpload(upload rpc.Upload) {
+func (e *Executor) HandleUpload(upload rpc.Spec) {
 	if err := e.storage.Insert(upload); err != nil {
 		e.logger.Error("Failed to insert debuglet spec", zap.Error(err))
 		err = fmt.Errorf("failed to insert: %w", err)

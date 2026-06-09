@@ -6,7 +6,7 @@ import (
 	"debuglet/internal/executor/storage"
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tesla"
-	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -20,6 +20,7 @@ type Executor struct {
 	// storage is responsible for storing full debuglet specs
 	// until the debuglet is to be started and then calling OnStart
 	storage storage.Storage
+	running map[string]*rpc.DebugletClient
 }
 
 var _ rpc.ExecutorControlHandler = (*Executor)(nil)
@@ -47,23 +48,27 @@ func New(cfg *config.Config, l *zap.Logger, s storage.Storage) (*Executor, error
 	return executor, nil
 }
 
-func (e *Executor) Start(ctx context.Context) error {
+func (e *Executor) Listen(ctx context.Context) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 
-	errCh := make(chan error, 1)
 	go func() {
-		errCh <- e.control.Listen(ctx)
-		cancel(errors.New("failed to open control stream"))
+		if err := e.control.Listen(ctx); err != nil {
+			cancel(fmt.Errorf("failed to open control stream: %w", err))
+		}
 		e.control.Close()
 	}()
 
-	if err := e.control.Wait(ctx); err != nil {
-		return err
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-e.control.Ready():
 	}
+
 	e.hello()
 	go e.startHeartbeatLoop(ctx)
 
-	return <-errCh
+	<-ctx.Done()
+	return nil
 }
 
 func (e *Executor) hello() error {

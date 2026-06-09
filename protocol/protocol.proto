@@ -92,6 +92,44 @@ message DispatcherControlMessage {
 // ================ DEBUGLET STREAM MESSAGES ====================
 // ============================================================
 
+// ================ EXECUTOR -> DISPATCHER =====================
+
+// The states of a debuglet from when a debuglet is set to start until before it exits
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_INITIALIZING = 1;
+  RUN_STATE_STARTED = 2;
+}
+
+message DebugletState {
+  string debuglet_id = 1;
+  string executor_id = 2;
+  RunState state = 3;
+}
+
+message DebugletOutput {
+  string debuglet_id = 1;
+  bytes output = 2;
+}
+
+message DebugletExit {
+  string debuglet_id = 1;
+  int32 exit_code = 2;
+  optional string error_message = 3;
+}
+
+message ExecutorDebugletMessage {
+  oneof msg {
+    DebugletState state = 1;
+    DebugletOutput output = 2;
+    DebugletExit exit = 3;
+  }
+}
+
+// ================ DISPATCHER -> EXECUTOR =====================
+
+message DispatcherDebugletMessage {}
+
 // ============================================================
 // ====================== SERVICE DEFS =========================
 // ============================================================
@@ -101,5 +139,5 @@ service DispatcherService {
   rpc ControlStream(stream ExecutorControlMessage) returns (stream DispatcherControlMessage);
 
   // Per-session bidirectional stream for debuglet execution
-  // rpc SessionStream(stream SessionMessage) returns (stream SessionMessage);
+  rpc DebugletStream(stream ExecutorDebugletMessage) returns (stream DispatcherDebugletMessage);
 }

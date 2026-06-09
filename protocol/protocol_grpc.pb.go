@@ -33,7 +33,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DispatcherService_ControlStream_FullMethodName = "/debuglet.protocol.DispatcherService/ControlStream"
+	DispatcherService_ControlStream_FullMethodName  = "/debuglet.protocol.DispatcherService/ControlStream"
+	DispatcherService_DebugletStream_FullMethodName = "/debuglet.protocol.DispatcherService/DebugletStream"
 )
 
 // DispatcherServiceClient is the client API for DispatcherService service.
@@ -42,6 +43,8 @@ const (
 type DispatcherServiceClient interface {
 	// Persistent control channel for executor registration, heartbeat, and task assignment
 	ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage], error)
+	// Per-session bidirectional stream for debuglet execution
+	DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage], error)
 }
 
 type dispatcherServiceClient struct {
@@ -65,12 +68,27 @@ func (c *dispatcherServiceClient) ControlStream(ctx context.Context, opts ...grp
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DispatcherService_ControlStreamClient = grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage]
 
+func (c *dispatcherServiceClient) DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DispatcherService_ServiceDesc.Streams[1], DispatcherService_DebugletStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecutorDebugletMessage, DispatcherDebugletMessage]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DispatcherService_DebugletStreamClient = grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage]
+
 // DispatcherServiceServer is the server API for DispatcherService service.
 // All implementations must embed UnimplementedDispatcherServiceServer
 // for forward compatibility.
 type DispatcherServiceServer interface {
 	// Persistent control channel for executor registration, heartbeat, and task assignment
 	ControlStream(grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]) error
+	// Per-session bidirectional stream for debuglet execution
+	DebugletStream(grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]) error
 	mustEmbedUnimplementedDispatcherServiceServer()
 }
 
@@ -83,6 +101,9 @@ type UnimplementedDispatcherServiceServer struct{}
 
 func (UnimplementedDispatcherServiceServer) ControlStream(grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]) error {
 	return status.Error(codes.Unimplemented, "method ControlStream not implemented")
+}
+func (UnimplementedDispatcherServiceServer) DebugletStream(grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]) error {
+	return status.Error(codes.Unimplemented, "method DebugletStream not implemented")
 }
 func (UnimplementedDispatcherServiceServer) mustEmbedUnimplementedDispatcherServiceServer() {}
 func (UnimplementedDispatcherServiceServer) testEmbeddedByValue()                           {}
@@ -112,6 +133,13 @@ func _DispatcherService_ControlStream_Handler(srv interface{}, stream grpc.Serve
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DispatcherService_ControlStreamServer = grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]
 
+func _DispatcherService_DebugletStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(DispatcherServiceServer).DebugletStream(&grpc.GenericServerStream[ExecutorDebugletMessage, DispatcherDebugletMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DispatcherService_DebugletStreamServer = grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]
+
 // DispatcherService_ServiceDesc is the grpc.ServiceDesc for DispatcherService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -123,6 +151,12 @@ var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ControlStream",
 			Handler:       _DispatcherService_ControlStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "DebugletStream",
+			Handler:       _DispatcherService_DebugletStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

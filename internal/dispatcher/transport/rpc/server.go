@@ -93,3 +93,7 @@ func (s *Server) ControlStream(stream pb.DispatcherService_ControlStreamServer) 
 	}
 	return err
 }
+
+func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer) error {
+	return nil
+}

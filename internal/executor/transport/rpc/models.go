@@ -3,7 +3,7 @@ package rpc
 import "time"
 
 type ExecutorControlHandler interface {
-	HandleUpload(Upload)
+	HandleUpload(Spec)
 	HandleAbort(debugletID, reason string)
 }
 
@@ -14,7 +14,7 @@ type Policy struct {
 	Addresses []string
 }
 
-type Upload struct {
+type Spec struct {
 	DebugletID string
 	StartTime  *time.Time
 	Wasm       []byte
