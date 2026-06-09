@@ -2,22 +2,22 @@ package memory
 
 import (
 	"context"
-	"debuglet/internal/executor/db"
-	"debuglet/internal/executor/transport"
+	"debuglet/internal/executor/storage"
+	"debuglet/internal/executor/transport/rpc"
 	"errors"
 	"sync"
 	"time"
 )
 
 type MemoryStorage struct {
-	onStart func(context.Context, transport.Upload)
+	onStart func(context.Context, rpc.Upload)
 
 	wakeup chan struct{}
 	mu     sync.RWMutex
 	tq     *TimedQueue
 }
 
-var _ db.Storage = (*MemoryStorage)(nil)
+var _ storage.Storage = (*MemoryStorage)(nil)
 
 func NewStorage() *MemoryStorage {
 	return &MemoryStorage{
@@ -26,7 +26,7 @@ func NewStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) Insert(u transport.Upload) error {
+func (m *MemoryStorage) Insert(u rpc.Upload) error {
 	m.mu.Lock()
 	m.tq.Push(u)
 	m.mu.Unlock()
@@ -43,7 +43,7 @@ func (m *MemoryStorage) Remove(debugletID string) bool {
 	return true
 }
 
-func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, transport.Upload)) {
+func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, rpc.Upload)) {
 	m.onStart = onStart
 }
 

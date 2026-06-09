@@ -13,8 +13,8 @@ type debugletHistory struct {
 	ids []string
 }
 
-// Executor represents a registered executor and its metadata.
-type Executor struct {
+// RegisteredExecutor represents a registered executor and its metadata.
+type RegisteredExecutor struct {
 	ID       string
 	Ready    bool
 	LastSeen time.Time
@@ -28,14 +28,14 @@ type Executor struct {
 	history *debugletHistory
 }
 
-// lastDebugletHistory is the default number of recent measurement IDs to
+// lastDebugletHistory is the default number of recent debuglet IDs to
 // retain per executor. The caller can override it via HTTP query parameters.
 const lastDebugletHistory = 10
 
-// RecentDebugletIDs returns up to n recent measurement IDs for this
+// RecentDebugletIDs returns up to n recent debuglet IDs for this
 // executor, newest first. If n ≤ 0 the default (lastDebugletHistory) is
 // used.
-func (e *Executor) RecentDebugletIDs(n int) []string {
+func (e *RegisteredExecutor) RecentDebugletIDs(n int) []string {
 	if n <= 0 {
 		n = lastDebugletHistory
 	}
@@ -61,9 +61,9 @@ func (e *Executor) RecentDebugletIDs(n int) []string {
 	return out
 }
 
-// appendMeasurementID adds id to the executor's history, trimming old entries
+// AppendDebugletID adds id to the executor's history, trimming old entries
 // so the total length stays within 2× the maximum to bound memory usage.
-func (e *Executor) appendMeasurementID(id string) {
+func (e *RegisteredExecutor) AppendDebugletID(id string) {
 	if e.history == nil {
 		panic("history not initialized")
 	}
@@ -84,7 +84,7 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay time.Dura
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
-		d.executors[id] = &Executor{history: &debugletHistory{}}
+		d.executors[id] = &RegisteredExecutor{history: &debugletHistory{}}
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))
 	}
@@ -101,12 +101,12 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay time.Dura
 
 // GetExecutorByIPFull returns the full Executor record for the given source IP,
 // or nil if no executor is registered with that IP.
-func (d *Dispatcher) GetExecutorByIPFull(ip string) (Executor, bool) {
+func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	id, ok := d.ipToExecutor[ip]
 	if !ok {
-		return Executor{}, false
+		return RegisteredExecutor{}, false
 	}
 	return *d.executors[id], true
 }
@@ -129,17 +129,17 @@ func (d *Dispatcher) SetExecutor(id string, lastSeenNs int64) error {
 	return nil
 }
 
-func (d *Dispatcher) ListExecutors() []Executor {
+func (d *Dispatcher) ListExecutors() []RegisteredExecutor {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	var executors []Executor
+	var executors []RegisteredExecutor
 	for _, e := range d.executors {
 		executors = append(executors, *e)
 	}
 	return executors
 }
 
-func (d *Dispatcher) GetExecutor(ID string) (Executor, bool) {
+func (d *Dispatcher) GetExecutor(ID string) (RegisteredExecutor, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	e, exists := d.executors[ID]

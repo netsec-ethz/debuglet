@@ -2,7 +2,7 @@ package executor
 
 import (
 	"context"
-	"debuglet/internal/executor/transport"
+	"debuglet/internal/executor/transport/rpc"
 )
 
-func (e *Executor) OnStart(ctx context.Context, spec transport.Upload) {}
+func (e *Executor) OnStart(ctx context.Context, spec rpc.Upload) {}

@@ -1,13 +1,13 @@
-package transport
+package rpc
 
 import "time"
 
-type ControlHandler interface {
+type ExecutorControlHandler interface {
 	HandleUpload(Upload)
 	HandleAbort(debugletID, reason string)
 }
 
-type DebugletPolicy struct {
+type Policy struct {
 	FloorBW   int64
 	CeilBW    int64
 	Timeout   time.Duration
@@ -18,7 +18,7 @@ type Upload struct {
 	DebugletID string
 	StartTime  *time.Time
 	Wasm       []byte
-	Policy     DebugletPolicy
+	Policy     Policy
 }
 
 type Hello struct {

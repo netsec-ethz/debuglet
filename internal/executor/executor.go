@@ -3,8 +3,8 @@ package executor
 import (
 	"context"
 	"debuglet/internal/executor/config"
-	"debuglet/internal/executor/db"
-	"debuglet/internal/executor/transport"
+	"debuglet/internal/executor/storage"
+	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tesla"
 	"errors"
 	"time"
@@ -14,17 +14,17 @@ import (
 
 type Executor struct {
 	cfg           config.Config
-	control       *transport.ControlClient
+	control       *rpc.ControlClient
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
 	// storage is responsible for storing full debuglet specs
 	// until the debuglet is to be started and then calling OnStart
-	storage db.Storage
+	storage storage.Storage
 }
 
-var _ transport.ControlHandler = (*Executor)(nil)
+var _ rpc.ExecutorControlHandler = (*Executor)(nil)
 
-func New(cfg *config.Config, l *zap.Logger, s db.Storage) (*Executor, error) {
+func New(cfg *config.Config, l *zap.Logger, s storage.Storage) (*Executor, error) {
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:  []byte(cfg.TeslaSeed),
 		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
@@ -39,7 +39,7 @@ func New(cfg *config.Config, l *zap.Logger, s db.Storage) (*Executor, error) {
 
 	s.RegisterOnStart(executor.OnStart)
 
-	client, err := transport.NewControlClient(cfg, l, executor)
+	client, err := rpc.NewControlClient(cfg, l, executor)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (e *Executor) Start(ctx context.Context) error {
 }
 
 func (e *Executor) hello() error {
-	h := transport.Hello{
+	h := rpc.Hello{
 		ExecutorID:           e.cfg.ExecutorID,
 		Version:              e.cfg.Version,
 		SourceIP:             "127.0.0.1", // TODO: detect public IP

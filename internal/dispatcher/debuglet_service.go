@@ -26,6 +26,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	for i, spec := range specs {
 		debugletID := uuid.New().String()
 		debugletIDS[i] = debugletID
+		d.executors[spec.ExecutorID].AppendDebugletID(debugletID)
 		g.Go(d.uploadToExecutor(subCtx, i, debugletID, spec))
 	}
 

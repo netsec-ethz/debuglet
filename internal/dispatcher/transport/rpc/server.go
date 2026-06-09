@@ -16,13 +16,13 @@ import (
 type Server struct {
 	pb.UnsafeDispatcherServiceServer
 	logger   *zap.Logger
-	handler  dispatcher.ControlHandler
+	handler  dispatcher.DispatcherControlHandler
 	registry *StreamRegistry
 }
 
 var _ dispatcher.ExecutorSender = (*Server)(nil)
 
-func NewServer(logger *zap.Logger, h dispatcher.ControlHandler) *Server {
+func NewServer(logger *zap.Logger, h dispatcher.DispatcherControlHandler) *Server {
 	return &Server{
 		logger:   logger,
 		handler:  h,

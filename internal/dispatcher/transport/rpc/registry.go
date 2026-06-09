@@ -48,9 +48,10 @@ func (r *StreamRegistry) Get(id string) (*ExecutorConn, bool) {
 // ExecutorConn manages an executor stream connection and ensures messages
 // are sent while avoiding race-conditions
 type ExecutorConn struct {
-	stream pb.DispatcherService_ControlStreamServer
-	sendCh chan *pb.DispatcherControlMessage
-	done   chan struct{}
+	stream    pb.DispatcherService_ControlStreamServer
+	sendCh    chan *pb.DispatcherControlMessage
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func (c *ExecutorConn) sendLoop() {
@@ -75,7 +76,7 @@ func (c *ExecutorConn) Send(ctx context.Context, msg *pb.DispatcherControlMessag
 }
 
 func (c *ExecutorConn) closeSendCh() {
-	sync.OnceFunc(func() {
+	c.closeOnce.Do(func() {
 		close(c.sendCh)
 	})
 }

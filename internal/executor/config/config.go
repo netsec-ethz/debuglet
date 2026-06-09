@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/BurntSushi/toml"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // Config represents the structure of executor.toml
@@ -51,9 +51,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("config file not found: %s", path)
 	}
 
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config file: %w", err)
+	}
+
 	var cfg Config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal toml: %w", err)
 	}
 
 	if cfg.LogLevel == "" {

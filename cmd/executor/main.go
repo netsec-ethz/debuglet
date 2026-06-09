@@ -24,7 +24,7 @@ import (
 
 	"debuglet/internal/executor"
 	"debuglet/internal/executor/config"
-	"debuglet/internal/executor/db/memory"
+	"debuglet/internal/executor/storage/memory"
 
 	scionFlag "github.com/scionproto/scion/private/app/flag"
 )

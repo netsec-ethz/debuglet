@@ -1,6 +1,6 @@
 package api
 
-type DebugletPolicy struct {
+type DebugletPolicyRequest struct {
 	FloorBW   int64    `json:"floor_bw"`
 	CeilBW    int64    `json:"ceil_bw"`
 	TimeoutMS int64    `json:"timeout_ms"`
@@ -9,10 +9,10 @@ type DebugletPolicy struct {
 
 type DebugletRequest struct {
 	// Optional start time as unix epoch time
-	StartTimestamp *int64         `json:"start_time,omitempty"`
-	ExecutorID     string         `json:"executor_id"`
-	Wasm           string         `json:"wasm"`
-	Policy         DebugletPolicy `json:"policy"`
+	StartTimestamp *int64                `json:"start_time,omitempty"`
+	ExecutorID     string                `json:"executor_id"`
+	Wasm           string                `json:"wasm"`
+	Policy         DebugletPolicyRequest `json:"policy"`
 }
 
 type ExecutorResponse struct {

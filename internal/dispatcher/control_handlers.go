@@ -6,7 +6,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type ControlHandler interface {
+type DispatcherControlHandler interface {
 	HandleHello(ctx context.Context, h Hello) error
 	HandleHeartbeat(ctx context.Context, hb Heartbeat) error
 	HandleDisconnect(ctx context.Context, executorID string)

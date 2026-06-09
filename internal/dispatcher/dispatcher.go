@@ -8,7 +8,7 @@ import (
 )
 
 type Dispatcher struct {
-	executors    map[string]*Executor
+	executors    map[string]*RegisteredExecutor
 	ipToExecutor map[string]string
 	mu           sync.RWMutex
 	keystore     *tag.KeyStore
@@ -16,11 +16,11 @@ type Dispatcher struct {
 	logger       *zap.Logger
 }
 
-var _ ControlHandler = (*Dispatcher)(nil)
+var _ DispatcherControlHandler = (*Dispatcher)(nil)
 
 func New(l *zap.Logger) *Dispatcher {
 	return &Dispatcher{
-		executors:    make(map[string]*Executor),
+		executors:    make(map[string]*RegisteredExecutor),
 		ipToExecutor: make(map[string]string),
 		keystore:     tag.NewKeyStore(),
 		logger:       l,

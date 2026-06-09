@@ -1,4 +1,4 @@
-package transport
+package rpc
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	pb "debuglet/protocol"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -18,15 +19,16 @@ type ControlClient struct {
 	client     pb.DispatcherServiceClient
 	stream     grpc.BidiStreamingClient[pb.ExecutorControlMessage, pb.DispatcherControlMessage]
 	logger     *zap.Logger
-	handler    ControlHandler
+	handler    ExecutorControlHandler
 	streamOpen chan struct{}
 
 	// handles concurrent sending of messages
-	sendCh chan *pb.ExecutorControlMessage
-	done   chan struct{}
+	sendCh    chan *pb.ExecutorControlMessage
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
-func NewControlClient(cfg *config.Config, l *zap.Logger, h ControlHandler) (*ControlClient, error) {
+func NewControlClient(cfg *config.Config, l *zap.Logger, h ExecutorControlHandler) (*ControlClient, error) {
 	creds, err := getClientCredentials(cfg)
 	if err != nil {
 		return nil, err
@@ -116,7 +118,7 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 				DebugletID: debuglet.GetId(),
 				StartTime:  startTime,
 				Wasm:       debuglet.GetWasm(),
-				Policy: DebugletPolicy{
+				Policy: Policy{
 					FloorBW:   debuglet.Policy.GetFloorBw(),
 					CeilBW:    debuglet.Policy.GetCeilBw(),
 					Timeout:   time.Duration(debuglet.Policy.GetTimeoutMs()) * time.Millisecond,

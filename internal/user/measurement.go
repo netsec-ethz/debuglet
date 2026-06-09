@@ -29,7 +29,7 @@ func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, flo
 		debuglets = append(debuglets, api.DebugletRequest{
 			ExecutorID: executorID,
 			Wasm:       wasm,
-			Policy: api.DebugletPolicy{
+			Policy: api.DebugletPolicyRequest{
 				FloorBW:   floorBW,
 				CeilBW:    ceilBW,
 				TimeoutMS: timeout,
