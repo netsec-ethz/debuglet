@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	pb "debuglet/protocol"
 	"sync"
 )
@@ -62,10 +63,12 @@ func (c *ExecutorConn) sendLoop() {
 	}
 }
 
-func (c *ExecutorConn) Send(msg *pb.DispatcherControlMessage) error {
+func (c *ExecutorConn) Send(ctx context.Context, msg *pb.DispatcherControlMessage) error {
 	select {
 	case <-c.stream.Context().Done():
 		return c.stream.Context().Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case c.sendCh <- msg:
 		return nil
 	}

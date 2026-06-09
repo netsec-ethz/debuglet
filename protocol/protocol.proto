@@ -61,7 +61,7 @@ message ExecutorControlMessage {
 
 // ================ DISPATCHER -> EXECUTOR =====================
 
-message DebugletSpec {
+message DebugletUploadSpec {
   string id = 1;
   optional google.protobuf.Timestamp start_time = 2;
   bytes wasm = 3;
@@ -75,10 +75,16 @@ message DebugletSpec {
   Policy policy = 5;
 }
 
+message AbortDebuglet {
+  string debuglet_id = 1;
+  string reason = 2;
+}
+
 // Dispatcher -> Executor
 message DispatcherControlMessage {
   oneof msg {
-    DebugletSpec upload = 1;
+    DebugletUploadSpec upload = 1;
+    AbortDebuglet abort = 2;
   }
 }
 

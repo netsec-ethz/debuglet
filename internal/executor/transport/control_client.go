@@ -112,7 +112,6 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 				tmp := st.AsTime()
 				startTime = &tmp
 			}
-			// TODO: return error
 			go c.handler.HandleUpload(Upload{
 				DebugletID: debuglet.GetId(),
 				StartTime:  startTime,
@@ -124,6 +123,8 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 					Addresses: debuglet.Policy.GetAddresses(),
 				},
 			})
+		case *pb.DispatcherControlMessage_Abort:
+			go c.handler.HandleAbort(m.Abort.GetDebugletId(), m.Abort.GetReason())
 		case nil:
 			c.logger.Warn("received control message with empty msg")
 		default:

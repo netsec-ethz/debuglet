@@ -7,6 +7,7 @@ import (
 
 type ExecutorSender interface {
 	UploadDebuglet(ctx context.Context, debugletID string, d DebugletSpec) error
+	AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error
 }
 
 type Hello struct {

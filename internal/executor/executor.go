@@ -17,7 +17,9 @@ type Executor struct {
 	control       *transport.ControlClient
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
-	storage       db.Storage
+	// storage is responsible for storing full debuglet specs
+	// until the debuglet is to be started and then calling OnStart
+	storage db.Storage
 }
 
 var _ transport.ControlHandler = (*Executor)(nil)
@@ -36,7 +38,6 @@ func New(cfg *config.Config, l *zap.Logger, s db.Storage) (*Executor, error) {
 	}
 
 	s.RegisterOnStart(executor.OnStart)
-	s.RegisterOnError(executor.OnError)
 
 	client, err := transport.NewControlClient(cfg, l, executor)
 	if err != nil {

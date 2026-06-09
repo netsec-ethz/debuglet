@@ -15,30 +15,39 @@ func (s *Server) UploadDebuglet(ctx context.Context, debugletID string, d dispat
 		return fmt.Errorf("executor '%s' not found", d.ExecutorID)
 	}
 
-	// abort if request context has already been cancelled
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
 	var startTime *timestamppb.Timestamp
 	if d.StartTime != nil {
 		timestamppb.New(*d.StartTime)
 	}
 
-	return stream.Send(&pb.DispatcherControlMessage{
+	return stream.Send(ctx, &pb.DispatcherControlMessage{
 		Msg: &pb.DispatcherControlMessage_Upload{
-			Upload: &pb.DebugletSpec{
+			Upload: &pb.DebugletUploadSpec{
 				Id:        debugletID,
 				StartTime: startTime,
 				Wasm:      d.Wasm,
-				Policy: &pb.DebugletSpec_Policy{
+				Policy: &pb.DebugletUploadSpec_Policy{
 					FloorBw:   d.Policy.FloorBW,
 					CeilBw:    d.Policy.CeilBW,
 					TimeoutMs: d.Policy.Timeout.Milliseconds(),
 					Addresses: d.Policy.Addresses,
 				},
+			},
+		},
+	})
+}
+
+func (s *Server) AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error {
+	stream, ok := s.registry.Get(executorID)
+	if !ok {
+		return fmt.Errorf("executor '%s' not found", executorID)
+	}
+
+	return stream.Send(ctx, &pb.DispatcherControlMessage{
+		Msg: &pb.DispatcherControlMessage_Abort{
+			Abort: &pb.AbortDebuglet{
+				DebugletId: debugletID,
+				Reason:     reason,
 			},
 		},
 	})

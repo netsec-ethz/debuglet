@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -29,8 +30,9 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	}
 
 	if err := g.Wait(); err != nil {
-		for _, ID := range debugletIDS {
-			AbortDebuglet(ID)
+		for i, spec := range specs {
+			debugletID := debugletIDS[i]
+			d.AbortDebuglet(ctx, spec.ExecutorID, debugletID, "failed to batch upload all debuglets")
 		}
 		return nil, fmt.Errorf("failed to upload debuglets: %w", err)
 	}
@@ -47,7 +49,8 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 	}
 }
 
-// (idempotent)
-func AbortDebuglet(debugletID string) {
-
+func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debugletID string, reason string) {
+	if err := d.sender.AbortDebuglet(ctx, executorID, debugletID, reason); err != nil {
+		d.logger.Error("Failed to abort debuglet", zap.String("executorID", executorID), zap.String("debugletID", debugletID), zap.String("reason", reason))
+	}
 }

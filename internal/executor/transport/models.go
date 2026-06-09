@@ -4,6 +4,7 @@ import "time"
 
 type ControlHandler interface {
 	HandleUpload(Upload)
+	HandleAbort(debugletID, reason string)
 }
 
 type DebugletPolicy struct {

@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"container/heap"
 	"context"
 	"debuglet/internal/executor/db"
 	"debuglet/internal/executor/transport"
@@ -11,72 +10,60 @@ import (
 )
 
 type MemoryStorage struct {
-	onStartCb func(context.Context, transport.Upload) error
-	onErrorCb func(string, error)
+	onStart func(context.Context, transport.Upload)
 
 	wakeup chan struct{}
 	mu     sync.RWMutex
-	prioQ  *TimedQueue
+	tq     *TimedQueue
 }
 
 var _ db.Storage = (*MemoryStorage)(nil)
 
 func NewStorage() *MemoryStorage {
-	tq := &TimedQueue{}
-	heap.Init(tq)
 	return &MemoryStorage{
 		wakeup: make(chan struct{}),
-		prioQ:  tq,
+		tq:     NewTimedQueue(),
 	}
 }
 
 func (m *MemoryStorage) Insert(u transport.Upload) error {
 	m.mu.Lock()
-	heap.Push(m.prioQ, u)
+	m.tq.Push(u)
 	m.mu.Unlock()
 	m.wakeup <- struct{}{}
 	return nil
 }
 
-func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, transport.Upload) error) {
-	m.onStartCb = onStart
-}
-
-func (m *MemoryStorage) onStart(ctx context.Context, u transport.Upload) error {
-	if m.onStartCb == nil {
-		return errors.New("onStart not registered")
+func (m *MemoryStorage) Remove(debugletID string) bool {
+	m.mu.Lock()
+	if old := m.tq.Remove(debugletID); old == nil {
+		return false
 	}
-	return m.onStartCb(ctx, u)
+	m.mu.Unlock()
+	return true
 }
 
-func (m *MemoryStorage) RegisterOnError(onErr func(string, error)) {
-	m.onErrorCb = onErr
-}
-
-func (m *MemoryStorage) onError(debugletID string, err error) {
-	if m.onStartCb == nil {
-		return
-	}
-	m.onErrorCb(debugletID, err)
+func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, transport.Upload)) {
+	m.onStart = onStart
 }
 
 func (m *MemoryStorage) StartLoop(ctx context.Context) error {
+	if m.onStart == nil {
+		return errors.New("onStart is not registered")
+	}
+
 	var timerChan <-chan time.Time
 	var timer *time.Timer
 
 	for {
 		m.mu.Lock()
 
-		if m.prioQ.Len() > 0 {
-			nextItem := (*m.prioQ)[0]
+		if m.tq.Len() > 0 {
+			nextItem := m.tq.Peek(0)
 			if nextItem.StartTime == nil || time.Now().After(*nextItem.StartTime) {
-				heap.Pop(m.prioQ)
+				m.tq.Pop()
 				m.mu.Unlock()
-				go func() {
-					if err := m.onStart(ctx, *nextItem); err != nil {
-						m.onError(nextItem.DebugletID, err)
-					}
-				}()
+				go m.onStart(ctx, *nextItem)
 			} else {
 				// sleep until next debuglet should start
 				m.mu.Unlock()
