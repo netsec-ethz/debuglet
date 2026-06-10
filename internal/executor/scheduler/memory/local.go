@@ -2,7 +2,7 @@ package memory
 
 import (
 	"context"
-	"debuglet/internal/executor/storage"
+	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/transport/rpc"
 	"errors"
 	"sync"
@@ -17,7 +17,7 @@ type MemoryStorage struct {
 	tq     *TimedQueue
 }
 
-var _ storage.Storage = (*MemoryStorage)(nil)
+var _ scheduler.Scheduler = (*MemoryStorage)(nil)
 
 func NewStorage() *MemoryStorage {
 	return &MemoryStorage{

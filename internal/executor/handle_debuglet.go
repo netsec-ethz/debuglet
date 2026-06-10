@@ -11,7 +11,7 @@ import (
 func (e *Executor) OnStart(ctx context.Context, debuglet rpc.Spec) {
 	ctx, cancel := context.WithCancelCause(ctx)
 
-	client := rpc.NewDebugletClient(*e.control.GRPCClient(), debuglet, e.cfg.ExecutorID)
+	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), debuglet, e.cfg.ExecutorID)
 	e.running[debuglet.DebugletID] = client
 
 	go func() {

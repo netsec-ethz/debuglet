@@ -8,7 +8,7 @@ import (
 )
 
 func (e *Executor) HandleUpload(upload rpc.Spec) {
-	if err := e.storage.Insert(upload); err != nil {
+	if err := e.scheduler.Insert(upload); err != nil {
 		e.logger.Error("Failed to insert debuglet spec", zap.Error(err))
 		err = fmt.Errorf("failed to insert: %w", err)
 		if err2 := e.control.SendError(&upload.DebugletID, err); err2 != nil {
@@ -19,7 +19,7 @@ func (e *Executor) HandleUpload(upload rpc.Spec) {
 
 func (e *Executor) HandleAbort(debugletID, reason string) {
 	e.logger.Debug("Handling abort", zap.String("debugletID", debugletID), zap.String("reason", reason))
-	existed := e.storage.Remove(debugletID)
+	existed := e.scheduler.Remove(debugletID)
 	if existed {
 		e.logger.Info("Removed debuglet from storage before it was started", zap.String("debugletID", debugletID))
 		return

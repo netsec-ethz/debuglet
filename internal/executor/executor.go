@@ -3,7 +3,7 @@ package executor
 import (
 	"context"
 	"debuglet/internal/executor/config"
-	"debuglet/internal/executor/storage"
+	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tesla"
 	"fmt"
@@ -17,15 +17,16 @@ type Executor struct {
 	control       *rpc.ControlClient
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
-	// storage is responsible for storing full debuglet specs
-	// until the debuglet is to be started and then calling OnStart
-	storage storage.Storage
-	running map[string]*rpc.DebugletClient
+	// scheduler is responsible for storing full debuglet specs
+	// until the debuglet is to be started. It will call OnStart
+	// when a debuglet is to be started.
+	scheduler scheduler.Scheduler
+	running   map[string]*rpc.DebugletClient
 }
 
 var _ rpc.ExecutorControlHandler = (*Executor)(nil)
 
-func New(cfg *config.Config, l *zap.Logger, s storage.Storage) (*Executor, error) {
+func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, error) {
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:  []byte(cfg.TeslaSeed),
 		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
@@ -35,7 +36,7 @@ func New(cfg *config.Config, l *zap.Logger, s storage.Storage) (*Executor, error
 		teslaSchedule: schedule,
 		logger:        l,
 		cfg:           *cfg,
-		storage:       s,
+		scheduler:     s,
 	}
 
 	s.RegisterOnStart(executor.OnStart)

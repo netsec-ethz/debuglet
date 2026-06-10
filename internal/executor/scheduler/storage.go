@@ -1,11 +1,11 @@
-package storage
+package scheduler
 
 import (
 	"context"
 	"debuglet/internal/executor/transport/rpc"
 )
 
-type Storage interface {
+type Scheduler interface {
 	Insert(rpc.Spec) error
 	// Remove removes a debuglet from storage preventing it from being started. It returns false if
 	// the given ID does not exist in the storage anymore (i.e. the debuglet has already started).
