@@ -4,7 +4,6 @@ import (
 	"context"
 	pb "debuglet/protocol"
 	"io"
-	"sync"
 
 	"go.uber.org/zap"
 )
@@ -15,8 +14,6 @@ type DebugletClient struct {
 	logger      *zap.Logger
 	debuglet    Spec
 	executorID  string
-	cancel      chan struct{}
-	cancelOnce  sync.Once
 	streamReady chan struct{}
 }
 
@@ -26,16 +23,8 @@ func NewDebugletClient(l *zap.Logger, client pb.DispatcherServiceClient, debugle
 		logger:     l,
 		debuglet:   debuglet,
 		executorID: executorID,
-		cancel:     make(chan struct{}),
 	}
 }
-
-func (d *DebugletClient) Cancel() {
-	d.cancelOnce.Do(func() {
-		close(d.cancel)
-	})
-}
-
 func (d *DebugletClient) Ready() <-chan struct{} {
 	return d.streamReady
 }
@@ -64,13 +53,41 @@ func (d *DebugletClient) Listen(ctx context.Context) error {
 	}
 }
 
-func (d *DebugletClient) SetState(state pb.RunState) {
-	d.stream.Send(&pb.ExecutorDebugletMessage{
+func (d *DebugletClient) SendSetState(state pb.RunState) error {
+	return d.stream.Send(&pb.ExecutorDebugletMessage{
 		Msg: &pb.ExecutorDebugletMessage_State{
 			State: &pb.DebugletState{
 				DebugletId: d.debuglet.DebugletID,
 				ExecutorId: d.executorID,
 				State:      state,
+			},
+		},
+	})
+}
+
+func (d *DebugletClient) SendOutput(output []byte) error {
+	return d.stream.Send(&pb.ExecutorDebugletMessage{
+		Msg: &pb.ExecutorDebugletMessage_Output{
+			Output: &pb.DebugletOutput{
+				DebugletId: d.debuglet.DebugletID,
+				Output:     output,
+			},
+		},
+	})
+}
+
+func (d *DebugletClient) SendExit(exitCode int32, err error) error {
+	var errMsg *string
+	if err != nil {
+		tmp := err.Error()
+		errMsg = &tmp
+	}
+	return d.stream.Send(&pb.ExecutorDebugletMessage{
+		Msg: &pb.ExecutorDebugletMessage_Exit{
+			Exit: &pb.DebugletExit{
+				DebugletId:   d.debuglet.DebugletID,
+				ExitCode:     exitCode,
+				ErrorMessage: errMsg,
 			},
 		},
 	})

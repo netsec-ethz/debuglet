@@ -56,6 +56,7 @@ message ExecutorControlMessage {
     ExecutorHello hello = 1;
     ExecutorHeartbeat heartbeat = 2;
     ExecutorError error = 3;
+    ExecutorResources resources = 4;
   }
 }
 

@@ -17,6 +17,7 @@ type Dispatcher struct {
 }
 
 var _ DispatcherControlHandler = (*Dispatcher)(nil)
+var _ DispatcherDebugletHandler = (*Dispatcher)(nil)
 
 func New(l *zap.Logger) *Dispatcher {
 	return &Dispatcher{

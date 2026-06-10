@@ -335,6 +335,7 @@ type ExecutorControlMessage struct {
 	//	*ExecutorControlMessage_Hello
 	//	*ExecutorControlMessage_Heartbeat
 	//	*ExecutorControlMessage_Error
+	//	*ExecutorControlMessage_Resources
 	Msg           isExecutorControlMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -404,6 +405,15 @@ func (x *ExecutorControlMessage) GetError() *ExecutorError {
 	return nil
 }
 
+func (x *ExecutorControlMessage) GetResources() *ExecutorResources {
+	if x != nil {
+		if x, ok := x.Msg.(*ExecutorControlMessage_Resources); ok {
+			return x.Resources
+		}
+	}
+	return nil
+}
+
 type isExecutorControlMessage_Msg interface {
 	isExecutorControlMessage_Msg()
 }
@@ -420,11 +430,17 @@ type ExecutorControlMessage_Error struct {
 	Error *ExecutorError `protobuf:"bytes,3,opt,name=error,proto3,oneof"`
 }
 
+type ExecutorControlMessage_Resources struct {
+	Resources *ExecutorResources `protobuf:"bytes,4,opt,name=resources,proto3,oneof"`
+}
+
 func (*ExecutorControlMessage_Hello) isExecutorControlMessage_Msg() {}
 
 func (*ExecutorControlMessage_Heartbeat) isExecutorControlMessage_Msg() {}
 
 func (*ExecutorControlMessage_Error) isExecutorControlMessage_Msg() {}
+
+func (*ExecutorControlMessage_Resources) isExecutorControlMessage_Msg() {}
 
 type DebugletUploadSpec struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
@@ -1026,11 +1042,12 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vdebuglet_id\x18\x01 \x01(\tH\x00R\n" +
 	"debugletId\x88\x01\x01\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05errorB\x0e\n" +
-	"\f_debuglet_id\"\xd9\x01\n" +
+	"\f_debuglet_id\"\x9f\x02\n" +
 	"\x16ExecutorControlMessage\x128\n" +
 	"\x05hello\x18\x01 \x01(\v2 .debuglet.protocol.ExecutorHelloH\x00R\x05hello\x12D\n" +
 	"\theartbeat\x18\x02 \x01(\v2$.debuglet.protocol.ExecutorHeartbeatH\x00R\theartbeat\x128\n" +
-	"\x05error\x18\x03 \x01(\v2 .debuglet.protocol.ExecutorErrorH\x00R\x05errorB\x05\n" +
+	"\x05error\x18\x03 \x01(\v2 .debuglet.protocol.ExecutorErrorH\x00R\x05error\x12D\n" +
+	"\tresources\x18\x04 \x01(\v2$.debuglet.protocol.ExecutorResourcesH\x00R\tresourcesB\x05\n" +
 	"\x03msg\"\xc8\x02\n" +
 	"\x12DebugletUploadSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
@@ -1119,23 +1136,24 @@ var file_protocol_protocol_proto_depIdxs = []int32{
 	1,  // 0: debuglet.protocol.ExecutorControlMessage.hello:type_name -> debuglet.protocol.ExecutorHello
 	2,  // 1: debuglet.protocol.ExecutorControlMessage.heartbeat:type_name -> debuglet.protocol.ExecutorHeartbeat
 	4,  // 2: debuglet.protocol.ExecutorControlMessage.error:type_name -> debuglet.protocol.ExecutorError
-	15, // 3: debuglet.protocol.DebugletUploadSpec.start_time:type_name -> google.protobuf.Timestamp
-	14, // 4: debuglet.protocol.DebugletUploadSpec.policy:type_name -> debuglet.protocol.DebugletUploadSpec.Policy
-	6,  // 5: debuglet.protocol.DispatcherControlMessage.upload:type_name -> debuglet.protocol.DebugletUploadSpec
-	7,  // 6: debuglet.protocol.DispatcherControlMessage.abort:type_name -> debuglet.protocol.AbortDebuglet
-	0,  // 7: debuglet.protocol.DebugletState.state:type_name -> debuglet.protocol.RunState
-	9,  // 8: debuglet.protocol.ExecutorDebugletMessage.state:type_name -> debuglet.protocol.DebugletState
-	10, // 9: debuglet.protocol.ExecutorDebugletMessage.output:type_name -> debuglet.protocol.DebugletOutput
-	11, // 10: debuglet.protocol.ExecutorDebugletMessage.exit:type_name -> debuglet.protocol.DebugletExit
-	5,  // 11: debuglet.protocol.DispatcherService.ControlStream:input_type -> debuglet.protocol.ExecutorControlMessage
-	12, // 12: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.ExecutorDebugletMessage
-	8,  // 13: debuglet.protocol.DispatcherService.ControlStream:output_type -> debuglet.protocol.DispatcherControlMessage
-	13, // 14: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DispatcherDebugletMessage
-	13, // [13:15] is the sub-list for method output_type
-	11, // [11:13] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	3,  // 3: debuglet.protocol.ExecutorControlMessage.resources:type_name -> debuglet.protocol.ExecutorResources
+	15, // 4: debuglet.protocol.DebugletUploadSpec.start_time:type_name -> google.protobuf.Timestamp
+	14, // 5: debuglet.protocol.DebugletUploadSpec.policy:type_name -> debuglet.protocol.DebugletUploadSpec.Policy
+	6,  // 6: debuglet.protocol.DispatcherControlMessage.upload:type_name -> debuglet.protocol.DebugletUploadSpec
+	7,  // 7: debuglet.protocol.DispatcherControlMessage.abort:type_name -> debuglet.protocol.AbortDebuglet
+	0,  // 8: debuglet.protocol.DebugletState.state:type_name -> debuglet.protocol.RunState
+	9,  // 9: debuglet.protocol.ExecutorDebugletMessage.state:type_name -> debuglet.protocol.DebugletState
+	10, // 10: debuglet.protocol.ExecutorDebugletMessage.output:type_name -> debuglet.protocol.DebugletOutput
+	11, // 11: debuglet.protocol.ExecutorDebugletMessage.exit:type_name -> debuglet.protocol.DebugletExit
+	5,  // 12: debuglet.protocol.DispatcherService.ControlStream:input_type -> debuglet.protocol.ExecutorControlMessage
+	12, // 13: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.ExecutorDebugletMessage
+	8,  // 14: debuglet.protocol.DispatcherService.ControlStream:output_type -> debuglet.protocol.DispatcherControlMessage
+	13, // 15: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DispatcherDebugletMessage
+	14, // [14:16] is the sub-list for method output_type
+	12, // [12:14] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
@@ -1148,6 +1166,7 @@ func file_protocol_protocol_proto_init() {
 		(*ExecutorControlMessage_Hello)(nil),
 		(*ExecutorControlMessage_Heartbeat)(nil),
 		(*ExecutorControlMessage_Error)(nil),
+		(*ExecutorControlMessage_Resources)(nil),
 	}
 	file_protocol_protocol_proto_msgTypes[5].OneofWrappers = []any{}
 	file_protocol_protocol_proto_msgTypes[7].OneofWrappers = []any{

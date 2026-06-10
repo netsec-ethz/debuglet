@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package wasm
 
 import (
 	"testing"
@@ -44,7 +44,7 @@ func panicSafeCall(fn func()) (panicked bool) {
 func TestGetResultNilInstancePanicsOrErrors(t *testing.T) {
 	var gotErr error
 	panicked := panicSafeCall(func() {
-		_, gotErr = getResult(nil, 4)
+		_, gotErr = GetResult(nil, 4)
 	})
 	if !panicked && gotErr == nil {
 		t.Error("expected either a panic or an error for nil instance")
@@ -56,7 +56,7 @@ func TestGetResultNilInstancePanicsOrErrors(t *testing.T) {
 func TestExtractResIdxNilInstancePanicsOrErrors(t *testing.T) {
 	var gotErr error
 	panicked := panicSafeCall(func() {
-		_, gotErr = extractResIdx(nil)
+		_, gotErr = ExtractResIdx(nil)
 	})
 	if !panicked && gotErr == nil {
 		t.Error("expected either a panic or an error for nil instance")
@@ -68,7 +68,7 @@ func TestExtractResIdxNilInstancePanicsOrErrors(t *testing.T) {
 func TestExtractSliceNilInstancePanicsOrErrors(t *testing.T) {
 	var gotErr error
 	panicked := panicSafeCall(func() {
-		_, gotErr = extractSlice(nil, "some_buffer", 0, 16)
+		_, gotErr = ExtractSlice(nil, "some_buffer", 0, 16)
 	})
 	if !panicked && gotErr == nil {
 		t.Error("expected either a panic or an error for nil instance")

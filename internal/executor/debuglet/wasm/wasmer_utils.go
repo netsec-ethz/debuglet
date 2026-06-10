@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package wasm
 
 import (
 	"encoding/binary"
@@ -27,11 +27,11 @@ const (
 
 // Extracts first len bytes from the result buffer and returns them.
 // Takes as input a wasm instance object and the number of bytes to read.
-func getResult(instance *wasmer.Instance, len int32) ([]byte, error) {
+func GetResult(instance *wasmer.Instance, len int32) ([]byte, error) {
 	if len > MAX_SLICE_LENGTH {
 		len = MAX_SLICE_LENGTH
 	}
-	contents, err := extractSlice(instance, "result", 0, len)
+	contents, err := ExtractSlice(instance, "result", 0, len)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract result buffer: %w", err)
 	}
@@ -41,7 +41,7 @@ func getResult(instance *wasmer.Instance, len int32) ([]byte, error) {
 
 // Extracts the contents of the buffer with the given name from the wasm runtime,
 // starting at `start` and ending at `end` (excluded), and return them
-func extractSlice(instanceTarget *wasmer.Instance, name string, start, end int32) ([]byte, error) {
+func ExtractSlice(instanceTarget *wasmer.Instance, name string, start, end int32) ([]byte, error) {
 	numbersAddressBox, err := instanceTarget.Exports.GetGlobal(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve exported global (memory buffer is not correctly exported): %w", err)
@@ -66,7 +66,7 @@ func extractSlice(instanceTarget *wasmer.Instance, name string, start, end int32
 // Extracts the result length from "result_idx".
 // This is intended to be used if the debuglet hasn't returned a result length (because of a failure),
 // but we'd still like to recover results of work performed so far.
-func extractResIdx(instanceTarget *wasmer.Instance) ([]byte, error) {
+func ExtractResIdx(instanceTarget *wasmer.Instance) ([]byte, error) {
 	numbersAddressBox, err := instanceTarget.Exports.GetGlobal("result_idx")
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve exported global (memory buffer is not correctly exported): %w", err)

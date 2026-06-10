@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package socket
 
 import (
 	"context"
@@ -92,8 +92,8 @@ func (r *SocketRegistry) CloseAll() {
 // SCIONConn wraps a SCION/UDP connection and its associated PathSelector.
 // It replaces the former ScionDialWrapper.
 type SCIONConn struct {
-	conn     *pan.Conn
-	selector *PathSelector
+	Conn     *pan.Conn
+	Selector *PathSelector
 }
 
 // SCIONConnRegistry manages lazily-dialled SCION connections keyed by
@@ -143,7 +143,9 @@ func (r *SCIONConnRegistry) GetOrDial(
 	}
 
 	if pktTagger != nil {
-		if sc, ok := conn.(interface{ SyscallConn() (syscall.RawConn, error) }); ok {
+		if sc, ok := conn.(interface {
+			SyscallConn() (syscall.RawConn, error)
+		}); ok {
 			rawConn, err := sc.SyscallConn()
 			if err == nil {
 				rawConn.Control(func(fd uintptr) {
@@ -153,7 +155,7 @@ func (r *SCIONConnRegistry) GetOrDial(
 		}
 	}
 
-	sc := &SCIONConn{conn: &conn, selector: selector}
+	sc := &SCIONConn{Conn: &conn, Selector: selector}
 	r.conns[addrIdx] = sc
 	return sc, nil
 }
@@ -163,8 +165,8 @@ func (r *SCIONConnRegistry) CloseAll() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, sc := range r.conns {
-		if sc != nil && sc.conn != nil {
-			_ = (*sc.conn).Close()
+		if sc != nil && sc.Conn != nil {
+			_ = (*sc.Conn).Close()
 			r.conns[i] = nil
 		}
 	}

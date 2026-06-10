@@ -20,10 +20,11 @@
 // Go function names use camelCase with a "host" prefix. The WASM-visible
 // import key strings (used in importObject.Register) are left unchanged so
 // that existing WASM modules do not need recompilation.
-package engine
+package wasm
 
 import (
 	"crypto/tls"
+	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/legacy/executor/resource"
 	"debuglet/pkg/tagger"
 	"fmt"
@@ -41,31 +42,28 @@ import (
 // Context / timing
 // =============================================================================
 
-// hostWaitStart verifies the execution context is still active.
+// HostWaitStart verifies the execution context is still active.
 // WASM key: "wait_start"
-func hostWaitStart(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
+func HostWaitStart(env *HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 	return []wasmer.Value{}, nil
 }
 
-// hostGetTimestamp returns the current wall-clock time as a Unix nanosecond timestamp.
+// HostGetTimestamp returns the current wall-clock time as a Unix nanosecond timestamp.
 // WASM key: "get_timestamp"
-func hostGetTimestamp(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
+func HostGetTimestamp(env *HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 	return []wasmer.Value{wasmer.NewI64(time.Now().UnixNano())}, nil
 }
 
-// hostWaitUntil blocks until the given Unix nanosecond timestamp, or until the
+// HostWaitUntil blocks until the given Unix nanosecond timestamp, or until the
 // context is cancelled.
 // WASM key: "wait_until"
-func hostWaitUntil(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
+func HostWaitUntil(env *HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -79,11 +77,10 @@ func hostWaitUntil(environment interface{}, args []wasmer.Value) ([]wasmer.Value
 	return []wasmer.Value{}, nil
 }
 
-// hostSleep blocks for the given Unix nanosecond amount of time, or until the
+// HostSleep blocks for the given Unix nanosecond amount of time, or until the
 // context is cancelled.
 // WASM key: "sleep"
-func hostSleep(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
+func HostSleep(env *HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -100,33 +97,32 @@ func hostSleep(environment interface{}, args []wasmer.Value) ([]wasmer.Value, er
 // Generic socket API
 // =============================================================================
 
-// hostConnect dials a IP/UDP/TCP(+TLS) connection to addresses[args[0]] and registers
+// HostConnect dials a IP/UDP/TCP(+TLS) connection to addresses[args[0]] and registers
 // it in the SocketRegistry. Returns the socket handle as I32.
 // WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
-func hostConnect(
-	socketType SocketType,
-	environment interface{},
+func HostConnect(
+	socketType socket.SocketType,
+	env *HostEnvironment,
 	args []wasmer.Value,
 	addresses []string,
 	sugar *zap.SugaredLogger,
-	registry ISocketRegistry,
+	registry socket.ISocketRegistry,
 	tlsCfg *tls.Config,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
 	var network string
 	switch socketType {
-	case SocketTypeTLS:
+	case socket.SocketTypeTLS:
 		network = "tcp"
-	case SocketTypeICMP4:
+	case socket.SocketTypeICMP4:
 		network = "ip4:icmp"
-	case SocketTypeTCP:
+	case socket.SocketTypeTCP:
 		network = "tcp"
-	case SocketTypeUDP:
+	case socket.SocketTypeUDP:
 		network = "udp"
 	default:
 		return nil, fmt.Errorf("connect: unknown SocketType %d", socketType)
@@ -149,7 +145,7 @@ func hostConnect(
 		}
 	}
 
-	if socketType == SocketTypeTLS {
+	if socketType == socket.SocketTypeTLS {
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
 	} else {
 		conn, err = dialer.DialContext(env.ctx, network, addr)
@@ -159,23 +155,22 @@ func hostConnect(
 		return []wasmer.Value{wasmer.NewI32(-1)}, nil
 	}
 
-	socket := NewGenericSocket(conn, socketType)
+	socket := socket.NewGenericSocket(conn, socketType)
 	handle := registry.Add(socket)
 	env.handleToAddr[handle] = addr
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
-// hostReceiveData reads up to args[1] bytes from the socket at args[0] into
+// HostReceiveData reads up to args[1] bytes from the socket at args[0] into
 // the buffer at pointer args[2]. Returns the number of bytes read as I32.
 // WASM key: "receive_tcp_data", "receive_ip_data"
-func hostReceiveData(
-	environment interface{},
+func HostReceiveData(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
-	registry ISocketRegistry,
+	registry socket.ISocketRegistry,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -207,17 +202,16 @@ func hostReceiveData(
 	return []wasmer.Value{wasmer.NewI32(int32(n))}, nil
 }
 
-// hostSendData writes args[1] bytes starting at offset args[2] from the WASM
+// HostSendData writes args[1] bytes starting at offset args[2] from the WASM
 // tcp_send_buffer to the socket at args[0].
 // WASM key: "send_tcp_data", "send_icmp4_data"
-func hostSendData(
-	environment interface{},
+func HostSendData(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
-	registry ISocketRegistry,
+	registry socket.ISocketRegistry,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -240,10 +234,6 @@ func hostSendData(
 	data := memory.Data()
 	message := data[ptr : ptr+size]
 
-	if err := ratelimit(env, resource.TransferOut, sockID, size, sugar); err != nil {
-		return nil, err
-	}
-
 	sugar.Debugw("hostSendData: sending tcp message", "message", string(message))
 
 	if _, err = sock.Write(message); err != nil {
@@ -253,15 +243,14 @@ func hostSendData(
 	return []wasmer.Value{}, nil
 }
 
-// hostClose closes the socket at handle args[0].
+// HostClose closes the socket at handle args[0].
 // WASM key: "close_tcp", "close_ip"
-func hostClose(
-	environment interface{},
+func HostClose(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
-	registry ISocketRegistry,
+	registry socket.ISocketRegistry,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -277,17 +266,16 @@ func hostClose(
 // TCP socket API
 // =============================================================================
 
-// hostAcceptTCP accepts one incoming TCP connection on the server and registers
+// HostAcceptTCP accepts one incoming TCP connection on the server and registers
 // it in the SocketRegistry. Returns the socket handle as I32.
 // WASM key: "accept_tcp"
-func hostAcceptTCP(
-	environment interface{},
+func HostAcceptTCP(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	tcpServer *net.TCPListener,
 	sugar *zap.SugaredLogger,
-	registry ISocketRegistry,
+	registry socket.ISocketRegistry,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -298,7 +286,7 @@ func hostAcceptTCP(
 		return nil, fmt.Errorf("accept_tcp: %w", err)
 	}
 
-	handle := registry.Add(NewGenericSocket(conn, SocketTypeTCP))
+	handle := registry.Add(socket.NewGenericSocket(conn, socket.SocketTypeTCP))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
@@ -308,17 +296,16 @@ func hostAcceptTCP(
 //            "send_ip_data", "close_ip"
 // =============================================================================
 
-// hostAcceptIP accepts one incoming IP connection on the server and registers
+// HostAcceptIP accepts one incoming IP connection on the server and registers
 // it in the SocketRegistry. Returns the socket handle as I32.
 // WASM key: "accept_ip"
-func hostAcceptIP(
-	environment interface{},
+func HostAcceptIP(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	ipServer net.Listener,
 	sugar *zap.SugaredLogger,
-	registry ISocketRegistry,
+	registry socket.ISocketRegistry,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -334,7 +321,7 @@ func hostAcceptIP(
 		return nil, fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn)
 	}
 
-	handle := registry.Add(NewGenericSocket(ipConn, SocketTypeICMP4))
+	handle := registry.Add(socket.NewGenericSocket(ipConn, socket.SocketTypeICMP4))
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
@@ -343,15 +330,14 @@ func hostAcceptIP(
 // WASM keys: "send_udp_packet", "receive_udp_packet", "answer_udp_packet"
 // =============================================================================
 
-func hostSendUDPPacket(
-	environment interface{},
+func HostSendUDPPacket(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	udpAddresses []*net.UDPAddr,
 	instance *wasmer.Instance,
 	udpServer *net.PacketConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -359,7 +345,7 @@ func hostSendUDPPacket(
 	dst := udpAddresses[args[0].I32()]
 	sugar.Debugw("hostSendUDPPacket sending", "dst", dst)
 
-	contents, err := extractSlice(instance, "udp_send_buffer", 0, args[1].I32())
+	contents, err := ExtractSlice(instance, "udp_send_buffer", 0, args[1].I32())
 	if err != nil {
 		sugar.Warnw("hostSendUDPPacket: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("send_udp_packet: failed to extract udp_send_buffer: %w", err)
@@ -372,20 +358,19 @@ func hostSendUDPPacket(
 	return []wasmer.Value{wasmer.NewI64(time.Now().UnixNano())}, nil
 }
 
-func hostReceiveUDPPacket(
-	environment interface{},
+func HostReceiveUDPPacket(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	lastReceived *net.Addr,
 	instance *wasmer.Instance,
 	udpServer *net.PacketConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	buf, err := extractSlice(instance, "udp_receive_buffer", 0, 1024)
+	buf, err := ExtractSlice(instance, "udp_receive_buffer", 0, 1024)
 	if err != nil {
 		sugar.Warnw("hostReceiveUDPPacket: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("receive_udp_packet: failed to extract udp_receive_buffer: %w", err)
@@ -407,8 +392,8 @@ func hostReceiveUDPPacket(
 	return []wasmer.Value{wasmer.NewI32(int32(n)), wasmer.NewI64(time.Now().UnixNano())}, nil
 }
 
-func hostAnswerUDPPacket(
-	environment interface{},
+func HostAnswerUDPPacket(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	lastReceived *net.Addr,
@@ -416,12 +401,11 @@ func hostAnswerUDPPacket(
 	instance *wasmer.Instance,
 	udpServer *net.PacketConn,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	contents, err := extractSlice(instance, "udp_send_buffer", 0, args[1].I32())
+	contents, err := ExtractSlice(instance, "udp_send_buffer", 0, args[1].I32())
 	if err != nil {
 		sugar.Warnw("hostAnswerUDPPacket: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("answer_udp_packet: failed to extract udp_send_buffer: %w", err)
@@ -448,20 +432,19 @@ func hostAnswerUDPPacket(
 //            "scion_get_interface_details", "scion_select_path"
 // =============================================================================
 
-// hostSendSCIONUDPPacket dials (or reuses) a SCION connection to
+// HostSendSCIONUDPPacket dials (or reuses) a SCION connection to
 // addresses[args[0]] and writes args[1] bytes from udp_send_buffer.
 // Returns the send timestamp as I64.
 // WASM key: "send_scion_udp_packet"
-func hostSendSCIONUDPPacket(
-	environment interface{},
+func HostSendSCIONUDPPacket(
+	env *HostEnvironment,
 	args []wasmer.Value,
-	scionConns *SCIONConnRegistry,
+	scionConns *socket.SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -478,7 +461,7 @@ func hostSendSCIONUDPPacket(
 		return nil, fmt.Errorf("send_scion_udp_packet: %w", err)
 	}
 
-	data, err := extractSlice(instance, "udp_send_buffer", 0, size)
+	data, err := ExtractSlice(instance, "udp_send_buffer", 0, size)
 	if err != nil {
 		sugar.Warnw("hostSendSCIONUDPPacket: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("send_scion_udp_packet: failed to extract udp_send_buffer: %w", err)
@@ -488,9 +471,9 @@ func hostSendSCIONUDPPacket(
 	if !ok {
 		return nil, fmt.Errorf("send_scion_udp_packet: debuglet has no deadline")
 	}
-	(*sc.conn).SetDeadline(deadline)
+	(*sc.Conn).SetDeadline(deadline)
 
-	if _, err = (*sc.conn).Write(data); err != nil {
+	if _, err = (*sc.Conn).Write(data); err != nil {
 		if ctxErr := checkContextExpired(env); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -500,12 +483,12 @@ func hostSendSCIONUDPPacket(
 	return []wasmer.Value{wasmer.NewI64(time.Now().UnixNano())}, nil
 }
 
-// hostReceiveSCIONServerUDPPacket reads one packet from the SCION server
+// HostReceiveSCIONServerUDPPacket reads one packet from the SCION server
 // listener into udp_receive_buffer. args[0] is the timeout in milliseconds.
 // Returns (bytesRead I32, timestamp I64). lastReceived is updated in place.
 // WASM key: "receive_scion_server_udp_packet"
-func hostReceiveSCIONServerUDPPacket(
-	environment interface{},
+func HostReceiveSCIONServerUDPPacket(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	lastReceived *net.Addr,
 	sugar *zap.SugaredLogger,
@@ -513,12 +496,11 @@ func hostReceiveSCIONServerUDPPacket(
 	scionServer *pan.ListenConn,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
-	buf, err := extractSlice(instance, "udp_receive_buffer", 0, 1024)
+	buf, err := ExtractSlice(instance, "udp_receive_buffer", 0, 1024)
 	if err != nil {
 		sugar.Warnw("hostReceiveSCIONServerUDPPacket: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("receive_scion_server_udp_packet: failed to extract udp_receive_buffer: %w", err)
@@ -548,27 +530,26 @@ func hostReceiveSCIONServerUDPPacket(
 	return []wasmer.Value{wasmer.NewI32(int32(n)), wasmer.NewI64(time.Now().UnixNano())}, nil
 }
 
-// hostAnswerSCIONUDPPacket replies to the last received SCION packet, or falls
+// HostAnswerSCIONUDPPacket replies to the last received SCION packet, or falls
 // back to dialling addresses[args[0]] if no packet has been received yet.
 // WASM key: "answer_scion_udp_packet"
-func hostAnswerSCIONUDPPacket(
-	environment interface{},
+func HostAnswerSCIONUDPPacket(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	lastReceived *net.Addr,
-	scionConns *SCIONConnRegistry,
+	scionConns *socket.SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 	scionServer *pan.ListenConn,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
 	size := args[1].I32()
-	data, err := extractSlice(instance, "udp_send_buffer", 0, size)
+	data, err := ExtractSlice(instance, "udp_send_buffer", 0, size)
 	if err != nil {
 		sugar.Warnw("hostAnswerSCIONUDPPacket: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("answer_scion_udp_packet: failed to extract udp_send_buffer: %w", err)
@@ -607,7 +588,7 @@ func hostAnswerSCIONUDPPacket(
 			sugar.Warnw("hostAnswerSCIONUDPPacket: dial failed", "err", err)
 			return nil, fmt.Errorf("answer_scion_udp_packet: %w", err)
 		}
-		if _, err = (*sc.conn).Write(data); err != nil {
+		if _, err = (*sc.Conn).Write(data); err != nil {
 			sugar.Warnw("hostAnswerSCIONUDPPacket: write failed", "err", err)
 			return []wasmer.Value{wasmer.NewI64(0)}, fmt.Errorf("answer_scion_udp_packet: write failed: %w", err)
 		}
@@ -615,18 +596,17 @@ func hostAnswerSCIONUDPPacket(
 	return []wasmer.Value{wasmer.NewI64(time.Now().UnixNano())}, nil
 }
 
-// hostSCIONAvailablePaths returns the number of available SCION paths to
+// HostSCIONAvailablePaths returns the number of available SCION paths to
 // addresses[args[0]].
 // WASM key: "scion_available_paths"
-func hostSCIONAvailablePaths(
-	environment interface{},
+func HostSCIONAvailablePaths(
+	env *HostEnvironment,
 	args []wasmer.Value,
-	scionConns *SCIONConnRegistry,
+	scionConns *socket.SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -640,21 +620,20 @@ func hostSCIONAvailablePaths(
 		return nil, fmt.Errorf("scion_available_paths: %w", err)
 	}
 
-	return []wasmer.Value{wasmer.NewI32(int32(len(sc.selector.Paths())))}, nil
+	return []wasmer.Value{wasmer.NewI32(int32(len(sc.Selector.Paths())))}, nil
 }
 
-// hostSCIONPathLength returns the hop count of path at index args[1] for
+// HostSCIONPathLength returns the hop count of path at index args[1] for
 // the connection to addresses[args[0]].
 // WASM key: "scion_path_length"
-func hostSCIONPathLength(
-	environment interface{},
+func HostSCIONPathLength(
+	env *HostEnvironment,
 	args []wasmer.Value,
-	scionConns *SCIONConnRegistry,
+	scionConns *socket.SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -669,23 +648,22 @@ func hostSCIONPathLength(
 	}
 
 	pathIdx := args[1].I32()
-	paths := sc.selector.Paths()
+	paths := sc.Selector.Paths()
 	hops := len(paths[pathIdx].Metadata.Interfaces) / 2
 	return []wasmer.Value{wasmer.NewI32(int32(hops))}, nil
 }
 
-// hostSCIONGetInterfaceDetails returns the IA and IfID of interface args[2]
+// HostSCIONGetInterfaceDetails returns the IA and IfID of interface args[2]
 // on path args[1] for the connection to addresses[args[0]].
 // WASM key: "scion_get_interface_details"
-func hostSCIONGetInterfaceDetails(
-	environment interface{},
+func HostSCIONGetInterfaceDetails(
+	env *HostEnvironment,
 	args []wasmer.Value,
-	scionConns *SCIONConnRegistry,
+	scionConns *socket.SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -701,7 +679,7 @@ func hostSCIONGetInterfaceDetails(
 
 	pathIdx := int(args[1].I32())
 	ifIdx := int(args[2].I32())
-	paths := sc.selector.Paths()
+	paths := sc.Selector.Paths()
 
 	sugar.Debugw("hostSCIONGetInterfaceDetails", "path", pathIdx, "interface", ifIdx)
 
@@ -716,18 +694,17 @@ func hostSCIONGetInterfaceDetails(
 	}, nil
 }
 
-// hostSCIONSelectPath forces the path selector for addresses[args[0]] to use
+// HostSCIONSelectPath forces the path selector for addresses[args[0]] to use
 // path index args[1].
 // WASM key: "scion_select_path"
-func hostSCIONSelectPath(
-	environment interface{},
+func HostSCIONSelectPath(
+	env *HostEnvironment,
 	args []wasmer.Value,
-	scionConns *SCIONConnRegistry,
+	scionConns *socket.SCIONConnRegistry,
 	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -743,8 +720,8 @@ func hostSCIONSelectPath(
 
 	pathIdx := int(args[1].I32())
 	sugar.Debugw("hostSCIONSelectPath: forcing path", "index", pathIdx)
-	sc.selector.ForcePath(pathIdx)
-	sugar.Debugw("hostSCIONSelectPath: path selected", "path", sc.selector.Path())
+	sc.Selector.ForcePath(pathIdx)
+	sugar.Debugw("hostSCIONSelectPath: path selected", "path", sc.Selector.Path())
 	return []wasmer.Value{}, nil
 }
 
@@ -755,20 +732,19 @@ func hostSCIONSelectPath(
 //            "write_i32x", "write_i64x", "write_delta_timestamp"
 // =============================================================================
 
-// hostReadWriteBuffer is a shared helper that reads the write_buffer global
+// HostReadWriteBuffer is a shared helper that reads the write_buffer global
 // from WASM memory. It is not exported to WASM.
-func hostReadWriteBuffer(
-	environment interface{},
+func HostReadWriteBuffer(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]byte, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 	size := args[0].I32()
-	data, err := extractSlice(instance, "write_buffer", 0, size)
+	data, err := ExtractSlice(instance, "write_buffer", 0, size)
 	if err != nil {
 		sugar.Warnw("hostReadWriteBuffer: failed to extract buffer", "err", err)
 		return nil, fmt.Errorf("write: failed to extract write_buffer: %w", err)
@@ -776,15 +752,15 @@ func hostReadWriteBuffer(
 	return data, nil
 }
 
-// hostWriteString prints a UTF-8 string followed by a newline.
+// HostWriteString prints a UTF-8 string followed by a newline.
 // WASM key: "write"
-func hostWriteString(
-	environment interface{},
+func HostWriteString(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	data, err := hostReadWriteBuffer(environment, args, sugar, instance)
+	data, err := HostReadWriteBuffer(env, args, sugar, instance)
 	if err != nil {
 		return nil, err
 	}
@@ -793,15 +769,15 @@ func hostWriteString(
 	return []wasmer.Value{}, nil
 }
 
-// hostWriteStringNoEOL prints a UTF-8 string without a trailing newline.
+// HostWriteStringNoEOL prints a UTF-8 string without a trailing newline.
 // WASM key: "write_noeol"
-func hostWriteStringNoEOL(
-	environment interface{},
+func HostWriteStringNoEOL(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	data, err := hostReadWriteBuffer(environment, args, sugar, instance)
+	data, err := HostReadWriteBuffer(env, args, sugar, instance)
 	if err != nil {
 		return nil, err
 	}
@@ -810,15 +786,14 @@ func hostWriteStringNoEOL(
 	return []wasmer.Value{}, nil
 }
 
-// hostWriteI32 prints an int32 in decimal.
+// HostWriteI32 prints an int32 in decimal.
 // WASM key: "write_i32"
-func hostWriteI32(
-	environment interface{},
+func HostWriteI32(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -828,15 +803,14 @@ func hostWriteI32(
 	return []wasmer.Value{}, nil
 }
 
-// hostWriteI64 prints an int64 in decimal.
+// HostWriteI64 prints an int64 in decimal.
 // WASM key: "write_i64"
-func hostWriteI64(
-	environment interface{},
+func HostWriteI64(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -846,15 +820,14 @@ func hostWriteI64(
 	return []wasmer.Value{}, nil
 }
 
-// hostWriteI32Hex prints an int32 in hexadecimal.
+// HostWriteI32Hex prints an int32 in hexadecimal.
 // WASM key: "write_i32x"
-func hostWriteI32Hex(
-	environment interface{},
+func HostWriteI32Hex(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -864,15 +837,14 @@ func hostWriteI32Hex(
 	return []wasmer.Value{}, nil
 }
 
-// hostWriteI64Hex prints an int64 in hexadecimal.
+// HostWriteI64Hex prints an int64 in hexadecimal.
 // WASM key: "write_i64x"
-func hostWriteI64Hex(
-	environment interface{},
+func HostWriteI64Hex(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -882,14 +854,13 @@ func hostWriteI64Hex(
 	return []wasmer.Value{}, nil
 }
 
-// hostWriteDeltaTimestamp prints a nanosecond duration in human-readable form.
+// HostWriteDeltaTimestamp prints a nanosecond duration in human-readable form.
 // WASM key: "write_delta_timestamp"
-func hostWriteDeltaTimestamp(
-	environment interface{},
+func HostWriteDeltaTimestamp(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
@@ -905,21 +876,20 @@ func hostWriteDeltaTimestamp(
 // WASM key: "dump_result"
 // =============================================================================
 
-// hostDumpResult writes the WASM result buffer to a timestamped file.
+// HostDumpResult writes the WASM result buffer to a timestamped file.
 // WASM key: "dump_result"
-func hostDumpResult(
-	environment interface{},
+func HostDumpResult(
+	env *HostEnvironment,
 	args []wasmer.Value,
 	sugar *zap.SugaredLogger,
 	instance *wasmer.Instance,
 ) ([]wasmer.Value, error) {
-	env := environment.(*HostEnvironment)
 	if err := checkContextExpired(env); err != nil {
 		return nil, err
 	}
 
 	size := args[0].I32()
-	data, err := extractSlice(instance, "result", 0, size)
+	data, err := ExtractSlice(instance, "result", 0, size)
 	if err != nil {
 		sugar.Warnw("hostDumpResult: failed to extract result", "err", err)
 		return nil, fmt.Errorf("dump_result: failed to extract result: %w", err)

@@ -18,7 +18,7 @@ type Executor struct {
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
-	// until the debuglet is to be started. It will call OnStart
+	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
 	scheduler scheduler.Scheduler
 	running   map[string]*rpc.DebugletClient
@@ -82,6 +82,10 @@ func (e *Executor) hello() error {
 		TeslaAnchorKey:       e.teslaSchedule.Anchor(),
 	}
 	return e.control.SendHello(h)
+}
+
+func (e *Executor) setResources(capacity int64) error {
+	return e.control.SetResources(capacity)
 }
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context) {

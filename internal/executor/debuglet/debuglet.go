@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package debuglet
 
 import (
 	"context"
@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"debuglet/internal/executor/bpf"
+	"debuglet/internal/executor/debuglet/socket"
+	"debuglet/internal/executor/debuglet/wasm"
 	"debuglet/internal/executor/platform"
 	"debuglet/pkg/tagger"
 	"debuglet/pkg/tesla"
@@ -47,36 +49,6 @@ const (
 	scionConnCapacity = 16
 )
 
-// hostFunction is the function signature expected by wasmer's import mechanism.
-type hostFunction func(environment interface{}, args []wasmer.Value) ([]wasmer.Value, error)
-
-// HostEnvironment carries the execution context for the current debuglet
-// session. It is passed by value to each host function.
-type HostEnvironment struct {
-	ctx          context.Context
-	sessionID    string
-	handleToAddr map[int32]string
-}
-
-// checkContextExpired returns a descriptive error if the HostEnvironment's
-// context has been cancelled or has exceeded its deadline.
-func checkContextExpired(env *HostEnvironment) error {
-	if env == nil {
-		return nil
-	}
-	select {
-	case <-env.ctx.Done():
-	default:
-		return nil
-	}
-	switch err := env.ctx.Err(); err {
-	case context.DeadlineExceeded:
-		return fmt.Errorf("debuglet exceeded maximum allowed runtime")
-	default:
-		return fmt.Errorf("debuglet context cancelled: %w", err)
-	}
-}
-
 // Debuglet is the engine that loads, initialises, and runs a single WASM
 // debuglet module. One Debuglet instance corresponds to one session.
 type Debuglet struct {
@@ -98,7 +70,7 @@ type Debuglet struct {
 	addresses []string
 
 	started bool
-	hostEnv *HostEnvironment
+	hostEnv *wasm.HostEnvironment
 
 	createdAt time.Time
 	mu        sync.Mutex
@@ -110,7 +82,7 @@ type Debuglet struct {
 
 // NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
 // Engine and Store.
-func NewDebuglet(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule, measurementID []byte) *Debuglet {
+func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *Debuglet {
 	eng := wasmer.NewEngine()
 
 	var pktTagger tagger.TaggerInterface
@@ -120,13 +92,13 @@ func NewDebuglet(logger *zap.Logger, debugletID string, schedule *tesla.KeySched
 			iface = "eth0"
 		}
 		// Try to initialize eBPF tagger.
-		if bt, err := bpf.NewBPFTagger(iface, schedule, measurementID); err == nil {
+		if bt, err := bpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
 			pktTagger = bt
 		} else {
 			fmt.Printf("bpf: failed to initialize BPF tagger on %s: %v. Falling back to Go tagger.\n", iface, err)
 			// Fallback to lo if eth0 failed and we are local
 			if iface == "eth0" {
-				if bt, err := bpf.NewBPFTagger("lo", schedule, measurementID); err == nil {
+				if bt, err := bpf.NewBPFTagger("lo", schedule, []byte(debugletID)); err == nil {
 					pktTagger = bt
 					fmt.Printf("bpf: successfully fell back to lo\n")
 				}
@@ -135,10 +107,10 @@ func NewDebuglet(logger *zap.Logger, debugletID string, schedule *tesla.KeySched
 
 		if pktTagger == nil {
 			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
-			pktTagger = tagger.New(schedule, measurementID)
+			pktTagger = tagger.New(schedule, []byte(debugletID))
 		}
 	} else {
-		pktTagger = tagger.New(schedule, measurementID)
+		pktTagger = tagger.New(schedule, []byte(debugletID))
 	}
 
 	return &Debuglet{
@@ -148,10 +120,7 @@ func NewDebuglet(logger *zap.Logger, debugletID string, schedule *tesla.KeySched
 		createdAt: time.Now(),
 		stdoutCh:  make(chan []byte, 1024),
 		pktTagger: pktTagger,
-		hostEnv: &HostEnvironment{
-			sessionID:    debugletID,
-			handleToAddr: make(map[int32]string),
-		},
+		hostEnv:   wasm.NewHostEnvironment(debugletID),
 	}
 }
 
@@ -188,9 +157,6 @@ func (d *Debuglet) GetSCIONAddr() string {
 // reserved for future use.
 func (d *Debuglet) startServers(ctx context.Context) error {
 	d.logger.Debugw("startServers: starting")
-
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
 
 	// -- Placeholder for future UDP server --
 	// udpServer, err := net.ListenPacket("udp", ":0")
@@ -254,8 +220,8 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	}
 
 	// Per-session state shared across host function calls.
-	scionConns := NewSCIONConnRegistry(scionConnCapacity)
-	socketRegistry := &SocketRegistry{}
+	scionConns := socket.NewSCIONConnRegistry(scionConnCapacity)
+	socketRegistry := &socket.SocketRegistry{}
 	var lastReceived net.Addr
 
 	d.logger.Debug("registering host functions for WASM")
@@ -270,21 +236,10 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	return nil
 }
 
-// wrapHostFn wraps a hostFunction with the session's HostEnvironment and
-// converts it into a *wasmer.Function ready for registration.
-func (d *Debuglet) wrapHostFn(input, output []*wasmer.ValueType, fn hostFunction) *wasmer.Function {
-	return wasmer.NewFunctionWithEnvironment(
-		d.store,
-		wasmer.NewFunctionType(input, output),
-		d.hostEnv,
-		fn,
-	)
-}
-
 // registerHostFunctions populates the importObject with all host functions
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
-func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scionConns *SCIONConnRegistry, sockets *SocketRegistry, lastReceived *net.Addr) {
+func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scionConns *socket.SCIONConnRegistry, sockets *socket.SocketRegistry, lastReceived *net.Addr) {
 	i32 := wasmer.I32
 	i64 := wasmer.I64
 	in := wasmer.NewValueTypes
@@ -292,171 +247,177 @@ func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scio
 
 	importObject.Register("env", map[string]wasmer.IntoExtern{
 		// ---- Context / timing ----
-		"wait_start": d.wrapHostFn(in(), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+		"wait_start": d.hostEnv.WrapHostFn(d.store, in(), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
 				d.markStarted()
-				return hostWaitStart(env, args)
+				return wasm.HostWaitStart(env, args)
 			},
 		),
 
-		"get_timestamp": d.wrapHostFn(in(), out(i64),
-			hostGetTimestamp,
+		"get_timestamp": d.hostEnv.WrapHostFn(d.store, in(), out(i64),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostGetTimestamp(env, args)
+			},
 		),
 
-		"wait_until": d.wrapHostFn(in(i64), out(),
-			hostWaitUntil,
+		"wait_until": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWaitUntil(env, args)
+			},
 		),
 
-		"sleep": d.wrapHostFn(in(i64), out(),
-			hostSleep,
+		"sleep": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSleep(env, args)
+			},
 		),
 
 		// ---- TCP socket API ----
-		"connect_tcp": d.wrapHostFn(in(i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
+		"connect_tcp": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostConnect(socket.SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
 			},
 		),
 
-		"connect_tls": d.wrapHostFn(in(i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
+		"connect_tls": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostConnect(socket.SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
 			},
 		),
 
-		"accept_tcp": d.wrapHostFn(in(), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostAcceptTCP(env, args, d.tcpServer, d.logger, sockets)
+		"accept_tcp": d.hostEnv.WrapHostFn(d.store, in(), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostAcceptTCP(env, args, d.tcpServer, d.logger, sockets)
 			},
 		),
 
-		"receive_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
+		"receive_tcp_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
-		"send_tcp_data": d.wrapHostFn(in(i32, i32, i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
+		"send_tcp_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
-		"close_tcp": d.wrapHostFn(in(i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostClose(env, args, d.logger, sockets)
+		"close_tcp": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostClose(env, args, d.logger, sockets)
 			},
 		),
 
 		// ---- IP socket API ----
-		"connect_icmp4": d.wrapHostFn(in(i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostConnect(SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
+		"connect_icmp4": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostConnect(socket.SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
 			},
 		),
 
-		"accept_icmp4": d.wrapHostFn(in(), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostAcceptIP(env, args, d.ipServer, d.logger, sockets)
+		"accept_icmp4": d.hostEnv.WrapHostFn(d.store, in(), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostAcceptIP(env, args, d.ipServer, d.logger, sockets)
 			},
 		),
 
-		"receive_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
+		"receive_icmp4_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
-		"send_icmp4_data": d.wrapHostFn(in(i32, i32, i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendData(env, args, d.logger, sockets, d.wasmerInstance)
+		"send_icmp4_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSendData(env, args, d.logger, sockets, d.wasmerInstance)
 			},
 		),
 
-		"close_icmp4": d.wrapHostFn(in(i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostClose(env, args, d.logger, sockets)
+		"close_icmp4": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostClose(env, args, d.logger, sockets)
 			},
 		),
 
 		// ---- SCION-UDP API ----
-		"send_scion_udp_packet": d.wrapHostFn(in(i32, i32), out(i64),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSendSCIONUDPPacket(env, args, scionConns, d.addresses, d.logger, d.wasmerInstance, d.pktTagger)
+		"send_scion_udp_packet": d.hostEnv.WrapHostFn(d.store, in(i32, i32), out(i64),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSendSCIONUDPPacket(env, args, scionConns, d.addresses, d.logger, d.wasmerInstance, d.pktTagger)
 			},
 		),
 
-		"receive_scion_server_udp_packet": d.wrapHostFn(in(i32), out(i32, i64),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
+		"receive_scion_server_udp_packet": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32, i64),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
 				d.markStarted()
-				return hostReceiveSCIONServerUDPPacket(env, args, lastReceived, d.logger, d.wasmerInstance, &d.scionServer, d.pktTagger)
+				return wasm.HostReceiveSCIONServerUDPPacket(env, args, lastReceived, d.logger, d.wasmerInstance, &d.scionServer, d.pktTagger)
 			},
 		),
 
-		"scion_available_paths": d.wrapHostFn(in(i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONAvailablePaths(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
+		"scion_available_paths": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSCIONAvailablePaths(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
-		"scion_path_length": d.wrapHostFn(in(i32, i32), out(i32),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONPathLength(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
+		"scion_path_length": d.hostEnv.WrapHostFn(d.store, in(i32, i32), out(i32),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSCIONPathLength(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
-		"scion_get_interface_details": d.wrapHostFn(in(i32, i32, i32), out(i64, i64),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONGetInterfaceDetails(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
+		"scion_get_interface_details": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(i64, i64),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSCIONGetInterfaceDetails(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
-		"scion_select_path": d.wrapHostFn(in(i32, i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostSCIONSelectPath(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
+		"scion_select_path": d.hostEnv.WrapHostFn(d.store, in(i32, i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostSCIONSelectPath(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
 			},
 		),
 
 		// ---- Debug write API ----
-		"write": d.wrapHostFn(in(i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteString(env, args, d.logger, d.wasmerInstance)
+		"write": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteString(env, args, d.logger, d.wasmerInstance)
 			},
 		),
 
-		"write_noeol": d.wrapHostFn(in(i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteStringNoEOL(env, args, d.logger, d.wasmerInstance)
+		"write_noeol": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteStringNoEOL(env, args, d.logger, d.wasmerInstance)
 			},
 		),
 
-		"write_i32": d.wrapHostFn(in(i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteI32(env, args, d.logger, d.wasmerInstance)
+		"write_i32": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteI32(env, args, d.logger, d.wasmerInstance)
 			},
 		),
 
-		"write_i64": d.wrapHostFn(in(i64), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteI64(env, args, d.logger, d.wasmerInstance)
+		"write_i64": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteI64(env, args, d.logger, d.wasmerInstance)
 			},
 		),
 
-		"write_i32x": d.wrapHostFn(in(i32), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteI32Hex(env, args, d.logger, d.wasmerInstance)
+		"write_i32x": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteI32Hex(env, args, d.logger, d.wasmerInstance)
 			},
 		),
 
-		"write_i64x": d.wrapHostFn(in(i64), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteI64Hex(env, args, d.logger, d.wasmerInstance)
+		"write_i64x": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteI64Hex(env, args, d.logger, d.wasmerInstance)
 			},
 		),
 
-		"write_delta_timestamp": d.wrapHostFn(in(i64), out(),
-			func(env interface{}, args []wasmer.Value) ([]wasmer.Value, error) {
-				return hostWriteDeltaTimestamp(env, args, d.logger)
+		"write_delta_timestamp": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
+			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
+				return wasm.HostWriteDeltaTimestamp(env, args, d.logger)
 			},
 		),
 	})
@@ -497,7 +458,7 @@ func (d *Debuglet) Close() {
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
 // back through StdoutChan, and returns the result bytes written to the WASM
 // result buffer.
-func (d *Debuglet) Run() ([]byte, error) {
+func (d *Debuglet) Run(ctx context.Context) ([]byte, error) {
 	instance := d.wasmerInstance
 
 	// Optional initialization
@@ -515,9 +476,7 @@ func (d *Debuglet) Run() ([]byte, error) {
 		return nil, fmt.Errorf("run_debuglet is not correctly exported: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultExecTimeout)
-	defer cancel()
-	d.hostEnv.ctx = ctx
+	d.hostEnv.SetContext(ctx)
 
 	done := make(chan error, 1)
 	var result []byte
@@ -537,14 +496,14 @@ func (d *Debuglet) Run() ([]byte, error) {
 			return
 		}
 
-		resIdx, err := extractResIdx(instance)
+		resIdx, err := wasm.ExtractResIdx(instance)
 		if err != nil {
 			done <- fmt.Errorf("failed to retrieve result index: %w", err)
 			return
 		}
 
 		resultSize := int32(binary.LittleEndian.Uint32(resIdx))
-		result, err = getResult(instance, resultSize)
+		result, err = wasm.GetResult(instance, resultSize)
 		if err != nil {
 			d.logger.Warnw("Run: failed to retrieve result", "err", err)
 			done <- fmt.Errorf("failed to retrieve result: %w", err)

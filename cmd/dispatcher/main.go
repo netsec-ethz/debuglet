@@ -56,7 +56,7 @@ func main() {
 	defer logger.Sync()
 
 	disp := dispatcher.New(logger)
-	server := rpc.NewServer(logger, disp)
+	server := rpc.NewServer(logger, disp, disp)
 	disp.SetExecutorSender(server)
 	var wg sync.WaitGroup
 	wg.Add(2)
