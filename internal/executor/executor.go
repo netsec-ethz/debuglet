@@ -37,6 +37,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		logger:        l,
 		cfg:           *cfg,
 		scheduler:     s,
+		running:       make(map[string]*rpc.DebugletClient),
 	}
 
 	s.RegisterOnStart(executor.OnStart)
@@ -85,7 +86,7 @@ func (e *Executor) hello() error {
 }
 
 func (e *Executor) setResources(capacity int64) error {
-	return e.control.SetResources(capacity)
+	return e.control.SendSetResources(capacity)
 }
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context) {

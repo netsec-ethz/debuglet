@@ -16,7 +16,6 @@ package debuglet
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -75,8 +74,8 @@ type Debuglet struct {
 	createdAt time.Time
 	mu        sync.Mutex
 
-	// stdoutCh buffers WASI stdout/stderr chunks while the debuglet runs.
-	stdoutCh chan []byte
+	// outputCh buffers WASI stdout/stderr chunks while the debuglet runs.
+	outputCh chan []byte
 	closed   bool
 }
 
@@ -118,16 +117,16 @@ func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *De
 		engine:    eng,
 		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
-		stdoutCh:  make(chan []byte, 1024),
+		outputCh:  make(chan []byte, 1024),
 		pktTagger: pktTagger,
 		hostEnv:   wasm.NewHostEnvironment(debugletID),
 	}
 }
 
-// StdoutChan returns the channel on which WASI stdout/stderr bytes are
+// OutputChan returns the channel on which WASI stdout/stderr bytes are
 // published while the debuglet executes.
-func (d *Debuglet) StdoutChan() <-chan []byte {
-	return d.stdoutCh
+func (d *Debuglet) OutputChan() <-chan []byte {
+	return d.outputCh
 }
 
 // Init starts the network servers and compiles and instantiates the WASM
@@ -450,7 +449,7 @@ func (d *Debuglet) Close() {
 	}
 
 	if !d.closed {
-		close(d.stdoutCh)
+		close(d.outputCh)
 		d.closed = true
 	}
 }
@@ -458,7 +457,7 @@ func (d *Debuglet) Close() {
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
 // back through StdoutChan, and returns the result bytes written to the WASM
 // result buffer.
-func (d *Debuglet) Run(ctx context.Context) ([]byte, error) {
+func (d *Debuglet) Run(ctx context.Context) error {
 	instance := d.wasmerInstance
 
 	// Optional initialization
@@ -466,20 +465,19 @@ func (d *Debuglet) Run(ctx context.Context) ([]byte, error) {
 	if err == nil {
 		if _, initErr := initFunc(); initErr != nil {
 			d.logger.Warnw("Run: initialization error", "err", initErr)
-			return nil, fmt.Errorf("failed to initialize Go runtime: %w", initErr)
+			return fmt.Errorf("failed to initialize Go runtime: %w", initErr)
 		}
 	}
 
 	runFunc, err := instance.Exports.GetFunction("run_debuglet")
 	if err != nil {
 		d.logger.Warnw("Run: 'run_debuglet' not exported", "err", err)
-		return nil, fmt.Errorf("run_debuglet is not correctly exported: %w", err)
+		return fmt.Errorf("run_debuglet is not correctly exported: %w", err)
 	}
 
 	d.hostEnv.SetContext(ctx)
 
 	done := make(chan error, 1)
-	var result []byte
 
 	go func() {
 		defer func() {
@@ -496,19 +494,6 @@ func (d *Debuglet) Run(ctx context.Context) ([]byte, error) {
 			return
 		}
 
-		resIdx, err := wasm.ExtractResIdx(instance)
-		if err != nil {
-			done <- fmt.Errorf("failed to retrieve result index: %w", err)
-			return
-		}
-
-		resultSize := int32(binary.LittleEndian.Uint32(resIdx))
-		result, err = wasm.GetResult(instance, resultSize)
-		if err != nil {
-			d.logger.Warnw("Run: failed to retrieve result", "err", err)
-			done <- fmt.Errorf("failed to retrieve result: %w", err)
-			return
-		}
 		done <- nil
 	}()
 
@@ -531,7 +516,7 @@ StreamLoop:
 			d.flushWASIOutput()
 		}
 	}
-	return result, retErr
+	return retErr
 }
 
 // markStarted records that the debuglet has begun active execution.
@@ -543,7 +528,7 @@ func (d *Debuglet) markStarted() {
 	}
 }
 
-// flushWASIOutput drains the WASI stdout buffer and forwards it to stdoutCh.
+// flushWASIOutput drains the WASI stdout buffer and forwards it to outputCh.
 // ReadStdout is called while the mutex is held so that a concurrent Close()
 // cannot free the underlying C memory between the nil-check and the read.
 func (d *Debuglet) flushWASIOutput() {
@@ -555,6 +540,6 @@ func (d *Debuglet) flushWASIOutput() {
 	buf := d.wasiEnv.ReadStdout()
 	d.mu.Unlock()
 	if len(buf) > 0 {
-		d.stdoutCh <- buf
+		d.outputCh <- buf
 	}
 }

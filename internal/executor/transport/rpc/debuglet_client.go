@@ -19,10 +19,11 @@ type DebugletClient struct {
 
 func NewDebugletClient(l *zap.Logger, client pb.DispatcherServiceClient, debuglet Spec, executorID string) *DebugletClient {
 	return &DebugletClient{
-		client:     client,
-		logger:     l,
-		debuglet:   debuglet,
-		executorID: executorID,
+		client:      client,
+		logger:      l,
+		debuglet:    debuglet,
+		executorID:  executorID,
+		streamReady: make(chan struct{}),
 	}
 }
 func (d *DebugletClient) Ready() <-chan struct{} {
@@ -54,6 +55,7 @@ func (d *DebugletClient) Listen(ctx context.Context) error {
 }
 
 func (d *DebugletClient) SendSetState(state pb.RunState) error {
+	d.logger.Debug("Sending debuglet state", zap.String("debugletID", d.debuglet.DebugletID), zap.String("state", state.String()))
 	return d.stream.Send(&pb.ExecutorDebugletMessage{
 		Msg: &pb.ExecutorDebugletMessage_State{
 			State: &pb.DebugletState{
@@ -66,6 +68,7 @@ func (d *DebugletClient) SendSetState(state pb.RunState) error {
 }
 
 func (d *DebugletClient) SendOutput(output []byte) error {
+	d.logger.Debug("Sending debuglet output", zap.String("debugletID", d.debuglet.DebugletID), zap.Int("outputSize", len(output)))
 	return d.stream.Send(&pb.ExecutorDebugletMessage{
 		Msg: &pb.ExecutorDebugletMessage_Output{
 			Output: &pb.DebugletOutput{
@@ -77,6 +80,7 @@ func (d *DebugletClient) SendOutput(output []byte) error {
 }
 
 func (d *DebugletClient) SendExit(exitCode int32, err error) error {
+	d.logger.Debug("Sending debuglet exit", zap.String("debugletID", d.debuglet.DebugletID), zap.Int32("exitCode", exitCode), zap.Error(err))
 	var errMsg *string
 	if err != nil {
 		tmp := err.Error()

@@ -25,9 +25,8 @@ import (
 // newHostEnv is a convenience helper that wraps a context in a HostEnvironment.
 func newHostEnv(ctx context.Context) *HostEnvironment {
 	return &HostEnvironment{
-		ctx:          ctx,
-		sessionID:    "session-1",
-		handleToAddr: make(map[int32]string),
+		ctx:       ctx,
+		sessionID: "session-1",
 	}
 }
 

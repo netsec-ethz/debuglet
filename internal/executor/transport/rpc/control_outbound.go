@@ -78,7 +78,7 @@ func (c *ControlClient) SendError(debugletID *string, err error) error {
 	)
 }
 
-func (c *ControlClient) SetResources(capacity int64) error {
+func (c *ControlClient) SendSetResources(capacity int64) error {
 	c.logger.Debug("Sending 'resources'", zap.Int64("capacity", capacity))
 	return c.Send(&pb.ExecutorControlMessage{
 		Msg: &pb.ExecutorControlMessage_Resources{

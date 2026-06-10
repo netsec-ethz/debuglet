@@ -63,6 +63,9 @@ func createEchoPacket(id uint16, seq uint16, size int) []byte {
 
 func ping(id uint16, seq uint16) (time.Duration, error) {
 	connID := connect_icmp4(0)
+	if connID == -1 {
+		return 0, errors.New("failed to setup socket")
+	}
 	defer close_icmp4(connID)
 
 	echo := createEchoPacket(id, seq, 64)

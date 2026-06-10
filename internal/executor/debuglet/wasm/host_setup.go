@@ -10,15 +10,13 @@ import (
 // HostEnvironment carries the execution context for the current debuglet
 // session. It is passed by value to each host function.
 type HostEnvironment struct {
-	ctx          context.Context
-	sessionID    string
-	handleToAddr map[int32]string
+	ctx       context.Context
+	sessionID string
 }
 
 func NewHostEnvironment(debugletID string) *HostEnvironment {
 	return &HostEnvironment{
-		sessionID:    debugletID,
-		handleToAddr: make(map[int32]string),
+		sessionID: debugletID,
 	}
 }
 

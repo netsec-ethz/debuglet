@@ -25,7 +25,6 @@ package wasm
 import (
 	"crypto/tls"
 	"debuglet/internal/executor/debuglet/socket"
-	"debuglet/internal/legacy/executor/resource"
 	"debuglet/pkg/tagger"
 	"fmt"
 	"net"
@@ -157,7 +156,7 @@ func HostConnect(
 
 	socket := socket.NewGenericSocket(conn, socketType)
 	handle := registry.Add(socket)
-	env.handleToAddr[handle] = addr
+
 	return []wasmer.Value{wasmer.NewI32(handle)}, nil
 }
 
@@ -223,7 +222,7 @@ func HostSendData(
 		return nil, fmt.Errorf("send_data: %w", err)
 	}
 
-	size := min(args[1].I32(), int32(resource.RatelimitBurst))
+	size := args[1].I32()
 	ptr := args[2].I32()
 
 	memory, err := instance.Exports.GetMemory("memory")

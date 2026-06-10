@@ -110,7 +110,7 @@ func grpcToRunState(r pb.RunState) dispatcher.DebugletRunState {
 }
 
 func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer) error {
-	var executorID string
+	var debugletID string
 	ctx := stream.Context()
 	var err error = nil
 
@@ -124,8 +124,7 @@ func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer
 		if err != nil {
 			st := status.Convert(err)
 			if st.Code() == codes.Canceled || ctx.Err() != nil {
-				s.coHandler.HandleDisconnect(ctx, executorID)
-				s.logger.Info("Executor disconnected (context canceled)", zap.String("executor_id", executorID))
+				s.logger.Info("Debuglet disconnected (context canceled)", zap.String("debugletID", debugletID))
 				break
 			}
 			s.logger.Error("ControlStream error", zap.Error(err))
@@ -134,6 +133,7 @@ func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer
 
 		switch msg := in.GetMsg().(type) {
 		case *pb.ExecutorDebugletMessage_State:
+			debugletID = msg.State.GetDebugletId()
 			s.deHandler.HandleState(ctx, msg.State.GetDebugletId(), msg.State.GetExecutorId(), grpcToRunState(msg.State.GetState()))
 		case *pb.ExecutorDebugletMessage_Output:
 			s.deHandler.HandleOutput(ctx, msg.Output.GetDebugletId(), msg.Output.GetOutput())

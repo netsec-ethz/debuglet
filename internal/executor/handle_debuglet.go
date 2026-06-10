@@ -39,14 +39,14 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 	err := deb.Init(subCtx, spec.Wasm, spec.Policy.Addresses)
 	cancelInit()
 	if err != nil {
+		deb.Close()
 		var zapError zap.Field
 		if ctx.Err() == nil {
-			// cancel the function context if it hasn't been cancelled yet
-			cancel(err)
 			zapError = zap.Error(err)
 		} else {
 			zapError = zap.Error(context.Cause(ctx))
 		}
+		cancel(err)
 		e.logger.Error("Failed to initialize debuglet", zap.String("debugletID", spec.DebugletID), zapError)
 		return
 	}
@@ -56,25 +56,34 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 		e.logger.Error("Failed to set state to 'started'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 	}
 
+	outputDone := make(chan struct{})
+	go func() {
+		defer close(outputDone)
+		for output := range deb.OutputChan() {
+			client.SendOutput(output)
+		}
+	}()
+
 	subCtx, cancelRun := context.WithTimeout(ctx, spec.Policy.Timeout)
-	// TODO: remove the result from debuglet.Run() as it might not be required (can simply use Output)
-	_, err = deb.Run(subCtx)
+	err = deb.Run(subCtx)
+	cancelRun()
+	deb.Close()
+
 	// TODO: determine how to differentiate between wasm code errors and errors when trying to start up a debuglet
 	if err != nil {
 		var zapError zap.Field
 		if ctx.Err() == nil {
-			// cancel the function context if it hasn't been cancelled yet
-			cancel(err)
 			zapError = zap.Error(err)
 		} else {
 			zapError = zap.Error(context.Cause(ctx))
 		}
+		cancel(err)
 		e.logger.Error("Failed to run debuglet", zap.String("debugletID", spec.DebugletID), zapError)
 		return
 	}
-	cancelRun()
 
 	// ======== CLEANUP ========
+	<-outputDone
 	client.SendExit(0, nil)
 
 	// Close the debuglet grpc stream

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"sync"
+	"time"
 )
 
 var (
@@ -28,7 +29,7 @@ func main() {
 				"executor-1",
 				1000,
 				4096,
-				7000,
+				10*time.Second,
 				[]string{"google.com:80"},
 			)
 			log.Printf("added debuglets i=%d, len=%d\n", i, len(debugletIDs))
@@ -36,11 +37,8 @@ func main() {
 				log.Printf("\t%d. %s\n", j, m)
 			}
 
-			// start := user.ConnectMeasurement(debugletIDs)
-			// log.Printf("connected to measurement websocket ID=%s\n", debugletIDs)
-
-			// log.Printf("starting measurement ID=%s\n", debugletIDs)
-			// start(context.TODO())
+			time.Sleep(time.Second)
+			user.ReadOutput(debugletIDs[0])
 
 			wg.Done()
 		}(i)

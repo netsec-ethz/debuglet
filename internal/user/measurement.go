@@ -1,23 +1,22 @@
 package user
 
 import (
+	"bufio"
 	"bytes"
-	"context"
 	"debuglet/internal/dispatcher/transport/api"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
-
-	"github.com/gorilla/websocket"
+	"strings"
+	"time"
 )
 
 const baseURL = "localhost:9000"
 
-func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, floorBW, ceilBW, timeout int64, addresses []string) []string {
+func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, floorBW, ceilBW int64, timeout time.Duration, addresses []string) []string {
 	dat, err := os.ReadFile(wasmPath)
 	if err != nil {
 		panic(err)
@@ -32,7 +31,7 @@ func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, flo
 			Policy: api.DebugletPolicyRequest{
 				FloorBW:   floorBW,
 				CeilBW:    ceilBW,
-				TimeoutMS: timeout,
+				TimeoutMS: timeout.Milliseconds(),
 				Addresses: addresses,
 			},
 		})
@@ -63,36 +62,67 @@ func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, flo
 
 }
 
-func ConnectMeasurement(measurementID string) (start func(ctx context.Context)) {
-	url := fmt.Sprintf("ws://%s/measurements/%s/start", baseURL, measurementID)
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+func ReadOutput(debugletID string) {
+	client := &http.Client{
+		Timeout: 0,
+	}
+
+	url := fmt.Sprintf("http://%s/logs/%s", baseURL, debugletID)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		panic(err)
 	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
 
-	return func(ctx context.Context) {
-		defer conn.Close()
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
 
-		err := conn.WriteMessage(websocket.TextMessage, []byte("start"))
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		panic(fmt.Sprintf("unexpected status: %d, body: %s", resp.StatusCode, body))
+	}
+	reader := bufio.NewReader(resp.Body)
+	var event api.SSEEvent
+
+	for {
+		line, err := reader.ReadString('\n')
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			panic(err)
 		}
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
 
-		for {
-			messageType, p, err := conn.ReadMessage()
-			if err != nil {
-				log.Printf("read error or connection closed (ID=%s): %v\n", measurementID, err)
-				return
+		// Empty line signals end of an event
+		if line == "" {
+			if len(event.Data) != 0 {
+				handleEvent(event)
+				event = api.SSEEvent{}
 			}
-			switch messageType {
-			case websocket.TextMessage:
-				log.Printf("received text (ID=%s): %s\n", measurementID, string(p))
-			case websocket.CloseMessage:
-				log.Printf("server closed the connection ID=%s\n", measurementID)
-				return
-			default:
-				log.Println("got message:", messageType, p)
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "id:"):
+			event.ID = []byte(strings.TrimSpace(line[3:]))
+		case strings.HasPrefix(line, "event:"):
+			event.Event = []byte(strings.TrimSpace(line[6:]))
+		case strings.HasPrefix(line, "retry:"):
+			fmt.Sscanf(line[6:], "%d", &event.Retry)
+		case strings.HasPrefix(line, "data:"):
+			if len(event.Data) != 0 {
+				event.Data = append(event.Data, '\n')
 			}
+			event.Data = append(event.Data, strings.TrimSpace(line[5:])...)
 		}
 	}
+}
+
+func handleEvent(e api.SSEEvent) {
+	fmt.Printf("[%s] Event: %s\n  Data: %s\n", e.ID, e.Event, e.Data)
 }
