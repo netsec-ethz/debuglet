@@ -16,8 +16,7 @@ type logConn struct {
 }
 
 type debugletStore struct {
-	logs       []byte
-	executorID string
+	logs []byte
 }
 
 type Dispatcher struct {

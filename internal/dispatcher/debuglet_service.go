@@ -29,18 +29,11 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 		debugletIDS[i] = debugletID
 		d.executors[spec.ExecutorID].AppendDebugletID(debugletID)
 		g.Go(d.uploadToExecutor(subCtx, i, debugletID, spec))
-
-		d.mu.Lock()
-		d.debugletStores[debugletID] = &debugletStore{
-			executorID: spec.ExecutorID,
-			logs:       []byte{},
-		}
-		d.mu.Unlock()
 	}
 
 	if err := g.Wait(); err != nil {
-		for _, id := range debugletIDS {
-			if err := d.AbortDebuglet(ctx, id, "failed to batch upload all debuglets"); err != nil {
+		for i, id := range debugletIDS {
+			if err := d.AbortDebuglet(ctx, specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
 				d.logger.Error("Failed to abort debuglet: " + err.Error())
 			}
 		}
@@ -60,14 +53,8 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 	}
 }
 
-func (d *Dispatcher) AbortDebuglet(ctx context.Context, debugletID string, reason string) error {
-	d.mu.RLock()
-	store, exists := d.debugletStores[debugletID]
-	d.mu.RUnlock()
-	if !exists {
-		return fmt.Errorf("debuglet '%s' not found", debugletID)
-	}
-	if err := d.sender.AbortDebuglet(ctx, store.executorID, debugletID, reason); err != nil {
+func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error {
+	if err := d.sender.AbortDebuglet(ctx, executorID, debugletID, reason); err != nil {
 		return errors.New("failed to forward abort to executor")
 	}
 	return nil

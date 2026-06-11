@@ -23,6 +23,11 @@ type DebugletRequest struct {
 	Policy         DebugletPolicyRequest `json:"policy"`
 }
 
+type DebugletDeleteRequest struct {
+	DebugletID string `json:"debuglet_id"`
+	ExecutorID string `json:"executor_id"`
+}
+
 type ExecutorResponse struct {
 	ID       string `json:"id"`
 	Ready    bool   `json:"ready"`
@@ -53,7 +58,7 @@ type ExecutorTeslaResponse struct {
 	DisclosedKey      string `json:"disclosed_key"`       // base64-encoded k_τ, empty if none yet
 }
 
-func API2Spec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
+func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
 	if err != nil {
 		return dispatcher.DebugletSpec{}, errors.New("invalid wasm code")

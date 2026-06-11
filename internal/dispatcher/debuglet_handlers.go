@@ -23,6 +23,11 @@ type DispatcherDebugletHandler interface {
 }
 
 func (d *Dispatcher) HandleState(ctx context.Context, debugletID, executorID string, state DebugletRunState) error {
+	if state == RunStateInitializing {
+		d.mu.Lock()
+		d.debugletStores[debugletID] = &debugletStore{logs: []byte{}}
+		d.mu.Unlock()
+	}
 	d.logger.Debug("Received debuglet state update", zap.String("debugletID", debugletID), zap.String("executorID", executorID), zap.Int("state", state))
 	return nil
 }

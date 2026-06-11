@@ -9,7 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// PUT /submit
+// PUT /debuglet
 func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	var reqs []DebugletRequest
 	if err := c.Bind(&reqs); err != nil {
@@ -21,7 +21,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 
 	var specs []dispatcher.DebugletSpec
 	for i, req := range reqs {
-		spec, err := API2Spec(req)
+		spec, err := APIToSpec(req)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
@@ -35,7 +35,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	}
 }
 
-// GET /logs/:id
+// GET /debuglet/:id
 // Uses Server-Sent Events (SSE) to stream logs/results
 func (h *Handler) GetLogsWS(c echo.Context) error {
 	debugletID := c.Param("id")
@@ -87,10 +87,14 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 	}
 }
 
-// DELETE /debuglet/:id
+// DELETE /debuglet
 func (h *Handler) AbortDebuglet(c echo.Context) error {
-	debugletID := c.Param("id")
-	if err := h.dispatcher.AbortDebuglet(c.Request().Context(), debugletID, "cancelled via API"); err != nil {
+	var req DebugletDeleteRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
+	}
+
+	if err := h.dispatcher.AbortDebuglet(c.Request().Context(), req.ExecutorID, req.DebugletID, "cancelled via API"); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 	return c.NoContent(http.StatusNoContent)

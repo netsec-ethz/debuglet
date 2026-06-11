@@ -58,9 +58,18 @@ func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletReque
 	return ids
 }
 
-func AbortDebuglet(ID string) {
-	url := fmt.Sprintf("http://%s/debuglet/%s", baseURL, ID)
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
+func AbortDebuglet(ID, executorID string) {
+	var delete api.DebugletDeleteRequest = api.DebugletDeleteRequest{
+		DebugletID: ID,
+		ExecutorID: executorID,
+	}
+	data, err := json.Marshal(delete)
+	if err != nil {
+		panic(err)
+	}
+
+	url := fmt.Sprintf("http://%s/debuglet", baseURL)
+	req, err := http.NewRequest(http.MethodDelete, url, bytes.NewBuffer(data))
 	if err != nil {
 		panic(err)
 	}
@@ -73,18 +82,16 @@ func AbortDebuglet(ID string) {
 }
 
 func ReadOutput(debugletID string) error {
-	client := &http.Client{
-		Timeout: 0,
-	}
-
-	url := fmt.Sprintf("http://%s/logs/%s", baseURL, debugletID)
+	url := fmt.Sprintf("http://%s/debuglet/%s", baseURL, debugletID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Content-Type", "application/json")
 
+	client := &http.Client{Timeout: 0}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

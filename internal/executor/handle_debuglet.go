@@ -28,6 +28,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		if err2 := e.control.SendError(&spec.DebugletID, err); err2 != nil {
 			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
 		}
+		close(preRunLock)
 		e.mu.Unlock()
 		cancel(errors.New("not enough capacity for another debuglet"))
 		return
@@ -37,6 +38,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		client:    client,
 		cancelCtx: cancel,
 	}
+	close(preRunLock)
 	e.mu.Unlock()
 
 	defer func() {

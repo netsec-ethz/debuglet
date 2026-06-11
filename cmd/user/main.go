@@ -21,6 +21,8 @@ var (
 func main() {
 	flag.Parse()
 
+	execID := "executor-1"
+
 	wg := sync.WaitGroup{}
 	wg.Add(*measurementAmount * *debugletAmount)
 
@@ -30,7 +32,7 @@ func main() {
 			seconds := start.Unix()
 			log.Printf("creating measurement i=%d\n", i)
 			debugletIDs := user.CreateMeasurement(*wasmPath, *debugletAmount, api.DebugletRequest{
-				ExecutorID:     "executor-1",
+				ExecutorID:     execID,
 				StartTimestamp: &seconds,
 				Policy: api.DebugletPolicyRequest{
 					FloorBW:   1000,
@@ -48,7 +50,7 @@ func main() {
 				go func(ID string) {
 					if *abort {
 						time.Sleep(time.Second)
-						user.AbortDebuglet(ID)
+						user.AbortDebuglet(ID, execID)
 					} else {
 						errCount := 0
 						for {
@@ -56,8 +58,8 @@ func main() {
 							if err == nil {
 								break
 							}
-							fmt.Println(err)
 							errCount++
+							fmt.Printf("output err (i=%d): %v\n", errCount, err)
 							if errCount > 5 {
 								break
 							}
