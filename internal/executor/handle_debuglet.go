@@ -17,7 +17,7 @@ type RunningDebuglet struct {
 	cancelCtx func(error)
 }
 
-func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
+func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<- struct{}) {
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)

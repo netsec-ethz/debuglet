@@ -74,7 +74,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config: missing capacity")
 	}
 	if cfg.ExecutorID == "" {
-		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
+		return nil, fmt.Errorf("invalid config: missing executor_id")
 	}
 	if cfg.DispatcherAddr == "" {
 		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")

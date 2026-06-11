@@ -74,8 +74,13 @@ func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []b
 func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.connectedLogs[debugletID] = slices.DeleteFunc(d.connectedLogs[debugletID], func(lc logConn) bool {
-		close(lc.logs)
+	index := slices.IndexFunc(d.connectedLogs[debugletID], func(lc logConn) bool {
 		return seq == lc.seq
 	})
+	if index == -1 {
+		return
+	}
+	conn := d.connectedLogs[debugletID][index]
+	close(conn.logs)
+	d.connectedLogs[debugletID] = slices.Delete(d.connectedLogs[debugletID], index, index+1)
 }

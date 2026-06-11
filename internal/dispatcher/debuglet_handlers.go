@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 )
@@ -30,14 +31,18 @@ func (d *Dispatcher) HandleOutput(ctx context.Context, debugletID string, output
 	d.logger.Debug("Received debuglet output", zap.String("debugletID", debugletID), zap.Int("outputSize", len(output)))
 
 	d.mu.Lock()
-	store, _ := d.debugletStores[debugletID]
+	store, exists := d.debugletStores[debugletID]
+	if !exists {
+		d.mu.Unlock()
+		return fmt.Errorf("debuglet '%s' not found", debugletID)
+	}
 	store.logs = append(store.logs, output...)
 	d.mu.Unlock()
 
-	// NOTE: this lock might block for too long
 	d.mu.RLock()
-	defer d.mu.RUnlock()
-	for _, conn := range d.connectedLogs[debugletID] {
+	connections := d.connectedLogs[debugletID]
+	d.mu.RUnlock()
+	for _, conn := range connections {
 		conn.logs <- output
 	}
 	return nil

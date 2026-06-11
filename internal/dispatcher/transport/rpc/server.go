@@ -168,36 +168,51 @@ func grpcToRunState(r pb.RunState) dispatcher.DebugletRunState {
 func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer) error {
 	var debugletID string
 	ctx := stream.Context()
+	var handledExit bool
 
-	for {
-		in, err := stream.Recv()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			st := status.Convert(err)
-			if st.Code() == codes.Canceled || ctx.Err() != nil {
-				s.logger.Info("Debuglet disconnected (context canceled)", zap.String("debugletID", debugletID))
-			} else {
-				s.logger.Error("ControlStream error", zap.Error(err))
+	err := func() error {
+		for {
+			in, err := stream.Recv()
+			if err == io.EOF {
+				return nil
 			}
-			return err
-		}
+			if err != nil {
+				st := status.Convert(err)
+				if st.Code() == codes.Canceled || ctx.Err() != nil {
+					s.logger.Info("Debuglet disconnected (context canceled)", zap.String("debugletID", debugletID))
+				} else {
+					s.logger.Error("ControlStream error", zap.Error(err))
+				}
+				return err
+			}
 
-		switch msg := in.GetMsg().(type) {
-		case *pb.ExecutorDebugletMessage_State:
-			debugletID = msg.State.GetDebugletId()
-			s.deHandler.HandleState(ctx, msg.State.GetDebugletId(), msg.State.GetExecutorId(), grpcToRunState(msg.State.GetState()))
-		case *pb.ExecutorDebugletMessage_Output:
-			s.deHandler.HandleOutput(ctx, msg.Output.GetDebugletId(), msg.Output.GetOutput())
-		case *pb.ExecutorDebugletMessage_Exit:
-			var errMsg error
-			if e := msg.Exit.GetErrorMessage(); e != "" {
-				errMsg = errors.New(e)
+			switch msg := in.GetMsg().(type) {
+			case *pb.ExecutorDebugletMessage_State:
+				debugletID = msg.State.GetDebugletId()
+				s.deHandler.HandleState(ctx, msg.State.GetDebugletId(), msg.State.GetExecutorId(), grpcToRunState(msg.State.GetState()))
+			case *pb.ExecutorDebugletMessage_Output:
+				s.deHandler.HandleOutput(ctx, msg.Output.GetDebugletId(), msg.Output.GetOutput())
+			case *pb.ExecutorDebugletMessage_Exit:
+				var errMsg error
+				if e := msg.Exit.GetErrorMessage(); e != "" {
+					errMsg = errors.New(e)
+				}
+				debugletID = msg.Exit.GetDebugletId()
+				handledExit = true
+				s.deHandler.HandleExit(debugletID, msg.Exit.GetExitCode(), errMsg)
+			default:
+				s.logger.Warn("Unknown debuglet message")
 			}
-			s.deHandler.HandleExit(msg.Exit.GetDebugletId(), msg.Exit.GetExitCode(), errMsg)
-		default:
-			s.logger.Warn("Unknown debuglet message")
+		}
+	}()
+
+	if !handledExit && debugletID != "" {
+		if err == nil {
+			s.deHandler.HandleExit(debugletID, 0, nil)
+		} else {
+			s.deHandler.HandleExit(debugletID, -1, err)
 		}
 	}
+
+	return err
 }

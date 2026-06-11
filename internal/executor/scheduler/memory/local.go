@@ -10,7 +10,7 @@ import (
 )
 
 type MemoryStorage struct {
-	onStart func(context.Context, rpc.Spec)
+	onStart func(context.Context, rpc.Spec, chan<- struct{})
 
 	wakeup chan struct{}
 	mu     sync.RWMutex
@@ -43,7 +43,7 @@ func (m *MemoryStorage) Remove(debugletID string) bool {
 	return true
 }
 
-func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, rpc.Spec)) {
+func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, rpc.Spec, chan<- struct{})) {
 	m.onStart = onStart
 }
 
@@ -63,7 +63,9 @@ func (m *MemoryStorage) StartLoop(ctx context.Context) error {
 			if nextItem.StartTime == nil || time.Now().After(*nextItem.StartTime) {
 				m.tq.Pop()
 				m.mu.Unlock()
-				go m.onStart(ctx, *nextItem)
+				preRunLock := make(chan struct{}, 1)
+				go m.onStart(ctx, *nextItem, preRunLock)
+				<-preRunLock
 			} else {
 				// sleep until next debuglet should start
 				m.mu.Unlock()
