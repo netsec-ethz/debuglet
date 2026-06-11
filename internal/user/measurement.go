@@ -112,7 +112,7 @@ func ReadOutput(debugletID string) error {
 		// Empty line signals end of an event
 		if line == "" {
 			if len(event.Data) != 0 {
-				handleEvent(event)
+				handleEvent(debugletID, event)
 				event = api.SSEEvent{}
 			}
 			continue
@@ -134,6 +134,6 @@ func ReadOutput(debugletID string) error {
 	return nil
 }
 
-func handleEvent(e api.SSEEvent) {
-	fmt.Printf("[%s] Event: %s\n  Data: %s\n", e.ID, e.Event, e.Data)
+func handleEvent(debugletID string, e api.SSEEvent) {
+	fmt.Printf("[[%s]]: [%s] Event: %s - Data Len: %d\n", debugletID, e.ID, e.Event, len(e.Data))
 }

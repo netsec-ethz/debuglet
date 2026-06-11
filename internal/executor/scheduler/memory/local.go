@@ -21,15 +21,15 @@ var _ scheduler.Scheduler = (*MemoryStorage)(nil)
 
 func NewStorage() *MemoryStorage {
 	return &MemoryStorage{
-		wakeup: make(chan struct{}),
+		wakeup: make(chan struct{}, 32),
 		tq:     NewTimedQueue(),
 	}
 }
 
 func (m *MemoryStorage) Insert(u rpc.Spec) error {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.tq.Push(u)
-	m.mu.Unlock()
 	m.wakeup <- struct{}{}
 	return nil
 }

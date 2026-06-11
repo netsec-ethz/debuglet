@@ -4,6 +4,7 @@ import (
 	"debuglet/internal/dispatcher/transport/api"
 	"debuglet/internal/user"
 	"flag"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	wg := sync.WaitGroup{}
-	wg.Add(*measurementAmount)
+	wg.Add(*measurementAmount * *debugletAmount)
 
 	for i := range *measurementAmount {
 		go func(i int) {
@@ -43,20 +44,29 @@ func main() {
 				log.Printf("\t%d. %s\n", j, m)
 			}
 
-			if *abort {
-				time.Sleep(time.Second)
-				user.AbortDebuglet(debugletIDs[0])
-			} else {
-				for {
-					err := user.ReadOutput(debugletIDs[0])
-					if err == nil {
-						break
+			for _, ID := range debugletIDs {
+				go func(ID string) {
+					if *abort {
+						time.Sleep(time.Second)
+						user.AbortDebuglet(ID)
+					} else {
+						errCount := 0
+						for {
+							err := user.ReadOutput(ID)
+							if err == nil {
+								break
+							}
+							fmt.Println(err)
+							errCount++
+							if errCount > 5 {
+								break
+							}
+							time.Sleep(time.Second)
+						}
 					}
-					time.Sleep(time.Second)
-				}
+					wg.Done()
+				}(ID)
 			}
-
-			wg.Done()
 		}(i)
 	}
 

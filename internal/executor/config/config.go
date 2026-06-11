@@ -23,15 +23,15 @@ import (
 
 // Config represents the structure of executor.toml
 type Config struct {
-	ExecutorID     string `toml:"executor_id"`
-	Version        string `toml:"version"`
-	DispatcherAddr string `toml:"dispatcher_addr"`
-	LogLevel       string `toml:"log_level"`
-	Capacity       int64  `toml:"capacity"`
-	TeslaSeed      string `toml:"tesla_seed"`
-	TeslaDelay     int64  `toml:"tesla_delay"` // in seconds
-
-	Credentials CredentialConfig `toml:"credentials"`
+	ExecutorID     string           `toml:"executor_id"`
+	Version        string           `toml:"version"`
+	DispatcherAddr string           `toml:"dispatcher_addr"`
+	LogLevel       string           `toml:"log_level"`
+	Capacity       int64            `toml:"capacity"`
+	TeslaSeed      string           `toml:"tesla_seed"`
+	TeslaDelay     int64            `toml:"tesla_delay"` // in seconds
+	MaxDebuglets   int              `toml:"max_debuglets"`
+	Credentials    CredentialConfig `toml:"credentials"`
 }
 
 type CredentialConfig struct {
@@ -61,16 +61,22 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal toml: %w", err)
 	}
 
+	// defaults
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
+	}
+	if cfg.MaxDebuglets == 0 {
+		cfg.MaxDebuglets = 10
 	}
 
 	// Basic validation
 	if cfg.Capacity == 0 {
 		return nil, fmt.Errorf("invalid config: missing capacity")
-	} else if cfg.ExecutorID == "" {
+	}
+	if cfg.ExecutorID == "" {
 		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
-	} else if cfg.DispatcherAddr == "" {
+	}
+	if cfg.DispatcherAddr == "" {
 		return nil, fmt.Errorf("invalid config: missing dispatcher_addr")
 	}
 

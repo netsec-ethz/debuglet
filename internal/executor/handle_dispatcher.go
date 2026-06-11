@@ -9,10 +9,12 @@ import (
 )
 
 func (e *Executor) HandleUpload(upload rpc.Spec) {
+	// TODO: perform checks and throw error if can't submit
+
 	e.logger.Debug("Handling upload", zap.String("debugletID", upload.DebugletID))
 	if err := e.scheduler.Insert(upload); err != nil {
-		e.logger.Error("Failed to insert debuglet spec", zap.Error(err))
-		err = fmt.Errorf("failed to insert: %w", err)
+		e.logger.Error("Failed to schedule debuglet spec", zap.Error(err))
+		err = fmt.Errorf("failed to schedule: %w", err)
 		if err2 := e.control.SendError(&upload.DebugletID, err); err2 != nil {
 			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
 		}

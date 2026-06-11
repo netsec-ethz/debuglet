@@ -6,6 +6,7 @@ import (
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/protocol"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -21,6 +22,17 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 
 	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)
 	e.mu.Lock()
+
+	if len(e.running) >= e.cfg.MaxDebuglets {
+		err := fmt.Errorf("cannot add another debuglet (id=%s)", spec.DebugletID)
+		if err2 := e.control.SendError(&spec.DebugletID, err); err2 != nil {
+			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
+		}
+		e.mu.Unlock()
+		cancel(errors.New("not enough capacity for another debuglet"))
+		return
+	}
+
 	e.running[spec.DebugletID] = RunningDebuglet{
 		client:    client,
 		cancelCtx: cancel,
