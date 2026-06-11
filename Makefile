@@ -29,8 +29,8 @@ build: bpf
 dispatcher d:
 	@$(GO) run cmd/dispatcher/main.go -config local/configs/dispatcher.toml
 
-executor e: build
-	sudo -E ./$(EXECUTOR_BINARY) -config local/configs/executor.toml
+executor e:
+	sudo -E mise x -- go run cmd/executor/main.go -config local/configs/executor.toml
 
 wasm:
 	@if [ -z "$(SAMPLE_DIR)" ]; then echo "SAMPLE_DIR is required. Usage: make wasm SAMPLE_DIR=..."; exit 1; fi

@@ -9,7 +9,7 @@ import (
 type DispatcherControlHandler interface {
 	HandleHello(ctx context.Context, h Hello) error
 	HandleHeartbeat(ctx context.Context, hb Heartbeat) error
-	HandleDisconnect(ctx context.Context, executorID string)
+	HandleDisconnect(executorID string)
 	HandleError(ctx context.Context, debugletID *string, err error)
 	HandleResources(ctx context.Context, executorID string, capacity int64) error
 }
@@ -20,11 +20,10 @@ func (d *Dispatcher) HandleHello(ctx context.Context, h Hello) error {
 }
 
 func (d *Dispatcher) HandleHeartbeat(ctx context.Context, hb Heartbeat) error {
-	// TODO
-	return nil
+	return d.keystore.Store(hb.ExecutorID, hb.TeslaKeyEpoch, hb.TeslaKey)
 }
 
-func (d *Dispatcher) HandleDisconnect(ctx context.Context, executorID string) {
+func (d *Dispatcher) HandleDisconnect(executorID string) {
 	d.RemoveExecutor(executorID)
 }
 

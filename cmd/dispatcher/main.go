@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -56,7 +57,7 @@ func main() {
 	defer logger.Sync()
 
 	disp := dispatcher.New(logger)
-	server := rpc.NewServer(logger, disp, disp)
+	server := rpc.NewServer(logger, disp, disp, rpc.ServerOptions{ExecutorTimeout: time.Duration(cfg.ExecutorTimeout) * time.Second})
 	disp.SetExecutorSender(server)
 	var wg sync.WaitGroup
 	wg.Add(2)

@@ -21,6 +21,8 @@ make dispatcher # or make d
 
 #### Start a executor
 
+**NOTE:** Requires elevated permissions for handling packets at the kernel level (using ebpf).
+
 ```bash
 make executor # or make e
 ```
@@ -43,13 +45,15 @@ make proto
 
 Use the debuglet-dashboard to submit measurements.
 
+Or run the local go user client:
+
+```bash
+go run cmd/user/main.go -wasm local/wasm_samples/send_tcp/debuglet.wasm
+```
+
 ### Optional Requirements
 
 The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.
-
-#### ICMP
-
-For icmp to work, the executor has to be run as root.
 
 #### SCION
 
@@ -115,7 +119,7 @@ sequenceDiagram
     Executor->>Dispatcher: [ControlMessage] Resources (set bw capacity)
     end
     Executor->>Dispatcher: [ControlMessage] Heartbeat (repeats /60s)
-    
+
     rect rgba(255,0,0,0.3)
     Client->>Dispatcher: createUser <br/> (POST https /api/users)
     Dispatcher->>Client: UserId, AuthKey

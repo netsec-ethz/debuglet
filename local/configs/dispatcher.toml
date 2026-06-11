@@ -2,6 +2,7 @@ http_port = 9000
 grpc_port = 9001
 log_level = "debug"
 disable_tls = true
+executor_timeout = 60
 
 [tls]
 cert_file = "local/configs/dispatcher/cert"

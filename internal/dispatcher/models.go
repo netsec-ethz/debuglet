@@ -20,6 +20,7 @@ type Hello struct {
 }
 
 type Heartbeat struct {
+	ExecutorID    string
 	Timestamp     time.Time
 	TeslaKeyEpoch int64
 	TeslaKey      []byte

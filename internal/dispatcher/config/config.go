@@ -33,6 +33,8 @@ type DispatcherConfig struct {
 	LogLevel   string    `toml:"log_level"`
 	DisableTLS bool      `toml:"disable_tls"`
 	TLS        TLSConfig `toml:"tls"`
+	// Maximum amount of seconds between heartbeats
+	ExecutorTimeout int `toml:"executor_timeout"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it
