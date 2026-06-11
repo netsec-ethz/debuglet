@@ -11,30 +11,21 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 const baseURL = "localhost:9000"
 
-func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, floorBW, ceilBW int64, timeout time.Duration, addresses []string) []string {
+func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletRequest) []string {
 	dat, err := os.ReadFile(wasmPath)
 	if err != nil {
 		panic(err)
 	}
 	wasm := base64.StdEncoding.EncodeToString(dat)
+	spec.Wasm = wasm
 
 	var debuglets []api.DebugletRequest
 	for range numDebuglets {
-		debuglets = append(debuglets, api.DebugletRequest{
-			ExecutorID: executorID,
-			Wasm:       wasm,
-			Policy: api.DebugletPolicyRequest{
-				FloorBW:   floorBW,
-				CeilBW:    ceilBW,
-				TimeoutMS: timeout.Milliseconds(),
-				Addresses: addresses,
-			},
-		})
+		debuglets = append(debuglets, spec)
 	}
 
 	data, err := json.Marshal(debuglets)
@@ -42,8 +33,14 @@ func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, flo
 		panic(err)
 	}
 
-	url := fmt.Sprintf("http://%s/submit", baseURL)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
+	url := fmt.Sprintf("http://%s/debuglet", baseURL)
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(data))
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -59,10 +56,23 @@ func CreateMeasurement(wasmPath string, numDebuglets int, executorID string, flo
 		panic(err)
 	}
 	return ids
-
 }
 
-func ReadOutput(debugletID string) {
+func AbortDebuglet(ID string) {
+	url := fmt.Sprintf("http://%s/debuglet/%s", baseURL, ID)
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		panic(err)
+	}
+	client := http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Aborted '%s', got status=%d\n", ID, resp.StatusCode)
+}
+
+func ReadOutput(debugletID string) error {
 	client := &http.Client{
 		Timeout: 0,
 	}
@@ -70,20 +80,20 @@ func ReadOutput(debugletID string) {
 	url := fmt.Sprintf("http://%s/logs/%s", baseURL, debugletID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		panic(fmt.Sprintf("unexpected status: %d, body: %s", resp.StatusCode, body))
+		return fmt.Errorf("unexpected status: %d, body: %s", resp.StatusCode, body)
 	}
 	reader := bufio.NewReader(resp.Body)
 	var event api.SSEEvent
@@ -94,7 +104,7 @@ func ReadOutput(debugletID string) {
 			if err == io.EOF {
 				break
 			}
-			panic(err)
+			return err
 		}
 		line = strings.TrimSuffix(line, "\n")
 		line = strings.TrimSuffix(line, "\r")
@@ -121,6 +131,7 @@ func ReadOutput(debugletID string) {
 			event.Data = append(event.Data, strings.TrimSpace(line[5:])...)
 		}
 	}
+	return nil
 }
 
 func handleEvent(e api.SSEEvent) {

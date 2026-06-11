@@ -11,11 +11,27 @@ import (
 	"go.uber.org/zap"
 )
 
+type RunningDebuglet struct {
+	client    *rpc.DebugletClient
+	cancelCtx func(error)
+}
+
 func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)
-	e.running[spec.DebugletID] = client
+	e.mu.Lock()
+	e.running[spec.DebugletID] = RunningDebuglet{
+		client:    client,
+		cancelCtx: cancel,
+	}
+	e.mu.Unlock()
+
+	defer func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		delete(e.running, spec.DebugletID)
+	}()
 
 	go func() {
 		if err := client.Listen(ctx); err != nil {
@@ -48,12 +64,22 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 		}
 		cancel(err)
 		e.logger.Error("Failed to initialize debuglet", zap.String("debugletID", spec.DebugletID), zapError)
+		client.SendExit(1, err)
 		return
 	}
 
 	// ======== RUN/START ========
+	select {
+	case <-ctx.Done():
+		e.logger.Error("Debuglet context is done", zap.String("debugletID", spec.DebugletID), zap.Error(context.Cause(ctx)))
+		client.SendExit(1, context.Cause(ctx))
+		return
+	default:
+	}
 	if err := client.SendSetState(protocol.RunState_RUN_STATE_STARTED); err != nil {
 		e.logger.Error("Failed to set state to 'started'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		client.SendExit(1, err)
+		return
 	}
 
 	outputDone := make(chan struct{})
@@ -79,6 +105,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 		}
 		cancel(err)
 		e.logger.Error("Failed to run debuglet", zap.String("debugletID", spec.DebugletID), zapError)
+		client.SendExit(1, err)
 		return
 	}
 
@@ -88,7 +115,4 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec) {
 
 	// Close the debuglet grpc stream
 	cancel(errors.New("debuglet finished"))
-
-	// TODO: proper mutex for deleting/adding debuglet spec while handling aborts
-	delete(e.running, spec.DebugletID)
 }

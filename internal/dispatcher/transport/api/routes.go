@@ -21,8 +21,9 @@ func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
 
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// debuglet
-	e.POST("/submit", h.SubmitDebuglets)
+	e.PUT("/debuglet", h.SubmitDebuglets)
 	e.GET("/logs/:id", h.GetLogsWS)
+	e.DELETE("/debuglet/:id", h.AbortDebuglet)
 	// executor
 	e.GET("/executors", h.GetExecutors)
 	e.GET("/executors/by-ip", h.GetExecutorByIP)

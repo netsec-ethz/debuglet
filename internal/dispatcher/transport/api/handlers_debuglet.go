@@ -2,16 +2,14 @@ package api
 
 import (
 	"debuglet/internal/dispatcher"
-	"encoding/base64"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 )
 
-// POST /submit
+// PUT /submit
 func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	var reqs []DebugletRequest
 	if err := c.Bind(&reqs); err != nil {
@@ -23,31 +21,11 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 
 	var specs []dispatcher.DebugletSpec
 	for i, req := range reqs {
-		decoded, err := base64.StdEncoding.DecodeString(req.Wasm)
+		spec, err := API2Spec(req)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid wasm code (i=%d)", i))
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
-		if strings.TrimSpace(req.ExecutorID) == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("missing executor ID (i=%d)", i))
-		}
-
-		var startTime *time.Time
-		if st := req.StartTimestamp; st != nil {
-			tmp := time.Unix(*st, 0)
-			startTime = &tmp
-		}
-
-		specs = append(specs, dispatcher.DebugletSpec{
-			StartTime:  startTime,
-			ExecutorID: req.ExecutorID,
-			Wasm:       decoded,
-			Policy: dispatcher.DebugletPolicy{
-				FloorBW:   req.Policy.FloorBW,
-				CeilBW:    req.Policy.CeilBW,
-				Timeout:   time.Duration(req.Policy.TimeoutMS) * time.Millisecond,
-				Addresses: req.Policy.Addresses,
-			},
-		})
+		specs = append(specs, spec)
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
@@ -67,7 +45,7 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	outputCh := make(chan []byte)
+	outputCh := make(chan []byte, 1)
 	seqID, done, err := h.dispatcher.RegisterLogConnection(debugletID, outputCh)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
@@ -107,4 +85,13 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 			}
 		}
 	}
+}
+
+// DELETE /debuglet/:id
+func (h *Handler) AbortDebuglet(c echo.Context) error {
+	debugletID := c.Param("id")
+	if err := h.dispatcher.AbortDebuglet(c.Request().Context(), debugletID, "cancelled via API"); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }

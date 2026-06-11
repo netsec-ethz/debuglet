@@ -84,5 +84,6 @@ func (tq *TimedQueue) Remove(ID string) *rpc.Spec {
 	if !exists {
 		return nil
 	}
+	delete(tq.refs, ID)
 	return heap.Remove(tq.pq, it.index).(*item).upload
 }

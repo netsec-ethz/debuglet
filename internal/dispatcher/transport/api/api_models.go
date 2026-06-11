@@ -1,5 +1,13 @@
 package api
 
+import (
+	"debuglet/internal/dispatcher"
+	"encoding/base64"
+	"errors"
+	"strings"
+	"time"
+)
+
 type DebugletPolicyRequest struct {
 	FloorBW   int64    `json:"floor_bw"`
 	CeilBW    int64    `json:"ceil_bw"`
@@ -43,4 +51,32 @@ type ExecutorTeslaResponse struct {
 	DelaySec          int64  `json:"delay_sec"`           // epoch duration in seconds
 	DisclosedEpoch    int64  `json:"disclosed_epoch"`     // index of latest disclosed key
 	DisclosedKey      string `json:"disclosed_key"`       // base64-encoded k_τ, empty if none yet
+}
+
+func API2Spec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
+	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
+	if err != nil {
+		return dispatcher.DebugletSpec{}, errors.New("invalid wasm code")
+	}
+	if strings.TrimSpace(r.ExecutorID) == "" {
+		return dispatcher.DebugletSpec{}, errors.New("missing executor ID")
+	}
+
+	var startTime *time.Time
+	if st := r.StartTimestamp; st != nil {
+		tmp := time.Unix(*st, 0)
+		startTime = &tmp
+	}
+
+	return dispatcher.DebugletSpec{
+		StartTime:  startTime,
+		ExecutorID: r.ExecutorID,
+		Wasm:       decoded,
+		Policy: dispatcher.DebugletPolicy{
+			FloorBW:   r.Policy.FloorBW,
+			CeilBW:    r.Policy.CeilBW,
+			Timeout:   time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
+			Addresses: r.Policy.Addresses,
+		},
+	}, nil
 }

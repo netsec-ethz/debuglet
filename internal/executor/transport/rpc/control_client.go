@@ -7,6 +7,7 @@ import (
 	pb "debuglet/protocol"
 	"fmt"
 	"io"
+	"reflect"
 	"sync"
 	"time"
 
@@ -105,6 +106,8 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 			c.logger.Error("Error receiving", zap.Error(err))
 			return err
 		}
+
+		c.logger.Debug("Received control message", zap.String("messageType", reflect.TypeOf(msg.GetMsg()).String()))
 
 		switch m := msg.GetMsg().(type) {
 		case *pb.DispatcherControlMessage_Upload:

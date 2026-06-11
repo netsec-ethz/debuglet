@@ -31,7 +31,7 @@ type Server struct {
 	opts      ServerOptions
 }
 
-var _ dispatcher.ExecutorSender = (*Server)(nil)
+var _ dispatcher.ExecutorServer = (*Server)(nil)
 
 func NewServer(logger *zap.Logger, c dispatcher.DispatcherControlHandler, d dispatcher.DispatcherDebugletHandler, opts ServerOptions) *Server {
 	if opts.ExecutorTimeout <= 0 {
@@ -195,7 +195,7 @@ func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer
 			if e := msg.Exit.GetErrorMessage(); e != "" {
 				errMsg = errors.New(e)
 			}
-			s.deHandler.HandleExit(ctx, msg.Exit.GetDebugletId(), msg.Exit.GetExitCode(), errMsg)
+			s.deHandler.HandleExit(msg.Exit.GetDebugletId(), msg.Exit.GetExitCode(), errMsg)
 		default:
 			s.logger.Warn("Unknown debuglet message")
 		}

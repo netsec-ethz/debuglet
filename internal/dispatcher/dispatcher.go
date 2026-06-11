@@ -15,17 +15,22 @@ type logConn struct {
 	done chan struct{}
 }
 
+type debugletStore struct {
+	logs       []byte
+	executorID string
+}
+
 type Dispatcher struct {
 	executors    map[string]*RegisteredExecutor
 	ipToExecutor map[string]string
 	mu           sync.RWMutex
 	keystore     *tag.KeyStore
-	sender       ExecutorSender
+	sender       ExecutorServer
 	logger       *zap.Logger
 
 	// Naive storage of the full output of debuglets.
-	// debugletLogs allows for a user to get the full logs at a later point in time.
-	debugletLogs map[string][]byte
+	// debugletStores allows for a user to get the full logs at a later point in time.
+	debugletStores map[string]*debugletStore
 	// connectedLogs stores the users connected via websockets
 	connectedLogs map[string][]logConn
 	seq           int
@@ -36,16 +41,16 @@ var _ DispatcherDebugletHandler = (*Dispatcher)(nil)
 
 func New(l *zap.Logger) *Dispatcher {
 	return &Dispatcher{
-		executors:     make(map[string]*RegisteredExecutor),
-		ipToExecutor:  make(map[string]string),
-		keystore:      tag.NewKeyStore(),
-		logger:        l,
-		debugletLogs:  make(map[string][]byte),
-		connectedLogs: make(map[string][]logConn),
+		executors:      make(map[string]*RegisteredExecutor),
+		ipToExecutor:   make(map[string]string),
+		keystore:       tag.NewKeyStore(),
+		logger:         l,
+		debugletStores: make(map[string]*debugletStore),
+		connectedLogs:  make(map[string][]logConn),
 	}
 }
 
-func (d *Dispatcher) SetExecutorSender(s ExecutorSender) {
+func (d *Dispatcher) SetExecutorSender(s ExecutorServer) {
 	d.sender = s
 }
 
@@ -56,7 +61,7 @@ func (d *Dispatcher) GetKeyStore() *tag.KeyStore {
 func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []byte) (int, <-chan struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, exists := d.debugletLogs[debugletID]; !exists {
+	if _, exists := d.debugletStores[debugletID]; !exists {
 		return 0, nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
 	}
 

@@ -36,10 +36,10 @@ func (m *MemoryStorage) Insert(u rpc.Spec) error {
 
 func (m *MemoryStorage) Remove(debugletID string) bool {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if old := m.tq.Remove(debugletID); old == nil {
 		return false
 	}
-	m.mu.Unlock()
 	return true
 }
 

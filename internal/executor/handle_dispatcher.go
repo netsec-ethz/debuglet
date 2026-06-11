@@ -2,12 +2,14 @@ package executor
 
 import (
 	"debuglet/internal/executor/transport/rpc"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
 )
 
 func (e *Executor) HandleUpload(upload rpc.Spec) {
+	e.logger.Debug("Handling upload", zap.String("debugletID", upload.DebugletID))
 	if err := e.scheduler.Insert(upload); err != nil {
 		e.logger.Error("Failed to insert debuglet spec", zap.Error(err))
 		err = fmt.Errorf("failed to insert: %w", err)
@@ -25,8 +27,10 @@ func (e *Executor) HandleAbort(debugletID, reason string) {
 		return
 	}
 
-	// TODO: try to abort debuglet if it's still being executed, since at this point either:
-	// - OnStart has already been called
-	// - this is an unknown debugletID
-	// - (it's a race condition right after the debuglet has been removed from storage, but OnStart hasn't been called properly yet)
+	run, exists := e.running[debugletID]
+	if !exists {
+		e.logger.Error("Did not find debuglet when aborting. Probably due to a race condition between OnStart and Abort being called at the same time", zap.String("debugletID", debugletID))
+		return
+	}
+	run.cancelCtx(errors.New(reason))
 }

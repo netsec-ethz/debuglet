@@ -17,7 +17,7 @@ func (s *Server) UploadDebuglet(ctx context.Context, debugletID string, d dispat
 
 	var startTime *timestamppb.Timestamp
 	if d.StartTime != nil {
-		timestamppb.New(*d.StartTime)
+		startTime = timestamppb.New(*d.StartTime)
 	}
 
 	return stream.Send(ctx, &pb.DispatcherControlMessage{

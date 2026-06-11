@@ -7,6 +7,7 @@ import (
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tesla"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -21,7 +22,8 @@ type Executor struct {
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
 	scheduler scheduler.Scheduler
-	running   map[string]*rpc.DebugletClient
+	running   map[string]RunningDebuglet
+	mu        sync.RWMutex
 }
 
 var _ rpc.ExecutorControlHandler = (*Executor)(nil)
@@ -37,7 +39,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		logger:        l,
 		cfg:           *cfg,
 		scheduler:     s,
-		running:       make(map[string]*rpc.DebugletClient),
+		running:       make(map[string]RunningDebuglet),
 	}
 
 	s.RegisterOnStart(executor.OnStart)
