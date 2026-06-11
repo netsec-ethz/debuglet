@@ -2,6 +2,7 @@ package api
 
 import (
 	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -58,6 +59,13 @@ type ExecutorTeslaResponse struct {
 	DisclosedKey      string `json:"disclosed_key"`       // base64-encoded k_τ, empty if none yet
 }
 
+type DestinationLimitRequest struct {
+	Destination string `json:"destination"`
+	Limit       int64  `json:"limit"`
+}
+
+// ================ HELPERS ================
+
 func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
 	if err != nil {
@@ -78,8 +86,8 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 		ExecutorID: r.ExecutorID,
 		Wasm:       decoded,
 		Policy: dispatcher.DebugletPolicy{
-			FloorBW:   r.Policy.FloorBW,
-			CeilBW:    r.Policy.CeilBW,
+			FloorBW:   resource.Bitrate(r.Policy.FloorBW),
+			CeilBW:    resource.Bitrate(r.Policy.CeilBW),
 			Timeout:   time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
 			Addresses: r.Policy.Addresses,
 		},

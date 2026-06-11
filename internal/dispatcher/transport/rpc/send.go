@@ -26,9 +26,9 @@ func (s *Server) UploadDebuglet(ctx context.Context, debugletID string, d dispat
 				Id:        debugletID,
 				StartTime: startTime,
 				Wasm:      d.Wasm,
-				Policy: &pb.DebugletUploadSpec_Policy{
-					FloorBw:   d.Policy.FloorBW,
-					CeilBw:    d.Policy.CeilBW,
+				Policy: &pb.DebugletPolicy{
+					FloorBw:   int64(d.Policy.FloorBW),
+					CeilBw:    int64(d.Policy.CeilBW),
 					TimeoutMs: d.Policy.Timeout.Milliseconds(),
 					Addresses: d.Policy.Addresses,
 				},
@@ -48,6 +48,29 @@ func (s *Server) AbortDebuglet(ctx context.Context, executorID, debugletID, reas
 			Abort: &pb.AbortDebuglet{
 				DebugletId: debugletID,
 				Reason:     reason,
+			},
+		},
+	})
+}
+
+func (s *Server) DestinationUpdates(ctx context.Context, executorID string, updates []dispatcher.LimitUpdate) error {
+	stream, ok := s.registry.Get(executorID)
+	if !ok {
+		return fmt.Errorf("executor '%s' not found", executorID)
+	}
+
+	var limits []*pb.DestinationUpdates_DestinationLimit
+	for _, up := range updates {
+		limits = append(limits, &pb.DestinationUpdates_DestinationLimit{
+			Address:   up.Address,
+			BitsLimit: int64(up.Limit),
+		})
+	}
+
+	return stream.Send(ctx, &pb.DispatcherControlMessage{
+		Msg: &pb.DispatcherControlMessage_Updates{
+			Updates: &pb.DestinationUpdates{
+				Limits: limits,
 			},
 		},
 	})

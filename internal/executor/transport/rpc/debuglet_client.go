@@ -62,6 +62,12 @@ func (d *DebugletClient) SendSetState(state pb.RunState) error {
 				DebugletId: d.debuglet.DebugletID,
 				ExecutorId: d.executorID,
 				State:      state,
+				Policy: &pb.DebugletPolicy{
+					FloorBw:   d.debuglet.Policy.FloorBW,
+					CeilBw:    d.debuglet.Policy.CeilBW,
+					TimeoutMs: d.debuglet.Policy.Timeout.Milliseconds(),
+					Addresses: d.debuglet.Policy.Addresses,
+				},
 			},
 		},
 	})

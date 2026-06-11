@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/tag"
 	"fmt"
 	"slices"
@@ -16,7 +17,9 @@ type logConn struct {
 }
 
 type debugletStore struct {
-	logs []byte
+	logs       []byte
+	policy     DebugletPolicy
+	executorID string
 }
 
 type Dispatcher struct {
@@ -32,7 +35,9 @@ type Dispatcher struct {
 	debugletStores map[string]*debugletStore
 	// connectedLogs stores the users connected via websockets
 	connectedLogs map[string][]logConn
-	seq           int
+	seq           int // counter for log connection IDs
+
+	destinations *resource.DestinationsUsage
 }
 
 var _ DispatcherControlHandler = (*Dispatcher)(nil)
@@ -46,6 +51,7 @@ func New(l *zap.Logger) *Dispatcher {
 		logger:         l,
 		debugletStores: make(map[string]*debugletStore),
 		connectedLogs:  make(map[string][]logConn),
+		destinations:   resource.NewDestinations(resource.Gigabit),
 	}
 }
 
@@ -82,4 +88,10 @@ func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
 	conn := d.connectedLogs[debugletID][index]
 	close(conn.logs)
 	d.connectedLogs[debugletID] = slices.Delete(d.connectedLogs[debugletID], index, index+1)
+}
+
+func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.destinations.SetLimit(destination, limit)
 }

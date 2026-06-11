@@ -2,12 +2,14 @@ package dispatcher
 
 import (
 	"context"
+	"debuglet/internal/dispatcher/resource"
 	"time"
 )
 
 type ExecutorServer interface {
 	UploadDebuglet(ctx context.Context, debugletID string, d DebugletSpec) error
 	AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error
+	DestinationUpdates(ctx context.Context, executorID string, updates []LimitUpdate) error
 }
 
 type Hello struct {
@@ -34,8 +36,13 @@ type DebugletSpec struct {
 }
 
 type DebugletPolicy struct {
-	FloorBW   int64
-	CeilBW    int64
+	FloorBW   resource.Bitrate
+	CeilBW    resource.Bitrate
 	Timeout   time.Duration
 	Addresses []string
+}
+
+type LimitUpdate struct {
+	Address string
+	Limit   resource.Bitrate
 }

@@ -62,18 +62,19 @@ message ExecutorControlMessage {
 
 // ================ DISPATCHER -> EXECUTOR =====================
 
+message DebugletPolicy {
+  int64 floor_bw = 1; // min bits/s required
+  int64 ceil_bw = 2; // max bits/s it could use
+  int64 timeout_ms = 3; // timeout in ms
+  repeated string addresses = 4; // e.g., SCION or network endpoints
+}
+
 message DebugletUploadSpec {
   string id = 1;
   optional google.protobuf.Timestamp start_time = 2;
   bytes wasm = 3;
 
-  message Policy {
-    int64 floor_bw = 1; // min bits/s required
-    int64 ceil_bw = 2; // max bits/s it could use
-    int64 timeout_ms = 3; // timeout in ms
-    repeated string addresses = 4; // e.g., SCION or network endpoints
-  }
-  Policy policy = 5;
+  DebugletPolicy policy = 5;
 }
 
 message AbortDebuglet {
@@ -81,11 +82,21 @@ message AbortDebuglet {
   string reason = 2;
 }
 
+message DestinationUpdates {
+  repeated DestinationLimit limits = 1;
+
+  message DestinationLimit {
+    string address = 1;
+    int64 bits_limit = 2;
+  }
+}
+
 // Dispatcher -> Executor
 message DispatcherControlMessage {
   oneof msg {
     DebugletUploadSpec upload = 1;
     AbortDebuglet abort = 2;
+    DestinationUpdates updates = 3;
   }
 }
 
@@ -106,6 +117,7 @@ message DebugletState {
   string debuglet_id = 1;
   string executor_id = 2;
   RunState state = 3;
+  optional DebugletPolicy policy = 4;
 }
 
 message DebugletOutput {

@@ -23,10 +23,12 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// debuglet
 	e.PUT("/debuglet", h.SubmitDebuglets)
 	e.GET("/debuglet/:id", h.GetLogsWS)
-	e.DELETE("/debuglet", h.AbortDebuglet)
+	e.DELETE("/debuglet", h.DeleteDebuglet)
 	// executor
 	e.GET("/executors", h.GetExecutors)
 	e.GET("/executors/by-ip", h.GetExecutorByIP)
 	e.GET("/executors/:id/tesla", h.GetExecutorTesla)
+	// destination
+	e.PATCH("/destination", h.UpdateDestinationLimit)
 	// payment
 }

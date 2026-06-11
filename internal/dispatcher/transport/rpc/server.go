@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/resource"
 	pb "debuglet/protocol"
 )
 
@@ -165,6 +166,15 @@ func grpcToRunState(r pb.RunState) dispatcher.DebugletRunState {
 	}
 }
 
+func grpcToPolicy(r *pb.DebugletPolicy) dispatcher.DebugletPolicy {
+	return dispatcher.DebugletPolicy{
+		FloorBW:   resource.Bitrate(r.GetFloorBw()),
+		CeilBW:    resource.Bitrate(r.GetCeilBw()),
+		Addresses: r.GetAddresses(),
+		Timeout:   time.Duration(r.GetTimeoutMs()) * time.Millisecond,
+	}
+}
+
 func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer) error {
 	var debugletID string
 	ctx := stream.Context()
@@ -181,7 +191,7 @@ func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer
 				if st.Code() == codes.Canceled || ctx.Err() != nil {
 					s.logger.Info("Debuglet disconnected (context canceled)", zap.String("debugletID", debugletID))
 				} else {
-					s.logger.Error("ControlStream error", zap.Error(err))
+					s.logger.Error("Debuglet stream error", zap.Error(err))
 				}
 				return err
 			}
@@ -189,9 +199,16 @@ func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer
 			switch msg := in.GetMsg().(type) {
 			case *pb.ExecutorDebugletMessage_State:
 				debugletID = msg.State.GetDebugletId()
-				s.deHandler.HandleState(ctx, msg.State.GetDebugletId(), msg.State.GetExecutorId(), grpcToRunState(msg.State.GetState()))
+				err := s.deHandler.HandleState(ctx, msg.State.GetDebugletId(), msg.State.GetExecutorId(), grpcToRunState(msg.State.GetState()), grpcToPolicy(msg.State.GetPolicy()))
+				if err != nil {
+					// TODO: propagate error to executor/abort debuglet if the debuglet is rejected on initialization
+					s.logger.Error("Debuglet stream state error", zap.Error(err))
+				}
 			case *pb.ExecutorDebugletMessage_Output:
-				s.deHandler.HandleOutput(ctx, msg.Output.GetDebugletId(), msg.Output.GetOutput())
+				err := s.deHandler.HandleOutput(ctx, msg.Output.GetDebugletId(), msg.Output.GetOutput())
+				if err != nil {
+					s.logger.Error("Debuglet stream output error", zap.Error(err))
+				}
 			case *pb.ExecutorDebugletMessage_Exit:
 				var errMsg error
 				if e := msg.Exit.GetErrorMessage(); e != "" {

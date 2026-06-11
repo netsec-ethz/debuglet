@@ -88,7 +88,7 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 }
 
 // DELETE /debuglet
-func (h *Handler) AbortDebuglet(c echo.Context) error {
+func (h *Handler) DeleteDebuglet(c echo.Context) error {
 	var req DebugletDeleteRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())

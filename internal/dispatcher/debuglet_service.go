@@ -14,6 +14,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	g, subCtx := errgroup.WithContext(ctx)
 	debugletIDS := make([]string, len(specs))
 
+	// =========== SUBMISSION CHECKS ===========
 	d.mu.RLock()
 	for _, spec := range specs {
 		_, exists := d.executors[spec.ExecutorID]
@@ -24,6 +25,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	}
 	d.mu.RUnlock()
 
+	// =========== INSERT ===========
 	for i, spec := range specs {
 		debugletID := uuid.New().String()
 		debugletIDS[i] = debugletID
