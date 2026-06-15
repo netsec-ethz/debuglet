@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 )
@@ -20,6 +21,16 @@ func (d *Dispatcher) HandleHello(ctx context.Context, h Hello) error {
 }
 
 func (d *Dispatcher) HandleHeartbeat(ctx context.Context, hb Heartbeat) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if exec, exists := d.executors[hb.ExecutorID]; exists {
+		exec.LastSeen = hb.Timestamp
+		exec.Ready = true
+	} else {
+		return fmt.Errorf("executor '%s' not found", hb.ExecutorID)
+	}
+
 	return d.keystore.Store(hb.ExecutorID, hb.TeslaKeyEpoch, hb.TeslaKey)
 }
 

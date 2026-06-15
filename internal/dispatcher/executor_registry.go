@@ -84,7 +84,13 @@ func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay time.Dura
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
-		d.executors[id] = &RegisteredExecutor{history: &debugletHistory{}}
+		d.executors[id] = &RegisteredExecutor{
+			ID:                   id,
+			TeslaDelay:           teslaDelay,
+			TeslaAnchorTimestamp: teslaAnchor,
+			TeslaAnchorKey:       anchorKey,
+			history:              &debugletHistory{},
+		}
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))
 	}
