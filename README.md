@@ -104,7 +104,57 @@ The Debuglet ecosystem (Dispatcher and Executor) is containerized via Docker for
    make docker-down
    ```
 
-## Flow
+## Flows
+
+### Submit Debuglet
+
+Submitting a debuglet stores it directly on the executor without any resource checks from the dispatcher along the way.
+The executor may reject it for any reason (no capacity, blacklisted addresses, etc.). The executor should check the start time and ensure it has enough capacity at the given start time depending on what other jobs have also be submitted.
+
+The `ExecutorScheduler` stores the full specification of the debuglet and will trigger `OnStart` when the start time is right.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Dispatcher
+    participant Executor
+    participant ExecutorScheduler
+
+    Client->>Dispatcher: PUT /debuglet
+    Dispatcher->>Executor: SubmitDebuglet(spec)
+    Executor->>ExecutorScheduler: Insert(spec)
+
+    ExecutorScheduler->>Executor: opt err
+    Executor->>Dispatcher: opt err
+    Dispatcher->>Client: opt err
+```
+
+### OnStart Debuglet
+
+The start of a debuglet is triggered by the executor scheduler. On initialization, the dispatcher allocates space for the output logs and can additionally check if any destinations need to be ratelimitted.
+
+The client may connect to the debuglet endpoint with a given ID to get server-side-events for dynamic output from the debuglet.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Dispatcher
+    participant Executor
+    participant ExecutorScheduler
+
+    ExecutorScheduler->>Executor: OnStart(spec)
+    Executor->>Dispatcher: SetState(Initializing)
+    Executor->>Dispatcher: SetState(Started)
+    Executor->>Executor: run debuglet
+    Executor->>Dispatcher: Output(debugletID)
+
+    Client-->>Dispatcher: GET /debuglet/:id
+    Dispatcher-->>Client: SSE: Output(debugletID)
+
+    Executor->>Dispatcher: Exit(opt error)
+```
+
+### Legacy Full Flow
 
 ```mermaid
 sequenceDiagram
