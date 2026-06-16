@@ -8,7 +8,7 @@ import (
 )
 
 //go:wasmimport env sleep
-func sleep(ts int64)
+func sleep(ns int64)
 
 //go:wasmimport env connect_tcp
 func connect_tcp(addrPtr int32) int32
@@ -41,7 +41,7 @@ func run_debuglet() int32 {
 	msg := []byte("GET / HTTP/1.1\r\nHost: localhost:5173\r\nUser-Agent: nc/0.0.1\r\nAccept: */*\r\n\r\n")
 	copiedLen := copy(tcpSendBuffer, msg)
 
-	for range 5 {
+	for range 100 {
 		send_tcp_data(connID, int32(copiedLen), int32(uintptr(unsafe.Pointer(&tcpSendBuffer[0]))))
 		fmt.Println("sent tcp request")
 

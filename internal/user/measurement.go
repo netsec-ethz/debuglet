@@ -58,7 +58,7 @@ func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletReque
 	return ids
 }
 
-func AbortDebuglet(ID, executorID string) {
+func AbortDebuglet(ID, executorID string) int {
 	var delete api.DebugletDeleteRequest = api.DebugletDeleteRequest{
 		DebugletID: ID,
 		ExecutorID: executorID,
@@ -73,12 +73,14 @@ func AbortDebuglet(ID, executorID string) {
 	if err != nil {
 		panic(err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 	client := http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Printf("Aborted '%s', got status=%d\n", ID, resp.StatusCode)
+	return resp.StatusCode
 }
 
 func ReadOutput(debugletID string) error {

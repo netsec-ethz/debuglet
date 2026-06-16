@@ -49,8 +49,12 @@ func main() {
 			for _, ID := range debugletIDs {
 				go func(ID string) {
 					if *abort {
-						time.Sleep(time.Second)
-						user.AbortDebuglet(ID, execID)
+						for range 5 {
+							time.Sleep(time.Second)
+							if status := user.AbortDebuglet(ID, execID); status != 400 {
+								break
+							}
+						}
 					} else {
 						errCount := 0
 						for {
