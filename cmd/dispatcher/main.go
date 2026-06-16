@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -30,7 +31,9 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"debuglet/internal/dispatcher"
-	"debuglet/internal/dispatcher/api"
+	"debuglet/internal/dispatcher/config"
+	"debuglet/internal/dispatcher/transport/api"
+	"debuglet/internal/dispatcher/transport/rpc"
 	pb "debuglet/protocol"
 )
 
@@ -38,7 +41,7 @@ func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/dispatcher/dispatcher.toml", "Path to dispatcher configuration file")
 	flag.Parse()
 
-	cfg, err := dispatcher.LoadConfig(*cfgPath)
+	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
 	}
@@ -53,15 +56,16 @@ func main() {
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
-	manager := dispatcher.NewDispatcher()
-
+	disp := dispatcher.New(logger)
+	server := rpc.NewServer(logger, disp, disp, rpc.ServerOptions{ExecutorTimeout: time.Duration(cfg.ExecutorTimeout) * time.Second})
+	disp.SetExecutorSender(server)
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// ---- Start gRPC Server ----
 	go func() {
 		defer wg.Done()
-		if err := startGRPCServer(manager, cfg, logger); err != nil {
+		if err := startGRPCServer(server, cfg, logger); err != nil {
 			logger.Fatal("failed to start gRPC server", zap.Error(err))
 		}
 	}()
@@ -69,7 +73,7 @@ func main() {
 	// ---- Start HTTP Server ----
 	go func() {
 		defer wg.Done()
-		if err := startHTTPServer(manager, cfg, logger); err != nil {
+		if err := startHTTPServer(disp, cfg, logger); err != nil {
 			logger.Fatal("failed to start HTTP server", zap.Error(err))
 		}
 	}()
@@ -77,7 +81,7 @@ func main() {
 	wg.Wait()
 }
 
-func getServerCredentials(cfg *dispatcher.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
+func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
 	// Load the server's certificate and key
 	serverCert, err := tls.LoadX509KeyPair(
 		cfg.TLS.CertFile,
@@ -127,7 +131,7 @@ func getServerCredentials(cfg *dispatcher.DispatcherConfig, logger *zap.Logger) 
 }
 
 // startGRPCServer runs the dispatcher’s gRPC interface
-func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
+func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	port := cfg.GRPCPort
 	addr := fmt.Sprintf(":%d", port)
 	lis, err := net.Listen("tcp", addr)
@@ -140,7 +144,7 @@ func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 		return fmt.Errorf("failed to get server credentials: %w", err)
 	}
 	srv := grpc.NewServer(grpc.Creds(creds))
-	pb.RegisterDebugletDispatcherServer(srv, dispatcher.NewDispatcherServer(manager, logger))
+	pb.RegisterDispatcherServiceServer(srv, server)
 
 	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))
 	if err := srv.Serve(lis); err != nil {
@@ -151,8 +155,9 @@ func startGRPCServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 }
 
 // startHTTPServer runs the Echo-based HTTP API
-func startHTTPServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
+func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	port := cfg.HTTPPort
+
 	handler := api.NewHandler(manager, logger)
 
 	e := echo.New()
@@ -179,6 +184,9 @@ func startHTTPServer(manager *dispatcher.Dispatcher, cfg *dispatcher.DispatcherC
 		Handler:   e,
 		TLSConfig: tlsConfig,
 	}
-
-	return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	if cfg.DisableTLS {
+		return server.ListenAndServe()
+	} else {
+		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	}
 }

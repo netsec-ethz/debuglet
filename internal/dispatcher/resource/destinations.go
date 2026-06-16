@@ -1,7 +1,7 @@
 package resource
 
 import (
-	"debuglet/internal/util/avl"
+	"debuglet/internal/dispatcher/resource/avl"
 	"errors"
 	"fmt"
 	"iter"
@@ -12,35 +12,38 @@ var (
 	ErrCapacityFull = errors.New("insufficient capacity")
 )
 
-type jobKey struct {
-	jobId, destination string
+type storeKey struct {
+	ID, destination string
+}
+
+type storeValue struct {
+	minimum Bitrate
+	maximum Bitrate
 }
 
 type DestinationsUsage struct {
 	// The residual (limit-minimum) bandwidths of assignments available for fairsharing
 	trees map[string]*avl.AVL[string]
 	// The explicit TOTAL destination capacities
-	capacities map[string]int64
+	capacities map[string]Bitrate
 	// The total capacity for a destination used up by all relevant job's minimums
-	usedCapacities map[string]int64
+	usedCapacities map[string]Bitrate
 	// The minimum capacities of jobs
-	minimums   map[jobKey]int64
-	maximums   map[jobKey]int64
-	defaultCap int64
+	store      map[storeKey]*storeValue
+	defaultCap Bitrate
 }
 
-func NewDestinations(defaultCap int64) *DestinationsUsage {
+func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 	return &DestinationsUsage{
 		trees:          make(map[string]*avl.AVL[string]),
-		capacities:     make(map[string]int64),
-		usedCapacities: make(map[string]int64),
-		minimums:       make(map[jobKey]int64),
-		maximums:       make(map[jobKey]int64),
+		capacities:     make(map[string]Bitrate),
+		usedCapacities: make(map[string]Bitrate),
+		store:          make(map[storeKey]*storeValue),
 		defaultCap:     defaultCap,
 	}
 }
 
-func (d *DestinationsUsage) CheckCapacity(destination string, minimum int64) error {
+func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) error {
 	cap, exists := d.capacities[destination]
 	if !exists {
 		cap = d.defaultCap
@@ -52,7 +55,7 @@ func (d *DestinationsUsage) CheckCapacity(destination string, minimum int64) err
 	return nil
 }
 
-func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], int64) {
+func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], Bitrate) {
 	tree, exists := d.trees[destination]
 	if !exists {
 		tree = &avl.AVL[string]{}
@@ -65,7 +68,7 @@ func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], in
 	return tree, cap
 }
 
-func (d *DestinationsUsage) Insert(destination, jobId string, minimum, maximum int64) error {
+func (d *DestinationsUsage) Insert(destination, executorID string, minimum, maximum Bitrate) error {
 	if minimum > maximum {
 		return fmt.Errorf("insertion failed with min=%d>max=%d: %w", minimum, maximum, ErrMinGreater)
 	}
@@ -76,58 +79,85 @@ func (d *DestinationsUsage) Insert(destination, jobId string, minimum, maximum i
 		return fmt.Errorf("insertion failed with new usage=%d, capacity=%d: %w", used+minimum, cap, ErrCapacityFull)
 	}
 	d.usedCapacities[destination] += minimum
+	jk := storeKey{ID: executorID, destination: destination}
+	if old, exists := d.store[jk]; exists {
+		old.minimum += minimum
+		old.maximum += maximum
+	} else {
+		d.store[jk] = &storeValue{minimum: minimum, maximum: maximum}
+	}
 
-	jk := jobKey{jobId: jobId, destination: destination}
-	d.minimums[jk] = minimum
-	d.maximums[jk] = maximum
-	tree.Insert(jobId, maximum-minimum)
+	tree.Add(executorID, int64(maximum-minimum))
 	return nil
 }
 
-func (d *DestinationsUsage) Remove(destination, jobId string) {
+func (d *DestinationsUsage) Remove(destination, executorID string, minimum, maximum Bitrate) {
 	tree, exists := d.trees[destination]
 	if !exists {
 		return
 	}
 
-	jk := jobKey{jobId: jobId, destination: destination}
-	minimum := d.minimums[jk]
-	maximum := d.maximums[jk]
-	tree.Delete(jobId, maximum-minimum)
-	if tree.Len() == 0 {
-		delete(d.trees, destination)
+	node := tree.Get(executorID)
+	if node == nil {
+		return
 	}
+
+	diff := int64(maximum - minimum)
+	if diff >= node.Value {
+		// there is no more usage on the destination for this executor after the removal
+		tree.Delete(executorID)
+		if tree.Len() == 0 {
+			delete(d.trees, destination)
+		}
+	} else {
+		// there is still usage on the destination for this executor. Do not fully remove
+		tree.Replace(executorID, node.Value-diff)
+	}
+
 	d.usedCapacities[destination] -= minimum
 	if d.usedCapacities[destination] <= 0 {
 		delete(d.usedCapacities, destination)
 	}
-	delete(d.minimums, jk)
-	delete(d.maximums, jk)
+
+	jk := storeKey{ID: executorID, destination: destination}
+	old, exists := d.store[jk]
+	if !exists {
+		return
+	}
+	old.minimum -= minimum
+	old.maximum -= maximum
+	if old.minimum <= 0 && old.maximum <= 0 {
+		delete(d.store, jk)
+	}
 }
 
-// Number of jobs being tracked
+// Number of IDs being tracked
 func (d *DestinationsUsage) Len() int {
-	return len(d.minimums)
+	return len(d.store)
 }
 
 // Fairshares a destination address, then returns an iterator with
-// tuples of (job ID, new maximum bandwidth).
-// All jobs that are not returned can fully use their designated bandwidth.
+// tuples of (ID, new maximum bandwidth).
 //
-// The fairshare respects the minimum bandwidth of each job.
-// It is guaranteed that job.maximum >= fairshare >= job.minimum for all jobs.
-func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, int64] {
+// The fairshare respects the minimum bandwidth of each ID.
+// It is guaranteed that ID.maximum >= fairshare >= ID.minimum for all IDs.
+func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitrate] {
 	tree, cap := d.getTreeCap(destination)
 	usage := d.usedCapacities[destination]
 
-	fairshare := tree.Fairshare(cap - usage)
-	return func(yield func(string, int64) bool) {
+	fairshare := tree.Fairshare(int64(cap - usage))
+	return func(yield func(string, Bitrate) bool) {
 		for n := range tree.Range(avl.Unbounded, avl.Unbounded) {
-			jk := jobKey{jobId: n.ID, destination: destination}
-			actualLimit := min(d.maximums[jk], fairshare+d.minimums[jk])
+			jk := storeKey{ID: n.ID, destination: destination}
+			s := d.store[jk]
+			actualLimit := min(s.maximum, Bitrate(fairshare)+s.minimum)
 			if !yield(n.ID, actualLimit) {
 				return
 			}
 		}
 	}
+}
+
+func (d *DestinationsUsage) SetLimit(destination string, limit Bitrate) {
+	d.capacities[destination] = limit
 }

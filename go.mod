@@ -1,21 +1,18 @@
 module debuglet
 
-go 1.24.4
+go 1.25.0
 
 require (
-	github.com/BurntSushi/toml v0.3.1
 	github.com/cilium/ebpf v0.21.0
-	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/netsec-ethz/scion-apps v0.6.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/scionproto/scion v0.11.1-0.20240610170620-50b971ca2d4b
-	github.com/wasmerio/wasmer-go v1.0.4
+	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.43.0
-	golang.org/x/time v0.11.0
+	golang.org/x/sync v0.17.0
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10
 )
@@ -30,6 +27,7 @@ require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20240509144519-723abb6459b7 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
@@ -61,9 +59,9 @@ require (
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/time v0.11.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250804133106-a7a43d27e69b // indirect
 	modernc.org/gc/v3 v3.0.0-20240304020402-f0dba7c97c2b // indirect

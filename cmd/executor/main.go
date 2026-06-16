@@ -23,6 +23,8 @@ import (
 	"go.uber.org/zap"
 
 	"debuglet/internal/executor"
+	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/scheduler/memory"
 
 	scionFlag "github.com/scionproto/scion/private/app/flag"
 )
@@ -31,7 +33,7 @@ func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	flag.Parse()
 
-	cfg, err := executor.LoadConfig(*cfgPath)
+	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load executor config: %v", err))
 	}
@@ -53,17 +55,27 @@ func main() {
 	}
 	os.Setenv("SCION_DAEMON_ADDRESS", envFlags.Daemon())
 
+	storage := memory.NewStorage()
+
 	logger.Info("Starting executor:", zap.String("executor_id", cfg.ExecutorID), zap.String("dispatcher_addr", cfg.DispatcherAddr))
 
-	exec, err := executor.NewExecutor(cfg, logger)
+	exec, err := executor.New(cfg, logger, storage)
 	if err != nil {
 		logger.Fatal("Failed to create executor", zap.Error(err))
 		return
 	}
 
-	ctx := context.Background()
-	if err := exec.Start(ctx); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if err := storage.StartLoop(ctx); err != nil {
+			logger.Fatal("Failed to start storage loop", zap.Error(err))
+			return
+		}
+	}()
+
+	if err := exec.Listen(ctx); err != nil {
 		logger.Fatal("Failed to start executor", zap.Error(err))
-		return
 	}
 }

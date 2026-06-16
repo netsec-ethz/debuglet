@@ -11,62 +11,62 @@ import (
 func TestMultiDest(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dests := []string{"128.0.0.0", "128.0.0.1"}
-	d.Insert(dests[0], "j1", 1, 100)
-	d.Insert(dests[0], "j2", 1, 100)
-	d.Insert(dests[1], "j2", 1, 100)
+	d.Insert(dests[0], "e1", 1, 100)
+	d.Insert(dests[0], "e2", 1, 100)
+	d.Insert(dests[1], "e2", 1, 100)
 
 	jobCaps := maps.Collect(d.Fairshare(dests[0]))
-	if len(jobCaps) != 2 || jobCaps["j1"] != 50 || jobCaps["j2"] != 50 {
+	if len(jobCaps) != 2 || jobCaps["e1"] != 50 || jobCaps["e2"] != 50 {
 		t.Fatalf("Expected equal fair sharing of D1 for both jobs, got %v", jobCaps)
 	}
 	jobCaps = maps.Collect(d.Fairshare(dests[1]))
-	if len(jobCaps) != 1 || jobCaps["j2"] != 100 {
-		t.Fatalf("Expected J1 to get full bandwidth of D2, got %v", jobCaps)
+	if len(jobCaps) != 1 || jobCaps["e2"] != 100 {
+		t.Fatalf("Expected e1 to get full bandwidth of D2, got %v", jobCaps)
 	}
 }
 
 func TestMinimum(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "j1", 60, 100)
-	d.Insert(dest, "j2", 0, 100)
+	d.Insert(dest, "e1", 60, 100)
+	d.Insert(dest, "e2", 0, 100)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
-	if len(jobCaps) != 2 || jobCaps["j1"] != 80 || jobCaps["j2"] != 20 {
-		t.Fatalf("Expected fair share while respecting j1's minimum of 60, got %v", jobCaps)
+	if len(jobCaps) != 2 || jobCaps["e1"] != 80 || jobCaps["e2"] != 20 {
+		t.Fatalf("Expected fair share while respecting e1's minimum of 60, got %v", jobCaps)
 	}
 }
 
 func TestZero(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "j1", 5, 100)
-	d.Insert(dest, "j2", 5, 100)
+	d.Insert(dest, "e1", 5, 100)
+	d.Insert(dest, "e2", 5, 100)
 	d.Insert(dest, "j3", 20, 20)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
-	if len(jobCaps) != 3 || jobCaps["j1"] != 40 || jobCaps["j2"] != 40 || jobCaps["j3"] != 20 {
-		t.Fatalf("Expected j1=40, j2=40, j3=20, got %v", jobCaps)
+	if len(jobCaps) != 3 || jobCaps["e1"] != 40 || jobCaps["e2"] != 40 || jobCaps["j3"] != 20 {
+		t.Fatalf("Expected e1=40, e2=40, j3=20, got %v", jobCaps)
 	}
 }
 
 func TestNotFull(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "j1", 5, 5)
-	d.Insert(dest, "j2", 5, 5)
+	d.Insert(dest, "e1", 5, 5)
+	d.Insert(dest, "e2", 5, 5)
 	d.Insert(dest, "j3", 20, 20)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
-	if len(jobCaps) != 3 || jobCaps["j1"] != 5 || jobCaps["j2"] != 5 || jobCaps["j3"] != 20 {
-		t.Fatalf("Expected j1=5, j2=5, j3=20, got %v", jobCaps)
+	if len(jobCaps) != 3 || jobCaps["e1"] != 5 || jobCaps["e2"] != 5 || jobCaps["j3"] != 20 {
+		t.Fatalf("Expected e1=5, e2=5, j3=20, got %v", jobCaps)
 	}
 }
 
 func TestErrors(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	err := d.Insert(dest, "j2", 10, 5)
+	err := d.Insert(dest, "e2", 10, 5)
 	if err == nil || !errors.Is(err, resource.ErrMinGreater) {
 		t.Fatalf("Expected to receive ErrMinGreater, got %v", err)
 	}
@@ -77,7 +77,7 @@ func TestErrors(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
-	err = d.Insert(dest, "j2", 5, 5)
+	err = d.Insert(dest, "e2", 5, 5)
 	if err == nil || !errors.Is(err, resource.ErrCapacityFull) {
 		t.Fatalf("Expected to receive ErrCapacityFull, got %v", err)
 	}
@@ -86,15 +86,29 @@ func TestErrors(t *testing.T) {
 func TestRemove(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "j1", 10, 10)
-	d.Insert(dest, "j2", 20, 100)
-	d.Remove(dest, "j1")
+	d.Insert(dest, "e1", 10, 10)
+	d.Insert(dest, "e2", 20, 100)
+	d.Remove(dest, "e1", 10, 10)
 	if x := d.Len(); x != 1 {
 		t.Fatalf("Expected Len()=1, got %d", x)
 	}
 	jobCaps := maps.Collect(d.Fairshare(dest))
-	if len(jobCaps) != 1 || jobCaps["j2"] != 100 {
-		t.Fatalf("Expected sole job j2 to have the full 100, got %v", jobCaps)
+	if len(jobCaps) != 1 || jobCaps["e2"] != 100 {
+		t.Fatalf("Expected sole job e2 to have the full 100, got %v", jobCaps)
+	}
+}
+
+func TestAdd(t *testing.T) {
+	d := resource.NewDestinations(100)
+	dest := "128.0.0.0"
+	d.Insert(dest, "exec1", 2, 10)
+	d.Insert(dest, "exec1", 10, 10)
+
+	d.Insert(dest, "exec2", 2, 10)
+
+	caps := maps.Collect(d.Fairshare(dest))
+	if len(caps) != 2 || caps["exec1"] != 20 || caps["exec2"] != 10 {
+		t.Fatalf("Expected exec1 to have 20 and exec2 to have 10, got %v", caps)
 	}
 }
 
@@ -142,7 +156,7 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 		b.StopTimer()
 
 		for j := 0; j < batch; j++ {
-			d.Remove(benchDests[i+j], "bench-job")
+			d.Remove(benchDests[i+j], "bench-job", 1, 100)
 		}
 		i += batch
 	}
