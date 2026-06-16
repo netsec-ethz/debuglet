@@ -5,11 +5,11 @@ import (
 	"debuglet/internal/executor/debuglet"
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/protocol"
-	"errors"
 	"fmt"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type RunningDebuglet struct {
@@ -19,6 +19,7 @@ type RunningDebuglet struct {
 
 func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<- struct{}) {
 	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 
 	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)
 	e.mu.Lock()
@@ -30,7 +31,6 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		}
 		close(preRunLock)
 		e.mu.Unlock()
-		cancel(errors.New("not enough capacity for another debuglet"))
 		return
 	}
 
@@ -50,7 +50,6 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 	go func() {
 		if err := client.Listen(ctx); err != nil {
 			cancel(err)
-			// TODO: failed debuglets are still stored in e.running. Makes sense to move/store elsewhere
 		}
 	}()
 
@@ -62,71 +61,56 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 	}
 
 	// ======== INITIALIZE ========
-	client.SendSetState(protocol.RunState_RUN_STATE_INITIALIZING)
+	if err := client.SendSetState(protocol.RunState_RUN_STATE_INITIALIZING); err != nil {
+		e.logger.Error("Failed to set state to 'initialized'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		client.SendExit(-1, err)
+		return
+	}
+
 	deb := debuglet.New(e.logger, spec.DebugletID, e.teslaSchedule)
+	defer deb.Close(ctx)
+	err := deb.InitRuntime(ctx, spec.Wasm, spec.Policy.Addresses)
+	if err != nil {
+		var zapError zap.Field
+		if ctx.Err() == nil {
+			zapError = zap.Error(err)
+		} else {
+			zapError = zap.Error(context.Cause(ctx))
+		}
+		e.logger.Error("Failed to initialize debuglet runtime", zap.String("debugletID", spec.DebugletID), zapError)
+		client.SendExit(-1, err)
+		return
+	}
 
 	subCtx, cancelInit := context.WithTimeout(ctx, time.Second)
-	err := deb.Init(subCtx, spec.Wasm, spec.Policy.Addresses)
-	cancelInit()
-	if err != nil {
-		deb.Close()
-		var zapError zap.Field
-		if ctx.Err() == nil {
-			zapError = zap.Error(err)
-		} else {
-			zapError = zap.Error(context.Cause(ctx))
-		}
-		cancel(err)
-		e.logger.Error("Failed to initialize debuglet", zap.String("debugletID", spec.DebugletID), zapError)
-		client.SendExit(1, err)
-		return
+	if err := deb.StartServers(subCtx); err != nil {
+		e.logger.Warn("Failed to startup servers for debuglet. Ignoring", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 	}
+	cancelInit()
 
 	// ======== RUN/START ========
-	select {
-	case <-ctx.Done():
-		e.logger.Error("Debuglet context is done", zap.String("debugletID", spec.DebugletID), zap.Error(context.Cause(ctx)))
-		client.SendExit(1, context.Cause(ctx))
-		return
-	default:
-	}
 	if err := client.SendSetState(protocol.RunState_RUN_STATE_STARTED); err != nil {
 		e.logger.Error("Failed to set state to 'started'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		client.SendExit(1, err)
+		client.SendExit(-1, err)
 		return
 	}
 
-	outputDone := make(chan struct{})
-	go func() {
-		defer close(outputDone)
-		for output := range deb.OutputChan() {
-			client.SendOutput(output)
-		}
-	}()
+	outputCh := make(chan []byte, 1024)
+	timedCtx, cancelRun := context.WithTimeout(ctx, spec.Policy.Timeout)
+	g, subCtx := errgroup.WithContext(timedCtx)
+	g.Go(func() error {
+		return deb.Run(subCtx, outputCh)
+	})
 
-	subCtx, cancelRun := context.WithTimeout(ctx, spec.Policy.Timeout)
-	err = deb.Run(subCtx)
+	for out := range outputCh {
+		client.SendOutput(out)
+	}
+
 	cancelRun()
-	deb.Close()
 
-	// TODO: determine how to differentiate between wasm code errors and errors when trying to start up a debuglet
-	if err != nil {
-		var zapError zap.Field
-		if ctx.Err() == nil {
-			zapError = zap.Error(err)
-		} else {
-			zapError = zap.Error(context.Cause(ctx))
-		}
-		cancel(err)
-		e.logger.Error("Failed to run debuglet", zap.String("debugletID", spec.DebugletID), zapError)
-		client.SendExit(1, err)
-		return
+	if err := g.Wait(); err != nil {
+		client.SendExit(-1, err)
+	} else {
+		client.SendExit(0, nil)
 	}
-
-	// ======== CLEANUP ========
-	<-outputDone
-	client.SendExit(0, nil)
-
-	// Close the debuglet grpc stream
-	cancel(errors.New("debuglet finished"))
 }

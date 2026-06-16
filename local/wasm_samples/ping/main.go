@@ -9,9 +9,6 @@ import (
 	"unsafe"
 )
 
-//go:wasmimport env sleep
-func sleep(ts int64)
-
 //go:wasmimport env connect_icmp4
 func connect_icmp4(addrPtr int32) int32
 
@@ -28,24 +25,19 @@ var sendBuffer []byte = make([]byte, 64)
 var recvBuffer []byte = make([]byte, 100)
 var pinner runtime.Pinner
 
-func main() {}
-
 func init() {
 	pinner.Pin(&sendBuffer[0])
 	pinner.Pin(&recvBuffer[0])
 }
 
-//go:wasmexport run_debuglet
-func run_debuglet() int32 {
+func main() {
 	for seq := range 5 {
 		taken, err := ping(1, uint16(seq))
 		if err != nil {
 			panic(err)
 		}
-		sleep(int64(time.Second - min(time.Second, taken)))
+		time.Sleep(time.Second - min(time.Second, taken))
 	}
-
-	return 0
 }
 
 func createEchoPacket(id uint16, seq uint16, size int) []byte {

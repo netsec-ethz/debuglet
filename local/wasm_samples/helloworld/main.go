@@ -4,15 +4,6 @@ import (
 	"fmt"
 )
 
-//go:wasmimport env wait_start
-func wait_start()
-
-//go:wasmimport env get_timestamp
-func get_timestamp() int64
-
-//go:wasmimport env wait_until
-func wait_until(ts int64)
-
 //go:wasmimport env connect_tcp
 func connect_tcp(addrPtr int32) int32
 
@@ -70,10 +61,6 @@ func write_i64x(val int64)
 //go:wasmimport env write_delta_timestamp
 func write_delta_timestamp(ts int64)
 
-//go:wasmexport run_debuglet
-func run_debuglet() int32 {
+func main() {
 	fmt.Println("Hello from Debuglet!")
-	return 0
 }
-
-func main() {}

@@ -25,52 +25,33 @@ func TestMaxSliceLength(t *testing.T) {
 	}
 }
 
-// panicSafeCall executes fn and returns any panic as an error string.
-// The wasmer-go library dereferences a wasmer.Instance pointer before our
-// code can return a Go error, so we catch the resulting nil-pointer panic.
-func panicSafeCall(fn func()) (panicked bool) {
+// TestGetResultNilModule verifies that calling GetResult with a nil module
+// panics (as expected with wazero's api.Module).
+func TestGetResultNilModule(t *testing.T) {
 	defer func() {
-		if r := recover(); r != nil {
-			panicked = true
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil module")
 		}
 	}()
-	fn()
-	return false
+	GetResult(nil, 4)
 }
 
-// TestGetResultNilInstancePanicsOrErrors verifies that calling getResult with a
-// nil instance either returns an error or panics — but does not silently
-// succeed.
-func TestGetResultNilInstancePanicsOrErrors(t *testing.T) {
-	var gotErr error
-	panicked := panicSafeCall(func() {
-		_, gotErr = GetResult(nil, 4)
-	})
-	if !panicked && gotErr == nil {
-		t.Error("expected either a panic or an error for nil instance")
-	}
+// TestExtractResIdxNilModule verifies that ExtractResIdx with a nil module panics.
+func TestExtractResIdxNilModule(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil module")
+		}
+	}()
+	ExtractResIdx(nil)
 }
 
-// TestExtractResIdxNilInstancePanicsOrErrors verifies that extractResIdx with
-// a nil instance either returns an error or panics.
-func TestExtractResIdxNilInstancePanicsOrErrors(t *testing.T) {
-	var gotErr error
-	panicked := panicSafeCall(func() {
-		_, gotErr = ExtractResIdx(nil)
-	})
-	if !panicked && gotErr == nil {
-		t.Error("expected either a panic or an error for nil instance")
-	}
-}
-
-// TestExtractSliceNilInstancePanicsOrErrors verifies that extractSlice with a
-// nil instance either returns an error or panics.
-func TestExtractSliceNilInstancePanicsOrErrors(t *testing.T) {
-	var gotErr error
-	panicked := panicSafeCall(func() {
-		_, gotErr = ExtractSlice(nil, "some_buffer", 0, 16)
-	})
-	if !panicked && gotErr == nil {
-		t.Error("expected either a panic or an error for nil instance")
-	}
+// TestExtractSliceNilModule verifies that ExtractSlice with a nil module panics.
+func TestExtractSliceNilModule(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil module")
+		}
+	}()
+	ExtractSlice(nil, "some_buffer", 0, 16)
 }

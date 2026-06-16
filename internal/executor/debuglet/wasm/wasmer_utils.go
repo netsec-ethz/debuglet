@@ -18,20 +18,19 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/wasmerio/wasmer-go/wasmer"
+	"github.com/tetratelabs/wazero/api"
 )
 
 const (
 	MAX_SLICE_LENGTH = 8192
 )
 
-// Extracts first len bytes from the result buffer and returns them.
-// Takes as input a wasm instance object and the number of bytes to read.
-func GetResult(instance *wasmer.Instance, len int32) ([]byte, error) {
+// GetResult extracts the first len bytes from the result buffer and returns them.
+func GetResult(mod api.Module, len int32) ([]byte, error) {
 	if len > MAX_SLICE_LENGTH {
 		len = MAX_SLICE_LENGTH
 	}
-	contents, err := ExtractSlice(instance, "result", 0, len)
+	contents, err := ExtractSlice(mod, "result", 0, len)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract result buffer: %w", err)
 	}
@@ -39,51 +38,61 @@ func GetResult(instance *wasmer.Instance, len int32) ([]byte, error) {
 	return contents, nil
 }
 
-// Extracts the contents of the buffer with the given name from the wasm runtime,
-// starting at `start` and ending at `end` (excluded), and return them
-func ExtractSlice(instanceTarget *wasmer.Instance, name string, start, end int32) ([]byte, error) {
-	numbersAddressBox, err := instanceTarget.Exports.GetGlobal(name)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve exported global (memory buffer is not correctly exported): %w", err)
+// ExtractSlice extracts the contents of the buffer with the given name from WASM memory,
+// starting at `start` and ending at `end` (excluded).
+func ExtractSlice(mod api.Module, name string, start, end int32) ([]byte, error) {
+	global := mod.ExportedGlobal(name)
+	if global == nil {
+		return nil, fmt.Errorf("failed to retrieve exported global (memory buffer is not correctly exported)")
 	}
 
-	numbersAddress, err := numbersAddressBox.Get()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve global's value (memory buffer is not correctly exported): %w", err)
+	numbersAddress := int32(global.Get())
+
+	mem := mod.Memory()
+	if mem == nil {
+		return nil, fmt.Errorf("failed to retrieve exported memory (global memory is not correctly exported)")
 	}
 
-	memory, err := instanceTarget.Exports.GetMemory("memory")
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve exported memory (global memory is not correctly exported): %w", err)
+	ptrBuf, ok := mem.Read(uint32(numbersAddress), 4)
+	if !ok {
+		return nil, fmt.Errorf("failed to read pointer from memory at %d", numbersAddress)
 	}
 
-	newAddress := int32(binary.LittleEndian.Uint32(memory.Data()[numbersAddress.(int32) : numbersAddress.(int32)+4]))
-
-	toWrite := memory.Data()[newAddress+start : newAddress+end]
+	newAddress := int32(binary.LittleEndian.Uint32(ptrBuf))
+	dataLen := end - start
+	toWrite, ok := mem.Read(uint32(newAddress+start), uint32(dataLen))
+	if !ok {
+		return nil, fmt.Errorf("failed to read data from memory at %d", newAddress+start)
+	}
 	return toWrite, nil
 }
 
-// Extracts the result length from "result_idx".
+// ExtractResIdx extracts the result length from "result_idx".
 // This is intended to be used if the debuglet hasn't returned a result length (because of a failure),
 // but we'd still like to recover results of work performed so far.
-func ExtractResIdx(instanceTarget *wasmer.Instance) ([]byte, error) {
-	numbersAddressBox, err := instanceTarget.Exports.GetGlobal("result_idx")
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve exported global (memory buffer is not correctly exported): %w", err)
+func ExtractResIdx(mod api.Module) ([]byte, error) {
+	global := mod.ExportedGlobal("result_idx")
+	if global == nil {
+		return nil, fmt.Errorf("failed to retrieve exported global (memory buffer is not correctly exported)")
 	}
 
-	numbersAddress, err := numbersAddressBox.Get()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve global's value (memory buffer is not correctly exported): %w", err)
+	numbersAddress := int32(global.Get())
+
+	mem := mod.Memory()
+	if mem == nil {
+		return nil, fmt.Errorf("failed to retrieve exported memory (global memory is not correctly exported)")
 	}
 
-	memory, err := instanceTarget.Exports.GetMemory("memory")
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve exported memory (global memory is not correctly exported): %w", err)
+	ptrBuf, ok := mem.Read(uint32(numbersAddress), 4)
+	if !ok {
+		return nil, fmt.Errorf("failed to read pointer from memory at %d", numbersAddress)
 	}
 
-	newAddress := int32(binary.LittleEndian.Uint32(memory.Data()[numbersAddress.(int32) : numbersAddress.(int32)+4]))
+	newAddress := int32(binary.LittleEndian.Uint32(ptrBuf))
 
-	toWrite := memory.Data()[newAddress : newAddress+4]
+	toWrite, ok := mem.Read(uint32(newAddress), 4)
+	if !ok {
+		return nil, fmt.Errorf("failed to read result_idx data from memory at %d", newAddress)
+	}
 	return toWrite, nil
 }

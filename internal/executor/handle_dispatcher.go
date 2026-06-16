@@ -29,7 +29,9 @@ func (e *Executor) HandleAbort(debugletID, reason string) {
 		return
 	}
 
+	e.mu.Lock()
 	run, exists := e.running[debugletID]
+	e.mu.Unlock()
 	if !exists {
 		e.logger.Error("Did not find debuglet when aborting. Probably due to a race condition between OnStart and Abort being called at the same time", zap.String("debugletID", debugletID))
 		return

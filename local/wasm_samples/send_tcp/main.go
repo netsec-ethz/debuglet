@@ -7,9 +7,6 @@ import (
 	"unsafe"
 )
 
-//go:wasmimport env sleep
-func sleep(ns int64)
-
 //go:wasmimport env connect_tcp
 func connect_tcp(addrPtr int32) int32
 
@@ -28,20 +25,18 @@ func init() {
 	pinner.Pin(&tcpRecvBuffer[0])
 }
 
-//go:wasmexport run_debuglet
-func run_debuglet() int32 {
+func main() {
 	// requires addresses[0] to be "127.0.0.1:5173"
 	connID := connect_tcp(0)
 	if connID < 0 {
-		fmt.Println("failed to connect")
-		return 1
+		panic("failed to connect")
 	}
 	fmt.Println("connID", connID)
 
 	msg := []byte("GET / HTTP/1.1\r\nHost: localhost:5173\r\nUser-Agent: nc/0.0.1\r\nAccept: */*\r\n\r\n")
 	copiedLen := copy(tcpSendBuffer, msg)
 
-	for range 100 {
+	for range 10 {
 		send_tcp_data(connID, int32(copiedLen), int32(uintptr(unsafe.Pointer(&tcpSendBuffer[0]))))
 		fmt.Println("sent tcp request")
 
@@ -49,10 +44,6 @@ func run_debuglet() int32 {
 		fmt.Println("received", n, "bytes")
 		fmt.Println("response:", string(tcpRecvBuffer[:n]))
 
-		sleep(time.Second.Nanoseconds())
+		time.Sleep(time.Second)
 	}
-
-	return 0
 }
-
-func main() {}

@@ -16,6 +16,7 @@ package debuglet
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net"
 	"os"
@@ -31,7 +32,8 @@ import (
 	"debuglet/pkg/tesla"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
-	"github.com/wasmerio/wasmer-go/wasmer"
+	"github.com/tetratelabs/wazero"
+	wasi "github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"go.uber.org/zap"
 )
 
@@ -52,11 +54,10 @@ const (
 // debuglet module. One Debuglet instance corresponds to one session.
 type Debuglet struct {
 	logger *zap.SugaredLogger
-	engine *wasmer.Engine
-	store  *wasmer.Store
 
-	wasiEnv        *wasmer.WasiEnvironment
-	wasmerInstance *wasmer.Instance
+	// wazero runtime state
+	runtime  wazero.Runtime
+	compiled wazero.CompiledModule
 
 	scionServer pan.ListenConn
 	udpServer   net.PacketConn
@@ -68,22 +69,13 @@ type Debuglet struct {
 	// addresses is the list of peer addresses made available to the WASM module.
 	addresses []string
 
-	started bool
-	hostEnv *wasm.HostEnvironment
-
 	createdAt time.Time
 	mu        sync.Mutex
-
-	// outputCh buffers WASI stdout/stderr chunks while the debuglet runs.
-	outputCh chan []byte
-	closed   bool
 }
 
-// NewDebuglet creates a ready-to-initialise Debuglet backed by a new wasmer
-// Engine and Store.
+// New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
 func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *Debuglet {
-	eng := wasmer.NewEngine()
-
+	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if runtime.GOOS == "linux" {
 		iface := os.Getenv("DEBUGLET_IFACE")
@@ -114,32 +106,23 @@ func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *De
 
 	return &Debuglet{
 		logger:    logger.Sugar(),
-		engine:    eng,
-		store:     wasmer.NewStore(eng),
 		createdAt: time.Now(),
-		outputCh:  make(chan []byte, 1024),
 		pktTagger: pktTagger,
-		hostEnv:   wasm.NewHostEnvironment(debugletID),
 	}
 }
 
-// OutputChan returns the channel on which WASI stdout/stderr bytes are
-// published while the debuglet executes.
-func (d *Debuglet) OutputChan() <-chan []byte {
-	return d.outputCh
-}
-
-// Init starts the network servers and compiles and instantiates the WASM
+// InitRuntime starts the network servers and compiles and instantiates the WASM
 // module. It must be called exactly once before Run.
-func (d *Debuglet) Init(ctx context.Context, wasmBytes []byte, addresses []string) error {
-	if err := d.startServers(ctx); err != nil {
-		d.logger.Warnw("failed to start up server(s)", "err", err)
-	}
-	if err := d.createWASMInstance(wasmBytes); err != nil {
+func (d *Debuglet) InitRuntime(ctx context.Context, wasmBytes []byte, addresses []string) error {
+	d.addresses = addresses
+	if err := d.createWASMInstance(ctx, wasmBytes); err != nil {
 		return err
 	}
-	d.addresses = addresses
 	return nil
+}
+
+func (d *Debuglet) StartServers(ctx context.Context) error {
+	return d.startServers(ctx)
 }
 
 // GetSCIONAddr returns the local SCION address of the server listener started
@@ -194,28 +177,20 @@ func (d *Debuglet) startServers(ctx context.Context) error {
 }
 
 // createWASMInstance compiles the given WASM bytecode and instantiates a
-// wasmer Instance with all host functions registered.
-func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
-	module, err := wasmer.NewModule(d.store, wasmBytes)
+// wazero module with WASI and all host functions registered.
+func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) error {
+	d.runtime = wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
+
+	compiled, err := d.runtime.CompileModule(ctx, wasmBytes)
 	if err != nil {
 		d.logger.Warnw("createWASMInstance: module compile failed", "err", err)
 		return fmt.Errorf("createWASMInstance: bytecode is probably malformed: %w", err)
 	}
+	d.compiled = compiled
 
-	d.logger.Debug("producing new debuglet WasiEnvironment")
-	wasiEnv, err := wasmer.NewWasiStateBuilder("debuglet").
-		CaptureStdout().
-		CaptureStderr().
-		Finalize()
-	if err != nil {
-		return fmt.Errorf("createWASMInstance: WASI finalize failed: %w", err)
-	}
-	d.wasiEnv = wasiEnv
-
-	d.logger.Debug("generating new debuglet import object")
-	importObject, err := d.wasiEnv.GenerateImportObject(d.store, module)
-	if err != nil {
-		return fmt.Errorf("createWASMInstance: generate import object failed: %w", err)
+	d.logger.Debug("instantiating WASI (wasi_snapshot_preview1)")
+	if _, err := wasi.Instantiate(ctx, d.runtime); err != nil {
+		return fmt.Errorf("createWASMInstance: WASI instantiation failed: %w", err)
 	}
 
 	// Per-session state shared across host function calls.
@@ -223,207 +198,60 @@ func (d *Debuglet) createWASMInstance(wasmBytes []byte) error {
 	socketRegistry := &socket.SocketRegistry{}
 	var lastReceived net.Addr
 
-	d.logger.Debug("registering host functions for WASM")
-	d.registerHostFunctions(importObject, scionConns, socketRegistry, &lastReceived)
-
-	instance, err := wasmer.NewInstance(module, importObject)
-	if err != nil {
-		d.logger.Warnw("createWASMInstance: instantiation failed", "err", err)
-		return fmt.Errorf("createWASMInstance: failed to instantiate: %w", err)
+	d.logger.Debug("building host 'env' module")
+	hmb := d.runtime.NewHostModuleBuilder("env")
+	hmb = d.registerHostFunctions(hmb, scionConns, socketRegistry, &lastReceived)
+	if _, err := hmb.Instantiate(ctx); err != nil {
+		return fmt.Errorf("createWASMInstance: host module instantiation failed: %w", err)
 	}
-	d.wasmerInstance = instance
+
 	return nil
 }
 
-// registerHostFunctions populates the importObject with all host functions
+// registerHostFunctions populates the host module builder with all host functions
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
-func (d *Debuglet) registerHostFunctions(importObject *wasmer.ImportObject, scionConns *socket.SCIONConnRegistry, sockets *socket.SocketRegistry, lastReceived *net.Addr) {
-	i32 := wasmer.I32
-	i64 := wasmer.I64
-	in := wasmer.NewValueTypes
-	out := wasmer.NewValueTypes
+func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder, scionConns *socket.SCIONConnRegistry, sockets *socket.SocketRegistry, lastReceived *net.Addr) wazero.HostModuleBuilder {
+	// ---- Generic socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTCP, d.addresses, d.logger, sockets, nil, d.pktTagger)).Export("connect_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTLS, d.addresses, d.logger, sockets, nil, d.pktTagger)).Export("connect_tls")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.logger, sockets)).Export("receive_tcp_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.logger, sockets)).Export("send_tcp_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.logger, sockets)).Export("close_tcp")
 
-	importObject.Register("env", map[string]wasmer.IntoExtern{
-		// ---- Context / timing ----
-		"wait_start": d.hostEnv.WrapHostFn(d.store, in(), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				d.markStarted()
-				return wasm.HostWaitStart(env, args)
-			},
-		),
+	// ---- TCP socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.tcpServer, d.logger, sockets)).Export("accept_tcp")
 
-		"get_timestamp": d.hostEnv.WrapHostFn(d.store, in(), out(i64),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostGetTimestamp(env, args)
-			},
-		),
+	// ---- IP socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeICMP4, d.addresses, d.logger, sockets, nil, d.pktTagger)).Export("connect_icmp4")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.ipServer, d.logger, sockets)).Export("accept_icmp4")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.logger, sockets)).Export("receive_icmp4_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.logger, sockets)).Export("send_icmp4_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.logger, sockets)).Export("close_icmp4")
 
-		"wait_until": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWaitUntil(env, args)
-			},
-		),
+	// ---- SCION-UDP API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(scionConns, d.addresses, d.logger, d.pktTagger)).Export("send_scion_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveSCIONServerUDPPacket(lastReceived, d.logger, &d.scionServer, d.pktTagger)).Export("receive_scion_server_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAnswerSCIONUDPPacket(lastReceived, scionConns, d.addresses, d.logger, &d.scionServer, d.pktTagger)).Export("answer_scion_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONAvailablePaths(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_available_paths")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONPathLength(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_path_length")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_get_interface_details")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_select_path")
 
-		"sleep": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSleep(env, args)
-			},
-		),
+	// ---- Debug write API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteString(d.logger)).Export("write")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteStringNoEOL(d.logger)).Export("write_noeol")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI32(d.logger)).Export("write_i32")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI64(d.logger)).Export("write_i64")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI32Hex(d.logger)).Export("write_i32x")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI64Hex(d.logger)).Export("write_i64x")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteDeltaTimestamp(d.logger)).Export("write_delta_timestamp")
 
-		// ---- TCP socket API ----
-		"connect_tcp": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostConnect(socket.SocketTypeTCP, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
-			},
-		),
-
-		"connect_tls": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostConnect(socket.SocketTypeTLS, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
-			},
-		),
-
-		"accept_tcp": d.hostEnv.WrapHostFn(d.store, in(), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostAcceptTCP(env, args, d.tcpServer, d.logger, sockets)
-			},
-		),
-
-		"receive_tcp_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
-			},
-		),
-
-		"send_tcp_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSendData(env, args, d.logger, sockets, d.wasmerInstance)
-			},
-		),
-
-		"close_tcp": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostClose(env, args, d.logger, sockets)
-			},
-		),
-
-		// ---- IP socket API ----
-		"connect_icmp4": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostConnect(socket.SocketTypeICMP4, env, args, d.addresses, d.logger, sockets, nil, d.pktTagger)
-			},
-		),
-
-		"accept_icmp4": d.hostEnv.WrapHostFn(d.store, in(), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostAcceptIP(env, args, d.ipServer, d.logger, sockets)
-			},
-		),
-
-		"receive_icmp4_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostReceiveData(env, args, d.logger, sockets, d.wasmerInstance)
-			},
-		),
-
-		"send_icmp4_data": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSendData(env, args, d.logger, sockets, d.wasmerInstance)
-			},
-		),
-
-		"close_icmp4": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostClose(env, args, d.logger, sockets)
-			},
-		),
-
-		// ---- SCION-UDP API ----
-		"send_scion_udp_packet": d.hostEnv.WrapHostFn(d.store, in(i32, i32), out(i64),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSendSCIONUDPPacket(env, args, scionConns, d.addresses, d.logger, d.wasmerInstance, d.pktTagger)
-			},
-		),
-
-		"receive_scion_server_udp_packet": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32, i64),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				d.markStarted()
-				return wasm.HostReceiveSCIONServerUDPPacket(env, args, lastReceived, d.logger, d.wasmerInstance, &d.scionServer, d.pktTagger)
-			},
-		),
-
-		"scion_available_paths": d.hostEnv.WrapHostFn(d.store, in(i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSCIONAvailablePaths(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
-			},
-		),
-
-		"scion_path_length": d.hostEnv.WrapHostFn(d.store, in(i32, i32), out(i32),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSCIONPathLength(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
-			},
-		),
-
-		"scion_get_interface_details": d.hostEnv.WrapHostFn(d.store, in(i32, i32, i32), out(i64, i64),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSCIONGetInterfaceDetails(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
-			},
-		),
-
-		"scion_select_path": d.hostEnv.WrapHostFn(d.store, in(i32, i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostSCIONSelectPath(env, args, scionConns, d.addresses, d.logger, d.pktTagger)
-			},
-		),
-
-		// ---- Debug write API ----
-		"write": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteString(env, args, d.logger, d.wasmerInstance)
-			},
-		),
-
-		"write_noeol": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteStringNoEOL(env, args, d.logger, d.wasmerInstance)
-			},
-		),
-
-		"write_i32": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteI32(env, args, d.logger, d.wasmerInstance)
-			},
-		),
-
-		"write_i64": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteI64(env, args, d.logger, d.wasmerInstance)
-			},
-		),
-
-		"write_i32x": d.hostEnv.WrapHostFn(d.store, in(i32), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteI32Hex(env, args, d.logger, d.wasmerInstance)
-			},
-		),
-
-		"write_i64x": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteI64Hex(env, args, d.logger, d.wasmerInstance)
-			},
-		),
-
-		"write_delta_timestamp": d.hostEnv.WrapHostFn(d.store, in(i64), out(),
-			func(env *wasm.HostEnvironment, args []wasmer.Value) ([]wasmer.Value, error) {
-				return wasm.HostWriteDeltaTimestamp(env, args, d.logger)
-			},
-		),
-	})
+	return hmb
 }
 
-// Close shuts down all network listeners and the wasmer instance.
-func (d *Debuglet) Close() {
+// Close shuts down all network listeners and the wazero module instance.
+func (d *Debuglet) Close(ctx context.Context) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -439,107 +267,49 @@ func (d *Debuglet) Close() {
 	if d.ipServer != nil {
 		_ = d.ipServer.Close()
 	}
-	if d.wasmerInstance != nil {
-		inst := d.wasmerInstance
-		d.wasmerInstance = nil // nil first so flushWASIOutput sees it immediately
-		inst.Close()
+	if d.runtime != nil {
+		d.runtime.Close(ctx)
 	}
 	if d.pktTagger != nil {
 		d.pktTagger.Close()
 	}
+}
 
-	if !d.closed {
-		close(d.outputCh)
-		d.closed = true
+type chanWriter struct {
+	ch chan<- []byte
+}
+
+func (w *chanWriter) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
 	}
+	temp := make([]byte, len(p))
+	copy(temp, p)
+	w.ch <- temp
+	return len(p), nil
 }
 
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
-// back through StdoutChan, and returns the result bytes written to the WASM
-// result buffer.
-func (d *Debuglet) Run(ctx context.Context) error {
-	instance := d.wasmerInstance
+// back through outputCh, and returns any execution error.
+func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte) error {
+	writer := &chanWriter{ch: outputCh}
+	defer close(outputCh)
 
-	// Optional initialization
-	initFunc, err := instance.Exports.GetFunction("_initialize")
-	if err == nil {
-		if _, initErr := initFunc(); initErr != nil {
-			d.logger.Warnw("Run: initialization error", "err", initErr)
-			return fmt.Errorf("failed to initialize Go runtime: %w", initErr)
-		}
-	}
+	config := wazero.NewModuleConfig().
+		WithStdout(writer).
+		WithStderr(writer).
+		WithSysWalltime().
+		WithSysNanotime().
+		WithSysNanosleep().
+		WithRandSource(rand.Reader)
 
-	runFunc, err := instance.Exports.GetFunction("run_debuglet")
+	// start the wasm
+	mod, err := d.runtime.InstantiateModule(ctx, d.compiled, config)
 	if err != nil {
-		d.logger.Warnw("Run: 'run_debuglet' not exported", "err", err)
-		return fmt.Errorf("run_debuglet is not correctly exported: %w", err)
+		return fmt.Errorf("failed to instantiate module: %w", err)
 	}
+	mod.Close(ctx)
 
-	d.hostEnv.SetContext(ctx)
+	return nil
 
-	done := make(chan error, 1)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				d.logger.Errorf("Run: recovered from panic: %v", r)
-				done <- fmt.Errorf("debuglet panicked: %v", r)
-			}
-		}()
-
-		d.logger.Debug("starting execution")
-		if _, runErr := runFunc(); runErr != nil {
-			d.logger.Warnw("Run: execution error", "err", runErr)
-			done <- fmt.Errorf("error running debuglet: %w", runErr)
-			return
-		}
-
-		done <- nil
-	}()
-
-	ticker := time.NewTicker(stdoutPollInterval)
-	defer ticker.Stop()
-
-	var retErr error
-StreamLoop:
-	for {
-		select {
-		case <-ctx.Done():
-			retErr = ctx.Err()
-			break StreamLoop
-		case err := <-done:
-			d.flushWASIOutput()
-			retErr = err
-			break StreamLoop
-		case <-ticker.C:
-			// Flush available stdout/stderr — do NOT break the loop here.
-			d.flushWASIOutput()
-		}
-	}
-	return retErr
-}
-
-// markStarted records that the debuglet has begun active execution.
-func (d *Debuglet) markStarted() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if !d.started {
-		d.started = true
-	}
-}
-
-// flushWASIOutput drains the WASI stdout buffer and forwards it to outputCh.
-// ReadStdout is called while the mutex is held so that a concurrent Close()
-// cannot free the underlying C memory between the nil-check and the read.
-func (d *Debuglet) flushWASIOutput() {
-	d.mu.Lock()
-	if d.closed || d.wasmerInstance == nil || d.wasiEnv == nil {
-		d.mu.Unlock()
-		return
-	}
-	buf := d.wasiEnv.ReadStdout()
-	d.mu.Unlock()
-	if len(buf) > 0 {
-		d.outputCh <- buf
-	}
 }
