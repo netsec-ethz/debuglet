@@ -47,12 +47,11 @@ import (
 // WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
 func HostConnect(
 	socketType socket.SocketType,
-	addresses []string,
 	sugar *zap.SugaredLogger,
 	registry socket.ISocketRegistry,
 	tlsCfg *tls.Config,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, index int32) int32 {
+) func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
 	var network string
 	switch socketType {
 	case socket.SocketTypeTLS:
@@ -67,11 +66,8 @@ func HostConnect(
 		panic(fmt.Errorf("connect: unknown SocketType %d", socketType))
 	}
 
-	return func(ctx context.Context, index int32) int32 {
-		addr := addresses[index]
-
-		var conn net.Conn
-		var err error
+	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
+		addr, err := ExtractStr(mod, addrp, addrLen)
 
 		dialer := &net.Dialer{
 			Timeout: 5 * time.Second,
@@ -85,11 +81,13 @@ func HostConnect(
 			}
 		}
 
+		var conn net.Conn
 		if socketType == socket.SocketTypeTLS {
 			conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
 		} else {
 			conn, err = dialer.DialContext(ctx, network, addr)
 		}
+
 		if err != nil {
 			sugar.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
 			return -1
@@ -106,23 +104,17 @@ func HostConnect(
 func HostReceiveData(
 	sugar *zap.SugaredLogger,
 	registry socket.ISocketRegistry,
-) func(ctx context.Context, mod api.Module, sockID int32, size int32, ptr int32) int32 {
-	return func(ctx context.Context, mod api.Module, sockID int32, size int32, ptr int32) int32 {
+) func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) int32 {
 		sock, err := registry.Get(sockID)
 		if err != nil {
 			sugar.Warnw("hostReceiveData: invalid handle", "handle", sockID, "err", err)
 			panic(fmt.Errorf("receive_data: %w", err))
 		}
 
-		mem := mod.Memory()
-		if mem == nil {
-			sugar.Errorw("hostReceiveData: failed to extract memory")
-			panic(fmt.Errorf("receive_data: failed to extract memory"))
-		}
-
-		buf, ok := mem.Read(uint32(ptr), uint32(size))
-		if !ok {
-			panic(fmt.Errorf("receive_data: failed to read memory at %d", ptr))
+		buf, err := ExtractMem[byte](mod, bufp, bufLen)
+		if err != nil {
+			panic(err)
 		}
 
 		n, err := sock.Read(buf)
@@ -140,23 +132,17 @@ func HostReceiveData(
 func HostSendData(
 	sugar *zap.SugaredLogger,
 	registry socket.ISocketRegistry,
-) func(ctx context.Context, mod api.Module, sockID int32, size int32, ptr int32) {
-	return func(ctx context.Context, mod api.Module, sockID int32, size int32, ptr int32) {
+) func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) {
+	return func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) {
 		sock, err := registry.Get(sockID)
 		if err != nil {
 			sugar.Warnw("hostSendData: invalid handle", "handle", sockID, "err", err)
 			panic(fmt.Errorf("send_data: %w", err))
 		}
 
-		mem := mod.Memory()
-		if mem == nil {
-			sugar.Errorw("hostSendData: failed to extract memory")
-			panic(fmt.Errorf("send_data: failed to extract memory"))
-		}
-
-		message, ok := mem.Read(uint32(ptr), uint32(size))
-		if !ok {
-			panic(fmt.Errorf("send_data: failed to read memory at %d", ptr))
+		message, err := ExtractMem[byte](mod, bufp, bufLen)
+		if err != nil {
+			panic(err)
 		}
 
 		sugar.Debugw("hostSendData: sending message", "message", string(message))
@@ -238,114 +224,6 @@ func HostAcceptIP(
 }
 
 // =============================================================================
-// UDP (plain IP) socket API  — !!! NOT YET REGISTERED — infrastructure only !!!
-// WASM keys: "send_udp_packet", "receive_udp_packet", "answer_udp_packet"
-// =============================================================================
-
-// HostSendUDPPacket writes size bytes from udp_send_buffer to the destination at
-// udpAddresses[addrIdx]. Returns the send timestamp as I64.
-func HostSendUDPPacket(
-	sugar *zap.SugaredLogger,
-	udpAddresses []*net.UDPAddr,
-	udpServer *net.PacketConn,
-) func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-	return func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-		dst := udpAddresses[addrIdx]
-		sugar.Debugw("hostSendUDPPacket sending", "dst", dst)
-
-		contents, err := ExtractSlice(mod, "udp_send_buffer", 0, size)
-		if err != nil {
-			sugar.Warnw("hostSendUDPPacket: failed to extract buffer", "err", err)
-			panic(fmt.Errorf("send_udp_packet: failed to extract udp_send_buffer: %w", err))
-		}
-
-		if _, err = (*udpServer).WriteTo(contents, dst); err != nil {
-			sugar.Warnw("hostSendUDPPacket: write error", "err", err)
-			return 0
-		}
-		return time.Now().UnixNano()
-	}
-}
-
-type readResult struct {
-	n    int
-	addr net.Addr
-	err  error
-}
-
-// HostReceiveUDPPacket reads one packet from udpServer into udp_receive_buffer.
-// timeout is the read deadline in nanoseconds. lastReceived is updated in place.
-// Returns (bytesRead I32, timestamp I64).
-func HostReceiveUDPPacket(
-	sugar *zap.SugaredLogger,
-	lastReceived *net.Addr,
-	udpServer net.PacketConn,
-) func(ctx context.Context, mod api.Module, timeout int64) (int32, int64) {
-	return func(ctx context.Context, mod api.Module, timeout int64) (int32, int64) {
-		buf, err := ExtractSlice(mod, "udp_receive_buffer", 0, 1024)
-		if err != nil {
-			sugar.Warnw("hostReceiveUDPPacket: failed to extract buffer", "err", err)
-			panic(fmt.Errorf("receive_udp_packet: failed to extract udp_receive_buffer: %w", err))
-		}
-
-		deadline := time.Now().Add(time.Duration(timeout) * time.Nanosecond)
-		if err := udpServer.SetReadDeadline(deadline); err != nil {
-			sugar.Warnw("hostReceiveUDPPacket: failed to set deadline", "err", err)
-			panic(fmt.Errorf("receive_udp_packet: failed to set read deadline: %w", err))
-		}
-
-		// Channel to deliver the read result across goroutines
-		ch := make(chan readResult, 1)
-
-		go func() {
-			n, addr, err := udpServer.ReadFrom(buf)
-			ch <- readResult{n: n, addr: addr, err: err}
-		}()
-
-		select {
-		case <-ctx.Done():
-			_ = udpServer.SetReadDeadline(time.Unix(0, 1))
-			return 0, 0
-
-		case res := <-ch:
-			*lastReceived = res.addr
-			return int32(res.n), time.Now().UnixNano()
-		}
-	}
-}
-
-// HostAnswerUDPPacket replies to the last received UDP packet (or to
-// udpAddresses[addrIdx] if no packet was received yet) with size bytes from
-// udp_send_buffer. Returns the send timestamp as I64.
-func HostAnswerUDPPacket(
-	sugar *zap.SugaredLogger,
-	lastReceived *net.Addr,
-	udpAddresses []*net.UDPAddr,
-	udpServer *net.PacketConn,
-) func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-	return func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-		contents, err := ExtractSlice(mod, "udp_send_buffer", 0, size)
-		if err != nil {
-			sugar.Warnw("hostAnswerUDPPacket: failed to extract buffer", "err", err)
-			panic(fmt.Errorf("answer_udp_packet: failed to extract udp_send_buffer: %w", err))
-		}
-
-		dst := net.Addr(udpAddresses[addrIdx])
-		if lastReceived != nil && *lastReceived != nil {
-			dst = *lastReceived
-		} else {
-			sugar.Warnln("hostAnswerUDPPacket: lastReceived is nil, falling back to address list")
-		}
-
-		if _, err = (*udpServer).WriteTo(contents, dst); err != nil {
-			sugar.Warnw("hostAnswerUDPPacket: write error", "err", err)
-			return 0
-		}
-		return time.Now().UnixNano()
-	}
-}
-
-// =============================================================================
 // SCION-UDP API
 // WASM keys: "send_scion_udp_packet", "receive_scion_server_udp_packet",
 //
@@ -360,18 +238,22 @@ func HostAnswerUDPPacket(
 // WASM key: "send_scion_udp_packet"
 func HostSendSCIONUDPPacket(
 	scionConns *socket.SCIONConnRegistry,
-	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-	return func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-		sc, err := scionConns.GetOrDial(ctx, addresses, addrIdx, sugar, pktTagger)
+) func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
+		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
+
+		sc, err := scionConns.GetOrDial(ctx, addr, sugar, pktTagger)
 		if err != nil {
 			sugar.Warnw("hostSendSCIONUDPPacket: dial failed", "err", err)
 			panic(fmt.Errorf("send_scion_udp_packet: %w", err))
 		}
 
-		data, err := ExtractSlice(mod, "udp_send_buffer", 0, size)
+		data, err := ExtractMem[byte](mod, sendp, sendLen)
 		if err != nil {
 			sugar.Warnw("hostSendSCIONUDPPacket: failed to extract buffer", "err", err)
 			panic(fmt.Errorf("send_scion_udp_packet: failed to extract udp_send_buffer: %w", err))
@@ -400,9 +282,9 @@ func HostReceiveSCIONServerUDPPacket(
 	sugar *zap.SugaredLogger,
 	scionServer *pan.ListenConn,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, mod api.Module, timeout int32) (int32, int64) {
-	return func(ctx context.Context, mod api.Module, timeout int32) (int32, int64) {
-		buf, err := ExtractSlice(mod, "udp_receive_buffer", 0, 1024)
+) func(ctx context.Context, mod api.Module, recvp, recvLen uint32, timeout int32) (int32, int64) {
+	return func(ctx context.Context, mod api.Module, recvp, recvLen uint32, timeout int32) (int32, int64) {
+		buf, err := ExtractMem[byte](mod, recvp, recvLen)
 		if err != nil {
 			sugar.Warnw("hostReceiveSCIONServerUDPPacket: failed to extract buffer", "err", err)
 			panic(fmt.Errorf("receive_scion_server_udp_packet: failed to extract udp_receive_buffer: %w", err))
@@ -439,9 +321,9 @@ func HostAnswerSCIONUDPPacket(
 	sugar *zap.SugaredLogger,
 	scionServer *pan.ListenConn,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-	return func(ctx context.Context, mod api.Module, addrIdx int32, size int32) int64 {
-		data, err := ExtractSlice(mod, "udp_send_buffer", 0, size)
+) func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
+		data, err := ExtractMem[byte](mod, sendp, sendLen)
 		if err != nil {
 			sugar.Warnw("hostAnswerSCIONUDPPacket: failed to extract buffer", "err", err)
 			return 0
@@ -474,7 +356,11 @@ func HostAnswerSCIONUDPPacket(
 			}
 		} else {
 			sugar.Warnln("hostAnswerSCIONUDPPacket: lastReceived is nil, falling back to dial")
-			sc, err := scionConns.GetOrDial(ctx, addresses, addrIdx, sugar, pktTagger)
+			addr, err := ExtractStr(mod, addrp, addrLen)
+			if err != nil {
+				panic(err)
+			}
+			sc, err := scionConns.GetOrDial(ctx, addr, sugar, pktTagger)
 			if err != nil {
 				sugar.Warnw("hostAnswerSCIONUDPPacket: dial failed", "err", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
@@ -493,12 +379,15 @@ func HostAnswerSCIONUDPPacket(
 // WASM key: "scion_available_paths"
 func HostSCIONAvailablePaths(
 	scionConns *socket.SCIONConnRegistry,
-	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, addrIdx int32) int32 {
-	return func(ctx context.Context, addrIdx int32) int32 {
-		sc, err := scionConns.GetOrDial(ctx, addresses, addrIdx, sugar, pktTagger)
+) func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
+		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
+		sc, err := scionConns.GetOrDial(ctx, addr, sugar, pktTagger)
 		if err != nil {
 			sugar.Warnw("hostSCIONAvailablePaths: dial failed", "err", err)
 			panic(fmt.Errorf("scion_available_paths: %w", err))
@@ -513,12 +402,15 @@ func HostSCIONAvailablePaths(
 // WASM key: "scion_path_length"
 func HostSCIONPathLength(
 	scionConns *socket.SCIONConnRegistry,
-	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, addrIdx int32, pathIdx int32) int32 {
-	return func(ctx context.Context, addrIdx int32, pathIdx int32) int32 {
-		sc, err := scionConns.GetOrDial(ctx, addresses, addrIdx, sugar, pktTagger)
+) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) int32 {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) int32 {
+		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
+		sc, err := scionConns.GetOrDial(ctx, addr, sugar, pktTagger)
 		if err != nil {
 			sugar.Warnw("hostSCIONPathLength: dial failed", "err", err)
 			panic(fmt.Errorf("scion_path_length: %w", err))
@@ -535,12 +427,15 @@ func HostSCIONPathLength(
 // WASM key: "scion_get_interface_details"
 func HostSCIONGetInterfaceDetails(
 	scionConns *socket.SCIONConnRegistry,
-	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, addrIdx int32, pathIdx int32, ifIdx int32) (int64, int64) {
-	return func(ctx context.Context, addrIdx int32, pathIdx int32, ifIdx int32) (int64, int64) {
-		sc, err := scionConns.GetOrDial(ctx, addresses, addrIdx, sugar, pktTagger)
+) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
+		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
+		sc, err := scionConns.GetOrDial(ctx, addr, sugar, pktTagger)
 		if err != nil {
 			sugar.Warnw("hostSCIONGetInterfaceDetails: dial failed", "err", err)
 			panic(fmt.Errorf("scion_get_interface_details: %w", err))
@@ -564,13 +459,15 @@ func HostSCIONGetInterfaceDetails(
 // WASM key: "scion_select_path"
 func HostSCIONSelectPath(
 	scionConns *socket.SCIONConnRegistry,
-	addresses []string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
-) func(ctx context.Context, addrIdx int32, pathIdx int32) {
-	return func(ctx context.Context, addrIdx int32, pathIdx int32) {
-
-		sc, err := scionConns.GetOrDial(ctx, addresses, addrIdx, sugar, pktTagger)
+) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) {
+		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
+		sc, err := scionConns.GetOrDial(ctx, addr, sugar, pktTagger)
 		if err != nil {
 			sugar.Warnw("hostSCIONSelectPath: dial failed", "err", err)
 			panic(fmt.Errorf("scion_select_path: %w", err))
@@ -593,11 +490,9 @@ func HostSCIONSelectPath(
 
 // HostReadWriteBuffer is a shared helper that reads the write_buffer global
 // from WASM memory. It is not exported to WASM.
-func HostReadWriteBuffer(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, mod api.Module, size int32) ([]byte, error) {
-	return func(ctx context.Context, mod api.Module, size int32) ([]byte, error) {
-		data, err := ExtractSlice(mod, "write_buffer", 0, size)
+func HostReadWriteBuffer(sugar *zap.SugaredLogger) func(ctx context.Context, mod api.Module, writep, writeLen uint32) ([]byte, error) {
+	return func(ctx context.Context, mod api.Module, writep, writeLen uint32) ([]byte, error) {
+		data, err := ExtractMem[byte](mod, writep, writeLen)
 		if err != nil {
 			sugar.Warnw("hostReadWriteBuffer: failed to extract buffer", "err", err)
 			return nil, fmt.Errorf("write: failed to extract write_buffer: %w", err)
@@ -608,12 +503,10 @@ func HostReadWriteBuffer(
 
 // HostWriteString prints a UTF-8 string followed by a newline.
 // WASM key: "write"
-func HostWriteString(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, mod api.Module, size int32) {
+func HostWriteString(sugar *zap.SugaredLogger) func(ctx context.Context, mod api.Module, writep, writeLen uint32) {
 	readBuf := HostReadWriteBuffer(sugar)
-	return func(ctx context.Context, mod api.Module, size int32) {
-		data, err := readBuf(ctx, mod, size)
+	return func(ctx context.Context, mod api.Module, writep, writeLen uint32) {
+		data, err := readBuf(ctx, mod, writep, writeLen)
 		if err != nil {
 			panic(err)
 		}
@@ -624,12 +517,10 @@ func HostWriteString(
 
 // HostWriteStringNoEOL prints a UTF-8 string without a trailing newline.
 // WASM key: "write_noeol"
-func HostWriteStringNoEOL(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, mod api.Module, size int32) {
+func HostWriteStringNoEOL(sugar *zap.SugaredLogger) func(ctx context.Context, mod api.Module, writep, writeLen uint32) {
 	readBuf := HostReadWriteBuffer(sugar)
-	return func(ctx context.Context, mod api.Module, size int32) {
-		data, err := readBuf(ctx, mod, size)
+	return func(ctx context.Context, mod api.Module, writep, writeLen uint32) {
+		data, err := readBuf(ctx, mod, writep, writeLen)
 		if err != nil {
 			panic(err)
 		}
@@ -640,9 +531,7 @@ func HostWriteStringNoEOL(
 
 // HostWriteI32 prints an int32 in decimal.
 // WASM key: "write_i32"
-func HostWriteI32(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, n int32) {
+func HostWriteI32(sugar *zap.SugaredLogger) func(ctx context.Context, n int32) {
 	return func(ctx context.Context, n int32) {
 		fmt.Printf("%d", n)
 		sugar.Debugw("hostWriteI32", "value", n)
@@ -651,9 +540,7 @@ func HostWriteI32(
 
 // HostWriteI64 prints an int64 in decimal.
 // WASM key: "write_i64"
-func HostWriteI64(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, n int64) {
+func HostWriteI64(sugar *zap.SugaredLogger) func(ctx context.Context, n int64) {
 	return func(ctx context.Context, n int64) {
 		fmt.Printf("%d", n)
 		sugar.Debugw("hostWriteI64", "value", n)
@@ -662,9 +549,7 @@ func HostWriteI64(
 
 // HostWriteI32Hex prints an int32 in hexadecimal.
 // WASM key: "write_i32x"
-func HostWriteI32Hex(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, n int32) {
+func HostWriteI32Hex(sugar *zap.SugaredLogger) func(ctx context.Context, n int32) {
 	return func(ctx context.Context, n int32) {
 		fmt.Printf("%x", n)
 		sugar.Debugw("hostWriteI32Hex", "value", fmt.Sprintf("%x", n))
@@ -673,9 +558,7 @@ func HostWriteI32Hex(
 
 // HostWriteI64Hex prints an int64 in hexadecimal.
 // WASM key: "write_i64x"
-func HostWriteI64Hex(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, n int64) {
+func HostWriteI64Hex(sugar *zap.SugaredLogger) func(ctx context.Context, n int64) {
 	return func(ctx context.Context, n int64) {
 		fmt.Printf("%x", n)
 		sugar.Debugw("hostWriteI64Hex", "value", fmt.Sprintf("%x", n))
@@ -684,9 +567,7 @@ func HostWriteI64Hex(
 
 // HostWriteDeltaTimestamp prints a nanosecond duration in human-readable form.
 // WASM key: "write_delta_timestamp"
-func HostWriteDeltaTimestamp(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, delta int64) {
+func HostWriteDeltaTimestamp(sugar *zap.SugaredLogger) func(ctx context.Context, delta int64) {
 	return func(ctx context.Context, delta int64) {
 
 		d := time.Duration(delta)
@@ -703,12 +584,9 @@ func HostWriteDeltaTimestamp(
 
 // HostDumpResult writes the WASM result buffer to a timestamped file.
 // WASM key: "dump_result"
-func HostDumpResult(
-	sugar *zap.SugaredLogger,
-) func(ctx context.Context, mod api.Module, size int32) {
-	return func(ctx context.Context, mod api.Module, size int32) {
-
-		data, err := ExtractSlice(mod, "result", 0, size)
+func HostDumpResult(sugar *zap.SugaredLogger) func(ctx context.Context, mod api.Module, resultp, resultLen uint32) {
+	return func(ctx context.Context, mod api.Module, resultp, resultLen uint32) {
+		data, err := ExtractMem[byte](mod, resultp, resultLen)
 		if err != nil {
 			sugar.Warnw("hostDumpResult: failed to extract result", "err", err)
 			panic(fmt.Errorf("dump_result: failed to extract result: %w", err))

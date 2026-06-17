@@ -67,9 +67,9 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		return
 	}
 
-	deb := debuglet.New(e.logger, spec.DebugletID, e.teslaSchedule)
+	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule)
 	defer deb.Close(ctx)
-	err := deb.InitRuntime(ctx, spec.Wasm, spec.Policy.Addresses)
+	err := deb.InitRuntime(ctx, spec.Wasm)
 	if err != nil {
 		var zapError zap.Field
 		if ctx.Err() == nil {

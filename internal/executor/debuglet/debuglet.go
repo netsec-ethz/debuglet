@@ -28,6 +28,7 @@ import (
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/wasm"
 	"debuglet/internal/executor/platform"
+	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tagger"
 	"debuglet/pkg/tesla"
 
@@ -53,6 +54,9 @@ const (
 // Debuglet is the engine that loads, initialises, and runs a single WASM
 // debuglet module. One Debuglet instance corresponds to one session.
 type Debuglet struct {
+	id     string
+	policy rpc.Policy
+
 	logger *zap.SugaredLogger
 
 	// wazero runtime state
@@ -66,15 +70,12 @@ type Debuglet struct {
 
 	pktTagger tagger.TaggerInterface
 
-	// addresses is the list of peer addresses made available to the WASM module.
-	addresses []string
-
 	createdAt time.Time
 	mu        sync.Mutex
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *Debuglet {
+func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tesla.KeySchedule) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if runtime.GOOS == "linux" {
@@ -105,6 +106,8 @@ func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *De
 	}
 
 	return &Debuglet{
+		id:        debugletID,
+		policy:    policy,
 		logger:    logger.Sugar(),
 		createdAt: time.Now(),
 		pktTagger: pktTagger,
@@ -113,8 +116,7 @@ func New(logger *zap.Logger, debugletID string, schedule *tesla.KeySchedule) *De
 
 // InitRuntime starts the network servers and compiles and instantiates the WASM
 // module. It must be called exactly once before Run.
-func (d *Debuglet) InitRuntime(ctx context.Context, wasmBytes []byte, addresses []string) error {
-	d.addresses = addresses
+func (d *Debuglet) InitRuntime(ctx context.Context, wasmBytes []byte) error {
 	if err := d.createWASMInstance(ctx, wasmBytes); err != nil {
 		return err
 	}
@@ -213,8 +215,8 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 // the Go-side implementation names have changed.
 func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder, scionConns *socket.SCIONConnRegistry, sockets *socket.SocketRegistry, lastReceived *net.Addr) wazero.HostModuleBuilder {
 	// ---- Generic socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTCP, d.addresses, d.logger, sockets, nil, d.pktTagger)).Export("connect_tcp")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTLS, d.addresses, d.logger, sockets, nil, d.pktTagger)).Export("connect_tls")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTCP, d.logger, sockets, nil, d.pktTagger)).Export("connect_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTLS, d.logger, sockets, nil, d.pktTagger)).Export("connect_tls")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.logger, sockets)).Export("receive_tcp_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.logger, sockets)).Export("send_tcp_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.logger, sockets)).Export("close_tcp")
@@ -223,20 +225,21 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder, scionConn
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.tcpServer, d.logger, sockets)).Export("accept_tcp")
 
 	// ---- IP socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeICMP4, d.addresses, d.logger, sockets, nil, d.pktTagger)).Export("connect_icmp4")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeICMP4, d.logger, sockets, nil, d.pktTagger)).Export("connect_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.ipServer, d.logger, sockets)).Export("accept_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.logger, sockets)).Export("receive_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.logger, sockets)).Export("send_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.logger, sockets)).Export("close_icmp4")
 
 	// ---- SCION-UDP API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(scionConns, d.addresses, d.logger, d.pktTagger)).Export("send_scion_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(scionConns, d.logger, d.pktTagger)).Export("send_scion_udp_packet")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveSCIONServerUDPPacket(lastReceived, d.logger, &d.scionServer, d.pktTagger)).Export("receive_scion_server_udp_packet")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAnswerSCIONUDPPacket(lastReceived, scionConns, d.addresses, d.logger, &d.scionServer, d.pktTagger)).Export("answer_scion_udp_packet")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONAvailablePaths(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_available_paths")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONPathLength(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_path_length")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_get_interface_details")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(scionConns, d.addresses, d.logger, d.pktTagger)).Export("scion_select_path")
+	// HACK: HostAnswerSCIONUDPPacket expects a list of addresses. This has been removed for the time being as the function is not being worked on or used
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAnswerSCIONUDPPacket(lastReceived, scionConns, []string{}, d.logger, &d.scionServer, d.pktTagger)).Export("answer_scion_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONAvailablePaths(scionConns, d.logger, d.pktTagger)).Export("scion_available_paths")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONPathLength(scionConns, d.logger, d.pktTagger)).Export("scion_path_length")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(scionConns, d.logger, d.pktTagger)).Export("scion_get_interface_details")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(scionConns, d.logger, d.pktTagger)).Export("scion_select_path")
 
 	// ---- Debug write API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteString(d.logger)).Export("write")
