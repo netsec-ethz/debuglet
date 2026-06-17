@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -15,15 +16,29 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	debugletIDS := make([]string, len(specs))
 
 	// =========== SUBMISSION CHECKS ===========
-	d.mu.RLock()
-	for _, spec := range specs {
-		_, exists := d.executors[spec.ExecutorID]
-		if !exists {
-			d.mu.RUnlock()
-			return nil, fmt.Errorf("executor '%s' not found", spec.ExecutorID)
+	err := func() error {
+		d.mu.RLock()
+		defer d.mu.RUnlock()
+
+		for _, spec := range specs {
+			p := spec.Policy
+			if p.FloorBW > p.CeilBW {
+				return fmt.Errorf("floorBW (%s) greater than ceilBW (%s)", p.FloorBW.String(), p.CeilBW.String())
+			}
+			if spec.StartTime != nil && spec.StartTime.Before(time.Now()) {
+				spec.StartTime = nil
+			}
+
+			_, exists := d.executors[spec.ExecutorID]
+			if !exists {
+				return fmt.Errorf("executor '%s' not found", spec.ExecutorID)
+			}
 		}
+		return nil
+	}()
+	if err != nil {
+		return nil, err
 	}
-	d.mu.RUnlock()
 
 	// =========== INSERT ===========
 	for i, spec := range specs {
