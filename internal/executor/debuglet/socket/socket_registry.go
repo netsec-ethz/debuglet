@@ -101,37 +101,32 @@ type SCIONConn struct {
 // number of addresses provided to the WASM module.
 type SCIONConnRegistry struct {
 	mu    sync.Mutex
-	conns []*SCIONConn
+	conns map[string]*SCIONConn
 }
 
 // NewSCIONConnRegistry creates a registry pre-sized for the given number of addresses.
 func NewSCIONConnRegistry(capacity int) *SCIONConnRegistry {
-	return &SCIONConnRegistry{conns: make([]*SCIONConn, capacity)}
+	return &SCIONConnRegistry{conns: make(map[string]*SCIONConn)}
 }
 
 // GetOrDial returns the existing SCIONConn for the given address index, or
 // dials a new one if none exists yet.
 func (r *SCIONConnRegistry) GetOrDial(
 	ctx context.Context,
-	addresses []string,
-	addrIdx int32,
+	addr string,
 	sugar *zap.SugaredLogger,
 	pktTagger tagger.TaggerInterface,
 ) (*SCIONConn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if addrIdx < 0 || int(addrIdx) >= len(r.conns) {
-		return nil, fmt.Errorf("invalid address index %d (have %d addresses)", addrIdx, len(r.conns))
+	if c, ok := r.conns[addr]; ok {
+		return c, nil
 	}
 
-	if r.conns[addrIdx] != nil {
-		return r.conns[addrIdx], nil
-	}
-
-	udpAddr, err := pan.ResolveUDPAddr(ctx, addresses[addrIdx])
+	udpAddr, err := pan.ResolveUDPAddr(ctx, addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve SCION address %q: %w", addresses[addrIdx], err)
+		return nil, fmt.Errorf("failed to resolve SCION address %q: %w", addr, err)
 	}
 
 	sugar.Debugw("SCIONConnRegistry dialling", "udpAddr", udpAddr)
@@ -139,7 +134,7 @@ func (r *SCIONConnRegistry) GetOrDial(
 	selector := NewPathSelector()
 	conn, err := pan.DialUDP(ctx, netip.AddrPort{}, udpAddr, nil, selector)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial SCION address %q: %w", addresses[addrIdx], err)
+		return nil, fmt.Errorf("failed to dial SCION address %q: %w", addr, err)
 	}
 
 	if pktTagger != nil {
@@ -156,7 +151,7 @@ func (r *SCIONConnRegistry) GetOrDial(
 	}
 
 	sc := &SCIONConn{Conn: &conn, Selector: selector}
-	r.conns[addrIdx] = sc
+	r.conns[addr] = sc
 	return sc, nil
 }
 

@@ -48,8 +48,13 @@ Use the debuglet-dashboard to submit measurements.
 Or run the local go user client:
 
 ```bash
-go run cmd/user/main.go -wasm local/wasm_samples/send_tcp/debuglet.wasm
+# send TCP GET req
+go run cmd/user/main.go -wasm local/wasm_samples/send_tcp/debuglet.wasm -debuglets 1 -- -addr google.com:80 -iter 5
+# send ping req
+go run cmd/user/main.go -wasm local/wasm_samples/ping/debuglet.wasm -debuglets 1 -- -addr 1.1.1.1 -iter 10
 ```
+
+The local user client allows for args to be passed through to the WASM by adding the flags after `--` at the end.
 
 ### Optional Requirements
 

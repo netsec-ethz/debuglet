@@ -120,6 +120,7 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 			go c.handler.HandleUpload(Spec{
 				DebugletID: debuglet.GetId(),
 				StartTime:  startTime,
+				Args:       debuglet.GetArgs(),
 				Wasm:       debuglet.GetWasm(),
 				Policy: Policy{
 					FloorBW:   debuglet.Policy.GetFloorBw(),

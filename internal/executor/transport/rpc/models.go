@@ -17,6 +17,7 @@ type Policy struct {
 type Spec struct {
 	DebugletID string
 	StartTime  *time.Time
+	Args       []string
 	Wasm       []byte
 	Policy     Policy
 }

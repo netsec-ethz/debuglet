@@ -144,5 +144,5 @@ func ReadOutput(debugletID string) error {
 }
 
 func handleEvent(debugletID string, e api.SSEEvent) {
-	fmt.Printf("[[%s]]: [%s] Event: %s - Data Len: %d\n", debugletID, e.ID, e.Event, len(e.Data))
+	fmt.Printf("[[%s]]: [%s] Event: %s - Data: %q\n", debugletID, e.ID, e.Event, e.Data)
 }

@@ -515,6 +515,7 @@ type DebugletUploadSpec struct {
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	StartTime     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=start_time,json=startTime,proto3,oneof" json:"start_time,omitempty"`
 	Wasm          []byte                 `protobuf:"bytes,3,opt,name=wasm,proto3" json:"wasm,omitempty"`
+	Args          []string               `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`
 	Policy        *DebugletPolicy        `protobuf:"bytes,5,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -567,6 +568,13 @@ func (x *DebugletUploadSpec) GetStartTime() *timestamppb.Timestamp {
 func (x *DebugletUploadSpec) GetWasm() []byte {
 	if x != nil {
 		return x.Wasm
+	}
+	return nil
+}
+
+func (x *DebugletUploadSpec) GetArgs() []string {
+	if x != nil {
+		return x.Args
 	}
 	return nil
 }
@@ -1174,12 +1182,13 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
 	"\n" +
 	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\x1c\n" +
-	"\taddresses\x18\x04 \x03(\tR\taddresses\"\xc2\x01\n" +
+	"\taddresses\x18\x04 \x03(\tR\taddresses\"\xd6\x01\n" +
 	"\x12DebugletUploadSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +
 	"start_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\tstartTime\x88\x01\x01\x12\x12\n" +
-	"\x04wasm\x18\x03 \x01(\fR\x04wasm\x129\n" +
+	"\x04wasm\x18\x03 \x01(\fR\x04wasm\x12\x12\n" +
+	"\x04args\x18\x04 \x03(\tR\x04args\x129\n" +
 	"\x06policy\x18\x05 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policyB\r\n" +
 	"\v_start_time\"H\n" +
 	"\rAbortDebuglet\x12\x1f\n" +

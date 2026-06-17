@@ -26,6 +26,7 @@ func (s *Server) UploadDebuglet(ctx context.Context, debugletID string, d dispat
 				Id:        debugletID,
 				StartTime: startTime,
 				Wasm:      d.Wasm,
+				Args:      d.Args,
 				Policy: &pb.DebugletPolicy{
 					FloorBw:   int64(d.Policy.FloorBW),
 					CeilBw:    int64(d.Policy.CeilBW),
