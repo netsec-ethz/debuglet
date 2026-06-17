@@ -241,15 +241,6 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder, scionConn
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(scionConns, d.logger, d.pktTagger)).Export("scion_get_interface_details")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(scionConns, d.logger, d.pktTagger)).Export("scion_select_path")
 
-	// ---- Debug write API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteString(d.logger)).Export("write")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteStringNoEOL(d.logger)).Export("write_noeol")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI32(d.logger)).Export("write_i32")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI64(d.logger)).Export("write_i64")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI32Hex(d.logger)).Export("write_i32x")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI64Hex(d.logger)).Export("write_i64x")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteDeltaTimestamp(d.logger)).Export("write_delta_timestamp")
-
 	return hmb
 }
 
