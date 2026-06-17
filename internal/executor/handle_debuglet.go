@@ -99,7 +99,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 	timedCtx, cancelRun := context.WithTimeout(ctx, spec.Policy.Timeout)
 	g, subCtx := errgroup.WithContext(timedCtx)
 	g.Go(func() error {
-		return deb.Run(subCtx, outputCh)
+		return deb.Run(subCtx, outputCh, spec.Args)
 	})
 
 	for out := range outputCh {

@@ -31,6 +31,7 @@ type Heartbeat struct {
 type DebugletSpec struct {
 	StartTime  *time.Time
 	Wasm       []byte
+	Args       []string
 	Policy     DebugletPolicy
 	ExecutorID string
 }

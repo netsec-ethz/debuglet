@@ -73,6 +73,7 @@ message DebugletUploadSpec {
   string id = 1;
   optional google.protobuf.Timestamp start_time = 2;
   bytes wasm = 3;
+  repeated string args = 4;
 
   DebugletPolicy policy = 5;
 }

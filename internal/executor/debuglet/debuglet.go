@@ -294,7 +294,7 @@ func (w *chanWriter) Write(p []byte) (n int, err error) {
 
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
 // back through outputCh, and returns any execution error.
-func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte) error {
+func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) error {
 	writer := &chanWriter{ch: outputCh}
 	defer close(outputCh)
 
@@ -304,7 +304,8 @@ func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte) error {
 		WithSysWalltime().
 		WithSysNanotime().
 		WithSysNanosleep().
-		WithRandSource(rand.Reader)
+		WithRandSource(rand.Reader).
+		WithArgs(args...)
 
 	// start the wasm
 	mod, err := d.runtime.InstantiateModule(ctx, d.compiled, config)

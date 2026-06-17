@@ -20,6 +20,7 @@ type DebugletRequest struct {
 	// Optional start time as unix epoch time
 	StartTimestamp *int64                `json:"start_time,omitempty"`
 	ExecutorID     string                `json:"executor_id"`
+	Args           []string              `json:"args,omitempty"`
 	Wasm           string                `json:"wasm"`
 	Policy         DebugletPolicyRequest `json:"policy"`
 }
@@ -84,6 +85,7 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 	return dispatcher.DebugletSpec{
 		StartTime:  startTime,
 		ExecutorID: r.ExecutorID,
+		Args:       r.Args,
 		Wasm:       decoded,
 		Policy: dispatcher.DebugletPolicy{
 			FloorBW:   resource.Bitrate(r.Policy.FloorBW),

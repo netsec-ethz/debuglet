@@ -106,7 +106,7 @@ type SCIONConnRegistry struct {
 
 // NewSCIONConnRegistry creates a registry pre-sized for the given number of addresses.
 func NewSCIONConnRegistry(capacity int) *SCIONConnRegistry {
-	return &SCIONConnRegistry{conns: map[string]*SCIONConn{}}
+	return &SCIONConnRegistry{conns: make(map[string]*SCIONConn)}
 }
 
 // GetOrDial returns the existing SCIONConn for the given address index, or
