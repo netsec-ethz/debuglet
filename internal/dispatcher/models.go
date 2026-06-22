@@ -4,6 +4,8 @@ import (
 	"context"
 	"debuglet/internal/dispatcher/resource"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 type ExecutorServer interface {
@@ -47,3 +49,18 @@ type LimitUpdate struct {
 	Address string
 	Limit   resource.Bitrate
 }
+
+func (l LimitUpdate) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("address", l.Address)
+	enc.AddString("limit", l.Limit.String())
+	return nil
+}
+
+//go:generate stringer -type=DebugletRunState
+type DebugletRunState int
+
+const (
+	RunStateUnspecified DebugletRunState = iota
+	RunStateInitializing
+	RunStateStarted
+)

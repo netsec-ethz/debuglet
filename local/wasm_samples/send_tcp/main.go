@@ -41,7 +41,7 @@ func main() {
 		send_tcp_data(connID, uint32(uintptr(unsafe.Pointer(&msg[0]))), uint32(len(msg)))
 		fmt.Println("sent tcp request")
 
-		var tcpRecvBuffer []byte = make([]byte, 4096)
+		var tcpRecvBuffer []byte = make([]byte, 1024)
 		n := receive_tcp_data(connID, uint32(uintptr(unsafe.Pointer(&tcpRecvBuffer[0]))), uint32(len(tcpRecvBuffer)))
 		fmt.Println("received", n, "bytes")
 		fmt.Println("response:", string(tcpRecvBuffer[:n]))

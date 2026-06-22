@@ -38,7 +38,7 @@ func main() {
 				StartTimestamp: &seconds,
 				Args:           passthroughArgs,
 				Policy: api.DebugletPolicyRequest{
-					FloorBW:   1000,
+					FloorBW:   1024,
 					CeilBW:    4096,
 					TimeoutMS: (10 * time.Second).Milliseconds(),
 				},

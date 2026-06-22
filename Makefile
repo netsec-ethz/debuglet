@@ -18,9 +18,11 @@ deps:
 # --------------------------------------------------------------------
 # Build local binaries
 # --------------------------------------------------------------------
-build: bpf
+build-exec: bpf
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
-	$(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
+
+build-disp:
+	mise x -- $(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
 
 # --------------------------------------------------------------------
 # Run locally
@@ -97,3 +99,21 @@ generate-certs:
 clean:
 	rm -f $(EXECUTOR_BINARY) $(DISPATCHER_BINARY)
 	rm -f internal/executor/bpf/c/tagger.o
+
+# --------------------------------------------------------------------
+# Install systemd services
+# --------------------------------------------------------------------
+
+SYSTEMD_PATH = /etc/systemd/system
+
+systemd-install: build-disp
+	sudo cp build/dispatcher.service $(SYSTEMD_PATH)/debuglet-dispatcher.service
+	sudo systemctl daemon-reload
+	sudo systemctl enable debuglet-dispatcher.service
+	sudo systemctl restart debuglet-dispatcher.service
+
+systemd-uninstall: build-disp
+	sudo systemctl stop debuglet-dispatcher.service || true
+	sudo systemctl disable debuglet-dispatcher.service || true
+	sudo rm -f $(SYSTEMD_PATH)/debuglet-dispatcher.service
+	sudo systemctl daemon-reload

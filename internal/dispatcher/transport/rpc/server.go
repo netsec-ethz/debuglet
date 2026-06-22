@@ -201,7 +201,6 @@ func (s *Server) DebugletStream(stream pb.DispatcherService_DebugletStreamServer
 				debugletID = msg.State.GetDebugletId()
 				err := s.deHandler.HandleState(ctx, msg.State.GetDebugletId(), msg.State.GetExecutorId(), grpcToRunState(msg.State.GetState()), grpcToPolicy(msg.State.GetPolicy()))
 				if err != nil {
-					// TODO: propagate error to executor/abort debuglet if the debuglet is rejected on initialization
 					s.logger.Error("Debuglet stream state error", zap.Error(err))
 				}
 			case *pb.ExecutorDebugletMessage_Output:

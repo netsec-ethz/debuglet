@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"debuglet/internal/executor/transport/rpc"
 	"errors"
 	"fmt"
@@ -8,20 +9,20 @@ import (
 	"go.uber.org/zap"
 )
 
-func (e *Executor) HandleUpload(upload rpc.Spec) {
+func (e *Executor) HandleUpload(ctx context.Context, upload rpc.Spec) {
 	// TODO: perform checks and throw error if can't submit
 
 	e.logger.Debug("Handling upload", zap.String("debugletID", upload.DebugletID))
 	if err := e.scheduler.Insert(upload); err != nil {
 		e.logger.Error("Failed to schedule debuglet spec", zap.Error(err))
 		err = fmt.Errorf("failed to schedule: %w", err)
-		if err2 := e.control.SendError(&upload.DebugletID, err); err2 != nil {
+		if err2 := e.control.SendError(ctx, &upload.DebugletID, err); err2 != nil {
 			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
 		}
 	}
 }
 
-func (e *Executor) HandleAbort(debugletID, reason string) {
+func (e *Executor) HandleAbort(ctx context.Context, debugletID, reason string) {
 	e.logger.Debug("Handling abort", zap.String("debugletID", debugletID), zap.String("reason", reason))
 	existed := e.scheduler.Remove(debugletID)
 	if existed {
@@ -37,4 +38,12 @@ func (e *Executor) HandleAbort(debugletID, reason string) {
 		return
 	}
 	run.cancelCtx(errors.New(reason))
+}
+
+func (e *Executor) HandleUpdate(ctx context.Context, updates []rpc.Update) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, up := range updates {
+		e.limiter.SetAddrCapacity(up.Address, up.Limit)
+	}
 }

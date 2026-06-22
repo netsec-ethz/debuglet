@@ -50,7 +50,7 @@ func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) e
 	}
 	used := d.usedCapacities[destination]
 	if used+minimum > cap {
-		return fmt.Errorf("%s destination capacity exceeded (want %d, have %d): %w", destination, minimum, cap-used, ErrCapacityFull)
+		return fmt.Errorf("%s destination capacity exceeded (want %s, have %s): %w", destination, minimum, cap-used, ErrCapacityFull)
 	}
 	return nil
 }

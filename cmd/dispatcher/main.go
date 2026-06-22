@@ -143,7 +143,11 @@ func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *z
 	if err != nil {
 		return fmt.Errorf("failed to get server credentials: %w", err)
 	}
-	srv := grpc.NewServer(grpc.Creds(creds))
+	srv := grpc.NewServer(
+		grpc.Creds(creds),
+		grpc.MaxRecvMsgSize(32*1024*1024), // 32 MB
+		grpc.MaxSendMsgSize(32*1024*1024),
+	)
 	pb.RegisterDispatcherServiceServer(srv, server)
 
 	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))

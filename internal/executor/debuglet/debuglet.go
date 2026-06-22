@@ -17,8 +17,8 @@ package debuglet
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"fmt"
-	"net"
 	"os"
 	"runtime"
 	"sync"
@@ -28,6 +28,7 @@ import (
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/wasm"
 	"debuglet/internal/executor/platform"
+	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tagger"
 	"debuglet/pkg/tesla"
@@ -57,25 +58,18 @@ type Debuglet struct {
 	id     string
 	policy rpc.Policy
 
-	logger *zap.SugaredLogger
-
 	// wazero runtime state
 	runtime  wazero.Runtime
 	compiled wazero.CompiledModule
 
-	scionServer pan.ListenConn
-	udpServer   net.PacketConn
-	tcpServer   *net.TCPListener
-	ipServer    net.Listener
-
-	pktTagger tagger.TaggerInterface
-
 	createdAt time.Time
 	mu        sync.Mutex
+
+	env *wasm.WasmEnv
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tesla.KeySchedule) *Debuglet {
+func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if runtime.GOOS == "linux" {
@@ -105,12 +99,23 @@ func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tes
 		pktTagger = tagger.New(schedule, []byte(debugletID))
 	}
 
+	env := wasm.WasmEnv{
+		DebugletID: debugletID,
+		Policy:     policy,
+		Limiter:    limiter,
+		Logger:     logger.Sugar(),
+		TlsCfg:     &tls.Config{},
+		Tagger:     pktTagger,
+
+		Registry:  &socket.SocketRegistry{},
+		ScionConn: socket.NewSCIONConnRegistry(scionConnCapacity),
+	}
+
 	return &Debuglet{
 		id:        debugletID,
 		policy:    policy,
-		logger:    logger.Sugar(),
 		createdAt: time.Now(),
-		pktTagger: pktTagger,
+		env:       &env,
 	}
 }
 
@@ -130,28 +135,31 @@ func (d *Debuglet) StartServers(ctx context.Context) error {
 // GetSCIONAddr returns the local SCION address of the server listener started
 // during Init.
 func (d *Debuglet) GetSCIONAddr() string {
-	if d.scionServer == nil {
+	if d.env.ScionServer == nil {
 		return ""
 	}
-	return d.scionServer.LocalAddr().String()
+	return d.env.ScionServer.LocalAddr().String()
 }
 
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
 func (d *Debuglet) startServers(ctx context.Context) error {
-	d.logger.Debugw("startServers: starting")
+	d.env.Logger.Debugw("startServers: starting")
 
 	// -- Placeholder for future UDP server --
 	// udpServer, err := net.ListenPacket("udp", ":0")
+	// d.env.UdpServer = udpServer
 
 	// -- Placeholder for future TCP server --
 	// addr, err := net.ResolveTCPAddr("tcp", ":0")
 	// tcpServer, err := net.ListenTCP("tcp", addr)
+	// d.env.TcpServer = tcpServer
 
 	// -- Placeholder for future IP server --
 	// ipAddr, err := net.ResolveIPAddr("ip", ":0")
 	// ipServer, err := net.ListenIP("ip", ipAddr)
+	// d.env.IpServer = ipServer
 
 	scionHost, err := platform.GetScionAddr(ctx)
 	if err != nil {
@@ -167,14 +175,14 @@ func (d *Debuglet) startServers(ctx context.Context) error {
 		return fmt.Errorf("startServers: failed to set SCION listen addr: %w", err)
 	}
 
-	d.logger.Debug("startServers: starting scion UDP listener")
+	d.env.Logger.Debug("startServers: starting scion UDP listener")
 	scionServer, err := pan.ListenUDP(ctx, listen.Get(), nil)
 	if err != nil {
 		return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
 	}
-	d.scionServer = scionServer
+	d.env.ScionServer = scionServer
 
-	d.logger.Debugw("startServers: started", "SCION", scionServer.LocalAddr())
+	d.env.Logger.Debugw("startServers: started", "SCION", scionServer.LocalAddr())
 	return nil
 }
 
@@ -185,24 +193,19 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 
 	compiled, err := d.runtime.CompileModule(ctx, wasmBytes)
 	if err != nil {
-		d.logger.Warnw("createWASMInstance: module compile failed", "err", err)
+		d.env.Logger.Warnw("createWASMInstance: module compile failed", "err", err)
 		return fmt.Errorf("createWASMInstance: bytecode is probably malformed: %w", err)
 	}
 	d.compiled = compiled
 
-	d.logger.Debug("instantiating WASI (wasi_snapshot_preview1)")
+	d.env.Logger.Debug("instantiating WASI (wasi_snapshot_preview1)")
 	if _, err := wasi.Instantiate(ctx, d.runtime); err != nil {
 		return fmt.Errorf("createWASMInstance: WASI instantiation failed: %w", err)
 	}
 
-	// Per-session state shared across host function calls.
-	scionConns := socket.NewSCIONConnRegistry(scionConnCapacity)
-	socketRegistry := &socket.SocketRegistry{}
-	var lastReceived net.Addr
-
-	d.logger.Debug("building host 'env' module")
+	d.env.Logger.Debug("building host 'env' module")
 	hmb := d.runtime.NewHostModuleBuilder("env")
-	hmb = d.registerHostFunctions(hmb, scionConns, socketRegistry, &lastReceived)
+	hmb = d.registerHostFunctions(hmb)
 	if _, err := hmb.Instantiate(ctx); err != nil {
 		return fmt.Errorf("createWASMInstance: host module instantiation failed: %w", err)
 	}
@@ -213,68 +216,47 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 // registerHostFunctions populates the host module builder with all host functions
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
-func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder, scionConns *socket.SCIONConnRegistry, sockets *socket.SocketRegistry, lastReceived *net.Addr) wazero.HostModuleBuilder {
+func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.HostModuleBuilder {
 	// ---- Generic socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTCP, d.logger, sockets, nil, d.pktTagger)).Export("connect_tcp")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeTLS, d.logger, sockets, nil, d.pktTagger)).Export("connect_tls")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.logger, sockets)).Export("receive_tcp_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.logger, sockets)).Export("send_tcp_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.logger, sockets)).Export("close_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTCP)).Export("connect_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTLS)).Export("connect_tls")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_tcp_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_tcp_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_tcp")
 
 	// ---- TCP socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.tcpServer, d.logger, sockets)).Export("accept_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.env)).Export("accept_tcp")
 
 	// ---- IP socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(socket.SocketTypeICMP4, d.logger, sockets, nil, d.pktTagger)).Export("connect_icmp4")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.ipServer, d.logger, sockets)).Export("accept_icmp4")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.logger, sockets)).Export("receive_icmp4_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.logger, sockets)).Export("send_icmp4_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.logger, sockets)).Export("close_icmp4")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.env)).Export("accept_icmp4")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_icmp4_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")
 
 	// ---- SCION-UDP API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(scionConns, d.logger, d.pktTagger)).Export("send_scion_udp_packet")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveSCIONServerUDPPacket(lastReceived, d.logger, &d.scionServer, d.pktTagger)).Export("receive_scion_server_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(d.env)).Export("send_scion_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveSCIONServerUDPPacket(d.env)).Export("receive_scion_server_udp_packet")
 	// HACK: HostAnswerSCIONUDPPacket expects a list of addresses. This has been removed for the time being as the function is not being worked on or used
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAnswerSCIONUDPPacket(lastReceived, scionConns, []string{}, d.logger, &d.scionServer, d.pktTagger)).Export("answer_scion_udp_packet")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONAvailablePaths(scionConns, d.logger, d.pktTagger)).Export("scion_available_paths")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONPathLength(scionConns, d.logger, d.pktTagger)).Export("scion_path_length")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(scionConns, d.logger, d.pktTagger)).Export("scion_get_interface_details")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(scionConns, d.logger, d.pktTagger)).Export("scion_select_path")
-
-	// ---- Debug write API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteString(d.logger)).Export("write")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteStringNoEOL(d.logger)).Export("write_noeol")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI32(d.logger)).Export("write_i32")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI64(d.logger)).Export("write_i64")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI32Hex(d.logger)).Export("write_i32x")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteI64Hex(d.logger)).Export("write_i64x")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostWriteDeltaTimestamp(d.logger)).Export("write_delta_timestamp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAnswerSCIONUDPPacket(d.env, []string{})).Export("answer_scion_udp_packet")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONAvailablePaths(d.env)).Export("scion_available_paths")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONPathLength(d.env)).Export("scion_path_length")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(d.env)).Export("scion_get_interface_details")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(d.env)).Export("scion_select_path")
 
 	return hmb
 }
 
-// Close shuts down all network listeners and the wazero module instance.
+// Close cleans up all the resources used by the debuglet
 func (d *Debuglet) Close(ctx context.Context) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.scionServer != nil {
-		_ = d.scionServer.Close()
-	}
-	if d.udpServer != nil {
-		_ = d.udpServer.Close()
-	}
-	if d.tcpServer != nil {
-		_ = d.tcpServer.Close()
-	}
-	if d.ipServer != nil {
-		_ = d.ipServer.Close()
-	}
+	d.env.Limiter.RemoveDebuglet(d.id)
+	d.env.Close()
+
 	if d.runtime != nil {
 		d.runtime.Close(ctx)
-	}
-	if d.pktTagger != nil {
-		d.pktTagger.Close()
 	}
 }
 
@@ -297,6 +279,10 @@ func (w *chanWriter) Write(p []byte) (n int, err error) {
 func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) error {
 	writer := &chanWriter{ch: outputCh}
 	defer close(outputCh)
+
+	if err := d.env.Limiter.InsertDebuglet(d.id, app.Bitrate(d.policy.FloorBW), app.Bitrate(d.policy.CeilBW), d.policy.Addresses); err != nil {
+		return fmt.Errorf("failed to insert debuglet to limiter: %w", err)
+	}
 
 	config := wazero.NewModuleConfig().
 		WithStdout(writer).
