@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/pkg/tesla"
@@ -24,6 +25,7 @@ type Executor struct {
 	scheduler scheduler.Scheduler
 	running   map[string]RunningDebuglet
 	mu        sync.RWMutex
+	limiter   *app.Limiter
 }
 
 var _ rpc.ExecutorControlHandler = (*Executor)(nil)
@@ -40,7 +42,10 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		cfg:           *cfg,
 		scheduler:     s,
 		running:       make(map[string]RunningDebuglet),
+		limiter:       app.NewLimiter(),
 	}
+
+	executor.limiter.SetExecutorCapacity(app.Gigabit)
 
 	s.RegisterOnStart(executor.OnStart)
 
@@ -68,14 +73,14 @@ func (e *Executor) Listen(ctx context.Context) error {
 	case <-e.control.Ready():
 	}
 
-	e.hello()
+	e.hello(ctx)
 	go e.startHeartbeatLoop(ctx)
 
 	<-ctx.Done()
 	return nil
 }
 
-func (e *Executor) hello() error {
+func (e *Executor) hello(ctx context.Context) error {
 	h := rpc.Hello{
 		ExecutorID:           e.cfg.ExecutorID,
 		Version:              e.cfg.Version,
@@ -84,11 +89,12 @@ func (e *Executor) hello() error {
 		TeslaAnchorTimestamp: e.teslaSchedule.Config().Epoch,
 		TeslaAnchorKey:       e.teslaSchedule.Anchor(),
 	}
-	return e.control.SendHello(h)
+	return e.control.SendHello(ctx, h)
 }
 
-func (e *Executor) setResources(capacity int64) error {
-	return e.control.SendSetResources(capacity)
+func (e *Executor) setResources(ctx context.Context, capacity app.Bitrate) error {
+	e.limiter.SetExecutorCapacity(capacity)
+	return e.control.SendSetResources(ctx, int64(capacity))
 }
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context) {
@@ -104,7 +110,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := e.control.SendHeartbeat(e.teslaSchedule); err != nil {
+			if err := e.control.SendHeartbeat(ctx, e.teslaSchedule); err != nil {
 				e.logger.Error("Failed to send heartbeat", zap.Error(err))
 			}
 		}

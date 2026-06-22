@@ -26,7 +26,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 
 	if len(e.running) >= e.cfg.MaxDebuglets {
 		err := fmt.Errorf("cannot add another debuglet (id=%s)", spec.DebugletID)
-		if err2 := e.control.SendError(&spec.DebugletID, err); err2 != nil {
+		if err2 := e.control.SendError(ctx, &spec.DebugletID, err); err2 != nil {
 			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
 		}
 		close(preRunLock)
@@ -67,7 +67,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		return
 	}
 
-	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule)
+	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter)
 	defer deb.Close(ctx)
 	err := deb.InitRuntime(ctx, spec.Wasm)
 	if err != nil {

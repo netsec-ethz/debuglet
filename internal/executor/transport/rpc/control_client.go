@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/ratelimit/app"
 	pb "debuglet/protocol"
 	"fmt"
 	"io"
@@ -117,7 +118,7 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 				tmp := st.AsTime()
 				startTime = &tmp
 			}
-			go c.handler.HandleUpload(Spec{
+			go c.handler.HandleUpload(ctx, Spec{
 				DebugletID: debuglet.GetId(),
 				StartTime:  startTime,
 				Args:       debuglet.GetArgs(),
@@ -130,7 +131,13 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 				},
 			})
 		case *pb.DispatcherControlMessage_Abort:
-			go c.handler.HandleAbort(m.Abort.GetDebugletId(), m.Abort.GetReason())
+			go c.handler.HandleAbort(ctx, m.Abort.GetDebugletId(), m.Abort.GetReason())
+		case *pb.DispatcherControlMessage_Updates:
+			var updates []Update
+			for _, up := range msg.GetUpdates().GetLimits() {
+				updates = append(updates, Update{Address: up.GetAddress(), Limit: app.Bitrate(up.GetBitsLimit())})
+			}
+			go c.handler.HandleUpdate(ctx, updates)
 		case nil:
 			c.logger.Warn("received control message with empty msg")
 		default:

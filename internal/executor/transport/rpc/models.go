@@ -1,10 +1,15 @@
 package rpc
 
-import "time"
+import (
+	"context"
+	"debuglet/internal/executor/ratelimit/app"
+	"time"
+)
 
 type ExecutorControlHandler interface {
-	HandleUpload(Spec)
-	HandleAbort(debugletID, reason string)
+	HandleUpload(context.Context, Spec)
+	HandleAbort(ctx context.Context, debugletID, reason string)
+	HandleUpdate(ctx context.Context, updates []Update)
 }
 
 type Policy struct {
@@ -29,4 +34,9 @@ type Hello struct {
 	TeslaDelay           time.Duration
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte
+}
+
+type Update struct {
+	Address string
+	Limit   app.Bitrate
 }

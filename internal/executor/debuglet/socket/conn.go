@@ -36,18 +36,21 @@ type Socket interface {
 	io.ReadWriteCloser
 	// Type returns the transport type of this socket.
 	Type() SocketType
+	Addr() string
 }
 
 type GenericSocket struct {
 	conn       net.Conn
 	socketType SocketType
+	addr       string
 }
 
-func NewGenericSocket(conn net.Conn, socketType SocketType) *GenericSocket {
-	return &GenericSocket{conn: conn, socketType: socketType}
+func NewGenericSocket(conn net.Conn, socketType SocketType, addr string) *GenericSocket {
+	return &GenericSocket{conn: conn, socketType: socketType, addr: addr}
 }
 
-func (s *GenericSocket) Type() SocketType            { return s.socketType }
 func (s *GenericSocket) Read(b []byte) (int, error)  { return s.conn.Read(b) }
 func (s *GenericSocket) Write(b []byte) (int, error) { return s.conn.Write(b) }
 func (s *GenericSocket) Close() error                { return s.conn.Close() }
+func (s *GenericSocket) Type() SocketType            { return s.socketType }
+func (s *GenericSocket) Addr() string                { addr, _ := hostFromAddr(s.addr); return addr }

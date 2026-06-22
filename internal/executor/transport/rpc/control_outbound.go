@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"debuglet/pkg/tesla"
 	pb "debuglet/protocol"
 	"time"
@@ -19,10 +20,12 @@ func (c *ControlClient) sendLoop() {
 	}
 }
 
-func (c *ControlClient) Send(msg *pb.ExecutorControlMessage) error {
+func (c *ControlClient) Send(ctx context.Context, msg *pb.ExecutorControlMessage) error {
 	select {
 	case <-c.stream.Context().Done():
 		return c.stream.Context().Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case c.sendCh <- msg:
 		return nil
 	}
@@ -39,11 +42,11 @@ func (c *ControlClient) Close() {
 	<-c.done
 }
 
-func (c *ControlClient) SendHeartbeat(schedule *tesla.KeySchedule) error {
+func (c *ControlClient) SendHeartbeat(ctx context.Context, schedule *tesla.KeySchedule) error {
 	now := time.Now()
 	epoch, key, _ := schedule.DisclosedKey(now)
 	c.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))
-	return c.Send(&pb.ExecutorControlMessage{
+	return c.Send(ctx, &pb.ExecutorControlMessage{
 		Msg: &pb.ExecutorControlMessage_Heartbeat{Heartbeat: &pb.ExecutorHeartbeat{
 			TimestampNs:   now.UnixNano(),
 			TeslaKeyEpoch: epoch,
@@ -52,9 +55,9 @@ func (c *ControlClient) SendHeartbeat(schedule *tesla.KeySchedule) error {
 	})
 }
 
-func (c *ControlClient) SendHello(h Hello) error {
+func (c *ControlClient) SendHello(ctx context.Context, h Hello) error {
 	c.logger.Debug("Sending 'hello'", zap.String("id", h.ExecutorID))
-	return c.Send(&pb.ExecutorControlMessage{
+	return c.Send(ctx, &pb.ExecutorControlMessage{
 		Msg: &pb.ExecutorControlMessage_Hello{Hello: &pb.ExecutorHello{
 			ExecutorId:             h.ExecutorID,
 			Version:                h.Version,
@@ -66,9 +69,9 @@ func (c *ControlClient) SendHello(h Hello) error {
 	})
 }
 
-func (c *ControlClient) SendError(debugletID *string, err error) error {
+func (c *ControlClient) SendError(ctx context.Context, debugletID *string, err error) error {
 	c.logger.Debug("Sending 'error'", zap.Stringp("id", debugletID), zap.Error(err))
-	return c.Send(&pb.ExecutorControlMessage{
+	return c.Send(ctx, &pb.ExecutorControlMessage{
 		Msg: &pb.ExecutorControlMessage_Error{
 			Error: &pb.ExecutorError{
 				DebugletId: debugletID,
@@ -78,9 +81,9 @@ func (c *ControlClient) SendError(debugletID *string, err error) error {
 	)
 }
 
-func (c *ControlClient) SendSetResources(capacity int64) error {
+func (c *ControlClient) SendSetResources(ctx context.Context, capacity int64) error {
 	c.logger.Debug("Sending 'resources'", zap.Int64("capacity", capacity))
-	return c.Send(&pb.ExecutorControlMessage{
+	return c.Send(ctx, &pb.ExecutorControlMessage{
 		Msg: &pb.ExecutorControlMessage_Resources{
 			Resources: &pb.ExecutorResources{
 				BandwidthCapacity: capacity,
