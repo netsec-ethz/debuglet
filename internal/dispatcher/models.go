@@ -63,4 +63,7 @@ const (
 	RunStateUnspecified DebugletRunState = iota
 	RunStateInitializing
 	RunStateStarted
+	// Additional states managed solely on the dispatcher's side for transparency
+	RunStateUploading
+	RunStateExited
 )

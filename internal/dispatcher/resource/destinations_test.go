@@ -9,11 +9,12 @@ import (
 )
 
 func TestMultiDest(t *testing.T) {
+	debugletID := "d-1"
 	d := resource.NewDestinations(100)
 	dests := []string{"128.0.0.0", "128.0.0.1"}
-	d.Insert(dests[0], "e1", 1, 100)
-	d.Insert(dests[0], "e2", 1, 100)
-	d.Insert(dests[1], "e2", 1, 100)
+	d.Insert(debugletID, dests[0], "e1", 1, 100)
+	d.Insert(debugletID, dests[0], "e2", 1, 100)
+	d.Insert(debugletID, dests[1], "e2", 1, 100)
 
 	jobCaps := maps.Collect(d.Fairshare(dests[0]))
 	if len(jobCaps) != 2 || jobCaps["e1"] != 50 || jobCaps["e2"] != 50 {
@@ -28,8 +29,8 @@ func TestMultiDest(t *testing.T) {
 func TestMinimum(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "e1", 60, 100)
-	d.Insert(dest, "e2", 0, 100)
+	d.Insert("d-1", dest, "e1", 60, 100)
+	d.Insert("d-1", dest, "e2", 0, 100)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
 	if len(jobCaps) != 2 || jobCaps["e1"] != 80 || jobCaps["e2"] != 20 {
@@ -40,9 +41,9 @@ func TestMinimum(t *testing.T) {
 func TestZero(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "e1", 5, 100)
-	d.Insert(dest, "e2", 5, 100)
-	d.Insert(dest, "j3", 20, 20)
+	d.Insert("d-1", dest, "e1", 5, 100)
+	d.Insert("d-1", dest, "e2", 5, 100)
+	d.Insert("d-1", dest, "j3", 20, 20)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
 	if len(jobCaps) != 3 || jobCaps["e1"] != 40 || jobCaps["e2"] != 40 || jobCaps["j3"] != 20 {
@@ -53,9 +54,9 @@ func TestZero(t *testing.T) {
 func TestNotFull(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "e1", 5, 5)
-	d.Insert(dest, "e2", 5, 5)
-	d.Insert(dest, "j3", 20, 20)
+	d.Insert("d-1", dest, "e1", 5, 5)
+	d.Insert("d-1", dest, "e2", 5, 5)
+	d.Insert("d-1", dest, "j3", 20, 20)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
 	if len(jobCaps) != 3 || jobCaps["e1"] != 5 || jobCaps["e2"] != 5 || jobCaps["j3"] != 20 {
@@ -66,18 +67,18 @@ func TestNotFull(t *testing.T) {
 func TestErrors(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	err := d.Insert(dest, "e2", 10, 5)
+	err := d.Insert("d-1", dest, "e2", 10, 5)
 	if err == nil || !errors.Is(err, resource.ErrMinGreater) {
 		t.Fatalf("Expected to receive ErrMinGreater, got %v", err)
 	}
 
 	for i := range 5 {
-		err := d.Insert(dest, fmt.Sprintf("j%d", i), 20, 100000)
+		err := d.Insert("d-1", dest, fmt.Sprintf("j%d", i), 20, 100000)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
-	err = d.Insert(dest, "e2", 5, 5)
+	err = d.Insert("d-1", dest, "e2", 5, 5)
 	if err == nil || !errors.Is(err, resource.ErrCapacityFull) {
 		t.Fatalf("Expected to receive ErrCapacityFull, got %v", err)
 	}
@@ -86,9 +87,9 @@ func TestErrors(t *testing.T) {
 func TestRemove(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "e1", 10, 10)
-	d.Insert(dest, "e2", 20, 100)
-	d.Remove(dest, "e1", 10, 10)
+	d.Insert("d-1", dest, "e1", 10, 10)
+	d.Insert("d-1", dest, "e2", 20, 100)
+	d.Remove("d-1", dest, "e1", 10, 10)
 	if x := d.Len(); x != 1 {
 		t.Fatalf("Expected Len()=1, got %d", x)
 	}
@@ -101,10 +102,10 @@ func TestRemove(t *testing.T) {
 func TestAdd(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert(dest, "exec1", 2, 10)
-	d.Insert(dest, "exec1", 10, 10)
+	d.Insert("d-1", dest, "exec1", 2, 10)
+	d.Insert("d-1", dest, "exec1", 10, 10)
 
-	d.Insert(dest, "exec2", 2, 10)
+	d.Insert("d-1", dest, "exec2", 2, 10)
 
 	caps := maps.Collect(d.Fairshare(dest))
 	if len(caps) != 2 || caps["exec1"] != 20 || caps["exec2"] != 10 {
@@ -127,7 +128,7 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 	d := resource.NewDestinations(100)
 	for i := range initial {
 		dest := fmt.Sprintf("prefill-%d", i)
-		if err := d.Insert(dest, "prefill-job", 1, 100); err != nil {
+		if err := d.Insert("d-1", dest, "prefill-job", 1, 100); err != nil {
 			b.Fatalf("prefill insert failed at %d: %v", i, err)
 		}
 	}
@@ -149,14 +150,14 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 		b.StartTimer()
 		for j := 0; j < batch; j++ {
 			dest := benchDests[i+j]
-			if err := d.Insert(dest, "bench-job", 1, 100); err != nil {
+			if err := d.Insert(fmt.Sprintf("j-%d", j), dest, "bench-job", 1, 100); err != nil {
 				b.Fatalf("benchmark insert failed at %d: %v", i+j, err)
 			}
 		}
 		b.StopTimer()
 
 		for j := 0; j < batch; j++ {
-			d.Remove(benchDests[i+j], "bench-job", 1, 100)
+			d.Remove(fmt.Sprintf("j-%d", j), benchDests[i+j], "bench-job", 1, 100)
 		}
 		i += batch
 	}

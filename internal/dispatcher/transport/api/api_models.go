@@ -65,6 +65,13 @@ type DestinationLimitRequest struct {
 	Limit       int64  `json:"limit"`
 }
 
+type DebugletStateResponse struct {
+	State      string `json:"state"`
+	Logs       string `json:"logs"` // base64-encoded
+	Error      string `json:"error"`
+	ExecutorID string `json:"executor_id"`
+}
+
 // ================ HELPERS ================
 
 func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
@@ -78,7 +85,7 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 
 	var startTime *time.Time
 	if st := r.StartTimestamp; st != nil {
-		tmp := time.Unix(*st, 0)
+		tmp := time.Unix(*st, 0).UTC()
 		startTime = &tmp
 	}
 

@@ -11,15 +11,18 @@ import (
 )
 
 type logConn struct {
-	seq  int
-	logs chan<- []byte
-	done chan struct{}
+	seq   int
+	logs  chan<- []byte
+	state chan<- DebugletRunState
+	done  chan struct{}
 }
 
-type debugletStore struct {
-	logs       []byte
-	policy     DebugletPolicy
-	executorID string
+type DebugletStore struct {
+	Logs       []byte
+	Policy     DebugletPolicy
+	ExecutorID string
+	State      DebugletRunState
+	Err        string
 }
 
 type Dispatcher struct {
@@ -32,7 +35,7 @@ type Dispatcher struct {
 
 	// Naive storage of the full output of debuglets.
 	// debugletStores allows for a user to get the full logs at a later point in time.
-	debugletStores map[string]*debugletStore
+	debugletStores map[string]*DebugletStore
 	// connectedLogs stores the users connected via websockets
 	connectedLogs map[string][]logConn
 	seq           int // counter for log connection IDs
@@ -49,7 +52,7 @@ func New(l *zap.Logger) *Dispatcher {
 		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
 		logger:         l,
-		debugletStores: make(map[string]*debugletStore),
+		debugletStores: make(map[string]*DebugletStore),
 		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
 	}
@@ -63,7 +66,17 @@ func (d *Dispatcher) GetKeyStore() *tag.KeyStore {
 	return d.keystore
 }
 
-func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []byte) (int, <-chan struct{}, error) {
+func (d *Dispatcher) GetStore(debugletID string) (*DebugletStore, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st, ok := d.debugletStores[debugletID]; ok {
+		return st, nil
+	} else {
+		return nil, fmt.Errorf("debuglet with '%s' does not exist", debugletID)
+	}
+}
+
+func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- DebugletRunState) (int, <-chan struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.debugletStores[debugletID]; !exists {
@@ -71,7 +84,7 @@ func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []b
 	}
 
 	d.seq++
-	lc := logConn{logs: channel, seq: d.seq, done: make(chan struct{})}
+	lc := logConn{logs: logs, state: state, seq: d.seq, done: make(chan struct{})}
 	d.connectedLogs[debugletID] = append(d.connectedLogs[debugletID], lc)
 	return lc.seq, lc.done, nil
 }
@@ -87,6 +100,9 @@ func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
 	}
 	conn := d.connectedLogs[debugletID][index]
 	close(conn.logs)
+	if conn.state != nil {
+		close(conn.state)
+	}
 	d.connectedLogs[debugletID] = slices.Delete(d.connectedLogs[debugletID], index, index+1)
 }
 

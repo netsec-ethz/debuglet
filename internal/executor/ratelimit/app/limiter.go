@@ -119,6 +119,8 @@ func (l *Limiter) RemoveDebuglet(ID string) {
 	defer l.mu.Unlock()
 
 	l.execT.Delete(ID)
+	l.dirty[""] = time.Now()
+
 	if store, ok := l.stores[ID]; ok {
 		for a, _ := range store.lastAddrLimit {
 			if aTree, exists := l.addrT[a]; exists {
@@ -153,6 +155,9 @@ func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
 	}
 
 	updated := false
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
 	execLimit := store.lastExecLimit
 	addrLimit := store.lastAddrLimit[addr]
 
@@ -169,11 +174,9 @@ func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
 	}
 
 	if updated {
-		store.mu.Lock()
 		store.lastUpdate = time.Now()
 		store.lastExecLimit = execLimit
 		store.lastAddrLimit[addr] = addrLimit
-		store.mu.Unlock()
 	}
 
 	return Limit{Executor: execLimit, Address: addrLimit, Updated: updated}, nil

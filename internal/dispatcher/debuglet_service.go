@@ -41,12 +41,20 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	}
 
 	// =========== INSERT ===========
+	d.mu.Lock()
 	for i, spec := range specs {
 		debugletID := uuid.New().String()
 		debugletIDS[i] = debugletID
 		d.executors[spec.ExecutorID].AppendDebugletID(debugletID)
+		d.debugletStores[debugletID] = &DebugletStore{
+			Logs:       []byte{},
+			Policy:     spec.Policy,
+			ExecutorID: spec.ExecutorID,
+			State:      RunStateUploading,
+		}
 		g.Go(d.uploadToExecutor(subCtx, i, debugletID, spec))
 	}
+	d.mu.Unlock()
 
 	if err := g.Wait(); err != nil {
 		for i, id := range debugletIDS {
@@ -71,6 +79,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 }
 
 func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error {
+	d.HandleExit(debugletID, -1, errors.New(reason))
 	if err := d.sender.AbortDebuglet(ctx, executorID, debugletID, reason); err != nil {
 		return errors.New("failed to forward abort to executor")
 	}

@@ -41,6 +41,7 @@ func (e *Executor) HandleAbort(ctx context.Context, debugletID, reason string) {
 }
 
 func (e *Executor) HandleUpdate(ctx context.Context, updates []rpc.Update) {
+	e.logger.Debug("Handling update", zap.Objects("destination", updates))
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, up := range updates {

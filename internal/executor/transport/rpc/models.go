@@ -4,6 +4,8 @@ import (
 	"context"
 	"debuglet/internal/executor/ratelimit/app"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 type ExecutorControlHandler interface {
@@ -39,4 +41,10 @@ type Hello struct {
 type Update struct {
 	Address string
 	Limit   app.Bitrate
+}
+
+func (l Update) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("address", l.Address)
+	enc.AddString("limit", l.Limit.String())
+	return nil
 }

@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -17,6 +18,20 @@ type DispatcherDebugletHandler interface {
 func (d *Dispatcher) HandleState(ctx context.Context, debugletID, executorID string, state DebugletRunState, policy DebugletPolicy) error {
 	d.logger.Debug("Received debuglet state update", zap.String("debugletID", debugletID), zap.String("executorID", executorID), zap.String("state", state.String()))
 
+	d.mu.Lock()
+	if store, ok := d.debugletStores[debugletID]; ok {
+		store.State = state
+		for _, conn := range d.connectedLogs[debugletID] {
+			if conn.state != nil {
+				select {
+				case conn.state <- state:
+				default:
+				}
+			}
+		}
+	}
+	d.mu.Unlock()
+
 	if state == RunStateInitializing {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -30,19 +45,12 @@ func (d *Dispatcher) HandleState(ctx context.Context, debugletID, executorID str
 			}
 		}
 		for _, dest := range policy.Addresses {
-			if err := d.destinations.Insert(dest, executorID, policy.FloorBW, policy.CeilBW); err != nil {
+			if err := d.destinations.Insert(debugletID, dest, executorID, policy.FloorBW, policy.CeilBW); err != nil {
 				d.sender.AbortDebuglet(ctx, executorID, debugletID, err.Error())
 				return err
 			}
 		}
 		d.sendFairshare(ctx, policy.Addresses)
-
-		// insert
-		d.debugletStores[debugletID] = &debugletStore{
-			logs:       []byte{},
-			policy:     policy,
-			executorID: executorID,
-		}
 	}
 	return nil
 }
@@ -56,7 +64,7 @@ func (d *Dispatcher) HandleOutput(ctx context.Context, debugletID string, output
 		d.mu.Unlock()
 		return fmt.Errorf("debuglet '%s' not found", debugletID)
 	}
-	store.logs = append(store.logs, output...)
+	store.Logs = append(store.Logs, output...)
 
 	connections := d.connectedLogs[debugletID]
 	d.mu.Unlock()
@@ -71,15 +79,36 @@ func (d *Dispatcher) HandleExit(debugletID string, exitCode int32, err error) {
 	d.logger.Debug("Received debuglet exit", zap.String("debugletID", debugletID), zap.Int32("exitCode", exitCode), zap.Error(err))
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
 	if st, exists := d.debugletStores[debugletID]; exists {
-		for _, dest := range st.policy.Addresses {
-			d.destinations.Remove(dest, st.executorID, st.policy.FloorBW, st.policy.CeilBW)
+		st.State = RunStateExited
+		if err != nil {
+			st.Err = err.Error()
+		}
+		for _, conn := range d.connectedLogs[debugletID] {
+			if conn.state != nil {
+				select {
+				case conn.state <- RunStateExited:
+				default:
+				}
+			}
+		}
+
+		for _, dest := range st.Policy.Addresses {
+			d.destinations.Remove(debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
 		}
 		ctx := context.Background() // debuglet stream context is already cancelled at this point
-		d.sendFairshare(ctx, st.policy.Addresses)
+		d.sendFairshare(ctx, st.Policy.Addresses)
 
+		// remove debuglet store 10 minutes later
+		go func() {
+			time.Sleep(10 * time.Minute)
+			d.mu.Lock()
+			delete(d.debugletStores, debugletID)
+			delete(d.connectedLogs, debugletID)
+			d.mu.Unlock()
+		}()
 	}
-	delete(d.debugletStores, debugletID)
 	for _, conn := range d.connectedLogs[debugletID] {
 		close(conn.done)
 	}

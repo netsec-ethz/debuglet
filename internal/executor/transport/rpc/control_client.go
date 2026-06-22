@@ -121,7 +121,7 @@ func (c *ControlClient) Listen(ctx context.Context) error {
 			debuglet := m.Upload
 			var startTime *time.Time
 			if st := debuglet.GetStartTime(); st != nil {
-				tmp := st.AsTime()
+				tmp := st.AsTime().UTC()
 				startTime = &tmp
 			}
 			go c.handler.HandleUpload(ctx, Spec{

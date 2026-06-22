@@ -11,11 +11,13 @@ func _() {
 	_ = x[RunStateUnspecified-0]
 	_ = x[RunStateInitializing-1]
 	_ = x[RunStateStarted-2]
+	_ = x[RunStateUploading-3]
+	_ = x[RunStateExited-4]
 }
 
-const _DebugletRunState_name = "RunStateUnspecifiedRunStateInitializingRunStateStarted"
+const _DebugletRunState_name = "RunStateUnspecifiedRunStateInitializingRunStateStartedRunStateUploadingRunStateExited"
 
-var _DebugletRunState_index = [...]uint8{0, 19, 39, 54}
+var _DebugletRunState_index = [...]uint8{0, 19, 39, 54, 71, 85}
 
 func (i DebugletRunState) String() string {
 	idx := int(i) - 0
