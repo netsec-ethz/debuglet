@@ -1,0 +1,10 @@
+---
+# Deploy (or redeploy) the dispatcher.
+# Usage: cd deploy/ansible && ansible-playbook playbooks/deploy-dispatcher.yml
+
+- name: Deploy Debuglet Dispatcher
+  hosts: dispatcher
+  become: true
+  roles:
+    - common
+    - dispatcher

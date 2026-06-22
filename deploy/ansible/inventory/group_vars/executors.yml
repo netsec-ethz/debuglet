@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# Executor-specific defaults (applies to all hosts in the 'executors' group)
+# =============================================================================
+# Override per-host in inventory/hosts.yml using host_vars if needed.
+
+# Bandwidth capacity in bits/sec (default: 1 Gbps)
+executor_capacity: 1_000_000_000
+
+# TESLA epoch duration in seconds
+tesla_delay: 10
+
+# Log level: debug | info | warn | error
+executor_log_level: info
+
+# Enable eBPF TC egress tagging.
+# Set to false on hosts where BPF is unavailable (PlanetLab, restricted kernels).
+# When false: tagger.o is not deployed, capabilities are not set, and the
+# executor config disables BPF so it uses the pure-Go fallback tagger.
+executor_enable_bpf: false 

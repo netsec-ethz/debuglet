@@ -1,0 +1,12 @@
+executor_id     = "{{ executor_id | default(inventory_hostname) }}"
+version         = "1.0.0"
+dispatcher_addr = "{{ dispatcher_addr }}"
+log_level       = "{{ executor_log_level | default('info') }}"
+capacity        = {{ executor_capacity | default(1000000000) }}
+TeslaDelay      = {{ tesla_delay | default(10) }}
+enable_bpf      = {{ executor_enable_bpf | default(true) | lower }}
+
+[credentials]
+ca_cert     = "{{ config_dir }}/executor/ca.crt"
+client_cert = "{{ config_dir }}/executor/client.crt"
+client_key  = "{{ config_dir }}/executor/client.key"

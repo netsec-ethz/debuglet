@@ -5,7 +5,7 @@ DISPATCHER_BINARY = debuglet-dispatcher
 # Go command
 GO ?= go
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto bpf setcaps test coverage
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto bpf setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
 
 all: deps build
 
@@ -92,6 +92,48 @@ generate-certs:
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/executor/client.key -out local/configs/executor/client.crt -subj "/CN=executor"
 	@echo "Generating dispatcher certificates..."
 	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/dispatcher/server.key -out local/configs/dispatcher/server.crt -subj "/CN=dispatcher"
+
+# --------------------------------------------------------------------
+# Remote deployment (requires: docker, ansible, openssl)
+# --------------------------------------------------------------------
+
+# Build Linux x86_64 binaries + tagger.o via Docker → deploy/dist/
+deploy-build:
+	chmod +x deploy/scripts/build-linux.sh
+	deploy/scripts/build-linux.sh
+
+# Generate CA + dispatcher + executor TLS certs → deploy/certs/
+# EXECUTOR_IDS: space-separated list matching executor_id in inventory/hosts.yml
+# Example: make deploy-certs EXECUTOR_IDS="executor-node1 executor-node2"
+deploy-certs:
+	chmod +x deploy/scripts/generate-certs.sh
+	deploy/scripts/generate-certs.sh $(EXECUTOR_IDS)
+
+# Full deploy: build → certs → dispatcher → all executors
+deploy: deploy-build
+	cd deploy/ansible && ansible-playbook playbooks/site.yml
+
+# Deploy only the dispatcher
+deploy-dispatcher: deploy-build
+	cd deploy/ansible && ansible-playbook playbooks/deploy-dispatcher.yml
+
+# One-time bootstrap: grant passwordless sudo on executor nodes.
+# Run this first on any host whose user requires a sudo password.
+# Example: make bootstrap-sudo LIMIT=ordroid-ethz
+bootstrap-sudo:
+	cd deploy/ansible && ansible-playbook playbooks/bootstrap-sudo.yml -K \
+		$(if $(LIMIT),--limit $(LIMIT),)
+
+# Deploy only the executors (or pass LIMIT=hostname to target one)
+deploy-executors: deploy-build
+	cd deploy/ansible && ansible-playbook playbooks/deploy-executors.yml \
+		$(if $(LIMIT),--limit $(LIMIT),)
+
+# Push a new dispatcher address to all running executors (no binary redeploy)
+# Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
+deploy-update-addr:
+	cd deploy/ansible && ansible-playbook playbooks/update-dispatcher-addr.yml \
+		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # --------------------------------------------------------------------
 # Clean local build artifacts
