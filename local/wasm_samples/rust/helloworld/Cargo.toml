@@ -1,0 +1,13 @@
+[package]
+name = "rust_helloworld"
+version = "0.1.0"
+edition = "2021"
+
+# Built as a WASI command module (wasm32-wasip1) with a standard `fn main()`
+# entrypoint. The refactored engine runs the module's `_start` and streams
+# stdout back to the user.
+[[bin]]
+name = "rust_helloworld"
+path = "src/main.rs"
+
+[dependencies]
