@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -27,15 +28,17 @@ type UsageTracker struct {
 	// { destination: rateLimit }
 	usageOut map[string]*rate.Limiter
 	capacity map[string]Bitrate
+	logger   *zap.Logger
 
 	mu sync.Mutex
 }
 
-func NewUsageTracker() *UsageTracker {
+func NewUsageTracker(l *zap.Logger) *UsageTracker {
 	return &UsageTracker{
 		usageIn:  make(map[string]*rate.Limiter),
 		usageOut: make(map[string]*rate.Limiter),
 		capacity: make(map[string]Bitrate),
+		logger:   l,
 	}
 }
 
@@ -85,7 +88,7 @@ func (u *UsageTracker) upsert(dir TransferDirection, destination string, limits 
 
 // Wait uses a token bucket to sleep until either the context finishes or a packet of a given size has enough space
 func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destination string, size Bitrate) error {
-	reserveDestination, reserveExecutor, err := func() (*rate.Reservation, *rate.Reservation, error) {
+	waitFor, reservations, err := func() (time.Duration, []*rate.Reservation, error) {
 		u.mu.Lock()
 		defer u.mu.Unlock()
 
@@ -98,38 +101,71 @@ func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destinat
 
 		limiterDestination, exists := usage[destination]
 		if !exists {
-			return nil, nil, errors.New("cannot track destination usage, unregistered destination")
+			return 0, nil, errors.New("cannot track destination usage, unregistered destination")
 		}
 		limiterExecutor, exists := usage[""]
 		if !exists {
-			return nil, nil, errors.New("cannot track executor usage, not registered")
+			return 0, nil, errors.New("cannot track executor usage, not registered")
 		}
 
-		reserveDestination := limiterDestination.ReserveN(time.Now(), int(size))
-		if !reserveDestination.OK() {
-			return nil, nil, fmt.Errorf("cannot reserve destination, size is greater than burst (Got %d, Want %d)", int(size), limiterDestination.Burst())
+		var revs []*rate.Reservation
+
+		// NOTE: [rate.Limiter] only permits a max reservation of the burst size. To support ratelimiting greater
+		// sizes multiple reservations are added if required.
+		failedToReserve := false
+		var totalDestDelay time.Duration
+		remDestSize := int(size)
+		for remDestSize > 0 {
+			resFor := min(remDestSize, limiterDestination.Burst())
+			res := limiterDestination.ReserveN(time.Now(), resFor)
+			if !res.OK() {
+				failedToReserve = true
+				return 0, nil, fmt.Errorf("cannot reserve destination, size is greater than burst (Got %d, Want %d)", int(size), limiterDestination.Burst())
+			}
+			revs = append(revs, res)
+			totalDestDelay += res.Delay()
+			remDestSize -= resFor
+			defer func() {
+				if failedToReserve {
+					res.Cancel()
+				}
+			}()
 		}
 
-		reserveExecutor := limiterExecutor.ReserveN(time.Now(), int(size))
-		if !reserveExecutor.OK() {
-			reserveDestination.Cancel()
-			return nil, nil, fmt.Errorf("cannot reserve executor, size is greater than burst (Got %d, Want %d)", int(size), limiterExecutor.Burst())
+		var totalExecDelay time.Duration
+		remExecSize := int(size)
+		for remExecSize > 0 {
+			resFor := min(remExecSize, limiterExecutor.Burst())
+			res := limiterExecutor.ReserveN(time.Now(), resFor)
+			if !res.OK() {
+				failedToReserve = true
+				return 0, nil, fmt.Errorf("cannot reserve executor, size is greater than burst (Got %d, Want %d)", int(size), limiterExecutor.Burst())
+			}
+			revs = append(revs, res)
+			totalExecDelay += res.Delay()
+			remExecSize -= resFor
+			defer func() {
+				if failedToReserve {
+					res.Cancel()
+				}
+			}()
 		}
 
-		return reserveDestination, reserveExecutor, nil
+		return max(totalDestDelay, totalExecDelay), revs, nil
 	}()
 
 	if err != nil {
 		return err
 	}
 
-	waitFor := max(reserveDestination.Delay(), reserveExecutor.Delay())
+	u.logger.Debug("Ratelimit debuglet by sleeping", zap.String("destination", destination), zap.Duration("duration", waitFor), zap.Int64("size", int64(size)))
 
 	select {
 	case <-time.After(waitFor):
 	case <-ctx.Done():
-		reserveDestination.Cancel()
-		reserveExecutor.Cancel()
+		for _, r := range reservations {
+			r.Cancel()
+		}
 		return errors.New("context closed")
 	}
 

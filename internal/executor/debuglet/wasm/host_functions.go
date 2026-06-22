@@ -95,10 +95,6 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 // WASM key: "receive_tcp_data", "receive_ip_data"
 func HostReceiveData(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) int32 {
 	return func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) int32 {
-		if int64(bufLen)*8 > env.Policy.FloorBW {
-			panic(fmt.Errorf("buffer length (%d bytes) can't be greater than the floor bandwidth (%d bits)", bufLen, env.Policy.FloorBW))
-		}
-
 		sock, err := env.Registry.Get(sockID)
 		if err != nil {
 			env.Logger.Warnw("hostReceiveData: invalid handle", "handle", sockID, "err", err)
@@ -130,10 +126,6 @@ func HostReceiveData(env *WasmEnv) func(ctx context.Context, mod api.Module, soc
 // WASM key: "send_tcp_data", "send_icmp4_data"
 func HostSendData(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) {
 	return func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) {
-		if int64(bufLen)*8 > env.Policy.FloorBW {
-			panic(fmt.Errorf("buffer length (%d bytes) can't be greater than the floor bandwidth (%d bits)", bufLen, env.Policy.FloorBW))
-		}
-
 		sock, err := env.Registry.Get(sockID)
 		if err != nil {
 			env.Logger.Warnw("hostSendData: invalid handle", "handle", sockID, "err", err)

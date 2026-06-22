@@ -42,7 +42,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		cfg:           *cfg,
 		scheduler:     s,
 		running:       make(map[string]RunningDebuglet),
-		limiter:       app.NewLimiter(),
+		limiter:       app.NewLimiter(l),
 	}
 
 	executor.limiter.SetExecutorCapacity(app.Gigabit)

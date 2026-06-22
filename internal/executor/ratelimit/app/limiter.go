@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -47,7 +49,8 @@ type Limiter struct {
 
 	stores map[string]*storeValue
 
-	mu sync.RWMutex
+	mu     sync.RWMutex
+	logger *zap.Logger
 
 	// dirty keeps track of when destinations (and the executor with a key of "")
 	// have last been modified. This enables [Limiter.GetLimit] to be cached by not
@@ -58,13 +61,14 @@ type Limiter struct {
 	dirty map[string]time.Time
 }
 
-func NewLimiter() *Limiter {
+func NewLimiter(l *zap.Logger) *Limiter {
 	return &Limiter{
 		addrCapacity: make(map[string]Bitrate),
 		execT:        &avl.AVL[string]{},
 		addrT:        make(map[string]*avl.AVL[string]),
 		stores:       make(map[string]*storeValue),
 		dirty:        make(map[string]time.Time),
+		logger:       l,
 	}
 }
 
@@ -96,7 +100,7 @@ func (l *Limiter) InsertDebuglet(ID string, minimum, maximum Bitrate, addrs []st
 		maximum:       maximum,
 		lastAddrLimit: addrLimit,
 		lastExecLimit: -1,
-		tracker:       NewUsageTracker(),
+		tracker:       NewUsageTracker(l.logger),
 	}
 	l.dirty[""] = time.Now()
 	for _, a := range addrs {
@@ -141,7 +145,7 @@ func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
 	}
 
 	if _, ok := l.addrT[addr]; !ok {
-		return Limit{}, fmt.Errorf("address '%s' has not been registed", addr)
+		return Limit{}, fmt.Errorf("address '%s' has not been registered/not in policy", addr)
 	}
 	addrCap, ok := l.addrCapacity[addr]
 	if !ok {

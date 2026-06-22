@@ -36,7 +36,13 @@ func NewControlClient(cfg *config.Config, l *zap.Logger, h ExecutorControlHandle
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(cfg.DispatcherAddr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(cfg.DispatcherAddr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(32*1024*1024), // 32 MB
+			grpc.MaxCallSendMsgSize(32*1024*1024),
+		),
+	)
 	if err != nil {
 		return nil, err
 	}
