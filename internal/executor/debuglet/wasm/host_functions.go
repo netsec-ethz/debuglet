@@ -61,9 +61,7 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
 		addr, err := ExtractStr(mod, addrp, addrLen)
 
-		dialer := &net.Dialer{
-			Timeout: 5 * time.Second,
-		}
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
 
 		if env.Tagger != nil {
 			dialer.Control = func(network, address string, c syscall.RawConn) error {
@@ -82,7 +80,7 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 
 		if err != nil {
 			env.Logger.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
-			return -1
+			panic(fmt.Errorf("connect: %w", err))
 		}
 
 		sock := socket.NewGenericSocket(conn, socketType, addr)
@@ -277,9 +275,13 @@ func HostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod
 
 		n, from, err := env.ScionServer.ReadFrom(buf)
 		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				env.Logger.Debugw("hostReceiveSCIONServerUDPPacket: read timeout", "timeout", timeout)
+				env.LastReceived = nil
+				return 0, time.Now().UnixNano()
+			}
 			env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: read error", "err", err, "n", n)
-			env.LastReceived = nil
-			return 0, time.Now().UnixNano()
+			panic(fmt.Errorf("receive_scion_server_udp_packet: read error: %w", err))
 		}
 		env.LastReceived = from
 		return int32(n), time.Now().UnixNano()
@@ -294,14 +296,14 @@ func HostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 		data, err := ExtractMem[byte](mod, sendp, sendLen)
 		if err != nil {
 			env.Logger.Warnw("hostAnswerSCIONUDPPacket: failed to extract buffer", "err", err)
-			return 0
+			panic(fmt.Errorf("answer_scion_udp_packet: failed to extract buffer: %w", err))
 		}
 
 		if env.LastReceived != nil {
 			lastReceivedAddr, ok := env.LastReceived.(pan.UDPAddr)
 			if !ok {
 				env.Logger.Warnw("hostAnswerSCIONUDPPacket: could not cast lastReceived to UDPAddr", "addr", env.LastReceived)
-				return 0
+				panic(fmt.Errorf("answer_scion_udp_packet: could not cast lastReceived to UDPAddr"))
 			}
 
 			// Match port from known addresses
@@ -320,7 +322,7 @@ func HostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 			env.Logger.Debugw("hostAnswerSCIONUDPPacket: writing", "dst", lastReceivedAddr)
 			if _, err = env.ScionServer.WriteTo(data, lastReceivedAddr); err != nil {
 				env.Logger.Warnw("hostAnswerSCIONUDPPacket: write failed", "err", err)
-				return 0
+				panic(fmt.Errorf("answer_scion_udp_packet: write failed: %w", err))
 			}
 		} else {
 			env.Logger.Warnln("hostAnswerSCIONUDPPacket: lastReceived is nil, falling back to dial")
@@ -335,7 +337,7 @@ func HostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 			}
 			if _, err = (*sc.Conn).Write(data); err != nil {
 				env.Logger.Warnw("hostAnswerSCIONUDPPacket: write failed", "err", err)
-				return 0
+				panic(fmt.Errorf("answer_scion_udp_packet: write failed: %w", err))
 			}
 		}
 		return time.Now().UnixNano()

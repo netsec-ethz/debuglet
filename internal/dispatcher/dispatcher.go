@@ -66,13 +66,13 @@ func (d *Dispatcher) GetKeyStore() *tag.KeyStore {
 	return d.keystore
 }
 
-func (d *Dispatcher) GetStore(debugletID string) (*DebugletStore, error) {
+func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if st, ok := d.debugletStores[debugletID]; ok {
-		return st, nil
+		return *st, nil
 	} else {
-		return nil, fmt.Errorf("debuglet with '%s' does not exist", debugletID)
+		return DebugletStore{}, fmt.Errorf("debuglet with '%s' does not exist", debugletID)
 	}
 }
 

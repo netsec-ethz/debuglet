@@ -79,9 +79,9 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 }
 
 func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error {
-	d.HandleExit(debugletID, -1, errors.New(reason))
 	if err := d.sender.AbortDebuglet(ctx, executorID, debugletID, reason); err != nil {
 		return errors.New("failed to forward abort to executor")
 	}
+	d.HandleExit(debugletID, -1, errors.New(reason))
 	return nil
 }

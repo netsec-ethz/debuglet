@@ -19,7 +19,6 @@ type RunningDebuglet struct {
 
 func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<- struct{}) {
 	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
 
 	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)
 	e.mu.Lock()
@@ -30,6 +29,7 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
 		}
 		close(preRunLock)
+		cancel(nil)
 		e.mu.Unlock()
 		return
 	}
@@ -47,10 +47,17 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		delete(e.running, spec.DebugletID)
 	}()
 
+	listenDone := make(chan struct{})
 	go func() {
+		defer close(listenDone)
 		if err := client.Listen(ctx); err != nil {
 			cancel(err)
 		}
+	}()
+
+	defer func() {
+		cancel(nil)
+		<-listenDone
 	}()
 
 	select {

@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -40,6 +41,48 @@ func (d *Dispatcher) HandleDisconnect(executorID string) {
 
 func (d *Dispatcher) HandleError(ctx context.Context, debugletID *string, err error) {
 	d.logger.Error("Got executor error", zap.Stringp("debugletID", debugletID), zap.Error(err))
+
+	if debugletID == nil {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	st, exists := d.debugletStores[*debugletID]
+	if !exists {
+		return
+	}
+
+	st.State = RunStateExited
+	st.Err = err.Error()
+
+	for _, conn := range d.connectedLogs[*debugletID] {
+		if conn.state != nil {
+			select {
+			case conn.state <- RunStateExited:
+			default:
+			}
+		}
+	}
+
+	for _, dest := range st.Policy.Addresses {
+		d.destinations.Remove(*debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
+	}
+	ctxBg := context.Background()
+	d.sendFairshare(ctxBg, st.Policy.Addresses)
+
+	go func() {
+		time.Sleep(10 * time.Minute)
+		d.mu.Lock()
+		delete(d.debugletStores, *debugletID)
+		delete(d.connectedLogs, *debugletID)
+		d.mu.Unlock()
+	}()
+
+	for _, conn := range d.connectedLogs[*debugletID] {
+		close(conn.done)
+	}
 }
 
 func (d *Dispatcher) HandleResources(ctx context.Context, executorID string, capacity int64) error {

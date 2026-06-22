@@ -19,6 +19,8 @@ func (d *Dispatcher) HandleState(ctx context.Context, debugletID, executorID str
 	d.logger.Debug("Received debuglet state update", zap.String("debugletID", debugletID), zap.String("executorID", executorID), zap.String("state", state.String()))
 
 	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	if store, ok := d.debugletStores[debugletID]; ok {
 		store.State = state
 		for _, conn := range d.connectedLogs[debugletID] {
@@ -30,12 +32,8 @@ func (d *Dispatcher) HandleState(ctx context.Context, debugletID, executorID str
 			}
 		}
 	}
-	d.mu.Unlock()
 
 	if state == RunStateInitializing {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-
 		// check if any destination is overloaded (only accounts for the floor bandwidth)
 		d.logger.Debug("Checking debuglet capacity usage", zap.String("debugletID", debugletID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", policy.FloorBW.String()), zap.String("ceilBW", policy.CeilBW.String()))
 		for _, dest := range policy.Addresses {

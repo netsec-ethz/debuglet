@@ -13,6 +13,7 @@ var (
 )
 
 type storeKey struct {
+	// ID is used for either the debuglet ID or exeutor ID depending on the map it's used in
 	ID, destination string
 }
 
@@ -30,7 +31,7 @@ type DestinationsUsage struct {
 	usedCapacities map[string]Bitrate
 	// The minimum capacities of jobs
 	store           map[storeKey]*storeValue
-	activeDebuglets map[string]struct{}
+	activeDebuglets map[storeKey]struct{}
 	defaultCap      Bitrate
 }
 
@@ -40,7 +41,7 @@ func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 		capacities:      make(map[string]Bitrate),
 		usedCapacities:  make(map[string]Bitrate),
 		store:           make(map[storeKey]*storeValue),
-		activeDebuglets: make(map[string]struct{}),
+		activeDebuglets: make(map[storeKey]struct{}),
 		defaultCap:      defaultCap,
 	}
 }
@@ -81,7 +82,7 @@ func (d *DestinationsUsage) Insert(debugletID string, destination, executorID st
 		return fmt.Errorf("insertion failed with new usage=%d, capacity=%d: %w", used+minimum, cap, ErrCapacityFull)
 
 	}
-	d.activeDebuglets[debugletID] = struct{}{}
+	d.activeDebuglets[storeKey{debugletID, destination}] = struct{}{}
 	d.usedCapacities[destination] += minimum
 	jk := storeKey{ID: executorID, destination: destination}
 	if old, exists := d.store[jk]; exists {
@@ -96,7 +97,7 @@ func (d *DestinationsUsage) Insert(debugletID string, destination, executorID st
 }
 
 func (d *DestinationsUsage) Remove(debugletID, destination, executorID string, minimum, maximum Bitrate) {
-	if _, exists := d.activeDebuglets[debugletID]; !exists {
+	if _, exists := d.activeDebuglets[storeKey{debugletID, destination}]; !exists {
 		return
 	}
 
@@ -133,7 +134,7 @@ func (d *DestinationsUsage) Remove(debugletID, destination, executorID string, m
 		delete(d.usedCapacities, destination)
 	}
 
-	delete(d.activeDebuglets, debugletID)
+	delete(d.activeDebuglets, storeKey{debugletID, destination})
 
 	old.minimum -= minimum
 	old.maximum -= maximum

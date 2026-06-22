@@ -92,7 +92,7 @@ func (d *DebugletClient) SendExit(exitCode int32, err error) error {
 		tmp := err.Error()
 		errMsg = &tmp
 	}
-	return d.stream.Send(&pb.ExecutorDebugletMessage{
+	if sendErr := d.stream.Send(&pb.ExecutorDebugletMessage{
 		Msg: &pb.ExecutorDebugletMessage_Exit{
 			Exit: &pb.DebugletExit{
 				DebugletId:   d.debuglet.DebugletID,
@@ -100,5 +100,8 @@ func (d *DebugletClient) SendExit(exitCode int32, err error) error {
 				ErrorMessage: errMsg,
 			},
 		},
-	})
+	}); sendErr != nil {
+		return sendErr
+	}
+	return d.stream.CloseSend()
 }
