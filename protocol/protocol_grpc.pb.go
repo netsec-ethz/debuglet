@@ -33,130 +33,130 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DebugletDispatcher_ControlStream_FullMethodName = "/debuglet.protocol.DebugletDispatcher/ControlStream"
-	DebugletDispatcher_SessionStream_FullMethodName = "/debuglet.protocol.DebugletDispatcher/SessionStream"
+	DispatcherService_ControlStream_FullMethodName  = "/debuglet.protocol.DispatcherService/ControlStream"
+	DispatcherService_DebugletStream_FullMethodName = "/debuglet.protocol.DispatcherService/DebugletStream"
 )
 
-// DebugletDispatcherClient is the client API for DebugletDispatcher service.
+// DispatcherServiceClient is the client API for DispatcherService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type DebugletDispatcherClient interface {
+type DispatcherServiceClient interface {
 	// Persistent control channel for executor registration, heartbeat, and task assignment
-	ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error)
+	ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage], error)
 	// Per-session bidirectional stream for debuglet execution
-	SessionStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SessionMessage, SessionMessage], error)
+	DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage], error)
 }
 
-type debugletDispatcherClient struct {
+type dispatcherServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewDebugletDispatcherClient(cc grpc.ClientConnInterface) DebugletDispatcherClient {
-	return &debugletDispatcherClient{cc}
+func NewDispatcherServiceClient(cc grpc.ClientConnInterface) DispatcherServiceClient {
+	return &dispatcherServiceClient{cc}
 }
 
-func (c *debugletDispatcherClient) ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error) {
+func (c *dispatcherServiceClient) ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &DebugletDispatcher_ServiceDesc.Streams[0], DebugletDispatcher_ControlStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &DispatcherService_ServiceDesc.Streams[0], DispatcherService_ControlStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ControlMessage, ControlMessage]{ClientStream: stream}
+	x := &grpc.GenericClientStream[ExecutorControlMessage, DispatcherControlMessage]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DebugletDispatcher_ControlStreamClient = grpc.BidiStreamingClient[ControlMessage, ControlMessage]
+type DispatcherService_ControlStreamClient = grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage]
 
-func (c *debugletDispatcherClient) SessionStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SessionMessage, SessionMessage], error) {
+func (c *dispatcherServiceClient) DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &DebugletDispatcher_ServiceDesc.Streams[1], DebugletDispatcher_SessionStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &DispatcherService_ServiceDesc.Streams[1], DispatcherService_DebugletStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[SessionMessage, SessionMessage]{ClientStream: stream}
+	x := &grpc.GenericClientStream[ExecutorDebugletMessage, DispatcherDebugletMessage]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DebugletDispatcher_SessionStreamClient = grpc.BidiStreamingClient[SessionMessage, SessionMessage]
+type DispatcherService_DebugletStreamClient = grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage]
 
-// DebugletDispatcherServer is the server API for DebugletDispatcher service.
-// All implementations must embed UnimplementedDebugletDispatcherServer
+// DispatcherServiceServer is the server API for DispatcherService service.
+// All implementations must embed UnimplementedDispatcherServiceServer
 // for forward compatibility.
-type DebugletDispatcherServer interface {
+type DispatcherServiceServer interface {
 	// Persistent control channel for executor registration, heartbeat, and task assignment
-	ControlStream(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error
+	ControlStream(grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]) error
 	// Per-session bidirectional stream for debuglet execution
-	SessionStream(grpc.BidiStreamingServer[SessionMessage, SessionMessage]) error
-	mustEmbedUnimplementedDebugletDispatcherServer()
+	DebugletStream(grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]) error
+	mustEmbedUnimplementedDispatcherServiceServer()
 }
 
-// UnimplementedDebugletDispatcherServer must be embedded to have
+// UnimplementedDispatcherServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedDebugletDispatcherServer struct{}
+type UnimplementedDispatcherServiceServer struct{}
 
-func (UnimplementedDebugletDispatcherServer) ControlStream(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error {
+func (UnimplementedDispatcherServiceServer) ControlStream(grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]) error {
 	return status.Error(codes.Unimplemented, "method ControlStream not implemented")
 }
-func (UnimplementedDebugletDispatcherServer) SessionStream(grpc.BidiStreamingServer[SessionMessage, SessionMessage]) error {
-	return status.Error(codes.Unimplemented, "method SessionStream not implemented")
+func (UnimplementedDispatcherServiceServer) DebugletStream(grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]) error {
+	return status.Error(codes.Unimplemented, "method DebugletStream not implemented")
 }
-func (UnimplementedDebugletDispatcherServer) mustEmbedUnimplementedDebugletDispatcherServer() {}
-func (UnimplementedDebugletDispatcherServer) testEmbeddedByValue()                            {}
+func (UnimplementedDispatcherServiceServer) mustEmbedUnimplementedDispatcherServiceServer() {}
+func (UnimplementedDispatcherServiceServer) testEmbeddedByValue()                           {}
 
-// UnsafeDebugletDispatcherServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to DebugletDispatcherServer will
+// UnsafeDispatcherServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to DispatcherServiceServer will
 // result in compilation errors.
-type UnsafeDebugletDispatcherServer interface {
-	mustEmbedUnimplementedDebugletDispatcherServer()
+type UnsafeDispatcherServiceServer interface {
+	mustEmbedUnimplementedDispatcherServiceServer()
 }
 
-func RegisterDebugletDispatcherServer(s grpc.ServiceRegistrar, srv DebugletDispatcherServer) {
-	// If the following call panics, it indicates UnimplementedDebugletDispatcherServer was
+func RegisterDispatcherServiceServer(s grpc.ServiceRegistrar, srv DispatcherServiceServer) {
+	// If the following call panics, it indicates UnimplementedDispatcherServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&DebugletDispatcher_ServiceDesc, srv)
+	s.RegisterService(&DispatcherService_ServiceDesc, srv)
 }
 
-func _DebugletDispatcher_ControlStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(DebugletDispatcherServer).ControlStream(&grpc.GenericServerStream[ControlMessage, ControlMessage]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DebugletDispatcher_ControlStreamServer = grpc.BidiStreamingServer[ControlMessage, ControlMessage]
-
-func _DebugletDispatcher_SessionStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(DebugletDispatcherServer).SessionStream(&grpc.GenericServerStream[SessionMessage, SessionMessage]{ServerStream: stream})
+func _DispatcherService_ControlStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(DispatcherServiceServer).ControlStream(&grpc.GenericServerStream[ExecutorControlMessage, DispatcherControlMessage]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DebugletDispatcher_SessionStreamServer = grpc.BidiStreamingServer[SessionMessage, SessionMessage]
+type DispatcherService_ControlStreamServer = grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]
 
-// DebugletDispatcher_ServiceDesc is the grpc.ServiceDesc for DebugletDispatcher service.
+func _DispatcherService_DebugletStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(DispatcherServiceServer).DebugletStream(&grpc.GenericServerStream[ExecutorDebugletMessage, DispatcherDebugletMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DispatcherService_DebugletStreamServer = grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]
+
+// DispatcherService_ServiceDesc is the grpc.ServiceDesc for DispatcherService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var DebugletDispatcher_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "debuglet.protocol.DebugletDispatcher",
-	HandlerType: (*DebugletDispatcherServer)(nil),
+var DispatcherService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "debuglet.protocol.DispatcherService",
+	HandlerType: (*DispatcherServiceServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "ControlStream",
-			Handler:       _DebugletDispatcher_ControlStream_Handler,
+			Handler:       _DispatcherService_ControlStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "SessionStream",
-			Handler:       _DebugletDispatcher_SessionStream_Handler,
+			StreamName:    "DebugletStream",
+			Handler:       _DispatcherService_DebugletStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

@@ -3,49 +3,41 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"flag"
 	"fmt"
-	"runtime"
+	"os"
 	"time"
 	"unsafe"
 )
 
-//go:wasmimport env sleep
-func sleep(ts int64)
-
 //go:wasmimport env connect_icmp4
-func connect_icmp4(addrPtr int32) int32
+func connect_icmp4(addrp, addrLen uint32) int32
 
 //go:wasmimport env receive_icmp4_data
-func receive_icmp4_data(connID int32, length int32, bufferPtr int32) int32
+func receive_icmp4_data(sockID int32, bufPtr uint32, bufLen uint32) int32
 
 //go:wasmimport env send_icmp4_data
-func send_icmp4_data(connID int32, length int32, bufferPtr int32)
+func send_icmp4_data(sockID int32, bufPtr, bufLen uint32)
 
 //go:wasmimport env close_icmp4
 func close_icmp4(connID int32)
 
-var sendBuffer []byte = make([]byte, 64)
-var recvBuffer []byte = make([]byte, 100)
-var pinner runtime.Pinner
+var (
+	addr = flag.String("addr", "1.1.1.1", "address to contact")
+	iter = flag.Int("iter", 1, "times to send a ping request")
+)
 
-func main() {}
+func main() {
+	// os.Args does not include the binary/command
+	flag.CommandLine.Parse(os.Args)
 
-func init() {
-	pinner.Pin(&sendBuffer[0])
-	pinner.Pin(&recvBuffer[0])
-}
-
-//go:wasmexport run_debuglet
-func run_debuglet() int32 {
-	for seq := range 5 {
+	for seq := range *iter {
 		taken, err := ping(1, uint16(seq))
 		if err != nil {
 			panic(err)
 		}
-		sleep(int64(time.Second - min(time.Second, taken)))
+		time.Sleep(time.Second - min(time.Second, taken))
 	}
-
-	return 0
 }
 
 func createEchoPacket(id uint16, seq uint16, size int) []byte {
@@ -62,16 +54,20 @@ func createEchoPacket(id uint16, seq uint16, size int) []byte {
 }
 
 func ping(id uint16, seq uint16) (time.Duration, error) {
-	connID := connect_icmp4(0)
+	ptr := uint32(uintptr(unsafe.Pointer(unsafe.StringData(*addr))))
+	connID := connect_icmp4(ptr, uint32(len(*addr)))
+	if connID == -1 {
+		return 0, errors.New("failed to setup socket")
+	}
 	defer close_icmp4(connID)
 
 	echo := createEchoPacket(id, seq, 64)
-	copy(sendBuffer, echo)
 
 	start := time.Now()
 
-	send_icmp4_data(connID, int32(len(sendBuffer)), int32(uintptr(unsafe.Pointer(&sendBuffer[0]))))
-	n := receive_icmp4_data(connID, int32(len(recvBuffer)), int32(uintptr(unsafe.Pointer(&recvBuffer[0]))))
+	send_icmp4_data(connID, uint32(uintptr(unsafe.Pointer(&echo[0]))), uint32(len(echo)))
+	var recvBuffer []byte = make([]byte, 100)
+	n := receive_icmp4_data(connID, uint32(uintptr(unsafe.Pointer(&recvBuffer[0]))), uint32(len(recvBuffer)))
 
 	taken := time.Since(start)
 

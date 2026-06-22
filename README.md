@@ -21,6 +21,8 @@ make dispatcher # or make d
 
 #### Start a executor
 
+**NOTE:** Requires elevated permissions for handling packets at the kernel level (using ebpf).
+
 ```bash
 make executor # or make e
 ```
@@ -43,13 +45,20 @@ make proto
 
 Use the debuglet-dashboard to submit measurements.
 
+Or run the local go user client:
+
+```bash
+# send TCP GET req
+go run cmd/user/main.go -wasm local/wasm_samples/send_tcp/debuglet.wasm -debuglets 1 -- -addr google.com:80 -iter 5
+# send ping req
+go run cmd/user/main.go -wasm local/wasm_samples/ping/debuglet.wasm -debuglets 1 -- -addr 1.1.1.1 -iter 10
+```
+
+The local user client allows for args to be passed through to the WASM by adding the flags after `--` at the end.
+
 ### Optional Requirements
 
 The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.
-
-#### ICMP
-
-For icmp to work, the executor has to be run as root.
 
 #### SCION
 
@@ -100,11 +109,62 @@ The Debuglet ecosystem (Dispatcher and Executor) is containerized via Docker for
    make docker-down
    ```
 
-## Flow
+## Flows
+
+### Submit Debuglet
+
+Submitting a debuglet stores it directly on the executor without any resource checks from the dispatcher along the way.
+The executor may reject it for any reason (no capacity, blacklisted addresses, etc.). The executor should check the start time and ensure it has enough capacity at the given start time depending on what other jobs have also be submitted.
+
+The `ExecutorScheduler` stores the full specification of the debuglet and will trigger `OnStart` when the start time is right.
 
 ```mermaid
 sequenceDiagram
     participant Client
+    participant Dispatcher
+    participant Executor
+    participant ExecutorScheduler
+
+    Client->>Dispatcher: PUT /debuglet
+    Dispatcher->>Executor: SubmitDebuglet(spec)
+    Executor->>ExecutorScheduler: Insert(spec)
+
+    ExecutorScheduler->>Executor: opt err
+    Executor->>Dispatcher: opt err
+    Dispatcher->>Client: opt err
+```
+
+### OnStart Debuglet
+
+The start of a debuglet is triggered by the executor scheduler. On initialization, the dispatcher allocates space for the output logs and can additionally check if any destinations need to be ratelimitted.
+
+The client may connect to the debuglet endpoint with a given ID to get server-side-events for dynamic output from the debuglet.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Dispatcher
+    participant Executor
+    participant ExecutorScheduler
+
+    ExecutorScheduler->>Executor: OnStart(spec)
+    Executor->>Dispatcher: SetState(Initializing)
+    Executor->>Dispatcher: SetState(Started)
+    Executor->>Executor: run debuglet
+    Executor->>Dispatcher: Output(debugletID)
+
+    Client-->>Dispatcher: GET /debuglet/:id
+    Dispatcher-->>Client: SSE: Output(debugletID)
+
+    Executor->>Dispatcher: Exit(opt error)
+```
+
+### Legacy Full Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant SuiBlockchain
     participant Dispatcher
     participant Executor
     participant SCION
@@ -114,6 +174,15 @@ sequenceDiagram
     Executor->>Dispatcher: [ControlMessage] Resources (set bw capacity)
     end
     Executor->>Dispatcher: [ControlMessage] Heartbeat (repeats /60s)
+
+    rect rgba(255,0,0,0.3)
+    Client->>Dispatcher: createUser <br/> (POST https /api/users)
+    Dispatcher->>Client: UserId, AuthKey
+
+    Client->>SuiBlockchain: buyTokens(UserID,Amount)
+    SuiBlockchain->>Dispatcher: notifyPayment(UserID, Amount)
+    Dispatcher->>Dispatcher: updateBalance
+    end
 
     Client->>Dispatcher: createMeasurement <br/> (POST http /api/measurements)
     activate Dispatcher

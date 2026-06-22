@@ -15,113 +15,144 @@
 syntax = "proto3";
 package debuglet.protocol;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "/protocol";
 
 // ============================================================
 // ================ CONTROL STREAM MESSAGES ====================
 // ============================================================
 
+// ================ EXECUTOR -> DISPATCHER =====================
+
 message ExecutorHello {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
+  string source_ip = 3; // Source IP for packet attribution
+  int64 tesla_delay_sec = 4; // TESLA epoch delay in seconds
+  int64 tesla_anchor_timestamp_ns = 5; // Reference wall-clock time for epoch 0
+  bytes tesla_anchor_key = 6; // Public anchor k_0 = H^L(seed); used to verify disclosed keys
   double price_per_bw = 3; // Price per bit/s of bandwidth
 }
 
 message ExecutorHeartbeat {
-  int64 timestamp = 2;
+  int64 timestamp_ns = 2;
+  int64 tesla_key_epoch = 3;
+  bytes tesla_key = 4;
 }
 
 message ExecutorResources {
   int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle per second
 }
 
-message DebugletAssignment {
-  string session_id = 1;
-  string measurement_id = 2;
-  bytes code = 3;
-  repeated string addresses = 4; // e.g., SCION or network endpoints
-
-  message Policy {
-    int64 floor_bw = 1; // min bits/s required
-    int64 ceil_bw = 2; // max bits/s it could use
-    int64 timeout_ms = 3; // timeout in ms
-  }
-  Policy policy = 5;
+// Errors on the executor side before a debuglet is started, i.e. during uploading
+message ExecutorError {
+  optional string debuglet_id = 1;
+  string error = 2;
 }
 
-message NoOp {
-  string message = 1;
-}
-
-message DestinationUpdates {
-  message Update {
-    string assignment_id = 1;
-    string destination = 2;
-    int64 new_ceil_bw = 3;
-  }
-  repeated Update updates = 1;
-}
-
-message ControlMessage {
+// Executor -> Dispatcher
+message ExecutorControlMessage {
   oneof msg {
     ExecutorHello hello = 1;
     ExecutorHeartbeat heartbeat = 2;
-    DebugletAssignment assignment = 3;
-    NoOp noop = 4; // Optional, for testing or idle pings
-    DestinationUpdates updates = 5;
-    ExecutorResources resources = 6;
+    ExecutorError error = 3;
+    ExecutorResources resources = 4;
+  }
+}
+
+// ================ DISPATCHER -> EXECUTOR =====================
+
+message DebugletPolicy {
+  int64 floor_bw = 1; // min bits/s required
+  int64 ceil_bw = 2; // max bits/s it could use
+  int64 timeout_ms = 3; // timeout in ms
+  repeated string addresses = 4; // e.g., SCION or network endpoints
+}
+
+message DebugletUploadSpec {
+  string id = 1;
+  optional google.protobuf.Timestamp start_time = 2;
+  bytes wasm = 3;
+  repeated string args = 4;
+
+  DebugletPolicy policy = 5;
+}
+
+message AbortDebuglet {
+  string debuglet_id = 1;
+  string reason = 2;
+}
+
+message DestinationUpdates {
+  repeated DestinationLimit limits = 1;
+
+  message DestinationLimit {
+    string address = 1;
+    int64 bits_limit = 2;
+  }
+}
+
+// Dispatcher -> Executor
+message DispatcherControlMessage {
+  oneof msg {
+    DebugletUploadSpec upload = 1;
+    AbortDebuglet abort = 2;
+    DestinationUpdates updates = 3;
   }
 }
 
 // ============================================================
-// ================ SESSION STREAM MESSAGES ====================
+// ================ DEBUGLET STREAM MESSAGES ====================
 // ============================================================
 
-enum DispatcherCommandType {
-  START_EXECUTION = 0;
-  TEARDOWN_EXECUTION = 1;
+// ================ EXECUTOR -> DISPATCHER =====================
+
+// The states of a debuglet from when a debuglet is set to start until before it exits
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_INITIALIZING = 1;
+  RUN_STATE_STARTED = 2;
 }
 
-message DispatcherCommand {
-  string session_id = 1;
-  DispatcherCommandType type = 2;
-}
-
-message DebugletReady {
-  string session_id = 1;
+message DebugletState {
+  string debuglet_id = 1;
   string executor_id = 2;
-  string measurement_id = 3;
-  string scion_addr = 4;
+  RunState state = 3;
+  optional DebugletPolicy policy = 4;
 }
 
-message DebugletStdout {
-  string session_id = 1;
-  bytes stdout = 2;
+message DebugletOutput {
+  string debuglet_id = 1;
+  bytes output = 2;
 }
 
 message DebugletExit {
-  string session_id = 1;
+  string debuglet_id = 1;
   int32 exit_code = 2;
-  bytes result = 3; // Final result bytes
+  optional string error_message = 3;
 }
 
-message SessionMessage {
+message ExecutorDebugletMessage {
   oneof msg {
-    DispatcherCommand dispatcher_cmd = 1;
-    DebugletReady ready = 2;
-    DebugletStdout stdout = 3;
-    DebugletExit exit = 4;
+    DebugletState state = 1;
+    DebugletOutput output = 2;
+    DebugletExit exit = 3;
   }
 }
+
+// ================ DISPATCHER -> EXECUTOR =====================
+
+message DispatcherDebugletMessage {}
 
 // ============================================================
 // ====================== SERVICE DEFS =========================
 // ============================================================
 
-service DebugletDispatcher {
+service DispatcherService {
   // Persistent control channel for executor registration, heartbeat, and task assignment
-  rpc ControlStream(stream ControlMessage) returns (stream ControlMessage);
+  rpc ControlStream(stream ExecutorControlMessage) returns (stream DispatcherControlMessage);
 
   // Per-session bidirectional stream for debuglet execution
-  rpc SessionStream(stream SessionMessage) returns (stream SessionMessage);
+  rpc DebugletStream(stream ExecutorDebugletMessage) returns (stream DispatcherDebugletMessage);
 }

@@ -1,36 +1,25 @@
-// Copyright 2025 ETH Zurich
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package dispatcher
 
 import (
+	"debuglet/internal/dispatcher/resource"
+	"debuglet/internal/dispatcher/tag"
 	"fmt"
+	"slices"
 	"sync"
 
-	"debuglet/internal/dispatcher/resource"
-	pb "debuglet/protocol"
-
-	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
-type Executor struct {
-	ID          string                      `json:"id"`
-	Ready       bool                        `json:"ready"`
-	LastSeen    int64                       `json:"last_seen"`
-	PricePerBW  float64                     `json:"price_per_bw"`
-	Assignments chan *pb.DebugletAssignment `json:"-"`
-	Updates     chan *pb.DestinationUpdates `json:"-"`
+type logConn struct {
+	seq  int
+	logs chan<- []byte
+	done chan struct{}
+}
+
+type debugletStore struct {
+	logs       []byte
+	policy     DebugletPolicy
+	executorID string
 }
 
 func (e *Executor) GetPrice(floorBW int64) int64 {
@@ -38,174 +27,75 @@ func (e *Executor) GetPrice(floorBW int64) int64 {
 }
 
 type Dispatcher struct {
+	executors    map[string]*RegisteredExecutor
+	ipToExecutor map[string]string
 	mu           sync.RWMutex
-	executors    map[string]*Executor
-	measurements map[string]*Measurement
-	assignments  map[string]*pb.DebugletAssignment
-	resource     *resource.DispatcherManager
+	keystore     *tag.KeyStore
+	sender       ExecutorServer
+	logger       *zap.Logger
+
+	// Naive storage of the full output of debuglets.
+	// debugletStores allows for a user to get the full logs at a later point in time.
+	debugletStores map[string]*debugletStore
+	// connectedLogs stores the users connected via websockets
+	connectedLogs map[string][]logConn
+	seq           int // counter for log connection IDs
+
+	destinations *resource.DestinationsUsage
 }
 
-func NewDispatcher() *Dispatcher {
+var _ DispatcherControlHandler = (*Dispatcher)(nil)
+var _ DispatcherDebugletHandler = (*Dispatcher)(nil)
+
+func New(l *zap.Logger) *Dispatcher {
 	return &Dispatcher{
-		executors:    make(map[string]*Executor),
-		measurements: make(map[string]*Measurement),
-		assignments:  make(map[string]*pb.DebugletAssignment),
-		resource:     resource.New(),
+		executors:      make(map[string]*RegisteredExecutor),
+		ipToExecutor:   make(map[string]string),
+		keystore:       tag.NewKeyStore(),
+		logger:         l,
+		debugletStores: make(map[string]*debugletStore),
+		connectedLogs:  make(map[string][]logConn),
+		destinations:   resource.NewDestinations(resource.Gigabit),
 	}
 }
 
-func (d *Dispatcher) CreateMeasurement(numDebuglets int) (string, *Measurement) {
+func (d *Dispatcher) SetExecutorSender(s ExecutorServer) {
+	d.sender = s
+}
+
+func (d *Dispatcher) GetKeyStore() *tag.KeyStore {
+	return d.keystore
+}
+
+func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []byte) (int, <-chan struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	measurementId := uuid.New().String()
-	measurement := NewMeasurement(numDebuglets)
-	d.measurements[measurementId] = measurement
-	return measurementId, measurement
+	if _, exists := d.debugletStores[debugletID]; !exists {
+		return 0, nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
+	}
+
+	d.seq++
+	lc := logConn{logs: channel, seq: d.seq, done: make(chan struct{})}
+	d.connectedLogs[debugletID] = append(d.connectedLogs[debugletID], lc)
+	return lc.seq, lc.done, nil
 }
 
-func (d *Dispatcher) StartMeasurement(measurement *Measurement) error {
+func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
-	for _, session := range measurement.sessions {
-		assignment := session.Assignment
-		policy := assignment.GetPolicy()
-		executorID := session.ExecutorID
-
-		err := d.resource.CheckPolicy(executorID, policy.GetFloorBw(), policy.GetCeilBw(), assignment.GetAddresses())
-		if err != nil {
-			return err
-		}
-		destinationUpdates, err := d.resource.RegisterPolicy(executorID, assignment)
-		if err != nil {
-			return err
-		}
-		for executorID, updates := range destinationUpdates {
-			d.UpdateDestinations(executorID, updates)
-		}
-	}
-
-	return measurement.Start()
-}
-
-func (d *Dispatcher) GetMeasurement(id string) *Measurement {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	measurement, exists := d.measurements[id]
-	if !exists {
-		return nil
-	}
-	return measurement
-}
-
-func (d *Dispatcher) RemoveMeasurement(id string) {
-	m := d.GetMeasurement(id)
-	if m == nil {
+	index := slices.IndexFunc(d.connectedLogs[debugletID], func(lc logConn) bool {
+		return seq == lc.seq
+	})
+	if index == -1 {
 		return
 	}
-
-	for _, session := range m.sessions {
-		destinationUpdates := d.resource.RemovePolicy(session.Assignment.SessionId)
-		if destinationUpdates == nil {
-			continue
-		}
-		for executorID, updates := range destinationUpdates {
-			d.UpdateDestinations(executorID, updates)
-		}
-	}
-
-	m.Close()
-
-	delete(d.measurements, id)
+	conn := d.connectedLogs[debugletID][index]
+	close(conn.logs)
+	d.connectedLogs[debugletID] = slices.Delete(d.connectedLogs[debugletID], index, index+1)
 }
 
-func (d *Dispatcher) RegisterExecutor(id string, pricePerBW float64) {
+func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, exists := d.executors[id]; !exists {
-		d.executors[id] = &Executor{
-			ID:          id,
-			PricePerBW:  pricePerBW,
-			Assignments: make(chan *pb.DebugletAssignment, 1),
-			Updates:     make(chan *pb.DestinationUpdates, 1),
-		}
-	}
-}
-
-func (d *Dispatcher) RemoveExecutor(id string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	delete(d.executors, id)
-}
-
-func (d *Dispatcher) SetExecutor(id string, lastSeen int64) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	exec, exists := d.executors[id]
-	if !exists {
-		return fmt.Errorf("executor %s not found", id)
-	}
-	exec.Ready = true
-	exec.LastSeen = lastSeen
-	return nil
-}
-
-func (d *Dispatcher) SetExecutorCapacity(id string, capacity int64) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	_, exists := d.executors[id]
-	if !exists {
-		return fmt.Errorf("executor %s not found", id)
-	}
-	d.resource.SetExecutorCapacity(id, capacity)
-	return nil
-}
-
-func (d *Dispatcher) GetExecutor(id string) *Executor {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	exec, exists := d.executors[id]
-	if !exists {
-		return nil
-	}
-	return exec
-}
-
-func (d *Dispatcher) ListExecutors() []Executor {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	execs := []Executor{}
-	for _, exec := range d.executors {
-		execs = append(execs, *exec)
-	}
-	return execs
-}
-
-func (d *Dispatcher) DispatchTask(executorID string, measurement *Measurement, assignment *pb.DebugletAssignment) error {
-	d.mu.RLock()
-	exec, ok := d.executors[executorID]
-	d.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("executor %s not found", executorID)
-	}
-	measurement.Assign(executorID, assignment)
-	select {
-	case exec.Assignments <- assignment:
-		return nil
-	default:
-		return fmt.Errorf("executor %s assignment queue full", executorID)
-	}
-}
-
-func (d *Dispatcher) UpdateDestinations(executorID string, updates *pb.DestinationUpdates) error {
-	exec, ok := d.executors[executorID]
-	if !ok {
-		return fmt.Errorf("executor %s not found", executorID)
-	}
-	select {
-	case exec.Updates <- updates:
-		return nil
-	default:
-		return fmt.Errorf("executor %s updates queue full", executorID)
-	}
+	d.destinations.SetLimit(destination, limit)
 }

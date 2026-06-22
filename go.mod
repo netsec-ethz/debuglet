@@ -3,15 +3,16 @@ module debuglet
 go 1.25.0
 
 require (
-	github.com/BurntSushi/toml v0.3.1
+	github.com/cilium/ebpf v0.21.0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/netsec-ethz/scion-apps v0.6.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/scionproto/scion v0.11.1-0.20240610170620-50b971ca2d4b
-	github.com/wasmerio/wasmer-go v1.0.4
+	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/crypto v0.43.0
+	golang.org/x/sync v0.17.0
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10
 )
@@ -47,7 +48,7 @@ require (
 	github.com/prometheus/procfs v0.14.0 // indirect
 	github.com/quic-go/quic-go v0.43.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
