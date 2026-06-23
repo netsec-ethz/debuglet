@@ -32,6 +32,7 @@ type Config struct {
 	TeslaDelay     int64            `toml:"tesla_delay"` // in seconds
 	MaxDebuglets   int              `toml:"max_debuglets"`
 	Credentials    CredentialConfig `toml:"credentials"`
+	DisableTLS     bool             `toml:"disable_tls"`
 }
 
 type CredentialConfig struct {

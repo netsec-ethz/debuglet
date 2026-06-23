@@ -139,15 +139,21 @@ func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *z
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
-	creds, err := getServerCredentials(cfg, logger)
-	if err != nil {
-		return fmt.Errorf("failed to get server credentials: %w", err)
+	var grpcOpts []grpc.ServerOption
+	if cfg.DisableTLS {
+		// No transport credentials — plain HTTP/2
+	} else {
+		creds, err := getServerCredentials(cfg, logger)
+		if err != nil {
+			return fmt.Errorf("failed to get server credentials: %w", err)
+		}
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
 	}
-	srv := grpc.NewServer(
-		grpc.Creds(creds),
-		grpc.MaxRecvMsgSize(32*1024*1024), // 32 MB
+	grpcOpts = append(grpcOpts,
+		grpc.MaxRecvMsgSize(32*1024*1024),
 		grpc.MaxSendMsgSize(32*1024*1024),
 	)
+	srv := grpc.NewServer(grpcOpts...)
 	pb.RegisterDispatcherServiceServer(srv, server)
 
 	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))

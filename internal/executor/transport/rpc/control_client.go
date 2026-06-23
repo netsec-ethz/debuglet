@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type ControlClient struct {
@@ -32,20 +33,28 @@ type ControlClient struct {
 }
 
 func NewControlClient(cfg *config.Config, l *zap.Logger, h ExecutorControlHandler) (*ControlClient, error) {
-	creds, err := getClientCredentials(cfg)
-	if err != nil {
-		return nil, err
+	var grpcOpts []grpc.DialOption
+	if cfg.DisableTLS {
+		l.Info("TLS disabled, using insecure connection to dispatcher")
+		grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		creds, err := getClientCredentials(cfg)
+		if err != nil {
+			return nil, err
+		}
+		grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(creds))
 	}
-	conn, err := grpc.NewClient(cfg.DispatcherAddr,
-		grpc.WithTransportCredentials(creds),
+	grpcOpts = append(grpcOpts,
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(32*1024*1024), // 32 MB
+			grpc.MaxCallRecvMsgSize(32*1024*1024),
 			grpc.MaxCallSendMsgSize(32*1024*1024),
 		),
 	)
+	conn, err := grpc.NewClient(cfg.DispatcherAddr, grpcOpts...)
 	if err != nil {
 		return nil, err
 	}
+
 	l.Info("Connected to dispatcher", zap.String("address", cfg.DispatcherAddr))
 	client := pb.NewDispatcherServiceClient(conn)
 
