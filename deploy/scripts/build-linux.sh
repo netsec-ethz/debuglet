@@ -19,30 +19,20 @@ mkdir -p "${DIST_DIR}"
 echo "==> Building dispatcher (linux/amd64)..."
 docker build \
     -f "${ROOT_DIR}/build/package/dispatcher.Dockerfile" \
-    --target builder \
     --platform linux/amd64 \
-    -t debuglet-dispatcher-builder \
+    --output ${DIST_DIR} \
     "${ROOT_DIR}"
 
-CID=$(docker create --platform linux/amd64 debuglet-dispatcher-builder)
-docker cp "${CID}:/debuglet-dispatcher" "${DIST_DIR}/debuglet-dispatcher"
-docker rm "${CID}" >/dev/null
-chmod +x "${DIST_DIR}/debuglet-dispatcher"
 echo "    -> ${DIST_DIR}/debuglet-dispatcher"
 
 # ---- Build executor ----------------------------------------------------------
 echo "==> Building executor (linux/amd64)..."
 docker build \
     -f "${ROOT_DIR}/build/package/executor.Dockerfile" \
-    --target builder \
     --platform linux/amd64 \
-    -t debuglet-executor-builder \
+    --output ${DIST_DIR} \
     "${ROOT_DIR}"
 
-CID=$(docker create --platform linux/amd64 debuglet-executor-builder)
-docker cp "${CID}:/debuglet-executor" "${DIST_DIR}/debuglet-executor"
-docker rm "${CID}" >/dev/null
-chmod +x "${DIST_DIR}/debuglet-executor"
 echo "    -> ${DIST_DIR}/debuglet-executor"
 
 echo ""

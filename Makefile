@@ -13,7 +13,7 @@ all: deps build
 # Install Go dependencies for local build
 # --------------------------------------------------------------------
 deps:
-	$(GO) mod tidy
+	$(GO) mod download
 
 # --------------------------------------------------------------------
 # Build local binaries
@@ -22,7 +22,9 @@ build-exec:
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
 
 build-disp:
-	mise x -- $(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
+	$(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
+
+build: build-exec build-disp
 
 # --------------------------------------------------------------------
 # Run locally

@@ -6,8 +6,8 @@ services:
       context: .
       dockerfile: build/package/executor.Dockerfile
     volumes:
-      - ./configs/executor:/etc/debuglet/executor
-      - /var/log/debuglet:/var/log/debuglet
+      - ./local/configs/executor:/local/configs/executor:ro
+      - ./local/configs/executor.toml:/etc/debuglet/executor/executor.toml:ro
     restart: unless-stopped
     privileged: true
 
