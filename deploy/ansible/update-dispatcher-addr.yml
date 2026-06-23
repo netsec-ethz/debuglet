@@ -1,0 +1,29 @@
+---
+# Regenerate executor.toml on every executor and restart the service.
+# Use this whenever the dispatcher address (or any executor global variable)
+# changes — no need to redeploy binaries.
+#
+# Usage:
+#   cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml
+#
+#   Or pass the new address inline without editing the file:
+#   ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
+#       -e "dispatcher_addr=new-dispatcher.example.com"
+
+- name: Update dispatcher address on all executors
+  hosts: executors
+  become: true
+  tasks:
+    - name: Regenerate executor config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"
+        dest: "{{ config_dir }}/executor/executor.toml"
+        owner: "{{ debuglet_user }}"
+        mode: "0640"
+      register: config_changed
+
+    - name: Restart executor if config changed
+      ansible.builtin.systemd:
+        name: debuglet-executor
+        state: restarted
+      when: config_changed.changed

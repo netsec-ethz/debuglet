@@ -1,0 +1,67 @@
+---
+- name: Check if local certificate directory exists
+  delegate_to: localhost
+  run_once: true
+  ansible.builtin.stat:
+    path: "{{ certs_dir }}"
+  register: _local_certs
+
+- name: Create dispatcher config directory
+  ansible.builtin.file:
+    path: "{{ config_dir }}/dispatcher"
+    state: directory
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0700"
+
+- name: Install dispatcher binary
+  ansible.builtin.copy:
+    src: "{{ dist_dir }}/debuglet-dispatcher"
+    dest: "{{ install_prefix }}/bin/debuglet-dispatcher"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart dispatcher
+
+- name: Deploy dispatcher TLS certificate
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/dispatcher/server.crt"
+    dest: "{{ config_dir }}/dispatcher/server.crt"
+    owner: "{{ debuglet_user }}"
+    mode: "0640"
+  notify: Restart dispatcher
+  when: _local_certs.stat.exists
+
+- name: Deploy dispatcher TLS key
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/dispatcher/server.key"
+    dest: "{{ config_dir }}/dispatcher/server.key"
+    owner: "{{ debuglet_user }}"
+    mode: "0600"
+  notify: Restart dispatcher
+  when: _local_certs.stat.exists
+
+- name: Deploy dispatcher configuration
+  ansible.builtin.template:
+    src: dispatcher.toml.j2
+    dest: "{{ config_dir }}/dispatcher/dispatcher.toml"
+    owner: "{{ debuglet_user }}"
+    mode: "0640"
+  notify: Restart dispatcher
+
+- name: Install dispatcher systemd unit
+  ansible.builtin.template:
+    src: dispatcher.service.j2
+    dest: /etc/systemd/system/debuglet-dispatcher.service
+    owner: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart dispatcher
+
+- name: Enable and start dispatcher
+  ansible.builtin.systemd:
+    name: debuglet-dispatcher
+    enabled: true
+    state: started
+    daemon_reload: true

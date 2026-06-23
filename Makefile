@@ -102,36 +102,50 @@ deploy-build:
 	deploy/scripts/build-linux.sh
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/
-# EXECUTOR_IDS: space-separated list matching executor_id in inventory/hosts.yml
-# Example: make deploy-certs EXECUTOR_IDS="executor-node1 executor-node2"
+# Extracts executor IDs automatically from deploy/ansible/hosts.yml.
+# Override by passing EXECUTOR_IDS manually:
+#   make deploy-certs EXECUTOR_IDS="id1 id2"
 deploy-certs:
 	chmod +x deploy/scripts/generate-certs.sh
-	deploy/scripts/generate-certs.sh $(EXECUTOR_IDS)
+	@if [ -z "$(EXECUTOR_IDS)" ]; then \
+		EXECUTOR_IDS=$$(cd deploy/ansible && ansible-inventory -i hosts.yml --list 2>/dev/null | python3 -c "\
+import sys, json; \
+inv = json.load(sys.stdin); \
+groups = inv.get('executors', {}).get('children', {}); \
+hosts = [h for g in groups.values() for h in g.get('hosts', {}).keys()]; \
+meta = inv.get('_meta', {}).get('hostvars', {}); \
+ids = [meta.get(h, {}).get('executor_id', h) for h in hosts]; \
+print(' '.join(ids))" 2>/dev/null); \
+		echo "Auto-extracted executor IDs: $$EXECUTOR_IDS"; \
+		deploy/scripts/generate-certs.sh $$EXECUTOR_IDS; \
+	else \
+		deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
+	fi
 
-# Full deploy: build → certs → dispatcher → all executors
+# Full deploy: build → dispatcher → all executors
 deploy: deploy-build
-	cd deploy/ansible && ansible-playbook playbooks/site.yml
+	cd deploy/ansible && ansible-playbook site.yml
 
 # Deploy only the dispatcher
 deploy-dispatcher: deploy-build
-	cd deploy/ansible && ansible-playbook playbooks/deploy-dispatcher.yml
+	cd deploy/ansible && ansible-playbook deploy-dispatcher.yml
 
 # One-time bootstrap: grant passwordless sudo on executor nodes.
 # Run this first on any host whose user requires a sudo password.
 # Example: make bootstrap-sudo LIMIT=ordroid-ethz
 bootstrap-sudo:
-	cd deploy/ansible && ansible-playbook playbooks/bootstrap-sudo.yml -K \
+	cd deploy/ansible && ansible-playbook bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
 deploy-executors: deploy-build
-	cd deploy/ansible && ansible-playbook playbooks/deploy-executors.yml \
+	cd deploy/ansible && ansible-playbook deploy-executors.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Push a new dispatcher address to all running executors (no binary redeploy)
 # Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
 deploy-update-addr:
-	cd deploy/ansible && ansible-playbook playbooks/update-dispatcher-addr.yml \
+	cd deploy/ansible && ansible-playbook update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # --------------------------------------------------------------------
@@ -147,7 +161,7 @@ clean:
 SYSTEMD_PATH = /etc/systemd/system
 
 systemd-install: build-disp
-	sudo cp build/dispatcher.service $(SYSTEMD_PATH)/debuglet-dispatcher.service
+	sudo cp deploy/ansible/roles/dispatcher/templates/dispatcher.service.j2 $(SYSTEMD_PATH)/debuglet-dispatcher.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable debuglet-dispatcher.service
 	sudo systemctl restart debuglet-dispatcher.service
