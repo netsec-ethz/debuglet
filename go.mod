@@ -72,3 +72,5 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
+
+tool github.com/cilium/ebpf/cmd/bpf2go

@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   executor:
@@ -9,15 +9,16 @@ services:
       - ./configs/executor:/etc/debuglet/executor
       - /var/log/debuglet:/var/log/debuglet
     restart: unless-stopped
-    # Depending on BPF requirements, it might need privileged mode:
-    # privileged: true
+    privileged: true
 
   dispatcher:
     build:
       context: .
       dockerfile: build/package/dispatcher.Dockerfile
     volumes:
-      - ./configs/dispatcher:/etc/debuglet/dispatcher
+      - ./local/configs/dispatcher:/local/configs/dispatcher:ro
+      - ./local/configs/dispatcher.toml:/etc/debuglet/dispatcher/dispatcher.toml:ro
     ports:
+      - "9000:9000"
       - "9001:9001"
     restart: unless-stopped

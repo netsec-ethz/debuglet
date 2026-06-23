@@ -1,21 +1,18 @@
 # Build Stage
 FROM golang:1.25 AS builder
 WORKDIR /app
+
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
+COPY cmd/dispatcher ./cmd/dispatcher
+COPY internal/dispatcher ./internal/dispatcher
+COPY protocol ./protocol
+
 RUN CGO_ENABLED=0 go build -o /debuglet-dispatcher ./cmd/dispatcher
 
 # Runtime Stage
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /debuglet-dispatcher /usr/local/bin/debuglet-dispatcher
-
-RUN useradd --system --no-create-home --shell /usr/sbin/nologin debuglet
-USER debuglet
-
+FROM scratch
+COPY --from=builder /debuglet-dispatcher /debuglet-dispatcher
 EXPOSE 9001
-
-ENTRYPOINT ["/usr/local/bin/debuglet-dispatcher"]
+ENTRYPOINT ["/debuglet-dispatcher"]
