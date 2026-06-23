@@ -5,7 +5,7 @@ DISPATCHER_BINARY = debuglet-dispatcher
 # Go command
 GO ?= go
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto bpf setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
 
 all: deps build
 
@@ -18,7 +18,7 @@ deps:
 # --------------------------------------------------------------------
 # Build local binaries
 # --------------------------------------------------------------------
-build-exec: bpf
+build-exec:
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
 
 build-disp:
@@ -42,9 +42,6 @@ proto:
 	  --go_out=. --go_opt=paths=source_relative,Mschema.proto=. \
 	  --go-grpc_out=. --go-grpc_opt=paths=source_relative,Mschema.proto=. \
 	  protocol/protocol.proto
-
-bpf:
-	clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I/usr/include/x86_64-linux-gnu -c internal/executor/bpf/c/tagger.c -o internal/executor/bpf/c/tagger.o
 
 setcaps: build
 	sudo setcap cap_net_admin,cap_bpf+ep ./$(EXECUTOR_BINARY)
@@ -97,7 +94,7 @@ generate-certs:
 # Remote deployment (requires: docker, ansible, openssl)
 # --------------------------------------------------------------------
 
-# Build Linux x86_64 binaries + tagger.o via Docker → deploy/dist/
+# Build Linux x86_64 binaries via Docker → deploy/dist/
 deploy-build:
 	chmod +x deploy/scripts/build-linux.sh
 	deploy/scripts/build-linux.sh
@@ -140,7 +137,6 @@ deploy-update-addr:
 # --------------------------------------------------------------------
 clean:
 	rm -f $(EXECUTOR_BINARY) $(DISPATCHER_BINARY)
-	rm -f internal/executor/bpf/c/tagger.o
 
 # --------------------------------------------------------------------
 # Install systemd services

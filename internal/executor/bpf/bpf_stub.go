@@ -42,5 +42,11 @@ func (bt *BPFTagger) TagPacket(pkt []byte) ([]byte, error) {
 	return pkt, nil
 }
 
+// SetSocketMark is a no-op stub.
+func (bt *BPFTagger) SetSocketMark(fd int) error { return nil }
+
 // Close is a no-op stub.
-func (bt *BPFTagger) Close() {}
+func (bt *BPFTagger) Close() error { return nil }
+
+// Schedule is a no-op stub.
+func (bt *BPFTagger) Schedule() *tesla.KeySchedule { return nil }

@@ -1,3 +1,4 @@
+//go:build ignore
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2025 ETH Zurich
 //
@@ -108,7 +109,7 @@ int debuglet_tag(struct __sk_buff *skb) {
 
     void *data     = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
-    
+
     struct ethhdr *eth = data;
     struct iphdr  *iph;
     __u32 off;
@@ -168,7 +169,7 @@ int debuglet_tag(struct __sk_buff *skb) {
     __u16 frag_off = bpf_ntohs(frag_off_be);
     __u16 flags = frag_off >> 13;
 
-    bpf_printk("tagger: tagging packet at off=%d old_id=0x%x new_id=0x%x flags=0x%x\n", 
+    bpf_printk("tagger: tagging packet at off=%d old_id=0x%x new_id=0x%x flags=0x%x\n",
                ipid_off, bpf_ntohs(old_id), bpf_ntohs(tag_be), flags);
 
     __u32 csum_off = off + offsetof(struct iphdr, check);
