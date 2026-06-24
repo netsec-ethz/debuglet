@@ -23,7 +23,6 @@ import (
 
 	"encoding/hex"
 	"crypto/sha256"
-	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 

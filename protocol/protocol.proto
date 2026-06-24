@@ -32,7 +32,7 @@ message ExecutorHello {
   int64 tesla_delay_sec = 4; // TESLA epoch delay in seconds
   int64 tesla_anchor_timestamp_ns = 5; // Reference wall-clock time for epoch 0
   bytes tesla_anchor_key = 6; // Public anchor k_0 = H^L(seed); used to verify disclosed keys
-  double price_per_bw = 3; // Price per bit/s of bandwidth
+  double price_per_bw = 7; // Price per bit/s of bandwidth
 }
 
 message ExecutorHeartbeat {

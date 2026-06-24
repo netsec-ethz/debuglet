@@ -88,13 +88,13 @@ func (RunState) EnumDescriptor() ([]byte, []int) {
 
 type ExecutorHello struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
-	ExecutorId             string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`                                              // Unique ID for this executor instance
-	Version                string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                      // Optional: software version or capabilities
-	PricePerBw    float64                `protobuf:"fixed64,3,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"` // Price per bit/s of bandwidth
+	ExecutorId             string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`                                          // Unique ID for this executor instance
+	Version                string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                  // Optional: software version or capabilities
 	SourceIp               string                 `protobuf:"bytes,3,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`                                                // Source IP for packet attribution
 	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
+	PricePerBw             float64                `protobuf:"fixed64,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                      // Price per bit/s of bandwidth
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1159,7 +1159,7 @@ var File_protocol_protocol_proto protoreflect.FileDescriptor
 
 const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
-	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf4\x01\n" +
+	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\x1a\x1fgoogle/protobuf/timestamp.proto\"\x96\x02\n" +
 	"\rExecutorHello\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -1167,7 +1167,9 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\tsource_ip\x18\x03 \x01(\tR\bsourceIp\x12&\n" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
 	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
-	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\"{\n" +
+	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12 \n" +
+	"\fprice_per_bw\x18\a \x01(\x01R\n" +
+	"pricePerBw\"{\n" +
 	"\x11ExecutorHeartbeat\x12!\n" +
 	"\ftimestamp_ns\x18\x02 \x01(\x03R\vtimestampNs\x12&\n" +
 	"\x0ftesla_key_epoch\x18\x03 \x01(\x03R\rteslaKeyEpoch\x12\x1b\n" +

@@ -83,6 +83,7 @@ func (e *Executor) hello() error {
 		TeslaDelay:           e.teslaSchedule.Config().Delay,
 		TeslaAnchorTimestamp: e.teslaSchedule.Config().Epoch,
 		TeslaAnchorKey:       e.teslaSchedule.Anchor(),
+		PricePerBw:		      1,
 	}
 	return e.control.SendHello(h)
 }

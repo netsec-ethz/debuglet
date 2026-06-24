@@ -62,6 +62,7 @@ func (c *ControlClient) SendHello(h Hello) error {
 			TeslaDelaySec:          int64(h.TeslaDelay.Seconds()),
 			TeslaAnchorTimestampNs: h.TeslaAnchorTimestamp.UnixNano(),
 			TeslaAnchorKey:         h.TeslaAnchorKey,
+			PricePerBw:             h.PricePerBw,
 		}},
 	})
 }

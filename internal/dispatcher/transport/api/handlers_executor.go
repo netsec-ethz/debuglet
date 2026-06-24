@@ -19,6 +19,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 			LastSeen:               e.LastSeen.Unix(),
 			TeslaDelaySec:          int64(e.TeslaDelay.Seconds()),
 			TeslaAnchorTimestampNs: e.TeslaAnchorTimestamp.UnixNano(),
+			PricePerBw:				e.PricePerBw,
 		})
 	}
 	return c.JSON(http.StatusOK, resp)

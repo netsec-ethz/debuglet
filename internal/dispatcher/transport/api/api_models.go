@@ -38,6 +38,7 @@ type ExecutorResponse struct {
 	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
 	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
 	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
+	PricePerBw float64 `json:"price_per_bw"`
 }
 
 // ExecutorByIPResponse is returned by GET /executors/by-ip?ip=<ip>.

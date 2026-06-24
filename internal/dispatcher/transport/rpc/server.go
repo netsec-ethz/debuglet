@@ -92,6 +92,7 @@ func (s *Server) ControlStream(stream pb.DispatcherService_ControlStreamServer) 
 						TeslaDelay:           time.Duration(msg.Hello.GetTeslaDelaySec()) * time.Second,
 						TeslaAnchorTimestamp: time.Unix(0, msg.Hello.GetTeslaAnchorTimestampNs()),
 						TeslaAnchorKey:       msg.Hello.GetTeslaAnchorKey(),
+						PricePerBw:           msg.Hello.GetPricePerBw(),
 					}
 					executorID = msg.Hello.GetExecutorId()
 					s.registry.Register(executorID, stream)

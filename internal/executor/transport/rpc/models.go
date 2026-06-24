@@ -29,4 +29,5 @@ type Hello struct {
 	TeslaDelay           time.Duration
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte
+	PricePerBw			 float64
 }
