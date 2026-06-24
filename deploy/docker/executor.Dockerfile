@@ -13,7 +13,6 @@ RUN go mod download
 
 COPY cmd/executor ./cmd/executor
 COPY internal/executor ./internal/executor
-COPY pkg ./pkg
 COPY protocol ./protocol
 
 RUN go generate ./...

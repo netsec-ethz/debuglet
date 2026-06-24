@@ -28,6 +28,7 @@ type TLSConfig struct {
 }
 
 type DispatcherConfig struct {
+	Version    string    `toml:"version"`
 	GRPCPort   int       `toml:"grpc_port"`
 	HTTPPort   int       `toml:"http_port"`
 	LogLevel   string    `toml:"log_level"`
@@ -50,6 +51,9 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
+	}
+	if cfg.Version == "" {
+		cfg.Version = "unknown"
 	}
 
 	return &cfg, nil

@@ -20,6 +20,7 @@ deploy:
   stage: deploy
   image: ubuntu:latest
   only:
+    - main
     - dev
   before_script:
     - apt-get update && apt-get install -y ansible openssh-client
@@ -27,6 +28,7 @@ deploy:
     - echo "$ANSIBLE_SSH_PRIVATE_KEY" | base64 -d | ssh-add -
   script:
     - export ANSIBLE_HOST_KEY_CHECKING=False
-    - cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
+    - VERSION=$CI_COMMIT_SHORT_SHA
+    - cd deploy/ansible && ansible-playbook -i hosts.yml site.yml -e "deploy_version=$VERSION"
   dependencies:
     - build

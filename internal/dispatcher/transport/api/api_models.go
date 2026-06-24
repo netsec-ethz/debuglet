@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+type VersionResponse struct {
+	Version string `json:"version"`
+}
+
 type DebugletPolicyRequest struct {
 	FloorBW   int64    `json:"floor_bw"`
 	CeilBW    int64    `json:"ceil_bw"`
@@ -34,6 +38,7 @@ type ExecutorResponse struct {
 	ID       string `json:"id"`
 	Ready    bool   `json:"ready"`
 	LastSeen int64  `json:"last_seen"`
+	Version  string `json:"version"`
 
 	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
 	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`

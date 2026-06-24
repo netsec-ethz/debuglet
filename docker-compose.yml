@@ -6,8 +6,7 @@ services:
       context: .
       dockerfile: deploy/docker/executor.Dockerfile
     volumes:
-      - ./local/configs/executor:/local/configs/executor:ro
-      - ./local/configs/executor.toml:/etc/debuglet/executor/executor.toml:ro
+      - ./local/configs/executor:/etc/debuglet/executor:ro
     restart: unless-stopped
     privileged: true
 
@@ -16,8 +15,7 @@ services:
       context: .
       dockerfile: deploy/docker/dispatcher.Dockerfile
     volumes:
-      - ./local/configs/dispatcher:/local/configs/dispatcher:ro
-      - ./local/configs/dispatcher.toml:/etc/debuglet/dispatcher/dispatcher.toml:ro
+      - ./local/configs/dispatcher:/etc/debuglet/dispatcher:ro
     ports:
       - "9000:9000"
       - "9001:9001"

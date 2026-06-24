@@ -26,6 +26,8 @@ type DebugletStore struct {
 }
 
 type Dispatcher struct {
+	version string
+
 	executors    map[string]*RegisteredExecutor
 	ipToExecutor map[string]string
 	mu           sync.RWMutex
@@ -46,8 +48,9 @@ type Dispatcher struct {
 var _ DispatcherControlHandler = (*Dispatcher)(nil)
 var _ DispatcherDebugletHandler = (*Dispatcher)(nil)
 
-func New(l *zap.Logger) *Dispatcher {
+func New(l *zap.Logger, version string) *Dispatcher {
 	return &Dispatcher{
+		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
 		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
@@ -58,13 +61,9 @@ func New(l *zap.Logger) *Dispatcher {
 	}
 }
 
-func (d *Dispatcher) SetExecutorSender(s ExecutorServer) {
-	d.sender = s
-}
-
-func (d *Dispatcher) GetKeyStore() *tag.KeyStore {
-	return d.keystore
-}
+func (d *Dispatcher) GetVersion() string                 { return d.version }
+func (d *Dispatcher) GetKeyStore() *tag.KeyStore         { return d.keystore }
+func (d *Dispatcher) SetExecutorSender(s ExecutorServer) { d.sender = s }
 
 func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	d.mu.Lock()

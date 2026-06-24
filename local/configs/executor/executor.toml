@@ -1,5 +1,5 @@
 executor_id = "local-executor"
-version = "1.0.0"
+version = "unknown"
 dispatcher_addr = "localhost:9001"
 log_level = "debug"
 capacity = 1_000_000_000

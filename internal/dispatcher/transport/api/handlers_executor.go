@@ -16,6 +16,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 		resp = append(resp, ExecutorResponse{
 			ID:                     e.ID,
 			Ready:                  e.Ready,
+			Version:                e.Version,
 			LastSeen:               e.LastSeen.Unix(),
 			TeslaDelaySec:          int64(e.TeslaDelay.Seconds()),
 			TeslaAnchorTimestampNs: e.TeslaAnchorTimestamp.UnixNano(),

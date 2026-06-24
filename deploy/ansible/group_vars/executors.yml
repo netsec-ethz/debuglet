@@ -26,5 +26,5 @@ executor_tesla_seed: ""
 
 # Executor identity (override per-host in hosts.yml host_vars)
 executor_id: "{{ inventory_hostname }}"
-executor_version: "1.0.0"
+executor_version: "{{ deploy_version }}"
 executor_max_debuglets: 20

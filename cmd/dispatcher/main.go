@@ -56,7 +56,7 @@ func main() {
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
-	disp := dispatcher.New(logger)
+	disp := dispatcher.New(logger, cfg.Version)
 	server := rpc.NewServer(logger, disp, disp, rpc.ServerOptions{ExecutorTimeout: time.Duration(cfg.ExecutorTimeout) * time.Second})
 	disp.SetExecutorSender(server)
 	var wg sync.WaitGroup

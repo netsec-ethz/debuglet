@@ -2,6 +2,7 @@ package api
 
 import (
 	"debuglet/internal/dispatcher"
+	"net/http"
 
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -19,7 +20,12 @@ func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
 	}
 }
 
+func (h *Handler) GetVersion(c echo.Context) error {
+	return c.JSON(http.StatusOK, VersionResponse{Version: h.dispatcher.GetVersion()})
+}
+
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
+	e.GET("/version", h.GetVersion)
 	// debuglet
 	e.PUT("/debuglet", h.SubmitDebuglets)
 	e.GET("/debuglet/:id", h.GetLogsSSE)
