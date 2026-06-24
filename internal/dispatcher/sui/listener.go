@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"debuglet/internal/dispatcher/db"
@@ -32,6 +33,12 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
+
+// Payment Kit package ID on Sui testnet. Source: @mysten/payment-kit constants.mjs.
+const paymentKitPackageTestnet = "0x7e069abe383e80d32f2aec17b3793da82aabc8c2edf84abbf68dd7b719e71497"
+
+// noncePrefix is the required prefix for nonces this service will accept.
+const noncePrefix = "debuglet"
 
 // uint64Str handles Sui JSON's u64 encoding, which may be a number or a quoted string.
 type uint64Str uint64
@@ -59,9 +66,13 @@ type eventCursor struct {
 	EventSeq string `json:"eventSeq"`
 }
 
-type purchaseFields struct {
-	Username string    `json:"username"`
-	Amount   uint64Str `json:"amount"`
+type paymentReceiptFields struct {
+	Nonce         string         `json:"nonce"`
+	PaymentAmount uint64Str      `json:"payment_amount"`
+	Receiver      string         `json:"receiver"`
+	CoinType      string         `json:"coin_type"`
+	TimestampMs   uint64Str      `json:"timestamp_ms"`
+	PaymentType   map[string]any `json:"payment_type"`
 }
 
 type suiEvent struct {
@@ -69,7 +80,8 @@ type suiEvent struct {
 		TxDigest string `json:"txDigest"`
 		EventSeq string `json:"eventSeq"`
 	} `json:"id"`
-	ParsedJSON purchaseFields `json:"parsedJson"`
+	Sender     string               `json:"sender"`
+	ParsedJSON paymentReceiptFields `json:"parsedJson"`
 }
 
 type queryResult struct {
@@ -86,22 +98,24 @@ type rpcResponse struct {
 }
 
 type Listener struct {
-	rpcURL       string
-	grpcEndpoint string // host:port
-	eventType    string
-	cursorKey    string // keyed by package ID so a redeploy starts fresh automatically
-	db           *db.UserDB
-	logger       *zap.Logger
+	rpcURL          string
+	grpcEndpoint    string // host:port
+	eventType       string
+	cursorKey       string // keyed by package ID so a redeploy starts fresh automatically
+	receiverAddress string // only process payments sent to this address
+	db              *db.UserDB
+	logger          *zap.Logger
 }
 
-func NewListener(rpcURL, grpcEndpoint, packageID string, userDB *db.UserDB, logger *zap.Logger) *Listener {
+func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB, logger *zap.Logger) *Listener {
 	return &Listener{
-		rpcURL:       rpcURL,
-		grpcEndpoint: grpcEndpoint,
-		eventType:    fmt.Sprintf("%s::debuglet_tokens::DebugletPurchase", packageID),
-		cursorKey:    "sui_event_cursor:" + packageID,
-		db:           userDB,
-		logger:       logger,
+		rpcURL:          rpcURL,
+		grpcEndpoint:    grpcEndpoint,
+		eventType:       paymentKitPackageTestnet + "::payment_kit::PaymentReceipt",
+		cursorKey:       "sui_event_cursor:" + paymentKitPackageTestnet,
+		receiverAddress: strings.ToLower(receiverAddress),
+		db:              userDB,
+		logger:          logger,
 	}
 }
 
@@ -147,7 +161,7 @@ func (l *Listener) Start(ctx context.Context) error {
 }
 
 // subscribeGRPC opens a gRPC connection to the Sui node, subscribes to the checkpoint stream,
-// and processes DebugletPurchase events until the stream ends or ctx is cancelled.
+// and processes PaymentReceipt events until the stream ends or ctx is cancelled.
 // It updates *cursor after each matched event for resumption on reconnect.
 func (l *Listener) subscribeGRPC(ctx context.Context, cursor **eventCursor) error {
 	l.logger.Info("connecting to sui grpc", zap.String("endpoint", l.grpcEndpoint))
@@ -181,12 +195,12 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **eventCursor) erro
 
 		for _, tx := range resp.GetCheckpoint().GetTransactions() {
 			txDigest := tx.GetDigest()
+			sender := tx.GetTransaction().GetSender()
 			for j, ev := range tx.GetEvents().GetEvents() {
 				if ev.GetEventType() != l.eventType {
 					continue
 				}
-				l.processEventGRPC(ev, txDigest)
-
+				l.processEventGRPC(ev, txDigest, sender)
 				// Update cursor so a reconnect resumes after this event.
 				*cursor = &eventCursor{TxDigest: txDigest, EventSeq: strconv.Itoa(j)}
 				raw, _ := json.Marshal(*cursor)
@@ -198,61 +212,93 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **eventCursor) erro
 	}
 }
 
-// processEventGRPC credits balance from a DebugletPurchase event received via gRPC.
-func (l *Listener) processEventGRPC(ev *suirpcv2.Event, txDigest string) {
-	username, amount, err := decodePurchaseEvent(ev.GetContents().GetValue())
+// processEventGRPC credits balance from a PaymentReceipt event received via gRPC.
+func (l *Listener) processEventGRPC(ev *suirpcv2.Event, txDigest, sender string) {
+	nonce, receiver, amount, err := decodePaymentReceiptEvent(ev.GetContents().GetValue())
+	l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver,), zap.Int64("amount", amount))
 	if err != nil {
-		l.logger.Warn("DebugletPurchase: failed to decode BCS contents",
+		l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
 			zap.String("tx", txDigest),
 			zap.Error(err),
 		)
 		return
 	}
 
+	if !strings.EqualFold(receiver, l.receiverAddress) {
+		l.logger.Info("receiver didnt't match", zap.String("expected", l.receiverAddress))
+		return
+	}
+	if !strings.HasPrefix(nonce, noncePrefix) {
+		l.logger.Info("prefix mismatch")
+		return
+	}
+
 	if amount <= 0 {
-		l.logger.Warn("DebugletPurchase negative amount, no balance credited",
+		l.logger.Warn("PaymentReceipt: non-positive amount, no balance credited",
 			zap.String("tx", txDigest),
-			zap.String("username", username),
+			zap.String("sender", sender),
 			zap.Int64("mist", amount),
 		)
 		return
 	}
 
-	if err := l.db.UpdateBalance(username, amount); err != nil {
-		l.logger.Error("failed to credit balance from DebugletPurchase",
+	if err := l.db.UpdateBalance(sender, amount); err != nil {
+		l.logger.Error("failed to credit balance from PaymentReceipt",
 			zap.String("tx", txDigest),
-			zap.String("username", username),
+			zap.String("sender", sender),
+			zap.String("nonce", nonce),
 			zap.Int64("balance_delta", amount),
 			zap.Error(err),
 		)
 		return
 	}
 
-	l.logger.Info("credited balance from DebugletPurchase",
+	l.logger.Info("credited balance from PaymentReceipt",
 		zap.String("tx", txDigest),
-		zap.String("username", username),
+		zap.String("sender", sender),
+		zap.String("nonce", nonce),
 		zap.Int64("balance_delta", amount),
 	)
 }
 
-// decodePurchaseEvent decodes the BCS bytes of a DebugletPurchase Move event.
-// Struct layout: { username: String, amount: u64, currency: ascii::String }
-// BCS encoding: ULEB128-prefixed bytes for strings, little-endian for u64.
-func decodePurchaseEvent(data []byte) (username string, amount int64, err error) {
+// decodePaymentReceiptEvent decodes the BCS bytes of a PaymentReceipt Move event.
+// Struct layout: { payment_type: PaymentType, nonce: String, payment_amount: u64,
+//
+//	receiver: address (32 bytes), coin_type: String, timestamp_ms: u64 }
+//
+// PaymentType enum: variant 0 = Ephemeral, variant 1 = Registry (+ 32-byte address).
+func decodePaymentReceiptEvent(data []byte) (nonce, receiver string, amount int64, err error) {
 	pos := 0
 
+	// PaymentType enum variant index.
+	variant, n := bcsULEB128(data[pos:])
+	pos += n
+	if variant == 1 {
+		// Registry variant carries a 32-byte registry address.
+		pos += 32
+	}
+
+	// nonce: String
 	strLen, n := bcsULEB128(data[pos:])
 	pos += n
 	if pos+int(strLen) > len(data) {
-		return "", 0, fmt.Errorf("BCS username out of bounds (len=%d, pos=%d)", len(data), pos)
+		return "", "", 0, fmt.Errorf("BCS nonce out of bounds (len=%d, pos=%d)", len(data), pos)
 	}
-	username = string(data[pos : pos+int(strLen)])
+	nonce = string(data[pos : pos+int(strLen)])
 	pos += int(strLen)
 
+	// payment_amount: u64
 	if pos+8 > len(data) {
-		return "", 0, fmt.Errorf("BCS too short for amount (len=%d, pos=%d)", len(data), pos)
+		return "", "", 0, fmt.Errorf("BCS too short for payment_amount (len=%d, pos=%d)", len(data), pos)
 	}
 	amount = int64(binary.LittleEndian.Uint64(data[pos : pos+8]))
+	pos += 8
+
+	// receiver: address (32 bytes)
+	if pos+32 > len(data) {
+		return "", "", 0, fmt.Errorf("BCS too short for receiver (len=%d, pos=%d)", len(data), pos)
+	}
+	receiver = fmt.Sprintf("0x%x", data[pos:pos+32])
 	return
 }
 
@@ -332,31 +378,40 @@ func (l *Listener) fetchPage(cursor *eventCursor) (*queryResult, error) {
 }
 
 func (l *Listener) processEvent(ev suiEvent) {
-	amount := int64(ev.ParsedJSON.Amount)
-	username := ev.ParsedJSON.Username
+	if !strings.EqualFold(ev.ParsedJSON.Receiver, l.receiverAddress) {
+		return
+	}
+	if !strings.HasPrefix(ev.ParsedJSON.Nonce, noncePrefix) {
+		return
+	}
+
+	amount := int64(ev.ParsedJSON.PaymentAmount)
+	sender := ev.Sender
 
 	if amount <= 0 {
-		l.logger.Warn("DebugletPurchase negative amount, no balance credited",
+		l.logger.Warn("PaymentReceipt: non-positive amount, no balance credited",
 			zap.String("tx", ev.ID.TxDigest),
-			zap.String("username", username),
+			zap.String("sender", sender),
 			zap.Int64("mist", amount),
 		)
 		return
 	}
 
-	if err := l.db.UpdateBalance(username, amount); err != nil {
-		l.logger.Error("failed to credit balance from DebugletPurchase",
+	if err := l.db.UpdateBalance(sender, amount); err != nil {
+		l.logger.Error("failed to credit balance from PaymentReceipt",
 			zap.String("tx", ev.ID.TxDigest),
-			zap.String("username", username),
+			zap.String("sender", sender),
+			zap.String("nonce", ev.ParsedJSON.Nonce),
 			zap.Int64("balance_delta", amount),
 			zap.Error(err),
 		)
 		return
 	}
 
-	l.logger.Info("credited balance from DebugletPurchase",
+	l.logger.Info("credited balance from PaymentReceipt",
 		zap.String("tx", ev.ID.TxDigest),
-		zap.String("username", username),
+		zap.String("sender", sender),
+		zap.String("nonce", ev.ParsedJSON.Nonce),
 		zap.Int64("balance_delta", amount),
 	)
 }

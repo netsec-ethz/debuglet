@@ -65,6 +65,10 @@ type DestinationLimitRequest struct {
 	Limit       int64  `json:"limit"`
 }
 
+type BalanceResponse struct {
+	Balance int64 `json:"balance"`
+}
+
 // ================ HELPERS ================
 
 func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {

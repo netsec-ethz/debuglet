@@ -34,7 +34,7 @@ type DatabaseConfig struct {
 type SuiConfig struct {
 	RPCURL       string `toml:"rpc_url"`
 	GRPCEndpoint string `toml:"grpc_endpoint"` // host:port, e.g. fullnode.testnet.sui.io:443
-	PackageID    string `toml:"package_id"`
+	Address      string `toml:"address"`
 }
 
 type DispatcherConfig struct {

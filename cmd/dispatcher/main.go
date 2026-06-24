@@ -58,13 +58,6 @@ func main() {
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
-
-	userDB, err := db.NewUserDB(cfg.Database.Path)
-	if err != nil {
-		logger.Fatal("failed to open user database", zap.Error(err))
-	}
-	defer userDB.Close()
-
 	userDB, err := db.NewUserDB(cfg.Database.Path)
 	if err != nil {
 		logger.Fatal("failed to open user database", zap.Error(err))
@@ -181,9 +174,9 @@ func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *z
 	return nil
 }
 
-// startSuiListener subscribes to Sui DebugletPurchase events via gRPC and credits user balances.
-func startSuiListener(userDB *db.UserDB, cfg *dispatcher.DispatcherConfig, logger *zap.Logger) error {
-	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.PackageID, userDB, logger)
+// startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
+func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.Address, userDB, logger)
 	return l.Start(context.Background())
 }
 

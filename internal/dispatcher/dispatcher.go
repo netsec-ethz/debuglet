@@ -22,9 +22,6 @@ type debugletStore struct {
 	executorID string
 }
 
-func (e *Executor) GetPrice(floorBW int64) int64 {
-	return int64(e.PricePerBW)* floorBW
-}
 
 type Dispatcher struct {
 	executors    map[string]*RegisteredExecutor
