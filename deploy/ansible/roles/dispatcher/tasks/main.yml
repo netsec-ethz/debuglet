@@ -1,11 +1,4 @@
 ---
-- name: Check if local certificate directory exists
-  delegate_to: localhost
-  run_once: true
-  ansible.builtin.stat:
-    path: "{{ certs_dir }}"
-  register: _local_certs
-
 - name: Create dispatcher config directory
   ansible.builtin.file:
     path: "{{ config_dir }}/dispatcher"
@@ -22,24 +15,6 @@
     group: root
     mode: "0755"
   notify: Restart dispatcher
-
-- name: Deploy dispatcher TLS certificate
-  ansible.builtin.copy:
-    src: "{{ certs_dir }}/dispatcher/server.crt"
-    dest: "{{ config_dir }}/dispatcher/server.crt"
-    owner: "{{ debuglet_user }}"
-    mode: "0640"
-  notify: Restart dispatcher
-  when: _local_certs.stat.exists
-
-- name: Deploy dispatcher TLS key
-  ansible.builtin.copy:
-    src: "{{ certs_dir }}/dispatcher/server.key"
-    dest: "{{ config_dir }}/dispatcher/server.key"
-    owner: "{{ debuglet_user }}"
-    mode: "0600"
-  notify: Restart dispatcher
-  when: _local_certs.stat.exists
 
 - name: Deploy dispatcher configuration
   ansible.builtin.template:

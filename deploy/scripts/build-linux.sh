@@ -18,7 +18,7 @@ mkdir -p "${DIST_DIR}"
 # ---- Build dispatcher --------------------------------------------------------
 echo "==> Building dispatcher (linux/amd64)..."
 docker build \
-    -f "${ROOT_DIR}/build/package/dispatcher.Dockerfile" \
+    -f "${ROOT_DIR}/deploy/docker/dispatcher.Dockerfile" \
     --platform linux/amd64 \
     --output ${DIST_DIR} \
     "${ROOT_DIR}"
@@ -28,7 +28,7 @@ echo "    -> ${DIST_DIR}/debuglet-dispatcher"
 # ---- Build executor ----------------------------------------------------------
 echo "==> Building executor (linux/amd64)..."
 docker build \
-    -f "${ROOT_DIR}/build/package/executor.Dockerfile" \
+    -f "${ROOT_DIR}/deploy/docker/executor.Dockerfile" \
     --platform linux/amd64 \
     --output ${DIST_DIR} \
     "${ROOT_DIR}"

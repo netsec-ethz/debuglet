@@ -4,7 +4,7 @@ services:
   executor:
     build:
       context: .
-      dockerfile: build/package/executor.Dockerfile
+      dockerfile: deploy/docker/executor.Dockerfile
     volumes:
       - ./local/configs/executor:/local/configs/executor:ro
       - ./local/configs/executor.toml:/etc/debuglet/executor/executor.toml:ro
@@ -14,7 +14,7 @@ services:
   dispatcher:
     build:
       context: .
-      dockerfile: build/package/dispatcher.Dockerfile
+      dockerfile: deploy/docker/dispatcher.Dockerfile
     volumes:
       - ./local/configs/dispatcher:/local/configs/dispatcher:ro
       - ./local/configs/dispatcher.toml:/etc/debuglet/dispatcher/dispatcher.toml:ro

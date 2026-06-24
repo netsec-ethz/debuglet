@@ -21,12 +21,12 @@ deploy:
   image: ubuntu:latest
   only:
     - dev
-    - add-gitlab-action
   before_script:
     - apt-get update && apt-get install -y ansible openssh-client
     - eval $(ssh-agent -s)
-    - echo "$ANSIBLE_SSH_PRIVATE_KEY" | ssh-add -
+    - echo "$ANSIBLE_SSH_PRIVATE_KEY" | base64 -d | ssh-add -
   script:
-    - cd deploy/ansible && ansible-playbook site.yml
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
   dependencies:
     - build

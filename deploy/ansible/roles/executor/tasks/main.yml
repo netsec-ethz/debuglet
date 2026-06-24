@@ -1,11 +1,4 @@
 ---
-- name: Check if local certificate directory exists
-  delegate_to: localhost
-  run_once: true
-  ansible.builtin.stat:
-    path: "{{ certs_dir }}"
-  register: _local_certs
-
 - name: Create executor config directory
   ansible.builtin.file:
     path: "{{ config_dir }}/executor"
@@ -22,33 +15,6 @@
     group: root
     mode: "0755"
   notify: Restart executor
-
-- name: Deploy CA certificate
-  ansible.builtin.copy:
-    src: "{{ certs_dir }}/ca.crt"
-    dest: "{{ config_dir }}/executor/ca.crt"
-    owner: "{{ debuglet_user }}"
-    mode: "0644"
-  notify: Restart executor
-  when: _local_certs.stat.exists
-
-- name: Deploy executor client certificate
-  ansible.builtin.copy:
-    src: "{{ certs_dir }}/executors/{{ executor_id }}/client.crt"
-    dest: "{{ config_dir }}/executor/client.crt"
-    owner: "{{ debuglet_user }}"
-    mode: "0640"
-  notify: Restart executor
-  when: _local_certs.stat.exists
-
-- name: Deploy executor client key
-  ansible.builtin.copy:
-    src: "{{ certs_dir }}/executors/{{ executor_id }}/client.key"
-    dest: "{{ config_dir }}/executor/client.key"
-    owner: "{{ debuglet_user }}"
-    mode: "0600"
-  notify: Restart executor
-  when: _local_certs.stat.exists
 
 - name: Deploy executor configuration
   ansible.builtin.template:

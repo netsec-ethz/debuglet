@@ -121,31 +121,32 @@ print(' '.join(ids))" 2>/dev/null); \
 	else \
 		deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
 	fi
+	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-certs.yml
 
 # Full deploy: build → dispatcher → all executors
 deploy: deploy-build
-	cd deploy/ansible && ansible-playbook site.yml
+	cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
 
 # Deploy only the dispatcher
 deploy-dispatcher: deploy-build
-	cd deploy/ansible && ansible-playbook deploy-dispatcher.yml
+	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-dispatcher.yml
 
 # One-time bootstrap: grant passwordless sudo on executor nodes.
 # Run this first on any host whose user requires a sudo password.
 # Example: make bootstrap-sudo LIMIT=ordroid-ethz
 bootstrap-sudo:
-	cd deploy/ansible && ansible-playbook bootstrap-sudo.yml -K \
+	cd deploy/ansible && ansible-playbook -i hosts.yml bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
 deploy-executors: deploy-build
-	cd deploy/ansible && ansible-playbook deploy-executors.yml \
+	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-executors.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Push a new dispatcher address to all running executors (no binary redeploy)
 # Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
 deploy-update-addr:
-	cd deploy/ansible && ansible-playbook update-dispatcher-addr.yml \
+	cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # --------------------------------------------------------------------
