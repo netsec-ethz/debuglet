@@ -5,7 +5,7 @@ DISPATCHER_BINARY = debuglet-dispatcher
 # Go command
 GO ?= go
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto bpf setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
 
 all: deps build
 
@@ -18,20 +18,22 @@ deps:
 # --------------------------------------------------------------------
 # Build local binaries
 # --------------------------------------------------------------------
-build-exec: bpf
+build-exec:
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
 
 build-disp:
-	mise x -- $(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
+	$(GO) build -o $(DISPATCHER_BINARY) ./cmd/dispatcher
+
+build: build-exec build-disp
 
 # --------------------------------------------------------------------
 # Run locally
 # --------------------------------------------------------------------
 dispatcher d:
-	@$(GO) run cmd/dispatcher/main.go -config local/configs/dispatcher.toml
+	@$(GO) run cmd/dispatcher/main.go -config local/configs/dispatcher/dispatcher.toml
 
 executor e:
-	sudo -E mise x -- go run cmd/executor/main.go -config local/configs/executor.toml
+	sudo -E mise x -- go run cmd/executor/main.go -config local/configs/executor/executor.toml
 
 wasm:
 	@if [ -z "$(SAMPLE_DIR)" ]; then echo "SAMPLE_DIR is required. Usage: make wasm SAMPLE_DIR=..."; exit 1; fi
@@ -42,9 +44,6 @@ proto:
 	  --go_out=. --go_opt=paths=source_relative,Mschema.proto=. \
 	  --go-grpc_out=. --go-grpc_opt=paths=source_relative,Mschema.proto=. \
 	  protocol/protocol.proto
-
-bpf:
-	clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I/usr/include/x86_64-linux-gnu -c internal/executor/bpf/c/tagger.c -o internal/executor/bpf/c/tagger.o
 
 setcaps: build
 	sudo setcap cap_net_admin,cap_bpf+ep ./$(EXECUTOR_BINARY)
@@ -97,42 +96,57 @@ generate-certs:
 # Remote deployment (requires: docker, ansible, openssl)
 # --------------------------------------------------------------------
 
-# Build Linux x86_64 binaries + tagger.o via Docker → deploy/dist/
+# Build Linux x86_64 binaries via Docker → deploy/dist/
 deploy-build:
 	chmod +x deploy/scripts/build-linux.sh
 	deploy/scripts/build-linux.sh
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/
-# EXECUTOR_IDS: space-separated list matching executor_id in inventory/hosts.yml
-# Example: make deploy-certs EXECUTOR_IDS="executor-node1 executor-node2"
+# Extracts executor IDs automatically from deploy/ansible/hosts.yml.
+# Override by passing EXECUTOR_IDS manually:
+#   make deploy-certs EXECUTOR_IDS="id1 id2"
 deploy-certs:
 	chmod +x deploy/scripts/generate-certs.sh
-	deploy/scripts/generate-certs.sh $(EXECUTOR_IDS)
+	@if [ -z "$(EXECUTOR_IDS)" ]; then \
+		EXECUTOR_IDS=$$(cd deploy/ansible && ansible-inventory -i hosts.yml --list 2>/dev/null | python3 -c "\
+import sys, json; \
+inv = json.load(sys.stdin); \
+groups = inv.get('executors', {}).get('children', {}); \
+hosts = [h for g in groups.values() for h in g.get('hosts', {}).keys()]; \
+meta = inv.get('_meta', {}).get('hostvars', {}); \
+ids = [meta.get(h, {}).get('executor_id', h) for h in hosts]; \
+print(' '.join(ids))" 2>/dev/null); \
+		echo "Auto-extracted executor IDs: $$EXECUTOR_IDS"; \
+		deploy/scripts/generate-certs.sh $$EXECUTOR_IDS; \
+	else \
+		deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
+	fi
+	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-certs.yml
 
-# Full deploy: build → certs → dispatcher → all executors
+# Full deploy: build → dispatcher → all executors
 deploy: deploy-build
-	cd deploy/ansible && ansible-playbook playbooks/site.yml
+	cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
 
 # Deploy only the dispatcher
 deploy-dispatcher: deploy-build
-	cd deploy/ansible && ansible-playbook playbooks/deploy-dispatcher.yml
+	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-dispatcher.yml
 
 # One-time bootstrap: grant passwordless sudo on executor nodes.
 # Run this first on any host whose user requires a sudo password.
 # Example: make bootstrap-sudo LIMIT=ordroid-ethz
 bootstrap-sudo:
-	cd deploy/ansible && ansible-playbook playbooks/bootstrap-sudo.yml -K \
+	cd deploy/ansible && ansible-playbook -i hosts.yml bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
 deploy-executors: deploy-build
-	cd deploy/ansible && ansible-playbook playbooks/deploy-executors.yml \
+	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-executors.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Push a new dispatcher address to all running executors (no binary redeploy)
 # Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
 deploy-update-addr:
-	cd deploy/ansible && ansible-playbook playbooks/update-dispatcher-addr.yml \
+	cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # --------------------------------------------------------------------
@@ -140,22 +154,3 @@ deploy-update-addr:
 # --------------------------------------------------------------------
 clean:
 	rm -f $(EXECUTOR_BINARY) $(DISPATCHER_BINARY)
-	rm -f internal/executor/bpf/c/tagger.o
-
-# --------------------------------------------------------------------
-# Install systemd services
-# --------------------------------------------------------------------
-
-SYSTEMD_PATH = /etc/systemd/system
-
-systemd-install: build-disp
-	sudo cp build/dispatcher.service $(SYSTEMD_PATH)/debuglet-dispatcher.service
-	sudo systemctl daemon-reload
-	sudo systemctl enable debuglet-dispatcher.service
-	sudo systemctl restart debuglet-dispatcher.service
-
-systemd-uninstall: build-disp
-	sudo systemctl stop debuglet-dispatcher.service || true
-	sudo systemctl disable debuglet-dispatcher.service || true
-	sudo rm -f $(SYSTEMD_PATH)/debuglet-dispatcher.service
-	sudo systemctl daemon-reload

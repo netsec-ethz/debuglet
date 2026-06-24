@@ -24,7 +24,7 @@ import (
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
 
-	"debuglet/pkg/tagger"
+	"debuglet/internal/executor/tagger"
 )
 
 type ISocketRegistry interface {

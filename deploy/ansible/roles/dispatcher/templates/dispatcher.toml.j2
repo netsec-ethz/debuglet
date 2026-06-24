@@ -1,9 +1,11 @@
-http_port        = {{ dispatcher_http_port }}
-grpc_port        = {{ dispatcher_grpc_port }}
-log_level        = "{{ dispatcher_log_level | default('info') }}"
-disable_tls      = {{ dispatcher_disable_tls | default(false) | lower }}
-executor_timeout = {{ dispatcher_executor_timeout | default(60) }}
+http_port = {{ dispatcher_http_port }}
+grpc_port = {{ dispatcher_grpc_port }}
+version = "{{ deploy_version }}"
+log_level = "{{ dispatcher_log_level }}"
+disable_tls = {{ dispatcher_disable_tls | lower }}
+executor_timeout = {{ dispatcher_executor_timeout }}
 
 [tls]
 cert_file = "{{ config_dir }}/dispatcher/server.crt"
-key_file  = "{{ config_dir }}/dispatcher/server.key"
+key_file = "{{ config_dir }}/dispatcher/server.key"
+{% if dispatcher_tls_ca_file %}ca_file = "{{ dispatcher_tls_ca_file }}"{% endif %}

@@ -17,7 +17,7 @@ type DispatcherControlHandler interface {
 }
 
 func (d *Dispatcher) HandleHello(ctx context.Context, h Hello) error {
-	d.RegisterExecutor(h.ExecutorID, h.SourceIP, h.TeslaDelay, h.TeslaAnchorTimestamp, h.TeslaAnchorKey)
+	d.RegisterExecutor(h.ExecutorID, h.Version, h.SourceIP, h.TeslaDelay, h.TeslaAnchorTimestamp, h.TeslaAnchorKey)
 	return nil
 }
 

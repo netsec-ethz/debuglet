@@ -15,9 +15,8 @@
     state: directory
     owner: "{{ item.owner | default(debuglet_user) }}"
     group: "{{ item.group | default(debuglet_group) }}"
-    mode:  "{{ item.mode  | default('0755') }}"
+    mode: "{{ item.mode | default('0755') }}"
   loop:
     - { path: "{{ config_dir }}" }
     - { path: "{{ log_dir }}" }
-    - { path: "{{ install_prefix }}/bin",  owner: root, group: root }
-    - { path: "{{ install_prefix }}/lib",  owner: root, group: root }
+    - { path: "{{ install_prefix }}/bin", owner: root, group: root }

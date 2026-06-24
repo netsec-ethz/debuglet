@@ -109,6 +109,29 @@ The Debuglet ecosystem (Dispatcher and Executor) is containerized via Docker for
    make docker-down
    ```
 
+## Ansible Deployment
+
+### Bootstrap a new system
+
+Create the `debuglet` service user and grant passwordless sudo to your SSH user on the target host:
+
+```bash
+cd deploy/ansible && ansible-playbook bootstrap-sudo.yml -K --limit <hostname>
+```
+
+The `-K` flag prompts for the current sudo password once. After bootstrapping, all subsequent deploys run without interaction.
+
+### Deploy
+
+```bash
+make deploy-build                        # cross-compile Linux binaries
+make deploy-certs EXECUTOR_IDS="..."     # generate TLS certificates
+make deploy                              # full deploy (dispatcher + executors)
+# or individual:
+make deploy-dispatcher
+make deploy-executors
+```
+
 ## Flows
 
 ### Submit Debuglet

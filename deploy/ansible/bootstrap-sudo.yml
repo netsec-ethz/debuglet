@@ -4,8 +4,8 @@
 # deploys work without interaction.
 #
 # Usage:
-#   cd deploy/ansible && ansible-playbook playbooks/bootstrap-sudo.yml -K [--limit host]
-#   or: make bootstrap-sudo [LIMIT=ordroid-ethz]
+#   cd deploy/ansible && ansible-playbook -i hosts.yml bootstrap-sudo.yml -K [--limit host]
+#   or: make bootstrap-sudo [LIMIT=hostname]
 
 - name: Bootstrap passwordless sudo on executor nodes
   hosts: executors
@@ -18,5 +18,5 @@
         content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL\n"
         owner: root
         group: root
-        mode: '0440'
+        mode: "0440"
         validate: visudo -cf %s

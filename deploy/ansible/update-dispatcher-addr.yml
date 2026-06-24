@@ -4,12 +4,11 @@
 # changes — no need to redeploy binaries.
 #
 # Usage:
-#   # Edit deploy/ansible/group_vars/all.yml, then:
-#   cd deploy/ansible && ansible-playbook playbooks/update-dispatcher-addr.yml
+#   cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml
 #
-#   # Or pass the new address inline without editing the file:
-#   ansible-playbook playbooks/update-dispatcher-addr.yml \
-#       -e "dispatcher_addr=new-dispatcher.example.com:9001"
+#   Or pass the new address inline without editing the file:
+#   ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
+#       -e "dispatcher_addr=new-dispatcher.example.com"
 
 - name: Update dispatcher address on all executors
   hosts: executors
@@ -17,10 +16,10 @@
   tasks:
     - name: Regenerate executor config
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/../roles/executor/templates/executor.toml.j2"
+        src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"
         dest: "{{ config_dir }}/executor/executor.toml"
         owner: "{{ debuglet_user }}"
-        mode: '0640'
+        mode: "0640"
       register: config_changed
 
     - name: Restart executor if config changed

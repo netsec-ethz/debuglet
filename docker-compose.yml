@@ -1,23 +1,22 @@
-version: '3.8'
+version: "3.8"
 
 services:
   executor:
     build:
       context: .
-      dockerfile: build/package/executor.Dockerfile
+      dockerfile: deploy/docker/executor.Dockerfile
     volumes:
-      - ./configs/executor:/etc/debuglet/executor
-      - /var/log/debuglet:/var/log/debuglet
+      - ./local/configs/executor:/etc/debuglet/executor:ro
     restart: unless-stopped
-    # Depending on BPF requirements, it might need privileged mode:
-    # privileged: true
+    privileged: true
 
   dispatcher:
     build:
       context: .
-      dockerfile: build/package/dispatcher.Dockerfile
+      dockerfile: deploy/docker/dispatcher.Dockerfile
     volumes:
-      - ./configs/dispatcher:/etc/debuglet/dispatcher
+      - ./local/configs/dispatcher:/etc/debuglet/dispatcher:ro
     ports:
+      - "9000:9000"
       - "9001:9001"
     restart: unless-stopped

@@ -1,5 +1,5 @@
 [Unit]
-Description=Debuglet Executor ({{ executor_id | default(inventory_hostname) }})
+Description=Debuglet Executor ({{ executor_id }})
 After=network-online.target
 Wants=network-online.target
 
@@ -16,8 +16,6 @@ StandardError=journal
 SyslogIdentifier=debuglet-executor
 
 {% if executor_enable_bpf | default(true) %}
-# eBPF TC egress requires these two capabilities.
-# Granted via setcap so the binary does not need to run as root.
 AmbientCapabilities=CAP_NET_ADMIN CAP_BPF
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_BPF
 {% endif %}

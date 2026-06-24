@@ -16,6 +16,7 @@ type debugletHistory struct {
 // RegisteredExecutor represents a registered executor and its metadata.
 type RegisteredExecutor struct {
 	ID       string
+	Version  string
 	Ready    bool
 	LastSeen time.Time
 
@@ -79,13 +80,14 @@ func (e *RegisteredExecutor) AppendDebugletID(id string) {
 
 // RegisterExecutor creates or updates the executor record for id. anchorKey is
 // k_0, the public TESLA chain anchor published by the executor at startup.
-func (d *Dispatcher) RegisterExecutor(id string, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte) {
+func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte) {
 	d.logger.Info("Registering executor", zap.String("id", id), zap.String("ip", ip))
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
 		d.executors[id] = &RegisteredExecutor{
 			ID:                   id,
+			Version:              version,
 			TeslaDelay:           teslaDelay,
 			TeslaAnchorTimestamp: teslaAnchor,
 			TeslaAnchorKey:       anchorKey,

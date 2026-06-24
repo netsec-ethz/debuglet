@@ -5,7 +5,7 @@ import (
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/transport/rpc"
-	"debuglet/pkg/tagger"
+	"debuglet/internal/executor/tagger"
 	"net"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
