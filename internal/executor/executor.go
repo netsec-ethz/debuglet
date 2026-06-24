@@ -6,7 +6,7 @@ import (
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/transport/rpc"
-	"debuglet/pkg/tesla"
+	"debuglet/internal/executor/tagger/tesla"
 	"fmt"
 	"sync"
 	"time"

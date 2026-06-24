@@ -14,13 +14,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bpf
+package ebpf
 
 import (
 	"testing"
 	"time"
 
-	"debuglet/pkg/tesla"
+	"debuglet/internal/executor/tagger/tesla"
 )
 
 // TestNewBPFTaggerUnavailable verifies that the stub correctly reports that

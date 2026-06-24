@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"debuglet/pkg/tesla"
+	"debuglet/internal/executor/tagger/tesla"
 )
 
 // ---- helpers ----------------------------------------------------------------

@@ -24,14 +24,14 @@ import (
 	"sync"
 	"time"
 
-	"debuglet/internal/executor/bpf"
+	"debuglet/internal/executor/tagger"
+	"debuglet/internal/executor/tagger/ebpf"
+	"debuglet/internal/executor/tagger/tesla"
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/wasm"
 	"debuglet/internal/executor/platform"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/transport/rpc"
-	"debuglet/pkg/tagger"
-	"debuglet/pkg/tesla"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/tetratelabs/wazero"
@@ -78,13 +78,13 @@ func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tes
 			iface = "eth0"
 		}
 		// Try to initialize eBPF tagger.
-		if bt, err := bpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
+		if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
 			pktTagger = bt
 		} else {
 			fmt.Printf("bpf: failed to initialize BPF tagger on %s: %v. Falling back to Go tagger.\n", iface, err)
 			// Fallback to lo if eth0 failed and we are local
 			if iface == "eth0" {
-				if bt, err := bpf.NewBPFTagger("lo", schedule, []byte(debugletID)); err == nil {
+				if bt, err := ebpf.NewBPFTagger("lo", schedule, []byte(debugletID)); err == nil {
 					pktTagger = bt
 					fmt.Printf("bpf: successfully fell back to lo\n")
 				}

@@ -1,11 +1,11 @@
-package bpf
+package ebpf
 
 import (
 	"strings"
 	"testing"
 	"time"
 
-	"debuglet/pkg/tesla"
+	"debuglet/internal/executor/tagger/tesla"
 )
 
 func TestBPFLinuxLoad(t *testing.T) {

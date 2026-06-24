@@ -29,7 +29,7 @@
 //
 // Tagging is performed in pure Go and runs on all platforms. On Linux an
 // additional eBPF-based tagger is available for in-kernel, zero-copy tagging
-// (see internal/executor/bpf).
+// (see internal/executor/tagger/ebpf).
 package tagger
 
 import (
@@ -38,7 +38,7 @@ import (
 	"net"
 	"time"
 
-	"debuglet/pkg/tesla"
+	"debuglet/internal/executor/tagger/tesla"
 )
 
 // TaggerInterface is the abstraction used by both the pure-Go tagger and the

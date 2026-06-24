@@ -14,7 +14,7 @@
 //
 // NOTE: Full HMAC-SHA256 is not available inside the BPF verifier. We use
 // SipHash-2-4 as a fast, keyed pseudo-random function that is BPF-safe.
-// The Go-layer tagger (pkg/tagger) uses HMAC-SHA256 for comparison purposes.
+// The Go-layer tagger uses HMAC-SHA256 for comparison purposes.
 
 #include <linux/bpf.h>
 #include <linux/if_ether.h>

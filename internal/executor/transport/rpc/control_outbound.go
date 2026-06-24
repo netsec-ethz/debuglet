@@ -2,7 +2,7 @@ package rpc
 
 import (
 	"context"
-	"debuglet/pkg/tesla"
+	"debuglet/internal/executor/tagger/tesla"
 	pb "debuglet/protocol"
 	"time"
 
