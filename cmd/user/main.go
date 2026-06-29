@@ -13,7 +13,7 @@ import (
 var (
 	measurementAmount = flag.Int("measurements", 1, "amount of measurements to add")
 	debugletAmount    = flag.Int("debuglets", 1, "amount of debuglets per measurement to add")
-	wasmPath          = flag.String("wasm", "local/wasm_samples/ping/debuglet.wasm", "wasm to use")
+	wasmPath          = flag.String("wasm", "local/wasm_samples/go/ping/debuglet.wasm", "wasm to use")
 	abort             = flag.Bool("abort", false, "if measurements should be aborted after they're submitted")
 	delay             = flag.Duration("delay", 0, "the delay after which to start debuglets")
 	executor          = flag.String("executor", "executor-1", "the executor to connect to")

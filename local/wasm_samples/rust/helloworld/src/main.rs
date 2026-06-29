@@ -1,8 +1,11 @@
 // Minimal "hello world" debuglet in Rust.
 //
-// The refactored engine runs WASI command modules: define `fn main()` and build
-// for the wasm32-wasip1 target. stdout is streamed back to the user, so
-// println! is all we need to report output.
+// A debuglet is a WASI command module: write a normal `fn main()` and build it
+// for wasm32-wasip1. The executor runs _start and streams stdout back to the
+// user, so println! is all we need.
+//
+// Build:
+//   make wasm SAMPLE_DIR=local/wasm_samples/rust/helloworld
 
 fn main() {
     println!("Hello from Debuglet! (Rust)");

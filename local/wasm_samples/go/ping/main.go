@@ -1,81 +1,90 @@
+// ping — ICMPv4 latency probe, written with the Debuglet Go SDK.
+//
+// Sends `-iter` ICMP echo requests to `-addr` (one per second) and prints the
+// round-trip time of each reply. Build with:
+//
+//	make wasm SAMPLE_DIR=local/wasm_samples/go/ping
+//
+// Run (args after `--` are passed verbatim to the guest):
+//
+//	go run ./cmd/user -wasm local/wasm_samples/go/ping/debuglet.wasm -- -addr 1.1.1.1 -iter 5
 package main
 
 import (
 	"encoding/binary"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"time"
-	"unsafe"
+
+	"debuglet/pkg/debuglet"
 )
 
-//go:wasmimport env connect_icmp4
-func connect_icmp4(addrp, addrLen uint32) int32
-
-//go:wasmimport env receive_icmp4_data
-func receive_icmp4_data(sockID int32, bufPtr uint32, bufLen uint32) int32
-
-//go:wasmimport env send_icmp4_data
-func send_icmp4_data(sockID int32, bufPtr, bufLen uint32)
-
-//go:wasmimport env close_icmp4
-func close_icmp4(connID int32)
-
 var (
-	addr = flag.String("addr", "1.1.1.1", "address to contact")
-	iter = flag.Int("iter", 1, "times to send a ping request")
+	addr = flag.String("addr", "1.1.1.1", "IPv4 address to ping")
+	iter = flag.Int("iter", 5, "number of echo requests to send")
 )
 
 func main() {
-	// os.Args does not include the binary/command
+	// WASI argv has no program name, so parse os.Args as-is.
 	flag.CommandLine.Parse(os.Args)
 
-	for seq := range *iter {
-		taken, err := ping(1, uint16(seq))
+	for seq := 0; seq < *iter; seq++ {
+		rtt, err := ping(1, uint16(seq))
 		if err != nil {
-			panic(err)
+			fmt.Printf("icmp_seq=%d  error: %v\n", seq, err)
+		} else {
+			fmt.Printf("icmp_seq=%d  time=%v\n", seq, rtt)
 		}
-		time.Sleep(time.Second - min(time.Second, taken))
+		// Pace at roughly one ping per second.
+		time.Sleep(time.Second - min(time.Second, rtt))
 	}
 }
 
-func createEchoPacket(id uint16, seq uint16, size int) []byte {
-	echo := make([]byte, size)
-	echo[0] = 8
-	binary.BigEndian.PutUint16(echo[4:6], id)
-	binary.BigEndian.PutUint16(echo[6:8], seq)
-
-	sum := ^((uint16(echo[0])<<8 | uint16(echo[1])) +
-		(uint16(echo[4])<<8 | uint16(echo[5])) +
-		(uint16(echo[6])<<8 | uint16(echo[7])))
-	binary.BigEndian.PutUint16(echo[2:4], sum)
-	return echo
+// echoPacket builds a minimal ICMP echo request (type 8) with the checksum set.
+func echoPacket(id, seq uint16, size int) []byte {
+	p := make([]byte, size)
+	p[0] = 8 // type: echo request
+	binary.BigEndian.PutUint16(p[4:6], id)
+	binary.BigEndian.PutUint16(p[6:8], seq)
+	binary.BigEndian.PutUint16(p[2:4], checksum(p))
+	return p
 }
 
-func ping(id uint16, seq uint16) (time.Duration, error) {
-	ptr := uint32(uintptr(unsafe.Pointer(unsafe.StringData(*addr))))
-	connID := connect_icmp4(ptr, uint32(len(*addr)))
-	if connID == -1 {
-		return 0, errors.New("failed to setup socket")
+func checksum(b []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(b); i += 2 {
+		sum += uint32(b[i])<<8 | uint32(b[i+1])
 	}
-	defer close_icmp4(connID)
+	if len(b)%2 == 1 {
+		sum += uint32(b[len(b)-1]) << 8
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	return ^uint16(sum)
+}
 
-	echo := createEchoPacket(id, seq, 64)
+func ping(id, seq uint16) (time.Duration, error) {
+	conn, err := debuglet.ConnectICMP4(*addr)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
 
 	start := time.Now()
-
-	send_icmp4_data(connID, uint32(uintptr(unsafe.Pointer(&echo[0]))), uint32(len(echo)))
-	var recvBuffer []byte = make([]byte, 100)
-	n := receive_icmp4_data(connID, uint32(uintptr(unsafe.Pointer(&recvBuffer[0]))), uint32(len(recvBuffer)))
-
-	taken := time.Since(start)
-
-	if n < 20 {
-		return 0, errors.New("missing ip header")
+	if err := conn.Send(echoPacket(id, seq, 64)); err != nil {
+		return 0, err
 	}
-	ihl := (recvBuffer[0] & 0xF) * 4
 
-	fmt.Printf("%d bytes: icmp_seq=%d  time=%v\n", n-int32(ihl), seq, taken)
-	return taken, nil
+	buf := make([]byte, 100)
+	n, err := conn.Receive(buf)
+	rtt := time.Since(start)
+	if err != nil {
+		return 0, err
+	}
+	if n < 20 {
+		return 0, fmt.Errorf("short reply: %d bytes (missing IP header)", n)
+	}
+	return rtt, nil
 }

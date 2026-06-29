@@ -1,13 +1,12 @@
 [package]
-name = "rust_helloworld"
+name = "helloworld"
 version = "0.1.0"
 edition = "2021"
 
-# Built as a WASI command module (wasm32-wasip1) with a standard `fn main()`
-# entrypoint. The refactored engine runs the module's `_start` and streams
-# stdout back to the user.
+# Built as a WASI command module (wasm32-wasip1) with a standard `fn main()`.
+# The bin is named `debuglet` so the build output is `debuglet.wasm`.
 [[bin]]
-name = "rust_helloworld"
+name = "debuglet"
 path = "src/main.rs"
 
 [dependencies]

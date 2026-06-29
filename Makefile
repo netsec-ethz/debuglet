@@ -5,6 +5,21 @@ DISPATCHER_BINARY = debuglet-dispatcher
 # Go command
 GO ?= go
 
+# --------------------------------------------------------------------
+# Toolchains for building debuglet WASM samples (override as needed).
+# Go needs nothing extra. The others are only required to build their
+# respective samples:
+#   C      : a wasm32-wasi clang (wasi-sdk). Set WASI_SDK=/path/to/wasi-sdk
+#            (then CLANG defaults to $(WASI_SDK)/bin/clang), or set CLANG directly.
+#   Rust   : rustup target add wasm32-wasip1
+#   JS     : javy (https://github.com/bytecodealliance/javy)
+# --------------------------------------------------------------------
+WASI_SDK    ?=
+CLANG       ?= $(if $(WASI_SDK),$(WASI_SDK)/bin/clang,clang)
+CARGO       ?= cargo
+JAVY        ?= javy
+RUST_TARGET ?= wasm32-wasip1
+
 .PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
 
 all: deps build
@@ -35,9 +50,29 @@ dispatcher d:
 executor e:
 	sudo -E mise x -- go run cmd/executor/main.go -config local/configs/executor/executor.toml
 
+# Build a debuglet sample to $(SAMPLE_DIR)/debuglet.wasm. The language is
+# detected from the entrypoint file present in SAMPLE_DIR.
+#   Usage: make wasm SAMPLE_DIR=local/wasm_samples/<lang>/<sample>
 wasm:
 	@if [ -z "$(SAMPLE_DIR)" ]; then echo "SAMPLE_DIR is required. Usage: make wasm SAMPLE_DIR=..."; exit 1; fi
-	GOOS=wasip1 GOARCH=wasm $(GO) build -o $(SAMPLE_DIR)/debuglet.wasm $(SAMPLE_DIR)/main.go
+	@out="$(SAMPLE_DIR)/debuglet.wasm"; \
+	if [ -f "$(SAMPLE_DIR)/Cargo.toml" ]; then \
+		echo "[rust] building $(SAMPLE_DIR)"; \
+		( cd "$(SAMPLE_DIR)" && $(CARGO) build --release --target $(RUST_TARGET) ) && \
+		cp "$(SAMPLE_DIR)/target/$(RUST_TARGET)/release/debuglet.wasm" "$$out"; \
+	elif [ -f "$(SAMPLE_DIR)/main.go" ]; then \
+		echo "[go] building $(SAMPLE_DIR)"; \
+		GOOS=wasip1 GOARCH=wasm $(GO) build -o "$$out" "$(SAMPLE_DIR)/main.go"; \
+	elif [ -f "$(SAMPLE_DIR)/main.c" ]; then \
+		echo "[c] building $(SAMPLE_DIR) with $(CLANG)"; \
+		$(CLANG) -O2 "$(SAMPLE_DIR)/main.c" -lm -o "$$out"; \
+	elif [ -f "$(SAMPLE_DIR)/main.js" ]; then \
+		echo "[js] building $(SAMPLE_DIR) with $(JAVY)"; \
+		$(JAVY) build "$(SAMPLE_DIR)/main.js" -o "$$out"; \
+	else \
+		echo "no recognized entrypoint (Cargo.toml/main.go/main.c/main.js) in $(SAMPLE_DIR)"; exit 1; \
+	fi; \
+	echo "wrote $$out"
 
 proto:
 	protoc \

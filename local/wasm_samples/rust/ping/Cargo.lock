@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
-name = "helloworld"
+name = "debuglet"
 version = "0.1.0"
+
+[[package]]
+name = "ping"
+version = "0.1.0"
+dependencies = [
+ "debuglet",
+]
