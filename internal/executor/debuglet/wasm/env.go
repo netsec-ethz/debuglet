@@ -4,8 +4,9 @@ import (
 	"crypto/tls"
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/executor/transport/rpc"
+	ratebpf "debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/tagger"
+	"debuglet/internal/executor/transport/rpc"
 	"net"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -17,6 +18,7 @@ type WasmEnv struct {
 	Policy     rpc.Policy
 
 	Limiter      *app.Limiter
+	PacketCount  *ratebpf.PacketCount
 	LastReceived net.Addr
 	Logger       *zap.SugaredLogger
 	TlsCfg       *tls.Config
@@ -32,6 +34,7 @@ type WasmEnv struct {
 }
 
 func (e *WasmEnv) Close() {
+	e.Registry.CloseAll()
 	if e.ScionServer != nil {
 		e.ScionServer.Close()
 	}

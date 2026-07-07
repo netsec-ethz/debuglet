@@ -19,18 +19,18 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 	"time"
 
-	"debuglet/internal/executor/tagger"
-	"debuglet/internal/executor/tagger/ebpf"
-	"debuglet/internal/executor/tagger/tesla"
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/wasm"
 	"debuglet/internal/executor/platform"
 	"debuglet/internal/executor/ratelimit/app"
+	ratebpf "debuglet/internal/executor/ratelimit/ebpf"
+	"debuglet/internal/executor/tagger"
+	"debuglet/internal/executor/tagger/ebpf"
+	"debuglet/internal/executor/tagger/tesla"
 	"debuglet/internal/executor/transport/rpc"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -69,43 +69,35 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter) *Debuglet {
+func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc *ratebpf.PacketCount) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if runtime.GOOS == "linux" {
-		iface := os.Getenv("DEBUGLET_IFACE")
-		if iface == "" {
-			iface = "eth0"
-		}
-		// Try to initialize eBPF tagger.
-		if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
+		iface, err := ratebpf.GetDefaultInterface()
+		if err != nil {
+			logger.Warn("Failed to get default network interface for eBPF tagging; falling back to pure-Go tagger", zap.Error(err))
+		} else if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
+			// Try to initialize eBPF tagger.
 			pktTagger = bt
 		} else {
-			fmt.Printf("bpf: failed to initialize BPF tagger on %s: %v. Falling back to Go tagger.\n", iface, err)
-			// Fallback to lo if eth0 failed and we are local
-			if iface == "eth0" {
-				if bt, err := ebpf.NewBPFTagger("lo", schedule, []byte(debugletID)); err == nil {
-					pktTagger = bt
-					fmt.Printf("bpf: successfully fell back to lo\n")
-				}
-			}
+			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
+			pktTagger = tagger.New(schedule, []byte(debugletID))
 		}
 
 		if pktTagger == nil {
-			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
-			pktTagger = tagger.New(schedule, []byte(debugletID))
 		}
 	} else {
 		pktTagger = tagger.New(schedule, []byte(debugletID))
 	}
 
 	env := wasm.WasmEnv{
-		DebugletID: debugletID,
-		Policy:     policy,
-		Limiter:    limiter,
-		Logger:     logger.Sugar(),
-		TlsCfg:     &tls.Config{},
-		Tagger:     pktTagger,
+		DebugletID:  debugletID,
+		Policy:      policy,
+		Limiter:     limiter,
+		PacketCount: pc,
+		Logger:      logger.Sugar(),
+		TlsCfg:      &tls.Config{},
+		Tagger:      pktTagger,
 
 		Registry:  &socket.SocketRegistry{},
 		ScionConn: socket.NewSCIONConnRegistry(scionConnCapacity),
@@ -140,6 +132,9 @@ func (d *Debuglet) GetSCIONAddr() string {
 	}
 	return d.env.ScionServer.LocalAddr().String()
 }
+
+func (d *Debuglet) ID() string                       { return d.id }
+func (d *Debuglet) Registry() *socket.SocketRegistry { return d.env.Registry }
 
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
@@ -234,6 +229,8 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")
 
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostDrain(d.env)).Export("drain_connection")
+
 	// ---- SCION-UDP API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(d.env)).Export("send_scion_udp_packet")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveSCIONServerUDPPacket(d.env)).Export("receive_scion_server_udp_packet")
@@ -279,10 +276,6 @@ func (w *chanWriter) Write(p []byte) (n int, err error) {
 func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) error {
 	writer := &chanWriter{ch: outputCh}
 	defer close(outputCh)
-
-	if err := d.env.Limiter.InsertDebuglet(d.id, app.Bitrate(d.policy.FloorBW), app.Bitrate(d.policy.CeilBW), d.policy.Addresses); err != nil {
-		return fmt.Errorf("failed to insert debuglet to limiter: %w", err)
-	}
 
 	config := wazero.NewModuleConfig().
 		WithStdout(writer).

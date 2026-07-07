@@ -2,9 +2,12 @@ package executor
 
 import (
 	"context"
+	"debuglet/internal/executor/debuglet/wasm/hostconn"
 	"debuglet/internal/executor/transport/rpc"
 	"errors"
 	"fmt"
+	"net/netip"
+	"slices"
 
 	"go.uber.org/zap"
 )
@@ -42,9 +45,47 @@ func (e *Executor) HandleAbort(ctx context.Context, debugletID, reason string) {
 
 func (e *Executor) HandleUpdate(ctx context.Context, updates []rpc.Update) {
 	e.logger.Debug("Handling update", zap.Objects("destination", updates))
+	var ipUpdates []rpc.Update
+	for _, up := range updates {
+		ips, err := hostconn.DomainsToIP6(ctx, []string{up.Address})
+		if err != nil {
+			e.logger.Error("Failed to resolve address", zap.String("address", up.Address), zap.Error(err))
+			continue
+		}
+		for _, ip := range ips {
+			ipUpdates = append(ipUpdates, rpc.Update{
+				Address: ip,
+				Limit:   up.Limit,
+			})
+		}
+	}
+	e.logger.Debug("Resolved update addresses", zap.Objects("destination", ipUpdates))
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, up := range updates {
+	for _, up := range ipUpdates {
 		e.limiter.SetAddrCapacity(up.Address, up.Limit)
+	}
+
+	if e.packetCount == nil {
+		return
+	}
+	for _, up := range ipUpdates {
+		// TODO: have the dispatcher send the IP directly
+		ip, err := netip.ParseAddr(up.Address)
+		if err != nil {
+			continue
+		}
+		for _, running := range e.running {
+			if !slices.Contains(running.addresses, up.Address) {
+				continue
+			}
+			limit, err := e.limiter.GetLimit(running.id.String(), up.Address)
+			if err != nil {
+				continue
+			}
+			e.packetCount.SetLimit(ip, running.id, min(limit.Executor, limit.Address))
+			e.packetCount.SetExecLimit(running.id, limit.Executor)
+		}
 	}
 }

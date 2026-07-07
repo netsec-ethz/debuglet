@@ -4,9 +4,10 @@ import (
 	"context"
 	"debuglet/internal/executor/config"
 	"debuglet/internal/executor/ratelimit/app"
+	"debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/scheduler"
-	"debuglet/internal/executor/transport/rpc"
 	"debuglet/internal/executor/tagger/tesla"
+	"debuglet/internal/executor/transport/rpc"
 	"fmt"
 	"sync"
 	"time"
@@ -22,10 +23,11 @@ type Executor struct {
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
-	scheduler scheduler.Scheduler
-	running   map[string]RunningDebuglet
-	mu        sync.RWMutex
-	limiter   *app.Limiter
+	scheduler   scheduler.Scheduler
+	running     map[string]RunningDebuglet
+	mu          sync.RWMutex
+	limiter     *app.Limiter
+	packetCount *ebpf.PacketCount
 }
 
 var _ rpc.ExecutorControlHandler = (*Executor)(nil)
@@ -36,13 +38,23 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
 	})
 
+	iface, err := ebpf.GetDefaultInterface()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get default network interface: %w", err)
+	}
+	pc, pcErr := ebpf.NewCount(iface)
+	if pcErr != nil {
+		l.Warn("Failed to initialize eBPF packet count; egress ratelimiting disabled", zap.Error(pcErr))
+	}
+
 	executor := &Executor{
 		teslaSchedule: schedule,
 		logger:        l,
 		cfg:           *cfg,
 		scheduler:     s,
 		running:       make(map[string]RunningDebuglet),
-		limiter:       app.NewLimiter(l),
+		limiter:     app.NewLimiter(l),
+		packetCount: pc,
 	}
 
 	executor.limiter.SetExecutorCapacity(app.Gigabit)

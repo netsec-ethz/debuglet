@@ -33,6 +33,7 @@ type Config struct {
 	MaxDebuglets   int              `toml:"max_debuglets"`
 	Credentials    CredentialConfig `toml:"credentials"`
 	DisableTLS     bool             `toml:"disable_tls"`
+	JSONLogs       bool             `toml:"json_logs"`
 }
 
 type CredentialConfig struct {

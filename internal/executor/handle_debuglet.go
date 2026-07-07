@@ -3,21 +3,33 @@ package executor
 import (
 	"context"
 	"debuglet/internal/executor/debuglet"
+	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/protocol"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 type RunningDebuglet struct {
+	id        uuid.UUID
+	addresses []string
 	client    *rpc.DebugletClient
 	cancelCtx func(error)
+	debuglet  *debuglet.Debuglet
 }
 
 func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<- struct{}) {
+	debUUID, err := uuid.Parse(spec.DebugletID)
+	if err != nil {
+		e.logger.Error("Invalid debuglet UUID", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		close(preRunLock)
+		return
+	}
+
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)
@@ -35,9 +47,32 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 	}
 
 	e.running[spec.DebugletID] = RunningDebuglet{
+		id:        debUUID,
+		addresses: spec.Policy.Addresses,
 		client:    client,
 		cancelCtx: cancel,
 	}
+
+	if err = e.limiter.InsertDebuglet(debUUID.String(), app.Bitrate(spec.Policy.FloorBW), app.Bitrate(spec.Policy.CeilBW), spec.Policy.Addresses); err != nil {
+		e.logger.Error("Failed to insert debuglet into limiter", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		close(preRunLock)
+		e.mu.Unlock()
+		return
+	}
+	execLimit, _, err := e.limiter.GetExecLimit(spec.DebugletID)
+	if err != nil {
+		e.logger.Error("Failed to get executor limit for debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		close(preRunLock)
+		e.mu.Unlock()
+		return
+	}
+	if err = e.packetCount.SetExecLimit(debUUID, execLimit); err != nil {
+		e.logger.Error("Failed to set executor limit for debuglet in eBPF packet count", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		close(preRunLock)
+		e.mu.Unlock()
+		return
+	}
+
 	close(preRunLock)
 	e.mu.Unlock()
 
@@ -68,15 +103,21 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 	}
 
 	// ======== INITIALIZE ========
-	if err := client.SendSetState(protocol.RunState_RUN_STATE_INITIALIZING); err != nil {
+	if err = client.SendSetState(protocol.RunState_RUN_STATE_INITIALIZING); err != nil {
 		e.logger.Error("Failed to set state to 'initialized'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 		client.SendExit(-1, err)
 		return
 	}
 
-	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter)
+	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter, e.packetCount)
+	e.mu.Lock()
+	if running, ok := e.running[spec.DebugletID]; ok {
+		running.debuglet = deb
+		e.running[spec.DebugletID] = running
+	}
+	e.mu.Unlock()
 	defer deb.Close(ctx)
-	err := deb.InitRuntime(ctx, spec.Wasm)
+	err = deb.InitRuntime(ctx, spec.Wasm)
 	if err != nil {
 		var zapError zap.Field
 		if ctx.Err() == nil {

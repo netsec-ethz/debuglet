@@ -5,6 +5,7 @@ import (
 	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
+	"net"
 	"strings"
 	"time"
 )
@@ -94,6 +95,17 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 		startTime = &tmp
 	}
 
+	// remove accidental ports from the policy addresses
+	var addrs []string
+	for _, a := range r.Policy.Addresses {
+		host, _, err := net.SplitHostPort(a)
+		if err != nil {
+			addrs = append(addrs, a)
+		} else {
+			addrs = append(addrs, host)
+		}
+	}
+
 	return dispatcher.DebugletSpec{
 		StartTime:  startTime,
 		ExecutorID: r.ExecutorID,
@@ -103,7 +115,7 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 			FloorBW:   resource.Bitrate(r.Policy.FloorBW),
 			CeilBW:    resource.Bitrate(r.Policy.CeilBW),
 			Timeout:   time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
-			Addresses: r.Policy.Addresses,
+			Addresses: addrs,
 		},
 	}, nil
 }

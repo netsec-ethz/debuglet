@@ -42,7 +42,10 @@ func main() {
 	if err != nil {
 		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
-	logCfg := zap.NewProductionConfig()
+	logCfg := zap.NewDevelopmentConfig()
+	if cfg.JSONLogs {
+		logCfg = zap.NewProductionConfig()
+	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
