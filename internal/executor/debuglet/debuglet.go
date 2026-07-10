@@ -28,10 +28,10 @@ import (
 	"debuglet/internal/executor/platform"
 	"debuglet/internal/executor/ratelimit/app"
 	ratebpf "debuglet/internal/executor/ratelimit/ebpf"
+	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger"
 	"debuglet/internal/executor/tagger/ebpf"
 	"debuglet/internal/executor/tagger/tesla"
-	"debuglet/internal/executor/transport/rpc"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/tetratelabs/wazero"
@@ -56,7 +56,7 @@ const (
 // debuglet module. One Debuglet instance corresponds to one session.
 type Debuglet struct {
 	id     string
-	policy rpc.Policy
+	policy scheduler.Policy
 
 	// wazero runtime state
 	runtime  wazero.Runtime
@@ -69,7 +69,7 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, policy rpc.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc *ratebpf.PacketCount) *Debuglet {
+func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc *ratebpf.PacketCount) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if runtime.GOOS == "linux" {
@@ -273,6 +273,7 @@ func (w *chanWriter) Write(p []byte) (n int, err error) {
 
 // Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
 // back through outputCh, and returns any execution error.
+// The outputCh channel is closed when the debuglet finishes execution.
 func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) error {
 	writer := &chanWriter{ch: outputCh}
 	defer close(outputCh)

@@ -83,6 +83,11 @@ func (l *Limiter) SetExecutorCapacity(c Bitrate) {
 	defer l.mu.Unlock()
 	l.execCapacity = c
 }
+func (l *Limiter) ExecutorCapacity() Bitrate {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.execCapacity
+}
 func (l *Limiter) SetAddrCapacity(addr string, c Bitrate) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -5,8 +5,8 @@ import (
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/ratelimit/app"
 	ratebpf "debuglet/internal/executor/ratelimit/ebpf"
+	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger"
-	"debuglet/internal/executor/transport/rpc"
 	"net"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -15,7 +15,7 @@ import (
 
 type WasmEnv struct {
 	DebugletID string
-	Policy     rpc.Policy
+	Policy     scheduler.Policy
 
 	Limiter      *app.Limiter
 	PacketCount  *ratebpf.PacketCount

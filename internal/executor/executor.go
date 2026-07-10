@@ -2,22 +2,24 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
 	"debuglet/internal/executor/config"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger/tesla"
 	"debuglet/internal/executor/transport/rpc"
+	"debuglet/protocol"
 	"fmt"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/credentials"
 )
 
 type Executor struct {
 	cfg           config.Config
-	control       *rpc.ControlClient
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
@@ -28,15 +30,18 @@ type Executor struct {
 	mu          sync.RWMutex
 	limiter     *app.Limiter
 	packetCount *ebpf.PacketCount
-}
 
-var _ rpc.ExecutorControlHandler = (*Executor)(nil)
+	Bidi *rpc.BidiClient
+}
 
 func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, error) {
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:  []byte(cfg.TeslaSeed),
 		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Tesla key schedule: %w", err)
+	}
 
 	iface, err := ebpf.GetDefaultInterface()
 	if err != nil {
@@ -47,66 +52,52 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		l.Warn("Failed to initialize eBPF packet count; egress ratelimiting disabled", zap.Error(pcErr))
 	}
 
-	executor := &Executor{
+	limiter := app.NewLimiter(l)
+	limiter.SetExecutorCapacity(app.Gigabit)
+
+	e := &Executor{
 		teslaSchedule: schedule,
 		logger:        l,
 		cfg:           *cfg,
 		scheduler:     s,
 		running:       make(map[string]RunningDebuglet),
-		limiter:     app.NewLimiter(l),
-		packetCount: pc,
+		limiter:       limiter,
+		packetCount:   pc,
 	}
+	s.RegisterOnStart(e.OnDebugletStart)
 
-	executor.limiter.SetExecutorCapacity(app.Gigabit)
-
-	s.RegisterOnStart(executor.OnStart)
-
-	client, err := rpc.NewControlClient(cfg, l, executor)
+	var creds credentials.TransportCredentials
+	if !cfg.DisableTLS {
+		creds, err = getClientCredentials(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client credentials: %w", err)
+		}
+	}
+	opts := rpc.BidiOptions{Logger: l, Address: cfg.DispatcherAddr, TLSCreds: creds}
+	bidi, err := rpc.NewBidiClient(opts, e)
 	if err != nil {
 		return nil, err
 	}
-	executor.control = client
-	return executor, nil
+	e.Bidi = bidi
+	return e, nil
 }
 
 func (e *Executor) Listen(ctx context.Context) error {
-	ctx, cancel := context.WithCancelCause(ctx)
-
 	go func() {
-		if err := e.control.Listen(ctx); err != nil {
-			cancel(fmt.Errorf("failed to open control stream: %w", err))
+		e.Bidi.WaitReady()
+		if _, err := e.setResources(ctx, e.limiter.ExecutorCapacity()); err != nil {
+			e.logger.Error("Failed to announce resources", zap.Error(err))
 		}
-		e.control.Close()
+		e.startHeartbeatLoop(ctx)
 	}()
 
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-e.control.Ready():
-	}
-
-	e.hello(ctx)
-	go e.startHeartbeatLoop(ctx)
-
-	<-ctx.Done()
-	return nil
+	defer e.Bidi.Close()
+	return e.Bidi.ConnectAndServe(ctx)
 }
 
-func (e *Executor) hello(ctx context.Context) error {
-	h := rpc.Hello{
-		ExecutorID:           e.cfg.ExecutorID,
-		Version:              e.cfg.Version,
-		SourceIP:             "127.0.0.1", // TODO: detect public IP
-		TeslaDelay:           e.teslaSchedule.Config().Delay,
-		TeslaAnchorTimestamp: e.teslaSchedule.Config().Epoch,
-		TeslaAnchorKey:       e.teslaSchedule.Anchor(),
-	}
-	return e.control.SendHello(ctx, h)
-}
-
-func (e *Executor) setResources(ctx context.Context, capacity app.Bitrate) error {
+func (e *Executor) setResources(ctx context.Context, capacity app.Bitrate) (*protocol.ResourcesResponse, error) {
 	e.limiter.SetExecutorCapacity(capacity)
-	return e.control.SendSetResources(ctx, int64(capacity))
+	return e.Bidi.Client.Resources(ctx, &protocol.ResourcesRequest{BandwidthCapacity: int64(capacity)})
 }
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context) {
@@ -122,9 +113,42 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := e.control.SendHeartbeat(ctx, e.teslaSchedule); err != nil {
+			now := time.Now()
+			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
+			req := &protocol.HeartbeatRequest{
+				ExecutorId:    e.cfg.ExecutorID,
+				TimestampNs:   now.UnixNano(),
+				TeslaKeyEpoch: epoch,
+				TeslaKey:      key,
+			}
+
+			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))
+			if _, err := e.Bidi.Client.Heartbeat(ctx, req); err != nil {
 				e.logger.Error("Failed to send heartbeat", zap.Error(err))
 			}
 		}
 	}
+}
+
+func getClientCredentials(cfg *config.Config) (credentials.TransportCredentials, error) {
+	// Load client certificate
+	cert, err := tls.LoadX509KeyPair(
+		cfg.Credentials.ClientCert,
+		cfg.Credentials.ClientKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true, // skip server cert verification - insecure! TODO: server authentication
+		// RootCAs:      nil,
+		// ClientCAs:  nil,
+		// ClientAuth: tls.RequireAndVerifyClientCert,
+		// MinVersion: tls.VersionTLS13,
+	}
+
+	creds := credentials.NewTLS(tlsConfig)
+	return creds, nil
 }

@@ -4,130 +4,158 @@ import (
 	"context"
 	"debuglet/internal/executor/debuglet"
 	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/executor/transport/rpc"
+	"debuglet/internal/executor/scheduler"
 	"debuglet/protocol"
+	pb "debuglet/protocol"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 type RunningDebuglet struct {
 	id        uuid.UUID
 	addresses []string
-	client    *rpc.DebugletClient
 	cancelCtx func(error)
 	debuglet  *debuglet.Debuglet
 }
 
-func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<- struct{}) {
+func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec, rl *scheduler.RunLock) {
+	if err := e.debugletHandler(ctx, spec, rl); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("debuglet handler failed due to context error: %w", ctx.Err())
+		}
+		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		errMsg := err.Error()
+		e.Bidi.Client.DebugletExit(ctx, &protocol.DebugletExitRequest{
+			DebugletId:   spec.DebugletID,
+			ExitCode:     -1,
+			ErrorMessage: &errMsg,
+		})
+	}
+}
+
+func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl *scheduler.RunLock) error {
+	defer rl.Release() // catch early returns
+
 	debUUID, err := uuid.Parse(spec.DebugletID)
 	if err != nil {
-		e.logger.Error("Invalid debuglet UUID", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		close(preRunLock)
-		return
+		return fmt.Errorf("invalid debuglet UUID: %w", err)
 	}
 
-	ctx, cancel := context.WithCancelCause(ctx)
-
-	client := rpc.NewDebugletClient(e.logger, *e.control.GRPCClient(), spec, e.cfg.ExecutorID)
-	e.mu.Lock()
-
-	if len(e.running) >= e.cfg.MaxDebuglets {
-		err := fmt.Errorf("cannot add another debuglet (id=%s)", spec.DebugletID)
-		if err2 := e.control.SendError(ctx, &spec.DebugletID, err); err2 != nil {
-			e.logger.Error("Failed to forward error to dispatcher", zap.Error(err2), zap.NamedError("original", err))
-		}
-		close(preRunLock)
-		cancel(nil)
-		e.mu.Unlock()
-		return
+	if err := e.allocateDebuglet(ctx, spec); err != nil {
+		return fmt.Errorf("failed to allocate debuglet: %w", err)
 	}
 
-	e.running[spec.DebugletID] = RunningDebuglet{
-		id:        debUUID,
-		addresses: spec.Policy.Addresses,
-		client:    client,
-		cancelCtx: cancel,
-	}
-
-	if err = e.limiter.InsertDebuglet(debUUID.String(), app.Bitrate(spec.Policy.FloorBW), app.Bitrate(spec.Policy.CeilBW), spec.Policy.Addresses); err != nil {
-		e.logger.Error("Failed to insert debuglet into limiter", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		close(preRunLock)
-		e.mu.Unlock()
-		return
-	}
-	execLimit, _, err := e.limiter.GetExecLimit(spec.DebugletID)
+	ctx, cancelDebuglet := context.WithCancelCause(ctx)
+	deb, err := e.registerDebuglet(spec, debUUID, cancelDebuglet)
+	defer e.unregisterDebuglet(ctx, spec)
 	if err != nil {
-		e.logger.Error("Failed to get executor limit for debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		close(preRunLock)
-		e.mu.Unlock()
-		return
+		return fmt.Errorf("failed to register debuglet: %w", err)
 	}
-	if err = e.packetCount.SetExecLimit(debUUID, execLimit); err != nil {
-		e.logger.Error("Failed to set executor limit for debuglet in eBPF packet count", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		close(preRunLock)
-		e.mu.Unlock()
-		return
-	}
+	defer cancelDebuglet(nil)
 
-	close(preRunLock)
-	e.mu.Unlock()
-
-	defer func() {
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		delete(e.running, spec.DebugletID)
-	}()
-
-	listenDone := make(chan struct{})
-	go func() {
-		defer close(listenDone)
-		if err := client.Listen(ctx); err != nil {
-			cancel(err)
-		}
-	}()
-
-	defer func() {
-		cancel(nil)
-		<-listenDone
-	}()
-
-	select {
-	case <-ctx.Done():
-		e.logger.Error("Failed to setup debuglet GRPC session", zap.String("debugletID", spec.DebugletID), zap.Error(context.Cause(ctx)))
-		return
-	case <-client.Ready():
-	}
+	rl.Release()
 
 	// ======== INITIALIZE ========
-	if err = client.SendSetState(protocol.RunState_RUN_STATE_INITIALIZING); err != nil {
-		e.logger.Error("Failed to set state to 'initialized'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		client.SendExit(-1, err)
-		return
+	if err := e.initializeDebuglet(ctx, spec, deb); err != nil {
+		return fmt.Errorf("failed to initialize debuglet: %w", err)
+	}
+
+	// ======== RUN/START ========
+	outputCh, err := e.propagateOutputToStream(ctx, spec.DebugletID)
+	if err != nil {
+		return fmt.Errorf("failed to open stream for debuglet output: %w", err)
+	}
+
+	if err := e.runDebuglet(ctx, spec, deb, outputCh); err != nil {
+		return fmt.Errorf("failed to run debuglet: %w", err)
+	}
+	return nil
+}
+
+func (e *Executor) allocateDebuglet(ctx context.Context, spec scheduler.Spec) error {
+	req := &protocol.DebugletAllocateRequest{
+		DebugletId: spec.DebugletID,
+		ExecutorId: e.cfg.ExecutorID,
+		Policy: &protocol.DebugletPolicy{
+			FloorBw:   spec.Policy.FloorBW,
+			CeilBw:    spec.Policy.CeilBW,
+			TimeoutMs: spec.Policy.Timeout.Milliseconds(),
+			Addresses: spec.Policy.Addresses,
+		},
+	}
+	resp, err := e.Bidi.Client.DebugletAllocate(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to allocate on dispatcher: %w", err)
+	}
+
+	up := &pb.BandwidthRequest{Limits: resp.GetAllocatedLimits()}
+	_, err = e.OnBandwidth(ctx, up)
+	if err != nil {
+		return fmt.Errorf("failed to set bandwidth limits: %w", err)
+	}
+
+	return err
+}
+
+func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFunc context.CancelCauseFunc) (*debuglet.Debuglet, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if len(e.running) >= e.cfg.MaxDebuglets {
+		err := fmt.Errorf("max debuglet capacity reached (id=%s)", spec.DebugletID)
+		return nil, err
 	}
 
 	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter, e.packetCount)
-	e.mu.Lock()
-	if running, ok := e.running[spec.DebugletID]; ok {
-		running.debuglet = deb
-		e.running[spec.DebugletID] = running
+
+	e.running[spec.DebugletID] = RunningDebuglet{
+		id:        id,
+		addresses: spec.Policy.Addresses,
+		cancelCtx: cancelFunc,
+		debuglet:  deb,
 	}
-	e.mu.Unlock()
-	defer deb.Close(ctx)
+
+	err := e.limiter.InsertDebuglet(spec.DebugletID, app.Bitrate(spec.Policy.FloorBW), app.Bitrate(spec.Policy.CeilBW), spec.Policy.Addresses)
+	if err != nil {
+		return nil, err
+	}
+	execLimit, _, err := e.limiter.GetExecLimit(spec.DebugletID)
+	if err != nil {
+		return nil, err
+	}
+	if err = e.packetCount.SetExecLimit(id, execLimit); err != nil {
+		return nil, err
+	}
+
+	return deb, nil
+}
+
+func (e *Executor) unregisterDebuglet(ctx context.Context, spec scheduler.Spec) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if running, ok := e.running[spec.DebugletID]; ok {
+		running.debuglet.Close(ctx)
+		running.cancelCtx(nil)
+		delete(e.running, spec.DebugletID)
+	}
+	e.limiter.RemoveDebuglet(spec.DebugletID)
+}
+
+func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet) error {
+	_, err := e.Bidi.Client.DebugletState(ctx, &protocol.DebugletStateRequest{
+		DebugletId: spec.DebugletID,
+		ExecutorId: e.cfg.ExecutorID,
+		State:      protocol.RunState_RUN_STATE_INITIALIZING,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set state to 'initializing': %w", err)
+	}
 	err = deb.InitRuntime(ctx, spec.Wasm)
 	if err != nil {
-		var zapError zap.Field
-		if ctx.Err() == nil {
-			zapError = zap.Error(err)
-		} else {
-			zapError = zap.Error(context.Cause(ctx))
-		}
-		e.logger.Error("Failed to initialize debuglet runtime", zap.String("debugletID", spec.DebugletID), zapError)
-		client.SendExit(-1, err)
-		return
+		return fmt.Errorf("failed to initialize debuglet runtime: %w", err)
 	}
 
 	subCtx, cancelInit := context.WithTimeout(ctx, time.Second)
@@ -135,30 +163,42 @@ func (e *Executor) OnStart(ctx context.Context, spec rpc.Spec, preRunLock chan<-
 		e.logger.Warn("Failed to startup servers for debuglet. Ignoring", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 	}
 	cancelInit()
+	return nil
+}
 
-	// ======== RUN/START ========
-	if err := client.SendSetState(protocol.RunState_RUN_STATE_STARTED); err != nil {
-		e.logger.Error("Failed to set state to 'started'", zap.String("debugletID", spec.DebugletID), zap.Error(err))
-		client.SendExit(-1, err)
-		return
+func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan<- []byte, error) {
+	stream, err := e.Bidi.Client.DebugletStream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open debuglet stream: %w", err)
 	}
-
+	err = stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Ident{Ident: &pb.DebugletIdent{DebugletId: id, ExecutorId: e.cfg.ExecutorID}}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to send debuglet ident: %w", err)
+	}
 	outputCh := make(chan []byte, 1024)
-	timedCtx, cancelRun := context.WithTimeout(ctx, spec.Policy.Timeout)
-	g, subCtx := errgroup.WithContext(timedCtx)
-	g.Go(func() error {
-		return deb.Run(subCtx, outputCh, spec.Args)
+	go func() {
+		for out := range outputCh {
+			err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out}}})
+			if err != nil {
+				e.logger.Error("Failed to send debuglet output", zap.String("debugletID", id), zap.Error(err))
+				return
+			}
+		}
+	}()
+	return outputCh, nil
+}
+
+func (e *Executor) runDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet, outputCh chan<- []byte) error {
+	_, err := e.Bidi.Client.DebugletState(ctx, &pb.DebugletStateRequest{
+		DebugletId: spec.DebugletID,
+		ExecutorId: e.cfg.ExecutorID,
+		State:      pb.RunState_RUN_STATE_STARTED,
 	})
-
-	for out := range outputCh {
-		client.SendOutput(out)
+	if err != nil {
+		return fmt.Errorf("failed to set state to 'started': %w", err)
 	}
 
-	cancelRun()
-
-	if err := g.Wait(); err != nil {
-		client.SendExit(-1, err)
-	} else {
-		client.SendExit(0, nil)
-	}
+	timedCtx, cancel := context.WithTimeout(ctx, spec.Policy.Timeout)
+	defer cancel()
+	return deb.Run(timedCtx, outputCh, spec.Args)
 }

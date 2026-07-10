@@ -34,7 +34,8 @@ message HeartbeatRequest {
 message HeartbeatResponse {}
 
 message ResourcesRequest {
-  int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle per second
+  string executor_id = 1;
+  int64 bandwidth_capacity = 2; // Bandwidth capacity (bits/s) the executor can handle
 }
 message ResourcesResponse {}
 
@@ -73,13 +74,13 @@ message AbortRequest {
 }
 message AbortResponse {}
 
+message DestinationLimit {
+  string address = 1;
+  int64 bits_limit = 2;
+}
+
 message BandwidthRequest {
   repeated DestinationLimit limits = 1;
-
-  message DestinationLimit {
-    string address = 1;
-    int64 bits_limit = 2;
-  }
 }
 message BandwidthResponse {}
 
@@ -108,7 +109,10 @@ message DebugletAllocateRequest {
   string executor_id = 2;
   DebugletPolicy policy = 3;
 }
-message DebugletAllocateResponse {}
+// The dispatcher may directly respond with updated limits
+message DebugletAllocateResponse {
+    repeated DestinationLimit allocated_limits = 1;
+}
 
 message DebugletExitRequest {
   string debuglet_id = 1;
