@@ -103,10 +103,6 @@ func (e *Executor) OnBandwidth(ctx context.Context, req *pb.BandwidthRequest) (*
 		e.limiter.SetAddrCapacity(up.Address, up.Limit)
 	}
 
-	if e.packetCount == nil {
-		return nil, errors.New("packet count is not initialized")
-	}
-
 	for _, up := range ipUpdates {
 		ip, err := netip.ParseAddr(up.Address)
 		if err != nil {

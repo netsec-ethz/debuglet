@@ -5,7 +5,6 @@ import (
 	"debuglet/internal/executor/debuglet"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
-	"debuglet/protocol"
 	pb "debuglet/protocol"
 	"fmt"
 	"time"
@@ -28,7 +27,7 @@ func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec, rl 
 		}
 		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 		errMsg := err.Error()
-		e.Bidi.Client.DebugletExit(ctx, &protocol.DebugletExitRequest{
+		e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
 			DebugletId:   spec.DebugletID,
 			ExitCode:     -1,
 			ErrorMessage: &errMsg,
@@ -73,7 +72,7 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 		return fmt.Errorf("failed to run debuglet: %w", err)
 	}
 
-	e.Bidi.Client.DebugletExit(ctx, &protocol.DebugletExitRequest{
+	e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
 		DebugletId: spec.DebugletID,
 		ExitCode:   0,
 	})
@@ -82,10 +81,10 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 }
 
 func (e *Executor) allocateDebuglet(ctx context.Context, spec scheduler.Spec) error {
-	req := &protocol.DebugletAllocateRequest{
+	req := &pb.DebugletAllocateRequest{
 		DebugletId: spec.DebugletID,
 		ExecutorId: e.cfg.ExecutorID,
-		Policy: &protocol.DebugletPolicy{
+		Policy: &pb.DebugletPolicy{
 			FloorBw:   spec.Policy.FloorBW,
 			CeilBw:    spec.Policy.CeilBW,
 			TimeoutMs: spec.Policy.Timeout.Milliseconds(),
@@ -151,10 +150,10 @@ func (e *Executor) unregisterDebuglet(ctx context.Context, spec scheduler.Spec) 
 }
 
 func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet) error {
-	_, err := e.Bidi.Client.DebugletState(ctx, &protocol.DebugletStateRequest{
+	_, err := e.Bidi.Client.DebugletState(ctx, &pb.DebugletStateRequest{
 		DebugletId: spec.DebugletID,
 		ExecutorId: e.cfg.ExecutorID,
-		State:      protocol.RunState_RUN_STATE_INITIALIZING,
+		State:      pb.RunState_RUN_STATE_INITIALIZING,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set state to 'initializing': %w", err)

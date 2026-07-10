@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const maxDebugletLogSize = 100 * 1024 * 1024
+
 // ============================================================
 // ==================== CONTROL MESSAGES ======================
 // ============================================================
@@ -56,7 +58,6 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		h.GetTeslaAnchorKey(),
 	)
 
-	// goroutine to monitor the executor's heartbeat and remove it if it times out
 	go func() {
 		ticker := time.NewTicker(d.execTimeout)
 		defer ticker.Stop()
@@ -118,7 +119,6 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 	ceilBW := resource.Bitrate(policy.GetCeilBw())
 	d.logger.Debug("Received debuglet allocation request", zap.String("debugletID", debugletID), zap.String("executorID", executorID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
 
-	// check if any destination is overloaded (only accounts for the floor bandwidth)
 	d.logger.Debug("Checking debuglet capacity usage", zap.String("debugletID", debugletID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
 	for _, dest := range policy.Addresses {
 		if err := d.destinations.CheckCapacity(dest, floorBW); err != nil {
@@ -136,15 +136,12 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 			return nil, err
 		}
 	}
-	if err := d.sendFairshare(ctx, policy.Addresses); err != nil {
-		d.logger.Error("Failed to send fairshare update", zap.Error(err))
-		return nil, err
-	}
+	d.sendFairshare(ctx, policy.Addresses)
 	return &pb.DebugletAllocateResponse{}, nil
 }
 
 // OnDebugletExit handles the exit of a debuglet, cleaning up its state and notifying any connected log streams.
-// It may be called multiple times if the stream is closed and the debuglet sends the exit call manually, so it should be idempotent.
+// It is safe to call multiple times. Subsequent calls are no-ops if the debuglet has already been marked as exited.
 func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error) {
 	debugletID := req.GetDebugletId()
 	exitCode := req.GetExitCode()
@@ -152,16 +149,14 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 	d.logger.Debug("Received debuglet exit", zap.String("debugletID", debugletID), zap.Int32("exitCode", exitCode), zap.Stringp("errMsg", errMsg))
 
 	d.mu.Lock()
-	defer func() {
-		for _, conn := range d.connectedLogs[debugletID] {
-			close(conn.done)
-		}
-		d.mu.Unlock()
-	}()
-
 	st, exists := d.debugletStores[debugletID]
 	if !exists {
+		d.mu.Unlock()
 		return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
+	}
+	if st.State == RunStateExited {
+		d.mu.Unlock()
+		return &pb.DebugletExitResponse{}, nil
 	}
 
 	st.State = RunStateExited
@@ -182,13 +177,16 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		d.destinations.Remove(debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
 	}
 
+	for _, conn := range d.connectedLogs[debugletID] {
+		close(conn.done)
+	}
+	d.mu.Unlock()
+
 	go func() {
-		// send fairshare updates in the background
-		if err := d.sendFairshare(ctx, st.Policy.Addresses); err != nil {
+		if err := d.sendFairshare(context.Background(), st.Policy.Addresses); err != nil {
 			d.logger.Error("Failed to send fairshare update", zap.Error(err))
 		}
 
-		// remove debuglet store 10 minutes later
 		time.Sleep(10 * time.Minute)
 		d.mu.Lock()
 		delete(d.debugletStores, debugletID)
@@ -233,7 +231,12 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 					d.logger.Error("Debuglet output for unknown debuglet", zap.String("debugletID", debugletID))
 					continue
 				}
-				store.Logs = append(store.Logs, output...)
+				if len(store.Logs) < maxDebugletLogSize {
+					store.Logs = append(store.Logs, output...)
+					if len(store.Logs) > maxDebugletLogSize {
+						store.Logs = store.Logs[:maxDebugletLogSize]
+					}
+				}
 				connections := d.connectedLogs[debugletID]
 				d.mu.Unlock()
 
@@ -246,12 +249,8 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 		}
 	}()
 
-	// Send an exit if stream closes. In normal operation, the debuglet should send an exit message before closing the stream,
-	// but if it doesn't, we still want to clean up the state.
 	if debugletID != "" {
-		if err == nil || ctx.Err() != nil {
-			d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: 0})
-		} else {
+		if err != nil && ctx.Err() == nil {
 			d.logger.Error("Debuglet stream ended with error", zap.String("debugletID", debugletID), zap.Error(err))
 			errMsg := err.Error()
 			d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: -1, ErrorMessage: &errMsg})

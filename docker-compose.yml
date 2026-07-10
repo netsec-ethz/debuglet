@@ -6,17 +6,33 @@ services:
       context: .
       dockerfile: deploy/docker/executor.Dockerfile
     volumes:
-      - ./local/configs/executor:/etc/debuglet/executor:ro
+      - ./deploy/docker/configs/executor:/etc/debuglet/executor
+      - ./deploy/docker/nginx/certs:/etc/debuglet/certs:ro
     restart: unless-stopped
     privileged: true
+    depends_on:
+      - nginx
 
   dispatcher:
     build:
       context: .
       dockerfile: deploy/docker/dispatcher.Dockerfile
     volumes:
-      - ./local/configs/dispatcher:/etc/debuglet/dispatcher:ro
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      - ./deploy/docker/configs/dispatcher:/etc/debuglet/dispatcher:ro
     restart: unless-stopped
+    ports:
+      - "9000:9000" # expose http for local frontend
+
+
+  # Nginx proxy for local TLS termination testing
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./deploy/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/docker/nginx/certs:/etc/nginx/certs:ro
+    ports:
+      - "9443:9443"
+      - "9444:9444"
+    restart: unless-stopped
+    depends_on:
+      - dispatcher

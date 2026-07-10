@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"crypto/tls"
 	pb "debuglet/protocol"
 	"fmt"
 	"net"
@@ -15,9 +16,11 @@ import (
 )
 
 type BidiOptions struct {
-	Logger   *zap.Logger
-	Address  string
-	TLSCreds credentials.TransportCredentials
+	Logger       *zap.Logger
+	Address      string
+	YamuxAddress string
+	TLSCreds     credentials.TransportCredentials
+	TLSConfig    *tls.Config
 }
 
 // BidiClient connects to the dispatcher and sets up a bidirectional stream allowing
@@ -50,6 +53,10 @@ func NewBidiClient(opts BidiOptions, state ExecutorState) (*BidiClient, error) {
 		return nil, err
 	}
 
+	if opts.YamuxAddress == "" {
+		opts.YamuxAddress = opts.Address
+	}
+
 	return &BidiClient{
 		Client:     pb.NewDispatcherServiceClient(gconn),
 		grpcServer: grpcServer,
@@ -70,26 +77,34 @@ func (b *BidiClient) WaitReady() {
 }
 
 // ConnectAndServe opens a yamux bidirectional session to the dispatcher and
-// starts the executor gRPC server.
+// starts the executor gRPC server. If TLSConfig is set, the yamux connection
+// will be wrapped in TLS (required when connecting through a TLS-terminating proxy).
 func (b *BidiClient) ConnectAndServe(ctx context.Context) error {
-	d := net.Dialer{}
-	conn, err := d.DialContext(ctx, "tcp", b.opts.Address)
+	var conn net.Conn
+	var err error
+
+	if b.opts.TLSConfig != nil {
+		d := tls.Dialer{Config: b.opts.TLSConfig}
+		conn, err = d.DialContext(ctx, "tcp", b.opts.YamuxAddress)
+	} else {
+		d := net.Dialer{}
+		conn, err = d.DialContext(ctx, "tcp", b.opts.YamuxAddress)
+	}
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	b.opts.Logger.Info("Connected to dispatcher", zap.String("address", b.opts.Address))
+	b.opts.Logger.Info("Connected to dispatcher yamux", zap.String("address", b.opts.YamuxAddress))
 
 	session, err := yamux.Client(conn, nil)
 	if err != nil {
 		return err
 	}
-	// Sending initial data is required to trigger cmux routing on the dispatcher side and correctly establish the yamux session.
 	dur, err := session.Ping()
 	if err != nil {
 		return fmt.Errorf("failed to ping yamux session: %w", err)
 	}
-	b.opts.Logger.Info("Yamux session established", zap.String("address", b.opts.Address), zap.Duration("ping_duration", dur))
+	b.opts.Logger.Info("Yamux session established", zap.String("address", b.opts.YamuxAddress), zap.Duration("ping_duration", dur))
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -16,5 +16,5 @@ RUN CGO_ENABLED=0 go build -o /debuglet-dispatcher ./cmd/dispatcher
 # Runtime Stage
 FROM scratch
 COPY --from=builder /debuglet-dispatcher /
-EXPOSE 9001
+EXPOSE 9000 9001 9002
 ENTRYPOINT ["/debuglet-dispatcher"]

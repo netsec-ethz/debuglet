@@ -59,11 +59,23 @@ func main() {
 
 	g, subCtx := errgroup.WithContext(context.Background())
 
+	yamuxPort := cfg.YamuxPort
+	if yamuxPort == 0 {
+		yamuxPort = cfg.GRPCPort + 1
+	}
+
 	// ---- Start gRPC Server ----
 	g.Go(func() error {
 		addr := fmt.Sprintf(":%d", cfg.GRPCPort)
-		return d.Bidi.ListenAndServe(subCtx, addr)
+		return d.Bidi.ServeGRPC(subCtx, addr)
 	})
+
+	// ---- Start Yamux Listener ----
+	g.Go(func() error {
+		addr := fmt.Sprintf(":%d", yamuxPort)
+		return d.Bidi.ServeYamux(subCtx, addr)
+	})
+
 	// ---- Start HTTP Server ----
 	g.Go(func() error { return startHTTPServer(d, cfg, logger) })
 
@@ -92,7 +104,6 @@ func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfi
 	addr := fmt.Sprintf(":%d", port)
 	logger.Info("Dispatcher HTTP API started", zap.Int("port", port))
 
-	// Explicit TLS configuration for the HTTP server
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12, // More compatible than forcing 1.3
 	}

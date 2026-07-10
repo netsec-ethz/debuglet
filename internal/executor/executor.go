@@ -67,13 +67,14 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 	s.RegisterOnStart(e.OnDebugletStart)
 
 	var creds credentials.TransportCredentials
+	var tlsCfg *tls.Config
 	if !cfg.DisableTLS {
-		creds, err = getClientCredentials(cfg)
+		tlsCfg, creds, err = getClientCredentials(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get client credentials: %w", err)
 		}
 	}
-	opts := rpc.BidiOptions{Logger: l, Address: cfg.DispatcherAddr, TLSCreds: creds}
+	opts := rpc.BidiOptions{Logger: l, Address: cfg.DispatcherAddr, YamuxAddress: cfg.DispatcherYamuxAddr, TLSCreds: creds, TLSConfig: tlsCfg}
 	bidi, err := rpc.NewBidiClient(opts, e)
 	if err != nil {
 		return nil, err
@@ -130,25 +131,20 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context) {
 	}
 }
 
-func getClientCredentials(cfg *config.Config) (credentials.TransportCredentials, error) {
-	// Load client certificate
+func getClientCredentials(cfg *config.Config) (*tls.Config, credentials.TransportCredentials, error) {
 	cert, err := tls.LoadX509KeyPair(
 		cfg.Credentials.ClientCert,
 		cfg.Credentials.ClientKey,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		return nil, nil, fmt.Errorf("failed to load client certificate: %w", err)
 	}
 
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true, // skip server cert verification - insecure! TODO: server authentication
-		// RootCAs:      nil,
-		// ClientCAs:  nil,
-		// ClientAuth: tls.RequireAndVerifyClientCert,
-		// MinVersion: tls.VersionTLS13,
 	}
 
-	creds := credentials.NewTLS(tlsConfig)
-	return creds, nil
+	creds := credentials.NewTLS(tlsConfig.Clone())
+	return tlsConfig, creds, nil
 }

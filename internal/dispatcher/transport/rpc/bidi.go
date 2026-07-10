@@ -8,9 +8,7 @@ import (
 	"sync"
 
 	"github.com/hashicorp/yamux"
-	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -23,7 +21,7 @@ type ExecutorConn struct {
 }
 
 // BidiServer handles the bidirectional connection between the dispatcher and multiple executors.
-// It listens for incoming connections, establishes yamux sessions, and manages gRPC clients for each connected executor.
+// It serves a gRPC server for DispatcherService and a yamux listener for executor callbacks.
 //
 // [BidiServer.GetClient] can be used to get a specific connected executor client for sending messages (i.e. uploading a debuglet).
 type BidiServer struct {
@@ -78,36 +76,32 @@ func (b *BidiServer) RemoveClient(executorID string) {
 	}
 }
 
-// ListenAndServe listens for TCP requests and forwards them either to the gRPC server or to the yamux session handler
-// to open up a new yamux session, based on the connection type.
-func (b *BidiServer) ListenAndServe(ctx context.Context, addr string) error {
+// ServeGRPC starts the gRPC server on the given address for DispatcherService RPCs.
+func (b *BidiServer) ServeGRPC(ctx context.Context, addr string) error {
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen: %v", err)
+		return fmt.Errorf("failed to listen on %s: %v", addr, err)
 	}
-
-	mux := cmux.New(lis)
-	grpcL := mux.Match(cmux.HTTP2())
-	yamuxL := mux.Match(cmux.Any())
-
-	g, subCtx := errgroup.WithContext(ctx)
-	g.Go(func() error { return b.grpcServer.Serve(grpcL) })
-	g.Go(func() error { b.listenSessionLoop(subCtx, yamuxL); return nil })
-	g.Go(mux.Serve)
-
-	return g.Wait()
+	b.logger.Info("gRPC server listening", zap.String("address", addr))
+	return b.grpcServer.Serve(lis)
 }
 
-// listenSessionLoop continuously accepts new connections on the provided listener and handles each connection in a separate goroutine.
-func (b *BidiServer) listenSessionLoop(ctx context.Context, lis net.Listener) {
+// ServeYamux listens for yamux connections from executors on the given address.
+func (b *BidiServer) ServeYamux(ctx context.Context, addr string) error {
+	var lc net.ListenConfig
+	lis, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %v", addr, err)
+	}
+	b.logger.Info("Yamux listener started", zap.String("address", addr))
+
 	for {
-		b.logger.Debug("Listening for yamux connections", zap.String("address", lis.Addr().String()))
 		conn, err := lis.Accept()
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 				b.logger.Error("failed to accept connection", zap.Error(err))
 				continue
@@ -135,6 +129,7 @@ func (b *BidiServer) handleSession(ctx context.Context, conn net.Conn) {
 	hello, err := b.registerExecutor(ctx, gconn, session)
 	if err != nil {
 		b.logger.Error("failed to register executor", zap.Error(err))
+		gconn.Close()
 		session.Close()
 		return
 	}
@@ -178,9 +173,11 @@ func (b *BidiServer) registerExecutor(ctx context.Context, gconn *grpc.ClientCon
 	b.mu.Lock()
 	execID := out.GetExecutorId()
 	b.logger.Info("registered executor", zap.String("executor_id", execID))
-	if _, exists := b.clients[execID]; exists {
+	if old, exists := b.clients[execID]; exists {
 		b.logger.Warn("executor already registered, closing previous connection and overwriting", zap.String("executor_id", execID))
-		b.clients[execID].gconn.Close()
+		old.gconn.Close()
+		old.session.Close()
+		b.state.OnExecutorDisconnected(execID)
 	}
 	b.clients[execID] = ExecutorConn{gconn: gconn, client: client, session: session}
 	b.mu.Unlock()

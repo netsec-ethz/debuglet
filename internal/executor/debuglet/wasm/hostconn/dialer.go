@@ -21,6 +21,8 @@ func NewDialer(allowedIPs []string) (*HostDialer, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid ip %q: %w", ip, err)
 		}
+		// Ensure the address is in 16-byte format for consistency
+		addr = netip.AddrFrom16(addr.As16())
 		allowed[addr] = struct{}{}
 	}
 
@@ -48,6 +50,8 @@ func (hd *HostDialer) control(network, address string, c syscall.RawConn) error 
 	if err != nil {
 		return fmt.Errorf("failed to parse resolved IP: %w", err)
 	}
+	// Ensure the address is in 16-byte format for consistency
+	addr = netip.AddrFrom16(addr.As16())
 
 	if _, allowed := hd.allowedAddrs[addr]; !allowed {
 		return fmt.Errorf("connection to IP %s is not whitelisted", addr)
