@@ -15,26 +15,23 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
-	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/credentials"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/transport/api"
-	"debuglet/internal/dispatcher/transport/rpc"
-	pb "debuglet/protocol"
 )
 
 func main() {
@@ -56,29 +53,22 @@ func main() {
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
-	disp := dispatcher.New(logger, cfg.Version)
-	server := rpc.NewServer(logger, disp, disp, rpc.ServerOptions{ExecutorTimeout: time.Duration(cfg.ExecutorTimeout) * time.Second})
-	disp.SetExecutorSender(server)
-	var wg sync.WaitGroup
-	wg.Add(2)
+	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second)
+	defer d.Close()
+
+	g, subCtx := errgroup.WithContext(context.Background())
 
 	// ---- Start gRPC Server ----
-	go func() {
-		defer wg.Done()
-		if err := startGRPCServer(server, cfg, logger); err != nil {
-			logger.Fatal("failed to start gRPC server", zap.Error(err))
-		}
-	}()
-
+	g.Go(func() error {
+		addr := fmt.Sprintf(":%d", cfg.GRPCPort)
+		return d.Bidi.ListenAndServe(subCtx, addr)
+	})
 	// ---- Start HTTP Server ----
-	go func() {
-		defer wg.Done()
-		if err := startHTTPServer(disp, cfg, logger); err != nil {
-			logger.Fatal("failed to start HTTP server", zap.Error(err))
-		}
-	}()
+	g.Go(func() error { return startHTTPServer(d, cfg, logger) })
 
-	wg.Wait()
+	if err := g.Wait(); err != nil {
+		logger.Fatal("dispatcher exited with error", zap.Error(err))
+	}
 }
 
 func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
@@ -90,11 +80,6 @@ func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (cre
 	if err != nil {
 		return nil, fmt.Errorf("failed to load server certificate: %w", err)
 	}
-
-	// Optionally, load CA if you want to check later
-	// caCert, _ := os.ReadFile("/etc/debuglet/dispatcher/ca.crt")
-	// caCertPool := x509.NewCertPool()
-	// caCertPool.AppendCertsFromPEM(caCert)
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
@@ -128,40 +113,6 @@ func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (cre
 
 	creds := credentials.NewTLS(tlsConfig)
 	return creds, nil
-}
-
-// startGRPCServer runs the dispatcher’s gRPC interface
-func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	port := cfg.GRPCPort
-	addr := fmt.Sprintf(":%d", port)
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-
-	var grpcOpts []grpc.ServerOption
-	if cfg.DisableTLS {
-		// No transport credentials — plain HTTP/2
-	} else {
-		creds, err := getServerCredentials(cfg, logger)
-		if err != nil {
-			return fmt.Errorf("failed to get server credentials: %w", err)
-		}
-		grpcOpts = append(grpcOpts, grpc.Creds(creds))
-	}
-	grpcOpts = append(grpcOpts,
-		grpc.MaxRecvMsgSize(32*1024*1024),
-		grpc.MaxSendMsgSize(32*1024*1024),
-	)
-	srv := grpc.NewServer(grpcOpts...)
-	pb.RegisterDispatcherServiceServer(srv, server)
-
-	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))
-	if err := srv.Serve(lis); err != nil {
-		return fmt.Errorf("gRPC server failed: %w", err)
-	}
-
-	return nil
 }
 
 // startHTTPServer runs the Echo-based HTTP API

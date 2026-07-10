@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	pb "debuglet/protocol"
 	"errors"
 	"fmt"
 	"time"
@@ -82,6 +83,6 @@ func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID, debugletID, 
 	if err := d.sender.AbortDebuglet(ctx, executorID, debugletID, reason); err != nil {
 		return errors.New("failed to forward abort to executor")
 	}
-	d.HandleExit(debugletID, -1, errors.New(reason))
+	d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: -1, ErrorMessage: &reason})
 	return nil
 }

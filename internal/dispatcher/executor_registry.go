@@ -121,8 +121,9 @@ func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
 
 func (d *Dispatcher) RemoveExecutor(id string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	delete(d.executors, id)
+	d.mu.Unlock()
+	d.Bidi.RemoveClient(id)
 }
 
 func (d *Dispatcher) SetExecutor(id string, lastSeenNs int64) error {

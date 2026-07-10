@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"debuglet/internal/dispatcher/resource"
+	pb "debuglet/protocol"
 	"time"
 
 	"go.uber.org/zap/zapcore"
@@ -67,3 +68,14 @@ const (
 	RunStateUploading
 	RunStateExited
 )
+
+func grpcToRunState(r pb.RunState) DebugletRunState {
+	switch r {
+	case pb.RunState_RUN_STATE_INITIALIZING:
+		return RunStateInitializing
+	case pb.RunState_RUN_STATE_STARTED:
+		return RunStateStarted
+	default:
+		return RunStateUnspecified
+	}
+}

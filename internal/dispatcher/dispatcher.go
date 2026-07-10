@@ -3,9 +3,11 @@ package dispatcher
 import (
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/tag"
+	"debuglet/internal/dispatcher/transport/rpc"
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -29,11 +31,13 @@ type Dispatcher struct {
 	version string
 
 	executors    map[string]*RegisteredExecutor
+	execTimeout  time.Duration
 	ipToExecutor map[string]string
-	mu           sync.RWMutex
 	keystore     *tag.KeyStore
 	sender       ExecutorServer
 	logger       *zap.Logger
+	Bidi         *rpc.BidiServer
+	mu           sync.RWMutex
 
 	// Naive storage of the full output of debuglets.
 	// debugletStores allows for a user to get the full logs at a later point in time.
@@ -45,13 +49,11 @@ type Dispatcher struct {
 	destinations *resource.DestinationsUsage
 }
 
-var _ DispatcherControlHandler = (*Dispatcher)(nil)
-var _ DispatcherDebugletHandler = (*Dispatcher)(nil)
-
-func New(l *zap.Logger, version string) *Dispatcher {
-	return &Dispatcher{
+func New(l *zap.Logger, version string, execTimeout time.Duration) *Dispatcher {
+	d := &Dispatcher{
 		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
+		execTimeout:    execTimeout,
 		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
 		logger:         l,
@@ -59,11 +61,14 @@ func New(l *zap.Logger, version string) *Dispatcher {
 		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
 	}
+
+	d.Bidi = rpc.NewBidiServer(l, d)
+	return d
 }
 
-func (d *Dispatcher) GetVersion() string                 { return d.version }
-func (d *Dispatcher) GetKeyStore() *tag.KeyStore         { return d.keystore }
-func (d *Dispatcher) SetExecutorSender(s ExecutorServer) { d.sender = s }
+func (d *Dispatcher) Close()                     { d.Bidi.Close() }
+func (d *Dispatcher) GetVersion() string         { return d.version }
+func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
 
 func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	d.mu.Lock()
@@ -109,4 +114,5 @@ func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitr
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.destinations.SetLimit(destination, limit)
+	// TODO: Notify executors of the new limit if needed
 }
