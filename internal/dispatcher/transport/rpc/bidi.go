@@ -129,12 +129,14 @@ func (b *BidiServer) handleSession(ctx context.Context, conn net.Conn) {
 	if err != nil {
 		b.logger.Error("failed to create gRPC connection", zap.Error(err))
 		session.Close()
+		return
 	}
 
 	hello, err := b.registerExecutor(ctx, gconn, session)
 	if err != nil {
 		b.logger.Error("failed to register executor", zap.Error(err))
 		session.Close()
+		return
 	}
 	defer b.RemoveClient(hello.GetExecutorId())
 

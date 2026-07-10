@@ -64,6 +64,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 			d.mu.RLock()
 			exec, ok := d.executors[execID]
 			if !ok {
+				d.mu.RUnlock()
 				return
 			}
 			d.mu.RUnlock()
@@ -121,13 +122,17 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 	d.logger.Debug("Checking debuglet capacity usage", zap.String("debugletID", debugletID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
 	for _, dest := range policy.Addresses {
 		if err := d.destinations.CheckCapacity(dest, floorBW); err != nil {
-			d.sender.AbortDebuglet(ctx, executorID, debugletID, "not enough capacity")
+			if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "not enough capacity"); errAbort != nil {
+				d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
+			}
 			return nil, err
 		}
 	}
 	for _, dest := range policy.Addresses {
 		if err := d.destinations.Insert(debugletID, dest, executorID, floorBW, ceilBW); err != nil {
-			d.sender.AbortDebuglet(ctx, executorID, debugletID, err.Error())
+			if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "not enough capacity"); errAbort != nil {
+				d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
+			}
 			return nil, err
 		}
 	}
@@ -241,13 +246,14 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 		}
 	}()
 
-	// send an exit if stream closes
+	// Send an exit if stream closes. In normal operation, the debuglet should send an exit message before closing the stream,
+	// but if it doesn't, we still want to clean up the state.
 	if debugletID != "" {
-		if err == nil {
+		if err == nil || ctx.Err() != nil {
 			d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: 0})
 		} else {
-			errMsg := err.Error()
 			d.logger.Error("Debuglet stream ended with error", zap.String("debugletID", debugletID), zap.Error(err))
+			errMsg := err.Error()
 			d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: -1, ErrorMessage: &errMsg})
 		}
 	}
@@ -262,67 +268,26 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 // sendFairshare sends fairshare updates to all executors that have debuglets running for the given destinations
 // and blocks until all updates have been sent or an error occurs.
 func (d *Dispatcher) sendFairshare(ctx context.Context, dests []string) error {
-	var perExec map[string][]LimitUpdate = make(map[string][]LimitUpdate)
+	var perExec map[string][]*pb.DestinationLimit = make(map[string][]*pb.DestinationLimit)
 	for _, dest := range dests {
 		for eID, limit := range d.destinations.Fairshare(dest) {
 			d.logger.Debug("New fairshared update", zap.String("executorID", eID), zap.String("newLimit", limit.String()))
-			perExec[eID] = append(perExec[eID], LimitUpdate{Address: dest, Limit: limit})
+			perExec[eID] = append(perExec[eID], &pb.DestinationLimit{Address: dest, BitsLimit: int64(limit)})
 		}
 	}
 	g, subCtx := errgroup.WithContext(ctx)
 	for exec, updates := range perExec {
-		g.Go(func() error { return d.sender.DestinationUpdates(subCtx, exec, updates) })
+		g.Go(func() error {
+			client, ok := d.Bidi.GetClient(exec)
+			if !ok {
+				return fmt.Errorf("executor '%s' not found", exec)
+			}
+			_, err := client.Bandwidth(subCtx, &pb.BandwidthRequest{Limits: updates})
+			if err != nil {
+				return fmt.Errorf("failed to send fairshare update to executor '%s': %w", exec, err)
+			}
+			return nil
+		})
 	}
 	return g.Wait()
-}
-
-// -------------------
-
-// HandleError handles an error reported by a debuglet
-//
-// Deprecated: This method might be removed.
-func (d *Dispatcher) HandleError(ctx context.Context, debugletID *string, err error) {
-	d.logger.Error("Got executor error", zap.Stringp("debugletID", debugletID), zap.Error(err))
-
-	if debugletID == nil {
-		return
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	st, exists := d.debugletStores[*debugletID]
-	if !exists {
-		return
-	}
-
-	st.State = RunStateExited
-	st.Err = err.Error()
-
-	for _, conn := range d.connectedLogs[*debugletID] {
-		if conn.state != nil {
-			select {
-			case conn.state <- RunStateExited:
-			default:
-			}
-		}
-	}
-
-	for _, dest := range st.Policy.Addresses {
-		d.destinations.Remove(*debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
-	}
-	ctxBg := context.Background()
-	d.sendFairshare(ctxBg, st.Policy.Addresses)
-
-	go func() {
-		time.Sleep(10 * time.Minute)
-		d.mu.Lock()
-		delete(d.debugletStores, *debugletID)
-		delete(d.connectedLogs, *debugletID)
-		d.mu.Unlock()
-	}()
-
-	for _, conn := range d.connectedLogs[*debugletID] {
-		close(conn.done)
-	}
 }

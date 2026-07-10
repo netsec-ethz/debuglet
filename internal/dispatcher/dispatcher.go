@@ -34,7 +34,6 @@ type Dispatcher struct {
 	execTimeout  time.Duration
 	ipToExecutor map[string]string
 	keystore     *tag.KeyStore
-	sender       ExecutorServer
 	logger       *zap.Logger
 	Bidi         *rpc.BidiServer
 	mu           sync.RWMutex

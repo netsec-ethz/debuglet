@@ -72,6 +72,12 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 	if err := e.runDebuglet(ctx, spec, deb, outputCh); err != nil {
 		return fmt.Errorf("failed to run debuglet: %w", err)
 	}
+
+	e.Bidi.Client.DebugletExit(ctx, &protocol.DebugletExitRequest{
+		DebugletId: spec.DebugletID,
+		ExitCode:   0,
+	})
+
 	return nil
 }
 

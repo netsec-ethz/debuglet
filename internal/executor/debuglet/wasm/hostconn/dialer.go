@@ -63,10 +63,6 @@ func (hd *HostDialer) DialContext(ctx context.Context, network, address string) 
 	return hd.dialer.DialContext(ctx, network, address)
 }
 
-func (hd *HostDialer) Dial(network, address string) (net.Conn, error) {
-	return hd.dialer.Dial(network, address)
-}
-
 func (hd *HostDialer) AllowedAddrs() []string {
 	allowed := make([]string, 0, len(hd.allowedAddrs))
 	for addr := range hd.allowedAddrs {

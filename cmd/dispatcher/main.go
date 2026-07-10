@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"flag"
 	"fmt"
 	"net/http"
@@ -27,7 +26,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/credentials"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
@@ -47,7 +45,10 @@ func main() {
 	if err != nil {
 		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
-	logCfg := zap.NewProductionConfig()
+	logCfg := zap.NewDevelopmentConfig()
+	if cfg.JSONLogs {
+		logCfg = zap.NewProductionConfig()
+	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
@@ -69,50 +70,6 @@ func main() {
 	if err := g.Wait(); err != nil {
 		logger.Fatal("dispatcher exited with error", zap.Error(err))
 	}
-}
-
-func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
-	// Load the server's certificate and key
-	serverCert, err := tls.LoadX509KeyPair(
-		cfg.TLS.CertFile,
-		cfg.TLS.KeyFile,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAnyClientCert, // 👈 Require cert but skip CA validation
-		// ClientCAs: caCertPool, // optional if you want to enforce CA later
-		MinVersion: tls.VersionTLS13,
-		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-			// Custom verification logic
-			if len(rawCerts) == 0 {
-				return fmt.Errorf("no client certificate provided")
-			}
-			cert, err := x509.ParseCertificate(rawCerts[0])
-			if err != nil {
-				return fmt.Errorf("invalid client certificate: %w", err)
-			}
-
-			// Example: extract Common Name (executor ID)
-			logger.Info("Client connected",
-				zap.String("CN", cert.Subject.CommonName),
-				zap.String("Subject", cert.Subject.String()),
-			)
-
-			// You could check against a known list of executor IDs:
-			// if !isKnownExecutor(cert.Subject.CommonName) {
-			//     return fmt.Errorf("unauthorized executor: %s", cert.Subject.CommonName)
-			// }
-
-			return nil // Allow connection
-		},
-	}
-
-	creds := credentials.NewTLS(tlsConfig)
-	return creds, nil
 }
 
 // startHTTPServer runs the Echo-based HTTP API

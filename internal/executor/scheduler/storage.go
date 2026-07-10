@@ -49,7 +49,8 @@ type RunLock struct {
 func (r *RunLock) Done() <-chan struct{} {
 	r.mu.Lock()
 	if r.done == nil {
-		r.done = new(chan struct{})
+		ch := make(chan struct{})
+		r.done = &ch
 	}
 	r.mu.Unlock()
 	return *r.done
@@ -58,7 +59,8 @@ func (r *RunLock) Done() <-chan struct{} {
 func (r *RunLock) Release() {
 	r.mu.Lock()
 	if r.done == nil {
-		r.done = new(chan struct{})
+		ch := make(chan struct{})
+		r.done = &ch
 	}
 	r.mu.Unlock()
 	r.o.Do(func() {

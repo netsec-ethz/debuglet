@@ -4,7 +4,6 @@ import (
 	"context"
 	pb "debuglet/protocol"
 	"fmt"
-	"log"
 	"net"
 
 	"github.com/hashicorp/yamux"
@@ -92,17 +91,17 @@ func (b *BidiClient) ConnectAndServe(ctx context.Context) error {
 	}
 	b.opts.Logger.Info("Yamux session established", zap.String("address", b.opts.Address), zap.Duration("ping_duration", dur))
 
-	var errRet error
+	errCh := make(chan error, 1)
 	go func() {
 		close(b.ready)
-		errRet = b.grpcServer.Serve(session)
-		if errRet != nil {
+		err := b.grpcServer.Serve(session)
+		if err != nil {
 			b.ready = make(chan struct{})
-			log.Printf("failed to serve gRPC: %v", errRet)
 			session.Close()
 		}
+		errCh <- err
 	}()
 
 	<-session.CloseChan()
-	return errRet
+	return <-errCh
 }
