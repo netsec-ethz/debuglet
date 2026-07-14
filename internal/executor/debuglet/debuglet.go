@@ -77,7 +77,7 @@ func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedul
 		if err != nil {
 			logger.Warn("Failed to get default network interface for eBPF tagging; falling back to pure-Go tagger", zap.Error(err))
 		} else if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
-			// Try to initialize eBPF tagger.
+			logger.Warn("Failed to initialize BPF tagger", zap.Error(err))
 			pktTagger = bt
 		} else {
 			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")

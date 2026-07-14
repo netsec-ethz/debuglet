@@ -96,7 +96,6 @@ func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurement
 		return nil, fmt.Errorf("ebpf: load tagger objects: %w", err)
 	}
 
-	fmt.Printf("ebpf: attempting to attach TCX tagger to %s (index %d)\n", iface.Name, iface.Index)
 	// Attach to TC egress using TCX.
 	l, err := link.AttachTCX(link.TCXOptions{
 		Interface: iface.Index,
@@ -105,11 +104,8 @@ func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurement
 	})
 	if err != nil {
 		objs.Close()
-		fmt.Printf("ebpf: attach TCX to %s failed: %v\n", iface.Name, err)
 		return nil, fmt.Errorf("ebpf: attach TCX: %w", err)
 	}
-
-	fmt.Printf("ebpf: successfully attached tagger to %s via TCX\n", iface.Name)
 
 	mid := make([]byte, len(measurementID))
 	copy(mid, measurementID)

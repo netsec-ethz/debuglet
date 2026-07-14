@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User={{ debuglet_user }}
-Group={{ debuglet_group }}
+User=root
+Group=root
 ExecStart={{ install_prefix }}/bin/debuglet-executor \
     -config {{ config_dir }}/executor/executor.toml
 Restart=on-failure
