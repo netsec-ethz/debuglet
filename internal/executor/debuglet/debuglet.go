@@ -26,8 +26,8 @@ import (
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/wasm"
 	"debuglet/internal/executor/platform"
+	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
-	ratebpf "debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger"
 	"debuglet/internal/executor/tagger/ebpf"
@@ -69,11 +69,11 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc *ratebpf.PacketCount) *Debuglet {
+func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if runtime.GOOS == "linux" {
-		iface, err := ratebpf.GetDefaultInterface()
+		iface, err := ratelimit.GetDefaultInterface()
 		if err != nil {
 			logger.Warn("Failed to get default network interface for eBPF tagging; falling back to pure-Go tagger", zap.Error(err))
 		} else if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {

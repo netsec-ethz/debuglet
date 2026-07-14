@@ -3,8 +3,8 @@ package wasm
 import (
 	"crypto/tls"
 	"debuglet/internal/executor/debuglet/socket"
+	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
-	ratebpf "debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger"
 	"net"
@@ -18,7 +18,7 @@ type WasmEnv struct {
 	Policy     scheduler.Policy
 
 	Limiter      *app.Limiter
-	PacketCount  *ratebpf.PacketCount
+	PacketCount  ratelimit.PacketCount
 	LastReceived net.Addr
 	Logger       *zap.SugaredLogger
 	TlsCfg       *tls.Config

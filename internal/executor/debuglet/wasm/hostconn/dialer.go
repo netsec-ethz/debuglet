@@ -2,7 +2,7 @@ package hostconn
 
 import (
 	"context"
-	"errors"
+	"debuglet/internal/executor/debuglet/socket"
 	"fmt"
 	"net"
 	"net/netip"
@@ -29,20 +29,21 @@ func NewDialer(allowedIPs []string) (*HostDialer, error) {
 	hd := &HostDialer{
 		allowedAddrs: allowed,
 	}
-	hd.dialer = &net.Dialer{Control: hd.control}
+	hd.dialer = &net.Dialer{Control: hd.Control}
 	return hd, nil
 }
 
 func FromDomains(ctx context.Context, allowedAddr []string) (*HostDialer, error) {
-	allowed, err := DomainsToIP6(ctx, allowedAddr)
+	allowed, err := DomainsToIPv6(ctx, allowedAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve allowed addresses: %w", err)
 	}
 	return NewDialer(allowed)
 }
 
-func (hd *HostDialer) control(network, address string, c syscall.RawConn) error {
-	host, err := hostFromAddr(address)
+func (hd *HostDialer) Control(network, address string, c syscall.RawConn) error {
+	// TODO: check if its possible for address to be a domain. This function would fail in that case.
+	host, err := socket.HostFromAddr(address)
 	if err != nil {
 		return err
 	}
@@ -59,10 +60,6 @@ func (hd *HostDialer) control(network, address string, c syscall.RawConn) error 
 	return nil
 }
 
-func (hd *HostDialer) Control(network, address string, c syscall.RawConn) error {
-	return hd.control(network, address, c)
-}
-
 func (hd *HostDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	return hd.dialer.DialContext(ctx, network, address)
 }
@@ -73,17 +70,4 @@ func (hd *HostDialer) AllowedAddrs() []string {
 		allowed = append(allowed, addr.String())
 	}
 	return allowed
-}
-
-func hostFromAddr(addr string) (string, error) {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		var addrErr *net.AddrError
-		if errors.As(err, &addrErr) && addrErr.Err == "missing port in address" {
-			host = addr
-		} else {
-			return "", fmt.Errorf("invalid address format: %w", err)
-		}
-	}
-	return host, nil
 }

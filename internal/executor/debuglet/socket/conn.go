@@ -53,4 +53,4 @@ func (s *GenericSocket) Read(b []byte) (int, error)  { return s.conn.Read(b) }
 func (s *GenericSocket) Write(b []byte) (int, error) { return s.conn.Write(b) }
 func (s *GenericSocket) Close() error                { return s.conn.Close() }
 func (s *GenericSocket) Type() SocketType            { return s.socketType }
-func (s *GenericSocket) Addr() string                { addr, _ := hostFromAddr(s.addr); return addr }
+func (s *GenericSocket) Addr() string                { addr, _ := HostFromAddr(s.addr); return addr }

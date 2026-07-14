@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger/tesla"
 	"debuglet/internal/executor/transport/rpc"
@@ -29,7 +29,7 @@ type Executor struct {
 	running     map[string]RunningDebuglet
 	mu          sync.RWMutex
 	limiter     *app.Limiter
-	packetCount *ebpf.PacketCount
+	packetCount ratelimit.PacketCount
 
 	Bidi *rpc.BidiClient
 }
@@ -43,14 +43,15 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		return nil, fmt.Errorf("failed to create Tesla key schedule: %w", err)
 	}
 
-	iface, err := ebpf.GetDefaultInterface()
+	iface, err := ratelimit.GetDefaultInterface()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get default network interface: %w", err)
 	}
-	pc, pcErr := ebpf.NewCount(iface)
-	if pcErr != nil {
-		l.Warn("Failed to initialize eBPF packet count; egress ratelimiting disabled", zap.Error(pcErr))
+	pc, err := ratelimit.New(iface)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize packet count: %w", err)
 	}
+	l.Info("Initialized packet counter", zap.String("type", pc.Type()))
 
 	limiter := app.NewLimiter(l)
 	limiter.SetExecutorCapacity(app.Gigabit)

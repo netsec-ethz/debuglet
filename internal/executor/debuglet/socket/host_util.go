@@ -6,7 +6,7 @@ import (
 	"net"
 )
 
-func hostFromAddr(addr string) (string, error) {
+func HostFromAddr(addr string) (string, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		var addrErr *net.AddrError
