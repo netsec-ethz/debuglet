@@ -18,8 +18,11 @@ executor_log_level: info
 # When false: capabilities are not set and the systemd unit omits BPF caps.
 executor_enable_bpf: false
 
-# TLS for executor → dispatcher gRPC connection (default: match dispatcher)
-executor_disable_tls: "{{ dispatcher_disable_tls }}"
+# TLS for executor → dispatcher gRPC connection.
+# Executors reach the dispatcher through the nginx reverse proxy on :443, which
+# terminates TLS — so the executor's gRPC client MUST use TLS. Do not couple
+# this to dispatcher_disable_tls (the dispatcher runs cleartext behind nginx).
+executor_disable_tls: false
 
 # TESLA seed (leave empty to auto-generate; set per-host for deterministic keys)
 executor_tesla_seed: ""

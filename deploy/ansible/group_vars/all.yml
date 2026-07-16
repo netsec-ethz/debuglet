@@ -8,16 +8,20 @@
 #   2. Run: make deploy-update-addr
 #      or:  cd deploy/ansible && ansible-playbook update-dispatcher-addr.yml
 
-# Dispatcher endpoint (gRPC) — executors point here
+# Dispatcher endpoint — executors point here. This is a bare hostname (no port):
+# executors reach the nginx reverse proxy over HTTPS, and the gRPC client's dns
+# resolver dials the default port 443.
 dispatcher_addr: "db-dispatch.netsec.ethz.ch"
 
-# Ports on the dispatcher machine
+# Internal ports on the dispatcher machine. The dispatcher listens on these;
+# the nginx reverse proxy forwards to them from :443. They are NOT what
+# executors dial — executors reach nginx over HTTPS on the default port 443.
 dispatcher_grpc_port: 9001
 dispatcher_http_port: 9000
 
-# Set to true when a reverse proxy (e.g. nginx grpc_pass) handles TLS
-# termination in front of the gRPC port. Executors then connect through
-# the proxy on port 443 without specifying a port.
+# The dispatcher runs WITHOUT TLS because nginx terminates it in front of the
+# gRPC port (nginx -> dispatcher is localhost cleartext). Executors, however,
+# must speak TLS to nginx — see executor_disable_tls in executors.yml.
 dispatcher_disable_tls: true
 
 # Dispatcher service defaults
