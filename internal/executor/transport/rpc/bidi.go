@@ -91,14 +91,14 @@ func (b *BidiClient) ConnectAndServe(ctx context.Context) error {
 		conn, err = d.DialContext(ctx, "tcp", b.opts.YamuxAddress)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to connect to dispatcher yamux: %w", err)
 	}
 	defer conn.Close()
 	b.opts.Logger.Info("Connected to dispatcher yamux", zap.String("address", b.opts.YamuxAddress))
 
 	session, err := yamux.Client(conn, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create yamux session: %w", err)
 	}
 	dur, err := session.Ping()
 	if err != nil {
@@ -118,5 +118,8 @@ func (b *BidiClient) ConnectAndServe(ctx context.Context) error {
 	}()
 
 	<-session.CloseChan()
-	return <-errCh
+	if err := <-errCh; err != nil {
+		return fmt.Errorf("grpc server exited with error: %w", err)
+	}
+	return nil
 }

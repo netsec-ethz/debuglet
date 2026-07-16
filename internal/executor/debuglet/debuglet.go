@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"runtime"
 	"sync"
 	"time"
@@ -69,24 +70,19 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount) *Debuglet {
+func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
-	if runtime.GOOS == "linux" {
-		iface, err := ratelimit.GetDefaultInterface()
-		if err != nil {
-			logger.Warn("Failed to get default network interface for eBPF tagging; falling back to pure-Go tagger", zap.Error(err))
-		} else if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
-			logger.Warn("Failed to initialize BPF tagger", zap.Error(err))
+	if iface != nil && runtime.GOOS == "linux" {
+		if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
 			pktTagger = bt
 		} else {
 			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
-			pktTagger = tagger.New(schedule, []byte(debugletID))
 		}
+	}
 
-		if pktTagger == nil {
-		}
-	} else {
+	if pktTagger == nil {
+		logger.Info("Using fallback pure-Go tagger")
 		pktTagger = tagger.New(schedule, []byte(debugletID))
 	}
 

@@ -3,6 +3,7 @@ package hostconn
 import (
 	"context"
 	"debuglet/internal/executor/debuglet/socket"
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"fmt"
 	"net"
 	"net/netip"
@@ -34,7 +35,7 @@ func NewDialer(allowedIPs []string) (*HostDialer, error) {
 }
 
 func FromDomains(ctx context.Context, allowedAddr []string) (*HostDialer, error) {
-	allowed, err := DomainsToIPv6(ctx, allowedAddr)
+	allowed, err := netutil.DomainsToIPv6(ctx, allowedAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve allowed addresses: %w", err)
 	}

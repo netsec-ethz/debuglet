@@ -114,7 +114,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 		return nil, err
 	}
 
-	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter, e.packetCount)
+	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter, e.packetCount, e.iface)
 
 	e.running[spec.DebugletID] = RunningDebuglet{
 		id:        id,

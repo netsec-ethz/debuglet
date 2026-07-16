@@ -29,9 +29,13 @@ type PacketCount interface {
 }
 
 func New(iface *net.Interface) (PacketCount, error) {
-	bpf, err := ebpf.NewBPFCount(iface)
-	if err == nil {
-		return bpf, nil
+	var err error
+	if iface != nil {
+		var bpf *ebpf.BpfCount
+		bpf, err = ebpf.NewBPFCount(iface)
+		if err == nil {
+			return bpf, nil
+		}
 	}
 	fc, err2 := fallback.NewFallbackCount()
 	if err2 != nil {

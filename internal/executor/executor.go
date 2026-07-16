@@ -11,6 +11,7 @@ import (
 	"debuglet/internal/executor/transport/rpc"
 	"debuglet/protocol"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ type Executor struct {
 	mu          sync.RWMutex
 	limiter     *app.Limiter
 	packetCount ratelimit.PacketCount
+	iface       *net.Interface
 
 	Bidi *rpc.BidiClient
 }
@@ -43,9 +45,13 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		return nil, fmt.Errorf("failed to create Tesla key schedule: %w", err)
 	}
 
-	iface, err := ratelimit.GetDefaultInterface()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get default network interface: %w", err)
+	var iface *net.Interface
+	if cfg.NetworkInterface != "" {
+		f, err := net.InterfaceByName(cfg.NetworkInterface)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get '%s' network interface: %w", cfg.NetworkInterface, err)
+		}
+		iface = f
 	}
 	pc, err := ratelimit.New(iface)
 	if err != nil {

@@ -7,13 +7,13 @@ language, plus client libraries (SDKs) that hide the low-level host interface.
 If you are new here, read this page once for the shared model, then jump to the
 guide for your language:
 
-| Language   | Guide                              | SDK / bindings                         | Status |
-|------------|------------------------------------|----------------------------------------|--------|
-| Go         | [go/README.md](go/README.md)             | `pkg/debuglet` (import `debuglet/pkg/debuglet`) | full   |
-| Rust       | [rust/README.md](rust/README.md)         | `debuglet` crate (`rust/debuglet`)     | full   |
-| C          | [c/README.md](c/README.md)               | `c/common/debuglet_api.h`              | full   |
-| JavaScript | [javascript/README.md](javascript/README.md) | — (stdout only, via Javy)         | hello-world only |
-| Python     | [python/README.md](python/README.md)     | — (not currently runnable)             | unsupported |
+| Language   | Guide                                        | SDK / bindings                                  | Status           |
+| ---------- | -------------------------------------------- | ----------------------------------------------- | ---------------- |
+| Go         | [go/README.md](go/README.md)                 | `pkg/debuglet` (import `debuglet/pkg/debuglet`) | full             |
+| Rust       | [rust/README.md](rust/README.md)             | `debuglet` crate (`rust/debuglet`)              | full             |
+| C          | [c/README.md](c/README.md)                   | `c/common/debuglet_api.h`                       | full             |
+| JavaScript | [javascript/README.md](javascript/README.md) | — (stdout only, via Javy)                       | hello-world only |
+| Python     | [python/README.md](python/README.md)         | — (not currently runnable)                      | unsupported      |
 
 Each language ships the same three starter samples — **helloworld**, **ping**,
 and **throughput** — except where the toolchain can't support them (see below).
@@ -44,10 +44,10 @@ SDKs do this pointer math for you.
 Registered functions (see
 `internal/executor/debuglet/debuglet.go` and `.../wasm/host_functions.go`):
 
-| Group   | Functions |
-|---------|-----------|
-| TCP/TLS | `connect_tcp`, `connect_tls`, `accept_tcp`, `send_tcp_data`, `receive_tcp_data`, `close_tcp` |
-| ICMPv4  | `connect_icmp4`, `accept_icmp4`, `send_icmp4_data`, `receive_icmp4_data`, `close_icmp4` |
+| Group   | Functions                                                                                                                                                                               |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TCP/TLS | `connect_tcp`, `connect_tls`, `accept_tcp`, `send_tcp_data`, `receive_tcp_data`, `close_tcp`                                                                                            |
+| ICMPv4  | `connect_icmp4`, `accept_icmp4`, `send_icmp4_data`, `receive_icmp4_data`, `close_icmp4`                                                                                                 |
 | SCION   | `send_scion_udp_packet`, `receive_scion_server_udp_packet`, `answer_scion_udp_packet`, `scion_available_paths`, `scion_path_length`, `scion_get_interface_details`, `scion_select_path` |
 
 ## Building a sample
@@ -64,12 +64,12 @@ make wasm SAMPLE_DIR=local/wasm_samples/javascript/helloworld
 
 Toolchain requirements per language:
 
-| Language | Needs | Override |
-|----------|-------|----------|
-| Go       | Go (built in) | — |
-| Rust     | `rustup target add wasm32-wasip1` | `CARGO=...` |
+| Language | Needs                                                                       | Override                                   |
+| -------- | --------------------------------------------------------------------------- | ------------------------------------------ |
+| Go       | Go (built in)                                                               | —                                          |
+| Rust     | `rustup target add wasm32-wasip1`                                           | `CARGO=...`                                |
 | C        | a `wasm32-wasi` clang ([wasi-sdk](https://github.com/WebAssembly/wasi-sdk)) | `WASI_SDK=/path` or `CLANG=/path/to/clang` |
-| JS       | [`javy`](https://github.com/bytecodealliance/javy) | `JAVY=/path/to/javy` |
+| JS       | [`javy`](https://github.com/bytecodealliance/javy)                          | `JAVY=/path/to/javy`                       |
 
 ## Running a sample
 
@@ -77,10 +77,13 @@ Submit it through the local user client (the executor and dispatcher must be
 running — see the [root README](../../README.md)):
 
 ```sh
-go run ./cmd/user -wasm local/wasm_samples/go/ping/debuglet.wasm -- -addr 1.1.1.1 -iter 5
+# ping
+go run ./cmd/user  -addr 1.1.1.1 -floor 10000 -ceil 10000 -wasm local/wasm_samples/go/ping/debuglet.wasm -- -addr 1.1.1.1 -iter 5
+# send TCP
+go run ./cmd/user -addr 1.1.1.1 -floor 10000 -ceil 10000 -wasm local/wasm_samples/go/send_tcp/debuglet.wasm -- -addr 1.1.1.1:80
 ```
 
-Everything after `--` is forwarded to the debuglet as argv.
+Everything after `--` is forwarded to the debuglet as argv. The `-addr` before are the addresses which are sent along in the policy. View the `./cmd/user/main.go` file for more details about the flags that can be passed along for the policy.
 
 ## Limitations worth knowing
 

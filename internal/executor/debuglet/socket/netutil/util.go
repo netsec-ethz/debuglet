@@ -1,4 +1,4 @@
-package hostconn
+package netutil
 
 import (
 	"context"
@@ -8,6 +8,14 @@ import (
 	"net/netip"
 	"slices"
 )
+
+func AddrToIPv6(addr netip.Addr) netip.Addr {
+	if addr.Is4() {
+		ip4 := addr.As4()
+		return netip.AddrFrom16([16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, ip4[0], ip4[1], ip4[2], ip4[3]})
+	}
+	return addr
+}
 
 func DomainToIPv6(ctx context.Context, rawAddr string) ([]string, error) {
 	addr, err := netip.ParseAddr(rawAddr)

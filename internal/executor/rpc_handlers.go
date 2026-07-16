@@ -2,7 +2,7 @@ package executor
 
 import (
 	"context"
-	"debuglet/internal/executor/debuglet/wasm/hostconn"
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
 	pb "debuglet/protocol"
@@ -83,7 +83,7 @@ func (e *Executor) OnBandwidth(ctx context.Context, req *pb.BandwidthRequest) (*
 	// convert the bandwidth updates which are a mix of IPs and domains into a list of IPv6s to be inserted into ebpf
 	var ipUpdates []Update
 	for _, up := range req.GetLimits() {
-		ips, err := hostconn.DomainsToIPv6(ctx, []string{up.Address})
+		ips, err := netutil.DomainsToIPv6(ctx, []string{up.Address})
 		if err != nil {
 			e.logger.Error("Failed to resolve address", zap.String("address", up.Address), zap.Error(err))
 			continue

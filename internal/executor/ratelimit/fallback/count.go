@@ -2,6 +2,7 @@ package fallback
 
 import (
 	"debuglet/internal/executor/debuglet/socket"
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"fmt"
 	"net"
@@ -51,6 +52,7 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid address: %w", err)
 	}
+	addr = netutil.AddrToIPv6(addr)
 	fc := &FallbackConn{conn: conn,
 		count: f,
 		id:    id,

@@ -1,16 +1,6 @@
 // throughput — TCP throughput sender, written with the Debuglet Go SDK.
 //
-// Connects to `-addr` and sends fixed-size chunks for `-secs` seconds, then
-// reports the achieved throughput in Mbps. Pair it with any TCP sink (e.g. an
-// iperf server, or `nc -l -k <port> >/dev/null`).
-//
-// Build:
-//
-//	make wasm SAMPLE_DIR=local/wasm_samples/go/throughput
-//
-// Run:
-//
-//	go run ./cmd/user -wasm local/wasm_samples/go/throughput/debuglet.wasm -- -addr 127.0.0.1:5201 -secs 5
+// Read the respective README.md for more information on how to use this sample.
 package main
 
 import (
@@ -27,6 +17,25 @@ var (
 	secs  = flag.Int("secs", 5, "duration to send for, in seconds")
 	chunk = flag.Int("chunk", 4096, "send buffer size in bytes")
 )
+
+type Bitrate uint64
+
+func (b Bitrate) Bytes() uint64 { return (uint64(b) + 7) / 8 }
+func FromBytes(b int64) Bitrate { return Bitrate(b * 8) }
+
+func (b Bitrate) String() string {
+	bytes := b.Bytes()
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1fGiB", float64(bytes)/float64(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1fMiB", float64(bytes)/float64(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1fKiB", float64(bytes)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB", uint64(bytes))
+	}
+}
 
 func main() {
 	flag.CommandLine.Parse(os.Args)
@@ -47,6 +56,7 @@ func main() {
 
 	deadline := time.Now().Add(time.Duration(*secs) * time.Second)
 	var sent int64
+	start := time.Now()
 	for time.Now().Before(deadline) {
 		if err := conn.Send(buf); err != nil {
 			fmt.Printf("[-] send failed after %d bytes: %v\n", sent, err)
@@ -55,7 +65,5 @@ func main() {
 		sent += int64(len(buf))
 	}
 
-	elapsed := float64(*secs)
-	mbps := float64(sent) * 8.0 / (elapsed * 1e6)
-	fmt.Printf("[+] sent %d bytes in %.0fs (%.2f Mbps)\n", sent, elapsed, mbps)
+	fmt.Printf("[+] sent %s in %s (%s/s)\n", FromBytes(sent), time.Since(start).Round(time.Millisecond), FromBytes(sent/int64(*secs)))
 }

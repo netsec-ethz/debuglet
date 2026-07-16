@@ -15,6 +15,7 @@
 package config
 
 import (
+	"debuglet/internal/executor/ratelimit"
 	"fmt"
 	"os"
 
@@ -23,18 +24,19 @@ import (
 
 // Config represents the structure of executor.toml
 type Config struct {
-	ExecutorID           string           `toml:"executor_id"`
-	Version              string           `toml:"version"`
-	DispatcherAddr       string           `toml:"dispatcher_addr"`
-	DispatcherYamuxAddr  string           `toml:"dispatcher_yamux_addr"`
-	LogLevel             string           `toml:"log_level"`
-	Capacity             int64            `toml:"capacity"`
-	TeslaSeed            string           `toml:"tesla_seed"`
-	TeslaDelay           int64            `toml:"tesla_delay"` // in seconds
-	MaxDebuglets         int              `toml:"max_debuglets"`
-	Credentials          CredentialConfig `toml:"credentials"`
-	DisableTLS           bool             `toml:"disable_tls"`
-	JSONLogs             bool             `toml:"json_logs"`
+	ExecutorID          string           `toml:"executor_id"`
+	Version             string           `toml:"version"`
+	DispatcherAddr      string           `toml:"dispatcher_addr"`
+	DispatcherYamuxAddr string           `toml:"dispatcher_yamux_addr"`
+	LogLevel            string           `toml:"log_level"`
+	Capacity            int64            `toml:"capacity"`
+	TeslaSeed           string           `toml:"tesla_seed"`
+	TeslaDelay          int64            `toml:"tesla_delay"` // in seconds
+	MaxDebuglets        int              `toml:"max_debuglets"`
+	Credentials         CredentialConfig `toml:"credentials"`
+	DisableTLS          bool             `toml:"disable_tls"`
+	JSONLogs            bool             `toml:"json_logs"`
+	NetworkInterface    string           `toml:"network_interface"`
 }
 
 type CredentialConfig struct {
@@ -84,6 +86,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.DispatcherYamuxAddr == "" {
 		cfg.DispatcherYamuxAddr = cfg.DispatcherAddr
+	}
+	if cfg.NetworkInterface == "" {
+		iface, err := ratelimit.GetDefaultInterface()
+		if err == nil {
+			cfg.NetworkInterface = iface.Name
+		}
 	}
 
 	return &cfg, nil
