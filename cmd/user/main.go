@@ -21,7 +21,7 @@ var (
 	abort             = flag.Bool("abort", false, "if measurements should be aborted after they're submitted")
 	delay             = flag.Duration("delay", 0, "the delay after which to start debuglets")
 	executor          = flag.String("executor", "local-executor", "the executor to connect to")
-	floorBW           = flag.Int64("floor", 1024, "Floor bandwidth (in bits) to request in the policy")
+	floorBW           = flag.Int64("floor", 0, "Floor bandwidth (in bits) to request in the policy. Defaults to ceil.")
 	ceilBW            = flag.Int64("ceil", 4096, "Ceiling bandwidth (in bits) to request in the policy")
 )
 
@@ -37,6 +37,9 @@ func main() {
 	// collects arguments after `--`
 	passthroughArgs := flag.Args()
 
+	if *floorBW == 0 {
+		floorBW = ceilBW
+	}
 	var (
 		runningDebuglets   []string
 		runningDebugletsMu sync.Mutex

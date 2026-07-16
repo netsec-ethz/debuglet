@@ -7,14 +7,12 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"time"
 
 	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
 
 	"github.com/google/uuid"
-	"golang.org/x/sys/unix"
 )
 
 type HostConn struct {
@@ -72,42 +70,6 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 	}
 
 	return hc, nil
-}
-
-func (h *HostConn) Drain(ctx context.Context) {
-	tcpConn, ok := h.conn.(*net.TCPConn)
-	if !ok {
-		return
-	}
-	rawConn, err := tcpConn.SyscallConn()
-	if err != nil {
-		return
-	}
-	for {
-		var (
-			info *unix.TCPInfo
-			err  error
-		)
-		rawConn.Control(func(fd uintptr) {
-			info, err = unix.GetsockoptTCPInfo(int(fd), unix.IPPROTO_TCP, unix.TCP_INFO)
-		})
-
-		if err != nil || info == nil || info.Notsent_bytes == 0 {
-			return
-		}
-
-		estDuration := 200 * time.Millisecond
-		if h.limit > 0 {
-			estDuration = time.Duration(float64(info.Notsent_bytes) / float64(h.limit) * float64(time.Second))
-		}
-		waitFor := max(min(time.Second, estDuration/2), 10*time.Millisecond)
-
-		select {
-		case <-time.After(waitFor):
-		case <-ctx.Done():
-			return
-		}
-	}
 }
 
 func (h *HostConn) Close() error {

@@ -17,6 +17,7 @@ package config
 import (
 	"debuglet/internal/executor/ratelimit"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/pelletier/go-toml/v2"
@@ -91,6 +92,8 @@ func LoadConfig(path string) (*Config, error) {
 		iface, err := ratelimit.GetDefaultInterface()
 		if err == nil {
 			cfg.NetworkInterface = iface.Name
+		} else {
+			log.Printf("Warning: could not determine default network interface: %v", err)
 		}
 	}
 

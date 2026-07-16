@@ -17,8 +17,9 @@ import (
 
 // BpfCount employs ratelimiting using an EBPF layer. It requires root priviliges to work.
 type BpfCount struct {
-	objs   countObjects
-	egress link.Link
+	objs    countObjects
+	egress  link.Link
+	ingress link.Link
 }
 
 func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
@@ -37,14 +38,27 @@ func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
 		return nil, fmt.Errorf("failed to attach egress TCX: %w", err)
 	}
 
+	ingr, err := link.AttachTCX(link.TCXOptions{
+		Program:   objs.HandleIngress,
+		Interface: iface.Index,
+		Attach:    ebpf.AttachTCXIngress,
+	})
+	if err != nil {
+		egr.Close()
+		objs.Close()
+		return nil, fmt.Errorf("failed to attach ingress TCX: %w", err)
+	}
+
 	return &BpfCount{
-		objs:   objs,
-		egress: egr,
+		objs:    objs,
+		egress:  egr,
+		ingress: ingr,
 	}, nil
 }
 
 func (bc *BpfCount) Close() error {
 	bc.egress.Close()
+	bc.ingress.Close()
 	bc.objs.Close()
 	return nil
 }
