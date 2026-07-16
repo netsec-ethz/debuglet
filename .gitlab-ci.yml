@@ -6,7 +6,7 @@ build:
   stage: build
   image: ubuntu:latest
   before_script:
-    - apt-get update && apt-get install -y curl make
+    - apt-get update && apt-get install -y curl make llvm clang
     - ./deploy/bin/mise install
   script:
     - ./deploy/bin/mise x -- make all

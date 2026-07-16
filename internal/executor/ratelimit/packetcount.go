@@ -10,6 +10,7 @@ import (
 	"net/netip"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type PacketCount interface {
@@ -28,13 +29,15 @@ type PacketCount interface {
 	Type() string
 }
 
-func New(iface *net.Interface) (PacketCount, error) {
+func New(iface *net.Interface, logger *zap.Logger) (PacketCount, error) {
 	var err error
 	if iface != nil {
 		var bpf *ebpf.BpfCount
 		bpf, err = ebpf.NewBPFCount(iface)
 		if err == nil {
 			return bpf, nil
+		} else {
+			logger.Warn("Failed to initialize eBPF packet count, falling back to fallback packet count", zap.Error(err))
 		}
 	}
 	fc, err2 := fallback.NewFallbackCount()

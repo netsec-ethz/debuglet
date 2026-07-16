@@ -92,6 +92,7 @@ func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Du
 			TeslaAnchorTimestamp: teslaAnchor,
 			TeslaAnchorKey:       anchorKey,
 			history:              &debugletHistory{},
+			LastSeen:             time.Now(),
 		}
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))

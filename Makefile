@@ -34,6 +34,7 @@ deps:
 # Build local binaries
 # --------------------------------------------------------------------
 build-exec:
+	$(GO) generate ./...
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
 
 build-disp:

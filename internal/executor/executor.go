@@ -46,6 +46,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 	}
 
 	var iface *net.Interface
+	l.Debug("Network interface for packet counting", zap.String("interface", cfg.NetworkInterface))
 	if cfg.NetworkInterface != "" {
 		f, err := net.InterfaceByName(cfg.NetworkInterface)
 		if err != nil {
@@ -53,7 +54,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		}
 		iface = f
 	}
-	pc, err := ratelimit.New(iface)
+	pc, err := ratelimit.New(iface, l)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize packet count: %w", err)
 	}

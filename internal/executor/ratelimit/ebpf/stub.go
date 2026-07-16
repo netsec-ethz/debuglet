@@ -3,38 +3,23 @@
 package ebpf
 
 import (
+	"debuglet/internal/executor/ratelimit/app"
 	"errors"
-	"fmt"
+	"net"
 	"net/netip"
-	"syscall"
 
 	"github.com/google/uuid"
 )
 
-type PacketCount struct{}
+var ErrNotAvailable = errors.New("ebpf: not available on this platform")
 
-func NewCount(ifaceName string) (*PacketCount, error) {
-	return nil, fmt.Errorf("ebpf: eBPF ratelimiting is only available on Linux")
-}
+type BpfCount struct{}
 
-func (pc *PacketCount) Close() {}
-
-func (pc *PacketCount) Attach(conn syscall.Conn, id uuid.UUID) (uint32, error) {
-	return 0, errors.New("ebpf: not available on this platform")
-}
-
-func (pc *PacketCount) Detach(socketID uint32) error {
-	return nil
-}
-
-func (pc *PacketCount) SetLimit(addr netip.Addr, id uuid.UUID, limit uint64) error {
-	return errors.New("ebpf: not available on this platform")
-}
-
-func (pc *PacketCount) SetExecLimit(id uuid.UUID, limit uint64) error {
-	return errors.New("ebpf: not available on this platform")
-}
-
-func (pc *PacketCount) DeleteLimit(addr netip.Addr, id uuid.UUID) error {
-	return nil
-}
+func NewBPFCount(*net.Interface) (*BpfCount, error)                 { return nil, ErrNotAvailable }
+func (*BpfCount) Close() error                                      { return ErrNotAvailable }
+func (*BpfCount) Attach(net.Conn, uuid.UUID) (net.Conn, error)      { return nil, ErrNotAvailable }
+func (*BpfCount) SetLimit(netip.Addr, uuid.UUID, app.Bitrate) error { return ErrNotAvailable }
+func (*BpfCount) DeleteLimit(netip.Addr, uuid.UUID) error           { return ErrNotAvailable }
+func (*BpfCount) SetExecLimit(uuid.UUID, app.Bitrate) error         { return ErrNotAvailable }
+func (*BpfCount) DeleteExecLimit(uuid.UUID) error                   { return ErrNotAvailable }
+func (*BpfCount) Type() string                                      { return "ebpf" }

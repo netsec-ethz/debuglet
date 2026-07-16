@@ -17,6 +17,7 @@
 package ebpf
 
 import (
+	"net"
 	"testing"
 	"time"
 
@@ -34,7 +35,8 @@ func TestNewBPFTaggerUnavailable(t *testing.T) {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}
 
-	_, err = NewBPFTagger("lo", ks, []byte("test-measurement"))
+	iface, err := net.InterfaceByName("lo")
+	_, err = NewBPFTagger(iface, ks, []byte("test-measurement"))
 	if err == nil {
 		t.Error("expected error from NewBPFTagger on non-Linux, got nil")
 	}

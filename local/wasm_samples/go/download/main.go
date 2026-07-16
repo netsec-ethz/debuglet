@@ -1,11 +1,19 @@
+// Downloads a file from the target while indicating the download speed.
+// Requires http-compatible endpoint.
+//
+// go run ./cmd/user -addr ash-speed.hetzner.com -ceil 1000000 -wasm local/wasm_samples/go/download/debuglet.wasm -- -target http://ash-speed.hetzner.com/100MB.bin
+
 package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -20,6 +28,10 @@ func receive_tcp_data(sockID int32, bufPtr uint32, bufLen uint32) int32
 
 //go:wasmimport env send_tcp_data
 func send_tcp_data(sockID int32, bufPtr, bufLen uint32)
+
+var (
+	target = flag.String("target", "http://ash-speed.hetzner.com/100MB.bin", "http path to download from")
+)
 
 type WasmReader struct {
 	sockID    int32
@@ -43,14 +55,45 @@ func (w *WasmReader) BytesRead() int64 {
 	return w.bytesRead.Load()
 }
 
-func main() {
-	path := "/100MB.bin"
-	host := "ash-speed.hetzner.com"
-	addr := fmt.Sprintf("%s:80", host)
-	addrp := uint32(uintptr(unsafe.Pointer(unsafe.StringData(addr))))
-	sockID := connect_tcp(addrp, uint32(len(addr)))
+type Bitrate uint64
 
-	msg := fmt.Appendf([]byte{}, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: nc/0.0.1\r\nAccept: */*\r\n\r\n", path, host)
+func (b Bitrate) Bytes() uint64 { return (uint64(b) + 7) / 8 }
+func FromBytes(b int64) Bitrate { return Bitrate(b * 8) }
+
+func (b Bitrate) String() string {
+	bytes := b.Bytes()
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1fGiB", float64(bytes)/float64(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1fMiB", float64(bytes)/float64(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1fKiB", float64(bytes)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB", uint64(bytes))
+	}
+}
+
+func main() {
+	flag.CommandLine.Parse(os.Args)
+	u, err := url.Parse(*target)
+	if err != nil {
+		log.Fatalf("Failed to parse URL: %v", err)
+	}
+	host := u.Host
+	if u.Port() == "" {
+		if u.Scheme == "https" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+
+	fmt.Printf("[*] downloading: %s\n", *target)
+	addrp := uint32(uintptr(unsafe.Pointer(unsafe.StringData(host))))
+	sockID := connect_tcp(addrp, uint32(len(host)))
+
+	msg := fmt.Appendf([]byte{}, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: nc/0.0.1\r\nAccept: */*\r\n\r\n", u.Path, host)
 	msgp := uint32(uintptr(unsafe.Pointer(&msg[0])))
 	send_tcp_data(sockID, msgp, uint32(len(msg)))
 
@@ -58,6 +101,7 @@ func main() {
 	reader := bufio.NewReader(wasmReader)
 
 	done := make(chan struct{})
+	var contentLength int64
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -70,7 +114,12 @@ func main() {
 				speed := currentBytes - lastBytes
 				lastBytes = currentBytes
 
-				fmt.Printf("Current Speed: %.2f MB/s\n", float64(speed)/(1024*1024))
+				fmt.Printf("Current Speed: %s/s", FromBytes(speed))
+				if contentLength > 0 {
+					percentage := float64(currentBytes) / float64(contentLength) * 100
+					fmt.Printf(" (%.2f%%)", percentage)
+				}
+				fmt.Println()
 			case <-done:
 				return
 			}
@@ -85,6 +134,7 @@ func main() {
 	}
 	defer resp.Body.Close()
 
+	contentLength = resp.ContentLength
 	body, err := io.ReadAll(resp.Body)
 	close(done)
 	if err != nil {
@@ -95,6 +145,6 @@ func main() {
 	fmt.Printf("Status: %s\n", resp.Status)
 	fmt.Printf("Body length: %d\n", len(body))
 	fmt.Printf("Time passed: %s\n", since.Round(time.Second))
-	fmt.Printf("Average speed: %.2f MB/s", float64(len(body))/since.Seconds()/(1024*1024))
+	fmt.Printf("Average speed: %s/s", FromBytes(int64(float64(len(body))/since.Seconds())))
 
 }

@@ -82,7 +82,8 @@ type countSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type countProgramSpecs struct {
-	HandleEgress *ebpf.ProgramSpec `ebpf:"handle_egress"`
+	HandleEgress  *ebpf.ProgramSpec `ebpf:"handle_egress"`
+	HandleIngress *ebpf.ProgramSpec `ebpf:"handle_ingress"`
 }
 
 // countMapSpecs contains maps before they are loaded into the kernel.
@@ -149,12 +150,14 @@ type countVariables struct {
 //
 // It can be passed to loadCountObjects or ebpf.CollectionSpec.LoadAndAssign.
 type countPrograms struct {
-	HandleEgress *ebpf.Program `ebpf:"handle_egress"`
+	HandleEgress  *ebpf.Program `ebpf:"handle_egress"`
+	HandleIngress *ebpf.Program `ebpf:"handle_ingress"`
 }
 
 func (p *countPrograms) Close() error {
 	return _CountClose(
 		p.HandleEgress,
+		p.HandleIngress,
 	)
 }
 
