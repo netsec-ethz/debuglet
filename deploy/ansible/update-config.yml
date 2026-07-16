@@ -1,0 +1,52 @@
+---
+# Re-render dispatcher + executor configs from the templates and restart the
+# services where the config changed. No binaries are rebuilt or redeployed.
+#
+# Use this to push a config-only change (version, dispatcher address, log level,
+# ports, TLS flags, capacity, …) to running services.
+#
+# Usage:
+#   cd deploy/ansible && ansible-playbook -i hosts.yml update-config.yml
+#
+#   Stamp a version (overrides the "unknown" default) without editing files:
+#     ansible-playbook -i hosts.yml update-config.yml \
+#         -e "deploy_version=$(git rev-parse --short HEAD)"
+#
+#   Limit to some hosts:
+#     ansible-playbook -i hosts.yml update-config.yml --limit kisti-hk
+
+- name: Update dispatcher config
+  hosts: dispatcher
+  become: true
+  tasks:
+    - name: Regenerate dispatcher config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/roles/dispatcher/templates/dispatcher.toml.j2"
+        dest: "{{ config_dir }}/dispatcher/dispatcher.toml"
+        owner: "{{ debuglet_user }}"
+        mode: "0640"
+      register: dispatcher_config
+
+    - name: Restart dispatcher if config changed
+      ansible.builtin.systemd:
+        name: debuglet-dispatcher
+        state: restarted
+      when: dispatcher_config.changed
+
+- name: Update executor config
+  hosts: executors
+  become: true
+  tasks:
+    - name: Regenerate executor config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"
+        dest: "{{ config_dir }}/executor/executor.toml"
+        owner: "{{ debuglet_user }}"
+        mode: "0640"
+      register: executor_config
+
+    - name: Restart executor if config changed
+      ansible.builtin.systemd:
+        name: debuglet-executor
+        state: restarted
+      when: executor_config.changed

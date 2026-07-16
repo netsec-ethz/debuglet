@@ -20,7 +20,7 @@ CARGO       ?= cargo
 JAVY        ?= javy
 RUST_TARGET ?= wasm32-wasip1
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr bootstrap-sudo
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config bootstrap-sudo
 
 all: deps build
 
@@ -183,6 +183,15 @@ deploy-executors: deploy-build
 deploy-update-addr:
 	cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
+
+# Re-render dispatcher + executor configs and restart changed services (no
+# binary redeploy). DEPLOY_VERSION defaults to the current git short SHA.
+# Example: make deploy-update-config
+#          make deploy-update-config DEPLOY_VERSION=v1.2.3
+DEPLOY_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+deploy-update-config:
+	cd deploy/ansible && ansible-playbook -i hosts.yml update-config.yml \
+		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
 
 # --------------------------------------------------------------------
 # Clean local build artifacts
