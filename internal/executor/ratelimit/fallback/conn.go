@@ -46,18 +46,28 @@ func (f *FallbackConn) SetWriteDeadline(t time.Time) error {
 	return f.conn.SetWriteDeadline(t)
 }
 
-// TODO: Read is equivalent to ingress in this case. Only add ratelimit once the EBPF part also
-// supports ingress to match the implementation.
-func (f *FallbackConn) Read(b []byte) (n int, err error) { return f.conn.Read(b) }
+func (f *FallbackConn) Read(b []byte) (n int, err error) {
+	return f.ratelimit(b, f.conn.Read, false)
+}
 
 func (f *FallbackConn) Write(b []byte) (int, error) {
+	return f.ratelimit(b, f.conn.Write, true)
+}
+
+func (f *FallbackConn) Close() error {
+	f.once.Do(func() {
+		close(f.close)
+	})
+	return f.conn.Close()
+}
+
+func (f *FallbackConn) ratelimit(b []byte, rw func([]byte) (int, error), write bool) (int, error) {
 	// Connection lock is held even while being ratelimited and sleeping
 	// to ensure concurrent writes are handled in the correct order.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	var n int
-
 	for len(b) > 0 {
 		r, err := f.reserve(len(b))
 		if err != nil {
@@ -69,8 +79,10 @@ func (f *FallbackConn) Write(b []byte) (int, error) {
 			if !f.deadline.IsZero() {
 				dCh = time.After(time.Until(f.deadline))
 			}
-			if !f.writeDeadline.IsZero() {
+			if write && !f.writeDeadline.IsZero() {
 				wdCh = time.After(time.Until(f.writeDeadline))
+			} else if !write && !f.readDeadline.IsZero() {
+				wdCh = time.After(time.Until(f.readDeadline))
 			}
 
 			sleep := time.NewTimer(r.waitFor)
@@ -92,21 +104,15 @@ func (f *FallbackConn) Write(b []byte) (int, error) {
 			sleep.Stop()
 		}
 
-		nn, err := f.conn.Write(b[:r.allocated])
+		nn, err := rw(b[:r.allocated])
 		n += nn
 		if err != nil {
 			return n, err
 		}
 		b = b[nn:]
 	}
-	return n, nil
-}
 
-func (f *FallbackConn) Close() error {
-	f.once.Do(func() {
-		close(f.close)
-	})
-	return f.conn.Close()
+	return n, nil
 }
 
 type reservation struct {

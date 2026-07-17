@@ -37,7 +37,7 @@ func New(iface *net.Interface, logger *zap.Logger) (PacketCount, error) {
 		if err == nil {
 			return bpf, nil
 		} else {
-			logger.Warn("Failed to initialize eBPF packet count, falling back to fallback packet count", zap.Error(err))
+			logger.Warn("Failed to initialize eBPF packet count (possible permission issues), falling back to fallback packet count", zap.Error(err))
 		}
 	}
 	fc, err2 := fallback.NewFallbackCount()
