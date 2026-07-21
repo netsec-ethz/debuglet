@@ -2,7 +2,6 @@ package hostconn
 
 import (
 	"context"
-	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/socket/netutil"
 	"fmt"
 	"net"
@@ -12,24 +11,21 @@ import (
 
 type HostDialer struct {
 	dialer       *net.Dialer
-	allowedAddrs map[netip.Addr]struct{}
+	allowedIPv6s map[netutil.IPv6]struct{}
+	ipv6         netutil.IPv6
 }
 
 func NewDialer(allowedIPs []string) (*HostDialer, error) {
-	allowed := make(map[netip.Addr]struct{})
+	allowed := make(map[netutil.IPv6]struct{})
 	for _, ip := range allowedIPs {
 		addr, err := netip.ParseAddr(ip)
 		if err != nil {
 			return nil, fmt.Errorf("invalid ip %q: %w", ip, err)
 		}
-		// Ensure the address is in 16-byte format for consistency
-		addr = netip.AddrFrom16(addr.As16())
-		allowed[addr] = struct{}{}
+		allowed[netutil.ToIPv6(addr)] = struct{}{}
 	}
 
-	hd := &HostDialer{
-		allowedAddrs: allowed,
-	}
+	hd := &HostDialer{allowedIPv6s: allowed}
 	hd.dialer = &net.Dialer{Control: hd.Control}
 	return hd, nil
 }
@@ -43,8 +39,7 @@ func FromDomains(ctx context.Context, allowedAddr []string) (*HostDialer, error)
 }
 
 func (hd *HostDialer) Control(network, address string, c syscall.RawConn) error {
-	// TODO: check if its possible for address to be a domain. This function would fail in that case.
-	host, err := socket.HostFromAddr(address)
+	host, err := netutil.HostFromAddr(address)
 	if err != nil {
 		return err
 	}
@@ -52,10 +47,8 @@ func (hd *HostDialer) Control(network, address string, c syscall.RawConn) error 
 	if err != nil {
 		return fmt.Errorf("failed to parse resolved IP: %w", err)
 	}
-	// Ensure the address is in 16-byte format for consistency
-	addr = netip.AddrFrom16(addr.As16())
-
-	if _, allowed := hd.allowedAddrs[addr]; !allowed {
+	hd.ipv6 = netutil.ToIPv6(addr)
+	if _, allowed := hd.allowedIPv6s[hd.ipv6]; !allowed {
 		return fmt.Errorf("connection to IP %s is not whitelisted", addr)
 	}
 	return nil
@@ -66,8 +59,8 @@ func (hd *HostDialer) DialContext(ctx context.Context, network, address string) 
 }
 
 func (hd *HostDialer) AllowedAddrs() []string {
-	allowed := make([]string, 0, len(hd.allowedAddrs))
-	for addr := range hd.allowedAddrs {
+	allowed := make([]string, 0, len(hd.allowedIPv6s))
+	for addr := range hd.allowedIPv6s {
 		allowed = append(allowed, addr.String())
 	}
 	return allowed

@@ -133,7 +133,6 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			AllowedAddresses: dialer.AllowedAddrs(),
 			MaximumBandwidth: min(limit.Executor, limit.Address),
 			SocketType:       socketType,
-			ConnectionAddr:   connectionAddr,
 		}
 		hc, err := hostconn.NewConnection(ctx, env.PacketCount, debugletUUID, conn, opts)
 		if err != nil {

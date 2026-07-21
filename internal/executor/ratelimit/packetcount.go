@@ -1,13 +1,13 @@
 package ratelimit
 
 import (
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/ratelimit/ebpf"
 	"debuglet/internal/executor/ratelimit/fallback"
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -18,11 +18,11 @@ type PacketCount interface {
 	// It is important to call [net.Conn.Close] on the received connection once done to ensure correct cleanup for ratelimiting.
 	Attach(conn net.Conn, id uuid.UUID) (net.Conn, error)
 	// SetLimit sets a bitrate limit for a specific IP address and debuglet ID.
-	SetLimit(addr netip.Addr, id uuid.UUID, limit app.Bitrate) error
+	SetLimit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error
 	// SetExecLimit sets a bitrate limit for all traffic associated with the given debuglet ID.
 	SetExecLimit(id uuid.UUID, limit app.Bitrate) error
 	// DeleteLimit removes the bitrate limit for a specific IP address and debuglet ID.
-	DeleteLimit(addr netip.Addr, id uuid.UUID) error
+	DeleteLimit(addr netutil.IPv6, id uuid.UUID) error
 	// DeleteLimit removes the bitrate limit for all traffic associated with the given debuglet ID.
 	DeleteExecLimit(id uuid.UUID) error
 	Close() error

@@ -1,11 +1,11 @@
 package fallback
 
 import (
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"os"
 	"sync"
 	"time"
@@ -22,7 +22,7 @@ type FallbackConn struct {
 	count *FallbackCount
 	id    uuid.UUID
 	mu    *FIFOLock // Ensures FIFO for the write operation
-	addr  netip.Addr
+	ipv6  netutil.IPv6
 	close chan struct{}
 
 	deadline      time.Time
@@ -129,15 +129,15 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 	// don't have to constantly lock and access the maps again
 	f.count.mu.Lock()
 	defer f.count.mu.Unlock()
-	key := debugletKey{id: f.id, dest: f.addr}
+	key := debugletKey{id: f.id, dest: f.ipv6}
 
 	rate, ok := f.count.rates[key]
 	if !ok {
-		return nil, fmt.Errorf("no dest rate allowed for addr '%s'", f.addr.String())
+		return nil, fmt.Errorf("no dest rate allowed for addr '%s'", f.ipv6.String())
 	}
 	execRate, ok := f.count.execRates[f.id]
 	if !ok {
-		return nil, fmt.Errorf("no exec rate allowed for addr '%s'", f.addr.String())
+		return nil, fmt.Errorf("no exec rate allowed for addr '%s'", f.ipv6.String())
 	}
 
 	maxWrite := min(rate, execRate).Bytes()
@@ -196,7 +196,7 @@ func (r *reservation) free() {
 	r.conn.count.mu.Lock()
 	defer r.conn.count.mu.Unlock()
 
-	key := debugletKey{id: r.conn.id, dest: r.conn.addr}
+	key := debugletKey{id: r.conn.id, dest: r.conn.ipv6}
 	rate, ok := r.conn.count.rates[key]
 	if !ok {
 		return
