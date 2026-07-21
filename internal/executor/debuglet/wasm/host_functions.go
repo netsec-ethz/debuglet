@@ -122,15 +122,15 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			panic(fmt.Errorf("connect: invalid debuglet UUID"))
 		}
 
-		connectionAddr := stripPort(addr)
-		limit, err := env.Limiter.GetLimit(env.DebugletID, connectionAddr)
+		connAddr := stripPort(addr)
+		limit, err := env.Limiter.GetLimit(env.DebugletID, connAddr)
 		if err != nil {
-			env.Logger.Warnw("hostConnect: failed to get limit", "addr", connectionAddr, "err", err)
+			env.Logger.Warnw("hostConnect: failed to get limit", "addr", connAddr, "err", err)
 			panic(fmt.Errorf("connect: %w", err))
 		}
 
 		opts := hostconn.HostConnOpts{
-			AllowedAddresses: dialer.AllowedAddrs(),
+			ConnAddr:         connAddr,
 			MaximumBandwidth: min(limit.Executor, limit.Address),
 			SocketType:       socketType,
 		}

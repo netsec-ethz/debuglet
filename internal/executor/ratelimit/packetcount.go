@@ -16,15 +16,20 @@ import (
 type PacketCount interface {
 	// Attach associates a connection with the given ID for packet counting, returning an updated ratelimited connection.
 	// It is important to call [net.Conn.Close] on the received connection once done to ensure correct cleanup for ratelimiting.
-	Attach(conn net.Conn, id uuid.UUID) (net.Conn, error)
-	// SetLimit sets a bitrate limit for a specific IP address and debuglet ID.
-	SetLimit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error
+	// addr is the raw address string (IP or domain) used in the original policy.
+	Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, error)
+	// SetLimit sets a bitrate limit for a specific address (IP or domain) and debuglet ID.
+	// If addr is a plain IP, the limit is set directly. If addr is a domain, the limit is applied to all
+	// currently tracked IPs for that (domain, id) pair.
+	SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error
 	// SetExecLimit sets a bitrate limit for all traffic associated with the given debuglet ID.
 	SetExecLimit(id uuid.UUID, limit app.Bitrate) error
 	// DeleteLimit removes the bitrate limit for a specific IP address and debuglet ID.
 	DeleteLimit(addr netutil.IPv6, id uuid.UUID) error
 	// DeleteLimit removes the bitrate limit for all traffic associated with the given debuglet ID.
 	DeleteExecLimit(id uuid.UUID) error
+	// Detach removes the domain→IP association for a connection that was previously attached.
+	Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error
 	Close() error
 	Type() string
 }

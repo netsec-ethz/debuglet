@@ -12,7 +12,6 @@ import (
 type HostDialer struct {
 	dialer       *net.Dialer
 	allowedIPv6s map[netutil.IPv6]struct{}
-	ipv6         netutil.IPv6
 }
 
 func NewDialer(allowedIPs []string) (*HostDialer, error) {
@@ -47,8 +46,8 @@ func (hd *HostDialer) Control(network, address string, c syscall.RawConn) error 
 	if err != nil {
 		return fmt.Errorf("failed to parse resolved IP: %w", err)
 	}
-	hd.ipv6 = netutil.ToIPv6(addr)
-	if _, allowed := hd.allowedIPv6s[hd.ipv6]; !allowed {
+	ipv6 := netutil.ToIPv6(addr)
+	if _, allowed := hd.allowedIPv6s[ipv6]; !allowed {
 		return fmt.Errorf("connection to IP %s is not whitelisted", addr)
 	}
 	return nil
@@ -56,12 +55,4 @@ func (hd *HostDialer) Control(network, address string, c syscall.RawConn) error 
 
 func (hd *HostDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	return hd.dialer.DialContext(ctx, network, address)
-}
-
-func (hd *HostDialer) AllowedAddrs() []string {
-	allowed := make([]string, 0, len(hd.allowedIPv6s))
-	for addr := range hd.allowedIPv6s {
-		allowed = append(allowed, addr.String())
-	}
-	return allowed
 }
