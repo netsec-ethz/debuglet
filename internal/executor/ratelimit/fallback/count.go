@@ -1,7 +1,6 @@
 package fallback
 
 import (
-	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"fmt"
@@ -15,7 +14,7 @@ import (
 
 type debugletKey struct {
 	id   uuid.UUID
-	dest netip.Addr
+	dest netutil.IPv6
 }
 
 type bucketState struct {
@@ -44,7 +43,7 @@ func NewFallbackCount() (*FallbackCount, error) {
 }
 
 func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID) (net.Conn, error) {
-	host, err := socket.HostFromAddr(conn.RemoteAddr().String())
+	host, err := netutil.HostFromAddr(conn.RemoteAddr().String())
 	if err != nil {
 		return nil, err
 	}
@@ -52,18 +51,18 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid address: %w", err)
 	}
-	addr = netutil.AddrToIPv6(addr)
+	ipv6 := netutil.ToIPv6(addr)
 	fc := &FallbackConn{conn: conn,
 		count: f,
 		id:    id,
 		mu:    NewFIFOLock(),
-		addr:  addr,
+		ipv6:  ipv6,
 		close: make(chan struct{}),
 	}
 	return fc, nil
 }
 
-func (f *FallbackCount) SetLimit(addr netip.Addr, id uuid.UUID, limit app.Bitrate) error {
+func (f *FallbackCount) SetLimit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rates[debugletKey{id: id, dest: addr}] = limit
@@ -77,7 +76,7 @@ func (f *FallbackCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
 	return nil
 }
 
-func (f *FallbackCount) DeleteLimit(addr netip.Addr, id uuid.UUID) error {
+func (f *FallbackCount) DeleteLimit(addr netutil.IPv6, id uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := debugletKey{id: id, dest: addr}

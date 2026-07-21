@@ -3,11 +3,11 @@
 package ebpf
 
 import (
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"syscall"
 
 	"github.com/cilium/ebpf"
@@ -91,8 +91,8 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID) (net.Conn, error) {
 	return &BpfConn{count: bc, conn: conn, socketID: socketID}, nil
 }
 
-func (bc *BpfCount) SetLimit(addr netip.Addr, id uuid.UUID, limit app.Bitrate) error {
-	v6Bytes := addr.As16()
+func (bc *BpfCount) SetLimit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
+	v6Bytes := addr.IP.As16()
 	key := countDebugletKey{
 		Uuid: [16]byte(id),
 		Ipv6: v6Bytes,
@@ -101,8 +101,8 @@ func (bc *BpfCount) SetLimit(addr netip.Addr, id uuid.UUID, limit app.Bitrate) e
 	return bc.objs.RatesMap.Update(&key, &bytes, ebpf.UpdateAny)
 }
 
-func (bc *BpfCount) DeleteLimit(addr netip.Addr, id uuid.UUID) error {
-	v6Bytes := addr.As16()
+func (bc *BpfCount) DeleteLimit(addr netutil.IPv6, id uuid.UUID) error {
+	v6Bytes := addr.IP.As16()
 	key := countDebugletKey{
 		Uuid: [16]byte(id),
 		Ipv6: v6Bytes,

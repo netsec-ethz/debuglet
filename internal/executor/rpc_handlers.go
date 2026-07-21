@@ -116,7 +116,7 @@ func (e *Executor) OnBandwidth(ctx context.Context, req *pb.BandwidthRequest) (*
 			if err != nil {
 				continue
 			}
-			e.packetCount.SetLimit(ip, running.id, min(limit.Executor, limit.Address))
+			e.packetCount.SetLimit(netutil.ToIPv6(ip), running.id, min(limit.Executor, limit.Address))
 			e.packetCount.SetExecLimit(running.id, limit.Executor)
 		}
 	}

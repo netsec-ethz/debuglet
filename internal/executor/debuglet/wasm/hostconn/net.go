@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"debuglet/internal/executor/debuglet/socket"
+	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
 
@@ -34,7 +35,6 @@ type HostConnOpts struct {
 	AllowedAddresses []string
 	MaximumBandwidth app.Bitrate
 	SocketType       socket.SocketType
-	ConnectionAddr   string
 }
 
 func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, conn net.Conn, opts HostConnOpts) (*HostConn, error) {
@@ -48,7 +48,6 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 		limit:      opts.MaximumBandwidth,
 		connCtx:    ctx,
 		socketType: opts.SocketType,
-		connAddr:   opts.ConnectionAddr,
 	}
 
 	conn, err := hc.pc.Attach(conn, hc.id)
@@ -63,7 +62,7 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 			fmt.Printf("Failed to parse IP %s: %v\n", ip, err)
 			continue
 		}
-		err = hc.pc.SetLimit(addr, hc.id, hc.limit)
+		err = hc.pc.SetLimit(netutil.ToIPv6(addr), hc.id, hc.limit)
 		if err != nil {
 			fmt.Printf("Failed to set limit for IP %s: %v\n", ip, err)
 		}
@@ -91,7 +90,6 @@ func (h *HostConn) closeImpl() error {
 func (h *HostConn) Write(b []byte) (int, error) { return h.conn.Write(b) }
 func (h *HostConn) Read(b []byte) (int, error)  { return h.conn.Read(b) }
 func (h *HostConn) Type() socket.SocketType     { return h.socketType }
-func (h *HostConn) ConnectionAddr() string      { return h.connAddr }
 
 func (h *HostConn) Addr() string {
 	host, _, err := net.SplitHostPort(h.conn.RemoteAddr().String())
