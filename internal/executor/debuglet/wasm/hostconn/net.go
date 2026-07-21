@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"sync"
 
 	"debuglet/internal/executor/debuglet/socket"
-	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
 
@@ -22,7 +20,6 @@ type HostConn struct {
 	limit app.Bitrate
 
 	conn       net.Conn
-	connAddr   string
 	connCtx    context.Context
 	socketID   uint32
 	socketType socket.SocketType
@@ -32,7 +29,7 @@ type HostConn struct {
 }
 
 type HostConnOpts struct {
-	AllowedAddresses []string
+	ConnAddr         string
 	MaximumBandwidth app.Bitrate
 	SocketType       socket.SocketType
 }
@@ -50,22 +47,14 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 		socketType: opts.SocketType,
 	}
 
-	conn, err := hc.pc.Attach(conn, hc.id)
+	conn, err := hc.pc.Attach(conn, hc.id, opts.ConnAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach: %w", err)
 	}
 	hc.conn = conn
 
-	for _, ip := range opts.AllowedAddresses {
-		addr, err := netip.ParseAddr(ip)
-		if err != nil {
-			fmt.Printf("Failed to parse IP %s: %v\n", ip, err)
-			continue
-		}
-		err = hc.pc.SetLimit(netutil.ToIPv6(addr), hc.id, hc.limit)
-		if err != nil {
-			fmt.Printf("Failed to set limit for IP %s: %v\n", ip, err)
-		}
+	if err := hc.pc.SetLimit(opts.ConnAddr, hc.id, hc.limit); err != nil {
+		return nil, fmt.Errorf("failed to set limit: %w", err)
 	}
 
 	return hc, nil
@@ -97,10 +86,4 @@ func (h *HostConn) Addr() string {
 		return h.conn.RemoteAddr().String()
 	}
 	return host
-}
-
-func (h *HostConn) RemoteIP() netip.Addr {
-	host, _, _ := net.SplitHostPort(h.conn.RemoteAddr().String())
-	addr, _ := netip.ParseAddr(host)
-	return addr
 }

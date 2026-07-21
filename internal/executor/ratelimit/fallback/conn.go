@@ -18,12 +18,13 @@ var (
 )
 
 type FallbackConn struct {
-	conn  net.Conn
-	count *FallbackCount
-	id    uuid.UUID
-	mu    *FIFOLock // Ensures FIFO for the write operation
-	ipv6  netutil.IPv6
-	close chan struct{}
+	conn   net.Conn
+	count  *FallbackCount
+	id     uuid.UUID
+	mu     *FIFOLock // Ensures FIFO for the write operation
+	ipv6   netutil.IPv6
+	domain string
+	close  chan struct{}
 
 	deadline      time.Time
 	readDeadline  time.Time
@@ -56,6 +57,7 @@ func (f *FallbackConn) Write(b []byte) (int, error) {
 
 func (f *FallbackConn) Close() error {
 	f.once.Do(func() {
+		f.count.Detach(f.domain, f.id, f.ipv6)
 		close(f.close)
 	})
 	return f.conn.Close()

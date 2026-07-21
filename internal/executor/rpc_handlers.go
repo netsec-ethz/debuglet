@@ -2,13 +2,10 @@ package executor
 
 import (
 	"context"
-	"debuglet/internal/executor/debuglet/socket/netutil"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
 	pb "debuglet/protocol"
 	"errors"
-	"net/netip"
-	"slices"
 	"time"
 
 	"go.uber.org/zap"
@@ -80,43 +77,17 @@ func (e *Executor) OnAbort(ctx context.Context, req *pb.AbortRequest) (*pb.Abort
 func (e *Executor) OnBandwidth(ctx context.Context, req *pb.BandwidthRequest) (*pb.BandwidthResponse, error) {
 	e.logger.Debug("Bandwidth received")
 
-	// convert the bandwidth updates which are a mix of IPs and domains into a list of IPv6s to be inserted into ebpf
-	var ipUpdates []Update
-	for _, up := range req.GetLimits() {
-		ips, err := netutil.DomainsToIPv6(ctx, []string{up.Address})
-		if err != nil {
-			e.logger.Error("Failed to resolve address", zap.String("address", up.Address), zap.Error(err))
-			continue
-		}
-		for _, ip := range ips {
-			ipUpdates = append(ipUpdates, Update{
-				Address: ip,
-				Limit:   app.Bitrate(up.GetBitsLimit()),
-			})
-		}
-	}
-	e.logger.Debug("Resolved update addresses", zap.Objects("destination", ipUpdates))
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, up := range ipUpdates {
-		e.limiter.SetAddrCapacity(up.Address, up.Limit)
-	}
+	for _, up := range req.GetLimits() {
+		e.limiter.SetAddrCapacity(up.Address, app.Bitrate(up.GetBitsLimit()))
 
-	for _, up := range ipUpdates {
-		ip, err := netip.ParseAddr(up.Address)
-		if err != nil {
-			continue
-		}
 		for _, running := range e.running {
-			if !slices.Contains(running.addresses, up.Address) {
-				continue
-			}
 			limit, err := e.limiter.GetLimit(running.id.String(), up.Address)
 			if err != nil {
 				continue
 			}
-			e.packetCount.SetLimit(netutil.ToIPv6(ip), running.id, min(limit.Executor, limit.Address))
+			e.packetCount.SetLimit(up.Address, running.id, limit.Address)
 			e.packetCount.SetExecLimit(running.id, limit.Executor)
 		}
 	}

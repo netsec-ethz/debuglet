@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"sync"
 	"syscall"
 
 	"github.com/cilium/ebpf"
@@ -15,11 +17,19 @@ import (
 	"github.com/google/uuid"
 )
 
+type domainKey struct {
+	domain string
+	id     uuid.UUID
+}
+
 // BpfCount employs ratelimiting using an EBPF layer. It requires root priviliges to work.
 type BpfCount struct {
 	objs    countObjects
 	egress  link.Link
 	ingress link.Link
+
+	mu        sync.Mutex
+	domainIPs map[domainKey]map[netutil.IPv6]int
 }
 
 func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
@@ -50,9 +60,10 @@ func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
 	}
 
 	return &BpfCount{
-		objs:    objs,
-		egress:  egr,
-		ingress: ingr,
+		objs:      objs,
+		egress:    egr,
+		ingress:   ingr,
+		domainIPs: make(map[domainKey]map[netutil.IPv6]int),
 	}, nil
 }
 
@@ -63,7 +74,7 @@ func (bc *BpfCount) Close() error {
 	return nil
 }
 
-func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID) (net.Conn, error) {
+func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, error) {
 	c, ok := conn.(syscall.Conn)
 	if !ok {
 		return nil, errors.New("failed to extract syscall Conn")
@@ -88,10 +99,45 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID) (net.Conn, error) {
 		return nil, fmt.Errorf("failed to update socket map: %w", fdErr)
 	}
 
-	return &BpfConn{count: bc, conn: conn, socketID: socketID}, nil
+	host, err := netutil.HostFromAddr(conn.RemoteAddr().String())
+	if err != nil {
+		return nil, err
+	}
+	remoteIP, err := netip.ParseAddr(host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse remote address: %w", err)
+	}
+	ipv6 := netutil.ToIPv6(remoteIP)
+
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	dk := domainKey{domain: addr, id: id}
+	if _, ok := bc.domainIPs[dk]; !ok {
+		bc.domainIPs[dk] = make(map[netutil.IPv6]int)
+	}
+	bc.domainIPs[dk][ipv6]++
+
+	return &BpfConn{count: bc, conn: conn, socketID: socketID, domain: addr, id: id, resolvedIPv6: ipv6}, nil
 }
 
-func (bc *BpfCount) SetLimit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
+func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error {
+	parsedIP, err := netip.ParseAddr(addr)
+	if err == nil {
+		return bc.setRateLocked(netutil.ToIPv6(parsedIP), id, limit)
+	}
+
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	ips := bc.domainIPs[domainKey{domain: addr, id: id}]
+	for ipv6 := range ips {
+		if err := bc.setRateLocked(ipv6, id, limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (bc *BpfCount) setRateLocked(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
 	v6Bytes := addr.IP.As16()
 	key := countDebugletKey{
 		Uuid: [16]byte(id),
@@ -119,6 +165,30 @@ func (bc *BpfCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
 func (bc *BpfCount) DeleteExecLimit(id uuid.UUID) error {
 	key := countExecKey{Uuid: [16]byte(id)}
 	return bc.objs.ExecRatesMap.Delete(&key)
+}
+
+func (bc *BpfCount) Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	dk := domainKey{domain: addr, id: id}
+	ips, ok := bc.domainIPs[dk]
+	if !ok {
+		return nil
+	}
+	ips[ipv6]--
+	if ips[ipv6] <= 0 {
+		delete(ips, ipv6)
+		if err := bc.objs.RatesMap.Delete(&countDebugletKey{
+			Uuid: [16]byte(id),
+			Ipv6: ipv6.IP.As16(),
+		}); err != nil {
+			return err
+		}
+	}
+	if len(ips) == 0 {
+		delete(bc.domainIPs, dk)
+	}
+	return nil
 }
 
 func (f *BpfCount) Type() string { return "ebpf" }

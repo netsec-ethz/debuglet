@@ -15,7 +15,6 @@ import (
 
 type RunningDebuglet struct {
 	id        uuid.UUID
-	addresses []string
 	cancelCtx func(error)
 	debuglet  *debuglet.Debuglet
 }
@@ -118,7 +117,6 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 
 	e.running[spec.DebugletID] = RunningDebuglet{
 		id:        id,
-		addresses: spec.Policy.Addresses,
 		cancelCtx: cancelFunc,
 		debuglet:  deb,
 	}
