@@ -38,15 +38,18 @@ type SuiConfig struct {
 }
 
 type DispatcherConfig struct {
-	GRPCPort   int            `toml:"grpc_port"`
-	HTTPPort   int            `toml:"http_port"`
-	LogLevel   string    		`toml:"log_level"`
+	Version    string    `toml:"version"`
+	GRPCPort   int       `toml:"grpc_port"`
+	YamuxPort  int       `toml:"yamux_port"`
+	HTTPPort   int       `toml:"http_port"`
+	LogLevel   string    `toml:"log_level"`
 	DisableTLS bool      `toml:"disable_tls"`
 	TLS        TLSConfig      `toml:"tls"`
 	// Maximum amount of seconds between heartbeats
-	ExecutorTimeout int `toml:"executor_timeout"`
+	ExecutorTimeout int  `toml:"executor_timeout"`
 	Database DatabaseConfig `toml:"database"`
 	Sui      SuiConfig      `toml:"sui"`
+	JSONLogs        bool `toml:"json_logs"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it
@@ -62,6 +65,9 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
+	}
+	if cfg.Version == "" {
+		cfg.Version = "unknown"
 	}
 
 	return &cfg, nil

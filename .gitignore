@@ -16,3 +16,22 @@ __debug*
 .testCoverage.txt
 engine.test
 benchmarks
+
+# OS generated files 
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python generated files 
+.mypy_cache/
+__pycache__
+*.pyc
+.venv
+
+# Code agents
+.claude
+

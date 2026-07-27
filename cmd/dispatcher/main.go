@@ -17,19 +17,15 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"flag"
 	"fmt"
-	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"golang.org/x/sync/errgroup"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
@@ -53,7 +49,10 @@ func main() {
 	if err != nil {
 		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
-	logCfg := zap.NewProductionConfig()
+	logCfg := zap.NewDevelopmentConfig()
+	if cfg.JSONLogs {
+		logCfg = zap.NewProductionConfig()
+	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
@@ -64,30 +63,36 @@ func main() {
 	}
 	defer userDB.Close()
 
-	disp := dispatcher.New(logger)
-	server := rpc.NewServer(logger, disp, disp, rpc.ServerOptions{ExecutorTimeout: time.Duration(cfg.ExecutorTimeout) * time.Second})
-	disp.SetExecutorSender(server)
-	
-	var wg sync.WaitGroup
-	wg.Add(2)
+	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second)
+	defer d.Close()
+
+	g, subCtx := errgroup.WithContext(context.Background())
+
+	yamuxPort := cfg.YamuxPort
+	if yamuxPort == 0 {
+		yamuxPort = cfg.GRPCPort + 1
+	}
 
 	// ---- Start gRPC Server ----
-	go func() {
-		defer wg.Done()
-		if err := startGRPCServer(server, cfg, logger); err != nil {
-			logger.Fatal("failed to start gRPC server", zap.Error(err))
-		}
-	}()
+	g.Go(func() error {
+		addr := fmt.Sprintf(":%d", cfg.GRPCPort)
+		return d.Bidi.ServeGRPC(subCtx, addr)
+	})
+
+	// ---- Start Yamux Listener ----
+	g.Go(func() error {
+		addr := fmt.Sprintf(":%d", yamuxPort)
+		return d.Bidi.ServeYamux(subCtx, addr)
+	})
 
 	// ---- Start HTTP Server ----
-	go func() {
-		defer wg.Done()
-		if err := startHTTPServer(disp, userDB, cfg, logger); err != nil {
-			logger.Fatal("failed to start HTTP server", zap.Error(err))
-		}
-	}()
+	g.Go(func() error { return startHTTPServer(d, cfg, logger) })
 
-	// ---- Start Sui Event Listener (optional) ----
+	if err := g.Wait(); err != nil {
+		logger.Fatal("dispatcher exited with error", zap.Error(err))
+	}
+
+	// ---- Start Sui Event Listener ----
 	if cfg.Sui.RPCURL != "" {
 		wg.Add(1)
 		go func() {
@@ -97,81 +102,6 @@ func main() {
 			}
 		}()
 	}
-
-	wg.Wait()
-}
-
-func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
-	// Load the server's certificate and key
-	serverCert, err := tls.LoadX509KeyPair(
-		cfg.TLS.CertFile,
-		cfg.TLS.KeyFile,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
-	}
-
-	// Optionally, load CA if you want to check later
-	// caCert, _ := os.ReadFile("/etc/debuglet/dispatcher/ca.crt")
-	// caCertPool := x509.NewCertPool()
-	// caCertPool.AppendCertsFromPEM(caCert)
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAnyClientCert, // 👈 Require cert but skip CA validation
-		// ClientCAs: caCertPool, // optional if you want to enforce CA later
-		MinVersion: tls.VersionTLS13,
-		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-			// Custom verification logic
-			if len(rawCerts) == 0 {
-				return fmt.Errorf("no client certificate provided")
-			}
-			cert, err := x509.ParseCertificate(rawCerts[0])
-			if err != nil {
-				return fmt.Errorf("invalid client certificate: %w", err)
-			}
-
-			// Example: extract Common Name (executor ID)
-			logger.Info("Client connected",
-				zap.String("CN", cert.Subject.CommonName),
-				zap.String("Subject", cert.Subject.String()),
-			)
-
-			// You could check against a known list of executor IDs:
-			// if !isKnownExecutor(cert.Subject.CommonName) {
-			//     return fmt.Errorf("unauthorized executor: %s", cert.Subject.CommonName)
-			// }
-
-			return nil // Allow connection
-		},
-	}
-
-	creds := credentials.NewTLS(tlsConfig)
-	return creds, nil
-}
-
-// startGRPCServer runs the dispatcher’s gRPC interface
-func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	port := cfg.GRPCPort
-	addr := fmt.Sprintf(":%d", port)
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-
-	creds, err := getServerCredentials(cfg, logger)
-	if err != nil {
-		return fmt.Errorf("failed to get server credentials: %w", err)
-	}
-	srv := grpc.NewServer(grpc.Creds(creds))
-	pb.RegisterDispatcherServiceServer(srv, server)
-
-	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))
-	if err := srv.Serve(lis); err != nil {
-		return fmt.Errorf("gRPC server failed: %w", err)
-	}
-
-	return nil
 }
 
 // startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
@@ -200,7 +130,6 @@ func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, cfg *con
 	addr := fmt.Sprintf(":%d", port)
 	logger.Info("Dispatcher HTTP API started", zap.Int("port", port))
 
-	// Explicit TLS configuration for the HTTP server
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12, // More compatible than forcing 1.3
 	}

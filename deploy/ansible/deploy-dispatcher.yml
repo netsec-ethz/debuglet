@@ -1,0 +1,7 @@
+---
+- name: Deploy Debuglet Dispatcher
+  hosts: dispatcher
+  become: true
+  roles:
+    - common
+    - dispatcher

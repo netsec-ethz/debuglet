@@ -3,37 +3,45 @@ package dispatcher
 import (
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/tag"
+	"debuglet/internal/dispatcher/transport/rpc"
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
 
 type logConn struct {
-	seq  int
-	logs chan<- []byte
-	done chan struct{}
+	seq   int
+	logs  chan<- []byte
+	state chan<- DebugletRunState
+	done  chan struct{}
 }
 
-type debugletStore struct {
-	logs       []byte
-	policy     DebugletPolicy
-	executorID string
+type DebugletStore struct {
+	Logs       []byte
+	Policy     DebugletPolicy
+	ExecutorID string
+	State      DebugletRunState
+	Err        string
 }
 
 
 type Dispatcher struct {
+	version string
+
 	executors    map[string]*RegisteredExecutor
+	execTimeout  time.Duration
 	ipToExecutor map[string]string
-	mu           sync.RWMutex
 	keystore     *tag.KeyStore
-	sender       ExecutorServer
 	logger       *zap.Logger
+	Bidi         *rpc.BidiServer
+	mu           sync.RWMutex
 
 	// Naive storage of the full output of debuglets.
 	// debugletStores allows for a user to get the full logs at a later point in time.
-	debugletStores map[string]*debugletStore
+	debugletStores map[string]*DebugletStore
 	// connectedLogs stores the users connected via websockets
 	connectedLogs map[string][]logConn
 	seq           int // counter for log connection IDs
@@ -41,30 +49,38 @@ type Dispatcher struct {
 	destinations *resource.DestinationsUsage
 }
 
-var _ DispatcherControlHandler = (*Dispatcher)(nil)
-var _ DispatcherDebugletHandler = (*Dispatcher)(nil)
-
-func New(l *zap.Logger) *Dispatcher {
-	return &Dispatcher{
+func New(l *zap.Logger, version string, execTimeout time.Duration) *Dispatcher {
+	d := &Dispatcher{
+		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
+		execTimeout:    execTimeout,
 		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
 		logger:         l,
-		debugletStores: make(map[string]*debugletStore),
+		debugletStores: make(map[string]*DebugletStore),
 		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
 	}
+
+	d.Bidi = rpc.NewBidiServer(l, d)
+	return d
 }
 
-func (d *Dispatcher) SetExecutorSender(s ExecutorServer) {
-	d.sender = s
+func (d *Dispatcher) Close()                     { d.Bidi.Close() }
+func (d *Dispatcher) GetVersion() string         { return d.version }
+func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
+
+func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st, ok := d.debugletStores[debugletID]; ok {
+		return *st, nil
+	} else {
+		return DebugletStore{}, fmt.Errorf("debuglet with '%s' does not exist", debugletID)
+	}
 }
 
-func (d *Dispatcher) GetKeyStore() *tag.KeyStore {
-	return d.keystore
-}
-
-func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []byte) (int, <-chan struct{}, error) {
+func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- DebugletRunState) (int, <-chan struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.debugletStores[debugletID]; !exists {
@@ -72,7 +88,7 @@ func (d *Dispatcher) RegisterLogConnection(debugletID string, channel chan<- []b
 	}
 
 	d.seq++
-	lc := logConn{logs: channel, seq: d.seq, done: make(chan struct{})}
+	lc := logConn{logs: logs, state: state, seq: d.seq, done: make(chan struct{})}
 	d.connectedLogs[debugletID] = append(d.connectedLogs[debugletID], lc)
 	return lc.seq, lc.done, nil
 }
@@ -88,6 +104,9 @@ func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
 	}
 	conn := d.connectedLogs[debugletID][index]
 	close(conn.logs)
+	if conn.state != nil {
+		close(conn.state)
+	}
 	d.connectedLogs[debugletID] = slices.Delete(d.connectedLogs[debugletID], index, index+1)
 }
 
@@ -95,4 +114,5 @@ func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitr
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.destinations.SetLimit(destination, limit)
+	// TODO: Notify executors of the new limit if needed
 }
