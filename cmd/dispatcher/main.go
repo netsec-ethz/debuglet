@@ -30,10 +30,10 @@ import (
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/transport/api"
-	"debuglet/internal/dispatcher/transport/rpc"
+	//"debuglet/internal/dispatcher/transport/rpc"
 	"debuglet/internal/dispatcher/db"
 	"debuglet/internal/dispatcher/sui"
-	pb "debuglet/protocol"
+	//pb "debuglet/protocol"
 )
 
 func main() {
@@ -86,22 +86,17 @@ func main() {
 	})
 
 	// ---- Start HTTP Server ----
-	g.Go(func() error { return startHTTPServer(d, cfg, logger) })
+	g.Go(func() error { return startHTTPServer(d, userDB, cfg, logger) })
+
+	// ---- Start Sui Event Listener ----
+	if cfg.Sui.RPCURL != "" {
+		g.Go(func() error { return startSuiListener(userDB,cfg,logger)})
+	}
 
 	if err := g.Wait(); err != nil {
 		logger.Fatal("dispatcher exited with error", zap.Error(err))
 	}
 
-	// ---- Start Sui Event Listener ----
-	if cfg.Sui.RPCURL != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := startSuiListener(userDB, cfg, logger); err != nil {
-				logger.Fatal("sui event listener failed", zap.Error(err))
-			}
-		}()
-	}
 }
 
 // startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
