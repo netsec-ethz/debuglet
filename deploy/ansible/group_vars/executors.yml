@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# Executor-specific defaults (applies to all hosts in the 'executors' group)
+# =============================================================================
+# Override per-host in hosts.yml using host_vars if needed.
+
+# Bandwidth capacity in bits/sec (default: 1 Gbps)
+executor_capacity: 1_000_000_000
+
+# TESLA epoch duration in seconds
+tesla_delay: 10
+
+# Log level: debug | info | warn | error
+executor_log_level: info
+
+# Enable eBPF TC egress tagging (embedded in binary).
+# Set to false on hosts where BPF is unavailable (PlanetLab, restricted kernels).
+# When false: capabilities are not set and the systemd unit omits BPF caps.
+executor_enable_bpf: false
+
+# TLS for executor → dispatcher gRPC connection (default: match dispatcher)
+executor_disable_tls: "{{ dispatcher_disable_tls }}"
+
+# TESLA seed (leave empty to auto-generate; set per-host for deterministic keys)
+executor_tesla_seed: ""
+
+# Executor identity (override per-host in hosts.yml host_vars)
+executor_id: "{{ inventory_hostname }}"
+executor_version: "{{ deploy_version }}"
+executor_max_debuglets: 20

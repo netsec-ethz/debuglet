@@ -1,0 +1,12 @@
+[package]
+name = "helloworld"
+version = "0.1.0"
+edition = "2021"
+
+# Built as a WASI command module (wasm32-wasip1) with a standard `fn main()`.
+# The bin is named `debuglet` so the build output is `debuglet.wasm`.
+[[bin]]
+name = "debuglet"
+path = "src/main.rs"
+
+[dependencies]

@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# Global deployment variables
+# =============================================================================
+#
+# To update the dispatcher address on ALL executors at once:
+#   1. Edit dispatcher_addr below
+#   2. Run: make deploy-update-addr
+#      or:  cd deploy/ansible && ansible-playbook update-dispatcher-addr.yml
+
+# Dispatcher endpoint (gRPC) — executors point here
+dispatcher_addr: "db-dispatch.netsec.ethz.ch"
+
+# Ports on the dispatcher machine
+dispatcher_grpc_port: 9001
+dispatcher_http_port: 9000
+
+# Set to true when a reverse proxy (e.g. nginx grpc_pass) handles TLS
+# termination in front of the gRPC port. Executors then connect through
+# the proxy on port 443 without specifying a port.
+dispatcher_disable_tls: true
+
+# Dispatcher service defaults
+dispatcher_log_level: info
+dispatcher_executor_timeout: 60
+dispatcher_tls_ca_file: "{{ config_dir }}/dispatcher/ca.crt"
+
+# Deploy version — injected by CI from commit message; overridable via -e
+deploy_version: "unknown"
+
+# Filesystem layout on remote machines
+install_prefix: /usr/local
+config_dir: /etc/debuglet
+log_dir: /var/log/debuglet
+
+# Service account used to run both services
+debuglet_user: debuglet
+debuglet_group: debuglet
+
+# Paths to local build artifacts (relative to deploy/)
+dist_dir: "{{ playbook_dir }}/../dist"
+certs_dir: "{{ playbook_dir }}/../certs"

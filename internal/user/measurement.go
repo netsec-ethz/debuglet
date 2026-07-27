@@ -146,3 +146,32 @@ func ReadOutput(debugletID string) error {
 func handleEvent(debugletID string, e api.SSEEvent) {
 	fmt.Printf("[[%s]]: [%s] Event: %s - Data: %q\n", debugletID, e.ID, e.Event, e.Data)
 }
+
+func ReadState(debugletID string) (api.DebugletStateResponse, error) {
+	url := fmt.Sprintf("http://%s/debuglet/%s/state", baseURL, debugletID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return api.DebugletStateResponse{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return api.DebugletStateResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return api.DebugletStateResponse{}, fmt.Errorf("unexpected status: %d, body: %s", resp.StatusCode, body)
+	}
+
+	var stateResp api.DebugletStateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stateResp); err != nil {
+		return api.DebugletStateResponse{}, err
+	}
+	return stateResp, nil
+}

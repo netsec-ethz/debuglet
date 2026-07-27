@@ -1,6 +1,6 @@
 [tools]
-go = "1.26.4"
-"go:golang.org/x/perf/cmd/benchstat" = "latest"
+go = "1.25.11"
 protoc = "34.0"
 protoc-gen-go = "1.36.11"
 protoc-gen-go-grpc = "1.6.1"
+"go:golang.org/x/tools/cmd/stringer" = "latest"

@@ -2,6 +2,7 @@ package api
 
 import (
 	"debuglet/internal/dispatcher"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -36,8 +37,8 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 }
 
 // GET /debuglet/:id
-// Uses Server-Sent Events (SSE) to stream logs/results
-func (h *Handler) GetLogsWS(c echo.Context) error {
+// Uses Server-Sent Events (SSE) to stream state changes and output
+func (h *Handler) GetLogsSSE(c echo.Context) error {
 	debugletID := c.Param("id")
 
 	w := c.Response()
@@ -45,14 +46,50 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
+	store, err := h.dispatcher.GetStore(debugletID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
+	}
+
+	sseID := 0
+	sendEvent := func(eventType string, data []byte) error {
+		event := SSEEvent{
+			ID:    fmt.Appendf([]byte{}, "%d", sseID),
+			Data:  data,
+			Event: []byte(eventType),
+		}
+		sseID++
+		if err := event.MarshalTo(w); err != nil {
+			return err
+		}
+		return http.NewResponseController(w).Flush()
+	}
+
+	if store.State == dispatcher.RunStateExited {
+		if err := sendEvent("state", []byte(store.State.String())); err != nil {
+			return err
+		}
+		if len(store.Logs) > 0 {
+			if err := sendEvent("output", store.Logs); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	outputCh := make(chan []byte, 1)
-	seqID, done, err := h.dispatcher.RegisterLogConnection(debugletID, outputCh)
+	stateCh := make(chan dispatcher.DebugletRunState, 1)
+
+	seqID, done, err := h.dispatcher.RegisterLogConnection(debugletID, outputCh, stateCh)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
 	}
 	defer h.dispatcher.RemoveLogConnection(debugletID, seqID)
 
-	sseID := 0
+	if err := sendEvent("state", []byte(store.State.String())); err != nil {
+		return err
+	}
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -63,16 +100,11 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 		case <-done:
 			return nil
 		case output := <-outputCh:
-			event := SSEEvent{
-				ID:    fmt.Appendf([]byte{}, "%d", sseID),
-				Data:  output,
-				Event: []byte("output"),
-			}
-			sseID++
-			if err := event.MarshalTo(w); err != nil {
+			if err := sendEvent("output", output); err != nil {
 				return err
 			}
-			if err := http.NewResponseController(w).Flush(); err != nil {
+		case state := <-stateCh:
+			if err := sendEvent("state", []byte(state.String())); err != nil {
 				return err
 			}
 		case <-ticker.C:
@@ -85,6 +117,21 @@ func (h *Handler) GetLogsWS(c echo.Context) error {
 			}
 		}
 	}
+}
+
+// GET /debuglet/:id/state
+func (h *Handler) GetDebugletState(c echo.Context) error {
+	debugletID := c.Param("id")
+	store, err := h.dispatcher.GetStore(debugletID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
+	}
+	return c.JSON(http.StatusOK, DebugletStateResponse{
+		State:      store.State.String(),
+		Logs:       base64.StdEncoding.EncodeToString(store.Logs),
+		Error:      store.Err,
+		ExecutorID: store.ExecutorID,
+	})
 }
 
 // DELETE /debuglet

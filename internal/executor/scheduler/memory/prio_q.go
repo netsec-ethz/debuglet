@@ -2,12 +2,12 @@ package memory
 
 import (
 	"container/heap"
-	"debuglet/internal/executor/transport/rpc"
+	"debuglet/internal/executor/scheduler"
 )
 
 type item struct {
 	index  int
-	upload *rpc.Spec
+	upload *scheduler.Spec
 }
 
 type priorityQueue []*item
@@ -59,17 +59,17 @@ func NewTimedQueue() *TimedQueue {
 	return &TimedQueue{pq: pq, refs: make(map[string]*item)}
 }
 
-func (tq *TimedQueue) Push(x rpc.Spec) {
+func (tq *TimedQueue) Push(x scheduler.Spec) {
 	item := item{upload: &x}
 	heap.Push(tq.pq, &item)
 	tq.refs[x.DebugletID] = &item
 }
 
-func (tq *TimedQueue) Peek(ind int) *rpc.Spec {
+func (tq *TimedQueue) Peek(ind int) *scheduler.Spec {
 	return (*tq.pq)[ind].upload
 }
 
-func (tq *TimedQueue) Pop() *rpc.Spec {
+func (tq *TimedQueue) Pop() *scheduler.Spec {
 	u := heap.Pop(tq.pq).(*item).upload
 	delete(tq.refs, u.DebugletID)
 	return u
@@ -79,7 +79,7 @@ func (tq *TimedQueue) Len() int {
 	return tq.pq.Len()
 }
 
-func (tq *TimedQueue) Remove(ID string) *rpc.Spec {
+func (tq *TimedQueue) Remove(ID string) *scheduler.Spec {
 	it, exists := tq.refs[ID]
 	if !exists {
 		return nil

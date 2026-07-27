@@ -5,9 +5,14 @@ import (
 	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
+	"net"
 	"strings"
 	"time"
 )
+
+type VersionResponse struct {
+	Version string `json:"version"`
+}
 
 type DebugletPolicyRequest struct {
 	FloorBW   int64    `json:"floor_bw"`
@@ -34,6 +39,7 @@ type ExecutorResponse struct {
 	ID       string `json:"id"`
 	Ready    bool   `json:"ready"`
 	LastSeen int64  `json:"last_seen"`
+	Version  string `json:"version"`
 
 	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
 	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
@@ -66,6 +72,13 @@ type DestinationLimitRequest struct {
 	Limit       int64  `json:"limit"`
 }
 
+type DebugletStateResponse struct {
+	State      string `json:"state"`
+	Logs       string `json:"logs"` // base64-encoded
+	Error      string `json:"error"`
+	ExecutorID string `json:"executor_id"`
+}
+
 type BalanceResponse struct {
 	Balance int64 `json:"balance"`
 }
@@ -83,8 +96,19 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 
 	var startTime *time.Time
 	if st := r.StartTimestamp; st != nil {
-		tmp := time.Unix(*st, 0)
+		tmp := time.Unix(*st, 0).UTC()
 		startTime = &tmp
+	}
+
+	// remove accidental ports from the policy addresses
+	var addrs []string
+	for _, a := range r.Policy.Addresses {
+		host, _, err := net.SplitHostPort(a)
+		if err != nil {
+			addrs = append(addrs, a)
+		} else {
+			addrs = append(addrs, host)
+		}
 	}
 
 	return dispatcher.DebugletSpec{
@@ -96,7 +120,7 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 			FloorBW:   resource.Bitrate(r.Policy.FloorBW),
 			CeilBW:    resource.Bitrate(r.Policy.CeilBW),
 			Timeout:   time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
-			Addresses: r.Policy.Addresses,
+			Addresses: addrs,
 		},
 	}, nil
 }

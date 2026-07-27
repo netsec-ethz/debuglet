@@ -13,6 +13,7 @@ var (
 )
 
 type storeKey struct {
+	// ID is used for either the debuglet ID or exeutor ID depending on the map it's used in
 	ID, destination string
 }
 
@@ -29,17 +30,19 @@ type DestinationsUsage struct {
 	// The total capacity for a destination used up by all relevant job's minimums
 	usedCapacities map[string]Bitrate
 	// The minimum capacities of jobs
-	store      map[storeKey]*storeValue
-	defaultCap Bitrate
+	store           map[storeKey]*storeValue
+	activeDebuglets map[storeKey]struct{}
+	defaultCap      Bitrate
 }
 
 func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 	return &DestinationsUsage{
-		trees:          make(map[string]*avl.AVL[string]),
-		capacities:     make(map[string]Bitrate),
-		usedCapacities: make(map[string]Bitrate),
-		store:          make(map[storeKey]*storeValue),
-		defaultCap:     defaultCap,
+		trees:           make(map[string]*avl.AVL[string]),
+		capacities:      make(map[string]Bitrate),
+		usedCapacities:  make(map[string]Bitrate),
+		store:           make(map[storeKey]*storeValue),
+		activeDebuglets: make(map[storeKey]struct{}),
+		defaultCap:      defaultCap,
 	}
 }
 
@@ -50,7 +53,7 @@ func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) e
 	}
 	used := d.usedCapacities[destination]
 	if used+minimum > cap {
-		return fmt.Errorf("%s destination capacity exceeded (want %d, have %d): %w", destination, minimum, cap-used, ErrCapacityFull)
+		return fmt.Errorf("%s destination capacity exceeded (want %s, have %s): %w", destination, minimum, cap-used, ErrCapacityFull)
 	}
 	return nil
 }
@@ -68,7 +71,7 @@ func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], Bi
 	return tree, cap
 }
 
-func (d *DestinationsUsage) Insert(destination, executorID string, minimum, maximum Bitrate) error {
+func (d *DestinationsUsage) Insert(debugletID string, destination, executorID string, minimum, maximum Bitrate) error {
 	if minimum > maximum {
 		return fmt.Errorf("insertion failed with min=%d>max=%d: %w", minimum, maximum, ErrMinGreater)
 	}
@@ -77,7 +80,9 @@ func (d *DestinationsUsage) Insert(destination, executorID string, minimum, maxi
 	used := d.usedCapacities[destination]
 	if used+minimum > cap {
 		return fmt.Errorf("insertion failed with new usage=%d, capacity=%d: %w", used+minimum, cap, ErrCapacityFull)
+
 	}
+	d.activeDebuglets[storeKey{debugletID, destination}] = struct{}{}
 	d.usedCapacities[destination] += minimum
 	jk := storeKey{ID: executorID, destination: destination}
 	if old, exists := d.store[jk]; exists {
@@ -91,7 +96,11 @@ func (d *DestinationsUsage) Insert(destination, executorID string, minimum, maxi
 	return nil
 }
 
-func (d *DestinationsUsage) Remove(destination, executorID string, minimum, maximum Bitrate) {
+func (d *DestinationsUsage) Remove(debugletID, destination, executorID string, minimum, maximum Bitrate) {
+	if _, exists := d.activeDebuglets[storeKey{debugletID, destination}]; !exists {
+		return
+	}
+
 	tree, exists := d.trees[destination]
 	if !exists {
 		return
@@ -99,6 +108,12 @@ func (d *DestinationsUsage) Remove(destination, executorID string, minimum, maxi
 
 	node := tree.Get(executorID)
 	if node == nil {
+		return
+	}
+
+	jk := storeKey{ID: executorID, destination: destination}
+	old, exists := d.store[jk]
+	if !exists {
 		return
 	}
 
@@ -119,11 +134,8 @@ func (d *DestinationsUsage) Remove(destination, executorID string, minimum, maxi
 		delete(d.usedCapacities, destination)
 	}
 
-	jk := storeKey{ID: executorID, destination: destination}
-	old, exists := d.store[jk]
-	if !exists {
-		return
-	}
+	delete(d.activeDebuglets, storeKey{debugletID, destination})
+
 	old.minimum -= minimum
 	old.maximum -= maximum
 	if old.minimum <= 0 && old.maximum <= 0 {

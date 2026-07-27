@@ -1,0 +1,49 @@
+---
+- name: Create executor config directory
+  ansible.builtin.file:
+    path: "{{ config_dir }}/executor"
+    state: directory
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0700"
+
+- name: Install executor binary
+  ansible.builtin.copy:
+    src: "{{ dist_dir }}/debuglet-executor"
+    dest: "{{ install_prefix }}/bin/debuglet-executor"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart executor
+
+- name: Deploy executor configuration
+  ansible.builtin.template:
+    src: executor.toml.j2
+    dest: "{{ config_dir }}/executor/executor.toml"
+    owner: "{{ debuglet_user }}"
+    mode: "0640"
+  notify: Restart executor
+
+- name: Set eBPF capabilities on executor binary
+  community.general.capabilities:
+    path: "{{ install_prefix }}/bin/debuglet-executor"
+    capability: "cap_net_admin,cap_bpf+ep"
+    state: present
+  when: executor_enable_bpf | default(true)
+
+- name: Install executor systemd unit
+  ansible.builtin.template:
+    src: executor.service.j2
+    dest: /etc/systemd/system/debuglet-executor.service
+    owner: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart executor
+
+- name: Enable and start executor
+  ansible.builtin.systemd:
+    name: debuglet-executor
+    enabled: true
+    state: started
+    daemon_reload: true

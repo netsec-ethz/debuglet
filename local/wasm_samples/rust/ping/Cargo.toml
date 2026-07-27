@@ -1,0 +1,11 @@
+[package]
+name = "ping"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "debuglet"
+path = "src/main.rs"
+
+[dependencies]
+debuglet = { path = "../debuglet" }

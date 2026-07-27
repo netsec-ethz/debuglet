@@ -1,0 +1,5 @@
+---
+# Full deployment: dispatcher first, then all executors.
+
+- import_playbook: deploy-dispatcher.yml
+- import_playbook: deploy-executors.yml

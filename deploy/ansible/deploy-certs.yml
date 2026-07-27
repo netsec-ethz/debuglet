@@ -1,0 +1,78 @@
+---
+- name: Deploy TLS certificates to dispatcher
+  hosts: dispatcher
+  become: true
+  tasks:
+    - name: Create dispatcher config directory
+      ansible.builtin.file:
+        path: "{{ config_dir }}/dispatcher"
+        state: directory
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0700"
+
+    - name: Deploy dispatcher TLS certificate
+      ansible.builtin.copy:
+        src: "{{ certs_dir }}/dispatcher/server.crt"
+        dest: "{{ config_dir }}/dispatcher/server.crt"
+        owner: "{{ debuglet_user }}"
+        mode: "0640"
+
+    - name: Deploy dispatcher TLS key
+      ansible.builtin.copy:
+        src: "{{ certs_dir }}/dispatcher/server.key"
+        dest: "{{ config_dir }}/dispatcher/server.key"
+        owner: "{{ debuglet_user }}"
+        mode: "0600"
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart dispatcher
+      ansible.builtin.systemd:
+        name: debuglet-dispatcher
+        state: restarted
+
+- name: Deploy TLS certificates to executors
+  hosts: executors
+  serial: 1
+  become: true
+  tasks:
+    - name: Create executor config directory
+      ansible.builtin.file:
+        path: "{{ config_dir }}/executor"
+        state: directory
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0700"
+
+    - name: Deploy CA certificate
+      ansible.builtin.copy:
+        src: "{{ certs_dir }}/ca.crt"
+        dest: "{{ config_dir }}/executor/ca.crt"
+        owner: "{{ debuglet_user }}"
+        mode: "0644"
+
+    - name: Deploy executor client certificate
+      ansible.builtin.copy:
+        src: "{{ certs_dir }}/executors/{{ executor_id }}/client.crt"
+        dest: "{{ config_dir }}/executor/client.crt"
+        owner: "{{ debuglet_user }}"
+        mode: "0640"
+
+    - name: Deploy executor client key
+      ansible.builtin.copy:
+        src: "{{ certs_dir }}/executors/{{ executor_id }}/client.key"
+        dest: "{{ config_dir }}/executor/client.key"
+        owner: "{{ debuglet_user }}"
+        mode: "0600"
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart executor
+      ansible.builtin.systemd:
+        name: debuglet-executor
+        state: restarted

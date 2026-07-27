@@ -1,0 +1,14 @@
+executor_id = "{{ executor_id }}"
+version = "{{ executor_version }}"
+dispatcher_addr = "{{ dispatcher_addr }}:{{ dispatcher_grpc_port }}"
+log_level = "{{ executor_log_level }}"
+capacity = {{ executor_capacity }}
+tesla_seed = "{{ executor_tesla_seed }}"
+tesla_delay = {{ tesla_delay }}
+max_debuglets = {{ executor_max_debuglets }}
+disable_tls = {{ executor_disable_tls | lower }}
+
+[credentials]
+ca_cert = "{{ config_dir }}/executor/ca.crt"
+client_cert = "{{ config_dir }}/executor/client.crt"
+client_key = "{{ config_dir }}/executor/client.key"

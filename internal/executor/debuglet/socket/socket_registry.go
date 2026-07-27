@@ -24,7 +24,7 @@ import (
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
 
-	"debuglet/pkg/tagger"
+	"debuglet/internal/executor/tagger"
 )
 
 type ISocketRegistry interface {
@@ -87,6 +87,14 @@ func (r *SocketRegistry) CloseAll() {
 			r.sockets[i] = nil
 		}
 	}
+}
+
+func (r *SocketRegistry) All() []Socket {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]Socket, len(r.sockets))
+	copy(result, r.sockets)
+	return result
 }
 
 // SCIONConn wraps a SCION/UDP connection and its associated PathSelector.
