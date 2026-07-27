@@ -56,6 +56,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		time.Duration(h.GetTeslaDelaySec())*time.Second,
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),
 		h.GetTeslaAnchorKey(),
+		h.GetPricePerBw(),
 	)
 
 	go func() {

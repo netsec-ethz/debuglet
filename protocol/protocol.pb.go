@@ -92,7 +92,6 @@ type HeartbeatRequest struct {
 	TimestampNs   int64                  `protobuf:"varint,2,opt,name=timestamp_ns,json=timestampNs,proto3" json:"timestamp_ns,omitempty"`
 	TeslaKeyEpoch int64                  `protobuf:"varint,3,opt,name=tesla_key_epoch,json=teslaKeyEpoch,proto3" json:"tesla_key_epoch,omitempty"`
 	TeslaKey      []byte                 `protobuf:"bytes,4,opt,name=tesla_key,json=teslaKey,proto3" json:"tesla_key,omitempty"`
-	PricePerBw             float64                `protobuf:"fixed64,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                      // Price per bit/s of bandwidth
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -138,7 +137,7 @@ func (x *HeartbeatRequest) GetTimestampNs() int64 {
 	if x != nil {
 		return x.TimestampNs
 	}
-	return nil
+	return 0
 }
 
 func (x *HeartbeatRequest) GetTeslaKeyEpoch() int64 {
@@ -323,6 +322,7 @@ type HelloResponse struct {
 	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
+	PricePerBw             float64                `protobuf:"fixed64,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                      // Price per bit/s of bandwidth
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -399,12 +399,20 @@ func (x *HelloResponse) GetTeslaAnchorKey() []byte {
 	return nil
 }
 
+func (x *HelloResponse) GetPricePerBw() float64 {
+	if x != nil {
+		return x.PricePerBw
+	}
+	return 0
+}
+
 type DebugletPolicy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"`       // min bits/s required
 	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`          // max bits/s it could use
 	TimeoutMs     int64                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // timeout in ms
-	Addresses     []string               `protobuf:"bytes,4,rep,name=addresses,proto3" json:"addresses,omitempty"`                   // e.g., SCION or network endpoints
+	PricePerBw    int64                  `protobuf:"varint,4,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`
+	Addresses     []string               `protobuf:"bytes,5,rep,name=addresses,proto3" json:"addresses,omitempty"` // e.g., SCION or network endpoints
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -456,6 +464,13 @@ func (x *DebugletPolicy) GetCeilBw() int64 {
 func (x *DebugletPolicy) GetTimeoutMs() int64 {
 	if x != nil {
 		return x.TimeoutMs
+	}
+	return 0
+}
+
+func (x *DebugletPolicy) GetPricePerBw() int64 {
+	if x != nil {
+		return x.PricePerBw
 	}
 	return 0
 }
@@ -1328,7 +1343,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"executorId\x12-\n" +
 	"\x12bandwidth_capacity\x18\x02 \x01(\x03R\x11bandwidthCapacity\"\x13\n" +
 	"\x11ResourcesResponse\"\x0e\n" +
-	"\fHelloRequest\"\xf4\x01\n" +
+	"\fHelloRequest\"\x96\x02\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -1336,13 +1351,17 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\tsource_ip\x18\x03 \x01(\tR\bsourceIp\x12&\n" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
 	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
-	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\"\x81\x01\n" +
+	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12 \n" +
+	"\fprice_per_bw\x18\a \x01(\x01R\n" +
+	"pricePerBw\"\xa3\x01\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\x1c\n" +
-	"\taddresses\x18\x04 \x03(\tR\taddresses\"\xd1\x01\n" +
+	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12 \n" +
+	"\fprice_per_bw\x18\x04 \x01(\x03R\n" +
+	"pricePerBw\x12\x1c\n" +
+	"\taddresses\x18\x05 \x03(\tR\taddresses\"\xd1\x01\n" +
 	"\rUploadRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +

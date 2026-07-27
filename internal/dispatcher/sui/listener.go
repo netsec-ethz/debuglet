@@ -15,18 +15,18 @@
 package sui
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"debuglet/internal/dispatcher/db"
-	suirpcv2 "debuglet/internal/dispatcher/sui/proto/sui/rpc/v2"
+
+	"github.com/block-vision/sui-go-sdk/common/grpcconn"
+	"github.com/block-vision/sui-go-sdk/models"
+	"github.com/block-vision/sui-go-sdk/mystenbcs"
+	v2 "github.com/block-vision/sui-go-sdk/pb/sui/rpc/v2"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -37,77 +37,24 @@ import (
 // Payment Kit package ID on Sui testnet. Source: @mysten/payment-kit constants.mjs.
 const paymentKitPackageTestnet = "0x7e069abe383e80d32f2aec17b3793da82aabc8c2edf84abbf68dd7b719e71497"
 
-// noncePrefix is the required prefix for nonces this service will accept.
 const noncePrefix = "debuglet"
-
-// uint64Str handles Sui JSON's u64 encoding, which may be a number or a quoted string.
-type uint64Str uint64
-
-func (f *uint64Str) UnmarshalJSON(data []byte) error {
-	var n uint64
-	if err := json.Unmarshal(data, &n); err == nil {
-		*f = uint64Str(n)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("uint64Str: %w", err)
-	}
-	n, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return fmt.Errorf("uint64Str parse %q: %w", s, err)
-	}
-	*f = uint64Str(n)
-	return nil
-}
-
-type eventCursor struct {
-	TxDigest string `json:"txDigest"`
-	EventSeq string `json:"eventSeq"`
-}
-
-type paymentReceiptFields struct {
-	Nonce         string         `json:"nonce"`
-	PaymentAmount uint64Str      `json:"payment_amount"`
-	Receiver      string         `json:"receiver"`
-	CoinType      string         `json:"coin_type"`
-	TimestampMs   uint64Str      `json:"timestamp_ms"`
-	PaymentType   map[string]any `json:"payment_type"`
-}
-
-type suiEvent struct {
-	ID struct {
-		TxDigest string `json:"txDigest"`
-		EventSeq string `json:"eventSeq"`
-	} `json:"id"`
-	Sender     string               `json:"sender"`
-	ParsedJSON paymentReceiptFields `json:"parsedJson"`
-}
-
-type queryResult struct {
-	Data        []suiEvent   `json:"data"`
-	NextCursor  *eventCursor `json:"nextCursor"`
-	HasNextPage bool         `json:"hasNextPage"`
-}
-
-type rpcResponse struct {
-	Result *queryResult `json:"result"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
 
 type Listener struct {
 	rpcURL          string
-	grpcEndpoint    string // host:port
+	grpcEndpoint    string
 	eventType       string
-	cursorKey       string // keyed by package ID so a redeploy starts fresh automatically
-	receiverAddress string // only process payments sent to this address
+	cursorKey       string
+	receiverAddress string
 	db              *db.UserDB
 	logger          *zap.Logger
+	client          *grpcconn.SuiGrpcClient
 }
 
 func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB, logger *zap.Logger) *Listener {
+	client := grpcconn.NewSuiGrpcClient(
+		grpcEndpoint,
+		grpcconn.WithDialOptions(grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, ""))),
+	)
 	return &Listener{
 		rpcURL:          rpcURL,
 		grpcEndpoint:    grpcEndpoint,
@@ -116,6 +63,7 @@ func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB
 		receiverAddress: strings.ToLower(receiverAddress),
 		db:              userDB,
 		logger:          logger,
+		client:          client,
 	}
 }
 
@@ -125,12 +73,13 @@ func (l *Listener) Start(ctx context.Context) error {
 		return fmt.Errorf("load sui cursor: %w", err)
 	}
 
-	var cursor *eventCursor
+	var cursor *uint64
 	if raw != "" {
-		cursor = &eventCursor{}
-		if err := json.Unmarshal([]byte(raw), cursor); err != nil {
+		seq, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
 			l.logger.Warn("invalid stored sui cursor, resetting to start", zap.Error(err))
-			cursor = nil
+		} else {
+			cursor = &seq
 		}
 	}
 
@@ -138,13 +87,11 @@ func (l *Listener) Start(ctx context.Context) error {
 
 	backoff := 2 * time.Second
 	for {
-		// Catch up on any events missed since the last cursor.
-		cursor, err = l.pollAll(cursor)
+		cursor, err = l.catchUp(ctx, cursor)
 		if err != nil {
-			l.logger.Error("sui catch-up poll error", zap.Error(err))
+			l.logger.Error("sui catch-up error", zap.Error(err))
 		}
 
-		// Stream new events via gRPC until the connection drops or ctx is cancelled.
 		err = l.subscribeGRPC(ctx, &cursor)
 		if ctx.Err() != nil {
 			return nil
@@ -160,28 +107,97 @@ func (l *Listener) Start(ctx context.Context) error {
 	}
 }
 
-// subscribeGRPC opens a gRPC connection to the Sui node, subscribes to the checkpoint stream,
-// and processes PaymentReceipt events until the stream ends or ctx is cancelled.
-// It updates *cursor after each matched event for resumption on reconnect.
-func (l *Listener) subscribeGRPC(ctx context.Context, cursor **eventCursor) error {
+// catchUp fetches and processes any checkpoints between the last recorded cursor and the
+// current chain tip via gRPC, crediting balances for matching PaymentReceipt events. The
+// gRPC ledger API has no server-side event-type filter, so every checkpoint in the range
+// must be fetched and scanned client-side.
+//
+// If cursor is nil (no prior progress recorded, e.g. first deploy), catch-up is skipped
+// entirely and the cursor is initialized to the current tip: replaying the full checkpoint
+// history from genesis over gRPC would mean scanning millions of checkpoints one at a time.
+func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error) {
+	ledger, err := l.client.LedgerService(ctx)
+	if err != nil {
+		return cursor, fmt.Errorf("ledger service: %w", err)
+	}
+
+	info, err := ledger.GetServiceInfo(ctx, &v2.GetServiceInfoRequest{})
+	if err != nil {
+		return cursor, fmt.Errorf("get service info: %w", err)
+	}
+	tip := info.GetCheckpointHeight()
+
+	if cursor == nil {
+		l.logger.Info("no stored sui cursor, starting at chain tip", zap.Uint64("checkpoint", tip))
+		return &tip, nil
+	}
+	if *cursor >= tip {
+		return cursor, nil
+	}
+
+	l.logger.Info("sui catch-up: scanning checkpoints",
+		zap.Uint64("from", *cursor+1), zap.Uint64("to", tip))
+
+	readMask := &fieldmaskpb.FieldMask{
+		Paths: []string{"transactions.digest", "transactions.transaction.sender", "transactions.events"},
+	}
+
+	for seq := *cursor + 1; seq <= tip; seq++ {
+		if ctx.Err() != nil {
+			return cursor, ctx.Err()
+		}
+
+		resp, err := ledger.GetCheckpoint(ctx, &v2.GetCheckpointRequest{
+			CheckpointId: &v2.GetCheckpointRequest_SequenceNumber{SequenceNumber: seq},
+			ReadMask:     readMask,
+		})
+		if err != nil {
+			return cursor, fmt.Errorf("get checkpoint %d: %w", seq, err)
+		}
+
+		for _, tx := range resp.GetCheckpoint().GetTransactions() {
+			txDigest := tx.GetDigest()
+			sender := tx.GetTransaction().GetSender()
+			for _, ev := range tx.GetEvents().GetEvents() {
+				if ev.GetEventType() != l.eventType {
+					continue
+				}
+				l.processEventGRPC(ev, txDigest, sender)
+			}
+		}
+
+		seq := seq
+		cursor = &seq
+		if err := l.db.SetState(l.cursorKey, strconv.FormatUint(seq, 10)); err != nil {
+			l.logger.Error("failed to persist sui cursor", zap.Error(err))
+		}
+	}
+
+	return cursor, nil
+}
+
+func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 	l.logger.Info("connecting to sui grpc", zap.String("endpoint", l.grpcEndpoint))
 
-	conn, err := grpc.NewClient(l.grpcEndpoint,
-		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")),
+	client := grpcconn.NewSuiGrpcClient(
+		l.grpcEndpoint,
+		grpcconn.WithDialOptions(grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, ""))),
 	)
-	if err != nil {
-		return fmt.Errorf("grpc dial: %w", err)
-	}
-	defer conn.Close()
+	defer client.Close()
 
-	client := suirpcv2.NewSubscriptionServiceClient(conn)
-	stream, err := client.SubscribeCheckpoints(ctx, &suirpcv2.SubscribeCheckpointsRequest{
-		ReadMask: &fieldmaskpb.FieldMask{
-			Paths: []string{"transactions"},
-		},
-	})
+	service, err := client.SubscriptionService(ctx)
 	if err != nil {
-		return fmt.Errorf("subscribe checkpoints: %w", err)
+		return fmt.Errorf("failed to get subscription service: %v", err)
+	}
+
+	req := &v2.SubscribeCheckpointsRequest{
+		ReadMask: &fieldmaskpb.FieldMask{
+			Paths: []string{"*"}, // Get all fields
+		},
+	}
+	stream, err := service.SubscribeCheckpoints(ctx, req)
+	if err != nil {
+		return fmt.Errorf("SubscribeCheckpoints failed to start: %v", err)
 	}
 
 	for {
@@ -193,29 +209,29 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **eventCursor) erro
 			return fmt.Errorf("recv checkpoint: %w", err)
 		}
 
-		for _, tx := range resp.GetCheckpoint().GetTransactions() {
+		cp := resp.GetCheckpoint()
+		for _, tx := range cp.GetTransactions() {
 			txDigest := tx.GetDigest()
 			sender := tx.GetTransaction().GetSender()
-			for j, ev := range tx.GetEvents().GetEvents() {
+			for _, ev := range tx.GetEvents().GetEvents() {
 				if ev.GetEventType() != l.eventType {
 					continue
 				}
 				l.processEventGRPC(ev, txDigest, sender)
-				// Update cursor so a reconnect resumes after this event.
-				*cursor = &eventCursor{TxDigest: txDigest, EventSeq: strconv.Itoa(j)}
-				raw, _ := json.Marshal(*cursor)
-				if err := l.db.SetState(l.cursorKey, string(raw)); err != nil {
-					l.logger.Error("failed to persist sui cursor", zap.Error(err))
-				}
 			}
+		}
+
+		seq := cp.GetSequenceNumber()
+		*cursor = &seq
+		if err := l.db.SetState(l.cursorKey, strconv.FormatUint(seq, 10)); err != nil {
+			l.logger.Error("failed to persist sui cursor", zap.Error(err))
 		}
 	}
 }
 
-// processEventGRPC credits balance from a PaymentReceipt event received via gRPC.
-func (l *Listener) processEventGRPC(ev *suirpcv2.Event, txDigest, sender string) {
+func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
 	nonce, receiver, amount, err := decodePaymentReceiptEvent(ev.GetContents().GetValue())
-	l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver,), zap.Int64("amount", amount))
+	l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver), zap.Int64("amount", amount))
 	if err != nil {
 		l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
 			zap.String("tx", txDigest),
@@ -261,157 +277,26 @@ func (l *Listener) processEventGRPC(ev *suirpcv2.Event, txDigest, sender string)
 	)
 }
 
-// decodePaymentReceiptEvent decodes the BCS bytes of a PaymentReceipt Move event.
-// Struct layout: { payment_type: PaymentType, nonce: String, payment_amount: u64,
-//
-//	receiver: address (32 bytes), coin_type: String, timestamp_ms: u64 }
-//
-// PaymentType enum: variant 0 = Ephemeral, variant 1 = Registry (+ 32-byte address).
+type paymentType struct {
+	Ephemeral any
+	Registry  *models.SuiAddressBytes
+}
+
+func (*paymentType) IsBcsEnum() {}
+
+type paymentReceiptFields struct {
+	PaymentType   *paymentType
+	Nonce         string
+	PaymentAmount uint64
+	Receiver      models.SuiAddressBytes
+	CoinType      string
+	TimestampMs   uint64
+}
+
 func decodePaymentReceiptEvent(data []byte) (nonce, receiver string, amount int64, err error) {
-	pos := 0
-
-	// PaymentType enum variant index.
-	variant, n := bcsULEB128(data[pos:])
-	pos += n
-	if variant == 1 {
-		// Registry variant carries a 32-byte registry address.
-		pos += 32
+	var ev paymentReceiptFields
+	if _, err := mystenbcs.Unmarshal(data, &ev); err != nil {
+		return "", "", 0, fmt.Errorf("BCS decode PaymentReceipt: %w", err)
 	}
-
-	// nonce: String
-	strLen, n := bcsULEB128(data[pos:])
-	pos += n
-	if pos+int(strLen) > len(data) {
-		return "", "", 0, fmt.Errorf("BCS nonce out of bounds (len=%d, pos=%d)", len(data), pos)
-	}
-	nonce = string(data[pos : pos+int(strLen)])
-	pos += int(strLen)
-
-	// payment_amount: u64
-	if pos+8 > len(data) {
-		return "", "", 0, fmt.Errorf("BCS too short for payment_amount (len=%d, pos=%d)", len(data), pos)
-	}
-	amount = int64(binary.LittleEndian.Uint64(data[pos : pos+8]))
-	pos += 8
-
-	// receiver: address (32 bytes)
-	if pos+32 > len(data) {
-		return "", "", 0, fmt.Errorf("BCS too short for receiver (len=%d, pos=%d)", len(data), pos)
-	}
-	receiver = fmt.Sprintf("0x%x", data[pos:pos+32])
-	return
-}
-
-// bcsULEB128 reads a variable-length unsigned integer from BCS-encoded bytes.
-func bcsULEB128(data []byte) (uint64, int) {
-	var result uint64
-	var shift uint
-	for i, b := range data {
-		result |= uint64(b&0x7f) << shift
-		if b&0x80 == 0 {
-			return result, i + 1
-		}
-		shift += 7
-	}
-	return result, len(data)
-}
-
-// pollAll drains all available pages of new events starting from cursor (JSON-RPC catch-up).
-func (l *Listener) pollAll(cursor *eventCursor) (*eventCursor, error) {
-	for {
-		result, err := l.fetchPage(cursor)
-		if err != nil {
-			return cursor, err
-		}
-
-		for _, ev := range result.Data {
-			l.processEvent(ev)
-		}
-
-		cursor = result.NextCursor
-		if cursor != nil {
-			raw, _ := json.Marshal(cursor)
-			if err := l.db.SetState(l.cursorKey, string(raw)); err != nil {
-				l.logger.Error("failed to persist sui cursor", zap.Error(err))
-			}
-		}
-
-		if !result.HasNextPage {
-			return cursor, nil
-		}
-	}
-}
-
-func (l *Listener) fetchPage(cursor *eventCursor) (*queryResult, error) {
-	body, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "suix_queryEvents",
-		"params": []any{
-			map[string]any{"MoveEventType": l.eventType},
-			cursor,
-			50,
-			false,
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := http.Post(l.rpcURL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("rpc request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var rpc rpcResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpc); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	if rpc.Error != nil {
-		return nil, fmt.Errorf("rpc error: %s", rpc.Error.Message)
-	}
-	if rpc.Result == nil {
-		return nil, fmt.Errorf("nil result in rpc response")
-	}
-	return rpc.Result, nil
-}
-
-func (l *Listener) processEvent(ev suiEvent) {
-	if !strings.EqualFold(ev.ParsedJSON.Receiver, l.receiverAddress) {
-		return
-	}
-	if !strings.HasPrefix(ev.ParsedJSON.Nonce, noncePrefix) {
-		return
-	}
-
-	amount := int64(ev.ParsedJSON.PaymentAmount)
-	sender := ev.Sender
-
-	if amount <= 0 {
-		l.logger.Warn("PaymentReceipt: non-positive amount, no balance credited",
-			zap.String("tx", ev.ID.TxDigest),
-			zap.String("sender", sender),
-			zap.Int64("mist", amount),
-		)
-		return
-	}
-
-	if err := l.db.UpdateBalance(sender, amount); err != nil {
-		l.logger.Error("failed to credit balance from PaymentReceipt",
-			zap.String("tx", ev.ID.TxDigest),
-			zap.String("sender", sender),
-			zap.String("nonce", ev.ParsedJSON.Nonce),
-			zap.Int64("balance_delta", amount),
-			zap.Error(err),
-		)
-		return
-	}
-
-	l.logger.Info("credited balance from PaymentReceipt",
-		zap.String("tx", ev.ID.TxDigest),
-		zap.String("sender", sender),
-		zap.String("nonce", ev.ParsedJSON.Nonce),
-		zap.Int64("balance_delta", amount),
-	)
+	return ev.Nonce, fmt.Sprintf("0x%x", ev.Receiver), int64(ev.PaymentAmount), nil
 }
