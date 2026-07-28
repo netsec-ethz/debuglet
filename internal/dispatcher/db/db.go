@@ -21,13 +21,40 @@ import (
 	"strings"
 	"time"
 
-	"encoding/hex"
 	"crypto/sha256"
+	"encoding/hex"
+
 	_ "modernc.org/sqlite"
 )
 
 type UserDB struct {
 	db *sql.DB
+}
+type TransactionDB struct {
+	db *sql.DB
+}
+
+func NewTransactionDB(path string) (*TransactionDB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite db: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS transactions (
+		id 				INTEGER	PRIMARY KEY,
+		transaction_id 	TEXT	NOT NULL,
+		auth_key		TEXT	NOT NULL,
+		price			INTEGER NOT NULL,
+		method			TEXT	NOT NULL,
+		expires_at		INTEGER	NOT NULL,
+		payed			BOOLEAN	NOT NULL
+		)`)
+
+	if err != nil {
+		return nil, fmt.Errorf("create transactions table: %w", err)
+	}
+
+	return &TransactionDB{db: db}, nil
 }
 
 func NewUserDB(path string) (*UserDB, error) {
@@ -70,6 +97,9 @@ func (u *UserDB) Close() error {
 	return u.db.Close()
 }
 
+func (t *TransactionDB) Close() error {
+	return t.db.Close()
+}
 
 // UpdateBalance credits delta to a user's balance, creating the row if it does not exist.
 func (u *UserDB) UpdateBalance(userID string, delta int64) error {
@@ -211,4 +241,28 @@ func (u *UserDB) SetState(key, value string) error {
 func tokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
+}
+
+func (t *TransactionDB) StoreTransaction(transactionId string, authKey string, price int64, method string, expiresAt int64) error {
+
+	_, err := t.db.Exec(
+		`INSERT INTO transactions (transaction_id, auth_key, price, method, expires_at, payed) VALUES (?, ?, ?,?,?, ?)`,
+		transactionId, authKey, price, method, expiresAt, false,
+	)
+	if err != nil {
+		return fmt.Errorf("store challenge: %w", err)
+	}
+	return nil
+}
+
+func (t *TransactionDB) IsPayed(transactionId string) (bool, error) {
+	var value bool
+	err := t.db.QueryRow(`SELECT payed FROM state WHERE transaction_id = ?`, transactionId).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get state %q: %w", transactionId, err)
+	}
+	return value, nil
 }

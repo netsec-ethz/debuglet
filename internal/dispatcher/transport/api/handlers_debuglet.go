@@ -8,16 +8,29 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
 // PUT /debuglet
 func (h *Handler) SubmitDebuglets(c echo.Context) error {
-	var reqs []DebugletRequest
-	if err := c.Bind(&reqs); err != nil {
+	var req SubmitDebugletsRequest
+	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
 	}
+	h.logger.Info("submit debuglets",
+		//zap.Any("debuglets", req.Debuglets),
+		zap.Int("num_debuglets", len(req.Debuglets)),
+		zap.String("payment_method", req.PaymentMethod),
+	)
+	var reqs = req.Debuglets
 	if len(reqs) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
+	}
+
+	price := int64(0) //TODO calculate total price
+	transactionId, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price, req.PaymentMethod)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "faield to create payment intent: "+err.Error())
 	}
 
 	var specs []dispatcher.DebugletSpec
@@ -26,13 +39,14 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
+		spec.TransactionID = transactionId
 		specs = append(specs, spec)
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets: "+err.Error())
 	} else {
-		return c.JSON(http.StatusOK, IDs)
+		return c.JSON(http.StatusOK, SubmitDebugletsResponse{IDs, intent})
 	}
 }
 

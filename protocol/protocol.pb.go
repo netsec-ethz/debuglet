@@ -914,7 +914,8 @@ type DebugletAllocateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DebugletId    string                 `protobuf:"bytes,1,opt,name=debuglet_id,json=debugletId,proto3" json:"debuglet_id,omitempty"`
 	ExecutorId    string                 `protobuf:"bytes,2,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	Policy        *DebugletPolicy        `protobuf:"bytes,3,opt,name=policy,proto3" json:"policy,omitempty"`
+	TransactionId string                 `protobuf:"bytes,3,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
+	Policy        *DebugletPolicy        `protobuf:"bytes,4,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -959,6 +960,13 @@ func (x *DebugletAllocateRequest) GetDebugletId() string {
 func (x *DebugletAllocateRequest) GetExecutorId() string {
 	if x != nil {
 		return x.ExecutorId
+	}
+	return ""
+}
+
+func (x *DebugletAllocateRequest) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
 	}
 	return ""
 }
@@ -1389,13 +1397,14 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
 	"executorId\x121\n" +
 	"\x05state\x18\x03 \x01(\x0e2\x1b.debuglet.protocol.RunStateR\x05state\"\x17\n" +
-	"\x15DebugletStateResponse\"\x96\x01\n" +
+	"\x15DebugletStateResponse\"\xbd\x01\n" +
 	"\x17DebugletAllocateRequest\x12\x1f\n" +
 	"\vdebuglet_id\x18\x01 \x01(\tR\n" +
 	"debugletId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
-	"executorId\x129\n" +
-	"\x06policy\x18\x03 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policy\"j\n" +
+	"executorId\x12%\n" +
+	"\x0etransaction_id\x18\x03 \x01(\tR\rtransactionId\x129\n" +
+	"\x06policy\x18\x04 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policy\"j\n" +
 	"\x18DebugletAllocateResponse\x12N\n" +
 	"\x10allocated_limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x0fallocatedLimits\"\x8f\x01\n" +
 	"\x13DebugletExitRequest\x12\x1f\n" +

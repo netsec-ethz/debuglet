@@ -109,7 +109,8 @@ message DebugletStateResponse {}
 message DebugletAllocateRequest {
   string debuglet_id = 1;
   string executor_id = 2;
-  DebugletPolicy policy = 3;
+  string transaction_id = 3;
+  DebugletPolicy policy = 4;
 }
 // The dispatcher may directly respond with updated limits
 message DebugletAllocateResponse {

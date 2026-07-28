@@ -81,8 +81,9 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 
 func (e *Executor) allocateDebuglet(ctx context.Context, spec scheduler.Spec) error {
 	req := &pb.DebugletAllocateRequest{
-		DebugletId: spec.DebugletID,
-		ExecutorId: e.cfg.ExecutorID,
+		DebugletId:    spec.DebugletID,
+		ExecutorId:    e.cfg.ExecutorID,
+		TransactionId: spec.TransactionID,
 		Policy: &pb.DebugletPolicy{
 			FloorBw:   spec.Policy.FloorBW,
 			CeilBw:    spec.Policy.CeilBW,
@@ -113,7 +114,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 		return nil, err
 	}
 
-	deb := debuglet.New(e.logger, spec.DebugletID, spec.Policy, e.teslaSchedule, e.limiter, e.packetCount, e.iface)
+	deb := debuglet.New(e.logger, spec.DebugletID, spec.TransactionID, spec.Policy, e.teslaSchedule, e.limiter, e.packetCount, e.iface)
 
 	e.running[spec.DebugletID] = RunningDebuglet{
 		id:        id,

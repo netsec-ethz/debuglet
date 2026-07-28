@@ -41,10 +41,10 @@ type ExecutorResponse struct {
 	LastSeen int64  `json:"last_seen"`
 	Version  string `json:"version"`
 
-	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
-	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
-	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
-	PricePerBw float64 `json:"price_per_bw"`
+	TeslaDelaySec          int64   `json:"tesla_delay_sec"`
+	TeslaAnchorTimestampNs int64   `json:"tesla_anchor_timestamp_ns"`
+	TeslaAnchorKey         []byte  `json:"tesla_anchor_key"` // k_0, the public chain anchor
+	PricePerBw             float64 `json:"price_per_bw"`
 }
 
 // ExecutorByIPResponse is returned by GET /executors/by-ip?ip=<ip>.
@@ -79,8 +79,32 @@ type DebugletStateResponse struct {
 	ExecutorID string `json:"executor_id"`
 }
 
+type SubmitDebugletsResponse struct {
+	IDs           []string `json:"ids"`
+	paymentIntent any      // method specific intent
+}
+type SubmitDebugletsRequest struct {
+	Debuglets     []DebugletRequest `json:"debuglets"`
+	PaymentMethod string            `json:"payment_method"`
+}
+
 type BalanceResponse struct {
 	Balance int64 `json:"balance"`
+}
+
+type IntentResponse struct {
+	Method string `json:"method"`
+	Intent any    `json:"intent"`
+}
+
+type SuiIntent struct {
+	TransactionId []byte `json:"transaction_id"`
+	AuthKey       []byte `json:"auth_key"`
+	ExpiresAt     int64  `json:"expires_at"`
+}
+
+type IntentRequest struct {
+	IDs []string `json:"debuglet_ids"`
 }
 
 // ================ HELPERS ================
