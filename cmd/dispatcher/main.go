@@ -29,10 +29,12 @@ import (
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
+	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/transport/api"
+
 	//"debuglet/internal/dispatcher/transport/rpc"
 	"debuglet/internal/dispatcher/db"
-	"debuglet/internal/dispatcher/sui"
+	"debuglet/internal/dispatcher/payments/sui"
 	//pb "debuglet/protocol"
 )
 
@@ -61,9 +63,16 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to open user database", zap.Error(err))
 	}
+	transactionDB, err := db.NewTransactionDB("/var/lib/debuglet/transactions.db")
+	if err != nil {
+		logger.Fatal("failed to open transaction database", zap.Error(err))
+	}
 	defer userDB.Close()
+	defer transactionDB.Close()
 
-	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second)
+	paymentHandler := payments.NewPaymentHandler(transactionDB, userDB, cfg, logger)
+
+	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, paymentHandler)
 	defer d.Close()
 
 	g, subCtx := errgroup.WithContext(context.Background())
@@ -86,11 +95,13 @@ func main() {
 	})
 
 	// ---- Start HTTP Server ----
-	g.Go(func() error { return startHTTPServer(d, userDB, cfg, logger) })
+	g.Go(func() error { return startHTTPServer(d, userDB, transactionDB, cfg, logger) })
 
-	// ---- Start Sui Event Listener ----
+	// ---- Start payment handler ----
+
 	if cfg.Sui.RPCURL != "" {
-		g.Go(func() error { return startSuiListener(userDB,cfg,logger)})
+		g.Go(func() error { return paymentHandler.Start() })
+		//g.Go(func() error { return startSuiListener(userDB, cfg, logger) })
 	}
 
 	if err := g.Wait(); err != nil {
@@ -106,10 +117,10 @@ func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *z
 }
 
 // startHTTPServer runs the Echo-based HTTP API
-func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, transactionDB *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	port := cfg.HTTPPort
 
-	handler := api.NewHandler(manager, userDB, logger)
+	handler := api.NewHandler(manager, userDB, transactionDB, logger)
 
 	e := echo.New()
 	e.HideBanner = true

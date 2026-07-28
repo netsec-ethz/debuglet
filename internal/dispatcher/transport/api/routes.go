@@ -10,16 +10,18 @@ import (
 )
 
 type Handler struct {
-	dispatcher *dispatcher.Dispatcher
-	logger     *zap.Logger
-	database 	*db.UserDB
+	dispatcher    *dispatcher.Dispatcher
+	logger        *zap.Logger
+	database      *db.UserDB
+	transactionDB *db.TransactionDB
 }
 
-func NewHandler(d *dispatcher.Dispatcher, db *db.UserDB, l *zap.Logger) *Handler {
+func NewHandler(d *dispatcher.Dispatcher, db *db.UserDB, tb *db.TransactionDB, l *zap.Logger) *Handler {
 	return &Handler{
-		dispatcher: d,
-		logger:     l,
-		database: db,
+		dispatcher:    d,
+		logger:        l,
+		database:      db,
+		transactionDB: tb,
 	}
 }
 
@@ -42,6 +44,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.PATCH("/destination", h.UpdateDestinationLimit)
 	// payment
 	e.GET("payment/balance", h.GetBalance)
+	//e.GET("payment/intent", h.GetIntent)
 	//authentication
 	e.GET("auth/nonce", h.GetNonce)
 	e.PUT("auth/verify", h.Verify)

@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/tag"
 	"debuglet/internal/dispatcher/transport/rpc"
@@ -27,7 +28,6 @@ type DebugletStore struct {
 	Err        string
 }
 
-
 type Dispatcher struct {
 	version string
 
@@ -47,9 +47,11 @@ type Dispatcher struct {
 	seq           int // counter for log connection IDs
 
 	destinations *resource.DestinationsUsage
+
+	Payment *payments.PaymentHandler
 }
 
-func New(l *zap.Logger, version string, execTimeout time.Duration) *Dispatcher {
+func New(l *zap.Logger, version string, execTimeout time.Duration, paymentHandler *payments.PaymentHandler) *Dispatcher {
 	d := &Dispatcher{
 		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
@@ -60,6 +62,7 @@ func New(l *zap.Logger, version string, execTimeout time.Duration) *Dispatcher {
 		debugletStores: make(map[string]*DebugletStore),
 		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
+		Payment:        paymentHandler,
 	}
 
 	d.Bidi = rpc.NewBidiServer(l, d)

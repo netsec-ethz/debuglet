@@ -30,11 +30,12 @@ type Policy struct {
 }
 
 type Spec struct {
-	DebugletID string
-	StartTime  *time.Time
-	Args       []string
-	Wasm       []byte
-	Policy     Policy
+	DebugletID    string
+	StartTime     *time.Time
+	Args          []string
+	Wasm          []byte
+	Policy        Policy
+	TransactionID string
 }
 
 // RunLock is a synchronization primitive that allows a scheduler to signal to the executor that it has taken over ownership of a debuglet.
