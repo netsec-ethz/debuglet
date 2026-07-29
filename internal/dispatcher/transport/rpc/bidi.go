@@ -87,14 +87,9 @@ func (b *BidiServer) ServeGRPC(ctx context.Context, addr string) error {
 	return b.grpcServer.Serve(lis)
 }
 
-// ServeYamux listens for yamux connections from executors on the given address.
-func (b *BidiServer) ServeYamux(ctx context.Context, addr string) error {
-	var lc net.ListenConfig
-	lis, err := lc.Listen(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %v", addr, err)
-	}
-	b.logger.Info("Yamux listener started", zap.String("address", addr))
+// ServeYamux accepts yamux connections from executors on the given listener.
+func (b *BidiServer) ServeYamux(ctx context.Context, lis net.Listener) error {
+	b.logger.Info("Yamux listener started", zap.String("address", lis.Addr().String()))
 
 	for {
 		conn, err := lis.Accept()

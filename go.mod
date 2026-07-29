@@ -10,6 +10,7 @@ require (
 	github.com/netsec-ethz/scion-apps v0.6.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/scionproto/scion v0.11.1-0.20240610170620-50b971ca2d4b
+	github.com/soheilhy/cmux v0.1.5
 	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.53.0

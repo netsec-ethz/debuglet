@@ -19,11 +19,13 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
@@ -59,35 +61,39 @@ func main() {
 
 	g, subCtx := errgroup.WithContext(context.Background())
 
-	yamuxPort := cfg.YamuxPort
-	if yamuxPort == 0 {
-		yamuxPort = cfg.GRPCPort + 1
-	}
-
 	// ---- Start gRPC Server ----
 	g.Go(func() error {
 		addr := fmt.Sprintf(":%d", cfg.GRPCPort)
 		return d.Bidi.ServeGRPC(subCtx, addr)
 	})
 
-	// ---- Start Yamux Listener ----
+	// ---- Start combined HTTP + Yamux on cmux ----
 	g.Go(func() error {
-		addr := fmt.Sprintf(":%d", yamuxPort)
-		return d.Bidi.ServeYamux(subCtx, addr)
-	})
+		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("cmux listen: %w", err)
+		}
+		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
 
-	// ---- Start HTTP Server ----
-	g.Go(func() error { return startHTTPServer(d, cfg, logger) })
+		m := cmux.New(lis)
+		httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
+		yamuxL := m.Match(cmux.Any())
+
+		g2, ctx2 := errgroup.WithContext(subCtx)
+		g2.Go(func() error { return m.Serve() })
+		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
+		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
+		return g2.Wait()
+	})
 
 	if err := g.Wait(); err != nil {
 		logger.Fatal("dispatcher exited with error", zap.Error(err))
 	}
 }
 
-// startHTTPServer runs the Echo-based HTTP API
-func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	port := cfg.HTTPPort
-
+// startHTTPServer runs the Echo-based HTTP API on the given listener.
+func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	handler := api.NewHandler(manager, logger)
 
 	e := echo.New()
@@ -101,21 +107,19 @@ func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfi
 
 	handler.RegisterRoutes(e)
 
-	addr := fmt.Sprintf(":%d", port)
-	logger.Info("Dispatcher HTTP API started", zap.Int("port", port))
+	logger.Info("Dispatcher HTTP API started", zap.String("address", lis.Addr().String()))
 
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12, // More compatible than forcing 1.3
+		MinVersion: tls.VersionTLS12,
 	}
 
 	server := &http.Server{
-		Addr:      addr,
 		Handler:   e,
 		TLSConfig: tlsConfig,
 	}
 	if cfg.DisableTLS {
-		return server.ListenAndServe()
+		return server.Serve(lis)
 	} else {
-		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		return server.Serve(tls.NewListener(lis, tlsConfig))
 	}
 }

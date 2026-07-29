@@ -1,6 +1,5 @@
 http_port = 9000
 grpc_port = 9001
-yamux_port = 9002
 log_level = "debug"
 disable_tls = true
 executor_timeout = 60

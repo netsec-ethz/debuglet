@@ -1,6 +1,7 @@
 executor_id = "{{ executor_id }}"
 version = "{{ executor_version }}"
 dispatcher_addr = "{{ dispatcher_addr }}:{{ dispatcher_grpc_port }}"
+dispatcher_yamux_addr = "{{ dispatcher_addr }}:{{ dispatcher_http_port }}"
 log_level = "{{ executor_log_level }}"
 capacity = {{ executor_capacity }}
 tesla_seed = "{{ executor_tesla_seed }}"

@@ -30,7 +30,6 @@ type TLSConfig struct {
 type DispatcherConfig struct {
 	Version    string    `toml:"version"`
 	GRPCPort   int       `toml:"grpc_port"`
-	YamuxPort  int       `toml:"yamux_port"`
 	HTTPPort   int       `toml:"http_port"`
 	LogLevel   string    `toml:"log_level"`
 	DisableTLS bool      `toml:"disable_tls"`
