@@ -67,6 +67,7 @@ message UploadRequest {
   repeated string args = 4;
 
   DebugletPolicy policy = 5;
+  string transaction_id = 6;
 }
 message UploadResponse {}
 

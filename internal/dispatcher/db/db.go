@@ -34,6 +34,15 @@ type TransactionDB struct {
 	db *sql.DB
 }
 
+type Transaction struct {
+	TransactionId string
+	AuthKey       string
+	Price         int64
+	Method        string
+	Expires_at    int64
+	Payed         bool
+}
+
 func NewTransactionDB(path string) (*TransactionDB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -41,8 +50,7 @@ func NewTransactionDB(path string) (*TransactionDB, error) {
 	}
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS transactions (
-		id 				INTEGER	PRIMARY KEY,
-		transaction_id 	TEXT	NOT NULL,
+		transaction_id 	TEXT	PRIMARY KEY NOT NULL,
 		auth_key		TEXT	NOT NULL,
 		price			INTEGER NOT NULL,
 		method			TEXT	NOT NULL,
@@ -250,19 +258,33 @@ func (t *TransactionDB) StoreTransaction(transactionId string, authKey string, p
 		transactionId, authKey, price, method, expiresAt, false,
 	)
 	if err != nil {
-		return fmt.Errorf("store challenge: %w", err)
+		return fmt.Errorf("store transaction: %w", err)
 	}
 	return nil
 }
 
+func (t *TransactionDB) GetTransaction(transactionId string) (Transaction, error) {
+	var transaction Transaction
+	err := t.db.QueryRow(`SELECT auth_key, price FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&transaction.AuthKey, &transaction.Price)
+	if err != nil {
+		return transaction, fmt.Errorf("get transaction %q: %w", transactionId, err)
+	}
+	return transaction, nil
+}
+
+func (t *TransactionDB) SetPayed(transactionId string) error {
+	_, err := t.db.Exec(`UPDATE transactions SET payed = TRUE WHERE transaction_id = ?`, transactionId)
+	return err
+}
+
 func (t *TransactionDB) IsPayed(transactionId string) (bool, error) {
 	var value bool
-	err := t.db.QueryRow(`SELECT payed FROM state WHERE transaction_id = ?`, transactionId).Scan(&value)
+	err := t.db.QueryRow(`SELECT payed FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("get state %q: %w", transactionId, err)
+		return false, fmt.Errorf("get transaction %q: %w", transactionId, err)
 	}
 	return value, nil
 }

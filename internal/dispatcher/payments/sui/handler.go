@@ -42,7 +42,9 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (string, SuiPayment
 	expiresAt := time.Now().Add(time.Minute * 5).Unix()
 	transactionId := hex.EncodeToString(b_transactionId)
 	authKey := hex.EncodeToString(b_authKey)
-	h.Database.StoreTransaction(transactionId, authKey, price, "SUI", expiresAt)
+	if err := h.Database.StoreTransaction(transactionId, authKey, price, "SUI", expiresAt); err != nil {
+		return "", SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
+	}
 
 	return transactionId, SuiPaymentIntent{transactionId, authKey, expiresAt}, nil
 }

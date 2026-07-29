@@ -489,6 +489,7 @@ type UploadRequest struct {
 	Wasm          []byte                 `protobuf:"bytes,3,opt,name=wasm,proto3" json:"wasm,omitempty"`
 	Args          []string               `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`
 	Policy        *DebugletPolicy        `protobuf:"bytes,5,opt,name=policy,proto3" json:"policy,omitempty"`
+	TransactionId string                 `protobuf:"bytes,6,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -556,6 +557,13 @@ func (x *UploadRequest) GetPolicy() *DebugletPolicy {
 		return x.Policy
 	}
 	return nil
+}
+
+func (x *UploadRequest) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
+	}
+	return ""
 }
 
 type UploadResponse struct {
@@ -1369,14 +1377,15 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12 \n" +
 	"\fprice_per_bw\x18\x04 \x01(\x03R\n" +
 	"pricePerBw\x12\x1c\n" +
-	"\taddresses\x18\x05 \x03(\tR\taddresses\"\xd1\x01\n" +
+	"\taddresses\x18\x05 \x03(\tR\taddresses\"\xf8\x01\n" +
 	"\rUploadRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +
 	"start_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\tstartTime\x88\x01\x01\x12\x12\n" +
 	"\x04wasm\x18\x03 \x01(\fR\x04wasm\x12\x12\n" +
 	"\x04args\x18\x04 \x03(\tR\x04args\x129\n" +
-	"\x06policy\x18\x05 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policyB\r\n" +
+	"\x06policy\x18\x05 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policy\x12%\n" +
+	"\x0etransaction_id\x18\x06 \x01(\tR\rtransactionIdB\r\n" +
 	"\v_start_time\"\x10\n" +
 	"\x0eUploadResponse\"G\n" +
 	"\fAbortRequest\x12\x1f\n" +
