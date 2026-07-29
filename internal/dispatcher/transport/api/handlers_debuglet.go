@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"go.uber.org/zap"
 )
 
 // PUT /debuglet
@@ -17,17 +16,22 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
 	}
-	h.logger.Info("submit debuglets",
-		//zap.Any("debuglets", req.Debuglets),
-		zap.Int("num_debuglets", len(req.Debuglets)),
-		zap.String("payment_method", req.PaymentMethod),
-	)
+
 	var reqs = req.Debuglets
 	if len(reqs) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
 	}
 
-	price := int64(0) //TODO calculate total price
+	price := int64(0)
+	for _, req := range reqs {
+		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
+		if !exists {
+			continue
+		}
+		//TODO guard against overflow
+		price += int64(executor.PricePerBw) * req.Policy.FloorBW * req.Policy.TimeoutMS
+	}
+
 	transactionId, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price, req.PaymentMethod)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "faield to create payment intent: "+err.Error())
