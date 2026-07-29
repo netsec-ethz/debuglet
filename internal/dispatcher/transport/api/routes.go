@@ -43,8 +43,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// destination
 	e.PATCH("/destination", h.UpdateDestinationLimit)
 	// payment
-	e.GET("payment/balance", h.GetBalance)
-	//e.GET("payment/intent", h.GetIntent)
+	//e.GET("payment/balance", h.GetBalance)
+	e.PUT("payment/intent", h.GetPaymentIntent)
 	//authentication
 	e.GET("auth/nonce", h.GetNonce)
 	e.PUT("auth/verify", h.Verify)

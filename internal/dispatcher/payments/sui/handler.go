@@ -17,9 +17,9 @@ type SuiPaymentHandler struct {
 }
 
 type SuiPaymentIntent struct {
-	transactionId string
-	authKey       string
-	expirseAt     int64
+	TransactionId string
+	AuthKey       string
+	ExpiresAt     int64
 }
 
 func NewSuiPaymentHandler(rpcURL string, grpcEndpoint string, receiverAddress string, userDB *db.UserDB, transactionDB *db.TransactionDB, logger *zap.Logger) *SuiPaymentHandler {

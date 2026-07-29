@@ -19,7 +19,12 @@ type PaymentHandler struct {
 
 type PaymentIntent struct {
 	method string
-	intent any //method specific intent fields
+	Intent any //method specific intent fields
+}
+
+type DummyIntent struct {
+	TransactionId string
+	AuthKey       string
 }
 
 func NewPaymentHandler(db *db.TransactionDB, userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
@@ -40,10 +45,10 @@ func (p *PaymentHandler) CreatePaymentIntent(price int64, method string) (string
 		if err != nil {
 			return "", PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
 		}
-		return transactionId, PaymentIntent{method: method, intent: suiIntent}, nil
+		return transactionId, PaymentIntent{method: method, Intent: suiIntent}, nil
 	case "TEST":
 		transactionId, err := p.CreateDummyIntent()
-		return transactionId, PaymentIntent{method: "TEST", intent: nil}, err
+		return transactionId, PaymentIntent{method: "TEST", Intent: DummyIntent{TransactionId: transactionId, AuthKey: ""}}, err
 	default:
 		return "", PaymentIntent{}, fmt.Errorf("Unsupported payment method: %s", method)
 	}
@@ -55,6 +60,11 @@ func (p *PaymentHandler) IsPayed(transactionID string) (bool, error) {
 		return false, err
 	}
 	return payed, nil
+}
+
+func (p *PaymentHandler) GetTransaction(transactionID string) (db.Transaction, error) {
+	transaction, err := p.db.GetTransaction(transactionID)
+	return transaction, err
 }
 
 // This is for testing only. Creates a transaction and immediately sets it to payed
