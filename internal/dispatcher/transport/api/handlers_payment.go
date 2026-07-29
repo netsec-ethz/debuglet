@@ -1,6 +1,8 @@
 package api
 
 import (
+	"debuglet/internal/dispatcher/payments"
+	"debuglet/internal/dispatcher/payments/sui"
 	"net/http"
 	"strings"
 
@@ -40,18 +42,41 @@ func (h *Handler) GetBalance(c echo.Context) error {
 	return c.JSON(http.StatusOK, BalanceResponse{Balance: int64(balance)})
 }
 
-/*
-func (h *Handler) GetIntent(c echo.Context) error {
-	transactionId := make([]byte, 16)
-	authKey := make([]byte, 16)
-	_, err := rand.Read(transactionId)
-	_, err2 := rand.Read(authKey)
-	if err != nil || err2 != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create intent")
+func (h *Handler) GetPaymentIntent(c echo.Context) error {
+	var req PaymentIntentRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
 	}
-	expiresAt := time.Now().Add(time.Minute * 5).Unix()
-	h.transactionDB.StoreTransaction(hex.EncodeToString(transactionId), hex.EncodeToString(authKey), expiresAt)
-
-	return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{transactionId, authKey, expiresAt}})
+	if (req.PaymentMethod != "SUI") && (req.PaymentMethod != "TEST") {
+		return c.JSON(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
+	}
+	price := int64(0)
+	for _, req := range req.Debuglets {
+		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
+		if !exists {
+			return c.JSON(http.StatusBadRequest, "Executor does not exists: "+req.ExecutorID)
+		}
+		//TODO guard against overflow
+		price += int64(executor.PricePerBw) * req.Policy.FloorBW * req.Policy.TimeoutMS
+	}
+	//TODO bind request to transaction
+	_, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price, req.PaymentMethod)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
+	}
+	switch req.PaymentMethod {
+	case "SUI":
+		suiIntent, ok := intent.Intent.(sui.SuiPaymentIntent)
+		if !ok {
+			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
+		}
+		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{suiIntent.TransactionId, suiIntent.AuthKey, suiIntent.ExpiresAt, ""}})
+	case "TEST":
+		dummyIntent, ok := intent.Intent.(payments.DummyIntent)
+		if !ok {
+			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
+		}
+		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: DummyIntent{dummyIntent.TransactionId, dummyIntent.AuthKey}})
+	}
+	return echo.NewHTTPError(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
 }
-*/

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
 // PUT /debuglet
@@ -21,20 +22,11 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	if len(reqs) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
 	}
-
-	price := int64(0)
-	for _, req := range reqs {
-		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
-		if !exists {
-			continue
-		}
-		//TODO guard against overflow
-		price += int64(executor.PricePerBw) * req.Policy.FloorBW * req.Policy.TimeoutMS
-	}
-
-	transactionId, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price, req.PaymentMethod)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "faield to create payment intent: "+err.Error())
+	transactionId := req.TransactionId
+	h.dispatcher.Payment.GetTransaction(transactionId)
+	h.logger.Info("transaction_id", zap.String("id", transactionId))
+	if payed, err := h.dispatcher.Payment.IsPayed(transactionId); err != nil || !payed {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
 	}
 
 	var specs []dispatcher.DebugletSpec
@@ -43,14 +35,14 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
-		spec.TransactionID = transactionId
+		spec.TransactionID = transactionId //will be needed for refunding aborted debuglets
 		specs = append(specs, spec)
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets: "+err.Error())
 	} else {
-		return c.JSON(http.StatusOK, SubmitDebugletsResponse{IDs, intent})
+		return c.JSON(http.StatusOK, IDs)
 	}
 }
 

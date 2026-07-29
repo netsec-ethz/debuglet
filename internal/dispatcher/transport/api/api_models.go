@@ -79,13 +79,10 @@ type DebugletStateResponse struct {
 	ExecutorID string `json:"executor_id"`
 }
 
-type SubmitDebugletsResponse struct {
-	IDs           []string `json:"ids"`
-	paymentIntent any      // method specific intent
-}
 type SubmitDebugletsRequest struct {
 	Debuglets     []DebugletRequest `json:"debuglets"`
-	PaymentMethod string            `json:"payment_method"`
+	TransactionId string            `json:"transaction_id"`
+	AuthKey       string            `json:"auth_key"`
 }
 
 type BalanceResponse struct {
@@ -98,13 +95,20 @@ type IntentResponse struct {
 }
 
 type SuiIntent struct {
-	TransactionId []byte `json:"transaction_id"`
-	AuthKey       []byte `json:"auth_key"`
-	ExpiresAt     int64  `json:"expires_at"`
+	TransactionId   string `json:"transaction_id"`
+	AuthKey         string `json:"auth_key"`
+	ExpiresAt       int64  `json:"expires_at"`
+	RegistryAddress string `json:"registry_address"`
 }
 
-type IntentRequest struct {
-	IDs []string `json:"debuglet_ids"`
+type DummyIntent struct {
+	TransactionID string `json:"transaction_id"`
+	AuthKey       string `json:"auth_key"`
+}
+
+type PaymentIntentRequest struct {
+	Debuglets     []DebugletRequest `json:"debuglets"`
+	PaymentMethod string            `json:"payment_method"`
 }
 
 // ================ HELPERS ================
