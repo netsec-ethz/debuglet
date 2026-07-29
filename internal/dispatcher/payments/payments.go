@@ -1,10 +1,13 @@
 package payments
 
 import (
+	"crypto/rand"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/db"
 	"debuglet/internal/dispatcher/payments/sui"
+	"encoding/hex"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -38,6 +41,9 @@ func (p *PaymentHandler) CreatePaymentIntent(price int64, method string) (string
 			return "", PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
 		}
 		return transactionId, PaymentIntent{method: method, intent: suiIntent}, nil
+	case "TEST":
+		transactionId, err := p.CreateDummyIntent()
+		return transactionId, PaymentIntent{method: "TEST", intent: nil}, err
 	default:
 		return "", PaymentIntent{}, fmt.Errorf("Unsupported payment method: %s", method)
 	}
@@ -49,4 +55,21 @@ func (p *PaymentHandler) IsPayed(transactionID string) (bool, error) {
 		return false, err
 	}
 	return payed, nil
+}
+
+// This is for testing only. Creates a transaction and immediately sets it to payed
+func (p *PaymentHandler) CreateDummyIntent() (string, error) {
+	b_transactionId := make([]byte, 16)
+	_, err := rand.Read(b_transactionId)
+	if err != nil {
+		return "", fmt.Errorf("Failed to create Intent")
+	}
+	expiresAt := time.Now().Add(time.Minute * 5).Unix()
+	transactionId := hex.EncodeToString(b_transactionId)
+	err = p.db.StoreTransaction(transactionId, "", 0, "TEST", expiresAt)
+	if err != nil {
+		return "", err
+	}
+	err = p.db.SetPayed(transactionId)
+	return transactionId, err
 }
