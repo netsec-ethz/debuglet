@@ -70,7 +70,7 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{suiIntent.TransactionId, suiIntent.AuthKey, suiIntent.ExpiresAt, ""}})
+		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{TransactionId: suiIntent.TransactionId, AuthKey: suiIntent.AuthKey, Price: suiIntent.Price, ExpiresAt: suiIntent.ExpiresAt, RegistryAddress: ""}})
 	case "TEST":
 		dummyIntent, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {
@@ -79,4 +79,13 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: DummyIntent{dummyIntent.TransactionId, dummyIntent.AuthKey}})
 	}
 	return echo.NewHTTPError(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
+}
+
+func (h *Handler) GetPaymentStatus(c echo.Context) error {
+	transactionID := c.Param("transaction_id")
+	payed, err := h.dispatcher.Payment.IsPayed(transactionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, payed)
 }

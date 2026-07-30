@@ -18,6 +18,7 @@ type SuiPaymentHandler struct {
 
 type SuiPaymentIntent struct {
 	TransactionId string
+	Price         int64
 	AuthKey       string
 	ExpiresAt     int64
 }
@@ -46,5 +47,5 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (string, SuiPayment
 		return "", SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}
 
-	return transactionId, SuiPaymentIntent{transactionId, authKey, expiresAt}, nil
+	return transactionId, SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, ExpiresAt: expiresAt}, nil
 }
