@@ -34,7 +34,6 @@ import (
 
 	//"debuglet/internal/dispatcher/transport/rpc"
 	"debuglet/internal/dispatcher/db"
-	"debuglet/internal/dispatcher/payments/sui"
 	//pb "debuglet/protocol"
 )
 
@@ -110,11 +109,11 @@ func main() {
 
 }
 
-// startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
+/* startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
 func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.Address, userDB, logger)
 	return l.Start(context.Background())
-}
+}*/
 
 // startHTTPServer runs the Echo-based HTTP API
 func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, transactionDB *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {

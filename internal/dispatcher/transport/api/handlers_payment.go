@@ -3,10 +3,14 @@ package api
 import (
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/payments/sui"
+	"math"
 	"net/http"
 	"strings"
 
+	"math/big"
+
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
 // TODO remove balance, replace with pay per purchase
@@ -50,17 +54,27 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 	if (req.PaymentMethod != "SUI") && (req.PaymentMethod != "TEST") {
 		return c.JSON(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
 	}
-	price := int64(0)
+	price := new(big.Int).SetInt64(0)
 	for _, req := range req.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
 		if !exists {
 			return c.JSON(http.StatusBadRequest, "Executor does not exists: "+req.ExecutorID)
 		}
-		//TODO guard against overflow
-		price += int64(executor.PricePerBw) * req.Policy.FloorBW * req.Policy.TimeoutMS
+		if req.Policy.TimeoutMS < 0 || req.Policy.FloorBW < 0 {
+			return c.JSON(http.StatusBadRequest, "Invalid request")
+		}
+
+		ppb := new(big.Int).SetInt64(executor.PricePerBw)
+		floorBW := new(big.Int).SetInt64(req.Policy.FloorBW)
+		timeout := new(big.Int).SetInt64(req.Policy.TimeoutMS / 1000)
+		price.Add(price, new(big.Int).Mul(new(big.Int).Mul(ppb, floorBW), timeout))
 	}
-	//TODO bind request to transaction
-	_, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price, req.PaymentMethod)
+	if price.Cmp(new(big.Int).SetInt64(math.MaxInt64)) == 1 {
+		return c.JSON(http.StatusBadRequest, "Price exceeds upper limit")
+	}
+	h.logger.Info("intent", zap.Int64("price", price.Int64()))
+	//TODO bind exact request to transaction
+	_, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price.Int64(), req.PaymentMethod)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
 	}
@@ -70,7 +84,7 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{TransactionId: suiIntent.TransactionId, AuthKey: suiIntent.AuthKey, Price: suiIntent.Price, ExpiresAt: suiIntent.ExpiresAt, RegistryAddress: ""}})
+		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{TransactionId: suiIntent.TransactionId, AuthKey: suiIntent.AuthKey, Price: suiIntent.Price, ExpiresAt: suiIntent.ExpiresAt, RegistryAddress: suiIntent.RegistryAddress, ReceiverAddress: suiIntent.ReceiverAddress}})
 	case "TEST":
 		dummyIntent, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {

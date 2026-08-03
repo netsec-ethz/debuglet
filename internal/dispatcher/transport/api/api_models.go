@@ -41,10 +41,10 @@ type ExecutorResponse struct {
 	LastSeen int64  `json:"last_seen"`
 	Version  string `json:"version"`
 
-	TeslaDelaySec          int64   `json:"tesla_delay_sec"`
-	TeslaAnchorTimestampNs int64   `json:"tesla_anchor_timestamp_ns"`
-	TeslaAnchorKey         []byte  `json:"tesla_anchor_key"` // k_0, the public chain anchor
-	PricePerBw             float64 `json:"price_per_bw"`
+	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
+	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
+	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
+	PricePerBw             int64  `json:"price_per_bw"`
 }
 
 // ExecutorByIPResponse is returned by GET /executors/by-ip?ip=<ip>.
@@ -100,6 +100,7 @@ type SuiIntent struct {
 	Price           int64  `json:"price"`
 	ExpiresAt       int64  `json:"expires_at"`
 	RegistryAddress string `json:"registry_address"`
+	ReceiverAddress string `json:"receiver_address"`
 }
 
 type DummyIntent struct {

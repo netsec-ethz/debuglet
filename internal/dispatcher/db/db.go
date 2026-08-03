@@ -265,7 +265,8 @@ func (t *TransactionDB) StoreTransaction(transactionId string, authKey string, p
 
 func (t *TransactionDB) GetTransaction(transactionId string) (Transaction, error) {
 	var transaction Transaction
-	err := t.db.QueryRow(`SELECT auth_key, price FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&transaction.AuthKey, &transaction.Price)
+	transaction.TransactionId = transactionId
+	err := t.db.QueryRow(`SELECT auth_key, price, payed, method FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&transaction.AuthKey, &transaction.Price, &transaction.Payed, &transaction.Method)
 	if err != nil {
 		return transaction, fmt.Errorf("get transaction %q: %w", transactionId, err)
 	}

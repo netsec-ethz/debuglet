@@ -17,14 +17,18 @@ type SuiPaymentHandler struct {
 }
 
 type SuiPaymentIntent struct {
-	TransactionId string
-	Price         int64
-	AuthKey       string
-	ExpiresAt     int64
+	TransactionId   string
+	Price           int64
+	AuthKey         string
+	ExpiresAt       int64
+	RegistryAddress string
+	ReceiverAddress string
 }
 
+const NONCE_PREFIX = "SuiDebugletTransaction"
+
 func NewSuiPaymentHandler(rpcURL string, grpcEndpoint string, receiverAddress string, userDB *db.UserDB, transactionDB *db.TransactionDB, logger *zap.Logger) *SuiPaymentHandler {
-	listener := NewListener(rpcURL, grpcEndpoint, receiverAddress, userDB, logger)
+	listener := NewListener(rpcURL, grpcEndpoint, receiverAddress, userDB, transactionDB, logger)
 	return &SuiPaymentHandler{Listener: listener, Database: transactionDB}
 }
 
@@ -41,11 +45,11 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (string, SuiPayment
 		return "", SuiPaymentIntent{}, fmt.Errorf("Failed to create Intent")
 	}
 	expiresAt := time.Now().Add(time.Minute * 5).Unix()
-	transactionId := hex.EncodeToString(b_transactionId)
+	transactionId := NONCE_PREFIX + hex.EncodeToString(b_transactionId)
 	authKey := hex.EncodeToString(b_authKey)
 	if err := h.Database.StoreTransaction(transactionId, authKey, price, "SUI", expiresAt); err != nil {
 		return "", SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}
 
-	return transactionId, SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, ExpiresAt: expiresAt}, nil
+	return transactionId, SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, RegistryAddress: paymentKitPackageTestnet, ReceiverAddress: h.Listener.receiverAddress, ExpiresAt: expiresAt}, nil
 }

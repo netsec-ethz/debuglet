@@ -13,8 +13,9 @@ import (
 )
 
 type PaymentHandler struct {
-	db  *db.TransactionDB
-	sui *sui.SuiPaymentHandler
+	db     *db.TransactionDB
+	sui    *sui.SuiPaymentHandler
+	logger *zap.Logger
 }
 
 type PaymentIntent struct {
@@ -29,8 +30,9 @@ type DummyIntent struct {
 
 func NewPaymentHandler(db *db.TransactionDB, userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
 	return &PaymentHandler{
-		db:  db,
-		sui: sui.NewSuiPaymentHandler(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.Address, userDB, db, logger),
+		db:     db,
+		sui:    sui.NewSuiPaymentHandler(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.Address, userDB, db, logger),
+		logger: logger,
 	}
 }
 
@@ -81,5 +83,7 @@ func (p *PaymentHandler) CreateDummyIntent() (string, error) {
 		return "", err
 	}
 	err = p.db.SetPayed(transactionId)
+	payed, _ := p.db.IsPayed(transactionId)
+	p.logger.Info("created intent: ", zap.String("id", transactionId), zap.Bool("payed", payed))
 	return transactionId, err
 }

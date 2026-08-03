@@ -26,8 +26,8 @@ type RegisteredExecutor struct {
 
 	// debugletIDs is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
-	history *debugletHistory
-	PricePerBw float64
+	history    *debugletHistory
+	PricePerBw int64
 }
 
 // lastDebugletHistory is the default number of recent debuglet IDs to
@@ -94,7 +94,7 @@ func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Du
 			TeslaAnchorKey:       anchorKey,
 			history:              &debugletHistory{},
 			LastSeen:             time.Now(),
-			PricePerBw:		  price,
+			PricePerBw:           price,
 		}
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))
