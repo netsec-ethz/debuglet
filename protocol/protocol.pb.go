@@ -322,7 +322,7 @@ type HelloResponse struct {
 	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
-	PricePerBw             float64                `protobuf:"fixed64,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                      // Price per bit/s of bandwidth
+	PricePerBw             int64                  `protobuf:"varint,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                       // Price per bit/s of bandwidth
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -399,7 +399,7 @@ func (x *HelloResponse) GetTeslaAnchorKey() []byte {
 	return nil
 }
 
-func (x *HelloResponse) GetPricePerBw() float64 {
+func (x *HelloResponse) GetPricePerBw() int64 {
 	if x != nil {
 		return x.PricePerBw
 	}
@@ -1368,7 +1368,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
 	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
 	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12 \n" +
-	"\fprice_per_bw\x18\a \x01(\x01R\n" +
+	"\fprice_per_bw\x18\a \x01(\x03R\n" +
 	"pricePerBw\"\xa3\x01\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +

@@ -23,9 +23,12 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
 	}
 	transactionId := req.TransactionId
-	h.dispatcher.Payment.GetTransaction(transactionId)
-	h.logger.Info("transaction_id", zap.String("id", transactionId))
-	if payed, err := h.dispatcher.Payment.IsPayed(transactionId); err != nil || !payed {
+	transaction, err := h.dispatcher.Payment.GetTransaction(transactionId)
+	h.logger.Info("transaction_id", zap.String("id", transaction.TransactionId), zap.Bool("payed", transaction.Payed))
+	if err != nil || transaction.AuthKey != req.AuthKey {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
+	}
+	if !transaction.Payed {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
 	}
 

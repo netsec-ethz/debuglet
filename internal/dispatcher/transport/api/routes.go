@@ -45,7 +45,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// payment
 	//e.GET("payment/balance", h.GetBalance)
 	e.PUT("payment/intent", h.GetPaymentIntent)
-	e.GET("payment/:id/status", h.GetPaymentStatus)
+	e.GET("payment/:transaction_id/status", h.GetPaymentStatus)
 	//authentication
 	e.GET("auth/nonce", h.GetNonce)
 	e.PUT("auth/verify", h.Verify)

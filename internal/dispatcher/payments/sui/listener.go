@@ -48,9 +48,10 @@ type Listener struct {
 	db              *db.UserDB
 	logger          *zap.Logger
 	client          *grpcconn.SuiGrpcClient
+	tdb             *db.TransactionDB
 }
 
-func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB, logger *zap.Logger) *Listener {
+func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB, tdb *db.TransactionDB, logger *zap.Logger) *Listener {
 	client := grpcconn.NewSuiGrpcClient(
 		grpcEndpoint,
 		grpcconn.WithDialOptions(grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, ""))),
@@ -62,6 +63,7 @@ func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB
 		cursorKey:       "sui_event_cursor:" + paymentKitPackageTestnet,
 		receiverAddress: strings.ToLower(receiverAddress),
 		db:              userDB,
+		tdb:             tdb,
 		logger:          logger,
 		client:          client,
 	}
@@ -228,7 +230,6 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 		}
 	}
 }
-
 func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
 	nonce, receiver, amount, err := decodePaymentReceiptEvent(ev.GetContents().GetValue())
 	l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver), zap.Int64("amount", amount))
@@ -239,44 +240,83 @@ func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
 		)
 		return
 	}
-
-	if !strings.EqualFold(receiver, l.receiverAddress) {
-		l.logger.Info("receiver didnt't match", zap.String("expected", l.receiverAddress))
-		return
-	}
-	if !strings.HasPrefix(nonce, noncePrefix) {
-		l.logger.Info("prefix mismatch")
+	if !strings.HasPrefix(nonce, NONCE_PREFIX) {
 		return
 	}
 
-	if amount <= 0 {
-		l.logger.Warn("PaymentReceipt: non-positive amount, no balance credited",
-			zap.String("tx", txDigest),
-			zap.String("sender", sender),
-			zap.Int64("mist", amount),
-		)
+	// TODO refund failed purchases
+	transaction, err := l.tdb.GetTransaction(nonce)
+	if err != nil {
+		l.logger.Warn("didn't find transactionId", zap.String("id", nonce))
 		return
 	}
 
-	if err := l.db.UpdateBalance(sender, amount); err != nil {
-		l.logger.Error("failed to credit balance from PaymentReceipt",
+	if transaction.Method != "SUI" {
+		l.logger.Warn("Wrong method for transaction", zap.String("found", transaction.Method))
+	}
+
+	if amount != transaction.Price {
+		l.logger.Warn("payment didn't match price", zap.Int64("expected", transaction.Price), zap.Int64("actual", amount))
+		return
+	}
+	if receiver != l.receiverAddress {
+		l.logger.Warn("payment to wrong address", zap.String("expected", l.receiverAddress), zap.String("actual", receiver))
+		return
+	}
+
+	l.tdb.SetPayed(transaction.TransactionId)
+
+}
+
+/*
+	func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
+		nonce, receiver, amount, err := decodePaymentReceiptEvent(ev.GetContents().GetValue())
+		l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver), zap.Int64("amount", amount))
+		if err != nil {
+			l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
+				zap.String("tx", txDigest),
+				zap.Error(err),
+			)
+			return
+		}
+
+		if !strings.EqualFold(receiver, l.receiverAddress) {
+			l.logger.Info("receiver didnt't match", zap.String("expected", l.receiverAddress))
+			return
+		}
+		if !strings.HasPrefix(nonce, noncePrefix) {
+			l.logger.Info("prefix mismatch")
+			return
+		}
+
+		if amount <= 0 {
+			l.logger.Warn("PaymentReceipt: non-positive amount, no balance credited",
+				zap.String("tx", txDigest),
+				zap.String("sender", sender),
+				zap.Int64("mist", amount),
+			)
+			return
+		}
+
+		if err := l.db.UpdateBalance(sender, amount); err != nil {
+			l.logger.Error("failed to credit balance from PaymentReceipt",
+				zap.String("tx", txDigest),
+				zap.String("sender", sender),
+				zap.String("nonce", nonce),
+				zap.Int64("balance_delta", amount),
+				zap.Error(err),
+			)
+			return
+		}
+
+		l.logger.Info("credited balance from PaymentReceipt",
 			zap.String("tx", txDigest),
 			zap.String("sender", sender),
 			zap.String("nonce", nonce),
 			zap.Int64("balance_delta", amount),
-			zap.Error(err),
 		)
-		return
 	}
-
-	l.logger.Info("credited balance from PaymentReceipt",
-		zap.String("tx", txDigest),
-		zap.String("sender", sender),
-		zap.String("nonce", nonce),
-		zap.Int64("balance_delta", amount),
-	)
-}
-
+*/
 type paymentType struct {
 	Ephemeral any
 	Registry  *models.SuiAddressBytes

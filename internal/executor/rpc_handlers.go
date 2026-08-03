@@ -20,6 +20,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
+		PricePerBw:             e.cfg.PricePerBw,
 	}
 	return resp, nil
 }
