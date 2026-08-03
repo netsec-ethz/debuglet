@@ -146,8 +146,7 @@ make deploy-executors
 
 ### Submit Debuglet
 
-Submitting a debuglet stores it directly on the executor without any resource checks from the dispatcher along the way.
-The executor may reject it for any reason (no capacity, blacklisted addresses, etc.). The executor should check the start time and ensure it has enough capacity at the given start time depending on what other jobs have also be submitted.
+The dispatcher checks each debuglet's floor bandwidth against per-destination and per-executor capacity over the requested time window `[start, start+timeout]`. If accepted, the debuglet is forwarded to the executor for storage and eventual execution.
 
 The `ExecutorScheduler` stores the full specification of the debuglet and will trigger `OnStart` when the start time is right.
 

@@ -51,6 +51,8 @@ type DispatcherConfig struct {
 	Database        DatabaseConfig `toml:"database"`
 	Sui             SuiConfig      `toml:"sui"`
 	JSONLogs        bool           `toml:"json_logs"`
+	// Scheduler granularity in milliseconds for time-range capacity tracking.
+	SchedulerGranularityMs int64 `toml:"scheduler_granularity_ms"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it

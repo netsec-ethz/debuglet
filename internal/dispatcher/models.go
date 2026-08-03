@@ -3,8 +3,11 @@ package dispatcher
 import (
 	"debuglet/internal/dispatcher/resource"
 	pb "debuglet/protocol"
+	"errors"
 	"time"
 )
+
+var ErrNoCapacity = errors.New("insufficient capacity")
 
 type DebugletSpec struct {
 	StartTime     *time.Time

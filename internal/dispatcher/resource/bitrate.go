@@ -44,6 +44,15 @@ func (b Bitrate) String() string {
 	}
 }
 
+func (b Bitrate) Bytes() int {
+	// round up
+	return int(b+7) / 8
+}
+
+func FromBytes(b int) Bitrate {
+	return Bitrate(b * 8)
+}
+
 func Parse(s string) (Bitrate, error) {
 	s = strings.TrimSpace(s)
 	match := sizeRegex.FindStringSubmatch(s)
