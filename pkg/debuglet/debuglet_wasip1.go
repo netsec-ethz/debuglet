@@ -45,6 +45,9 @@ func receiveTCPData(sock, bufp, bufLen uint32) int32
 //go:wasmimport env send_tcp_data
 func sendTCPData(sock, bufp, bufLen uint32)
 
+//go:wasmimport env drain_connection
+func drain_connection(sock uint32)
+
 //go:wasmimport env close_tcp
 func closeTCP(sock uint32)
 
@@ -148,5 +151,13 @@ func (c *Conn) Close() error {
 	default:
 		closeTCP(uint32(c.handle))
 	}
+	return nil
+}
+
+func (c *Conn) Drain() error {
+	if c.tr != transportTCP {
+		return fmt.Errorf("debuglet: drain only supported for TCP connections")
+	}
+	drain_connection(uint32(c.handle))
 	return nil
 }

@@ -1,0 +1,12 @@
+http_port = 9000
+grpc_port = 9001
+log_level = "debug"
+executor_timeout = 60
+json_logs = false
+
+# TLS is terminated by nginx in front
+disable_tls = true
+
+[tls]
+cert_file = "/etc/debuglet/dispatcher/cert"
+key_file = "/etc/debuglet/dispatcher/key"

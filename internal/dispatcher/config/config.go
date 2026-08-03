@@ -35,7 +35,8 @@ type DispatcherConfig struct {
 	DisableTLS bool      `toml:"disable_tls"`
 	TLS        TLSConfig `toml:"tls"`
 	// Maximum amount of seconds between heartbeats
-	ExecutorTimeout int `toml:"executor_timeout"`
+	ExecutorTimeout int  `toml:"executor_timeout"`
+	JSONLogs        bool `toml:"json_logs"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it

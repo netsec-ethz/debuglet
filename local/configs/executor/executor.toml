@@ -1,11 +1,13 @@
 executor_id = "local-executor"
 version = "unknown"
 dispatcher_addr = "localhost:9001"
+dispatcher_yamux_addr = "localhost:9000"
 log_level = "debug"
 capacity = 1_000_000_000
 tesla_delay = 30
 max_debuglets = 20
 disable_tls = true
+# network_interface = "veth-host"
 
 [credentials]
 ca_cert = "local/configs/executor/ca.crt"

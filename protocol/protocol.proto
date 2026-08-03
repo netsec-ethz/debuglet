@@ -20,12 +20,29 @@ import "google/protobuf/timestamp.proto";
 option go_package = "/protocol";
 
 // ============================================================
-// ================ CONTROL STREAM MESSAGES ====================
+// ==================== CONTROL MESSAGES ======================
 // ============================================================
 
 // ================ EXECUTOR -> DISPATCHER =====================
 
-message ExecutorHello {
+message HeartbeatRequest {
+  string executor_id = 1;
+  int64 timestamp_ns = 2;
+  int64 tesla_key_epoch = 3;
+  bytes tesla_key = 4;
+}
+message HeartbeatResponse {}
+
+message ResourcesRequest {
+  string executor_id = 1;
+  int64 bandwidth_capacity = 2; // Bandwidth capacity (bits/s) the executor can handle
+}
+message ResourcesResponse {}
+
+// ================ DISPATCHER -> EXECUTOR =====================
+
+message HelloRequest {}
+message HelloResponse {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
   string source_ip = 3; // Source IP for packet attribution
@@ -34,34 +51,6 @@ message ExecutorHello {
   bytes tesla_anchor_key = 6; // Public anchor k_0 = H^L(seed); used to verify disclosed keys
 }
 
-message ExecutorHeartbeat {
-  int64 timestamp_ns = 2;
-  int64 tesla_key_epoch = 3;
-  bytes tesla_key = 4;
-}
-
-message ExecutorResources {
-  int64 bandwidth_capacity = 1; // Bandwidth capacity the executor can handle per second
-}
-
-// Errors on the executor side before a debuglet is started, i.e. during uploading
-message ExecutorError {
-  optional string debuglet_id = 1;
-  string error = 2;
-}
-
-// Executor -> Dispatcher
-message ExecutorControlMessage {
-  oneof msg {
-    ExecutorHello hello = 1;
-    ExecutorHeartbeat heartbeat = 2;
-    ExecutorError error = 3;
-    ExecutorResources resources = 4;
-  }
-}
-
-// ================ DISPATCHER -> EXECUTOR =====================
-
 message DebugletPolicy {
   int64 floor_bw = 1; // min bits/s required
   int64 ceil_bw = 2; // max bits/s it could use
@@ -69,7 +58,7 @@ message DebugletPolicy {
   repeated string addresses = 4; // e.g., SCION or network endpoints
 }
 
-message DebugletUploadSpec {
+message UploadRequest {
   string id = 1;
   optional google.protobuf.Timestamp start_time = 2;
   bytes wasm = 3;
@@ -77,35 +66,29 @@ message DebugletUploadSpec {
 
   DebugletPolicy policy = 5;
 }
+message UploadResponse {}
 
-message AbortDebuglet {
+message AbortRequest {
   string debuglet_id = 1;
   string reason = 2;
 }
+message AbortResponse {}
 
-message DestinationUpdates {
+message DestinationLimit {
+  string address = 1;
+  int64 bits_limit = 2;
+}
+
+message BandwidthRequest {
   repeated DestinationLimit limits = 1;
-
-  message DestinationLimit {
-    string address = 1;
-    int64 bits_limit = 2;
-  }
 }
-
-// Dispatcher -> Executor
-message DispatcherControlMessage {
-  oneof msg {
-    DebugletUploadSpec upload = 1;
-    AbortDebuglet abort = 2;
-    DestinationUpdates updates = 3;
-  }
-}
+message BandwidthResponse {}
 
 // ============================================================
-// ================ DEBUGLET STREAM MESSAGES ====================
+// ================ DEBUGLET STREAM MESSAGES ==================
 // ============================================================
 
-// ================ EXECUTOR -> DISPATCHER =====================
+// ================ EXECUTOR -> DISPATCHER ====================
 
 // The states of a debuglet from when a debuglet is set to start until before it exits
 enum RunState {
@@ -114,44 +97,67 @@ enum RunState {
   RUN_STATE_STARTED = 2;
 }
 
-message DebugletState {
+message DebugletStateRequest {
   string debuglet_id = 1;
   string executor_id = 2;
   RunState state = 3;
-  optional DebugletPolicy policy = 4;
 }
+message DebugletStateResponse {}
 
-message DebugletOutput {
+message DebugletAllocateRequest {
   string debuglet_id = 1;
-  bytes output = 2;
+  string executor_id = 2;
+  DebugletPolicy policy = 3;
+}
+// The dispatcher may directly respond with updated limits
+message DebugletAllocateResponse {
+    repeated DestinationLimit allocated_limits = 1;
 }
 
-message DebugletExit {
+message DebugletExitRequest {
   string debuglet_id = 1;
   int32 exit_code = 2;
   optional string error_message = 3;
 }
+message DebugletExitResponse {}
 
-message ExecutorDebugletMessage {
+// Initially sent through a debuglet stream to identify the debuglet and executor. After that, the debuglet can send output messages through the same stream.
+message DebugletIdent {
+  string debuglet_id = 1;
+  string executor_id = 2;
+}
+message DebugletOutput {
+  bytes output = 1;
+}
+message DebugletStreamRequest {
   oneof msg {
-    DebugletState state = 1;
+    DebugletIdent ident = 1;
     DebugletOutput output = 2;
-    DebugletExit exit = 3;
   }
 }
 
-// ================ DISPATCHER -> EXECUTOR =====================
+// ================ DISPATCHER -> DEBUGLET ====================
 
-message DispatcherDebugletMessage {}
+message DebugletStreamResponse {}
 
 // ============================================================
-// ====================== SERVICE DEFS =========================
+// ====================== SERVICE DEFS ========================
 // ============================================================
 
 service DispatcherService {
-  // Persistent control channel for executor registration, heartbeat, and task assignment
-  rpc ControlStream(stream ExecutorControlMessage) returns (stream DispatcherControlMessage);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Resources(ResourcesRequest) returns (ResourcesResponse);
 
-  // Per-session bidirectional stream for debuglet execution
-  rpc DebugletStream(stream ExecutorDebugletMessage) returns (stream DispatcherDebugletMessage);
+  rpc DebugletState(DebugletStateRequest) returns (DebugletStateResponse);
+  // Request resource allocation before a debuglet starts. The dispatcher can then have the caller wait until the resources have been allocated.
+  rpc DebugletAllocate(DebugletAllocateRequest) returns (DebugletAllocateResponse);
+  rpc DebugletExit(DebugletExitRequest) returns (DebugletExitResponse);
+  rpc DebugletStream(stream DebugletStreamRequest) returns (stream DebugletStreamResponse);
+}
+
+service ExecutorService {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc Upload(UploadRequest) returns (UploadResponse);
+  rpc Abort(AbortRequest) returns (AbortResponse);
+  rpc Bandwidth(BandwidthRequest) returns (BandwidthResponse);
 }

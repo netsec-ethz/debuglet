@@ -18,36 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime"
-	"time"
 
 	"github.com/scionproto/scion/pkg/daemon"
 	"github.com/scionproto/scion/pkg/private/serrors"
 	"github.com/scionproto/scion/pkg/snet/addrutil"
 	"github.com/scionproto/scion/private/app"
 )
-
-func Check(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func W(pos string) {
-	_, file, line, _ := runtime.Caller(1)
-
-	println(time.Now().String(), pos, file, line)
-}
-
-func C[T interface{}](res T, err error) T {
-	Check(err)
-	return res
-}
-
-func C2[T, U interface{}](res T, res2 U, err error) (T, U) {
-	Check(err)
-	return res, res2
-}
 
 func GetScionAddr(ctx context.Context) (string, error) {
 	daemonAddr := os.Getenv("SCION_DAEMON_ADDRESS")

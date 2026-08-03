@@ -3,8 +3,9 @@ package wasm
 import (
 	"crypto/tls"
 	"debuglet/internal/executor/debuglet/socket"
+	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/executor/transport/rpc"
+	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/tagger"
 	"net"
 
@@ -14,9 +15,10 @@ import (
 
 type WasmEnv struct {
 	DebugletID string
-	Policy     rpc.Policy
+	Policy     scheduler.Policy
 
 	Limiter      *app.Limiter
+	PacketCount  ratelimit.PacketCount
 	LastReceived net.Addr
 	Logger       *zap.SugaredLogger
 	TlsCfg       *tls.Config
@@ -32,6 +34,7 @@ type WasmEnv struct {
 }
 
 func (e *WasmEnv) Close() {
+	e.Registry.CloseAll()
 	if e.ScionServer != nil {
 		e.ScionServer.Close()
 	}

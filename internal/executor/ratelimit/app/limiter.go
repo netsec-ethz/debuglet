@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"debuglet/internal/executor/ratelimit/app/avl"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,6 +13,11 @@ import (
 
 const (
 	defaultDestinationCapacity = Gigabit
+)
+
+var (
+	ErrNotRegistered = errors.New("debuglet has not been registered")
+	ErrNotInPolicy   = errors.New("address has not been registered/not in policy")
 )
 
 type Limit struct {
@@ -77,6 +83,11 @@ func (l *Limiter) SetExecutorCapacity(c Bitrate) {
 	defer l.mu.Unlock()
 	l.execCapacity = c
 }
+func (l *Limiter) ExecutorCapacity() Bitrate {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.execCapacity
+}
 func (l *Limiter) SetAddrCapacity(addr string, c Bitrate) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -137,17 +148,46 @@ func (l *Limiter) RemoveDebuglet(ID string) {
 	delete(l.stores, ID)
 }
 
-func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
+func (l *Limiter) GetExecLimit(ID string) (Bitrate, bool, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
 	store, ok := l.stores[ID]
 	if !ok {
-		return Limit{}, fmt.Errorf("debuglet ID '%s' has not been registered", ID)
+		return 0, false, ErrNotRegistered
+	}
+
+	updated := false
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	execLimit := store.lastExecLimit
+
+	if execLimit == -1 || l.dirty[""].After(store.lastUpdate) {
+		maxExecFairshare := Bitrate(l.execT.Fairshare(int64(l.execCapacity)))
+		execLimit = min(store.maximum, store.minimum+maxExecFairshare)
+		updated = true
+	}
+
+	if updated {
+		store.lastUpdate = time.Now()
+		store.lastExecLimit = execLimit
+	}
+
+	return execLimit, updated, nil
+}
+
+func (l *Limiter) GetAddrLimit(ID string, addr string) (Bitrate, bool, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	store, ok := l.stores[ID]
+	if !ok {
+		return 0, false, ErrNotRegistered
 	}
 
 	if _, ok := l.addrT[addr]; !ok {
-		return Limit{}, fmt.Errorf("address '%s' has not been registered/not in policy", addr)
+		return 0, false, ErrNotInPolicy
 	}
 	addrCap, ok := l.addrCapacity[addr]
 	if !ok {
@@ -158,14 +198,7 @@ func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	execLimit := store.lastExecLimit
 	addrLimit := store.lastAddrLimit[addr]
-
-	if execLimit == -1 || l.dirty[""].After(store.lastUpdate) {
-		maxExecFairshare := Bitrate(l.execT.Fairshare(int64(l.execCapacity)))
-		execLimit = min(store.maximum, store.minimum+maxExecFairshare)
-		updated = true
-	}
 
 	if addrLimit == -1 || l.dirty[addr].After(store.lastUpdate) {
 		maxAddrFairshare := Bitrate(l.addrT[addr].Fairshare(int64(addrCap)))
@@ -175,9 +208,24 @@ func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
 
 	if updated {
 		store.lastUpdate = time.Now()
-		store.lastExecLimit = execLimit
 		store.lastAddrLimit[addr] = addrLimit
 	}
+
+	return addrLimit, updated, nil
+}
+
+func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
+	execLimit, execUpdated, err := l.GetExecLimit(ID)
+	if err != nil {
+		return Limit{}, err
+	}
+
+	addrLimit, addrUpdated, err := l.GetAddrLimit(ID, addr)
+	if err != nil {
+		return Limit{}, err
+	}
+
+	updated := execUpdated || addrUpdated
 
 	return Limit{Executor: execLimit, Address: addrLimit, Updated: updated}, nil
 }

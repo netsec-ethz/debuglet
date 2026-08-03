@@ -15,26 +15,23 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"golang.org/x/sync/errgroup"
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/transport/api"
-	"debuglet/internal/dispatcher/transport/rpc"
-	pb "debuglet/protocol"
 )
 
 func main() {
@@ -50,124 +47,53 @@ func main() {
 	if err != nil {
 		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
-	logCfg := zap.NewProductionConfig()
+	logCfg := zap.NewDevelopmentConfig()
+	if cfg.JSONLogs {
+		logCfg = zap.NewProductionConfig()
+	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
-	disp := dispatcher.New(logger, cfg.Version)
-	server := rpc.NewServer(logger, disp, disp, rpc.ServerOptions{ExecutorTimeout: time.Duration(cfg.ExecutorTimeout) * time.Second})
-	disp.SetExecutorSender(server)
-	var wg sync.WaitGroup
-	wg.Add(2)
+	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second)
+	defer d.Close()
+
+	g, subCtx := errgroup.WithContext(context.Background())
 
 	// ---- Start gRPC Server ----
-	go func() {
-		defer wg.Done()
-		if err := startGRPCServer(server, cfg, logger); err != nil {
-			logger.Fatal("failed to start gRPC server", zap.Error(err))
-		}
-	}()
+	g.Go(func() error {
+		addr := fmt.Sprintf(":%d", cfg.GRPCPort)
+		return d.Bidi.ServeGRPC(subCtx, addr)
+	})
 
-	// ---- Start HTTP Server ----
-	go func() {
-		defer wg.Done()
-		if err := startHTTPServer(disp, cfg, logger); err != nil {
-			logger.Fatal("failed to start HTTP server", zap.Error(err))
-		}
-	}()
-
-	wg.Wait()
-}
-
-func getServerCredentials(cfg *config.DispatcherConfig, logger *zap.Logger) (credentials.TransportCredentials, error) {
-	// Load the server's certificate and key
-	serverCert, err := tls.LoadX509KeyPair(
-		cfg.TLS.CertFile,
-		cfg.TLS.KeyFile,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
-	}
-
-	// Optionally, load CA if you want to check later
-	// caCert, _ := os.ReadFile("/etc/debuglet/dispatcher/ca.crt")
-	// caCertPool := x509.NewCertPool()
-	// caCertPool.AppendCertsFromPEM(caCert)
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientAuth:   tls.RequireAnyClientCert, // 👈 Require cert but skip CA validation
-		// ClientCAs: caCertPool, // optional if you want to enforce CA later
-		MinVersion: tls.VersionTLS13,
-		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-			// Custom verification logic
-			if len(rawCerts) == 0 {
-				return fmt.Errorf("no client certificate provided")
-			}
-			cert, err := x509.ParseCertificate(rawCerts[0])
-			if err != nil {
-				return fmt.Errorf("invalid client certificate: %w", err)
-			}
-
-			// Example: extract Common Name (executor ID)
-			logger.Info("Client connected",
-				zap.String("CN", cert.Subject.CommonName),
-				zap.String("Subject", cert.Subject.String()),
-			)
-
-			// You could check against a known list of executor IDs:
-			// if !isKnownExecutor(cert.Subject.CommonName) {
-			//     return fmt.Errorf("unauthorized executor: %s", cert.Subject.CommonName)
-			// }
-
-			return nil // Allow connection
-		},
-	}
-
-	creds := credentials.NewTLS(tlsConfig)
-	return creds, nil
-}
-
-// startGRPCServer runs the dispatcher’s gRPC interface
-func startGRPCServer(server *rpc.Server, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	port := cfg.GRPCPort
-	addr := fmt.Sprintf(":%d", port)
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-
-	var grpcOpts []grpc.ServerOption
-	if cfg.DisableTLS {
-		// No transport credentials — plain HTTP/2
-	} else {
-		creds, err := getServerCredentials(cfg, logger)
+	// ---- Start combined HTTP + Yamux on cmux ----
+	g.Go(func() error {
+		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
+		lis, err := net.Listen("tcp", addr)
 		if err != nil {
-			return fmt.Errorf("failed to get server credentials: %w", err)
+			return fmt.Errorf("cmux listen: %w", err)
 		}
-		grpcOpts = append(grpcOpts, grpc.Creds(creds))
-	}
-	grpcOpts = append(grpcOpts,
-		grpc.MaxRecvMsgSize(32*1024*1024),
-		grpc.MaxSendMsgSize(32*1024*1024),
-	)
-	srv := grpc.NewServer(grpcOpts...)
-	pb.RegisterDispatcherServiceServer(srv, server)
+		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
 
-	logger.Info("Dispatcher gRPC server started", zap.Int("port", port))
-	if err := srv.Serve(lis); err != nil {
-		return fmt.Errorf("gRPC server failed: %w", err)
-	}
+		m := cmux.New(lis)
+		httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
+		yamuxL := m.Match(cmux.Any())
 
-	return nil
+		g2, ctx2 := errgroup.WithContext(subCtx)
+		g2.Go(func() error { return m.Serve() })
+		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
+		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
+		return g2.Wait()
+	})
+
+	if err := g.Wait(); err != nil {
+		logger.Fatal("dispatcher exited with error", zap.Error(err))
+	}
 }
 
-// startHTTPServer runs the Echo-based HTTP API
-func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	port := cfg.HTTPPort
-
+// startHTTPServer runs the Echo-based HTTP API on the given listener.
+func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	handler := api.NewHandler(manager, logger)
 
 	e := echo.New()
@@ -181,22 +107,19 @@ func startHTTPServer(manager *dispatcher.Dispatcher, cfg *config.DispatcherConfi
 
 	handler.RegisterRoutes(e)
 
-	addr := fmt.Sprintf(":%d", port)
-	logger.Info("Dispatcher HTTP API started", zap.Int("port", port))
+	logger.Info("Dispatcher HTTP API started", zap.String("address", lis.Addr().String()))
 
-	// Explicit TLS configuration for the HTTP server
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12, // More compatible than forcing 1.3
+		MinVersion: tls.VersionTLS12,
 	}
 
 	server := &http.Server{
-		Addr:      addr,
 		Handler:   e,
 		TLSConfig: tlsConfig,
 	}
 	if cfg.DisableTLS {
-		return server.ListenAndServe()
+		return server.Serve(lis)
 	} else {
-		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		return server.Serve(tls.NewListener(lis, tlsConfig))
 	}
 }

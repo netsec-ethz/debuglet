@@ -1,6 +1,9 @@
+//go:build linux
+
 package ebpf
 
 import (
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +20,12 @@ func TestBPFLinuxLoad(t *testing.T) {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}
 
-	bt, err := NewBPFTagger("lo", ks, []byte("test-measurement"))
+	iface, err := net.InterfaceByName("lo")
+	if err != nil {
+		t.Fatalf("InterfaceByName failed: %v", err)
+	}
+
+	bt, err := NewBPFTagger(iface, ks, []byte("test-measurement"))
 	if err != nil {
 		if strings.Contains(err.Error(), "operation not permitted") {
 			t.Skipf("skipping test: insufficient privileges for eBPF: %v", err)

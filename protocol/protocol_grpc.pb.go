@@ -33,18 +33,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DispatcherService_ControlStream_FullMethodName  = "/debuglet.protocol.DispatcherService/ControlStream"
-	DispatcherService_DebugletStream_FullMethodName = "/debuglet.protocol.DispatcherService/DebugletStream"
+	DispatcherService_Heartbeat_FullMethodName        = "/debuglet.protocol.DispatcherService/Heartbeat"
+	DispatcherService_Resources_FullMethodName        = "/debuglet.protocol.DispatcherService/Resources"
+	DispatcherService_DebugletState_FullMethodName    = "/debuglet.protocol.DispatcherService/DebugletState"
+	DispatcherService_DebugletAllocate_FullMethodName = "/debuglet.protocol.DispatcherService/DebugletAllocate"
+	DispatcherService_DebugletExit_FullMethodName     = "/debuglet.protocol.DispatcherService/DebugletExit"
+	DispatcherService_DebugletStream_FullMethodName   = "/debuglet.protocol.DispatcherService/DebugletStream"
 )
 
 // DispatcherServiceClient is the client API for DispatcherService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DispatcherServiceClient interface {
-	// Persistent control channel for executor registration, heartbeat, and task assignment
-	ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage], error)
-	// Per-session bidirectional stream for debuglet execution
-	DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage], error)
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	Resources(ctx context.Context, in *ResourcesRequest, opts ...grpc.CallOption) (*ResourcesResponse, error)
+	DebugletState(ctx context.Context, in *DebugletStateRequest, opts ...grpc.CallOption) (*DebugletStateResponse, error)
+	// Request resource allocation before a debuglet starts. The dispatcher can then have the caller wait until the resources have been allocated.
+	DebugletAllocate(ctx context.Context, in *DebugletAllocateRequest, opts ...grpc.CallOption) (*DebugletAllocateResponse, error)
+	DebugletExit(ctx context.Context, in *DebugletExitRequest, opts ...grpc.CallOption) (*DebugletExitResponse, error)
+	DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DebugletStreamRequest, DebugletStreamResponse], error)
 }
 
 type dispatcherServiceClient struct {
@@ -55,40 +62,80 @@ func NewDispatcherServiceClient(cc grpc.ClientConnInterface) DispatcherServiceCl
 	return &dispatcherServiceClient{cc}
 }
 
-func (c *dispatcherServiceClient) ControlStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage], error) {
+func (c *dispatcherServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &DispatcherService_ServiceDesc.Streams[0], DispatcherService_ControlStream_FullMethodName, cOpts...)
+	out := new(HeartbeatResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_Heartbeat_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ExecutorControlMessage, DispatcherControlMessage]{ClientStream: stream}
+	return out, nil
+}
+
+func (c *dispatcherServiceClient) Resources(ctx context.Context, in *ResourcesRequest, opts ...grpc.CallOption) (*ResourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResourcesResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_Resources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dispatcherServiceClient) DebugletState(ctx context.Context, in *DebugletStateRequest, opts ...grpc.CallOption) (*DebugletStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DebugletStateResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_DebugletState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dispatcherServiceClient) DebugletAllocate(ctx context.Context, in *DebugletAllocateRequest, opts ...grpc.CallOption) (*DebugletAllocateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DebugletAllocateResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_DebugletAllocate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dispatcherServiceClient) DebugletExit(ctx context.Context, in *DebugletExitRequest, opts ...grpc.CallOption) (*DebugletExitResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DebugletExitResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_DebugletExit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dispatcherServiceClient) DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DebugletStreamRequest, DebugletStreamResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DispatcherService_ServiceDesc.Streams[0], DispatcherService_DebugletStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DebugletStreamRequest, DebugletStreamResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DispatcherService_ControlStreamClient = grpc.BidiStreamingClient[ExecutorControlMessage, DispatcherControlMessage]
-
-func (c *dispatcherServiceClient) DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &DispatcherService_ServiceDesc.Streams[1], DispatcherService_DebugletStream_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[ExecutorDebugletMessage, DispatcherDebugletMessage]{ClientStream: stream}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DispatcherService_DebugletStreamClient = grpc.BidiStreamingClient[ExecutorDebugletMessage, DispatcherDebugletMessage]
+type DispatcherService_DebugletStreamClient = grpc.BidiStreamingClient[DebugletStreamRequest, DebugletStreamResponse]
 
 // DispatcherServiceServer is the server API for DispatcherService service.
 // All implementations must embed UnimplementedDispatcherServiceServer
 // for forward compatibility.
 type DispatcherServiceServer interface {
-	// Persistent control channel for executor registration, heartbeat, and task assignment
-	ControlStream(grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]) error
-	// Per-session bidirectional stream for debuglet execution
-	DebugletStream(grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]) error
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	Resources(context.Context, *ResourcesRequest) (*ResourcesResponse, error)
+	DebugletState(context.Context, *DebugletStateRequest) (*DebugletStateResponse, error)
+	// Request resource allocation before a debuglet starts. The dispatcher can then have the caller wait until the resources have been allocated.
+	DebugletAllocate(context.Context, *DebugletAllocateRequest) (*DebugletAllocateResponse, error)
+	DebugletExit(context.Context, *DebugletExitRequest) (*DebugletExitResponse, error)
+	DebugletStream(grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]) error
 	mustEmbedUnimplementedDispatcherServiceServer()
 }
 
@@ -99,10 +146,22 @@ type DispatcherServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedDispatcherServiceServer struct{}
 
-func (UnimplementedDispatcherServiceServer) ControlStream(grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]) error {
-	return status.Error(codes.Unimplemented, "method ControlStream not implemented")
+func (UnimplementedDispatcherServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
 }
-func (UnimplementedDispatcherServiceServer) DebugletStream(grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]) error {
+func (UnimplementedDispatcherServiceServer) Resources(context.Context, *ResourcesRequest) (*ResourcesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Resources not implemented")
+}
+func (UnimplementedDispatcherServiceServer) DebugletState(context.Context, *DebugletStateRequest) (*DebugletStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DebugletState not implemented")
+}
+func (UnimplementedDispatcherServiceServer) DebugletAllocate(context.Context, *DebugletAllocateRequest) (*DebugletAllocateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DebugletAllocate not implemented")
+}
+func (UnimplementedDispatcherServiceServer) DebugletExit(context.Context, *DebugletExitRequest) (*DebugletExitResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DebugletExit not implemented")
+}
+func (UnimplementedDispatcherServiceServer) DebugletStream(grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]) error {
 	return status.Error(codes.Unimplemented, "method DebugletStream not implemented")
 }
 func (UnimplementedDispatcherServiceServer) mustEmbedUnimplementedDispatcherServiceServer() {}
@@ -126,19 +185,102 @@ func RegisterDispatcherServiceServer(s grpc.ServiceRegistrar, srv DispatcherServ
 	s.RegisterService(&DispatcherService_ServiceDesc, srv)
 }
 
-func _DispatcherService_ControlStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(DispatcherServiceServer).ControlStream(&grpc.GenericServerStream[ExecutorControlMessage, DispatcherControlMessage]{ServerStream: stream})
+func _DispatcherService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_Heartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).Heartbeat(ctx, req.(*HeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DispatcherService_ControlStreamServer = grpc.BidiStreamingServer[ExecutorControlMessage, DispatcherControlMessage]
+func _DispatcherService_Resources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResourcesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).Resources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_Resources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).Resources(ctx, req.(*ResourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DispatcherService_DebugletState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DebugletStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).DebugletState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_DebugletState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).DebugletState(ctx, req.(*DebugletStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DispatcherService_DebugletAllocate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DebugletAllocateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).DebugletAllocate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_DebugletAllocate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).DebugletAllocate(ctx, req.(*DebugletAllocateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DispatcherService_DebugletExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DebugletExitRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).DebugletExit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_DebugletExit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).DebugletExit(ctx, req.(*DebugletExitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _DispatcherService_DebugletStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(DispatcherServiceServer).DebugletStream(&grpc.GenericServerStream[ExecutorDebugletMessage, DispatcherDebugletMessage]{ServerStream: stream})
+	return srv.(DispatcherServiceServer).DebugletStream(&grpc.GenericServerStream[DebugletStreamRequest, DebugletStreamResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type DispatcherService_DebugletStreamServer = grpc.BidiStreamingServer[ExecutorDebugletMessage, DispatcherDebugletMessage]
+type DispatcherService_DebugletStreamServer = grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]
 
 // DispatcherService_ServiceDesc is the grpc.ServiceDesc for DispatcherService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -146,14 +288,29 @@ type DispatcherService_DebugletStreamServer = grpc.BidiStreamingServer[ExecutorD
 var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "debuglet.protocol.DispatcherService",
 	HandlerType: (*DispatcherServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
-	Streams: []grpc.StreamDesc{
+	Methods: []grpc.MethodDesc{
 		{
-			StreamName:    "ControlStream",
-			Handler:       _DispatcherService_ControlStream_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
+			MethodName: "Heartbeat",
+			Handler:    _DispatcherService_Heartbeat_Handler,
 		},
+		{
+			MethodName: "Resources",
+			Handler:    _DispatcherService_Resources_Handler,
+		},
+		{
+			MethodName: "DebugletState",
+			Handler:    _DispatcherService_DebugletState_Handler,
+		},
+		{
+			MethodName: "DebugletAllocate",
+			Handler:    _DispatcherService_DebugletAllocate_Handler,
+		},
+		{
+			MethodName: "DebugletExit",
+			Handler:    _DispatcherService_DebugletExit_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "DebugletStream",
 			Handler:       _DispatcherService_DebugletStream_Handler,
@@ -161,5 +318,221 @@ var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
+	Metadata: "protocol/protocol.proto",
+}
+
+const (
+	ExecutorService_Hello_FullMethodName     = "/debuglet.protocol.ExecutorService/Hello"
+	ExecutorService_Upload_FullMethodName    = "/debuglet.protocol.ExecutorService/Upload"
+	ExecutorService_Abort_FullMethodName     = "/debuglet.protocol.ExecutorService/Abort"
+	ExecutorService_Bandwidth_FullMethodName = "/debuglet.protocol.ExecutorService/Bandwidth"
+)
+
+// ExecutorServiceClient is the client API for ExecutorService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type ExecutorServiceClient interface {
+	Hello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error)
+	Upload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (*UploadResponse, error)
+	Abort(ctx context.Context, in *AbortRequest, opts ...grpc.CallOption) (*AbortResponse, error)
+	Bandwidth(ctx context.Context, in *BandwidthRequest, opts ...grpc.CallOption) (*BandwidthResponse, error)
+}
+
+type executorServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewExecutorServiceClient(cc grpc.ClientConnInterface) ExecutorServiceClient {
+	return &executorServiceClient{cc}
+}
+
+func (c *executorServiceClient) Hello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HelloResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_Hello_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executorServiceClient) Upload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (*UploadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UploadResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_Upload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executorServiceClient) Abort(ctx context.Context, in *AbortRequest, opts ...grpc.CallOption) (*AbortResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AbortResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_Abort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executorServiceClient) Bandwidth(ctx context.Context, in *BandwidthRequest, opts ...grpc.CallOption) (*BandwidthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BandwidthResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_Bandwidth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ExecutorServiceServer is the server API for ExecutorService service.
+// All implementations must embed UnimplementedExecutorServiceServer
+// for forward compatibility.
+type ExecutorServiceServer interface {
+	Hello(context.Context, *HelloRequest) (*HelloResponse, error)
+	Upload(context.Context, *UploadRequest) (*UploadResponse, error)
+	Abort(context.Context, *AbortRequest) (*AbortResponse, error)
+	Bandwidth(context.Context, *BandwidthRequest) (*BandwidthResponse, error)
+	mustEmbedUnimplementedExecutorServiceServer()
+}
+
+// UnimplementedExecutorServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedExecutorServiceServer struct{}
+
+func (UnimplementedExecutorServiceServer) Hello(context.Context, *HelloRequest) (*HelloResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Hello not implemented")
+}
+func (UnimplementedExecutorServiceServer) Upload(context.Context, *UploadRequest) (*UploadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Upload not implemented")
+}
+func (UnimplementedExecutorServiceServer) Abort(context.Context, *AbortRequest) (*AbortResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Abort not implemented")
+}
+func (UnimplementedExecutorServiceServer) Bandwidth(context.Context, *BandwidthRequest) (*BandwidthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Bandwidth not implemented")
+}
+func (UnimplementedExecutorServiceServer) mustEmbedUnimplementedExecutorServiceServer() {}
+func (UnimplementedExecutorServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeExecutorServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ExecutorServiceServer will
+// result in compilation errors.
+type UnsafeExecutorServiceServer interface {
+	mustEmbedUnimplementedExecutorServiceServer()
+}
+
+func RegisterExecutorServiceServer(s grpc.ServiceRegistrar, srv ExecutorServiceServer) {
+	// If the following call panics, it indicates UnimplementedExecutorServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&ExecutorService_ServiceDesc, srv)
+}
+
+func _ExecutorService_Hello_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HelloRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).Hello(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_Hello_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).Hello(ctx, req.(*HelloRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutorService_Upload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UploadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).Upload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_Upload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).Upload(ctx, req.(*UploadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutorService_Abort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AbortRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).Abort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_Abort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).Abort(ctx, req.(*AbortRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutorService_Bandwidth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BandwidthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).Bandwidth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_Bandwidth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).Bandwidth(ctx, req.(*BandwidthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// ExecutorService_ServiceDesc is the grpc.ServiceDesc for ExecutorService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var ExecutorService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "debuglet.protocol.ExecutorService",
+	HandlerType: (*ExecutorServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Hello",
+			Handler:    _ExecutorService_Hello_Handler,
+		},
+		{
+			MethodName: "Upload",
+			Handler:    _ExecutorService_Upload_Handler,
+		},
+		{
+			MethodName: "Abort",
+			Handler:    _ExecutorService_Abort_Handler,
+		},
+		{
+			MethodName: "Bandwidth",
+			Handler:    _ExecutorService_Bandwidth_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "protocol/protocol.proto",
 }

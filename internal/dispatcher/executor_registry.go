@@ -92,6 +92,7 @@ func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Du
 			TeslaAnchorTimestamp: teslaAnchor,
 			TeslaAnchorKey:       anchorKey,
 			history:              &debugletHistory{},
+			LastSeen:             time.Now(),
 		}
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))
@@ -121,8 +122,9 @@ func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
 
 func (d *Dispatcher) RemoveExecutor(id string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	delete(d.executors, id)
+	d.mu.Unlock()
+	d.Bidi.RemoveClient(id)
 }
 
 func (d *Dispatcher) SetExecutor(id string, lastSeenNs int64) error {

@@ -48,7 +48,12 @@ dispatcher d:
 	@$(GO) run cmd/dispatcher/main.go -config local/configs/dispatcher/dispatcher.toml
 
 executor e:
-	sudo -E mise x -- go run cmd/executor/main.go -config local/configs/executor/executor.toml
+ifdef EBPF
+	$(MAKE) build-exec
+	sudo ./$(EXECUTOR_BINARY) -config local/configs/executor/executor.toml
+else
+	@$(GO) run cmd/executor/main.go -config local/configs/executor/executor.toml
+endif
 
 # Build a debuglet sample to $(SAMPLE_DIR)/debuglet.wasm. The language is
 # detected from the entrypoint file present in SAMPLE_DIR.

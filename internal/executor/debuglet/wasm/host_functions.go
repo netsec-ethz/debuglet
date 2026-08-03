@@ -26,22 +26,44 @@ import (
 	"context"
 	"crypto/tls"
 	"debuglet/internal/executor/debuglet/socket"
-	"debuglet/internal/executor/ratelimit/app"
+	"debuglet/internal/executor/debuglet/wasm/hostconn"
 	"fmt"
 	"net"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/tetratelabs/wazero/api"
 )
 
 // =============================================================================
+// Drainable interface
+// =============================================================================
+
+type Drainable interface {
+	Drain(ctx context.Context)
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+func stripPort(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return host
+}
+
+// =============================================================================
 // Generic socket API
 // =============================================================================
 
-// HostConnect dials a IP/UDP/TCP(+TLS) connection to addresses[index] and registers
-// it in the SocketRegistry. Returns the socket handle as I32.
+// HostConnect dials a IP/UDP/TCP(+TLS) connection to the given address, creates
+// a HostConn with eBPF attachment, and registers it in the SocketRegistry.
+// Returns the socket handle as I32.
 // WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
 func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
 	var network string
@@ -60,31 +82,65 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 
 	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
 		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
 
-		dialer := &net.Dialer{Timeout: 5 * time.Second}
-
-		if env.Tagger != nil {
-			dialer.Control = func(network, address string, c syscall.RawConn) error {
-				return c.Control(func(fd uintptr) {
-					env.Tagger.SetSocketMark(int(fd))
-				})
-			}
+		dialer, err := hostconn.FromDomains(ctx, env.Policy.Addresses)
+		if err != nil {
+			env.Logger.Warnw("hostConnect: failed to create dialer", "err", err)
+			panic(fmt.Errorf("connect: %w", err))
 		}
 
 		var conn net.Conn
 		if socketType == socket.SocketTypeTLS {
-			conn, err = tls.DialWithDialer(dialer, "tcp", addr, env.TlsCfg)
+			tlsDialer := &tls.Dialer{
+				NetDialer: &net.Dialer{Control: dialer.Control},
+				Config:    env.TlsCfg,
+			}
+			conn, err = tlsDialer.DialContext(ctx, "tcp", addr)
 		} else {
 			conn, err = dialer.DialContext(ctx, network, addr)
 		}
-
 		if err != nil {
 			env.Logger.Warnw("hostConnect: failed to dial", "addr", addr, "err", err)
 			panic(fmt.Errorf("connect: %w", err))
 		}
 
-		sock := socket.NewGenericSocket(conn, socketType, addr)
-		return env.Registry.Add(sock)
+		if env.Tagger != nil {
+			if sc, ok := conn.(syscall.Conn); ok {
+				rawConn, _ := sc.SyscallConn()
+				rawConn.Control(func(fd uintptr) {
+					env.Tagger.SetSocketMark(int(fd))
+				})
+			}
+		}
+
+		debugletUUID, err := uuid.Parse(env.DebugletID)
+		if err != nil {
+			env.Logger.Warnw("hostConnect: invalid debuglet UUID", "id", env.DebugletID)
+			panic(fmt.Errorf("connect: invalid debuglet UUID"))
+		}
+
+		connAddr := stripPort(addr)
+		limit, err := env.Limiter.GetLimit(env.DebugletID, connAddr)
+		if err != nil {
+			env.Logger.Warnw("hostConnect: failed to get limit", "addr", connAddr, "err", err)
+			panic(fmt.Errorf("connect: %w", err))
+		}
+
+		opts := hostconn.HostConnOpts{
+			ConnAddr:         connAddr,
+			MaximumBandwidth: min(limit.Executor, limit.Address),
+			SocketType:       socketType,
+		}
+		hc, err := hostconn.NewConnection(ctx, env.PacketCount, debugletUUID, conn, opts)
+		if err != nil {
+			env.Logger.Warnw("hostConnect: failed to create HostConn", "err", err)
+			panic(fmt.Errorf("connect: %w", err))
+		}
+
+		return env.Registry.Add(hc)
 	}
 }
 
@@ -102,11 +158,6 @@ func HostReceiveData(env *WasmEnv) func(ctx context.Context, mod api.Module, soc
 		buf, err := ExtractMem[byte](mod, bufp, bufLen)
 		if err != nil {
 			panic(err)
-		}
-
-		// NOTE: ratelimiting is done using the BUFFER SIZE, not actual received size.
-		if err := ratelimit(ctx, env, app.TransferIn, sock.Addr(), app.Bitrate(len(buf))*app.Byte); err != nil {
-			panic(fmt.Errorf("failed to ratelimit: %w", err))
 		}
 
 		n, err := sock.Read(buf)
@@ -136,10 +187,6 @@ func HostSendData(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID
 		}
 		env.Logger.Debugw("hostSendData: sending message", "len", len(message))
 
-		if err := ratelimit(ctx, env, app.TransferOut, sock.Addr(), app.Bitrate(len(message))*app.Byte); err != nil {
-			panic(fmt.Errorf("failed to ratelimit: %w", err))
-		}
-
 		if _, err = sock.Write(message); err != nil {
 			env.Logger.Warnw("hostSendData: write error", "err", err)
 			panic(fmt.Errorf("send_data: write error: %w", err))
@@ -154,6 +201,19 @@ func HostClose(env *WasmEnv) func(ctx context.Context, sockID int32) {
 		if err := env.Registry.Close(sockID); err != nil {
 			env.Logger.Warnw("hostClose: close error", "handle", sockID, "err", err)
 			panic(fmt.Errorf("close_tcp: %w", err))
+		}
+	}
+}
+
+func HostDrain(env *WasmEnv) func(ctx context.Context, sockID int32) {
+	return func(ctx context.Context, sockID int32) {
+		sock, err := env.Registry.Get(sockID)
+		if err != nil {
+			env.Logger.Warnw("hostDrain: invalid handle", "handle", sockID, "err", err)
+			panic(fmt.Errorf("drain_connection: %w", err))
+		}
+		if d, ok := sock.(Drainable); ok {
+			d.Drain(ctx)
 		}
 	}
 }

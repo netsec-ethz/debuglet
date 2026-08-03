@@ -89,6 +89,14 @@ func (r *SocketRegistry) CloseAll() {
 	}
 }
 
+func (r *SocketRegistry) All() []Socket {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]Socket, len(r.sockets))
+	copy(result, r.sockets)
+	return result
+}
+
 // SCIONConn wraps a SCION/UDP connection and its associated PathSelector.
 // It replaces the former ScionDialWrapper.
 type SCIONConn struct {

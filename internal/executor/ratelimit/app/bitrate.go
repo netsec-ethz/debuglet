@@ -30,18 +30,26 @@ const (
 var sizeRegex = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)\s*([a-z]*)$`)
 
 func (b Bitrate) String() string {
+	bytes := b.Bytes()
 	switch {
-	case b >= Terabit:
-		return fmt.Sprintf("%.2ftbit", float64(b)/float64(Terabit))
-	case b >= Gigabit:
-		return fmt.Sprintf("%.2fgbit", float64(b)/float64(Gigabit))
-	case b >= Megabit:
-		return fmt.Sprintf("%.2fmbit", float64(b)/float64(Megabit))
-	case b >= Kilobit:
-		return fmt.Sprintf("%.2fkbit", float64(b)/float64(Kilobit))
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1fGiB", float64(bytes)/float64(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1fMiB", float64(bytes)/float64(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1fKiB", float64(bytes)/float64(1<<10))
 	default:
-		return fmt.Sprintf("%dbit", b)
+		return fmt.Sprintf("%dB", uint64(bytes))
 	}
+}
+
+func (b Bitrate) Bytes() int {
+	// round up
+	return int(b+7) / 8
+}
+
+func FromBytes(b int) Bitrate {
+	return Bitrate(b * 8)
 }
 
 func Parse(s string) (Bitrate, error) {
