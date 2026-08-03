@@ -32,8 +32,8 @@ type DatabaseConfig struct {
 }
 
 type SuiConfig struct {
-	RPCURL       string `toml:"rpc_url"`
 	GRPCEndpoint string `toml:"grpc_endpoint"` // host:port, e.g. fullnode.testnet.sui.io:443
+	GraphQLURL   string `toml:"graphql_url"`   // Sui GraphQL RPC, used to catch up on PaymentReceipt events by type
 	Address      string `toml:"address"`
 }
 

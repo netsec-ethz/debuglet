@@ -15,8 +15,12 @@
 package sui
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -34,31 +38,36 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
+// catchUpPageSize is the maximum page size the Sui GraphQL RPC accepts for the
+// events connection (requesting more errors with "Page size is too large").
+const catchUpPageSize = 50
+
 // Payment Kit package ID on Sui testnet. Source: @mysten/payment-kit constants.mjs.
 const paymentKitPackageTestnet = "0x7e069abe383e80d32f2aec17b3793da82aabc8c2edf84abbf68dd7b719e71497"
 
-const noncePrefix = "debuglet"
+const debugletRegistryTestnet = "0x856d588d43b547c0e1866ff26d61af5ce3531f9c8c3ee2fba4b0553e5a3ee830"
 
 type Listener struct {
-	rpcURL          string
 	grpcEndpoint    string
+	graphqlURL      string
 	eventType       string
 	cursorKey       string
 	receiverAddress string
 	db              *db.UserDB
 	logger          *zap.Logger
 	client          *grpcconn.SuiGrpcClient
+	httpClient      *http.Client
 	tdb             *db.TransactionDB
 }
 
-func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB, tdb *db.TransactionDB, logger *zap.Logger) *Listener {
+func NewListener(grpcEndpoint, graphqlURL, receiverAddress string, userDB *db.UserDB, tdb *db.TransactionDB, logger *zap.Logger) *Listener {
 	client := grpcconn.NewSuiGrpcClient(
 		grpcEndpoint,
 		grpcconn.WithDialOptions(grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, ""))),
 	)
 	return &Listener{
-		rpcURL:          rpcURL,
 		grpcEndpoint:    grpcEndpoint,
+		graphqlURL:      graphqlURL,
 		eventType:       paymentKitPackageTestnet + "::payment_kit::PaymentReceipt",
 		cursorKey:       "sui_event_cursor:" + paymentKitPackageTestnet,
 		receiverAddress: strings.ToLower(receiverAddress),
@@ -66,6 +75,7 @@ func NewListener(rpcURL, grpcEndpoint, receiverAddress string, userDB *db.UserDB
 		tdb:             tdb,
 		logger:          logger,
 		client:          client,
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -109,14 +119,6 @@ func (l *Listener) Start(ctx context.Context) error {
 	}
 }
 
-// catchUp fetches and processes any checkpoints between the last recorded cursor and the
-// current chain tip via gRPC, crediting balances for matching PaymentReceipt events. The
-// gRPC ledger API has no server-side event-type filter, so every checkpoint in the range
-// must be fetched and scanned client-side.
-//
-// If cursor is nil (no prior progress recorded, e.g. first deploy), catch-up is skipped
-// entirely and the cursor is initialized to the current tip: replaying the full checkpoint
-// history from genesis over gRPC would mean scanning millions of checkpoints one at a time.
 func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error) {
 	ledger, err := l.client.LedgerService(ctx)
 	if err != nil {
@@ -137,45 +139,129 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 		return cursor, nil
 	}
 
-	l.logger.Info("sui catch-up: scanning checkpoints",
-		zap.Uint64("from", *cursor+1), zap.Uint64("to", tip))
+	l.logger.Info("sui catch-up: querying PaymentReceipt events via GraphQL",
+		zap.Uint64("after_checkpoint", *cursor), zap.Uint64("to", tip))
 
-	readMask := &fieldmaskpb.FieldMask{
-		Paths: []string{"transactions.digest", "transactions.transaction.sender", "transactions.events"},
-	}
-
-	for seq := *cursor + 1; seq <= tip; seq++ {
+	var (
+		pageCursor *string
+		numEvents  int
+	)
+	for {
 		if ctx.Err() != nil {
 			return cursor, ctx.Err()
 		}
 
-		resp, err := ledger.GetCheckpoint(ctx, &v2.GetCheckpointRequest{
-			CheckpointId: &v2.GetCheckpointRequest_SequenceNumber{SequenceNumber: seq},
-			ReadMask:     readMask,
-		})
+		page, err := l.queryPaymentReceiptEvents(ctx, *cursor, pageCursor)
 		if err != nil {
-			return cursor, fmt.Errorf("get checkpoint %d: %w", seq, err)
+			return cursor, fmt.Errorf("query payment receipt events: %w", err)
 		}
 
-		for _, tx := range resp.GetCheckpoint().GetTransactions() {
-			txDigest := tx.GetDigest()
-			sender := tx.GetTransaction().GetSender()
-			for _, ev := range tx.GetEvents().GetEvents() {
-				if ev.GetEventType() != l.eventType {
-					continue
-				}
-				l.processEventGRPC(ev, txDigest, sender)
+		for _, node := range page.Events.Nodes {
+			contents, err := base64.StdEncoding.DecodeString(node.Contents.Bcs)
+			if err != nil {
+				l.logger.Warn("PaymentReceipt: failed to decode base64 contents", zap.Error(err))
+				continue
 			}
+			l.processPaymentReceipt(contents, node.Transaction.Digest, node.Sender.Address)
+			numEvents++
 		}
 
-		seq := seq
-		cursor = &seq
-		if err := l.db.SetState(l.cursorKey, strconv.FormatUint(seq, 10)); err != nil {
-			l.logger.Error("failed to persist sui cursor", zap.Error(err))
+		if !page.Events.PageInfo.HasNextPage {
+			break
 		}
+		endCursor := page.Events.PageInfo.EndCursor
+		pageCursor = &endCursor
+	}
+
+	l.logger.Info("sui catch-up: done", zap.Int("events_processed", numEvents), zap.Uint64("checkpoint", tip))
+
+	cursor = &tip
+	if err := l.db.SetState(l.cursorKey, strconv.FormatUint(tip, 10)); err != nil {
+		l.logger.Error("failed to persist sui cursor", zap.Error(err))
 	}
 
 	return cursor, nil
+}
+
+const paymentReceiptEventsQuery = `
+query PaymentReceiptEvents($type: String!, $afterCheckpoint: UInt53, $first: Int!, $after: String) {
+  events(first: $first, after: $after, filter: { type: $type, afterCheckpoint: $afterCheckpoint }) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      sender { address }
+      transaction { digest }
+      contents { bcs }
+    }
+  }
+}`
+
+type paymentReceiptEventNode struct {
+	Sender struct {
+		Address string `json:"address"`
+	} `json:"sender"`
+	Transaction struct {
+		Digest string `json:"digest"`
+	} `json:"transaction"`
+	Contents struct {
+		Bcs string `json:"bcs"`
+	} `json:"contents"`
+}
+
+type paymentReceiptEventsResponse struct {
+	Events struct {
+		PageInfo struct {
+			HasNextPage bool   `json:"hasNextPage"`
+			EndCursor   string `json:"endCursor"`
+		} `json:"pageInfo"`
+		Nodes []paymentReceiptEventNode `json:"nodes"`
+	} `json:"events"`
+}
+
+func (l *Listener) queryPaymentReceiptEvents(ctx context.Context, afterCheckpoint uint64, after *string) (*paymentReceiptEventsResponse, error) {
+	var resp paymentReceiptEventsResponse
+	err := l.graphQLQuery(ctx, paymentReceiptEventsQuery, map[string]any{
+		"type":            l.eventType,
+		"afterCheckpoint": afterCheckpoint,
+		"first":           catchUpPageSize,
+		"after":           after,
+	}, &resp)
+	return &resp, err
+}
+
+// graphQLQuery executes a GraphQL request against the Sui GraphQL RPC and decodes the "data"
+// field of the response into out.
+func (l *Listener) graphQLQuery(ctx context.Context, query string, variables map[string]any, out any) error {
+	body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		return fmt.Errorf("marshal graphql request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.graphqlURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build graphql request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := l.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do graphql request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var envelope struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return fmt.Errorf("decode graphql response: %w", err)
+	}
+	if len(envelope.Errors) > 0 {
+		return fmt.Errorf("graphql error: %s", envelope.Errors[0].Message)
+	}
+
+	return json.Unmarshal(envelope.Data, out)
 }
 
 func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
@@ -231,16 +317,17 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 	}
 }
 func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
-	nonce, receiver, amount, err := decodePaymentReceiptEvent(ev.GetContents().GetValue())
+	l.processPaymentReceipt(ev.GetContents().GetValue(), txDigest, sender)
+}
+
+func (l *Listener) processPaymentReceipt(contents []byte, txDigest, sender string) {
+	nonce, receiver, amount, err := decodePaymentReceiptEvent(contents)
 	l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver), zap.Int64("amount", amount))
 	if err != nil {
 		l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
 			zap.String("tx", txDigest),
 			zap.Error(err),
 		)
-		return
-	}
-	if !strings.HasPrefix(nonce, NONCE_PREFIX) {
 		return
 	}
 
@@ -255,6 +342,7 @@ func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
 		l.logger.Warn("Wrong method for transaction", zap.String("found", transaction.Method))
 	}
 
+	//TODO verify coin type matches SUI
 	if amount != transaction.Price {
 		l.logger.Warn("payment didn't match price", zap.Int64("expected", transaction.Price), zap.Int64("actual", amount))
 		return

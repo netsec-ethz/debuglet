@@ -98,7 +98,7 @@ func main() {
 
 	// ---- Start payment handler ----
 
-	if cfg.Sui.RPCURL != "" {
+	if cfg.Sui.GRPCEndpoint != "" {
 		g.Go(func() error { return paymentHandler.Start() })
 		//g.Go(func() error { return startSuiListener(userDB, cfg, logger) })
 	}
@@ -111,7 +111,7 @@ func main() {
 
 /* startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
 func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	l := sui.NewListener(cfg.Sui.RPCURL, cfg.Sui.GRPCEndpoint, cfg.Sui.Address, userDB, logger)
+	l := sui.NewListener(cfg.Sui.GRPCEndpoint, cfg.Sui.GraphQLURL, cfg.Sui.Address, userDB, logger)
 	return l.Start(context.Background())
 }*/
 
