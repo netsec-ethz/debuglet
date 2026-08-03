@@ -72,12 +72,12 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 	f.domainIPs[dk][ipv6]++
 
 	fc := &FallbackConn{conn: conn,
-		count:  f,
-		id:     id,
-		mu:     NewFIFOLock(),
-		ipv6:   ipv6,
-		domain: addr,
-		close:  make(chan struct{}),
+		count: f,
+		id:    id,
+		mu:    NewFIFOLock(),
+		ipv6:  ipv6,
+		addr:  addr,
+		close: make(chan struct{}),
 	}
 	return fc, nil
 }

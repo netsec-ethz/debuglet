@@ -123,21 +123,21 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error {
 	parsedIP, err := netip.ParseAddr(addr)
 	if err == nil {
-		return bc.setRateLocked(netutil.ToIPv6(parsedIP), id, limit)
+		return bc.setIPv6Limit(netutil.ToIPv6(parsedIP), id, limit)
 	}
 
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 	ips := bc.domainIPs[domainKey{domain: addr, id: id}]
 	for ipv6 := range ips {
-		if err := bc.setRateLocked(ipv6, id, limit); err != nil {
+		if err := bc.setIPv6Limit(ipv6, id, limit); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (bc *BpfCount) setRateLocked(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
+func (bc *BpfCount) setIPv6Limit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
 	v6Bytes := addr.IP.As16()
 	key := countDebugletKey{
 		Uuid: [16]byte(id),

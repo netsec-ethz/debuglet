@@ -119,6 +119,14 @@ func (l *Listener) Start(ctx context.Context) error {
 	}
 }
 
+// catchUp fetches and processes any checkpoints between the last recorded cursor and the
+// current chain tip via gRPC, crediting balances for matching PaymentReceipt events. The
+// gRPC ledger API has no server-side event-type filter, so every checkpoint in the range
+// must be fetched and scanned client-side.
+//
+// If cursor is nil (no prior progress recorded, e.g. first deploy), catch-up is skipped
+// entirely and the cursor is initialized to the current tip: replaying the full checkpoint
+// history from genesis over gRPC would mean scanning millions of checkpoints one at a time.
 func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error) {
 	ledger, err := l.client.LedgerService(ctx)
 	if err != nil {
