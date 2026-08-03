@@ -1,0 +1,12 @@
+[package]
+name = "debuglet"
+version = "0.1.0"
+edition = "2021"
+description = "Rust client library for writing Debuglet WASM measurement programs"
+license = "Apache-2.0"
+
+[lib]
+name = "debuglet"
+path = "src/lib.rs"
+
+[dependencies]

@@ -32,3 +32,6 @@ __pycache__
 *.pyc
 .venv
 
+# Code agents
+.claude
+

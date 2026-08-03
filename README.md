@@ -29,11 +29,21 @@ make executor # or make e
 
 #### Generate a WASM binary
 
+Debuglets can be written in Go, Rust, or C (and a stdout-only "hello world" in
+JavaScript). `make wasm` detects the language from `SAMPLE_DIR` and writes
+`debuglet.wasm` into it:
+
 ```bash
-make wasm SAMPLE_DIR=local/wasm_samples/helloworld
-# or
-make wasm SAMPLE_DIR=local/wasm_samples/send_tcp
+make wasm SAMPLE_DIR=local/wasm_samples/go/helloworld
+make wasm SAMPLE_DIR=local/wasm_samples/go/throughput
+make wasm SAMPLE_DIR=local/wasm_samples/rust/ping
+make wasm SAMPLE_DIR=local/wasm_samples/c/ping WASI_SDK=/opt/wasi-sdk
 ```
+
+See [local/wasm_samples/README.md](local/wasm_samples/README.md) for the
+debuglet execution model, the host API, the per-language client libraries
+(Go `pkg/debuglet`, the Rust `debuglet` crate, the C header), and the toolchains
+each language needs.
 
 #### Build new proto files
 
@@ -49,9 +59,9 @@ Or run the local go user client:
 
 ```bash
 # send TCP GET req
-go run cmd/user/main.go -wasm local/wasm_samples/send_tcp/debuglet.wasm -debuglets 1 -- -addr google.com:80 -iter 5
+go run cmd/user/main.go -wasm local/wasm_samples/go/send_tcp/debuglet.wasm -debuglets 1 -- -addr google.com:80 -iter 5
 # send ping req
-go run cmd/user/main.go -wasm local/wasm_samples/ping/debuglet.wasm -debuglets 1 -- -addr 1.1.1.1 -iter 10
+go run cmd/user/main.go -wasm local/wasm_samples/go/ping/debuglet.wasm -debuglets 1 -- -addr 1.1.1.1 -iter 10
 ```
 
 The local user client allows for args to be passed through to the WASM by adding the flags after `--` at the end.
