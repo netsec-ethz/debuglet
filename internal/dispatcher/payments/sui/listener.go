@@ -345,6 +345,10 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
 		l.logger.Warn("payment to wrong address", zap.String("expected", l.receiverAddress), zap.String("actual", receiver))
 		return
 	}
+	if receipt.TimestampMs/1000 > uint64(transaction.ExpiresAt) {
+		l.logger.Warn("transaction expired", zap.Uint64("exp time", uint64(transaction.ExpiresAt)), zap.Uint64("executed at", receipt.TimestampMs))
+		return
+	}
 
 	l.db.SetPayed(transaction.Id)
 }

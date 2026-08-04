@@ -109,7 +109,7 @@ func (t *TransactionDB) StoreTransaction(transaction Transaction) error {
 func (t *TransactionDB) GetTransaction(transactionId string) (Transaction, error) {
 	var transaction Transaction
 	transaction.Id = transactionId
-	err := t.db.QueryRow(`SELECT auth_key, price, payed, method FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&transaction.AuthKey, &transaction.Price, &transaction.Payed, &transaction.Method)
+	err := t.db.QueryRow(`SELECT auth_key, price, payed, method, hash, expires_at FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&transaction.AuthKey, &transaction.Price, &transaction.Payed, &transaction.Method, &transaction.Hash, &transaction.ExpiresAt)
 	if err != nil {
 		return transaction, fmt.Errorf("get transaction %q: %w", transactionId, err)
 	}

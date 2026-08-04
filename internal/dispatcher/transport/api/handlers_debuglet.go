@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -28,7 +29,8 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	if err != nil || transaction.AuthKey != req.AuthKey {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
 	}
-	if transaction.Hash != HashDebugletRequest(req.Debuglets) {
+	if !strings.EqualFold(transaction.Hash, HashDebugletRequest(req.Debuglets)) {
+		h.logger.Info("mismatched request", zap.String("expected", transaction.Hash), zap.String("found", HashDebugletRequest(req.Debuglets)))
 		return echo.NewHTTPError(http.StatusBadRequest, "Request does not match the intent")
 	}
 	if !transaction.Payed {
