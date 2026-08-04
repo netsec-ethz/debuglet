@@ -39,8 +39,6 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// catchUpPageSize is the maximum page size the Sui GraphQL RPC accepts for the
-// events connection (requesting more errors with "Page size is too large").
 const catchUpPageSize = 50
 
 type Listener struct {
@@ -119,14 +117,6 @@ func (l *Listener) Start(ctx context.Context) error {
 	}
 }
 
-// catchUp fetches and processes any checkpoints between the last recorded cursor and the
-// current chain tip via gRPC, crediting balances for matching PaymentReceipt events. The
-// gRPC ledger API has no server-side event-type filter, so every checkpoint in the range
-// must be fetched and scanned client-side.
-//
-// If cursor is nil (no prior progress recorded, e.g. first deploy), catch-up is skipped
-// entirely and the cursor is initialized to the current tip: replaying the full checkpoint
-// history from genesis over gRPC would mean scanning millions of checkpoints one at a time.
 func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error) {
 	ledger, err := l.client.LedgerService(ctx)
 	if err != nil {
@@ -170,7 +160,7 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 				l.logger.Warn("PaymentReceipt: failed to decode base64 contents", zap.Error(err))
 				continue
 			}
-			l.processPaymentReceipt(contents, node.Transaction.Digest, node.Sender.Address)
+			l.processPaymentReceipt(contents, node.Transaction.Digest)
 			numEvents++
 		}
 
@@ -196,7 +186,6 @@ query PaymentReceiptEvents($type: String!, $afterCheckpoint: UInt53, $first: Int
   events(first: $first, after: $after, filter: { type: $type, afterCheckpoint: $afterCheckpoint }) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      sender { address }
       transaction { digest }
       contents { bcs }
     }
@@ -204,9 +193,6 @@ query PaymentReceiptEvents($type: String!, $afterCheckpoint: UInt53, $first: Int
 }`
 
 type paymentReceiptEventNode struct {
-	Sender struct {
-		Address string `json:"address"`
-	} `json:"sender"`
 	Transaction struct {
 		Digest string `json:"digest"`
 	} `json:"transaction"`
@@ -236,8 +222,6 @@ func (l *Listener) queryPaymentReceiptEvents(ctx context.Context, afterCheckpoin
 	return &resp, err
 }
 
-// graphQLQuery executes a GraphQL request against the Sui GraphQL RPC and decodes the "data"
-// field of the response into out.
 func (l *Listener) graphQLQuery(ctx context.Context, query string, variables map[string]any, out any) error {
 	body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
 	if err != nil {
@@ -308,12 +292,11 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 		cp := resp.GetCheckpoint()
 		for _, tx := range cp.GetTransactions() {
 			txDigest := tx.GetDigest()
-			sender := tx.GetTransaction().GetSender()
 			for _, ev := range tx.GetEvents().GetEvents() {
 				if ev.GetEventType() != l.eventType {
 					continue
 				}
-				l.processEventGRPC(ev, txDigest, sender)
+				l.processEventGRPC(ev, txDigest)
 			}
 		}
 
@@ -324,13 +307,12 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 		}
 	}
 }
-func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
-	l.processPaymentReceipt(ev.GetContents().GetValue(), txDigest, sender)
+func (l *Listener) processEventGRPC(ev *v2.Event, txDigest string) {
+	l.processPaymentReceipt(ev.GetContents().GetValue(), txDigest)
 }
 
-func (l *Listener) processPaymentReceipt(contents []byte, txDigest, sender string) {
-	nonce, receiver, amount, err := decodePaymentReceiptEvent(contents)
-	l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver), zap.Int64("amount", amount))
+func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
+	receipt, err := decodePaymentReceiptEvent(contents)
 	if err != nil {
 		l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
 			zap.String("tx", txDigest),
@@ -339,18 +321,21 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest, sender strin
 		return
 	}
 
+	amount := int64(receipt.PaymentAmount)
+	receiver := fmt.Sprintf("0x%x", receipt.Receiver)
 	// TODO refund failed purchases
-	transaction, err := l.db.GetTransaction(nonce)
+	transaction, err := l.db.GetTransaction(receipt.Nonce)
 	if err != nil {
-		l.logger.Warn("didn't find transactionId", zap.String("id", nonce))
+		l.logger.Warn("didn't find transactionId", zap.String("id", receipt.Nonce))
 		return
 	}
 
 	if transaction.Method != "SUI" {
 		l.logger.Warn("Wrong method for transaction", zap.String("found", transaction.Method))
 	}
-
-	//TODO verify coin type matches SUI
+	if !strings.EqualFold(receipt.CoinType, "0x2::sui::SUI") {
+		l.logger.Warn("wrong coin type", zap.String("expected", "0x2::sui::SUI"), zap.String("found", receipt.CoinType))
+	}
 	if amount != transaction.Price {
 		l.logger.Warn("payment didn't match price", zap.Int64("expected", transaction.Price), zap.Int64("actual", amount))
 		return
@@ -361,58 +346,8 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest, sender strin
 	}
 
 	l.db.SetPayed(transaction.TransactionId)
-
 }
 
-/*
-	func (l *Listener) processEventGRPC(ev *v2.Event, txDigest, sender string) {
-		nonce, receiver, amount, err := decodePaymentReceiptEvent(ev.GetContents().GetValue())
-		l.logger.Info("Event received", zap.String("nonce", nonce), zap.String("receiver", receiver), zap.Int64("amount", amount))
-		if err != nil {
-			l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
-				zap.String("tx", txDigest),
-				zap.Error(err),
-			)
-			return
-		}
-
-		if !strings.EqualFold(receiver, l.receiverAddress) {
-			l.logger.Info("receiver didnt't match", zap.String("expected", l.receiverAddress))
-			return
-		}
-		if !strings.HasPrefix(nonce, noncePrefix) {
-			l.logger.Info("prefix mismatch")
-			return
-		}
-
-		if amount <= 0 {
-			l.logger.Warn("PaymentReceipt: non-positive amount, no balance credited",
-				zap.String("tx", txDigest),
-				zap.String("sender", sender),
-				zap.Int64("mist", amount),
-			)
-			return
-		}
-
-		if err := l.db.UpdateBalance(sender, amount); err != nil {
-			l.logger.Error("failed to credit balance from PaymentReceipt",
-				zap.String("tx", txDigest),
-				zap.String("sender", sender),
-				zap.String("nonce", nonce),
-				zap.Int64("balance_delta", amount),
-				zap.Error(err),
-			)
-			return
-		}
-
-		l.logger.Info("credited balance from PaymentReceipt",
-			zap.String("tx", txDigest),
-			zap.String("sender", sender),
-			zap.String("nonce", nonce),
-			zap.Int64("balance_delta", amount),
-		)
-	}
-*/
 type paymentType struct {
 	Ephemeral any
 	Registry  *models.SuiAddressBytes
@@ -420,7 +355,7 @@ type paymentType struct {
 
 func (*paymentType) IsBcsEnum() {}
 
-type paymentReceiptFields struct {
+type paymentReceipt struct {
 	PaymentType   *paymentType
 	Nonce         string
 	PaymentAmount uint64
@@ -429,10 +364,10 @@ type paymentReceiptFields struct {
 	TimestampMs   uint64
 }
 
-func decodePaymentReceiptEvent(data []byte) (nonce, receiver string, amount int64, err error) {
-	var ev paymentReceiptFields
+func decodePaymentReceiptEvent(data []byte) (paymentReceipt, error) {
+	var ev paymentReceipt
 	if _, err := mystenbcs.Unmarshal(data, &ev); err != nil {
-		return "", "", 0, fmt.Errorf("BCS decode PaymentReceipt: %w", err)
+		return ev, err
 	}
-	return ev.Nonce, fmt.Sprintf("0x%x", ev.Receiver), int64(ev.PaymentAmount), nil
+	return ev, nil
 }
