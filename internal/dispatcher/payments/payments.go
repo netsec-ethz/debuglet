@@ -28,10 +28,10 @@ type DummyIntent struct {
 	AuthKey       string
 }
 
-func NewPaymentHandler(db *db.TransactionDB, userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
+func NewPaymentHandler(db *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
 	return &PaymentHandler{
 		db:     db,
-		sui:    sui.NewSuiPaymentHandler(cfg, userDB, db, logger),
+		sui:    sui.NewSuiPaymentHandler(cfg, db, logger),
 		logger: logger,
 	}
 }

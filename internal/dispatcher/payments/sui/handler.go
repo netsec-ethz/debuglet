@@ -26,8 +26,8 @@ type SuiPaymentIntent struct {
 	ReceiverAddress string
 }
 
-func NewSuiPaymentHandler(cfg *config.DispatcherConfig, userDB *db.UserDB, transactionDB *db.TransactionDB, logger *zap.Logger) *SuiPaymentHandler {
-	listener := NewListener(cfg, userDB, transactionDB, logger)
+func NewSuiPaymentHandler(cfg *config.DispatcherConfig, transactionDB *db.TransactionDB, logger *zap.Logger) *SuiPaymentHandler {
+	listener := NewListener(cfg, transactionDB, logger)
 	return &SuiPaymentHandler{Listener: listener, Database: transactionDB}
 }
 

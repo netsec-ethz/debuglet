@@ -51,14 +51,13 @@ type Listener struct {
 	receiverAddress   string
 	paymentKitPackage string
 	paymentRegistryId string
-	db                *db.UserDB
 	logger            *zap.Logger
 	client            *grpcconn.SuiGrpcClient
 	httpClient        *http.Client
-	tdb               *db.TransactionDB
+	db                *db.TransactionDB
 }
 
-func NewListener(cfg *config.DispatcherConfig, userDB *db.UserDB, tdb *db.TransactionDB, logger *zap.Logger) *Listener {
+func NewListener(cfg *config.DispatcherConfig, db *db.TransactionDB, logger *zap.Logger) *Listener {
 	grpcEndpoint := cfg.Sui.GRPCEndpoint
 	paymentKitPackage := cfg.Sui.PaymentKitPackage
 	client := grpcconn.NewSuiGrpcClient(
@@ -73,8 +72,7 @@ func NewListener(cfg *config.DispatcherConfig, userDB *db.UserDB, tdb *db.Transa
 		receiverAddress:   strings.ToLower(cfg.Sui.Address),
 		paymentKitPackage: cfg.Sui.PaymentKitPackage,
 		paymentRegistryId: cfg.Sui.PaymentRegistryId,
-		db:                userDB,
-		tdb:               tdb,
+		db:                db,
 		logger:            logger,
 		client:            client,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
@@ -342,7 +340,7 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest, sender strin
 	}
 
 	// TODO refund failed purchases
-	transaction, err := l.tdb.GetTransaction(nonce)
+	transaction, err := l.db.GetTransaction(nonce)
 	if err != nil {
 		l.logger.Warn("didn't find transactionId", zap.String("id", nonce))
 		return
@@ -362,7 +360,7 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest, sender strin
 		return
 	}
 
-	l.tdb.SetPayed(transaction.TransactionId)
+	l.db.SetPayed(transaction.TransactionId)
 
 }
 

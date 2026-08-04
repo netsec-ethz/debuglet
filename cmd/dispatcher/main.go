@@ -61,18 +61,13 @@ func main() {
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
-	userDB, err := db.NewUserDB(cfg.Database.Path)
-	if err != nil {
-		logger.Fatal("failed to open user database", zap.Error(err))
-	}
 	transactionDB, err := db.NewTransactionDB("/var/lib/debuglet/transactions.db")
 	if err != nil {
 		logger.Fatal("failed to open transaction database", zap.Error(err))
 	}
-	defer userDB.Close()
 	defer transactionDB.Close()
 
-	paymentHandler := payments.NewPaymentHandler(transactionDB, userDB, cfg, logger)
+	paymentHandler := payments.NewPaymentHandler(transactionDB, cfg, logger)
 
 	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, paymentHandler)
 	defer d.Close()
@@ -97,7 +92,7 @@ func main() {
 	})
 
 	// ---- Start HTTP Server ----
-	g.Go(func() error { return startHTTPServer(d, userDB, transactionDB, cfg, logger) })
+	g.Go(func() error { return startHTTPServer(d, transactionDB, cfg, logger) })
 
 	// ---- Start payment handler ----
 
@@ -119,10 +114,10 @@ func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *z
 }*/
 
 // startHTTPServer runs the Echo-based HTTP API
-func startHTTPServer(manager *dispatcher.Dispatcher, userDB *db.UserDB, transactionDB *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+func startHTTPServer(manager *dispatcher.Dispatcher, transactionDB *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
 	port := cfg.HTTPPort
 
-	handler := api.NewHandler(manager, userDB, transactionDB, logger)
+	handler := api.NewHandler(manager, transactionDB, logger)
 
 	e := echo.New()
 	e.HideBanner = true
