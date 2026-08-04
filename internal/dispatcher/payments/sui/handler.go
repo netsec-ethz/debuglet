@@ -35,7 +35,7 @@ func (h *SuiPaymentHandler) Start() error {
 	return h.Listener.Start(context.Background())
 }
 
-func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (SuiPaymentIntent, error) {
+func (h *SuiPaymentHandler) CreatePaymentIntent(price int64, hash string) (SuiPaymentIntent, error) {
 	b_transactionId := make([]byte, 16)
 	b_authKey := make([]byte, 16)
 	_, err := rand.Read(b_transactionId)
@@ -46,7 +46,7 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (SuiPaymentIntent, 
 	expiresAt := time.Now().Add(time.Minute * 5).Unix()
 	transactionId := hex.EncodeToString(b_transactionId)
 	authKey := hex.EncodeToString(b_authKey)
-	if err := h.Database.StoreTransaction(transactionId, authKey, price, "SUI", expiresAt); err != nil {
+	if err := h.Database.StoreTransaction(db.Transaction{Id: transactionId, AuthKey: authKey, Price: price, Method: "SUI", ExpiresAt: expiresAt, Hash: hash, Payed: false}); err != nil {
 		return SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}
 

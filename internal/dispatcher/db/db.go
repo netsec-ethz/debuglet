@@ -27,12 +27,13 @@ type TransactionDB struct {
 }
 
 type Transaction struct {
-	TransactionId string
-	AuthKey       string
-	Price         int64
-	Method        string
-	Expires_at    int64
-	Payed         bool
+	Id        string
+	AuthKey   string
+	Price     int64
+	Method    string
+	ExpiresAt int64
+	Payed     bool
+	Hash      string
 }
 
 func NewTransactionDB(path string) (*TransactionDB, error) {
@@ -47,7 +48,8 @@ func NewTransactionDB(path string) (*TransactionDB, error) {
 		price			INTEGER NOT NULL,
 		method			TEXT	NOT NULL,
 		expires_at		INTEGER	NOT NULL,
-		payed			BOOLEAN	NOT NULL
+		payed			BOOLEAN	NOT NULL,
+		hash			TEXT	NOT NULL
 		)`)
 
 	if err != nil {
@@ -92,11 +94,11 @@ func (t *TransactionDB) SetState(key, value string) error {
 	return nil
 }
 
-func (t *TransactionDB) StoreTransaction(transactionId string, authKey string, price int64, method string, expiresAt int64) error {
+func (t *TransactionDB) StoreTransaction(transaction Transaction) error {
 
 	_, err := t.db.Exec(
-		`INSERT INTO transactions (transaction_id, auth_key, price, method, expires_at, payed) VALUES (?, ?, ?,?,?, ?)`,
-		transactionId, authKey, price, method, expiresAt, false,
+		`INSERT INTO transactions (transaction_id, auth_key, price, method, expires_at, payed, hash) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		transaction.Id, transaction.AuthKey, transaction.Price, transaction.Method, transaction.ExpiresAt, transaction.Payed, transaction.Hash,
 	)
 	if err != nil {
 		return fmt.Errorf("store transaction: %w", err)
@@ -106,7 +108,7 @@ func (t *TransactionDB) StoreTransaction(transactionId string, authKey string, p
 
 func (t *TransactionDB) GetTransaction(transactionId string) (Transaction, error) {
 	var transaction Transaction
-	transaction.TransactionId = transactionId
+	transaction.Id = transactionId
 	err := t.db.QueryRow(`SELECT auth_key, price, payed, method FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&transaction.AuthKey, &transaction.Price, &transaction.Payed, &transaction.Method)
 	if err != nil {
 		return transaction, fmt.Errorf("get transaction %q: %w", transactionId, err)
@@ -120,13 +122,9 @@ func (t *TransactionDB) SetPayed(transactionId string) error {
 }
 
 func (t *TransactionDB) IsPayed(transactionId string) (bool, error) {
-	var value bool
-	err := t.db.QueryRow(`SELECT payed FROM transactions WHERE transaction_id = ?`, transactionId).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
+	transaction, err := t.GetTransaction(transactionId)
 	if err != nil {
-		return false, fmt.Errorf("get transaction %q: %w", transactionId, err)
+		return false, err
 	}
-	return value, nil
+	return transaction.Payed, nil
 }

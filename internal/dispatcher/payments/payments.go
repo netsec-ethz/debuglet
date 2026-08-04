@@ -40,16 +40,16 @@ func (p *PaymentHandler) Start() error {
 	return p.sui.Start()
 }
 
-func (p *PaymentHandler) CreatePaymentIntent(price int64, method string) (PaymentIntent, error) {
+func (p *PaymentHandler) CreatePaymentIntent(price int64, method string, hash string) (PaymentIntent, error) {
 	switch method {
 	case "SUI":
-		suiIntent, err := p.sui.CreatePaymentIntent(price)
+		suiIntent, err := p.sui.CreatePaymentIntent(price, hash)
 		if err != nil {
 			return PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
 		}
 		return PaymentIntent{method: method, Intent: suiIntent}, nil
 	case "TEST":
-		transactionId, err := p.CreateDummyIntent()
+		transactionId, err := p.CreateDummyIntent(hash)
 		return PaymentIntent{method: "TEST", Intent: DummyIntent{TransactionId: transactionId, AuthKey: ""}}, err
 	default:
 		return PaymentIntent{}, fmt.Errorf("Unsupported payment method: %s", method)
@@ -70,7 +70,7 @@ func (p *PaymentHandler) GetTransaction(transactionID string) (db.Transaction, e
 }
 
 // This is for testing only. Creates a transaction and immediately sets it to payed
-func (p *PaymentHandler) CreateDummyIntent() (string, error) {
+func (p *PaymentHandler) CreateDummyIntent(hash string) (string, error) {
 	b_transactionId := make([]byte, 16)
 	_, err := rand.Read(b_transactionId)
 	if err != nil {
@@ -78,7 +78,7 @@ func (p *PaymentHandler) CreateDummyIntent() (string, error) {
 	}
 	expiresAt := time.Now().Add(time.Minute * 5).Unix()
 	transactionId := hex.EncodeToString(b_transactionId)
-	err = p.db.StoreTransaction(transactionId, "", 0, "TEST", expiresAt)
+	err = p.db.StoreTransaction(db.Transaction{Id: transactionId, Method: "TEST", ExpiresAt: expiresAt, Hash: hash})
 	if err != nil {
 		return "", err
 	}

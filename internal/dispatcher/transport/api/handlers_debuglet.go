@@ -24,7 +24,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	}
 	transactionId := req.TransactionId
 	transaction, err := h.dispatcher.Payment.GetTransaction(transactionId)
-	h.logger.Info("transaction_id", zap.String("id", transaction.TransactionId), zap.Bool("payed", transaction.Payed))
+	h.logger.Info("transaction_id", zap.String("id", transaction.Id), zap.Bool("payed", transaction.Payed))
 	if err != nil || transaction.AuthKey != req.AuthKey {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
 	}

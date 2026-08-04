@@ -333,7 +333,8 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
 	if transaction.Method != "SUI" {
 		l.logger.Warn("Wrong method for transaction", zap.String("found", transaction.Method))
 	}
-	if !strings.EqualFold(receipt.CoinType, "0x2::sui::SUI") {
+
+	if !strings.EqualFold(receipt.CoinType, "0x2::sui::SUI") && !strings.EqualFold(receipt.CoinType, "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI") {
 		l.logger.Warn("wrong coin type", zap.String("expected", "0x2::sui::SUI"), zap.String("found", receipt.CoinType))
 	}
 	if amount != transaction.Price {
@@ -345,7 +346,7 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
 		return
 	}
 
-	l.db.SetPayed(transaction.TransactionId)
+	l.db.SetPayed(transaction.Id)
 }
 
 type paymentType struct {

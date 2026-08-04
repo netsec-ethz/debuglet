@@ -61,7 +61,7 @@ func main() {
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
-	transactionDB, err := db.NewTransactionDB("/var/lib/debuglet/transactions.db")
+	transactionDB, err := db.NewTransactionDB(cfg.Database.Path)
 	if err != nil {
 		logger.Fatal("failed to open transaction database", zap.Error(err))
 	}

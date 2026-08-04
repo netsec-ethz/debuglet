@@ -1,8 +1,12 @@
 package api
 
 import (
+	"bytes"
+	"crypto/md5"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/payments/sui"
+	"encoding/gob"
+	"encoding/hex"
 	"math"
 	"net/http"
 
@@ -40,8 +44,10 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 	}
 	h.logger.Info("intent", zap.Int64("price", price.Int64()))
 	//TODO bind exact request to transaction
-	intent, err := h.dispatcher.Payment.CreatePaymentIntent(price.Int64(), req.PaymentMethod)
+	hash := HashDebugletRequest(req.Debuglets)
+	intent, err := h.dispatcher.Payment.CreatePaymentIntent(price.Int64(), req.PaymentMethod, hash)
 	if err != nil {
+		h.logger.Info("INTENT", zap.String("hash", hash), zap.String("err", err.Error()))
 		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
 	}
 	switch req.PaymentMethod {
@@ -59,6 +65,13 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: DummyIntent{dummyIntent.TransactionId, dummyIntent.AuthKey}})
 	}
 	return echo.NewHTTPError(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
+}
+
+func HashDebugletRequest(debuglets []DebugletRequest) string {
+	var b bytes.Buffer
+	gob.NewEncoder(&b).Encode(debuglets)
+	hash := md5.Sum(b.Bytes())
+	return hex.EncodeToString(hash[:])
 }
 
 func (h *Handler) GetPaymentStatus(c echo.Context) error {
