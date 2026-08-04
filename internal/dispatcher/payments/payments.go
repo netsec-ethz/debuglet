@@ -40,19 +40,19 @@ func (p *PaymentHandler) Start() error {
 	return p.sui.Start()
 }
 
-func (p *PaymentHandler) CreatePaymentIntent(price int64, method string) (string, PaymentIntent, error) {
+func (p *PaymentHandler) CreatePaymentIntent(price int64, method string) (PaymentIntent, error) {
 	switch method {
 	case "SUI":
-		transactionId, suiIntent, err := p.sui.CreatePaymentIntent(price)
+		suiIntent, err := p.sui.CreatePaymentIntent(price)
 		if err != nil {
-			return "", PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
+			return PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
 		}
-		return transactionId, PaymentIntent{method: method, Intent: suiIntent}, nil
+		return PaymentIntent{method: method, Intent: suiIntent}, nil
 	case "TEST":
 		transactionId, err := p.CreateDummyIntent()
-		return transactionId, PaymentIntent{method: "TEST", Intent: DummyIntent{TransactionId: transactionId, AuthKey: ""}}, err
+		return PaymentIntent{method: "TEST", Intent: DummyIntent{TransactionId: transactionId, AuthKey: ""}}, err
 	default:
-		return "", PaymentIntent{}, fmt.Errorf("Unsupported payment method: %s", method)
+		return PaymentIntent{}, fmt.Errorf("Unsupported payment method: %s", method)
 	}
 }
 

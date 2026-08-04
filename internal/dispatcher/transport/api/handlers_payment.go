@@ -40,7 +40,7 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 	}
 	h.logger.Info("intent", zap.Int64("price", price.Int64()))
 	//TODO bind exact request to transaction
-	_, intent, err := h.dispatcher.Payment.CreatePaymentIntent(price.Int64(), req.PaymentMethod)
+	intent, err := h.dispatcher.Payment.CreatePaymentIntent(price.Int64(), req.PaymentMethod)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
 	}

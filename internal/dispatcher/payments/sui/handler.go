@@ -35,20 +35,20 @@ func (h *SuiPaymentHandler) Start() error {
 	return h.Listener.Start(context.Background())
 }
 
-func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (string, SuiPaymentIntent, error) {
+func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (SuiPaymentIntent, error) {
 	b_transactionId := make([]byte, 16)
 	b_authKey := make([]byte, 16)
 	_, err := rand.Read(b_transactionId)
 	_, err2 := rand.Read(b_authKey)
 	if err != nil || err2 != nil {
-		return "", SuiPaymentIntent{}, fmt.Errorf("Failed to create Intent")
+		return SuiPaymentIntent{}, fmt.Errorf("Failed to create Intent")
 	}
 	expiresAt := time.Now().Add(time.Minute * 5).Unix()
 	transactionId := hex.EncodeToString(b_transactionId)
 	authKey := hex.EncodeToString(b_authKey)
 	if err := h.Database.StoreTransaction(transactionId, authKey, price, "SUI", expiresAt); err != nil {
-		return "", SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
+		return SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}
 
-	return transactionId, SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, RegistryAddress: h.Listener.paymentRegistryId, ReceiverAddress: h.Listener.receiverAddress, ExpiresAt: expiresAt}, nil
+	return SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, RegistryAddress: h.Listener.paymentRegistryId, ReceiverAddress: h.Listener.receiverAddress, ExpiresAt: expiresAt}, nil
 }
