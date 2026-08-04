@@ -32,9 +32,11 @@ type DatabaseConfig struct {
 }
 
 type SuiConfig struct {
-	GRPCEndpoint string `toml:"grpc_endpoint"` // host:port, e.g. fullnode.testnet.sui.io:443
-	GraphQLURL   string `toml:"graphql_url"`   // Sui GraphQL RPC, used to catch up on PaymentReceipt events by type
-	Address      string `toml:"address"`
+	GRPCEndpoint      string `toml:"grpc_endpoint"` // host:port, e.g. fullnode.testnet.sui.io:443
+	GraphQLURL        string `toml:"graphql_url"`   // Sui GraphQL RPC, used to catch up on PaymentReceipt events by type
+	Address           string `toml:"address"`
+	PaymentRegistryId string `toml:"payment_registry_id"`
+	PaymentKitPackage string `toml:"payment_kit_package"`
 }
 
 type DispatcherConfig struct {
@@ -44,12 +46,12 @@ type DispatcherConfig struct {
 	HTTPPort   int       `toml:"http_port"`
 	LogLevel   string    `toml:"log_level"`
 	DisableTLS bool      `toml:"disable_tls"`
-	TLS        TLSConfig      `toml:"tls"`
+	TLS        TLSConfig `toml:"tls"`
 	// Maximum amount of seconds between heartbeats
-	ExecutorTimeout int  `toml:"executor_timeout"`
-	Database DatabaseConfig `toml:"database"`
-	Sui      SuiConfig      `toml:"sui"`
-	JSONLogs        bool `toml:"json_logs"`
+	ExecutorTimeout int            `toml:"executor_timeout"`
+	Database        DatabaseConfig `toml:"database"`
+	Sui             SuiConfig      `toml:"sui"`
+	JSONLogs        bool           `toml:"json_logs"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it

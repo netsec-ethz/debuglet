@@ -31,7 +31,7 @@ type DummyIntent struct {
 func NewPaymentHandler(db *db.TransactionDB, userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
 	return &PaymentHandler{
 		db:     db,
-		sui:    sui.NewSuiPaymentHandler(cfg.Sui.GRPCEndpoint, cfg.Sui.GraphQLURL, cfg.Sui.Address, userDB, db, logger),
+		sui:    sui.NewSuiPaymentHandler(cfg, userDB, db, logger),
 		logger: logger,
 	}
 }

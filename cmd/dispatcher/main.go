@@ -30,7 +30,6 @@ import (
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/payments"
-	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/transport/api"
 
 	//"debuglet/internal/dispatcher/transport/rpc"

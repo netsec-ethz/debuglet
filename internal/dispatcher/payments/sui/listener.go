@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/db"
 
 	"github.com/block-vision/sui-go-sdk/common/grpcconn"
@@ -42,40 +43,41 @@ import (
 // events connection (requesting more errors with "Page size is too large").
 const catchUpPageSize = 50
 
-// Payment Kit package ID on Sui testnet. Source: @mysten/payment-kit constants.mjs.
-const paymentKitPackageTestnet = "0x7e069abe383e80d32f2aec17b3793da82aabc8c2edf84abbf68dd7b719e71497"
-
-const debugletRegistryTestnet = "0x856d588d43b547c0e1866ff26d61af5ce3531f9c8c3ee2fba4b0553e5a3ee830"
-
 type Listener struct {
-	grpcEndpoint    string
-	graphqlURL      string
-	eventType       string
-	cursorKey       string
-	receiverAddress string
-	db              *db.UserDB
-	logger          *zap.Logger
-	client          *grpcconn.SuiGrpcClient
-	httpClient      *http.Client
-	tdb             *db.TransactionDB
+	grpcEndpoint      string
+	graphqlURL        string
+	eventType         string
+	cursorKey         string
+	receiverAddress   string
+	paymentKitPackage string
+	paymentRegistryId string
+	db                *db.UserDB
+	logger            *zap.Logger
+	client            *grpcconn.SuiGrpcClient
+	httpClient        *http.Client
+	tdb               *db.TransactionDB
 }
 
-func NewListener(grpcEndpoint, graphqlURL, receiverAddress string, userDB *db.UserDB, tdb *db.TransactionDB, logger *zap.Logger) *Listener {
+func NewListener(cfg *config.DispatcherConfig, userDB *db.UserDB, tdb *db.TransactionDB, logger *zap.Logger) *Listener {
+	grpcEndpoint := cfg.Sui.GRPCEndpoint
+	paymentKitPackage := cfg.Sui.PaymentKitPackage
 	client := grpcconn.NewSuiGrpcClient(
 		grpcEndpoint,
 		grpcconn.WithDialOptions(grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, ""))),
 	)
 	return &Listener{
-		grpcEndpoint:    grpcEndpoint,
-		graphqlURL:      graphqlURL,
-		eventType:       paymentKitPackageTestnet + "::payment_kit::PaymentReceipt",
-		cursorKey:       "sui_event_cursor:" + paymentKitPackageTestnet,
-		receiverAddress: strings.ToLower(receiverAddress),
-		db:              userDB,
-		tdb:             tdb,
-		logger:          logger,
-		client:          client,
-		httpClient:      &http.Client{Timeout: 30 * time.Second},
+		grpcEndpoint:      grpcEndpoint,
+		graphqlURL:        cfg.Sui.GraphQLURL,
+		eventType:         paymentKitPackage + "::payment_kit::PaymentReceipt",
+		cursorKey:         "sui_event_cursor:" + paymentKitPackage,
+		receiverAddress:   strings.ToLower(cfg.Sui.Address),
+		paymentKitPackage: cfg.Sui.PaymentKitPackage,
+		paymentRegistryId: cfg.Sui.PaymentRegistryId,
+		db:                userDB,
+		tdb:               tdb,
+		logger:            logger,
+		client:            client,
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

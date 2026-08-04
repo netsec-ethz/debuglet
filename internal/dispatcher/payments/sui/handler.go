@@ -3,6 +3,7 @@ package sui
 import (
 	"context"
 	"crypto/rand"
+	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/db"
 	"encoding/hex"
 	"fmt"
@@ -25,8 +26,8 @@ type SuiPaymentIntent struct {
 	ReceiverAddress string
 }
 
-func NewSuiPaymentHandler(grpcEndpoint, graphqlURL, receiverAddress string, userDB *db.UserDB, transactionDB *db.TransactionDB, logger *zap.Logger) *SuiPaymentHandler {
-	listener := NewListener(grpcEndpoint, graphqlURL, receiverAddress, userDB, transactionDB, logger)
+func NewSuiPaymentHandler(cfg *config.DispatcherConfig, userDB *db.UserDB, transactionDB *db.TransactionDB, logger *zap.Logger) *SuiPaymentHandler {
+	listener := NewListener(cfg, userDB, transactionDB, logger)
 	return &SuiPaymentHandler{Listener: listener, Database: transactionDB}
 }
 
@@ -49,5 +50,5 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(price int64) (string, SuiPayment
 		return "", SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}
 
-	return transactionId, SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, RegistryAddress: debugletRegistryTestnet, ReceiverAddress: h.Listener.receiverAddress, ExpiresAt: expiresAt}, nil
+	return transactionId, SuiPaymentIntent{TransactionId: transactionId, Price: price, AuthKey: authKey, RegistryAddress: h.Listener.paymentRegistryId, ReceiverAddress: h.Listener.receiverAddress, ExpiresAt: expiresAt}, nil
 }
