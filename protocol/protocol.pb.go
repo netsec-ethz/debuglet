@@ -322,6 +322,7 @@ type HelloResponse struct {
 	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
+	PricePerBw             int64                  `protobuf:"varint,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                       // Price per bit/s of bandwidth
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -398,12 +399,20 @@ func (x *HelloResponse) GetTeslaAnchorKey() []byte {
 	return nil
 }
 
+func (x *HelloResponse) GetPricePerBw() int64 {
+	if x != nil {
+		return x.PricePerBw
+	}
+	return 0
+}
+
 type DebugletPolicy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"`       // min bits/s required
 	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`          // max bits/s it could use
 	TimeoutMs     int64                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // timeout in ms
-	Addresses     []string               `protobuf:"bytes,4,rep,name=addresses,proto3" json:"addresses,omitempty"`                   // e.g., SCION or network endpoints
+	PricePerBw    int64                  `protobuf:"varint,4,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`
+	Addresses     []string               `protobuf:"bytes,5,rep,name=addresses,proto3" json:"addresses,omitempty"` // e.g., SCION or network endpoints
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -459,6 +468,13 @@ func (x *DebugletPolicy) GetTimeoutMs() int64 {
 	return 0
 }
 
+func (x *DebugletPolicy) GetPricePerBw() int64 {
+	if x != nil {
+		return x.PricePerBw
+	}
+	return 0
+}
+
 func (x *DebugletPolicy) GetAddresses() []string {
 	if x != nil {
 		return x.Addresses
@@ -473,6 +489,7 @@ type UploadRequest struct {
 	Wasm          []byte                 `protobuf:"bytes,3,opt,name=wasm,proto3" json:"wasm,omitempty"`
 	Args          []string               `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`
 	Policy        *DebugletPolicy        `protobuf:"bytes,5,opt,name=policy,proto3" json:"policy,omitempty"`
+	TransactionId string                 `protobuf:"bytes,6,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -540,6 +557,13 @@ func (x *UploadRequest) GetPolicy() *DebugletPolicy {
 		return x.Policy
 	}
 	return nil
+}
+
+func (x *UploadRequest) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
+	}
+	return ""
 }
 
 type UploadResponse struct {
@@ -898,7 +922,8 @@ type DebugletAllocateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DebugletId    string                 `protobuf:"bytes,1,opt,name=debuglet_id,json=debugletId,proto3" json:"debuglet_id,omitempty"`
 	ExecutorId    string                 `protobuf:"bytes,2,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	Policy        *DebugletPolicy        `protobuf:"bytes,3,opt,name=policy,proto3" json:"policy,omitempty"`
+	TransactionId string                 `protobuf:"bytes,3,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
+	Policy        *DebugletPolicy        `protobuf:"bytes,4,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -943,6 +968,13 @@ func (x *DebugletAllocateRequest) GetDebugletId() string {
 func (x *DebugletAllocateRequest) GetExecutorId() string {
 	if x != nil {
 		return x.ExecutorId
+	}
+	return ""
+}
+
+func (x *DebugletAllocateRequest) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
 	}
 	return ""
 }
@@ -1327,7 +1359,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"executorId\x12-\n" +
 	"\x12bandwidth_capacity\x18\x02 \x01(\x03R\x11bandwidthCapacity\"\x13\n" +
 	"\x11ResourcesResponse\"\x0e\n" +
-	"\fHelloRequest\"\xf4\x01\n" +
+	"\fHelloRequest\"\x96\x02\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -1335,20 +1367,25 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\tsource_ip\x18\x03 \x01(\tR\bsourceIp\x12&\n" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
 	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
-	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\"\x81\x01\n" +
+	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12 \n" +
+	"\fprice_per_bw\x18\a \x01(\x03R\n" +
+	"pricePerBw\"\xa3\x01\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\x1c\n" +
-	"\taddresses\x18\x04 \x03(\tR\taddresses\"\xd1\x01\n" +
+	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12 \n" +
+	"\fprice_per_bw\x18\x04 \x01(\x03R\n" +
+	"pricePerBw\x12\x1c\n" +
+	"\taddresses\x18\x05 \x03(\tR\taddresses\"\xf8\x01\n" +
 	"\rUploadRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +
 	"start_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampH\x00R\tstartTime\x88\x01\x01\x12\x12\n" +
 	"\x04wasm\x18\x03 \x01(\fR\x04wasm\x12\x12\n" +
 	"\x04args\x18\x04 \x03(\tR\x04args\x129\n" +
-	"\x06policy\x18\x05 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policyB\r\n" +
+	"\x06policy\x18\x05 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policy\x12%\n" +
+	"\x0etransaction_id\x18\x06 \x01(\tR\rtransactionIdB\r\n" +
 	"\v_start_time\"\x10\n" +
 	"\x0eUploadResponse\"G\n" +
 	"\fAbortRequest\x12\x1f\n" +
@@ -1369,13 +1406,14 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
 	"executorId\x121\n" +
 	"\x05state\x18\x03 \x01(\x0e2\x1b.debuglet.protocol.RunStateR\x05state\"\x17\n" +
-	"\x15DebugletStateResponse\"\x96\x01\n" +
+	"\x15DebugletStateResponse\"\xbd\x01\n" +
 	"\x17DebugletAllocateRequest\x12\x1f\n" +
 	"\vdebuglet_id\x18\x01 \x01(\tR\n" +
 	"debugletId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
-	"executorId\x129\n" +
-	"\x06policy\x18\x03 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policy\"j\n" +
+	"executorId\x12%\n" +
+	"\x0etransaction_id\x18\x03 \x01(\tR\rtransactionId\x129\n" +
+	"\x06policy\x18\x04 \x01(\v2!.debuglet.protocol.DebugletPolicyR\x06policy\"j\n" +
 	"\x18DebugletAllocateResponse\x12N\n" +
 	"\x10allocated_limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x0fallocatedLimits\"\x8f\x01\n" +
 	"\x13DebugletExitRequest\x12\x1f\n" +

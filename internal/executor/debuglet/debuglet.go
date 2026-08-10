@@ -67,10 +67,12 @@ type Debuglet struct {
 	mu        sync.Mutex
 
 	env *wasm.WasmEnv
+
+	transactionID string
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface) *Debuglet {
+func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if iface != nil && runtime.GOOS == "linux" {
@@ -100,10 +102,11 @@ func New(logger *zap.Logger, debugletID string, policy scheduler.Policy, schedul
 	}
 
 	return &Debuglet{
-		id:        debugletID,
-		policy:    policy,
-		createdAt: time.Now(),
-		env:       &env,
+		id:            debugletID,
+		policy:        policy,
+		createdAt:     time.Now(),
+		env:           &env,
+		transactionID: transactionID,
 	}
 }
 

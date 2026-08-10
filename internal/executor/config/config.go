@@ -31,6 +31,7 @@ type Config struct {
 	DispatcherYamuxAddr string           `toml:"dispatcher_yamux_addr"`
 	LogLevel            string           `toml:"log_level"`
 	Capacity            int64            `toml:"capacity"`
+	PricePerBw          int64            `toml:"price_per_bw"`
 	TeslaSeed           string           `toml:"tesla_seed"`
 	TeslaDelay          int64            `toml:"tesla_delay"` // in seconds
 	MaxDebuglets        int              `toml:"max_debuglets"`

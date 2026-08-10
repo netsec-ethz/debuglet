@@ -31,7 +31,15 @@ import (
 
 	"debuglet/internal/dispatcher"
 	"debuglet/internal/dispatcher/config"
+	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/transport/api"
+
+	//"debuglet/internal/dispatcher/transport/rpc"
+
+	//"debuglet/internal/dispatcher/transport/rpc"
+	"debuglet/internal/dispatcher/db"
+	//pb "debuglet/protocol"
+	//pb "debuglet/protocol"
 )
 
 func main() {
@@ -55,8 +63,15 @@ func main() {
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
+	transactionDB, err := db.NewTransactionDB(cfg.Database.Path)
+	if err != nil {
+		logger.Fatal("failed to open transaction database", zap.Error(err))
+	}
+	defer transactionDB.Close()
 
-	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second)
+	paymentHandler := payments.NewPaymentHandler(transactionDB, cfg, logger)
+
+	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, paymentHandler)
 	defer d.Close()
 
 	g, subCtx := errgroup.WithContext(context.Background())
@@ -82,19 +97,33 @@ func main() {
 
 		g2, ctx2 := errgroup.WithContext(subCtx)
 		g2.Go(func() error { return m.Serve() })
-		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
+		g2.Go(func() error { return startHTTPServer(httpL, d, transactionDB, cfg, logger) })
+
+	// ---- Start payment handler ----
+
+	if cfg.Sui.GRPCEndpoint != "" {
+		g.Go(func() error { return paymentHandler.Start() })
+		//g.Go(func() error { return startSuiListener(userDB, cfg, logger) })
 		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
 		return g2.Wait()
 	})
+	}
 
 	if err := g.Wait(); err != nil {
 		logger.Fatal("dispatcher exited with error", zap.Error(err))
 	}
+
 }
 
+/* startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
+func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+	l := sui.NewListener(cfg.Sui.GRPCEndpoint, cfg.Sui.GraphQLURL, cfg.Sui.Address, userDB, logger)
+	return l.Start(context.Background())
+}*/
+
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
-func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	handler := api.NewHandler(manager, logger)
+func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, transactionDB *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+	handler := api.NewHandler(manager, transactionDB, logger)
 
 	e := echo.New()
 	e.HideBanner = true

@@ -56,6 +56,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		time.Duration(h.GetTeslaDelaySec())*time.Second,
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),
 		h.GetTeslaAnchorKey(),
+		h.GetPricePerBw(),
 	)
 
 	go func() {
@@ -115,11 +116,21 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 	policy := req.GetPolicy()
 	executorID := req.GetExecutorId()
 	debugletID := req.GetDebugletId()
+	transactionID := req.GetTransactionId()
 	floorBW := resource.Bitrate(policy.GetFloorBw())
 	ceilBW := resource.Bitrate(policy.GetCeilBw())
 	d.logger.Debug("Received debuglet allocation request", zap.String("debugletID", debugletID), zap.String("executorID", executorID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
 
 	d.logger.Debug("Checking debuglet capacity usage", zap.String("debugletID", debugletID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
+
+	if payed, err := d.Payment.IsPayed(transactionID); err != nil || !payed {
+		d.logger.Error("Debuglet has not been payed yet", zap.Error(err))
+		// TODO only aboart if the transaction expired, otherwise wait
+		if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "Debuglet has not been payed for"); errAbort != nil {
+			d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
+		}
+		return nil, err
+	}
 	for _, dest := range policy.Addresses {
 		if err := d.destinations.CheckCapacity(dest, floorBW); err != nil {
 			if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "not enough capacity"); errAbort != nil {

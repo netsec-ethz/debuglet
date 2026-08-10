@@ -20,13 +20,14 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
+		PricePerBw:             e.cfg.PricePerBw,
 	}
 	return resp, nil
 }
 
 func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
 	// TODO: perform checks and throw error if can't submit
-	e.logger.Debug("Upload received", zap.String("id", req.GetId()))
+	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("tranasaction_id", req.GetTransactionId()))
 
 	var startTime *time.Time
 	if st := req.GetStartTime(); st != nil {
@@ -35,10 +36,11 @@ func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.Upl
 	}
 	policy := req.GetPolicy()
 	spec := scheduler.Spec{
-		DebugletID: req.GetId(),
-		StartTime:  startTime,
-		Args:       req.GetArgs(),
-		Wasm:       req.GetWasm(),
+		DebugletID:    req.GetId(),
+		TransactionID: req.GetTransactionId(),
+		StartTime:     startTime,
+		Args:          req.GetArgs(),
+		Wasm:          req.GetWasm(),
 		Policy: scheduler.Policy{
 			FloorBW:   policy.GetFloorBw(),
 			CeilBW:    policy.GetCeilBw(),

@@ -81,10 +81,11 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 			startTime = timestamppb.New(*spec.StartTime)
 		}
 		req := &pb.UploadRequest{
-			Id:        debugletID,
-			StartTime: startTime,
-			Args:      spec.Args,
-			Wasm:      spec.Wasm,
+			Id:            debugletID,
+			TransactionId: spec.TransactionID,
+			StartTime:     startTime,
+			Args:          spec.Args,
+			Wasm:          spec.Wasm,
 			Policy: &pb.DebugletPolicy{
 				FloorBw:   int64(spec.Policy.FloorBW),
 				CeilBw:    int64(spec.Policy.CeilBW),

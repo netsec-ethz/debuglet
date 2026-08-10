@@ -5,19 +5,36 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
 // PUT /debuglet
 func (h *Handler) SubmitDebuglets(c echo.Context) error {
-	var reqs []DebugletRequest
-	if err := c.Bind(&reqs); err != nil {
+	var req SubmitDebugletsRequest
+	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
 	}
+
+	var reqs = req.Debuglets
 	if len(reqs) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
+	}
+	transactionId := req.TransactionId
+	transaction, err := h.dispatcher.Payment.GetTransaction(transactionId)
+	h.logger.Info("transaction_id", zap.String("id", transaction.Id), zap.Bool("payed", transaction.Payed))
+	if err != nil || transaction.AuthKey != req.AuthKey {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
+	}
+	if !strings.EqualFold(transaction.Hash, HashDebugletRequest(req.Debuglets)) {
+		h.logger.Info("mismatched request", zap.String("expected", transaction.Hash), zap.String("found", HashDebugletRequest(req.Debuglets)))
+		return echo.NewHTTPError(http.StatusBadRequest, "Request does not match the intent")
+	}
+	if !transaction.Payed {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
 	}
 
 	var specs []dispatcher.DebugletSpec
@@ -26,6 +43,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
+		spec.TransactionID = transactionId //will be needed for refunding aborted debuglets
 		specs = append(specs, spec)
 	}
 

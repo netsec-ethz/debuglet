@@ -44,6 +44,7 @@ type ExecutorResponse struct {
 	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
 	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
 	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
+	PricePerBw             int64  `json:"price_per_bw"`
 }
 
 // ExecutorByIPResponse is returned by GET /executors/by-ip?ip=<ip>.
@@ -76,6 +77,40 @@ type DebugletStateResponse struct {
 	Logs       string `json:"logs"` // base64-encoded
 	Error      string `json:"error"`
 	ExecutorID string `json:"executor_id"`
+}
+
+type SubmitDebugletsRequest struct {
+	Debuglets     []DebugletRequest `json:"debuglets"`
+	TransactionId string            `json:"transaction_id"`
+	AuthKey       string            `json:"auth_key"`
+}
+
+type BalanceResponse struct {
+	Balance int64 `json:"balance"`
+}
+
+type IntentResponse struct {
+	Method string `json:"method"`
+	Intent any    `json:"intent"`
+}
+
+type SuiIntent struct {
+	TransactionId   string `json:"transaction_id"`
+	AuthKey         string `json:"auth_key"`
+	Price           int64  `json:"price"`
+	ExpiresAt       int64  `json:"expires_at"`
+	RegistryAddress string `json:"registry_address"`
+	ReceiverAddress string `json:"receiver_address"`
+}
+
+type DummyIntent struct {
+	TransactionID string `json:"transaction_id"`
+	AuthKey       string `json:"auth_key"`
+}
+
+type PaymentIntentRequest struct {
+	Debuglets     []DebugletRequest `json:"debuglets"`
+	PaymentMethod string            `json:"payment_method"`
 }
 
 // ================ HELPERS ================

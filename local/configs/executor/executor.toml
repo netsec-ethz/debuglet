@@ -8,6 +8,7 @@ tesla_delay = 30
 max_debuglets = 20
 disable_tls = true
 # network_interface = "veth-host"
+price_per_bw = 1
 
 [credentials]
 ca_cert = "local/configs/executor/ca.crt"

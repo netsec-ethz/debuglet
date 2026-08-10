@@ -2,6 +2,7 @@ package api
 
 import (
 	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/db"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -9,14 +10,16 @@ import (
 )
 
 type Handler struct {
-	dispatcher *dispatcher.Dispatcher
-	logger     *zap.Logger
+	dispatcher    *dispatcher.Dispatcher
+	logger        *zap.Logger
+	transactionDB *db.TransactionDB
 }
 
-func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
+func NewHandler(d *dispatcher.Dispatcher, db *db.TransactionDB, l *zap.Logger) *Handler {
 	return &Handler{
-		dispatcher: d,
-		logger:     l,
+		dispatcher:    d,
+		logger:        l,
+		transactionDB: db,
 	}
 }
 
@@ -38,4 +41,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// destination
 	e.PATCH("/destination", h.UpdateDestinationLimit)
 	// payment
+	//e.GET("payment/balance", h.GetBalance)
+	e.PUT("payment/intent", h.GetPaymentIntent)
+	e.GET("payment/:transaction_id/status", h.GetPaymentStatus)
 }

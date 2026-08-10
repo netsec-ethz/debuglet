@@ -7,11 +7,12 @@ import (
 )
 
 type DebugletSpec struct {
-	StartTime  *time.Time
-	Wasm       []byte
-	Args       []string
-	Policy     DebugletPolicy
-	ExecutorID string
+	StartTime     *time.Time
+	Wasm          []byte
+	Args          []string
+	Policy        DebugletPolicy
+	ExecutorID    string
+	TransactionID string
 }
 
 type DebugletPolicy struct {
