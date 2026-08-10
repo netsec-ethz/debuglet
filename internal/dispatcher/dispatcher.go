@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
@@ -11,7 +12,6 @@ import (
 	"debuglet/internal/dispatcher/transport/rpc"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,15 +21,15 @@ import (
 type logConn struct {
 	seq   int
 	logs  chan<- []byte
-	state chan<- DebugletRunState
+	state chan<- models.DebugletRunState
 	done  chan struct{}
 }
 
 type DebugletStore struct {
 	Logs       []byte
-	Policy     DebugletPolicy
+	Policy     models.DebugletPolicy
 	ExecutorID string
-	State      DebugletRunState
+	State      models.DebugletRunState
 	Err        string
 	From, To   time.Time
 }
@@ -88,37 +88,14 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 		return fmt.Errorf("failed to list debuglets from database: %w", err)
 	}
 	for _, deb := range debuglets {
-		var addresses []string
-		if deb.Addresses.Valid {
-			addresses = strings.Split(deb.Addresses.String, ",")
-		}
-
 		d.scheduler.Submit(schedule.Request{
 			Executor:    deb.ExecutorID,
 			From:        deb.StartTime,
 			To:          deb.EndTime,
-			Destination: addresses,
+			Destination: deb.Addresses,
 			Use:         resource.Bitrate(deb.Usage),
 		})
 	}
-	return nil
-}
-
-func (d *Dispatcher) ClearOldDebuglets(ctx context.Context, olderThan time.Duration) error {
-	queries := ddb.New(d.db)
-	debuglets, err := queries.ListDebugletsEndBefore(ctx, time.Now().Add(-olderThan))
-	if err != nil {
-		return fmt.Errorf("failed to list debuglets from database: %w", err)
-	}
-	for _, deb := range debuglets {
-		if err := d.AbortDebuglet(ctx, deb.ExecutorID, deb.ID, "clearing old debuglet"); err != nil {
-			d.logger.Error("Failed to abort debuglet: "+err.Error(), zap.String("debugletID", deb.ID))
-		}
-		if err := queries.DeleteDebugletByID(ctx, deb.ID); err != nil {
-			d.logger.Error("Failed to delete debuglet from database: "+err.Error(), zap.String("debugletID", deb.ID))
-		}
-	}
-	d.logger.Debug("Cleared old debuglets", zap.Int("count", len(debuglets)))
 	return nil
 }
 
@@ -136,7 +113,7 @@ func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	}
 }
 
-func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- DebugletRunState) (int, <-chan struct{}, error) {
+func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- models.DebugletRunState) (int, <-chan struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.debugletStores[debugletID]; !exists {

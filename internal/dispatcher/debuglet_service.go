@@ -2,12 +2,11 @@ package dispatcher
 
 import (
 	"context"
-	"database/sql"
 	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,7 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) ([]string, error) {
+func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.DebugletSpec) ([]string, error) {
 	g, subCtx := errgroup.WithContext(ctx)
 	// debuglet IDs in the same order as the submission
 	debugletIDS := make([]string, len(specs))
@@ -65,7 +64,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 				Logs:       []byte{},
 				Policy:     spec.Policy,
 				ExecutorID: spec.ExecutorID,
-				State:      RunStateUploading,
+				State:      models.RunStateUploading,
 				From:       from,
 				To:         to,
 			})
@@ -79,12 +78,12 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 			sreqs = append(sreqs, r)
 
 			if d.scheduler.QueryMaxExec(r.Executor, from, to)+r.Use > exec.capacity {
-				return fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, ErrNoCapacity)
+				return fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, models.ErrNoCapacity)
 			}
 
 			for _, dest := range spec.Policy.Addresses {
 				if d.scheduler.QueryMaxDest(dest, from, to)+r.Use > d.destinations.Cap(dest) {
-					return fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, ErrNoCapacity)
+					return fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, models.ErrNoCapacity)
 				}
 			}
 		}
@@ -107,18 +106,14 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 
 	qtx := ddb.New(d.db).WithTx(tx)
 	for i, store := range stores {
-		var addrs sql.NullString
-		if len(store.Policy.Addresses) > 0 {
-			addrs = sql.NullString{String: strings.Join(store.Policy.Addresses, ","), Valid: true}
-		}
-
 		if _, err := qtx.CreateDebuglet(ctx, ddb.CreateDebugletParams{
 			ID:         debugletIDS[i],
 			StartTime:  store.From,
 			EndTime:    store.To,
 			ExecutorID: store.ExecutorID,
 			Usage:      int64(store.Policy.FloorBW),
-			Addresses:  addrs,
+			State:      store.State,
+			Addresses:  store.Policy.Addresses,
 		}); err != nil {
 			d.mu.Unlock()
 			return nil, fmt.Errorf("failed to create debuglet in database: %w", err)
@@ -150,7 +145,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	return debugletIDS, nil
 }
 
-func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec DebugletSpec) func() error {
+func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec models.DebugletSpec) func() error {
 	d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 	return func() error {
 		client, ok := d.Bidi.GetClient(spec.ExecutorID)
@@ -177,6 +172,16 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		if _, err := client.Upload(ctx, req); err != nil {
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
+
+		d.debugletStores[debugletID].State = models.RunStateUploaded
+		queries := ddb.New(d.db)
+		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
+			ID:    debugletID,
+			State: models.RunStateUploaded,
+		}); err != nil {
+			return fmt.Errorf("failed to update debuglet state in database: %w", err)
+		}
+
 		return nil
 	}
 }

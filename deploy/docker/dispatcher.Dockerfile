@@ -9,7 +9,8 @@ COPY cmd/dispatcher ./cmd/dispatcher
 COPY internal/dispatcher ./internal/dispatcher
 COPY protocol ./protocol
 
-RUN go install golang.org/x/tools/cmd/stringer
+RUN go install github.com/sqlc-dev/sqlc/cmd/sqlc@1.31.1
+RUN go install github.com/pressly/goose/v3/cmd/goose@3.27.3
 RUN go generate ./...
 RUN CGO_ENABLED=0 go build -o /debuglet-dispatcher ./cmd/dispatcher
 

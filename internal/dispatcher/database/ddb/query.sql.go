@@ -7,14 +7,15 @@ package ddb
 
 import (
 	"context"
-	"database/sql"
 	"time"
+
+	"debuglet/internal/dispatcher/models"
 )
 
 const createDebuglet = `-- name: CreateDebuglet :one
-INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses)
-VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, start_time, end_time, usage, executor_id, addresses
+INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses, state)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id, start_time, end_time, usage, executor_id, addresses, state
 `
 
 type CreateDebugletParams struct {
@@ -23,7 +24,8 @@ type CreateDebugletParams struct {
 	EndTime    time.Time
 	Usage      int64
 	ExecutorID string
-	Addresses  sql.NullString
+	Addresses  models.CommaSeparatedList
+	State      models.DebugletRunState
 }
 
 func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) (Debuglet, error) {
@@ -34,6 +36,7 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		arg.Usage,
 		arg.ExecutorID,
 		arg.Addresses,
+		arg.State,
 	)
 	var i Debuglet
 	err := row.Scan(
@@ -43,6 +46,31 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		&i.Usage,
 		&i.ExecutorID,
 		&i.Addresses,
+		&i.State,
+	)
+	return i, err
+}
+
+const createDebugletLog = `-- name: CreateDebugletLog :one
+INSERT INTO debuglet_logs (debuglet_id, timestamp, output)
+VALUES (?, ?, ?)
+RETURNING id, debuglet_id, timestamp, output
+`
+
+type CreateDebugletLogParams struct {
+	DebugletID string
+	Timestamp  time.Time
+	Output     []byte
+}
+
+func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogParams) (DebugletLog, error) {
+	row := q.db.QueryRowContext(ctx, createDebugletLog, arg.DebugletID, arg.Timestamp, arg.Output)
+	var i DebugletLog
+	err := row.Scan(
+		&i.ID,
+		&i.DebugletID,
+		&i.Timestamp,
+		&i.Output,
 	)
 	return i, err
 }
@@ -86,18 +114,8 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	return i, err
 }
 
-const deleteDebugletByID = `-- name: DeleteDebugletByID :exec
-DELETE FROM debuglets
-WHERE id = ?
-`
-
-func (q *Queries) DeleteDebugletByID(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteDebugletByID, id)
-	return err
-}
-
 const getDebugletByID = `-- name: GetDebugletByID :one
-SELECT id, start_time, end_time, usage, executor_id, addresses FROM debuglets
+SELECT id, start_time, end_time, usage, executor_id, addresses, state FROM debuglets
 WHERE id = ?
 `
 
@@ -111,6 +129,7 @@ func (q *Queries) GetDebugletByID(ctx context.Context, id string) (Debuglet, err
 		&i.Usage,
 		&i.ExecutorID,
 		&i.Addresses,
+		&i.State,
 	)
 	return i, err
 }
@@ -142,7 +161,7 @@ func (q *Queries) GetTransactionByID(ctx context.Context, id string) (Transactio
 }
 
 const getTransactionState = `-- name: GetTransactionState :one
-SELECT "key", value FROM transaction_state
+SELECT "key", value FROM transaction_states
 WHERE key = ?
 `
 
@@ -160,11 +179,18 @@ DEBUGLET
 
 */
 
-SELECT id, start_time, end_time, usage, executor_id, addresses FROM debuglets
+SELECT id, start_time, end_time, usage, executor_id, addresses, state FROM debuglets
+LIMIT ?
+OFFSET ?
 `
 
-func (q *Queries) ListDebuglets(ctx context.Context) ([]Debuglet, error) {
-	rows, err := q.db.QueryContext(ctx, listDebuglets)
+type ListDebugletsParams struct {
+	Limit  int64
+	Offset int64
+}
+
+func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([]Debuglet, error) {
+	rows, err := q.db.QueryContext(ctx, listDebuglets, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +205,7 @@ func (q *Queries) ListDebuglets(ctx context.Context) ([]Debuglet, error) {
 			&i.Usage,
 			&i.ExecutorID,
 			&i.Addresses,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -194,7 +221,7 @@ func (q *Queries) ListDebuglets(ctx context.Context) ([]Debuglet, error) {
 }
 
 const listDebugletsEndAfter = `-- name: ListDebugletsEndAfter :many
-SELECT id, start_time, end_time, usage, executor_id, addresses FROM debuglets
+SELECT id, start_time, end_time, usage, executor_id, addresses, state FROM debuglets
 WHERE end_time > ?
 `
 
@@ -214,6 +241,7 @@ func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime time.Time) 
 			&i.Usage,
 			&i.ExecutorID,
 			&i.Addresses,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -228,39 +256,31 @@ func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime time.Time) 
 	return items, nil
 }
 
-const listDebugletsEndBefore = `-- name: ListDebugletsEndBefore :many
-SELECT id, start_time, end_time, usage, executor_id, addresses FROM debuglets
-WHERE end_time < ?
+const updateDebugletState = `-- name: UpdateDebugletState :one
+UPDATE debuglets
+SET state = ?
+WHERE id = ?
+RETURNING id, start_time, end_time, usage, executor_id, addresses, state
 `
 
-func (q *Queries) ListDebugletsEndBefore(ctx context.Context, endTime time.Time) ([]Debuglet, error) {
-	rows, err := q.db.QueryContext(ctx, listDebugletsEndBefore, endTime)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Debuglet
-	for rows.Next() {
-		var i Debuglet
-		if err := rows.Scan(
-			&i.ID,
-			&i.StartTime,
-			&i.EndTime,
-			&i.Usage,
-			&i.ExecutorID,
-			&i.Addresses,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type UpdateDebugletStateParams struct {
+	State models.DebugletRunState
+	ID    string
+}
+
+func (q *Queries) UpdateDebugletState(ctx context.Context, arg UpdateDebugletStateParams) (Debuglet, error) {
+	row := q.db.QueryRowContext(ctx, updateDebugletState, arg.State, arg.ID)
+	var i Debuglet
+	err := row.Scan(
+		&i.ID,
+		&i.StartTime,
+		&i.EndTime,
+		&i.Usage,
+		&i.ExecutorID,
+		&i.Addresses,
+		&i.State,
+	)
+	return i, err
 }
 
 const updateTransactionPaid = `-- name: UpdateTransactionPaid :one
@@ -291,7 +311,7 @@ func (q *Queries) UpdateTransactionPaid(ctx context.Context, arg UpdateTransacti
 }
 
 const updateTransactionState = `-- name: UpdateTransactionState :one
-INSERT OR REPLACE INTO transaction_state (key, value)
+INSERT OR REPLACE INTO transaction_states (key, value)
 VALUES (?, ?)
 RETURNING "key", value
 `

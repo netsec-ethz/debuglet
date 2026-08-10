@@ -5,8 +5,9 @@
 package ddb
 
 import (
-	"database/sql"
 	"time"
+
+	"debuglet/internal/dispatcher/models"
 )
 
 type Debuglet struct {
@@ -15,17 +16,25 @@ type Debuglet struct {
 	EndTime    time.Time
 	Usage      int64
 	ExecutorID string
-	Addresses  sql.NullString
+	Addresses  models.CommaSeparatedList
+	State      models.DebugletRunState
+}
+
+type DebugletLog struct {
+	ID         int64
+	DebugletID string
+	Timestamp  time.Time
+	Output     []byte
 }
 
 type Transaction struct {
-	TransactionID string
-	AuthKey       string
-	Price         int64
-	Method        string
-	ExpiresAt     time.Time
-	Paid          bool
-	Hash          string
+	ID        string
+	AuthKey   string
+	Price     int64
+	Method    string
+	ExpiresAt time.Time
+	Paid      bool
+	Hash      string
 }
 
 type TransactionState struct {

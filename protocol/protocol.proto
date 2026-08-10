@@ -137,6 +137,7 @@ message DebugletIdent {
 }
 message DebugletOutput {
   bytes output = 1;
+  google.protobuf.Timestamp timestamp = 2;
 }
 message DebugletStreamRequest {
   oneof msg {

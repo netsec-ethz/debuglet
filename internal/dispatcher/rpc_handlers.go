@@ -2,6 +2,8 @@ package dispatcher
 
 import (
 	"context"
+	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
@@ -99,7 +101,7 @@ func (d *Dispatcher) OnExecutorDisconnected(execID string) {
 // ============================================================
 
 func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateRequest) (*pb.DebugletStateResponse, error) {
-	state := grpcToRunState(req.GetState())
+	state := models.GrpcToRunState(req.GetState())
 	debugletID := req.GetDebugletId()
 	d.logger.Debug("Received debuglet state update", zap.String("debugletID", debugletID), zap.String("executorID", req.GetExecutorId()), zap.String("state", state.String()))
 
@@ -108,6 +110,13 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateR
 
 	if store, ok := d.debugletStores[debugletID]; ok {
 		store.State = state
+		queries := ddb.New(d.db)
+		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
+			ID:    debugletID,
+			State: state,
+		}); err != nil {
+			d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
+		}
 		for _, conn := range d.connectedLogs[debugletID] {
 			if conn.state != nil {
 				select {
@@ -175,12 +184,12 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		d.mu.Unlock()
 		return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
 	}
-	if st.State == RunStateExited {
+	if st.State == models.RunStateExited {
 		d.mu.Unlock()
 		return &pb.DebugletExitResponse{}, nil
 	}
 
-	st.State = RunStateExited
+	st.State = models.RunStateExited
 	if errMsg != nil {
 		st.Err = *errMsg
 	}
@@ -188,7 +197,7 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 	for _, conn := range d.connectedLogs[debugletID] {
 		if conn.state != nil {
 			select {
-			case conn.state <- RunStateExited:
+			case conn.state <- models.RunStateExited:
 			default:
 			}
 		}
@@ -262,6 +271,15 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 				}
 				connections := d.connectedLogs[debugletID]
 				d.mu.Unlock()
+
+				queries := ddb.New(d.db)
+				if _, err := queries.CreateDebugletLog(ctx, ddb.CreateDebugletLogParams{
+					DebugletID: debugletID,
+					Timestamp:  msg.Output.GetTimestamp().AsTime().UTC(),
+					Output:     output,
+				}); err != nil {
+					d.logger.Error("Failed to store debuglet log in database", zap.String("debugletID", debugletID), zap.Error(err))
+				}
 
 				for _, conn := range connections {
 					conn.logs <- output

@@ -78,20 +78,6 @@ func main() {
 
 	g, subCtx := errgroup.WithContext(context.Background())
 
-	// ---- Start background cleanup ----
-	g.Go(func() error {
-		for {
-			select {
-			case <-subCtx.Done():
-				return nil
-			case <-time.After(1 * time.Minute):
-				if err := d.ClearOldDebuglets(subCtx, 1*time.Minute); err != nil {
-					logger.Error("Failed to clear old debuglets", zap.Error(err))
-				}
-			}
-		}
-	})
-
 	// ---- Start gRPC Server ----
 	g.Go(func() error {
 		addr := fmt.Sprintf(":%d", cfg.GRPCPort)

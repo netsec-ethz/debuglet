@@ -1,7 +1,7 @@
 package api
 
 import (
-	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
@@ -120,13 +120,13 @@ type PaymentIntentRequest struct {
 
 // ================ HELPERS ================
 
-func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
+func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
 	if err != nil {
-		return dispatcher.DebugletSpec{}, errors.New("invalid wasm code")
+		return models.DebugletSpec{}, errors.New("invalid wasm code")
 	}
 	if strings.TrimSpace(r.ExecutorID) == "" {
-		return dispatcher.DebugletSpec{}, errors.New("missing executor ID")
+		return models.DebugletSpec{}, errors.New("missing executor ID")
 	}
 
 	var startTime *time.Time
@@ -146,12 +146,12 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 		}
 	}
 
-	return dispatcher.DebugletSpec{
+	return models.DebugletSpec{
 		StartTime:  startTime,
 		ExecutorID: r.ExecutorID,
 		Args:       r.Args,
 		Wasm:       decoded,
-		Policy: dispatcher.DebugletPolicy{
+		Policy: models.DebugletPolicy{
 			FloorBW:     resource.Bitrate(r.Policy.FloorBW),
 			CeilBW:      resource.Bitrate(r.Policy.CeilBW),
 			Timeout:     time.Duration(r.Policy.TimeoutMS) * time.Millisecond,

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/models"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -38,7 +38,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
 	}
 
-	var specs []dispatcher.DebugletSpec
+	var specs []models.DebugletSpec
 	for i, req := range reqs {
 		spec, err := APIToSpec(req)
 		if err != nil {
@@ -49,7 +49,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
-		if errors.Is(err, dispatcher.ErrNoCapacity) {
+		if errors.Is(err, models.ErrNoCapacity) {
 			return echo.NewHTTPError(http.StatusConflict, "capacity exceeded: "+err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets: "+err.Error())
@@ -87,7 +87,7 @@ func (h *Handler) GetLogsSSE(c echo.Context) error {
 		return http.NewResponseController(w).Flush()
 	}
 
-	if store.State == dispatcher.RunStateExited {
+	if store.State == models.RunStateExited {
 		if err := sendEvent("state", []byte(store.State.String())); err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func (h *Handler) GetLogsSSE(c echo.Context) error {
 	}
 
 	outputCh := make(chan []byte, 1)
-	stateCh := make(chan dispatcher.DebugletRunState, 1)
+	stateCh := make(chan models.DebugletRunState, 1)
 
 	seqID, done, err := h.dispatcher.RegisterLogConnection(debugletID, outputCh, stateCh)
 	if err != nil {

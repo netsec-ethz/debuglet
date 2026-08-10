@@ -5,11 +5,9 @@ DEBUGLET
 */
 
 -- name: ListDebuglets :many
-SELECT * FROM debuglets;
-
--- name: ListDebugletsEndBefore :many
 SELECT * FROM debuglets
-WHERE end_time < ?;
+LIMIT ?
+OFFSET ?;
 
 -- name: ListDebugletsEndAfter :many
 SELECT * FROM debuglets
@@ -20,13 +18,20 @@ SELECT * FROM debuglets
 WHERE id = ?;
 
 -- name: CreateDebuglet :one
-INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses, state)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
--- name: DeleteDebugletByID :exec
-DELETE FROM debuglets
-WHERE id = ?;
+-- name: UpdateDebugletState :one
+UPDATE debuglets
+SET state = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: CreateDebugletLog :one
+INSERT INTO debuglet_logs (debuglet_id, timestamp, output)
+VALUES (?, ?, ?)
+RETURNING *;
 
 
 /*
@@ -35,26 +40,26 @@ TRANSACTION
 
 */
 
--- name: GetTransactionState :one
-SELECT * FROM transaction_state
-WHERE key = ?;
-
--- name: UpdateTransactionState :one
-INSERT OR REPLACE INTO transaction_state (key, value)
-VALUES (?, ?)
-RETURNING *;
-
 -- name: GetTransactionByID :one
 SELECT * FROM transactions
-WHERE transaction_id = ?;
+WHERE id = ?;
 
 -- name: CreateTransaction :one
-INSERT INTO transactions (transaction_id, auth_key, price, method, expires_at, paid, hash)
+INSERT INTO transactions (id, auth_key, price, method, expires_at, paid, hash)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateTransactionPaid :one
 UPDATE transactions
 SET paid = ?
-WHERE transaction_id = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: GetTransactionState :one
+SELECT * FROM transaction_states
+WHERE key = ?;
+
+-- name: UpdateTransactionState :one
+INSERT OR REPLACE INTO transaction_states (key, value)
+VALUES (?, ?)
 RETURNING *;
