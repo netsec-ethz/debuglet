@@ -132,10 +132,11 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 
 	d.logger.Debug("Checking debuglet capacity usage", zap.String("debugletID", debugletID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
 
-	if payed, err := d.Payment.IsPayed(transactionID); err != nil || !payed {
-		d.logger.Error("Debuglet has not been payed yet", zap.Error(err))
+	// TODO: Allocate should never even be called if the debuglet hasn't been paid for and successfully submitted to the executor
+	if paid, err := d.Payment.IsPaid(ctx, transactionID); err != nil || !paid {
+		d.logger.Error("Debuglet has not been paid yet", zap.Error(err))
 		// TODO only abort if the transaction expired, otherwise wait
-		if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "Debuglet has not been payed for"); errAbort != nil {
+		if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "Debuglet has not been paid for"); errAbort != nil {
 			d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
 		}
 		return nil, err

@@ -17,6 +17,7 @@ package sui
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -26,7 +27,7 @@ import (
 	"time"
 
 	"debuglet/internal/dispatcher/config"
-	"debuglet/internal/dispatcher/db"
+	"debuglet/internal/dispatcher/database/ddb"
 
 	"github.com/block-vision/sui-go-sdk/common/grpcconn"
 	"github.com/block-vision/sui-go-sdk/models"
@@ -52,10 +53,10 @@ type Listener struct {
 	logger            *zap.Logger
 	client            *grpcconn.SuiGrpcClient
 	httpClient        *http.Client
-	db                *db.TransactionDB
+	db                *sql.DB
 }
 
-func NewListener(cfg *config.DispatcherConfig, db *db.TransactionDB, logger *zap.Logger) *Listener {
+func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger) *Listener {
 	grpcEndpoint := cfg.Sui.GRPCEndpoint
 	paymentKitPackage := cfg.Sui.PaymentKitPackage
 	client := grpcconn.NewSuiGrpcClient(
@@ -78,14 +79,15 @@ func NewListener(cfg *config.DispatcherConfig, db *db.TransactionDB, logger *zap
 }
 
 func (l *Listener) Start(ctx context.Context) error {
-	raw, err := l.db.GetState(l.cursorKey)
+	queries := ddb.New(l.db)
+	raw, err := queries.GetTransactionState(ctx, l.cursorKey)
 	if err != nil {
 		return fmt.Errorf("load sui cursor: %w", err)
 	}
 
 	var cursor *uint64
-	if raw != "" {
-		seq, err := strconv.ParseUint(raw, 10, 64)
+	if raw.Value != "" {
+		seq, err := strconv.ParseUint(raw.Value, 10, 64)
 		if err != nil {
 			l.logger.Warn("invalid stored sui cursor, resetting to start", zap.Error(err))
 		} else {
@@ -160,7 +162,7 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 				l.logger.Warn("PaymentReceipt: failed to decode base64 contents", zap.Error(err))
 				continue
 			}
-			l.processPaymentReceipt(contents, node.Transaction.Digest)
+			l.processPaymentReceipt(ctx, contents, node.Transaction.Digest)
 			numEvents++
 		}
 
@@ -174,7 +176,10 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 	l.logger.Info("sui catch-up: done", zap.Int("events_processed", numEvents), zap.Uint64("checkpoint", tip))
 
 	cursor = &tip
-	if err := l.db.SetState(l.cursorKey, strconv.FormatUint(tip, 10)); err != nil {
+
+	queries := ddb.New(l.db)
+	_, err = queries.UpdateTransactionState(ctx, ddb.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(tip, 10)})
+	if err != nil {
 		l.logger.Error("failed to persist sui cursor", zap.Error(err))
 	}
 
@@ -296,22 +301,25 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 				if ev.GetEventType() != l.eventType {
 					continue
 				}
-				l.processEventGRPC(ev, txDigest)
+				l.processEventGRPC(ctx, ev, txDigest)
 			}
 		}
 
 		seq := cp.GetSequenceNumber()
 		*cursor = &seq
-		if err := l.db.SetState(l.cursorKey, strconv.FormatUint(seq, 10)); err != nil {
+
+		queries := ddb.New(l.db)
+		_, err = queries.UpdateTransactionState(ctx, ddb.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(seq, 10)})
+		if err != nil {
 			l.logger.Error("failed to persist sui cursor", zap.Error(err))
 		}
 	}
 }
-func (l *Listener) processEventGRPC(ev *v2.Event, txDigest string) {
-	l.processPaymentReceipt(ev.GetContents().GetValue(), txDigest)
+func (l *Listener) processEventGRPC(ctx context.Context, ev *v2.Event, txDigest string) {
+	l.processPaymentReceipt(ctx, ev.GetContents().GetValue(), txDigest)
 }
 
-func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
+func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, txDigest string) {
 	receipt, err := decodePaymentReceiptEvent(contents)
 	if err != nil {
 		l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
@@ -324,9 +332,10 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
 	amount := int64(receipt.PaymentAmount)
 	receiver := fmt.Sprintf("0x%x", receipt.Receiver)
 	// TODO refund failed purchases
-	transaction, err := l.db.GetTransaction(receipt.Nonce)
+	queries := ddb.New(l.db)
+	transaction, err := queries.GetTransactionByID(ctx, receipt.Nonce)
 	if err != nil {
-		l.logger.Warn("didn't find transactionId", zap.String("id", receipt.Nonce))
+		l.logger.Warn("failed to get transaction", zap.String("id", receipt.Nonce), zap.Error(err))
 		return
 	}
 
@@ -345,12 +354,16 @@ func (l *Listener) processPaymentReceipt(contents []byte, txDigest string) {
 		l.logger.Warn("payment to wrong address", zap.String("expected", l.receiverAddress), zap.String("actual", receiver))
 		return
 	}
-	if receipt.TimestampMs/1000 > uint64(transaction.ExpiresAt) {
-		l.logger.Warn("transaction expired", zap.Uint64("exp time", uint64(transaction.ExpiresAt)), zap.Uint64("executed at", receipt.TimestampMs))
+	if receipt.Timestamp.After(transaction.ExpiresAt) {
+		l.logger.Warn("transaction expired", zap.Time("exp_time", transaction.ExpiresAt), zap.Time("executed_at", receipt.Timestamp))
 		return
 	}
 
-	l.db.SetPayed(transaction.Id)
+	_, err = queries.UpdateTransactionPaid(ctx, ddb.UpdateTransactionPaidParams{TransactionID: transaction.TransactionID, Paid: true})
+	if err != nil {
+		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.TransactionID), zap.Error(err))
+		return
+	}
 }
 
 type paymentType struct {
@@ -366,7 +379,7 @@ type paymentReceipt struct {
 	PaymentAmount uint64
 	Receiver      models.SuiAddressBytes
 	CoinType      string
-	TimestampMs   uint64
+	Timestamp     time.Time
 }
 
 func decodePaymentReceiptEvent(data []byte) (paymentReceipt, error) {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"debuglet/internal/dispatcher"
-	"debuglet/internal/dispatcher/db"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -10,16 +9,14 @@ import (
 )
 
 type Handler struct {
-	dispatcher    *dispatcher.Dispatcher
-	logger        *zap.Logger
-	transactionDB *db.TransactionDB
+	dispatcher *dispatcher.Dispatcher
+	logger     *zap.Logger
 }
 
-func NewHandler(d *dispatcher.Dispatcher, db *db.TransactionDB, l *zap.Logger) *Handler {
+func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
 	return &Handler{
-		dispatcher:    d,
-		logger:        l,
-		transactionDB: db,
+		dispatcher: d,
+		logger:     l,
 	}
 }
 

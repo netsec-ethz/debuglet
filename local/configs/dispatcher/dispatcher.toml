@@ -11,7 +11,7 @@ key_file = "local/configs/dispatcher/key"
 # ca_file = "local/configs/dispatcher/ca"
 
 [database]
-path = "/var/lib/debuglet/transaction.db"
+path = ".data/dispatcher.db"
 
 [sui]
 grpc_endpoint       = "fullnode.testnet.sui.io:443"

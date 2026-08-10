@@ -13,13 +13,13 @@
 
 The `Makefile` includes helper-targets to run certain _longer_ commands:
 
-#### Start the dispatcher
+### Start the dispatcher
 
 ```bash
 make dispatcher # or make d
 ```
 
-#### Start a executor
+### Start a executor
 
 **NOTE:** Requires elevated permissions for handling packets at the kernel level (using ebpf).
 
@@ -27,7 +27,7 @@ make dispatcher # or make d
 make executor # or make e
 ```
 
-#### Generate a WASM binary
+### Generate a WASM binary
 
 Debuglets can be written in Go, Rust, or C (and a stdout-only "hello world" in
 JavaScript). `make wasm` detects the language from `SAMPLE_DIR` and writes
@@ -45,11 +45,21 @@ debuglet execution model, the host API, the per-language client libraries
 (Go `pkg/debuglet`, the Rust `debuglet` crate, the C header), and the toolchains
 each language needs.
 
-#### Build new proto files
+### Build new proto files
 
 ```bash
 make proto
 ```
+
+### Database
+
+Both the dispatcher and executor have their own database, which is a SQLite database by default, but can be changed out to postgres at a later time.
+
+[sqlc](https://docs.sqlc.dev/en/stable/index.html) is used to generate typed Go-bindings from a predefined set of SQL queries defined in `internal/[dispatcher|executor]/db/query.sql`.
+
+**Any changes to these requires re-generating the Go-bindings with `go generate ./...`.**
+
+[goose](https://github.com/pressly/goose) is used to handle database migrations. It will automatically upgrade the database when the dispatcher or executor starts up.
 
 ### Submitting measurements
 
@@ -59,9 +69,9 @@ Or run the local go user client:
 
 ```bash
 # send TCP GET req
-go run cmd/user/main.go -wasm local/wasm_samples/go/send_tcp/debuglet.wasm -debuglets 1 -- -addr google.com:80 -iter 5
+go run cmd/user/main.go -wasm local/wasm_samples/go/send_tcp/debuglet.wasm -debuglets 1 -addr google.com -- -addr google.com:80 -iter 5
 # send ping req
-go run cmd/user/main.go -wasm local/wasm_samples/go/ping/debuglet.wasm -debuglets 1 -- -addr 1.1.1.1 -iter 10
+go run cmd/user/main.go -wasm local/wasm_samples/go/ping/debuglet.wasm -debuglets 1 -addr 1.1.1.1 -- -addr 1.1.1.1 -iter 10
 ```
 
 The local user client allows for args to be passed through to the WASM by adding the flags after `--` at the end.
@@ -70,7 +80,7 @@ The local user client allows for args to be passed through to the WASM by adding
 
 The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.
 
-#### SCION
+### SCION
 
 SCION is a soft-dependency for measurements. If a measurement doesn't try to call any SCION-specific functions, you can simply let the executor time-out when it tries to establish a SCION connection.
 

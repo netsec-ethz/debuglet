@@ -2,9 +2,12 @@ package dispatcher
 
 import (
 	"context"
+	"database/sql"
+	"debuglet/internal/dispatcher/database/ddb"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -94,6 +97,38 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	}
 
 	// =========== INSERT ===========
+	// If any debuglets fail to be uploaded, the whole request fails and all debuglets are aborted
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := ddb.New(d.db).WithTx(tx)
+	for i, store := range stores {
+		var addrs sql.NullString
+		if len(store.Policy.Addresses) > 0 {
+			addrs = sql.NullString{String: strings.Join(store.Policy.Addresses, ","), Valid: true}
+		}
+
+		if _, err := qtx.CreateDebuglet(ctx, ddb.CreateDebugletParams{
+			ID:         debugletIDS[i],
+			StartTime:  store.From,
+			EndTime:    store.To,
+			ExecutorID: store.ExecutorID,
+			Usage:      int64(store.Policy.FloorBW),
+			Addresses:  addrs,
+		}); err != nil {
+			d.mu.Unlock()
+			return nil, fmt.Errorf("failed to create debuglet in database: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	for i, store := range stores {
 		d.executors[store.ExecutorID].AppendDebugletID(debugletIDS[i])
 		d.debugletStores[debugletIDS[i]] = &store
