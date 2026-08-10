@@ -83,11 +83,11 @@ func (p *PaymentHandler) CreateDummyIntent(ctx context.Context, hash string) (st
 
 	queries := ddb.New(p.db)
 	if t, err := queries.CreateTransaction(ctx, ddb.CreateTransactionParams{
-		TransactionID: transactionId,
-		Method:        "TEST",
-		ExpiresAt:     expiresAt,
-		Hash:          hash,
-		Paid:          true,
+		ID:        transactionId,
+		Method:    "TEST",
+		ExpiresAt: expiresAt,
+		Hash:      hash,
+		Paid:      true,
 	}); err != nil {
 		return "", fmt.Errorf("failed to store transaction: %w", err)
 	} else {

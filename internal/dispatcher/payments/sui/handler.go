@@ -49,13 +49,13 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(ctx context.Context, price int64
 	authKey := hex.EncodeToString(b_authKey)
 	queries := ddb.New(h.db)
 	if _, err := queries.CreateTransaction(ctx, ddb.CreateTransactionParams{
-		TransactionID: transactionId,
-		AuthKey:       authKey,
-		Price:         price,
-		Method:        "SUI",
-		ExpiresAt:     expiresAt,
-		Hash:          hash,
-		Paid:          false,
+		ID:        transactionId,
+		AuthKey:   authKey,
+		Price:     price,
+		Method:    "SUI",
+		ExpiresAt: expiresAt,
+		Hash:      hash,
+		Paid:      false,
 	}); err != nil {
 		return SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}

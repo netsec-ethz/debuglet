@@ -9,7 +9,7 @@ CREATE TABLE debuglets (
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-	transaction_id 	TEXT	PRIMARY KEY NOT NULL,
+	id 	TEXT	PRIMARY KEY NOT NULL,
 	auth_key		TEXT	NOT NULL,
 	price			INTEGER NOT NULL,
 	method			TEXT	NOT NULL,

@@ -359,9 +359,9 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 		return
 	}
 
-	_, err = queries.UpdateTransactionPaid(ctx, ddb.UpdateTransactionPaidParams{TransactionID: transaction.TransactionID, Paid: true})
+	_, err = queries.UpdateTransactionPaid(ctx, ddb.UpdateTransactionPaidParams{ID: transaction.ID, Paid: true})
 	if err != nil {
-		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.TransactionID), zap.Error(err))
+		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.ID), zap.Error(err))
 		return
 	}
 }

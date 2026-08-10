@@ -48,24 +48,24 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 }
 
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (transaction_id, auth_key, price, method, expires_at, paid, hash)
+INSERT INTO transactions (id, auth_key, price, method, expires_at, paid, hash)
 VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING transaction_id, auth_key, price, method, expires_at, paid, hash
+RETURNING id, auth_key, price, method, expires_at, paid, hash
 `
 
 type CreateTransactionParams struct {
-	TransactionID string
-	AuthKey       string
-	Price         int64
-	Method        string
-	ExpiresAt     time.Time
-	Paid          bool
-	Hash          string
+	ID        string
+	AuthKey   string
+	Price     int64
+	Method    string
+	ExpiresAt time.Time
+	Paid      bool
+	Hash      string
 }
 
 func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error) {
 	row := q.db.QueryRowContext(ctx, createTransaction,
-		arg.TransactionID,
+		arg.ID,
 		arg.AuthKey,
 		arg.Price,
 		arg.Method,
@@ -75,7 +75,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	)
 	var i Transaction
 	err := row.Scan(
-		&i.TransactionID,
+		&i.ID,
 		&i.AuthKey,
 		&i.Price,
 		&i.Method,
@@ -116,15 +116,21 @@ func (q *Queries) GetDebugletByID(ctx context.Context, id string) (Debuglet, err
 }
 
 const getTransactionByID = `-- name: GetTransactionByID :one
-SELECT transaction_id, auth_key, price, method, expires_at, paid, hash FROM transactions
-WHERE transaction_id = ?
+/*
+
+TRANSACTION
+
+*/
+
+SELECT id, auth_key, price, method, expires_at, paid, hash FROM transactions
+WHERE id = ?
 `
 
-func (q *Queries) GetTransactionByID(ctx context.Context, transactionID string) (Transaction, error) {
-	row := q.db.QueryRowContext(ctx, getTransactionByID, transactionID)
+func (q *Queries) GetTransactionByID(ctx context.Context, id string) (Transaction, error) {
+	row := q.db.QueryRowContext(ctx, getTransactionByID, id)
 	var i Transaction
 	err := row.Scan(
-		&i.TransactionID,
+		&i.ID,
 		&i.AuthKey,
 		&i.Price,
 		&i.Method,
@@ -136,12 +142,6 @@ func (q *Queries) GetTransactionByID(ctx context.Context, transactionID string) 
 }
 
 const getTransactionState = `-- name: GetTransactionState :one
-/*
-
-TRANSACTION
-
-*/
-
 SELECT "key", value FROM transaction_state
 WHERE key = ?
 `
@@ -266,20 +266,20 @@ func (q *Queries) ListDebugletsEndBefore(ctx context.Context, endTime time.Time)
 const updateTransactionPaid = `-- name: UpdateTransactionPaid :one
 UPDATE transactions
 SET paid = ?
-WHERE transaction_id = ?
-RETURNING transaction_id, auth_key, price, method, expires_at, paid, hash
+WHERE id = ?
+RETURNING id, auth_key, price, method, expires_at, paid, hash
 `
 
 type UpdateTransactionPaidParams struct {
-	Paid          bool
-	TransactionID string
+	Paid bool
+	ID   string
 }
 
 func (q *Queries) UpdateTransactionPaid(ctx context.Context, arg UpdateTransactionPaidParams) (Transaction, error) {
-	row := q.db.QueryRowContext(ctx, updateTransactionPaid, arg.Paid, arg.TransactionID)
+	row := q.db.QueryRowContext(ctx, updateTransactionPaid, arg.Paid, arg.ID)
 	var i Transaction
 	err := row.Scan(
-		&i.TransactionID,
+		&i.ID,
 		&i.AuthKey,
 		&i.Price,
 		&i.Method,
