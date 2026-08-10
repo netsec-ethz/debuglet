@@ -163,7 +163,13 @@ func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, 
 	}
 
 	subCtx, cancelInit := context.WithTimeout(ctx, time.Second)
-	if err := deb.StartServers(subCtx); err != nil {
+	req := debuglet.StartServersReq{
+		TCP:   spec.Policy.ListenTCP,
+		UDP:   spec.Policy.ListenUDP,
+		ICMP:  spec.Policy.ListenICMP,
+		SCION: spec.Policy.ListenSCION,
+	}
+	if err := deb.StartServers(subCtx, req); err != nil {
 		e.logger.Warn("Failed to startup servers for debuglet. Ignoring", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 	}
 	cancelInit()

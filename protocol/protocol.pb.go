@@ -322,7 +322,8 @@ type HelloResponse struct {
 	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
-	PricePerBw             int64                  `protobuf:"varint,7,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                       // Price per bit/s of bandwidth
+	IcmpEnabled            bool                   `protobuf:"varint,7,opt,name=icmp_enabled,json=icmpEnabled,proto3" json:"icmp_enabled,omitempty"`                                      // Whether the executor can handle ICMP packets
+	PricePerBw             int64                  `protobuf:"varint,8,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                       // Price per bit/s of bandwidth
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -399,6 +400,13 @@ func (x *HelloResponse) GetTeslaAnchorKey() []byte {
 	return nil
 }
 
+func (x *HelloResponse) GetIcmpEnabled() bool {
+	if x != nil {
+		return x.IcmpEnabled
+	}
+	return false
+}
+
 func (x *HelloResponse) GetPricePerBw() int64 {
 	if x != nil {
 		return x.PricePerBw
@@ -408,11 +416,15 @@ func (x *HelloResponse) GetPricePerBw() int64 {
 
 type DebugletPolicy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"`       // min bits/s required
-	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`          // max bits/s it could use
-	TimeoutMs     int64                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // timeout in ms
-	PricePerBw    int64                  `protobuf:"varint,4,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`
-	Addresses     []string               `protobuf:"bytes,5,rep,name=addresses,proto3" json:"addresses,omitempty"` // e.g., SCION or network endpoints
+	FloorBw       int64                  `protobuf:"varint,1,opt,name=floor_bw,json=floorBw,proto3" json:"floor_bw,omitempty"`             // min bits/s required
+	CeilBw        int64                  `protobuf:"varint,2,opt,name=ceil_bw,json=ceilBw,proto3" json:"ceil_bw,omitempty"`                // max bits/s it could use
+	TimeoutMs     int64                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`       // timeout in ms
+	Addresses     []string               `protobuf:"bytes,4,rep,name=addresses,proto3" json:"addresses,omitempty"`                         // e.g., SCION or network endpoints
+	RequireIcmp   bool                   `protobuf:"varint,5,opt,name=require_icmp,json=requireIcmp,proto3" json:"require_icmp,omitempty"` // whether ICMP is required
+	ListenUdp     bool                   `protobuf:"varint,6,opt,name=listen_udp,json=listenUdp,proto3" json:"listen_udp,omitempty"`       // whether the debuglet should setup a UDP listening server
+	ListenTcp     bool                   `protobuf:"varint,7,opt,name=listen_tcp,json=listenTcp,proto3" json:"listen_tcp,omitempty"`       // whether the debuglet should setup a TCP listening server
+	ListenIcmp    bool                   `protobuf:"varint,8,opt,name=listen_icmp,json=listenIcmp,proto3" json:"listen_icmp,omitempty"`    // whether the debuglet should setup an ICMP listening server
+	ListenScion   bool                   `protobuf:"varint,9,opt,name=listen_scion,json=listenScion,proto3" json:"listen_scion,omitempty"` // whether the debuglet should setup a SCION listening server
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -468,18 +480,46 @@ func (x *DebugletPolicy) GetTimeoutMs() int64 {
 	return 0
 }
 
-func (x *DebugletPolicy) GetPricePerBw() int64 {
-	if x != nil {
-		return x.PricePerBw
-	}
-	return 0
-}
-
 func (x *DebugletPolicy) GetAddresses() []string {
 	if x != nil {
 		return x.Addresses
 	}
 	return nil
+}
+
+func (x *DebugletPolicy) GetRequireIcmp() bool {
+	if x != nil {
+		return x.RequireIcmp
+	}
+	return false
+}
+
+func (x *DebugletPolicy) GetListenUdp() bool {
+	if x != nil {
+		return x.ListenUdp
+	}
+	return false
+}
+
+func (x *DebugletPolicy) GetListenTcp() bool {
+	if x != nil {
+		return x.ListenTcp
+	}
+	return false
+}
+
+func (x *DebugletPolicy) GetListenIcmp() bool {
+	if x != nil {
+		return x.ListenIcmp
+	}
+	return false
+}
+
+func (x *DebugletPolicy) GetListenScion() bool {
+	if x != nil {
+		return x.ListenScion
+	}
+	return false
 }
 
 type UploadRequest struct {
@@ -1359,7 +1399,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"executorId\x12-\n" +
 	"\x12bandwidth_capacity\x18\x02 \x01(\x03R\x11bandwidthCapacity\"\x13\n" +
 	"\x11ResourcesResponse\"\x0e\n" +
-	"\fHelloRequest\"\x96\x02\n" +
+	"\fHelloRequest\"\xb9\x02\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -1367,17 +1407,24 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\tsource_ip\x18\x03 \x01(\tR\bsourceIp\x12&\n" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
 	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
-	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12 \n" +
-	"\fprice_per_bw\x18\a \x01(\x03R\n" +
-	"pricePerBw\"\xa3\x01\n" +
+	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12!\n" +
+	"\ficmp_enabled\x18\a \x01(\bR\vicmpEnabled\x12 \n" +
+	"\fprice_per_bw\x18\b \x01(\x03R\n" +
+	"pricePerBw\"\xa6\x02\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12 \n" +
-	"\fprice_per_bw\x18\x04 \x01(\x03R\n" +
-	"pricePerBw\x12\x1c\n" +
-	"\taddresses\x18\x05 \x03(\tR\taddresses\"\xf8\x01\n" +
+	"timeout_ms\x18\x03 \x01(\x03R\ttimeoutMs\x12\x1c\n" +
+	"\taddresses\x18\x04 \x03(\tR\taddresses\x12!\n" +
+	"\frequire_icmp\x18\x05 \x01(\bR\vrequireIcmp\x12\x1d\n" +
+	"\n" +
+	"listen_udp\x18\x06 \x01(\bR\tlistenUdp\x12\x1d\n" +
+	"\n" +
+	"listen_tcp\x18\a \x01(\bR\tlistenTcp\x12\x1f\n" +
+	"\vlisten_icmp\x18\b \x01(\bR\n" +
+	"listenIcmp\x12!\n" +
+	"\flisten_scion\x18\t \x01(\bR\vlistenScion\"\xf8\x01\n" +
 	"\rUploadRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +

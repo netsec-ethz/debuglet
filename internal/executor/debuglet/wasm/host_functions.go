@@ -250,18 +250,21 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 // WASM key: "accept_ip"
 func HostAcceptIP(env *WasmEnv) func() int32 {
 	return func() int32 {
-		conn, err := env.IpServer.Accept()
-		if err != nil {
-			env.Logger.Warnw("hostAcceptIP: failed to accept", "err", err)
-			panic(fmt.Errorf("accept_ip: %w", err))
-		}
+		// TODO: implement
+		return 0
 
-		ipConn, ok := conn.(*net.IPConn)
-		if !ok {
-			panic(fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn))
-		}
+		// conn, err := env.IpServer.Accept()
+		// if err != nil {
+		// 	env.Logger.Warnw("hostAcceptIP: failed to accept", "err", err)
+		// 	panic(fmt.Errorf("accept_ip: %w", err))
+		// }
 
-		return env.Registry.Add(socket.NewGenericSocket(ipConn, socket.SocketTypeICMP4, ""))
+		// ipConn, ok := conn.(*net.IPConn)
+		// if !ok {
+		// 	panic(fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn))
+		// }
+
+		// return env.Registry.Add(socket.NewGenericSocket(ipConn, socket.SocketTypeICMP4, ""))
 	}
 }
 

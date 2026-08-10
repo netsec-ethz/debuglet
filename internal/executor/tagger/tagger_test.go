@@ -47,17 +47,17 @@ func newTestTagger(t *testing.T) *Tagger {
 func buildIPv4Packet(payload []byte) []byte {
 	totalLen := 20 + len(payload)
 	pkt := make([]byte, totalLen)
-	pkt[0] = 0x45                                                         // version=4, IHL=5
-	pkt[1] = 0x00                                                         // DSCP/ECN
-	binary.BigEndian.PutUint16(pkt[2:4], uint16(totalLen))               // total length
-	binary.BigEndian.PutUint16(pkt[4:6], 0x0000)                         // IPID = 0 initially
-	pkt[6] = 0x00                                                         // flags
-	pkt[7] = 0x00                                                         // fragment offset
-	pkt[8] = 64                                                           // TTL
-	pkt[9] = 17                                                           // protocol = UDP
-	binary.BigEndian.PutUint16(pkt[10:12], 0x0000)                       // checksum = 0 (computed later)
-	binary.BigEndian.PutUint32(pkt[12:16], 0x7F000001)                   // src = 127.0.0.1
-	binary.BigEndian.PutUint32(pkt[16:20], 0x7F000002)                   // dst = 127.0.0.2
+	pkt[0] = 0x45                                          // version=4, IHL=5
+	pkt[1] = 0x00                                          // DSCP/ECN
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(totalLen)) // total length
+	binary.BigEndian.PutUint16(pkt[4:6], 0x0000)           // IPID = 0 initially
+	pkt[6] = 0x00                                          // flags
+	pkt[7] = 0x00                                          // fragment offset
+	pkt[8] = 64                                            // TTL
+	pkt[9] = 17                                            // protocol = UDP
+	binary.BigEndian.PutUint16(pkt[10:12], 0x0000)         // checksum = 0 (computed later)
+	binary.BigEndian.PutUint32(pkt[12:16], 0x7F000001)     // src = 127.0.0.1
+	binary.BigEndian.PutUint32(pkt[16:20], 0x7F000002)     // dst = 127.0.0.2
 	copy(pkt[20:], payload)
 	// Compute correct initial checksum.
 	binary.BigEndian.PutUint16(pkt[10:12], IPv4Checksum(pkt[:20]))

@@ -308,7 +308,7 @@ func VerifyTag(disclosedKey []byte, epoch int64, measurementID, packet []byte, t
 	if len(packet) >= 20 && (packet[0]>>4) == 4 {
 		pkt := make([]byte, len(packet))
 		copy(pkt, packet)
-		pkt[4] = 0  // IPID
+		pkt[4] = 0 // IPID
 		pkt[5] = 0
 		pkt[10] = 0 // IPv4 checksum
 		pkt[11] = 0
@@ -341,10 +341,20 @@ func siphash24(k0, k1 uint64, data []byte) uint64 {
 		m := binary.LittleEndian.Uint64(data[i*8 : i*8+8])
 		v3 ^= m
 		for j := 0; j < 2; j++ {
-			v0 += v1; v1 = (v1 << 13) | (v1 >> 51); v1 ^= v0; v0 = (v0 << 32) | (v0 >> 32)
-			v2 += v3; v3 = (v3 << 16) | (v3 >> 48); v3 ^= v2
-			v0 += v3; v3 = (v3 << 21) | (v3 >> 43); v3 ^= v0
-			v2 += v1; v1 = (v1 << 17) | (v1 >> 47); v1 ^= v2; v2 = (v2 << 32) | (v2 >> 32)
+			v0 += v1
+			v1 = (v1 << 13) | (v1 >> 51)
+			v1 ^= v0
+			v0 = (v0 << 32) | (v0 >> 32)
+			v2 += v3
+			v3 = (v3 << 16) | (v3 >> 48)
+			v3 ^= v2
+			v0 += v3
+			v3 = (v3 << 21) | (v3 >> 43)
+			v3 ^= v0
+			v2 += v1
+			v1 = (v1 << 17) | (v1 >> 47)
+			v1 ^= v2
+			v2 = (v2 << 32) | (v2 >> 32)
 		}
 		v0 ^= m
 	}
@@ -355,18 +365,38 @@ func siphash24(k0, k1 uint64, data []byte) uint64 {
 	}
 	v3 ^= b
 	for j := 0; j < 2; j++ {
-		v0 += v1; v1 = (v1 << 13) | (v1 >> 51); v1 ^= v0; v0 = (v0 << 32) | (v0 >> 32)
-		v2 += v3; v3 = (v3 << 16) | (v3 >> 48); v3 ^= v2
-		v0 += v3; v3 = (v3 << 21) | (v3 >> 43); v3 ^= v0
-		v2 += v1; v1 = (v1 << 17) | (v1 >> 47); v1 ^= v2; v2 = (v2 << 32) | (v2 >> 32)
+		v0 += v1
+		v1 = (v1 << 13) | (v1 >> 51)
+		v1 ^= v0
+		v0 = (v0 << 32) | (v0 >> 32)
+		v2 += v3
+		v3 = (v3 << 16) | (v3 >> 48)
+		v3 ^= v2
+		v0 += v3
+		v3 = (v3 << 21) | (v3 >> 43)
+		v3 ^= v0
+		v2 += v1
+		v1 = (v1 << 17) | (v1 >> 47)
+		v1 ^= v2
+		v2 = (v2 << 32) | (v2 >> 32)
 	}
 	v0 ^= b
 	v2 ^= 0xff
 	for j := 0; j < 4; j++ {
-		v0 += v1; v1 = (v1 << 13) | (v1 >> 51); v1 ^= v0; v0 = (v0 << 32) | (v0 >> 32)
-		v2 += v3; v3 = (v3 << 16) | (v3 >> 48); v3 ^= v2
-		v0 += v3; v3 = (v3 << 21) | (v3 >> 43); v3 ^= v0
-		v2 += v1; v1 = (v1 << 17) | (v1 >> 47); v1 ^= v2; v2 = (v2 << 32) | (v2 >> 32)
+		v0 += v1
+		v1 = (v1 << 13) | (v1 >> 51)
+		v1 ^= v0
+		v0 = (v0 << 32) | (v0 >> 32)
+		v2 += v3
+		v3 = (v3 << 16) | (v3 >> 48)
+		v3 ^= v2
+		v0 += v3
+		v3 = (v3 << 21) | (v3 >> 43)
+		v3 ^= v0
+		v2 += v1
+		v1 = (v1 << 17) | (v1 >> 47)
+		v1 ^= v2
+		v2 = (v2 << 32) | (v2 >> 32)
 	}
 	return v0 ^ v1 ^ v2 ^ v3
 }
@@ -406,7 +436,7 @@ func VerifyBPFTag(disclosedKey []byte, epoch int64, measurementID, packet []byte
 	if len(packet) >= 20 && (packet[0]>>4) == 4 {
 		pkt := make([]byte, len(packet))
 		copy(pkt, packet)
-		pkt[4] = 0  // IPID
+		pkt[4] = 0 // IPID
 		pkt[5] = 0
 		pkt[10] = 0 // IPv4 checksum
 		pkt[11] = 0

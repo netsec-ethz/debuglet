@@ -49,15 +49,20 @@ message HelloResponse {
   int64 tesla_delay_sec = 4; // TESLA epoch delay in seconds
   int64 tesla_anchor_timestamp_ns = 5; // Reference wall-clock time for epoch 0
   bytes tesla_anchor_key = 6; // Public anchor k_0 = H^L(seed); used to verify disclosed keys
-  int64 price_per_bw = 7; // Price per bit/s of bandwidth
+  bool icmp_enabled = 7; // Whether the executor can handle ICMP packets
+  int64 price_per_bw = 8; // Price per bit/s of bandwidth
 }
 
 message DebugletPolicy {
   int64 floor_bw = 1; // min bits/s required
   int64 ceil_bw = 2; // max bits/s it could use
   int64 timeout_ms = 3; // timeout in ms
-  int64 price_per_bw = 4;
-  repeated string addresses = 5; // e.g., SCION or network endpoints
+  repeated string addresses = 4; // e.g., SCION or network endpoints
+  bool require_icmp = 5; // whether ICMP is required
+  bool listen_udp = 6; // whether the debuglet should setup a UDP listening server
+  bool listen_tcp = 7; // whether the debuglet should setup a TCP listening server
+  bool listen_icmp = 8; // whether the debuglet should setup an ICMP listening server
+  bool listen_scion = 9; // whether the debuglet should setup a SCION listening server
 }
 
 message UploadRequest {
@@ -115,7 +120,7 @@ message DebugletAllocateRequest {
 }
 // The dispatcher may directly respond with updated limits
 message DebugletAllocateResponse {
-    repeated DestinationLimit allocated_limits = 1;
+  repeated DestinationLimit allocated_limits = 1;
 }
 
 message DebugletExitRequest {

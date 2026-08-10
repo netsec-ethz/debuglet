@@ -20,6 +20,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
+		IcmpEnabled:            e.packetCount.Type() == "ebpf", // TODO: have proper system to detect if service has required perms for ICMP
 		PricePerBw:             e.cfg.PricePerBw,
 	}
 	return resp, nil
@@ -27,7 +28,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 
 func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
 	// TODO: perform checks and throw error if can't submit
-	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("tranasaction_id", req.GetTransactionId()))
+	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("transaction_id", req.GetTransactionId()))
 
 	var startTime *time.Time
 	if st := req.GetStartTime(); st != nil {
@@ -42,10 +43,15 @@ func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.Upl
 		Args:          req.GetArgs(),
 		Wasm:          req.GetWasm(),
 		Policy: scheduler.Policy{
-			FloorBW:   policy.GetFloorBw(),
-			CeilBW:    policy.GetCeilBw(),
-			Timeout:   time.Duration(policy.GetTimeoutMs()) * time.Millisecond,
-			Addresses: policy.GetAddresses(),
+			FloorBW:     policy.GetFloorBw(),
+			CeilBW:      policy.GetCeilBw(),
+			Timeout:     time.Duration(policy.GetTimeoutMs()) * time.Millisecond,
+			Addresses:   policy.GetAddresses(),
+			RequireICMP: policy.GetRequireIcmp(),
+			ListenUDP:   policy.GetListenUdp(),
+			ListenTCP:   policy.GetListenTcp(),
+			ListenICMP:  policy.GetListenIcmp(),
+			ListenSCION: policy.GetListenScion(),
 		},
 	}
 	if err := e.scheduler.Insert(spec); err != nil {
