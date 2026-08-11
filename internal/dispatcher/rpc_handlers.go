@@ -64,6 +64,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		time.Duration(h.GetTeslaDelaySec())*time.Second,
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),
 		h.GetTeslaAnchorKey(),
+		h.GetIcmpEnabled(),
 		h.GetPricePerBw(),
 	)
 
@@ -133,7 +134,7 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 
 	if payed, err := d.Payment.IsPayed(transactionID); err != nil || !payed {
 		d.logger.Error("Debuglet has not been payed yet", zap.Error(err))
-		// TODO only aboart if the transaction expired, otherwise wait
+		// TODO only abort if the transaction expired, otherwise wait
 		if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "Debuglet has not been payed for"); errAbort != nil {
 			d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
 		}

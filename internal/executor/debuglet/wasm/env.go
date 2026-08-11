@@ -26,7 +26,7 @@ type WasmEnv struct {
 
 	TcpServer   *net.TCPListener
 	UdpServer   net.PacketConn
-	IpServer    net.Listener
+	IpServer    net.PacketConn
 	ScionServer pan.ListenConn
 
 	Registry  *socket.SocketRegistry

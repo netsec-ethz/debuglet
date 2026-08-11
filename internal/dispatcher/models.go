@@ -19,10 +19,15 @@ type DebugletSpec struct {
 }
 
 type DebugletPolicy struct {
-	FloorBW   resource.Bitrate
-	CeilBW    resource.Bitrate
-	Timeout   time.Duration
-	Addresses []string
+	FloorBW     resource.Bitrate
+	CeilBW      resource.Bitrate
+	Timeout     time.Duration
+	Addresses   []string
+	RequireICMP bool
+	ListenUDP   bool
+	ListenTCP   bool
+	ListenICMP  bool
+	ListenSCION bool
 }
 
 //go:generate stringer -type=DebugletRunState

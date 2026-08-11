@@ -42,6 +42,10 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 				return fmt.Errorf("executor '%s' not found", spec.ExecutorID)
 			}
 
+			if (spec.Policy.RequireICMP || spec.Policy.ListenICMP) && !exec.ICMPEnabled {
+				return fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
+			}
+
 			// Create the stores and determine if the range [from,to] has enough capacity
 			var from time.Time
 			if spec.StartTime == nil {

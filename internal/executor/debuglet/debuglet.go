@@ -119,8 +119,8 @@ func (d *Debuglet) InitRuntime(ctx context.Context, wasmBytes []byte) error {
 	return nil
 }
 
-func (d *Debuglet) StartServers(ctx context.Context) error {
-	return d.startServers(ctx)
+func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
+	return d.startServers(ctx, req)
 }
 
 // GetSCIONAddr returns the local SCION address of the server listener started
@@ -135,48 +135,72 @@ func (d *Debuglet) GetSCIONAddr() string {
 func (d *Debuglet) ID() string                       { return d.id }
 func (d *Debuglet) Registry() *socket.SocketRegistry { return d.env.Registry }
 
+type StartServersReq struct {
+	UDP   bool
+	TCP   bool
+	ICMP  bool
+	SCION bool
+}
+
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
-func (d *Debuglet) startServers(ctx context.Context) error {
+func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error {
 	d.env.Logger.Debugw("startServers: starting")
 
-	// -- Placeholder for future UDP server --
-	// udpServer, err := net.ListenPacket("udp", ":0")
-	// d.env.UdpServer = udpServer
-
-	// -- Placeholder for future TCP server --
-	// addr, err := net.ResolveTCPAddr("tcp", ":0")
-	// tcpServer, err := net.ListenTCP("tcp", addr)
-	// d.env.TcpServer = tcpServer
-
-	// -- Placeholder for future IP server --
-	// ipAddr, err := net.ResolveIPAddr("ip", ":0")
-	// ipServer, err := net.ListenIP("ip", ipAddr)
-	// d.env.IpServer = ipServer
-
-	scionHost, err := platform.GetScionAddr(ctx)
-	if err != nil {
-		return fmt.Errorf("startServers: failed to get SCION address: %w", err)
-	}
-	scionAddr, err := pan.ParseUDPAddr(scionHost)
-	if err != nil {
-		return fmt.Errorf("startServers: failed to parse SCION address: %w", err)
+	if req.TCP {
+		tcpListener, err := net.Listen("tcp", ":0")
+		if err != nil {
+			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
+		}
+		if lis, ok := tcpListener.(*net.TCPListener); ok {
+			d.env.TcpServer = lis
+		} else {
+			return fmt.Errorf("startServers: failed to assert TCP listener type")
+		}
 	}
 
-	var listen pan.IPPortValue
-	if err = listen.Set(scionAddr.IP.String() + ":0"); err != nil {
-		return fmt.Errorf("startServers: failed to set SCION listen addr: %w", err)
+	if req.UDP {
+		udpServer, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
+		}
+		d.env.UdpServer = udpServer
 	}
 
-	d.env.Logger.Debug("startServers: starting scion UDP listener")
-	scionServer, err := pan.ListenUDP(ctx, listen.Get(), nil)
-	if err != nil {
-		return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
+	if req.ICMP {
+		icmpServer, err := net.ListenPacket("ip4:icmp", ":0")
+		if err != nil {
+			return fmt.Errorf("startServers: failed to start ICMP listener: %w", err)
+		}
+		d.env.IpServer = icmpServer
 	}
-	d.env.ScionServer = scionServer
 
-	d.env.Logger.Debugw("startServers: started", "SCION", scionServer.LocalAddr())
+	if req.SCION {
+		scionHost, err := platform.GetScionAddr(ctx)
+		if err != nil {
+			return fmt.Errorf("startServers: failed to get SCION address: %w", err)
+		}
+		scionAddr, err := pan.ParseUDPAddr(scionHost)
+		if err != nil {
+			return fmt.Errorf("startServers: failed to parse SCION address: %w", err)
+		}
+
+		var listen pan.IPPortValue
+		if err = listen.Set(scionAddr.IP.String() + ":0"); err != nil {
+			return fmt.Errorf("startServers: failed to set SCION listen addr: %w", err)
+		}
+
+		d.env.Logger.Debug("startServers: starting scion UDP listener")
+		scionServer, err := pan.ListenUDP(ctx, listen.Get(), nil)
+		if err != nil {
+			return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
+		}
+		d.env.ScionServer = scionServer
+
+		d.env.Logger.Debugw("startServers: started", "SCION", scionServer.LocalAddr())
+	}
+
 	return nil
 }
 

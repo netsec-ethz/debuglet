@@ -15,10 +15,15 @@ type VersionResponse struct {
 }
 
 type DebugletPolicyRequest struct {
-	FloorBW   int64    `json:"floor_bw"`
-	CeilBW    int64    `json:"ceil_bw"`
-	TimeoutMS int64    `json:"timeout_ms"`
-	Addresses []string `json:"addresses"`
+	FloorBW     int64    `json:"floor_bw"`
+	CeilBW      int64    `json:"ceil_bw"`
+	TimeoutMS   int64    `json:"timeout_ms"`
+	Addresses   []string `json:"addresses"`
+	RequireICMP bool     `json:"require_icmp"`
+	ListenUDP   bool     `json:"listen_udp"`
+	ListenTCP   bool     `json:"listen_tcp"`
+	ListenICMP  bool     `json:"listen_icmp"`
+	ListenSCION bool     `json:"listen_scion"`
 }
 
 type DebugletRequest struct {
@@ -147,10 +152,15 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 		Args:       r.Args,
 		Wasm:       decoded,
 		Policy: dispatcher.DebugletPolicy{
-			FloorBW:   resource.Bitrate(r.Policy.FloorBW),
-			CeilBW:    resource.Bitrate(r.Policy.CeilBW),
-			Timeout:   time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
-			Addresses: addrs,
+			FloorBW:     resource.Bitrate(r.Policy.FloorBW),
+			CeilBW:      resource.Bitrate(r.Policy.CeilBW),
+			Timeout:     time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
+			Addresses:   addrs,
+			RequireICMP: r.Policy.RequireICMP,
+			ListenUDP:   r.Policy.ListenUDP,
+			ListenTCP:   r.Policy.ListenTCP,
+			ListenICMP:  r.Policy.ListenICMP,
+			ListenSCION: r.Policy.ListenSCION,
 		},
 	}, nil
 }

@@ -25,6 +25,8 @@ type RegisteredExecutor struct {
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte // k_0, the public chain anchor
 
+	ICMPEnabled bool
+
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
 	history    *debugletHistory
@@ -83,7 +85,7 @@ func (e *RegisteredExecutor) AppendDebugletID(id string) {
 
 // RegisterExecutor creates or updates the executor record for id. anchorKey is
 // k_0, the public TESLA chain anchor published by the executor at startup.
-func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, price int64) {
+func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64) {
 	d.logger.Info("Registering executor", zap.String("id", id), zap.String("ip", ip), zap.Int64("price", price))
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -96,6 +98,7 @@ func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Du
 			TeslaAnchorKey:       anchorKey,
 			history:              &debugletHistory{},
 			LastSeen:             time.Now(),
+			ICMPEnabled:          icmpEnabled,
 			PricePerBw:           price,
 		}
 	} else {

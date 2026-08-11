@@ -23,10 +23,15 @@ type Scheduler interface {
 }
 
 type Policy struct {
-	FloorBW   int64
-	CeilBW    int64
-	Timeout   time.Duration
-	Addresses []string
+	FloorBW     int64
+	CeilBW      int64
+	Timeout     time.Duration
+	Addresses   []string
+	RequireICMP bool
+	ListenUDP   bool
+	ListenTCP   bool
+	ListenICMP  bool
+	ListenSCION bool
 }
 
 type Spec struct {
