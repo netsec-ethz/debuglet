@@ -1,7 +1,6 @@
 package user
 
 import (
-	"bufio"
 	"bytes"
 	"debuglet/internal/dispatcher/transport/api"
 	"encoding/base64"
@@ -11,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 const baseURL = "localhost:9000"
@@ -141,67 +141,31 @@ func AbortDebuglet(ID, executorID string) int {
 }
 
 func ReadOutput(debugletID string) error {
-	url := fmt.Sprintf("http://%s/debuglet/%s", baseURL, debugletID)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status: %d, body: %s", resp.StatusCode, body)
-	}
-	reader := bufio.NewReader(resp.Body)
-	var event api.SSEEvent
-
+	after := int64(0)
 	for {
-		line, err := reader.ReadString('\n')
+		url := fmt.Sprintf("http://%s/debuglet/%s/logs?after=%d&limit=100", baseURL, debugletID, after)
+		resp, err := http.Get(url)
 		if err != nil {
-			if err == io.EOF {
-				break
-			}
 			return err
 		}
-		line = strings.TrimSuffix(line, "\n")
-		line = strings.TrimSuffix(line, "\r")
+		var logResp api.DebugletLogsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&logResp); err != nil {
+			resp.Body.Close()
+			return err
+		}
+		resp.Body.Close()
 
-		// Empty line signals end of an event
-		if line == "" {
-			if len(event.Data) != 0 {
-				handleEvent(debugletID, event)
-				event = api.SSEEvent{}
-			}
-			continue
+		for _, entry := range logResp.Logs {
+			decoded, _ := base64.StdEncoding.DecodeString(entry.Output)
+			fmt.Printf("[[%s]]: [%s] %s\n", debugletID, entry.Timestamp, strings.TrimSpace(string(decoded)))
 		}
-		switch {
-		case strings.HasPrefix(line, "id:"):
-			event.ID = []byte(strings.TrimSpace(line[3:]))
-		case strings.HasPrefix(line, "event:"):
-			event.Event = []byte(strings.TrimSpace(line[6:]))
-		case strings.HasPrefix(line, "retry:"):
-			fmt.Sscanf(line[6:], "%d", &event.Retry)
-		case strings.HasPrefix(line, "data:"):
-			if len(event.Data) != 0 {
-				event.Data = append(event.Data, '\n')
-			}
-			event.Data = append(event.Data, strings.TrimSpace(line[5:])...)
+
+		if logResp.State == "RunStateExited" && !logResp.HasMore {
+			return nil
 		}
+		after = logResp.After
+		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
-}
-
-func handleEvent(debugletID string, e api.SSEEvent) {
-	fmt.Printf("[[%s]]: [%s] Event: %s - Data: %q\n", debugletID, e.ID, e.Event, e.Data)
 }
 
 func ReadState(debugletID string) (api.DebugletStateResponse, error) {

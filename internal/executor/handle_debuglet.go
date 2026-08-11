@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type RunningDebuglet struct {
@@ -194,7 +195,7 @@ func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan
 	outputCh := make(chan []byte, 1024)
 	go func() {
 		for out := range outputCh {
-			err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out}}})
+			err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out, Timestamp: timestamppb.Now()}}})
 			if err != nil {
 				e.logger.Error("Failed to send debuglet output", zap.String("debugletID", id), zap.Error(err))
 				return

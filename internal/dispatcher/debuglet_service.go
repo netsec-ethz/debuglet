@@ -121,7 +121,6 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 	to := from.Add(spec.Policy.Timeout).Add(10 * time.Second)
 
 	store := DebugletStore{
-		Logs:       []byte{},
 		Policy:     spec.Policy,
 		ExecutorID: spec.ExecutorID,
 		State:      models.RunStateUploading,
@@ -178,7 +177,10 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		}
 		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 
+		d.mu.Lock()
 		d.debugletStores[debugletID].State = models.RunStateUploaded
+		d.mu.Unlock()
+
 		queries := ddb.New(d.db)
 		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
 			ID:    debugletID,

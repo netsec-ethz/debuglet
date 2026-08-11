@@ -80,6 +80,10 @@ type CommaSeparatedList []string
 func (c *CommaSeparatedList) Scan(src any) error {
 	switch v := src.(type) {
 	case string:
+		if v == "" {
+			*c = nil
+			return nil
+		}
 		*c = strings.Split(v, ",")
 	case []byte:
 		*c = strings.Split(string(v), ",")

@@ -1,13 +1,14 @@
 package api
 
 import (
+	"debuglet/internal/dispatcher/database/ddb"
 	"debuglet/internal/dispatcher/models"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -58,87 +59,57 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 }
 
-// GET /debuglet/:id
-// Uses Server-Sent Events (SSE) to stream state changes and output
-func (h *Handler) GetLogsSSE(c echo.Context) error {
+// GET /debuglet/:id/logs
+func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	debugletID := c.Param("id")
 
-	w := c.Response()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	after, err := strconv.ParseInt(c.QueryParam("after"), 10, 64)
+	if err != nil {
+		after = 0
+	}
+	limit, err := strconv.ParseInt(c.QueryParam("limit"), 10, 64)
+	if err != nil || limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	ctx := c.Request().Context()
+	queries := ddb.New(h.dispatcher.DB())
+
+	dbLogs, err := queries.ListDebugletLogs(ctx, ddb.ListDebugletLogsParams{
+		DebugletID: debugletID,
+		ID:         after,
+		Limit:      limit,
+	})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query logs: "+err.Error())
+	}
 
 	store, err := h.dispatcher.GetStore(debugletID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
 	}
 
-	sseID := 0
-	sendEvent := func(eventType string, data []byte) error {
-		event := SSEEvent{
-			ID:    fmt.Appendf([]byte{}, "%d", sseID),
-			Data:  data,
-			Event: []byte(eventType),
-		}
-		sseID++
-		if err := event.MarshalTo(w); err != nil {
-			return err
-		}
-		return http.NewResponseController(w).Flush()
+	var entries []DebugletLogEntry
+	lastID := after
+	for _, l := range dbLogs {
+		entries = append(entries, DebugletLogEntry{
+			ID:        l.ID,
+			Timestamp: l.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
+			Output:    base64.StdEncoding.EncodeToString(l.Output),
+		})
+		lastID = l.ID
 	}
 
-	if store.State == models.RunStateExited {
-		if err := sendEvent("state", []byte(store.State.String())); err != nil {
-			return err
-		}
-		if len(store.Logs) > 0 {
-			if err := sendEvent("output", store.Logs); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	outputCh := make(chan []byte, 1)
-	stateCh := make(chan models.DebugletRunState, 1)
-
-	seqID, done, err := h.dispatcher.RegisterLogConnection(debugletID, outputCh, stateCh)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
-	}
-	defer h.dispatcher.RemoveLogConnection(debugletID, seqID)
-
-	if err := sendEvent("state", []byte(store.State.String())); err != nil {
-		return err
-	}
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-c.Request().Context().Done():
-			return nil
-		case <-done:
-			return nil
-		case output := <-outputCh:
-			if err := sendEvent("output", output); err != nil {
-				return err
-			}
-		case state := <-stateCh:
-			if err := sendEvent("state", []byte(state.String())); err != nil {
-				return err
-			}
-		case <-ticker.C:
-			event := SSEEvent{Comment: []byte("keepalive")}
-			if err := event.MarshalTo(w); err != nil {
-				return err
-			}
-			if err := http.NewResponseController(w).Flush(); err != nil {
-				return err
-			}
-		}
-	}
+	return c.JSON(http.StatusOK, DebugletLogsResponse{
+		State:   store.State.String(),
+		Error:   store.Err,
+		After:   lastID,
+		Logs:    entries,
+		HasMore: int64(len(dbLogs)) == limit,
+	})
 }
 
 // GET /debuglet/:id/state
@@ -150,7 +121,6 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, DebugletStateResponse{
 		State:      store.State.String(),
-		Logs:       base64.StdEncoding.EncodeToString(store.Logs),
 		Error:      store.Err,
 		ExecutorID: store.ExecutorID,
 	})
