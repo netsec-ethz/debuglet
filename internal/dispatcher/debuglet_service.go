@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
 	"time"
@@ -14,47 +15,88 @@ import (
 
 func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) ([]string, error) {
 	g, subCtx := errgroup.WithContext(ctx)
+	// debuglet IDs in the same order as the submission
 	debugletIDS := make([]string, len(specs))
+
+	d.mu.Lock()
+
+	now := time.Now()
+	var stores []DebugletStore
+	var sreqs []schedule.Request
 
 	// =========== SUBMISSION CHECKS ===========
 	err := func() error {
-		d.mu.RLock()
-		defer d.mu.RUnlock()
-
-		for _, spec := range specs {
+		for i, spec := range specs {
 			p := spec.Policy
 			if p.FloorBW > p.CeilBW {
 				return fmt.Errorf("floorBW (%s) greater than ceilBW (%s)", p.FloorBW.String(), p.CeilBW.String())
 			}
+			// ignore passed start times and set them to 'now'
 			if spec.StartTime != nil && spec.StartTime.Before(time.Now()) {
 				spec.StartTime = nil
+				specs[i] = spec
 			}
 
-			_, exists := d.executors[spec.ExecutorID]
+			exec, exists := d.executors[spec.ExecutorID]
 			if !exists {
 				return fmt.Errorf("executor '%s' not found", spec.ExecutorID)
 			}
+
+			// Create the stores and determine if the range [from,to] has enough capacity
+			var from time.Time
+			if spec.StartTime == nil {
+				from = now
+			} else {
+				from = *spec.StartTime
+			}
+			// NOTE: We add another 10 negligible seconds to account for any potential delays in the executor's processing time
+			to := from.Add(spec.Policy.Timeout).Add(10 * time.Second)
+
+			debugletID := uuid.New().String()
+			debugletIDS[i] = debugletID
+			stores = append(stores, DebugletStore{
+				Logs:       []byte{},
+				Policy:     spec.Policy,
+				ExecutorID: spec.ExecutorID,
+				State:      RunStateUploading,
+				From:       from,
+				To:         to,
+			})
+			r := schedule.Request{
+				Executor:    spec.ExecutorID,
+				Destination: spec.Policy.Addresses,
+				From:        from,
+				To:          to,
+				Use:         spec.Policy.FloorBW,
+			}
+			sreqs = append(sreqs, r)
+
+			if d.scheduler.QueryMaxExec(r.Executor, from, to)+r.Use > exec.capacity {
+				return fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, ErrNoCapacity)
+			}
+
+			for _, dest := range spec.Policy.Addresses {
+				if d.scheduler.QueryMaxDest(dest, from, to)+r.Use > d.destinations.Cap(dest) {
+					return fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, ErrNoCapacity)
+				}
+			}
 		}
+
 		return nil
 	}()
 	if err != nil {
+		d.mu.Unlock()
 		return nil, err
 	}
 
 	// =========== INSERT ===========
-	d.mu.Lock()
-	for i, spec := range specs {
-		debugletID := uuid.New().String()
-		debugletIDS[i] = debugletID
-		d.executors[spec.ExecutorID].AppendDebugletID(debugletID)
-		d.debugletStores[debugletID] = &DebugletStore{
-			Logs:       []byte{},
-			Policy:     spec.Policy,
-			ExecutorID: spec.ExecutorID,
-			State:      RunStateUploading,
-		}
-		g.Go(d.uploadToExecutor(subCtx, i, debugletID, spec))
+	for i, store := range stores {
+		d.executors[store.ExecutorID].AppendDebugletID(debugletIDS[i])
+		d.debugletStores[debugletIDS[i]] = &store
+		d.scheduler.Submit(sreqs[i])
+		g.Go(d.uploadToExecutor(subCtx, i, debugletIDS[i], specs[i]))
 	}
+
 	d.mu.Unlock()
 
 	if err := g.Wait(); err != nil {

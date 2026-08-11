@@ -3,6 +3,7 @@ package api
 import (
 	"debuglet/internal/dispatcher"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -48,6 +49,9 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
+		if errors.Is(err, dispatcher.ErrNoCapacity) {
+			return echo.NewHTTPError(http.StatusConflict, "capacity exceeded: "+err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets: "+err.Error())
 	} else {
 		return c.JSON(http.StatusOK, IDs)

@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"debuglet/internal/dispatcher/resource"
+	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
 	"io"
@@ -22,18 +23,19 @@ const maxDebugletLogSize = 100 * 1024 * 1024
 // ============================================================
 
 func (d *Dispatcher) OnHeartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
-	d.logger.Debug("Heartbeat received", zap.String("executor_id", req.GetExecutorId()))
+	execID := req.GetExecutorId()
+	d.logger.Debug("Heartbeat received", zap.String("executor_id", execID))
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if exec, exists := d.executors[req.GetExecutorId()]; exists {
+	if exec, exists := d.executors[execID]; exists {
 		exec.LastSeen = time.Unix(0, req.GetTimestampNs())
 		exec.Ready = true
 	} else {
-		return nil, fmt.Errorf("executor '%s' not found", req.GetExecutorId())
+		return nil, fmt.Errorf("executor '%s' not found", execID)
 	}
 
-	err := d.keystore.Store(req.GetExecutorId(), req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	err := d.keystore.Store(execID, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
 	if err != nil {
 		return nil, fmt.Errorf("failed to store Tesla key: %w", err)
 	}
@@ -41,8 +43,14 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, req *pb.HeartbeatRequest) 
 }
 
 func (d *Dispatcher) OnResources(ctx context.Context, req *pb.ResourcesRequest) (*pb.ResourcesResponse, error) {
-	// TODO
-	d.logger.Debug("Resource update received")
+	execID := req.GetExecutorId()
+	bw := resource.Bitrate(req.GetBandwidthCapacity())
+	d.logger.Debug("Resource update received", zap.String("executor_id", execID), zap.String("capacity", bw.String()))
+	if exec, ok := d.executors[execID]; !ok {
+		return nil, fmt.Errorf("executor '%s' not found", execID)
+	} else {
+		exec.capacity = bw
+	}
 	return &pb.ResourcesResponse{}, nil
 }
 
@@ -188,6 +196,8 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		d.destinations.Remove(debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
 	}
 
+	d.releaseFloor(st)
+
 	for _, conn := range d.connectedLogs[debugletID] {
 		close(conn.done)
 	}
@@ -300,4 +310,15 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, dests []string) error {
 		})
 	}
 	return g.Wait()
+}
+
+func (d *Dispatcher) releaseFloor(st *DebugletStore) {
+	r := schedule.Request{
+		Executor:    st.ExecutorID,
+		Destination: st.Policy.Addresses,
+		From:        st.From,
+		To:          st.To,
+		Use:         st.Policy.FloorBW,
+	}
+	d.scheduler.Remove(r)
 }

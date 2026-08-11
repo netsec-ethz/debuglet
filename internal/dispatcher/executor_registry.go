@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"debuglet/internal/dispatcher/resource"
 	"fmt"
 	"sync"
 	"time"
@@ -24,10 +25,11 @@ type RegisteredExecutor struct {
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte // k_0, the public chain anchor
 
-	// debugletIDs is a ring buffer of the last lastDebugletHistory
+	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
 	history    *debugletHistory
 	PricePerBw int64
+	capacity   resource.Bitrate
 }
 
 // lastDebugletHistory is the default number of recent debuglet IDs to

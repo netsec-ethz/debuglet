@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/resource"
+	"debuglet/internal/dispatcher/resource/schedule"
 	"debuglet/internal/dispatcher/tag"
 	"debuglet/internal/dispatcher/transport/rpc"
 	"fmt"
@@ -26,6 +27,7 @@ type DebugletStore struct {
 	ExecutorID string
 	State      DebugletRunState
 	Err        string
+	From, To   time.Time
 }
 
 type Dispatcher struct {
@@ -47,11 +49,14 @@ type Dispatcher struct {
 	seq           int // counter for log connection IDs
 
 	destinations *resource.DestinationsUsage
-
-	Payment *payments.PaymentHandler
+	Payment      *payments.PaymentHandler
+	scheduler    *schedule.JobScheduler
 }
 
-func New(l *zap.Logger, version string, execTimeout time.Duration, paymentHandler *payments.PaymentHandler) *Dispatcher {
+func New(l *zap.Logger, version string, execTimeout, granularity time.Duration, paymentHandler *payments.PaymentHandler) *Dispatcher {
+	if granularity <= 0 {
+		granularity = 30 * time.Second
+	}
 	d := &Dispatcher{
 		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
@@ -63,6 +68,7 @@ func New(l *zap.Logger, version string, execTimeout time.Duration, paymentHandle
 		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
 		Payment:        paymentHandler,
+		scheduler:      schedule.New(granularity),
 	}
 
 	d.Bidi = rpc.NewBidiServer(l, d)

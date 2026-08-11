@@ -47,10 +47,7 @@ func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 }
 
 func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) error {
-	cap, exists := d.capacities[destination]
-	if !exists {
-		cap = d.defaultCap
-	}
+	cap := d.Cap(destination)
 	used := d.usedCapacities[destination]
 	if used+minimum > cap {
 		return fmt.Errorf("%s destination capacity exceeded (want %s, have %s): %w", destination, minimum, cap-used, ErrCapacityFull)
@@ -64,11 +61,15 @@ func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], Bi
 		tree = &avl.AVL[string]{}
 		d.trees[destination] = tree
 	}
+	return tree, d.Cap(destination)
+}
+
+func (d *DestinationsUsage) Cap(destination string) Bitrate {
 	cap, exists := d.capacities[destination]
 	if !exists {
 		cap = d.defaultCap
 	}
-	return tree, cap
+	return cap
 }
 
 func (d *DestinationsUsage) Insert(debugletID string, destination, executorID string, minimum, maximum Bitrate) error {

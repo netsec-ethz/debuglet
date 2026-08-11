@@ -63,6 +63,8 @@ func main() {
 	logCfg.OutputPaths = []string{"stdout"}
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
+
+	// ---- Transaction Database ----
 	transactionDB, err := db.NewTransactionDB(cfg.Database.Path)
 	if err != nil {
 		logger.Fatal("failed to open transaction database", zap.Error(err))
@@ -71,7 +73,7 @@ func main() {
 
 	paymentHandler := payments.NewPaymentHandler(transactionDB, cfg, logger)
 
-	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, paymentHandler)
+	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, time.Duration(cfg.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
 	defer d.Close()
 
 	g, subCtx := errgroup.WithContext(context.Background())
@@ -102,7 +104,6 @@ func main() {
 		return g2.Wait()
 	})
 	// ---- Start payment handler ----
-
 	if cfg.Sui.GRPCEndpoint != "" {
 		g.Go(func() error { return paymentHandler.Start() })
 	}
@@ -110,7 +111,6 @@ func main() {
 	if err := g.Wait(); err != nil {
 		logger.Fatal("dispatcher exited with error", zap.Error(err))
 	}
-
 }
 
 /* startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.

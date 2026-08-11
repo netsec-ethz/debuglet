@@ -3,6 +3,7 @@ grpc_port = 9001
 log_level = "debug"
 disable_tls = true
 executor_timeout = 60
+scheduler_granularity_ms = 30000
 
 [tls]
 cert_file = "local/configs/dispatcher/cert"
