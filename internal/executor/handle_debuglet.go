@@ -19,8 +19,8 @@ type RunningDebuglet struct {
 	debuglet  *debuglet.Debuglet
 }
 
-func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec, rl *scheduler.RunLock) {
-	if err := e.debugletHandler(ctx, spec, rl); err != nil {
+func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec) {
+	if err := e.debugletHandler(ctx, spec); err != nil {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("debuglet handler failed due to context error: %w", ctx.Err())
 		}
@@ -34,14 +34,13 @@ func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec, rl 
 	}
 }
 
-func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl *scheduler.RunLock) error {
-	defer rl.Release() // catch early returns
-
+func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) error {
 	debUUID, err := uuid.Parse(spec.DebugletID)
 	if err != nil {
 		return fmt.Errorf("invalid debuglet UUID: %w", err)
 	}
 
+	// TODO: remove allocate step
 	if err := e.allocateDebuglet(ctx, spec); err != nil {
 		return fmt.Errorf("failed to allocate debuglet: %w", err)
 	}
@@ -53,8 +52,6 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 		return fmt.Errorf("failed to register debuglet: %w", err)
 	}
 	defer cancelDebuglet(nil)
-
-	rl.Release()
 
 	// ======== INITIALIZE ========
 	if err := e.initializeDebuglet(ctx, spec, deb); err != nil {

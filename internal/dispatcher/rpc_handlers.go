@@ -282,7 +282,14 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 				}
 
 				for _, conn := range connections {
-					conn.logs <- output
+					go func() {
+						conn.mu.Lock()
+						defer conn.mu.Unlock()
+						if conn.closedLogs {
+							return
+						}
+						conn.logs <- output
+					}()
 				}
 			default:
 				d.logger.Warn("Unknown debuglet message")

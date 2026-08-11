@@ -146,9 +146,9 @@ type StartServersReq struct {
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
 func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error {
-	d.env.Logger.Debugw("startServers: starting")
 
 	if req.TCP {
+		d.env.Logger.Debug("startServers: starting TCP listener")
 		tcpListener, err := net.Listen("tcp", ":0")
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
@@ -161,6 +161,7 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 	}
 
 	if req.UDP {
+		d.env.Logger.Debug("startServers: starting UDP listener")
 		udpServer, err := net.ListenPacket("udp", ":0")
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
@@ -169,6 +170,7 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 	}
 
 	if req.ICMP {
+		d.env.Logger.Debug("startServers: starting ICMP listener")
 		icmpServer, err := net.ListenPacket("ip4:icmp", ":0")
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start ICMP listener: %w", err)
@@ -177,6 +179,7 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 	}
 
 	if req.SCION {
+		d.env.Logger.Debug("startServers: starting SCION listener")
 		scionHost, err := platform.GetScionAddr(ctx)
 		if err != nil {
 			return fmt.Errorf("startServers: failed to get SCION address: %w", err)

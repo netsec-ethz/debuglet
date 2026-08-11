@@ -79,7 +79,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	if err := g.Wait(); err != nil {
 		for i, id := range debugletIDS {
 			// TODO: cleanup the database and scheduler for the aborted debuglets
-			if err := d.AbortDebuglet(ctx, specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
+			if err := d.AbortDebuglet(context.Background(), specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
 				d.logger.Error("Failed to abort debuglet: " + err.Error())
 			}
 		}
@@ -150,8 +150,8 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 }
 
 func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec models.DebugletSpec) func() error {
-	d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 	return func() error {
+		d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 		client, ok := d.Bidi.GetClient(spec.ExecutorID)
 		if !ok {
 			return fmt.Errorf("executor '%s' not connected", spec.ExecutorID)
@@ -176,6 +176,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		if _, err := client.Upload(ctx, req); err != nil {
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
+		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 
 		d.debugletStores[debugletID].State = models.RunStateUploaded
 		queries := ddb.New(d.db)

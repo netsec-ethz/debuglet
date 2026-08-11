@@ -23,6 +23,9 @@ type logConn struct {
 	logs  chan<- []byte
 	state chan<- models.DebugletRunState
 	done  chan struct{}
+
+	closedLogs bool
+	mu         sync.Mutex
 }
 
 type DebugletStore struct {
@@ -50,7 +53,7 @@ type Dispatcher struct {
 	// debugletStores allows for a user to get the full logs at a later point in time.
 	debugletStores map[string]*DebugletStore
 	// connectedLogs stores the users connected via websockets
-	connectedLogs map[string][]logConn
+	connectedLogs map[string][]*logConn
 	seq           int // counter for log connection IDs
 
 	destinations *resource.DestinationsUsage
@@ -71,7 +74,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		logger:         l,
 		db:             db,
 		debugletStores: make(map[string]*DebugletStore),
-		connectedLogs:  make(map[string][]logConn),
+		connectedLogs:  make(map[string][]*logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
 		Payment:        paymentHandler,
 		scheduler:      schedule.New(granularity),
@@ -122,20 +125,23 @@ func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte
 
 	d.seq++
 	lc := logConn{logs: logs, state: state, seq: d.seq, done: make(chan struct{})}
-	d.connectedLogs[debugletID] = append(d.connectedLogs[debugletID], lc)
+	d.connectedLogs[debugletID] = append(d.connectedLogs[debugletID], &lc)
 	return lc.seq, lc.done, nil
 }
 
 func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	index := slices.IndexFunc(d.connectedLogs[debugletID], func(lc logConn) bool {
+	index := slices.IndexFunc(d.connectedLogs[debugletID], func(lc *logConn) bool {
 		return seq == lc.seq
 	})
 	if index == -1 {
 		return
 	}
 	conn := d.connectedLogs[debugletID][index]
+	conn.mu.Lock()
+	conn.closedLogs = true
+	conn.mu.Unlock()
 	close(conn.logs)
 	if conn.state != nil {
 		close(conn.state)

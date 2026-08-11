@@ -73,7 +73,7 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.LogLevel = "info"
 	}
 	if cfg.MaxDebuglets == 0 {
-		cfg.MaxDebuglets = 10
+		cfg.MaxDebuglets = 100
 	}
 
 	// Basic validation
