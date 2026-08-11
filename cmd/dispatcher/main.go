@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"flag"
 	"fmt"
 	"net"
@@ -34,12 +35,7 @@ import (
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/transport/api"
 
-	//"debuglet/internal/dispatcher/transport/rpc"
-
-	//"debuglet/internal/dispatcher/transport/rpc"
-	"debuglet/internal/dispatcher/db"
-	//pb "debuglet/protocol"
-	//pb "debuglet/protocol"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -64,17 +60,23 @@ func main() {
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
-	// ---- Transaction Database ----
-	transactionDB, err := db.NewTransactionDB(cfg.Database.Path)
+	// ---- Database init ----
+	// path := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000&_synchronous=NORMAL", cfg.Database.Path)
+	db, err := sql.Open("sqlite", cfg.Database.Path)
 	if err != nil {
-		logger.Fatal("failed to open transaction database", zap.Error(err))
+		logger.Fatal("Failed to open database", zap.Error(err))
 	}
-	defer transactionDB.Close()
+	db.SetMaxOpenConns(1)
+	defer db.Close()
 
-	paymentHandler := payments.NewPaymentHandler(transactionDB, cfg, logger)
+	paymentHandler := payments.NewPaymentHandler(db, cfg, logger)
 
-	d := dispatcher.New(logger, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, time.Duration(cfg.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
+	// ---- Dispatcher init ----
+	d := dispatcher.New(logger, db, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, time.Duration(cfg.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
 	defer d.Close()
+	if err := d.RestoreScheduler(context.Background()); err != nil {
+		logger.Fatal("Failed to restore scheduler from database", zap.Error(err))
+	}
 
 	g, subCtx := errgroup.WithContext(context.Background())
 
@@ -86,26 +88,35 @@ func main() {
 
 	// ---- Start combined HTTP + Yamux on cmux ----
 	g.Go(func() error {
+		g2, ctx2 := errgroup.WithContext(subCtx)
+
 		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
-		lis, err := net.Listen("tcp", addr)
+		var lc net.ListenConfig
+		lis, err := lc.Listen(ctx2, "tcp", addr)
 		if err != nil {
 			return fmt.Errorf("cmux listen: %w", err)
 		}
-		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
 
 		m := cmux.New(lis)
 		httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
 		yamuxL := m.Match(cmux.Any())
 
-		g2, ctx2 := errgroup.WithContext(subCtx)
+		go func() {
+			<-ctx2.Done()
+			m.Close()
+			lis.Close()
+		}()
+
+		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
+
 		g2.Go(func() error { return m.Serve() })
-		g2.Go(func() error { return startHTTPServer(httpL, d, transactionDB, cfg, logger) })
+		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
 		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
 		return g2.Wait()
 	})
 	// ---- Start payment handler ----
 	if cfg.Sui.GRPCEndpoint != "" {
-		g.Go(func() error { return paymentHandler.Start() })
+		g.Go(func() error { return paymentHandler.Start(subCtx) })
 	}
 
 	if err := g.Wait(); err != nil {
@@ -113,15 +124,9 @@ func main() {
 	}
 }
 
-/* startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
-func startSuiListener(userDB *db.UserDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	l := sui.NewListener(cfg.Sui.GRPCEndpoint, cfg.Sui.GraphQLURL, cfg.Sui.Address, userDB, logger)
-	return l.Start(context.Background())
-}*/
-
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
-func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, transactionDB *db.TransactionDB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	handler := api.NewHandler(manager, transactionDB, logger)
+func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+	handler := api.NewHandler(manager, logger)
 
 	e := echo.New()
 	e.HideBanner = true

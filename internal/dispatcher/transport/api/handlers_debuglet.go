@@ -1,7 +1,7 @@
 package api
 
 import (
-	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/models"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,7 +14,7 @@ import (
 )
 
 // PUT /debuglet
-func (h *Handler) SubmitDebuglets(c echo.Context) error {
+func (h *Handler) PutDebuglets(c echo.Context) error {
 	var req SubmitDebugletsRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -25,31 +25,31 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
 	}
 	transactionId := req.TransactionId
-	transaction, err := h.dispatcher.Payment.GetTransaction(transactionId)
-	h.logger.Info("transaction_id", zap.String("id", transaction.Id), zap.Bool("payed", transaction.Payed))
-	if err != nil || transaction.AuthKey != req.AuthKey {
+	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
+	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Bool("paid", tx.Paid))
+	if err != nil || tx.AuthKey != req.AuthKey {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
 	}
-	if !strings.EqualFold(transaction.Hash, HashDebugletRequest(req.Debuglets)) {
-		h.logger.Info("mismatched request", zap.String("expected", transaction.Hash), zap.String("found", HashDebugletRequest(req.Debuglets)))
+	if !strings.EqualFold(tx.Hash, hashDebugletRequest(req.Debuglets)) {
+		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", hashDebugletRequest(req.Debuglets)))
 		return echo.NewHTTPError(http.StatusBadRequest, "Request does not match the intent")
 	}
-	if !transaction.Payed {
+	if !tx.Paid {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
 	}
 
-	var specs []dispatcher.DebugletSpec
+	var specs []models.DebugletSpec
 	for i, req := range reqs {
 		spec, err := APIToSpec(req)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
-		spec.TransactionID = transactionId //will be needed for refunding aborted debuglets
+		spec.TransactionID = transactionId
 		specs = append(specs, spec)
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs); err != nil {
-		if errors.Is(err, dispatcher.ErrNoCapacity) {
+		if errors.Is(err, models.ErrNoCapacity) {
 			return echo.NewHTTPError(http.StatusConflict, "capacity exceeded: "+err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets: "+err.Error())
@@ -87,7 +87,7 @@ func (h *Handler) GetLogsSSE(c echo.Context) error {
 		return http.NewResponseController(w).Flush()
 	}
 
-	if store.State == dispatcher.RunStateExited {
+	if store.State == models.RunStateExited {
 		if err := sendEvent("state", []byte(store.State.String())); err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func (h *Handler) GetLogsSSE(c echo.Context) error {
 	}
 
 	outputCh := make(chan []byte, 1)
-	stateCh := make(chan dispatcher.DebugletRunState, 1)
+	stateCh := make(chan models.DebugletRunState, 1)
 
 	seqID, done, err := h.dispatcher.RegisterLogConnection(debugletID, outputCh, stateCh)
 	if err != nil {

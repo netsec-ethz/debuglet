@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func (h *Handler) UpdateDestinationLimit(c echo.Context) error {
+func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 	// TODO: This endpoint requires authentication from the destination
 	var req DestinationLimitRequest
 	if err := c.Bind(&req); err != nil {

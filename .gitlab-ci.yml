@@ -4,9 +4,9 @@ stages:
 
 build:
   stage: build
-  image: ubuntu:latest
+  image: ubuntu:24.04
   before_script:
-    - apt-get update && apt-get install -y curl make llvm clang
+    - apt-get update && apt-get install -y curl make llvm clang linux-libc-dev
     - ./deploy/bin/mise install
   script:
     - ./deploy/bin/mise x -- make all
@@ -18,7 +18,7 @@ build:
 
 deploy:
   stage: deploy
-  image: ubuntu:latest
+  image: ubuntu:24.04
   only:
     - main
     - dev

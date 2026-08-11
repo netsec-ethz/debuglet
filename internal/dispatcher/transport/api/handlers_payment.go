@@ -1,12 +1,8 @@
 package api
 
 import (
-	"bytes"
-	"crypto/md5"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/payments/sui"
-	"encoding/gob"
-	"encoding/hex"
 	"math"
 	"net/http"
 
@@ -16,7 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *Handler) GetPaymentIntent(c echo.Context) error {
+// PUT /payment/intent
+func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	var req PaymentIntentRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -43,9 +40,9 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, "Price exceeds upper limit")
 	}
 	h.logger.Info("intent", zap.Int64("price", price.Int64()))
-	//TODO bind exact request to transaction
-	hash := HashDebugletRequest(req.Debuglets)
-	intent, err := h.dispatcher.Payment.CreatePaymentIntent(price.Int64(), req.PaymentMethod, hash)
+	// TODO: bind exact request to transaction
+	hash := hashDebugletRequest(req.Debuglets)
+	intent, err := h.dispatcher.Payment.CreatePaymentIntent(c.Request().Context(), price.Int64(), req.PaymentMethod, hash)
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash), zap.String("err", err.Error()))
 		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
@@ -56,29 +53,35 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI", Intent: SuiIntent{TransactionId: suiIntent.TransactionId, AuthKey: suiIntent.AuthKey, Price: suiIntent.Price, ExpiresAt: suiIntent.ExpiresAt, RegistryAddress: suiIntent.RegistryAddress, ReceiverAddress: suiIntent.ReceiverAddress}})
+		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI",
+			Intent: SuiIntent{
+				TransactionId:   suiIntent.TransactionId,
+				AuthKey:         suiIntent.AuthKey,
+				Price:           suiIntent.Price,
+				ExpiresAtS:      suiIntent.ExpiresAt.Unix(),
+				RegistryAddress: suiIntent.RegistryAddress,
+				ReceiverAddress: suiIntent.ReceiverAddress,
+			}})
 	case "TEST":
 		dummyIntent, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: DummyIntent{dummyIntent.TransactionId, dummyIntent.AuthKey}})
+		intent := DummyIntent{
+			TransactionID: dummyIntent.TransactionId,
+			AuthKey:       dummyIntent.AuthKey,
+		}
+		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: intent})
 	}
 	return echo.NewHTTPError(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
 }
 
-func HashDebugletRequest(debuglets []DebugletRequest) string {
-	var b bytes.Buffer
-	gob.NewEncoder(&b).Encode(debuglets)
-	hash := md5.Sum(b.Bytes())
-	return hex.EncodeToString(hash[:])
-}
-
+// GET /payment/:transaction_id/status
 func (h *Handler) GetPaymentStatus(c echo.Context) error {
 	transactionID := c.Param("transaction_id")
-	payed, err := h.dispatcher.Payment.IsPayed(transactionID)
+	paid, err := h.dispatcher.Payment.IsPaid(c.Request().Context(), transactionID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
-	return c.JSON(http.StatusOK, payed)
+	return c.JSON(http.StatusOK, paid)
 }

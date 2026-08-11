@@ -106,6 +106,16 @@ memory:
 	$(GO) tool pprof -http=:8080 benchmarks/engine-mem.out
 
 # --------------------------------------------------------------------
+# Database
+# --------------------------------------------------------------------
+upgrade:
+	mkdir -p .data
+	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations goose sqlite3 .data/dispatcher.db up
+
+downgrade:
+	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations goose sqlite3 .data/dispatcher.db down
+
+# --------------------------------------------------------------------
 # Docker orchestration
 # --------------------------------------------------------------------
 docker-build:

@@ -1,6 +1,10 @@
 package dispatcher
 
 import (
+	"context"
+	"database/sql"
+	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
@@ -17,15 +21,15 @@ import (
 type logConn struct {
 	seq   int
 	logs  chan<- []byte
-	state chan<- DebugletRunState
+	state chan<- models.DebugletRunState
 	done  chan struct{}
 }
 
 type DebugletStore struct {
 	Logs       []byte
-	Policy     DebugletPolicy
+	Policy     models.DebugletPolicy
 	ExecutorID string
-	State      DebugletRunState
+	State      models.DebugletRunState
 	Err        string
 	From, To   time.Time
 }
@@ -40,6 +44,7 @@ type Dispatcher struct {
 	logger       *zap.Logger
 	Bidi         *rpc.BidiServer
 	mu           sync.RWMutex
+	db           *sql.DB
 
 	// Naive storage of the full output of debuglets.
 	// debugletStores allows for a user to get the full logs at a later point in time.
@@ -53,7 +58,7 @@ type Dispatcher struct {
 	scheduler    *schedule.JobScheduler
 }
 
-func New(l *zap.Logger, version string, execTimeout, granularity time.Duration, paymentHandler *payments.PaymentHandler) *Dispatcher {
+func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity time.Duration, paymentHandler *payments.PaymentHandler) *Dispatcher {
 	if granularity <= 0 {
 		granularity = 30 * time.Second
 	}
@@ -64,6 +69,7 @@ func New(l *zap.Logger, version string, execTimeout, granularity time.Duration, 
 		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
 		logger:         l,
+		db:             db,
 		debugletStores: make(map[string]*DebugletStore),
 		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
@@ -73,6 +79,24 @@ func New(l *zap.Logger, version string, execTimeout, granularity time.Duration, 
 
 	d.Bidi = rpc.NewBidiServer(l, d)
 	return d
+}
+
+func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
+	queries := ddb.New(d.db)
+	debuglets, err := queries.ListDebugletsEndAfter(ctx, time.Now().Add(-1*time.Minute))
+	if err != nil {
+		return fmt.Errorf("failed to list debuglets from database: %w", err)
+	}
+	for _, deb := range debuglets {
+		d.scheduler.Submit(schedule.Request{
+			Executor:    deb.ExecutorID,
+			From:        deb.StartTime,
+			To:          deb.EndTime,
+			Destination: deb.Addresses,
+			Use:         resource.Bitrate(deb.Usage),
+		})
+	}
+	return nil
 }
 
 func (d *Dispatcher) Close()                     { d.Bidi.Close() }
@@ -89,7 +113,7 @@ func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	}
 }
 
-func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- DebugletRunState) (int, <-chan struct{}, error) {
+func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- models.DebugletRunState) (int, <-chan struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.debugletStores[debugletID]; !exists {

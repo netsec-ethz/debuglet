@@ -1,7 +1,7 @@
 package api
 
 import (
-	"debuglet/internal/dispatcher"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
@@ -33,6 +33,12 @@ type DebugletRequest struct {
 	Args           []string              `json:"args,omitempty"`
 	Wasm           string                `json:"wasm"`
 	Policy         DebugletPolicyRequest `json:"policy"`
+}
+
+type SubmitDebugletsRequest struct {
+	Debuglets     []DebugletRequest `json:"debuglets"`
+	TransactionId string            `json:"transaction_id"`
+	AuthKey       string            `json:"auth_key"`
 }
 
 type DebugletDeleteRequest struct {
@@ -84,17 +90,12 @@ type DebugletStateResponse struct {
 	ExecutorID string `json:"executor_id"`
 }
 
-type SubmitDebugletsRequest struct {
-	Debuglets     []DebugletRequest `json:"debuglets"`
-	TransactionId string            `json:"transaction_id"`
-	AuthKey       string            `json:"auth_key"`
-}
-
 type BalanceResponse struct {
 	Balance int64 `json:"balance"`
 }
 
 type IntentResponse struct {
+	Type   string `json:"type"`
 	Method string `json:"method"`
 	Intent any    `json:"intent"`
 }
@@ -103,7 +104,7 @@ type SuiIntent struct {
 	TransactionId   string `json:"transaction_id"`
 	AuthKey         string `json:"auth_key"`
 	Price           int64  `json:"price"`
-	ExpiresAt       int64  `json:"expires_at"`
+	ExpiresAtS      int64  `json:"expires_at_s"`
 	RegistryAddress string `json:"registry_address"`
 	ReceiverAddress string `json:"receiver_address"`
 }
@@ -120,13 +121,13 @@ type PaymentIntentRequest struct {
 
 // ================ HELPERS ================
 
-func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
+func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
 	if err != nil {
-		return dispatcher.DebugletSpec{}, errors.New("invalid wasm code")
+		return models.DebugletSpec{}, errors.New("invalid wasm code")
 	}
 	if strings.TrimSpace(r.ExecutorID) == "" {
-		return dispatcher.DebugletSpec{}, errors.New("missing executor ID")
+		return models.DebugletSpec{}, errors.New("missing executor ID")
 	}
 
 	var startTime *time.Time
@@ -146,12 +147,12 @@ func APIToSpec(r DebugletRequest) (dispatcher.DebugletSpec, error) {
 		}
 	}
 
-	return dispatcher.DebugletSpec{
+	return models.DebugletSpec{
 		StartTime:  startTime,
 		ExecutorID: r.ExecutorID,
 		Args:       r.Args,
 		Wasm:       decoded,
-		Policy: dispatcher.DebugletPolicy{
+		Policy: models.DebugletPolicy{
 			FloorBW:     resource.Bitrate(r.Policy.FloorBW),
 			CeilBW:      resource.Bitrate(r.Policy.CeilBW),
 			Timeout:     time.Duration(r.Policy.TimeoutMS) * time.Millisecond,

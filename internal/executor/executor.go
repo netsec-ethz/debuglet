@@ -106,7 +106,10 @@ func (e *Executor) Listen(ctx context.Context) error {
 
 func (e *Executor) setResources(ctx context.Context, capacity app.Bitrate) (*protocol.ResourcesResponse, error) {
 	e.limiter.SetExecutorCapacity(capacity)
-	return e.Bidi.Client.Resources(ctx, &protocol.ResourcesRequest{BandwidthCapacity: int64(capacity)})
+	return e.Bidi.Client.Resources(ctx, &protocol.ResourcesRequest{
+		BandwidthCapacity: int64(capacity),
+		ExecutorId:        e.cfg.ExecutorID,
+	})
 }
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context) {

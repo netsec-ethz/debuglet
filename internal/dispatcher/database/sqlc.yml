@@ -1,0 +1,18 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "query.sql"
+    schema: "migrations"
+    gen:
+      go:
+        package: "ddb"
+        out: "ddb"
+        overrides:
+          - column: "debuglets.state"
+            go_type:
+              import: "debuglet/internal/dispatcher/models"
+              type: "DebugletRunState"
+          - column: "debuglets.addresses"
+            go_type:
+              import: "debuglet/internal/dispatcher/models"
+              type: "CommaSeparatedList"

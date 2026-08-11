@@ -2,6 +2,8 @@ package dispatcher
 
 import (
 	"context"
+	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
@@ -13,87 +15,58 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) ([]string, error) {
+func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.DebugletSpec) ([]string, error) {
 	g, subCtx := errgroup.WithContext(ctx)
 	// debuglet IDs in the same order as the submission
 	debugletIDS := make([]string, len(specs))
 
 	d.mu.Lock()
 
-	now := time.Now()
 	var stores []DebugletStore
 	var sreqs []schedule.Request
 
 	// =========== SUBMISSION CHECKS ===========
-	err := func() error {
-		for i, spec := range specs {
-			p := spec.Policy
-			if p.FloorBW > p.CeilBW {
-				return fmt.Errorf("floorBW (%s) greater than ceilBW (%s)", p.FloorBW.String(), p.CeilBW.String())
-			}
-			// ignore passed start times and set them to 'now'
-			if spec.StartTime != nil && spec.StartTime.Before(time.Now()) {
-				spec.StartTime = nil
-				specs[i] = spec
-			}
-
-			exec, exists := d.executors[spec.ExecutorID]
-			if !exists {
-				return fmt.Errorf("executor '%s' not found", spec.ExecutorID)
-			}
-
-			if (spec.Policy.RequireICMP || spec.Policy.ListenICMP) && !exec.ICMPEnabled {
-				return fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
-			}
-
-			// Create the stores and determine if the range [from,to] has enough capacity
-			var from time.Time
-			if spec.StartTime == nil {
-				from = now
-			} else {
-				from = *spec.StartTime
-			}
-			// NOTE: We add another 10 negligible seconds to account for any potential delays in the executor's processing time
-			to := from.Add(spec.Policy.Timeout).Add(10 * time.Second)
-
+	for i := range specs {
+		if store, r, err := d.validateDebugletSpec(&specs[i]); err != nil {
+			d.mu.Unlock()
+			return nil, fmt.Errorf("invalid debuglet spec (i=%d): %w", i, err)
+		} else {
 			debugletID := uuid.New().String()
 			debugletIDS[i] = debugletID
-			stores = append(stores, DebugletStore{
-				Logs:       []byte{},
-				Policy:     spec.Policy,
-				ExecutorID: spec.ExecutorID,
-				State:      RunStateUploading,
-				From:       from,
-				To:         to,
-			})
-			r := schedule.Request{
-				Executor:    spec.ExecutorID,
-				Destination: spec.Policy.Addresses,
-				From:        from,
-				To:          to,
-				Use:         spec.Policy.FloorBW,
-			}
-			sreqs = append(sreqs, r)
-
-			if d.scheduler.QueryMaxExec(r.Executor, from, to)+r.Use > exec.capacity {
-				return fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, ErrNoCapacity)
-			}
-
-			for _, dest := range spec.Policy.Addresses {
-				if d.scheduler.QueryMaxDest(dest, from, to)+r.Use > d.destinations.Cap(dest) {
-					return fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, ErrNoCapacity)
-				}
-			}
+			stores = append(stores, *store)
+			sreqs = append(sreqs, *r)
 		}
-
-		return nil
-	}()
-	if err != nil {
-		d.mu.Unlock()
-		return nil, err
 	}
 
 	// =========== INSERT ===========
+	// If any debuglets fail to be uploaded, the whole request fails and all debuglets are aborted
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := ddb.New(d.db).WithTx(tx)
+	for i, store := range stores {
+		if _, err := qtx.CreateDebuglet(ctx, ddb.CreateDebugletParams{
+			ID:         debugletIDS[i],
+			StartTime:  store.From,
+			EndTime:    store.To,
+			ExecutorID: store.ExecutorID,
+			Usage:      int64(store.Policy.FloorBW),
+			State:      store.State,
+			Addresses:  store.Policy.Addresses,
+		}); err != nil {
+			d.mu.Unlock()
+			return nil, fmt.Errorf("failed to create debuglet in database: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	for i, store := range stores {
 		d.executors[store.ExecutorID].AppendDebugletID(debugletIDS[i])
 		d.debugletStores[debugletIDS[i]] = &store
@@ -105,6 +78,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 
 	if err := g.Wait(); err != nil {
 		for i, id := range debugletIDS {
+			// TODO: cleanup the database and scheduler for the aborted debuglets
 			if err := d.AbortDebuglet(ctx, specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
 				d.logger.Error("Failed to abort debuglet: " + err.Error())
 			}
@@ -115,7 +89,67 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []DebugletSpec) 
 	return debugletIDS, nil
 }
 
-func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec DebugletSpec) func() error {
+func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletStore, *schedule.Request, error) {
+	now := time.Now()
+
+	p := spec.Policy
+	if p.FloorBW > p.CeilBW {
+		return nil, nil, fmt.Errorf("floorBW (%s) greater than ceilBW (%s)", p.FloorBW.String(), p.CeilBW.String())
+	}
+	// ignore passed start times and set them to 'now'
+	if spec.StartTime != nil && spec.StartTime.Before(time.Now()) {
+		spec.StartTime = nil
+	}
+
+	exec, exists := d.executors[spec.ExecutorID]
+	if !exists {
+		return nil, nil, fmt.Errorf("executor '%s' not found", spec.ExecutorID)
+	}
+
+	if (spec.Policy.RequireICMP || spec.Policy.ListenICMP) && !exec.ICMPEnabled {
+		return nil, nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
+	}
+
+	// Create the stores and determine if the range [from,to] has enough capacity
+	var from time.Time
+	if spec.StartTime == nil {
+		from = now
+	} else {
+		from = *spec.StartTime
+	}
+	// NOTE: We add another 10 negligible seconds to account for any potential delays in the executor's processing time
+	to := from.Add(spec.Policy.Timeout).Add(10 * time.Second)
+
+	store := DebugletStore{
+		Logs:       []byte{},
+		Policy:     spec.Policy,
+		ExecutorID: spec.ExecutorID,
+		State:      models.RunStateUploading,
+		From:       from,
+		To:         to,
+	}
+	r := schedule.Request{
+		Executor:    spec.ExecutorID,
+		Destination: spec.Policy.Addresses,
+		From:        from,
+		To:          to,
+		Use:         spec.Policy.FloorBW,
+	}
+
+	if d.scheduler.QueryMaxExec(r.Executor, from, to)+r.Use > exec.capacity {
+		return nil, nil, fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, models.ErrNoCapacity)
+	}
+
+	for _, dest := range spec.Policy.Addresses {
+		if d.scheduler.QueryMaxDest(dest, from, to)+r.Use > d.destinations.Cap(dest) {
+			return nil, nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, models.ErrNoCapacity)
+		}
+	}
+
+	return &store, &r, nil
+}
+
+func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec models.DebugletSpec) func() error {
 	d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 	return func() error {
 		client, ok := d.Bidi.GetClient(spec.ExecutorID)
@@ -142,6 +176,16 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		if _, err := client.Upload(ctx, req); err != nil {
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
+
+		d.debugletStores[debugletID].State = models.RunStateUploaded
+		queries := ddb.New(d.db)
+		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
+			ID:    debugletID,
+			State: models.RunStateUploaded,
+		}); err != nil {
+			return fmt.Errorf("failed to update debuglet state in database: %w", err)
+		}
+
 		return nil
 	}
 }

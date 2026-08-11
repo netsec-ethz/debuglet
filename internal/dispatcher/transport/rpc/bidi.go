@@ -83,6 +83,11 @@ func (b *BidiServer) ServeGRPC(ctx context.Context, addr string) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", addr, err)
 	}
+	go func() {
+		<-ctx.Done()
+		b.Close()
+		lis.Close()
+	}()
 	b.logger.Info("gRPC server listening", zap.String("address", addr))
 	return b.grpcServer.Serve(lis)
 }

@@ -1223,6 +1223,7 @@ func (x *DebugletIdent) GetExecutorId() string {
 type DebugletOutput struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Output        []byte                 `protobuf:"bytes,1,opt,name=output,proto3" json:"output,omitempty"`
+	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1260,6 +1261,13 @@ func (*DebugletOutput) Descriptor() ([]byte, []int) {
 func (x *DebugletOutput) GetOutput() []byte {
 	if x != nil {
 		return x.Output
+	}
+	return nil
+}
+
+func (x *DebugletOutput) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Timestamp
 	}
 	return nil
 }
@@ -1474,9 +1482,10 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vdebuglet_id\x18\x01 \x01(\tR\n" +
 	"debugletId\x12\x1f\n" +
 	"\vexecutor_id\x18\x02 \x01(\tR\n" +
-	"executorId\"(\n" +
+	"executorId\"b\n" +
 	"\x0eDebugletOutput\x12\x16\n" +
-	"\x06output\x18\x01 \x01(\fR\x06output\"\x95\x01\n" +
+	"\x06output\x18\x01 \x01(\fR\x06output\x128\n" +
+	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\x95\x01\n" +
 	"\x15DebugletStreamRequest\x128\n" +
 	"\x05ident\x18\x01 \x01(\v2 .debuglet.protocol.DebugletIdentH\x00R\x05ident\x12;\n" +
 	"\x06output\x18\x02 \x01(\v2!.debuglet.protocol.DebugletOutputH\x00R\x06outputB\x05\n" +
@@ -1548,33 +1557,34 @@ var file_protocol_protocol_proto_depIdxs = []int32{
 	0,  // 3: debuglet.protocol.DebugletStateRequest.state:type_name -> debuglet.protocol.RunState
 	7,  // 4: debuglet.protocol.DebugletAllocateRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
 	12, // 5: debuglet.protocol.DebugletAllocateResponse.allocated_limits:type_name -> debuglet.protocol.DestinationLimit
-	21, // 6: debuglet.protocol.DebugletStreamRequest.ident:type_name -> debuglet.protocol.DebugletIdent
-	22, // 7: debuglet.protocol.DebugletStreamRequest.output:type_name -> debuglet.protocol.DebugletOutput
-	1,  // 8: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
-	3,  // 9: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
-	15, // 10: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
-	17, // 11: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
-	19, // 12: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
-	23, // 13: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
-	5,  // 14: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
-	8,  // 15: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
-	10, // 16: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
-	13, // 17: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
-	2,  // 18: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
-	4,  // 19: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
-	16, // 20: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
-	18, // 21: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
-	20, // 22: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
-	24, // 23: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
-	6,  // 24: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
-	9,  // 25: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
-	11, // 26: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
-	14, // 27: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	25, // 6: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
+	21, // 7: debuglet.protocol.DebugletStreamRequest.ident:type_name -> debuglet.protocol.DebugletIdent
+	22, // 8: debuglet.protocol.DebugletStreamRequest.output:type_name -> debuglet.protocol.DebugletOutput
+	1,  // 9: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
+	3,  // 10: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
+	15, // 11: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
+	17, // 12: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
+	19, // 13: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
+	23, // 14: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
+	5,  // 15: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
+	8,  // 16: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
+	10, // 17: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
+	13, // 18: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
+	2,  // 19: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
+	4,  // 20: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
+	16, // 21: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
+	18, // 22: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
+	20, // 23: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
+	24, // 24: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
+	6,  // 25: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
+	9,  // 26: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
+	11, // 27: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
+	14, // 28: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
+	19, // [19:29] is the sub-list for method output_type
+	9,  // [9:19] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
