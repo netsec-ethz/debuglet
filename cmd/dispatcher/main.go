@@ -98,15 +98,13 @@ func main() {
 		g2, ctx2 := errgroup.WithContext(subCtx)
 		g2.Go(func() error { return m.Serve() })
 		g2.Go(func() error { return startHTTPServer(httpL, d, transactionDB, cfg, logger) })
-
+		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
+		return g2.Wait()
+	})
 	// ---- Start payment handler ----
 
 	if cfg.Sui.GRPCEndpoint != "" {
 		g.Go(func() error { return paymentHandler.Start() })
-		//g.Go(func() error { return startSuiListener(userDB, cfg, logger) })
-		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
-		return g2.Wait()
-	})
 	}
 
 	if err := g.Wait(); err != nil {
