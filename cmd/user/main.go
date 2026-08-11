@@ -23,6 +23,7 @@ var (
 	executor          = flag.String("executor", "local-executor", "the executor to connect to")
 	floorBW           = flag.Int64("floor", 0, "Floor bandwidth (in bits) to request in the policy. Defaults to ceil.")
 	ceilBW            = flag.Int64("ceil", 4096, "Ceiling bandwidth (in bits) to request in the policy")
+	timeout           = flag.Duration("timeout", 10*time.Second, "Timeout for debuglet execution")
 )
 
 type stringSlice []string
@@ -74,7 +75,7 @@ func main() {
 				Policy: api.DebugletPolicyRequest{
 					FloorBW:   *floorBW,
 					CeilBW:    *ceilBW,
-					TimeoutMS: (10 * time.Second).Milliseconds(),
+					TimeoutMS: timeout.Milliseconds(),
 					Addresses: list,
 				},
 			})

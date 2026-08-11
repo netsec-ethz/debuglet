@@ -67,7 +67,16 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 		return fmt.Errorf("failed to open stream for debuglet output: %w", err)
 	}
 
-	if err := e.runDebuglet(ctx, spec, deb, outputCh); err != nil {
+	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, fmt.Errorf("timeout of %s exceeded", spec.Policy.Timeout))
+	defer cancel()
+	go func() {
+		<-timedCtx.Done()
+		e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(timedCtx.Err()))
+		// Forces debuglet to close all it's resources. It could be stuck in a conn.Read() call in a host function, which does not
+		// respect contexts closing nor can't be closed by wazero.
+		deb.Close(timedCtx)
+	}()
+	if err := e.runDebuglet(timedCtx, spec, deb, outputCh); err != nil {
 		return fmt.Errorf("failed to run debuglet: %w", err)
 	}
 
@@ -208,7 +217,5 @@ func (e *Executor) runDebuglet(ctx context.Context, spec scheduler.Spec, deb *de
 		return fmt.Errorf("failed to set state to 'started': %w", err)
 	}
 
-	timedCtx, cancel := context.WithTimeout(ctx, spec.Policy.Timeout)
-	defer cancel()
-	return deb.Run(timedCtx, outputCh, spec.Args)
+	return deb.Run(ctx, outputCh, spec.Args)
 }
