@@ -38,8 +38,8 @@ func NewPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Log
 	}
 }
 
-func (p *PaymentHandler) Start() error {
-	return p.sui.Start()
+func (p *PaymentHandler) Start(ctx context.Context) error {
+	return p.sui.Start(ctx)
 }
 
 func (p *PaymentHandler) CreatePaymentIntent(ctx context.Context, price int64, method string, hash string) (PaymentIntent, error) {

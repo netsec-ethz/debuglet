@@ -32,8 +32,8 @@ func NewSuiPaymentHandler(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.
 	return &SuiPaymentHandler{lis: listener, db: db}
 }
 
-func (h *SuiPaymentHandler) Start() error {
-	return h.lis.Start(context.Background())
+func (h *SuiPaymentHandler) Start(ctx context.Context) error {
+	return h.lis.Start(ctx)
 }
 
 func (h *SuiPaymentHandler) CreatePaymentIntent(ctx context.Context, price int64, hash string) (SuiPaymentIntent, error) {

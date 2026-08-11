@@ -86,18 +86,27 @@ func main() {
 
 	// ---- Start combined HTTP + Yamux on cmux ----
 	g.Go(func() error {
+		g2, ctx2 := errgroup.WithContext(subCtx)
+
 		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
-		lis, err := net.Listen("tcp", addr)
+		var lc net.ListenConfig
+		lis, err := lc.Listen(ctx2, "tcp", addr)
 		if err != nil {
 			return fmt.Errorf("cmux listen: %w", err)
 		}
-		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
 
 		m := cmux.New(lis)
 		httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
 		yamuxL := m.Match(cmux.Any())
 
-		g2, ctx2 := errgroup.WithContext(subCtx)
+		go func() {
+			<-ctx2.Done()
+			m.Close()
+			lis.Close()
+		}()
+
+		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
+
 		g2.Go(func() error { return m.Serve() })
 		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
 		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
@@ -105,19 +114,13 @@ func main() {
 	})
 	// ---- Start payment handler ----
 	if cfg.Sui.GRPCEndpoint != "" {
-		g.Go(func() error { return paymentHandler.Start() })
+		g.Go(func() error { return paymentHandler.Start(subCtx) })
 	}
 
 	if err := g.Wait(); err != nil {
 		logger.Fatal("dispatcher exited with error", zap.Error(err))
 	}
 }
-
-/* startSuiListener subscribes to Sui PaymentReceipt events via gRPC and credits user balances.
-func startSuiListener(db *sq;.DB, cfg *config.DispatcherConfig, logger *zap.Logger) error {
-	l := sui.NewListener(cfg.Sui.GRPCEndpoint, cfg.Sui.GraphQLURL, cfg.Sui.Address, db, logger)
-	return l.Start(context.Background())
-}*/
 
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
 func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
