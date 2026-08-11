@@ -14,7 +14,7 @@ import (
 )
 
 // PUT /debuglet
-func (h *Handler) SubmitDebuglets(c echo.Context) error {
+func (h *Handler) PutDebuglets(c echo.Context) error {
 	var req SubmitDebugletsRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -30,8 +30,8 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 	if err != nil || tx.AuthKey != req.AuthKey {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
 	}
-	if !strings.EqualFold(tx.Hash, HashDebugletRequest(req.Debuglets)) {
-		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", HashDebugletRequest(req.Debuglets)))
+	if !strings.EqualFold(tx.Hash, hashDebugletRequest(req.Debuglets)) {
+		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", hashDebugletRequest(req.Debuglets)))
 		return echo.NewHTTPError(http.StatusBadRequest, "Request does not match the intent")
 	}
 	if !tx.Paid {
@@ -44,7 +44,7 @@ func (h *Handler) SubmitDebuglets(c echo.Context) error {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
-		spec.TransactionID = transactionId //will be needed for refunding aborted debuglets
+		spec.TransactionID = transactionId
 		specs = append(specs, spec)
 	}
 

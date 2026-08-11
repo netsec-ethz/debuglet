@@ -22,7 +22,7 @@ type PaymentHandler struct {
 
 type PaymentIntent struct {
 	method string
-	Intent any //method specific intent fields
+	Intent any // method specific intent fields
 }
 
 type DummyIntent struct {

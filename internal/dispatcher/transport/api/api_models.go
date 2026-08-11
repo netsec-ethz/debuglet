@@ -35,6 +35,12 @@ type DebugletRequest struct {
 	Policy         DebugletPolicyRequest `json:"policy"`
 }
 
+type SubmitDebugletsRequest struct {
+	Debuglets     []DebugletRequest `json:"debuglets"`
+	TransactionId string            `json:"transaction_id"`
+	AuthKey       string            `json:"auth_key"`
+}
+
 type DebugletDeleteRequest struct {
 	DebugletID string `json:"debuglet_id"`
 	ExecutorID string `json:"executor_id"`
@@ -84,17 +90,12 @@ type DebugletStateResponse struct {
 	ExecutorID string `json:"executor_id"`
 }
 
-type SubmitDebugletsRequest struct {
-	Debuglets     []DebugletRequest `json:"debuglets"`
-	TransactionId string            `json:"transaction_id"`
-	AuthKey       string            `json:"auth_key"`
-}
-
 type BalanceResponse struct {
 	Balance int64 `json:"balance"`
 }
 
 type IntentResponse struct {
+	Type   string `json:"type"`
 	Method string `json:"method"`
 	Intent any    `json:"intent"`
 }

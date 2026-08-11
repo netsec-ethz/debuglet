@@ -28,7 +28,15 @@ func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletReque
 		debuglets = append(debuglets, spec)
 	}
 
-	data, err := json.Marshal(debuglets)
+	tid, key := PaymentIntent(debuglets)
+
+	debreq := api.SubmitDebugletsRequest{
+		TransactionId: tid,
+		AuthKey:       key,
+		Debuglets:     debuglets,
+	}
+
+	data, err := json.Marshal(debreq)
 	if err != nil {
 		panic(err)
 	}
@@ -56,6 +64,55 @@ func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletReque
 		panic(err)
 	}
 	return ids
+}
+
+func PaymentIntent(specs []api.DebugletRequest) (string, string) {
+	intentReq := api.PaymentIntentRequest{
+		Debuglets:     specs,
+		PaymentMethod: "TEST",
+	}
+	data, err := json.Marshal(intentReq)
+	if err != nil {
+		panic(err)
+	}
+
+	url := fmt.Sprintf("http://%s/payment/intent", baseURL)
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(data))
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		panic(fmt.Errorf("... %s", body))
+	}
+
+	var intentResp api.IntentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&intentResp); err != nil {
+		panic(err)
+	}
+	if intentResp.Method != "TEST" {
+		panic(fmt.Errorf("unexpected payment method: %s", intentResp.Method))
+	}
+	if v, ok := intentResp.Intent.(map[string]any); ok {
+		tid, ok := v["transaction_id"].(string)
+		if !ok {
+			panic(fmt.Errorf("unexpected transaction_id type: %T", v["transaction_id"]))
+		}
+		authKey, ok := v["auth_key"].(string)
+		if !ok {
+			panic(fmt.Errorf("unexpected auth_key type: %T", v["auth_key"]))
+		}
+		return tid, authKey
+	}
+	panic(fmt.Errorf("unexpected intent type: %T", intentResp.Intent))
 }
 
 func AbortDebuglet(ID, executorID string) int {

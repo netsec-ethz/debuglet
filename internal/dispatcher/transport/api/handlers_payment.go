@@ -1,12 +1,8 @@
 package api
 
 import (
-	"bytes"
-	"crypto/md5"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/payments/sui"
-	"encoding/gob"
-	"encoding/hex"
 	"math"
 	"net/http"
 
@@ -16,7 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *Handler) GetPaymentIntent(c echo.Context) error {
+// PUT /payment/intent
+func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	var req PaymentIntentRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -43,8 +40,8 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, "Price exceeds upper limit")
 	}
 	h.logger.Info("intent", zap.Int64("price", price.Int64()))
-	//TODO bind exact request to transaction
-	hash := HashDebugletRequest(req.Debuglets)
+	// TODO: bind exact request to transaction
+	hash := hashDebugletRequest(req.Debuglets)
 	intent, err := h.dispatcher.Payment.CreatePaymentIntent(c.Request().Context(), price.Int64(), req.PaymentMethod, hash)
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash), zap.String("err", err.Error()))
@@ -70,18 +67,16 @@ func (h *Handler) GetPaymentIntent(c echo.Context) error {
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: DummyIntent{dummyIntent.TransactionId, dummyIntent.AuthKey}})
+		intent := DummyIntent{
+			TransactionID: dummyIntent.TransactionId,
+			AuthKey:       dummyIntent.AuthKey,
+		}
+		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: intent})
 	}
 	return echo.NewHTTPError(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
 }
 
-func HashDebugletRequest(debuglets []DebugletRequest) string {
-	var b bytes.Buffer
-	gob.NewEncoder(&b).Encode(debuglets)
-	hash := md5.Sum(b.Bytes())
-	return hex.EncodeToString(hash[:])
-}
-
+// GET /payment/:transaction_id/status
 func (h *Handler) GetPaymentStatus(c echo.Context) error {
 	transactionID := c.Param("transaction_id")
 	paid, err := h.dispatcher.Payment.IsPaid(c.Request().Context(), transactionID)
