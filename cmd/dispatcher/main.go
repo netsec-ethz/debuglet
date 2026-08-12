@@ -132,8 +132,12 @@ func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *conf
 	e.HideBanner = true
 	e.HidePort = true
 	e.Use(middleware.Recover())
+	logFormat := `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n"
+	if !cfg.JSONLogs {
+		logFormat = "${time_rfc3339}\t${method}\t${uri} ${status} ${latency_human} ${remote_ip}\n"
+	}
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Format: `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n",
+		Format: logFormat,
 	}))
 	e.Use(middleware.CORS())
 
