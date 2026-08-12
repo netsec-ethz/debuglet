@@ -69,15 +69,17 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	queries := ddb.New(d.db)
-	debuglets, err := queries.ListDebugletsEndAfter(ctx, time.Now().Add(-1*time.Minute))
+	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(time.Now().Add(-1*time.Minute)))
 	if err != nil {
 		return fmt.Errorf("failed to list debuglets from database: %w", err)
 	}
+	d.logger.Info("Restoring debuglet schedule from database", zap.Int("count", len(debuglets)))
 	for _, deb := range debuglets {
+		d.logger.Info("Restoring debuglet schedule", zap.String("executor", deb.ExecutorID), zap.Strings("addresses", deb.Addresses), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time), zap.Int64("usage", deb.Usage))
 		d.scheduler.Submit(schedule.Request{
 			Executor:    deb.ExecutorID,
-			From:        deb.StartTime,
-			To:          deb.EndTime,
+			From:        deb.StartTime.Time,
+			To:          deb.EndTime.Time,
 			Destination: deb.Addresses,
 			Use:         resource.Bitrate(deb.Usage),
 		})

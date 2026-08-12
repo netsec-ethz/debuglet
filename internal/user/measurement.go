@@ -164,7 +164,7 @@ func ReadOutput(debugletID string) error {
 			return nil
 		}
 		after = logResp.After
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 	}
 }
 

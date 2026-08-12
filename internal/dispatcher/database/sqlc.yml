@@ -16,3 +16,7 @@ sql:
             go_type:
               import: "debuglet/internal/dispatcher/models"
               type: "CommaSeparatedList"
+          - db_type: "TIMESTAMP"
+            go_type:
+              import: "debuglet/internal/dispatcher/models"
+              type: "UTCTime"

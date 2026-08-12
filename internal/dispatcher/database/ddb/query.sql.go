@@ -7,7 +7,6 @@ package ddb
 
 import (
 	"context"
-	"time"
 
 	"debuglet/internal/dispatcher/models"
 )
@@ -20,8 +19,8 @@ RETURNING id, start_time, end_time, usage, executor_id, addresses, state
 
 type CreateDebugletParams struct {
 	ID         string
-	StartTime  time.Time
-	EndTime    time.Time
+	StartTime  models.UTCTime
+	EndTime    models.UTCTime
 	Usage      int64
 	ExecutorID string
 	Addresses  models.CommaSeparatedList
@@ -59,7 +58,7 @@ RETURNING id, debuglet_id, timestamp, output
 
 type CreateDebugletLogParams struct {
 	DebugletID string
-	Timestamp  time.Time
+	Timestamp  models.UTCTime
 	Output     []byte
 }
 
@@ -86,7 +85,7 @@ type CreateTransactionParams struct {
 	AuthKey   string
 	Price     int64
 	Method    string
-	ExpiresAt time.Time
+	ExpiresAt models.UTCTime
 	Paid      bool
 	Hash      string
 }
@@ -267,7 +266,7 @@ SELECT id, start_time, end_time, usage, executor_id, addresses, state FROM debug
 WHERE end_time > ?
 `
 
-func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime time.Time) ([]Debuglet, error) {
+func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime models.UTCTime) ([]Debuglet, error) {
 	rows, err := q.db.QueryContext(ctx, listDebugletsEndAfter, endTime)
 	if err != nil {
 		return nil, err

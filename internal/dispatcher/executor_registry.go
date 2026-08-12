@@ -156,9 +156,9 @@ func (d *Dispatcher) ListExecutors() []RegisteredExecutor {
 	return executors
 }
 
-func (d *Dispatcher) GetExecutor(ID string) (RegisteredExecutor, bool) {
+func (d *Dispatcher) GetExecutor(ID string) (*RegisteredExecutor, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	e, exists := d.executors[ID]
-	return *e, exists
+	return e, exists
 }

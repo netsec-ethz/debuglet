@@ -244,7 +244,7 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 				queries := ddb.New(d.db)
 				if _, err := queries.CreateDebugletLog(ctx, ddb.CreateDebugletLogParams{
 					DebugletID: debugletID,
-					Timestamp:  msg.Output.GetTimestamp().AsTime().UTC(),
+					Timestamp:  models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
 					Output:     output,
 				}); err != nil {
 					d.logger.Error("Failed to store debuglet log in database", zap.String("debugletID", debugletID), zap.Error(err))

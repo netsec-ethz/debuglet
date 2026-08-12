@@ -4,6 +4,7 @@ import (
 	"context"
 	"debuglet/internal/dispatcher/database/ddb"
 	"debuglet/internal/dispatcher/models"
+	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
@@ -51,8 +52,8 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	for i, store := range stores {
 		if _, err := qtx.CreateDebuglet(ctx, ddb.CreateDebugletParams{
 			ID:         debugletIDS[i],
-			StartTime:  store.From,
-			EndTime:    store.To,
+			StartTime:  models.NewUTCTime(store.From),
+			EndTime:    models.NewUTCTime(store.To),
 			ExecutorID: store.ExecutorID,
 			Usage:      int64(store.Policy.FloorBW),
 			State:      store.State,
@@ -136,12 +137,12 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 	}
 
 	if d.scheduler.QueryMaxExec(r.Executor, from, to)+r.Use > exec.capacity {
-		return nil, nil, fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, models.ErrNoCapacity)
+		return nil, nil, fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, resource.ErrCapacityFull)
 	}
 
 	for _, dest := range spec.Policy.Addresses {
 		if d.scheduler.QueryMaxDest(dest, from, to)+r.Use > d.destinations.Cap(dest) {
-			return nil, nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, models.ErrNoCapacity)
+			return nil, nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, resource.ErrCapacityFull)
 		}
 	}
 
