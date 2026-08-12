@@ -61,11 +61,11 @@ func main() {
 	defer logger.Sync()
 
 	// ---- Database init ----
-	// path := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000&_synchronous=NORMAL", cfg.Database.Path)
 	db, err := sql.Open("sqlite", cfg.Database.Path)
 	if err != nil {
 		logger.Fatal("Failed to open database", zap.Error(err))
 	}
+	// NOTE: limiting to a single connection could be a source of bottleneck with a lot of DB reads/writes
 	db.SetMaxOpenConns(1)
 	defer db.Close()
 
