@@ -5,15 +5,13 @@
 package ddb
 
 import (
-	"time"
-
 	"debuglet/internal/dispatcher/models"
 )
 
 type Debuglet struct {
 	ID         string
-	StartTime  time.Time
-	EndTime    time.Time
+	StartTime  models.UTCTime
+	EndTime    models.UTCTime
 	Usage      int64
 	ExecutorID string
 	Addresses  models.CommaSeparatedList
@@ -23,7 +21,7 @@ type Debuglet struct {
 type DebugletLog struct {
 	ID         int64
 	DebugletID string
-	Timestamp  time.Time
+	Timestamp  models.UTCTime
 	Output     []byte
 }
 
@@ -32,7 +30,7 @@ type Transaction struct {
 	AuthKey   string
 	Price     int64
 	Method    string
-	ExpiresAt time.Time
+	ExpiresAt models.UTCTime
 	Paid      bool
 	Hash      string
 }

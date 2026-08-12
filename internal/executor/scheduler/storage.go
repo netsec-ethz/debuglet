@@ -17,7 +17,7 @@ type Scheduler interface {
 	// its storage, there is a brief race condition where a debuglet is neither in the scheduler storage
 	// nor marked as being actively run by the executor.
 	// It can be called multiple times.
-	RegisterOnStart(func(context.Context, Spec, *RunLock))
+	RegisterOnStart(func(context.Context, Spec))
 	// StartLoop starts the loop that checks if any jobs are to be started and correspondingly calls the registered onStart function
 	StartLoop(ctx context.Context) error
 }

@@ -33,6 +33,13 @@ INSERT INTO debuglet_logs (debuglet_id, timestamp, output)
 VALUES (?, ?, ?)
 RETURNING *;
 
+-- name: ListDebugletLogs :many
+SELECT id, debuglet_id, timestamp, output
+FROM debuglet_logs
+WHERE debuglet_id = ? AND id > ?
+ORDER BY id ASC
+LIMIT ?;
+
 
 /*
 

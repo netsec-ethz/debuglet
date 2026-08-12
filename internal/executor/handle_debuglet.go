@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type RunningDebuglet struct {
@@ -19,8 +20,8 @@ type RunningDebuglet struct {
 	debuglet  *debuglet.Debuglet
 }
 
-func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec, rl *scheduler.RunLock) {
-	if err := e.debugletHandler(ctx, spec, rl); err != nil {
+func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec) {
+	if err := e.debugletHandler(ctx, spec); err != nil {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("debuglet handler failed due to context error: %w", ctx.Err())
 		}
@@ -34,14 +35,13 @@ func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec, rl 
 	}
 }
 
-func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl *scheduler.RunLock) error {
-	defer rl.Release() // catch early returns
-
+func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) error {
 	debUUID, err := uuid.Parse(spec.DebugletID)
 	if err != nil {
 		return fmt.Errorf("invalid debuglet UUID: %w", err)
 	}
 
+	// TODO: remove allocate step
 	if err := e.allocateDebuglet(ctx, spec); err != nil {
 		return fmt.Errorf("failed to allocate debuglet: %w", err)
 	}
@@ -54,8 +54,6 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 	}
 	defer cancelDebuglet(nil)
 
-	rl.Release()
-
 	// ======== INITIALIZE ========
 	if err := e.initializeDebuglet(ctx, spec, deb); err != nil {
 		return fmt.Errorf("failed to initialize debuglet: %w", err)
@@ -67,7 +65,16 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec, rl 
 		return fmt.Errorf("failed to open stream for debuglet output: %w", err)
 	}
 
-	if err := e.runDebuglet(ctx, spec, deb, outputCh); err != nil {
+	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, fmt.Errorf("timeout of %s exceeded", spec.Policy.Timeout))
+	defer cancel()
+	go func() {
+		<-timedCtx.Done()
+		e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(timedCtx.Err()))
+		// Forces debuglet to close all it's resources. It could be stuck in a conn.Read() call in a host function, which does not
+		// respect contexts closing nor can't be closed by wazero.
+		deb.Close(timedCtx)
+	}()
+	if err := e.runDebuglet(timedCtx, spec, deb, outputCh); err != nil {
 		return fmt.Errorf("failed to run debuglet: %w", err)
 	}
 
@@ -188,7 +195,7 @@ func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan
 	outputCh := make(chan []byte, 1024)
 	go func() {
 		for out := range outputCh {
-			err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out}}})
+			err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out, Timestamp: timestamppb.Now()}}})
 			if err != nil {
 				e.logger.Error("Failed to send debuglet output", zap.String("debugletID", id), zap.Error(err))
 				return
@@ -208,7 +215,5 @@ func (e *Executor) runDebuglet(ctx context.Context, spec scheduler.Spec, deb *de
 		return fmt.Errorf("failed to set state to 'started': %w", err)
 	}
 
-	timedCtx, cancel := context.WithTimeout(ctx, spec.Policy.Timeout)
-	defer cancel()
-	return deb.Run(timedCtx, outputCh, spec.Args)
+	return deb.Run(ctx, outputCh, spec.Args)
 }

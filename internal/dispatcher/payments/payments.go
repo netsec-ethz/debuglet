@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments/sui"
 	"encoding/hex"
 	"fmt"
@@ -85,7 +86,7 @@ func (p *PaymentHandler) CreateDummyIntent(ctx context.Context, hash string) (st
 	if t, err := queries.CreateTransaction(ctx, ddb.CreateTransactionParams{
 		ID:        transactionId,
 		Method:    "TEST",
-		ExpiresAt: expiresAt,
+		ExpiresAt: models.NewUTCTime(expiresAt),
 		Hash:      hash,
 		Paid:      true,
 	}); err != nil {

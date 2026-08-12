@@ -5,11 +5,10 @@ import (
 	"debuglet/internal/dispatcher/resource"
 	pb "debuglet/protocol"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
-
-var ErrNoCapacity = errors.New("insufficient capacity")
 
 type DebugletSpec struct {
 	StartTime  *time.Time
@@ -75,11 +74,16 @@ func (d DebugletRunState) String() string {
 	}
 }
 
+// CommaSeparatedList allows simple lists of strings to be stored in a single database column as a comma-separated string.
 type CommaSeparatedList []string
 
 func (c *CommaSeparatedList) Scan(src any) error {
 	switch v := src.(type) {
 	case string:
+		if v == "" {
+			*c = nil
+			return nil
+		}
 		*c = strings.Split(v, ",")
 	case []byte:
 		*c = strings.Split(string(v), ",")
@@ -96,4 +100,37 @@ func (c CommaSeparatedList) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return strings.Join(c, ","), nil
+}
+
+// UTCTime is a wrapper around time.Time that ensures the time is always stored and retrieved in UTC.
+type UTCTime struct {
+	time.Time
+}
+
+func NewUTCTime(t time.Time) UTCTime {
+	return UTCTime{Time: t.UTC()}
+}
+
+func (t UTCTime) Value() (driver.Value, error) {
+	if t.IsZero() {
+		return nil, nil
+	}
+	return t.Time.UTC(), nil
+}
+
+func (t *UTCTime) Scan(src any) error {
+	switch v := src.(type) {
+	case time.Time:
+		t.Time = v.UTC()
+		return nil
+	case string:
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return err
+		}
+		t.Time = parsed.UTC()
+		return nil
+	default:
+		return fmt.Errorf("cannot scan %T into UTCTime", src)
+	}
 }

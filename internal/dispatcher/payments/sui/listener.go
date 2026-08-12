@@ -354,8 +354,8 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 		l.logger.Warn("payment to wrong address", zap.String("expected", l.receiverAddress), zap.String("actual", receiver))
 		return
 	}
-	if receipt.Timestamp.After(transaction.ExpiresAt) {
-		l.logger.Warn("transaction expired", zap.Time("exp_time", transaction.ExpiresAt), zap.Time("executed_at", receipt.Timestamp))
+	if receipt.Timestamp.After(transaction.ExpiresAt.Time) {
+		l.logger.Warn("transaction expired", zap.Time("exp_time", transaction.ExpiresAt.Time), zap.Time("executed_at", receipt.Timestamp))
 		return
 	}
 

@@ -18,8 +18,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const maxDebugletLogSize = 100 * 1024 * 1024
-
 // ============================================================
 // ==================== CONTROL MESSAGES ======================
 // ============================================================
@@ -117,14 +115,6 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateR
 		}); err != nil {
 			d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
 		}
-		for _, conn := range d.connectedLogs[debugletID] {
-			if conn.state != nil {
-				select {
-				case conn.state <- state:
-				default:
-				}
-			}
-		}
 	}
 
 	return &pb.DebugletStateResponse{}, nil
@@ -194,24 +184,11 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		st.Err = *errMsg
 	}
 
-	for _, conn := range d.connectedLogs[debugletID] {
-		if conn.state != nil {
-			select {
-			case conn.state <- models.RunStateExited:
-			default:
-			}
-		}
-	}
-
 	for _, dest := range st.Policy.Addresses {
 		d.destinations.Remove(debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
 	}
 
 	d.releaseFloor(st)
-
-	for _, conn := range d.connectedLogs[debugletID] {
-		close(conn.done)
-	}
 	d.mu.Unlock()
 
 	go func() {
@@ -222,7 +199,6 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		time.Sleep(10 * time.Minute)
 		d.mu.Lock()
 		delete(d.debugletStores, debugletID)
-		delete(d.connectedLogs, debugletID)
 		d.mu.Unlock()
 	}()
 
@@ -257,32 +233,21 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 				output := msg.Output.GetOutput()
 				d.logger.Debug("Received debuglet output", zap.String("debugletID", debugletID), zap.Int("outputSize", len(output)))
 				d.mu.Lock()
-				store, exists := d.debugletStores[debugletID]
+				_, exists := d.debugletStores[debugletID]
 				if !exists {
 					d.mu.Unlock()
 					d.logger.Error("Debuglet output for unknown debuglet", zap.String("debugletID", debugletID))
 					continue
 				}
-				if len(store.Logs) < maxDebugletLogSize {
-					store.Logs = append(store.Logs, output...)
-					if len(store.Logs) > maxDebugletLogSize {
-						store.Logs = store.Logs[:maxDebugletLogSize]
-					}
-				}
-				connections := d.connectedLogs[debugletID]
 				d.mu.Unlock()
 
 				queries := ddb.New(d.db)
 				if _, err := queries.CreateDebugletLog(ctx, ddb.CreateDebugletLogParams{
 					DebugletID: debugletID,
-					Timestamp:  msg.Output.GetTimestamp().AsTime().UTC(),
+					Timestamp:  models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
 					Output:     output,
 				}); err != nil {
 					d.logger.Error("Failed to store debuglet log in database", zap.String("debugletID", debugletID), zap.Error(err))
-				}
-
-				for _, conn := range connections {
-					conn.logs <- output
 				}
 			default:
 				d.logger.Warn("Unknown debuglet message")

@@ -9,26 +9,29 @@ import (
 )
 
 type MemoryStorage struct {
-	onStart func(context.Context, scheduler.Spec, *scheduler.RunLock)
+	onStart func(context.Context, scheduler.Spec)
 
-	wakeup chan struct{}
-	mu     sync.RWMutex
-	tq     *TimedQueue
+	wakeup   chan struct{}
+	mu       sync.RWMutex
+	tq       *TimedQueue
+	inflight map[string]struct{} // popped from queue, waiting for executor to take ownership
 }
 
 var _ scheduler.Scheduler = (*MemoryStorage)(nil)
 
 func NewStorage() *MemoryStorage {
 	return &MemoryStorage{
-		wakeup: make(chan struct{}, 32),
-		tq:     NewTimedQueue(),
+		wakeup:   make(chan struct{}, 32),
+		tq:       NewTimedQueue(),
+		inflight: make(map[string]struct{}),
 	}
 }
 
 func (m *MemoryStorage) Insert(u scheduler.Spec) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.tq.Push(u)
+	m.mu.Unlock()
+
 	m.wakeup <- struct{}{}
 	return nil
 }
@@ -36,13 +39,15 @@ func (m *MemoryStorage) Insert(u scheduler.Spec) error {
 func (m *MemoryStorage) Remove(debugletID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if old := m.tq.Remove(debugletID); old == nil {
+
+	// Already handed to the executor — treat as "already started".
+	if _, ok := m.inflight[debugletID]; ok {
 		return false
 	}
-	return true
+	return m.tq.Remove(debugletID) != nil
 }
 
-func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, scheduler.Spec, *scheduler.RunLock)) {
+func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, scheduler.Spec)) {
 	m.onStart = onStart
 }
 
@@ -61,10 +66,14 @@ func (m *MemoryStorage) StartLoop(ctx context.Context) error {
 			nextItem := m.tq.Peek(0)
 			if nextItem.StartTime == nil || time.Now().After(*nextItem.StartTime) {
 				m.tq.Pop()
+				m.inflight[nextItem.DebugletID] = struct{}{}
 				m.mu.Unlock()
-				rl := &scheduler.RunLock{}
-				go m.onStart(ctx, *nextItem, rl)
-				<-rl.Done()
+				go func() {
+					m.onStart(ctx, *nextItem)
+					m.mu.Lock()
+					delete(m.inflight, nextItem.DebugletID)
+					m.mu.Unlock()
+				}()
 			} else {
 				// sleep until next debuglet should start
 				m.mu.Unlock()

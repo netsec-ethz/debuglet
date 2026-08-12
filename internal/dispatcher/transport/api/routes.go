@@ -28,7 +28,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/version", h.GetVersion)
 	// debuglet
 	e.PUT("/debuglet", h.PutDebuglets)
-	e.GET("/debuglet/:id", h.GetLogsSSE)
+	e.GET("/debuglet/:id/logs", h.GetDebugletLogs)
 	e.GET("/debuglet/:id/state", h.GetDebugletState)
 	e.DELETE("/debuglet", h.DeleteDebuglet)
 	// executor

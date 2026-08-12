@@ -85,9 +85,22 @@ type DestinationLimitRequest struct {
 
 type DebugletStateResponse struct {
 	State      string `json:"state"`
-	Logs       string `json:"logs"` // base64-encoded
 	Error      string `json:"error"`
 	ExecutorID string `json:"executor_id"`
+}
+
+type DebugletLogsResponse struct {
+	State   string             `json:"state"`
+	Error   string             `json:"error,omitempty"`
+	After   int64              `json:"after"`
+	Logs    []DebugletLogEntry `json:"logs"`
+	HasMore bool               `json:"has_more"`
+}
+
+type DebugletLogEntry struct {
+	ID        int64  `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Output    string `json:"output"` // base64-encoded
 }
 
 type BalanceResponse struct {
@@ -95,7 +108,6 @@ type BalanceResponse struct {
 }
 
 type IntentResponse struct {
-	Type   string `json:"type"`
 	Method string `json:"method"`
 	Intent any    `json:"intent"`
 }

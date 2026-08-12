@@ -11,22 +11,13 @@ import (
 	"debuglet/internal/dispatcher/tag"
 	"debuglet/internal/dispatcher/transport/rpc"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 )
 
-type logConn struct {
-	seq   int
-	logs  chan<- []byte
-	state chan<- models.DebugletRunState
-	done  chan struct{}
-}
-
 type DebugletStore struct {
-	Logs       []byte
 	Policy     models.DebugletPolicy
 	ExecutorID string
 	State      models.DebugletRunState
@@ -46,12 +37,8 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	db           *sql.DB
 
-	// Naive storage of the full output of debuglets.
-	// debugletStores allows for a user to get the full logs at a later point in time.
+	// debugletStores tracks in-memory state for active debuglets.
 	debugletStores map[string]*DebugletStore
-	// connectedLogs stores the users connected via websockets
-	connectedLogs map[string][]logConn
-	seq           int // counter for log connection IDs
 
 	destinations *resource.DestinationsUsage
 	Payment      *payments.PaymentHandler
@@ -71,7 +58,6 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		logger:         l,
 		db:             db,
 		debugletStores: make(map[string]*DebugletStore),
-		connectedLogs:  make(map[string][]logConn),
 		destinations:   resource.NewDestinations(resource.Gigabit),
 		Payment:        paymentHandler,
 		scheduler:      schedule.New(granularity),
@@ -83,15 +69,17 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	queries := ddb.New(d.db)
-	debuglets, err := queries.ListDebugletsEndAfter(ctx, time.Now().Add(-1*time.Minute))
+	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(time.Now().Add(-1*time.Minute)))
 	if err != nil {
 		return fmt.Errorf("failed to list debuglets from database: %w", err)
 	}
+	d.logger.Info("Restoring debuglet schedule from database", zap.Int("count", len(debuglets)))
 	for _, deb := range debuglets {
+		d.logger.Info("Restoring debuglet schedule", zap.String("executor", deb.ExecutorID), zap.Strings("addresses", deb.Addresses), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time), zap.Int64("usage", deb.Usage))
 		d.scheduler.Submit(schedule.Request{
 			Executor:    deb.ExecutorID,
-			From:        deb.StartTime,
-			To:          deb.EndTime,
+			From:        deb.StartTime.Time,
+			To:          deb.EndTime.Time,
 			Destination: deb.Addresses,
 			Use:         resource.Bitrate(deb.Usage),
 		})
@@ -102,6 +90,7 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 func (d *Dispatcher) Close()                     { d.Bidi.Close() }
 func (d *Dispatcher) GetVersion() string         { return d.version }
 func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
+func (d *Dispatcher) DB() *sql.DB                { return d.db }
 
 func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	d.mu.Lock()
@@ -111,36 +100,6 @@ func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	} else {
 		return DebugletStore{}, fmt.Errorf("debuglet with '%s' does not exist", debugletID)
 	}
-}
-
-func (d *Dispatcher) RegisterLogConnection(debugletID string, logs chan<- []byte, state chan<- models.DebugletRunState) (int, <-chan struct{}, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if _, exists := d.debugletStores[debugletID]; !exists {
-		return 0, nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
-	}
-
-	d.seq++
-	lc := logConn{logs: logs, state: state, seq: d.seq, done: make(chan struct{})}
-	d.connectedLogs[debugletID] = append(d.connectedLogs[debugletID], lc)
-	return lc.seq, lc.done, nil
-}
-
-func (d *Dispatcher) RemoveLogConnection(debugletID string, seq int) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	index := slices.IndexFunc(d.connectedLogs[debugletID], func(lc logConn) bool {
-		return seq == lc.seq
-	})
-	if index == -1 {
-		return
-	}
-	conn := d.connectedLogs[debugletID][index]
-	close(conn.logs)
-	if conn.state != nil {
-		close(conn.state)
-	}
-	d.connectedLogs[debugletID] = slices.Delete(d.connectedLogs[debugletID], index, index+1)
 }
 
 func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) {

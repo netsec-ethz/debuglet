@@ -4,6 +4,7 @@ import (
 	"context"
 	"debuglet/internal/dispatcher/database/ddb"
 	"debuglet/internal/dispatcher/models"
+	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
 	"fmt"
@@ -51,8 +52,8 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	for i, store := range stores {
 		if _, err := qtx.CreateDebuglet(ctx, ddb.CreateDebugletParams{
 			ID:         debugletIDS[i],
-			StartTime:  store.From,
-			EndTime:    store.To,
+			StartTime:  models.NewUTCTime(store.From),
+			EndTime:    models.NewUTCTime(store.To),
 			ExecutorID: store.ExecutorID,
 			Usage:      int64(store.Policy.FloorBW),
 			State:      store.State,
@@ -79,7 +80,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	if err := g.Wait(); err != nil {
 		for i, id := range debugletIDS {
 			// TODO: cleanup the database and scheduler for the aborted debuglets
-			if err := d.AbortDebuglet(ctx, specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
+			if err := d.AbortDebuglet(context.Background(), specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
 				d.logger.Error("Failed to abort debuglet: " + err.Error())
 			}
 		}
@@ -121,7 +122,6 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 	to := from.Add(spec.Policy.Timeout).Add(10 * time.Second)
 
 	store := DebugletStore{
-		Logs:       []byte{},
 		Policy:     spec.Policy,
 		ExecutorID: spec.ExecutorID,
 		State:      models.RunStateUploading,
@@ -137,12 +137,12 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 	}
 
 	if d.scheduler.QueryMaxExec(r.Executor, from, to)+r.Use > exec.capacity {
-		return nil, nil, fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, models.ErrNoCapacity)
+		return nil, nil, fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, resource.ErrCapacityFull)
 	}
 
 	for _, dest := range spec.Policy.Addresses {
 		if d.scheduler.QueryMaxDest(dest, from, to)+r.Use > d.destinations.Cap(dest) {
-			return nil, nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, models.ErrNoCapacity)
+			return nil, nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, resource.ErrCapacityFull)
 		}
 	}
 
@@ -150,8 +150,8 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 }
 
 func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec models.DebugletSpec) func() error {
-	d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 	return func() error {
+		d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 		client, ok := d.Bidi.GetClient(spec.ExecutorID)
 		if !ok {
 			return fmt.Errorf("executor '%s' not connected", spec.ExecutorID)
@@ -176,8 +176,12 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		if _, err := client.Upload(ctx, req); err != nil {
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
+		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
 
+		d.mu.Lock()
 		d.debugletStores[debugletID].State = models.RunStateUploaded
+		d.mu.Unlock()
+
 		queries := ddb.New(d.db)
 		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
 			ID:    debugletID,

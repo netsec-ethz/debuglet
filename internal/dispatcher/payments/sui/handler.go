@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"debuglet/internal/dispatcher/config"
 	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/models"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -53,7 +54,7 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(ctx context.Context, price int64
 		AuthKey:   authKey,
 		Price:     price,
 		Method:    "SUI",
-		ExpiresAt: expiresAt,
+		ExpiresAt: models.NewUTCTime(expiresAt),
 		Hash:      hash,
 		Paid:      false,
 	}); err != nil {

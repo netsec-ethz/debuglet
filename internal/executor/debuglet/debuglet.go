@@ -146,9 +146,9 @@ type StartServersReq struct {
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
 func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error {
-	d.env.Logger.Debugw("startServers: starting")
 
 	if req.TCP {
+		d.env.Logger.Debug("startServers: starting TCP listener")
 		tcpListener, err := net.Listen("tcp", ":0")
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
@@ -161,6 +161,7 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 	}
 
 	if req.UDP {
+		d.env.Logger.Debug("startServers: starting UDP listener")
 		udpServer, err := net.ListenPacket("udp", ":0")
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
@@ -169,6 +170,7 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 	}
 
 	if req.ICMP {
+		d.env.Logger.Debug("startServers: starting ICMP listener")
 		icmpServer, err := net.ListenPacket("ip4:icmp", ":0")
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start ICMP listener: %w", err)
@@ -177,6 +179,7 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 	}
 
 	if req.SCION {
+		d.env.Logger.Debug("startServers: starting SCION listener")
 		scionHost, err := platform.GetScionAddr(ctx)
 		if err != nil {
 			return fmt.Errorf("startServers: failed to get SCION address: %w", err)
@@ -207,7 +210,9 @@ func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error 
 // createWASMInstance compiles the given WASM bytecode and instantiates a
 // wazero module with WASI and all host functions registered.
 func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) error {
-	d.runtime = wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
+	// NOTE: Interpreter Runtime is slower, but supports cancelling IO-less WASM execution via context.Context
+	// and correctly jumping between contexts of different goroutines.
+	d.runtime = wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter().WithCloseOnContextDone(true))
 
 	compiled, err := d.runtime.CompileModule(ctx, wasmBytes)
 	if err != nil {
@@ -294,7 +299,7 @@ func (w *chanWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Run executes the debuglet's "run_debuglet" WASM export, streams stdout/stderr
+// Run executes the debuglet's "_start" WASM export, streams stdout/stderr
 // back through outputCh, and returns any execution error.
 // The outputCh channel is closed when the debuglet finishes execution.
 func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) error {
@@ -310,9 +315,15 @@ func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []strin
 		WithRandSource(rand.Reader).
 		WithArgs(args...)
 
+	start := time.Now()
+
 	// start the wasm
 	mod, err := d.runtime.InstantiateModule(ctx, d.compiled, config)
+	d.env.Logger.Debugw("debuglet execution finished", "duration", time.Since(start), "has_error", err != nil)
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("debuglet execution timed out: %w", context.Cause(ctx))
+		}
 		return fmt.Errorf("failed to instantiate module: %w", err)
 	}
 	mod.Close(ctx)
