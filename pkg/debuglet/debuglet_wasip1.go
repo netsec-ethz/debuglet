@@ -110,9 +110,9 @@ func acceptTCP() (*Conn, error) {
 	return &Conn{handle: h, tr: transportTCP}, nil
 }
 
-// Send writes the whole of b to the connection. The host send functions do not
-// report short writes, so Send returns an error only for invalid input.
-func (c *Conn) Send(b []byte) error {
+// Write writes the whole of b to the connection. The host send functions do not
+// report short writes, so Write returns an error only for invalid input.
+func (c *Conn) Write(b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
@@ -125,8 +125,8 @@ func (c *Conn) Send(b []byte) error {
 	return nil
 }
 
-// Receive reads up to len(b) bytes into b and returns the number of bytes read.
-func (c *Conn) Receive(b []byte) (int, error) {
+// Read reads up to len(b) bytes into b and returns the number of bytes read.
+func (c *Conn) Read(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}

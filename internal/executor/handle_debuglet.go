@@ -27,11 +27,14 @@ func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec) {
 		}
 		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 		errMsg := err.Error()
-		e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
+
+		if _, err := e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
 			DebugletId:   spec.DebugletID,
 			ExitCode:     -1,
 			ErrorMessage: &errMsg,
-		})
+		}); err != nil {
+			e.logger.Error("Failed to notify debuglet exit", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		}
 	}
 }
 

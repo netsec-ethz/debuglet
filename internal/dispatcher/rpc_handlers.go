@@ -61,6 +61,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		execID,
 		h.GetVersion(),
 		h.GetSourceIp(),
+		h.GetPublicHost(),
 		time.Duration(h.GetTeslaDelaySec())*time.Second,
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),
 		h.GetTeslaAnchorKey(),

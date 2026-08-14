@@ -119,10 +119,6 @@ func (d *Debuglet) InitRuntime(ctx context.Context, wasmBytes []byte) error {
 	return nil
 }
 
-func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
-	return d.startServers(ctx, req)
-}
-
 // GetSCIONAddr returns the local SCION address of the server listener started
 // during Init.
 func (d *Debuglet) GetSCIONAddr() string {
@@ -145,8 +141,7 @@ type StartServersReq struct {
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
-func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error {
-
+func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
 	if req.TCP {
 		d.env.Logger.Debug("startServers: starting TCP listener")
 		tcpListener, err := net.Listen("tcp", ":0")
@@ -250,13 +245,14 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 	// ---- TCP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.env)).Export("accept_tcp")
 
-	// ---- IP socket API ----
+	// ---- ICMP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.env)).Export("accept_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")
 
+	// ---- Connection Util API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostDrain(d.env)).Export("drain_connection")
 
 	// ---- SCION-UDP API ----
