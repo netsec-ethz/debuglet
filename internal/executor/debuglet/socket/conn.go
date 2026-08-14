@@ -28,7 +28,7 @@ const (
 	SocketTypeTLS
 	SocketTypeICMP4
 	SocketTypeUDP
-	// Future: SocketTypeUDP, SocketTypeRaw
+	// Future: SocketTypeRaw
 )
 
 // Socket is the common interface for all stream-oriented socket types

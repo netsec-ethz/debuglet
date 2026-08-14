@@ -17,20 +17,26 @@ type WasmEnv struct {
 	DebugletID string
 	Policy     scheduler.Policy
 
-	Limiter      *app.Limiter
-	PacketCount  ratelimit.PacketCount
-	LastReceived net.Addr
-	Logger       *zap.SugaredLogger
-	TlsCfg       *tls.Config
-	Tagger       tagger.TaggerInterface
+	Limiter         *app.Limiter
+	PacketCount     ratelimit.PacketCount
+	LastReceived    net.Addr
+	Logger          *zap.SugaredLogger
+	TlsCfg          *tls.Config
+	Tagger          tagger.TaggerInterface
 
+	// Listeners
+	PortManager *socket.PortManager
+	// TCP
 	TcpServer     *net.TCPListener
-	TcpManager    *socket.TCPServerManager
 	TcpServerPort int
 	TcpServerAddr string
-	UdpServer     net.PacketConn
-	IpServer      net.PacketConn
-	ScionServer   pan.ListenConn
+	// UDP
+	UdpServer     *net.UDPConn
+	UdpServerPort int
+	UdpServerAddr string
+
+	IpServer    net.PacketConn
+	ScionServer pan.ListenConn
 
 	Registry  *socket.SocketRegistry
 	ScionConn *socket.SCIONConnRegistry
@@ -43,11 +49,14 @@ func (e *WasmEnv) Close() {
 	}
 	if e.UdpServer != nil {
 		e.UdpServer.Close()
+		if e.PortManager != nil {
+			e.PortManager.Release(e.UdpServerPort)
+		}
 	}
 	if e.TcpServer != nil {
 		e.TcpServer.Close()
-		if e.TcpManager != nil {
-			e.TcpManager.Release(e.TcpServerPort)
+		if e.PortManager != nil {
+			e.PortManager.Release(e.TcpServerPort)
 		}
 	}
 	if e.IpServer != nil {

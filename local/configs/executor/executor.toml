@@ -8,8 +8,8 @@ tesla_delay = 30
 max_debuglets = 1000
 disable_tls = true
 # network_interface = "veth-host"
-public_host = "203.0.113.10"              # public IP or domain for TCP listeners (empty disables listening)
-tcp_ports = "2022,2025-3005,56000-62000"  # allowed TCP listener ports (comma-separated ranges)
+public_host = "203.0.113.10"              # public IP or domain for TCP/UDP listeners (empty disables listening)
+public_ports = "2022,2025-3005,56000-62000"  # allowed public listener ports (comma-separated ranges)
 
 [credentials]
 ca_cert = "local/configs/executor/ca.crt"

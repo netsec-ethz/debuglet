@@ -33,7 +33,7 @@ type Executor struct {
 	limiter     *app.Limiter
 	packetCount ratelimit.PacketCount
 	iface       *net.Interface
-	tcpManager  *socket.TCPServerManager
+	portManager *socket.PortManager
 
 	Bidi *rpc.BidiClient
 }
@@ -65,9 +65,9 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 	limiter := app.NewLimiter(l)
 	limiter.SetExecutorCapacity(app.Gigabit)
 
-	tcpServer, err := socket.NewTCPServer(cfg.PublicHost, cfg.TCPPorts)
+	portManager, err := socket.NewPortManager(cfg.PublicHost, cfg.PublicPorts)
 	if err != nil {
-		return nil, fmt.Errorf("invalid tcp_ports: %w", err)
+		return nil, fmt.Errorf("invalid public_ports: %w", err)
 	}
 
 	e := &Executor{
@@ -78,7 +78,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		running:       make(map[string]RunningDebuglet),
 		limiter:       limiter,
 		packetCount:   pc,
-		tcpManager:    tcpServer,
+		portManager:   portManager,
 	}
 	s.RegisterOnStart(e.OnDebugletStart)
 

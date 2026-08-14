@@ -68,18 +68,22 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 		return fmt.Errorf("failed to open stream for debuglet output: %w", err)
 	}
 
+	naturalExit := false
 	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, fmt.Errorf("timeout of %s exceeded", spec.Policy.Timeout))
 	defer cancel()
 	go func() {
 		<-timedCtx.Done()
-		e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(timedCtx.Err()))
-		// Forces debuglet to close all it's resources. It could be stuck in a conn.Read() call in a host function, which does not
-		// respect contexts closing nor can't be closed by wazero.
-		deb.Close(timedCtx)
+		if !naturalExit {
+			e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(timedCtx.Err()))
+			// Forces debuglet to close all it's resources. It could be stuck in a conn.Read() call in a host function, which does not
+			// respect contexts closing nor can't be closed by wazero.
+			deb.Close(timedCtx)
+		}
 	}()
 	if err := e.runDebuglet(timedCtx, spec, deb, outputCh); err != nil {
 		return fmt.Errorf("failed to run debuglet: %w", err)
 	}
+	naturalExit = true
 
 	e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
 		DebugletId: spec.DebugletID,
@@ -132,7 +136,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 		e.limiter,
 		e.packetCount,
 		e.iface,
-		e.tcpManager,
+		e.portManager,
 	)
 
 	e.running[spec.DebugletID] = RunningDebuglet{
@@ -190,8 +194,8 @@ func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, 
 		SCION: spec.Policy.ListenSCION,
 	}
 	if err := deb.StartServers(subCtx, req); err != nil {
-		if spec.Policy.ListenTCP {
-			return fmt.Errorf("failed to start TCP listener: %w", err)
+		if spec.Policy.ListenTCP || spec.Policy.ListenUDP {
+			return fmt.Errorf("failed to start listener: %w", err)
 		}
 		e.logger.Warn("Failed to startup servers for debuglet. Ignoring", zap.String("debugletID", spec.DebugletID), zap.Error(err))
 	}

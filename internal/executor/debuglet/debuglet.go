@@ -72,7 +72,7 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, tcpServer *socket.TCPServerManager) *Debuglet {
+func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if iface != nil && runtime.GOOS == "linux" {
@@ -100,7 +100,7 @@ func New(logger *zap.Logger, debugletID string, transactionID string, policy sch
 		Registry:  &socket.SocketRegistry{},
 		ScionConn: socket.NewSCIONConnRegistry(scionConnCapacity),
 
-		TcpManager: tcpServer,
+		PortManager: portManager,
 	}
 
 	return &Debuglet{
@@ -146,10 +146,10 @@ type StartServersReq struct {
 func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
 	if req.TCP {
 		d.env.Logger.Debug("startServers: starting TCP listener")
-		if !d.env.TcpManager.Enabled() {
-			return fmt.Errorf("startServers: TCP listener requested but not enabled (public_host/tcp_ports not configured)")
+		if !d.env.PortManager.Enabled() {
+			return fmt.Errorf("startServers: TCP listener requested but not enabled (public_host/public_ports not configured)")
 		}
-		lis, port, addr, err := d.env.TcpManager.Listen()
+		lis, port, addr, err := d.env.PortManager.ListenTCP()
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
 		}
@@ -160,11 +160,16 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 
 	if req.UDP {
 		d.env.Logger.Debug("startServers: starting UDP listener")
-		udpServer, err := net.ListenPacket("udp", ":0")
+		if !d.env.PortManager.Enabled() {
+			return fmt.Errorf("startServers: UDP listener requested but not enabled (public_host/public_ports not configured)")
+		}
+		conn, port, addr, err := d.env.PortManager.ListenUDP()
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
 		}
-		d.env.UdpServer = udpServer
+		d.env.UdpServer = conn
+		d.env.UdpServerPort = port
+		d.env.UdpServerAddr = addr
 	}
 
 	if req.ICMP {
@@ -238,16 +243,25 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
 func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.HostModuleBuilder {
-	// ---- Generic socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTCP)).Export("connect_tcp")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTLS)).Export("connect_tls")
+
+	// ---- TCP socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTCP)).Export("connect_tcp")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_tcp_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_tcp_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_tcp")
 
-	// ---- TCP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.env)).Export("accept_tcp")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetTCPAddr(d.env)).Export("get_tcp_addr")
+
+	// ---- UDP socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeUDP)).Export("connect_udp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_udp_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_udp_data")
+
+	// ---- UDP listener API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveUDPFrom(d.env)).Export("receive_udp_from")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetUDPAddr(d.env)).Export("get_udp_addr")
 
 	// ---- ICMP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")

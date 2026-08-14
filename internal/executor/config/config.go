@@ -40,8 +40,8 @@ type Config struct {
 	JSONLogs            bool             `toml:"json_logs"`
 	NetworkInterface    string           `toml:"network_interface"`
 	Database            DatabaseConfig   `toml:"database"`
-	PublicHost          string           `toml:"public_host"` // public IP or domain for TCP listeners; empty disables listening
-	TCPPorts            string           `toml:"tcp_ports"`   // allowed TCP listener ports as comma-separated ranges, e.g. "2022,2025-3005,56000-62000"
+	PublicHost          string           `toml:"public_host"`  // public IP or domain for TCP/UDP listeners; empty disables listening
+	PublicPorts         string           `toml:"public_ports"` // allowed public listener ports as comma-separated ranges, e.g. "2022,2025-3005,56000-62000"
 }
 
 type DatabaseConfig struct {
@@ -90,8 +90,8 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.MaxDebuglets == 0 {
 		cfg.MaxDebuglets = 100
 	}
-	if (cfg.PublicHost == "") != (cfg.TCPPorts == "") {
-		log.Println("Warning: both public_host and tcp_ports must be set for TCP listeners; listening is disabled")
+	if (cfg.PublicHost == "") != (cfg.PublicPorts == "") {
+		log.Println("Warning: both public_host and public_ports must be set for TCP/UDP listeners; listening is disabled")
 	}
 
 	// Basic validation

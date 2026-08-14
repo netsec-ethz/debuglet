@@ -39,7 +39,9 @@
 // debuglet_wasip1.go.
 package debuglet
 
-import "errors"
+import (
+	"errors"
+)
 
 // ErrConnect is returned when the host fails to establish a connection.
 var ErrConnect = errors.New("debuglet: connect failed")
@@ -49,6 +51,7 @@ type transport int
 
 const (
 	transportTCP transport = iota
+	transportUDP
 	transportICMP4
 )
 
@@ -75,6 +78,11 @@ func ConnectTLS(addr string) (*Conn, error) { return dialTCP(addr, true) }
 // Use it to send/receive ICMP echo packets, e.g. for a ping probe.
 func ConnectICMP4(addr string) (*Conn, error) { return dialICMP4(addr) }
 
+// ConnectUDP dials a UDP connection to addr ("host:port"). The returned Conn
+// sends and receives datagrams on the connected socket; no UDP listener is
+// required to use it.
+func ConnectUDP(addr string) (*Conn, error) { return dialUDP(addr) }
+
 // AcceptTCP blocks until the host's TCP listener accepts one inbound connection
 // and returns it. Used by server-style debuglets (e.g. an echo or throughput
 // sink). Requires the executor's TCP listener to be enabled.
@@ -84,3 +92,16 @@ func AcceptTCP() (*Conn, error) { return acceptTCP() }
 // listener, i.e. where clients should connect. It returns an error when no
 // listener has been started (the executor has no public host configured).
 func ListenAddr() (string, error) { return listenAddr() }
+
+// ListenUDPAddr returns the public "host:port" address of the debuglet's UDP
+// listener, i.e. where clients should send datagrams. It returns an error when
+// no UDP listener has been started (the executor has no public host configured).
+func ListenUDPAddr() (string, error) { return listenUDPAddr() }
+
+// ReadFromUDP blocks until a single datagram arrives on the debuglet's UDP
+// listener and returns the number of bytes read into buf, the sender's
+// "host:port" address, and any error. It mirrors Go's PacketConn.ReadFrom:
+// the call blocks until a datagram is available or the listener is closed.
+func ReadFromUDP(buf []byte) (n int, from string, err error) {
+	return readFromUDP(buf)
+}

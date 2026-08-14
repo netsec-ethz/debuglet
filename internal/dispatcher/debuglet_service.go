@@ -111,8 +111,8 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 		return nil, nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
 	}
 
-	if spec.Policy.ListenTCP && exec.PublicHost() == "" {
-		return nil, nil, fmt.Errorf("executor '%s' has no public host, but policy requires a TCP listener", spec.ExecutorID)
+	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
+		return nil, nil, fmt.Errorf("executor '%s' has no public host, but policy requires a listener", spec.ExecutorID)
 	}
 
 	// Create the stores and determine if the range [from,to] has enough capacity

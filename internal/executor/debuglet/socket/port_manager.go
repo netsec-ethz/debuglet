@@ -84,39 +84,89 @@ func parsePort(s string) (int, error) {
 	return p, nil
 }
 
-// TCPServerManager hands out TCP listener ports from a pre-configured pool. One
-// unused port is allocated per listening debuglet and released on close.
+// PortManager hands out listener ports from a pre-configured pool, shared
+// across protocols (TCP and UDP). One unused port is allocated per listening
+// debuglet and released on close; a port allocated to one protocol can never be
+// handed out to the other because both share the same inUse map.
 // It is intentionally dependency-free (plain string args) so it does not
 // introduce import cycles between the config and executor packages.
-type TCPServerManager struct {
+type PortManager struct {
 	mu         sync.Mutex
 	publicAddr string
 	ports      []int
 	inUse      map[int]struct{}
 }
 
-// NewTCPServer parses portsSpec and returns a ready-to-use TCPServer.
-func NewTCPServer(publicAddr, portsSpec string) (*TCPServerManager, error) {
+// NewPortManager parses portsSpec and returns a ready-to-use PortManager.
+func NewPortManager(publicAddr, portsSpec string) (*PortManager, error) {
 	ports, err := ParsePortRanges(portsSpec)
 	if err != nil {
 		return nil, err
 	}
-	return &TCPServerManager{
+	return &PortManager{
 		publicAddr: publicAddr,
 		ports:      ports,
 		inUse:      make(map[int]struct{}),
 	}, nil
 }
 
-// Enabled reports whether TCP listening is configured and available.
-func (s *TCPServerManager) Enabled() bool {
+// Enabled reports whether listening is configured and available.
+func (s *PortManager) Enabled() bool {
 	return s != nil && s.publicAddr != "" && len(s.ports) > 0
 }
 
-// Listen binds a TCP listener on the first free port in the pool and returns
+// ListenTCP binds a TCP listener on the first free port in the pool and returns
 // the listener, the bound port, and the public "host:port" address. It returns
 // an error when no free port is available.
-func (s *TCPServerManager) Listen() (*net.TCPListener, int, string, error) {
+func (s *PortManager) ListenTCP() (*net.TCPListener, int, string, error) {
+	var lis *net.TCPListener
+	port, addr, err := s.allocate(func(p int) (int, error) {
+		l, err := net.ListenTCP("tcp", &net.TCPAddr{Port: p})
+		if err != nil {
+			return 0, err
+		}
+		// Double-check the port actually bound is the one requested.
+		if got := l.Addr().(*net.TCPAddr).Port; got != p {
+			l.Close()
+			return 0, fmt.Errorf("bound to port %d, requested %d", got, p)
+		}
+		lis = l
+		return p, nil
+	})
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("no free TCP port available: %w", err)
+	}
+	return lis, port, addr, nil
+}
+
+// ListenUDP binds a UDP socket on the first free port in the pool and returns
+// the connection, the bound port, and the public "host:port" address. It
+// returns an error when no free port is available.
+func (s *PortManager) ListenUDP() (*net.UDPConn, int, string, error) {
+	var conn *net.UDPConn
+	port, addr, err := s.allocate(func(p int) (int, error) {
+		l, err := net.ListenUDP("udp", &net.UDPAddr{Port: p})
+		if err != nil {
+			return 0, err
+		}
+		if got := l.LocalAddr().(*net.UDPAddr).Port; got != p {
+			l.Close()
+			return 0, fmt.Errorf("bound to port %d, requested %d", got, p)
+		}
+		conn = l
+		return p, nil
+	})
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("no free UDP port available: %w", err)
+	}
+	return conn, port, addr, nil
+}
+
+// allocate finds the first free port in the pool and verifies it can be bound
+// via bind (which returns the actually-bound port or an error). On success it
+// marks the port used and returns the bound port and its public "host:port"
+// address.
+func (s *PortManager) allocate(bind func(int) (int, error)) (int, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -124,23 +174,21 @@ func (s *TCPServerManager) Listen() (*net.TCPListener, int, string, error) {
 		if _, used := s.inUse[p]; used {
 			continue
 		}
-		l, err := net.ListenTCP("tcp", &net.TCPAddr{Port: p})
+		bound, err := bind(p)
 		if err != nil {
 			continue // EADDRINUSE etc → try next
 		}
-		// Double-check the port actually bound is the one requested.
-		if got := l.Addr().(*net.TCPAddr).Port; got != p {
-			l.Close()
+		if bound != p {
 			continue
 		}
 		s.inUse[p] = struct{}{}
-		return l, p, net.JoinHostPort(s.publicAddr, strconv.Itoa(p)), nil
+		return p, net.JoinHostPort(s.publicAddr, strconv.Itoa(p)), nil
 	}
-	return nil, 0, "", fmt.Errorf("no free TCP port available")
+	return 0, "", fmt.Errorf("no free port available")
 }
 
 // Release returns a previously allocated port back to the pool.
-func (s *TCPServerManager) Release(port int) {
+func (s *PortManager) Release(port int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.inUse, port)

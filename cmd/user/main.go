@@ -25,6 +25,7 @@ var (
 	ceilBW            = flag.Int64("ceil", 4096, "Ceiling bandwidth (in bits) to request in the policy")
 	timeout           = flag.Duration("timeout", 10*time.Second, "Timeout for debuglet execution")
 	listenTCP         = flag.Bool("listen-tcp", false, "request a TCP listening server")
+	listenUDP         = flag.Bool("listen-udp", false, "request a UDP listening server")
 )
 
 type stringSlice []string
@@ -79,6 +80,7 @@ func main() {
 					TimeoutMS: timeout.Milliseconds(),
 					Addresses: list,
 					ListenTCP: *listenTCP,
+					ListenUDP: *listenUDP,
 				},
 			})
 			log.Printf("added debuglets i=%d, len=%d, ceil=%s\n", i, len(debugletIDs), app.Bitrate(*ceilBW))
