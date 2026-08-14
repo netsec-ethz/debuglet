@@ -24,10 +24,13 @@ type WasmEnv struct {
 	TlsCfg       *tls.Config
 	Tagger       tagger.TaggerInterface
 
-	TcpServer   *net.TCPListener
-	UdpServer   net.PacketConn
-	IpServer    net.PacketConn
-	ScionServer pan.ListenConn
+	TcpServer     *net.TCPListener
+	TcpManager    *socket.TCPServerManager
+	TcpServerPort int
+	TcpServerAddr string
+	UdpServer     net.PacketConn
+	IpServer      net.PacketConn
+	ScionServer   pan.ListenConn
 
 	Registry  *socket.SocketRegistry
 	ScionConn *socket.SCIONConnRegistry
@@ -43,6 +46,9 @@ func (e *WasmEnv) Close() {
 	}
 	if e.TcpServer != nil {
 		e.TcpServer.Close()
+		if e.TcpManager != nil {
+			e.TcpManager.Release(e.TcpServerPort)
+		}
 	}
 	if e.IpServer != nil {
 		e.IpServer.Close()

@@ -79,3 +79,8 @@ func ConnectICMP4(addr string) (*Conn, error) { return dialICMP4(addr) }
 // and returns it. Used by server-style debuglets (e.g. an echo or throughput
 // sink). Requires the executor's TCP listener to be enabled.
 func AcceptTCP() (*Conn, error) { return acceptTCP() }
+
+// ListenAddr returns the public "host:port" address of the debuglet's TCP
+// listener, i.e. where clients should connect. It returns an error when no
+// listener has been started (the executor has no public host configured).
+func ListenAddr() (string, error) { return listenAddr() }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
@@ -32,6 +33,7 @@ type Executor struct {
 	limiter     *app.Limiter
 	packetCount ratelimit.PacketCount
 	iface       *net.Interface
+	tcpManager  *socket.TCPServerManager
 
 	Bidi *rpc.BidiClient
 }
@@ -63,6 +65,11 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 	limiter := app.NewLimiter(l)
 	limiter.SetExecutorCapacity(app.Gigabit)
 
+	tcpServer, err := socket.NewTCPServer(cfg.PublicHost, cfg.TCPPorts)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tcp_ports: %w", err)
+	}
+
 	e := &Executor{
 		teslaSchedule: schedule,
 		logger:        l,
@@ -71,6 +78,7 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		running:       make(map[string]RunningDebuglet),
 		limiter:       limiter,
 		packetCount:   pc,
+		tcpManager:    tcpServer,
 	}
 	s.RegisterOnStart(e.OnDebugletStart)
 

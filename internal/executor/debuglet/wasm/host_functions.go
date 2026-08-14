@@ -237,6 +237,25 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 	}
 }
 
+// HostGetTCPAddr writes the public "host:port" of the TCP listener into the
+// guest buffer and returns its length, or -1 if unavailable/too small.
+// WASM key: "get_tcp_addr"
+func HostGetTCPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+		if env.TcpServerAddr == "" {
+			return -1
+		}
+		addr := []byte(env.TcpServerAddr)
+		if bufLen < uint32(len(addr)) {
+			return -1
+		}
+		if !mod.Memory().Write(bufPtr, addr) {
+			return -1
+		}
+		return int32(len(addr))
+	}
+}
+
 // =============================================================================
 // IP socket API
 // WASM keys: "connect_ip", "accept_ip", "receive_ip_data",

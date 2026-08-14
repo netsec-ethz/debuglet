@@ -72,7 +72,7 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface) *Debuglet {
+func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, tcpServer *socket.TCPServerManager) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if iface != nil && runtime.GOOS == "linux" {
@@ -99,6 +99,8 @@ func New(logger *zap.Logger, debugletID string, transactionID string, policy sch
 
 		Registry:  &socket.SocketRegistry{},
 		ScionConn: socket.NewSCIONConnRegistry(scionConnCapacity),
+
+		TcpManager: tcpServer,
 	}
 
 	return &Debuglet{
@@ -144,15 +146,16 @@ type StartServersReq struct {
 func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
 	if req.TCP {
 		d.env.Logger.Debug("startServers: starting TCP listener")
-		tcpListener, err := net.Listen("tcp", ":0")
+		if !d.env.TcpManager.Enabled() {
+			return fmt.Errorf("startServers: TCP listener requested but not enabled (public_host/tcp_ports not configured)")
+		}
+		lis, port, addr, err := d.env.TcpManager.Listen()
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
 		}
-		if lis, ok := tcpListener.(*net.TCPListener); ok {
-			d.env.TcpServer = lis
-		} else {
-			return fmt.Errorf("startServers: failed to assert TCP listener type")
-		}
+		d.env.TcpServer = lis
+		d.env.TcpServerPort = port
+		d.env.TcpServerAddr = addr
 	}
 
 	if req.UDP {
@@ -244,6 +247,7 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 
 	// ---- TCP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.env)).Export("accept_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetTCPAddr(d.env)).Export("get_tcp_addr")
 
 	// ---- ICMP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")

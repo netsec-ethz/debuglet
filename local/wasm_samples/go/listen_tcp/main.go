@@ -1,13 +1,19 @@
 package main
 
 import (
+	"fmt"
+
 	"debuglet/pkg/debuglet"
 )
 
-//go:wasmimport env accept_tcp
-func accept_tcp() int32
-
 func main() {
+	addr, err := debuglet.ListenAddr()
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("listening on", addr)
+
 	for {
 		conn, err := debuglet.AcceptTCP()
 		if err != nil {

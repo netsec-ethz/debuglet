@@ -39,6 +39,15 @@ type RegisteredExecutor struct {
 	publicHost *string
 }
 
+// PublicHost returns the executor's public host (IP or domain) at which
+// debuglet listeners can be contacted, or "" if none is configured.
+func (e *RegisteredExecutor) PublicHost() string {
+	if e.publicHost == nil {
+		return ""
+	}
+	return *e.publicHost
+}
+
 // lastDebugletHistory is the default number of recent debuglet IDs to
 // retain per executor. The caller can override it via HTTP query parameters.
 const lastDebugletHistory = 10

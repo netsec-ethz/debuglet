@@ -39,6 +39,9 @@ func connectTLS(addrp, addrLen uint32) int32
 //go:wasmimport env accept_tcp
 func acceptTCPHost() int32
 
+//go:wasmimport env get_tcp_addr
+func getTCPAddr(bufPtr, bufLen uint32) int32
+
 //go:wasmimport env receive_tcp_data
 func receiveTCPData(sock, bufp, bufLen uint32) int32
 
@@ -108,6 +111,15 @@ func acceptTCP() (*Conn, error) {
 		return nil, fmt.Errorf("debuglet: accept_tcp failed")
 	}
 	return &Conn{handle: h, tr: transportTCP}, nil
+}
+
+func listenAddr() (string, error) {
+	buf := make([]byte, 512)
+	n := getTCPAddr(bytePtr(buf), uint32(len(buf)))
+	if n < 0 {
+		return "", fmt.Errorf("debuglet: get_tcp_addr failed. Has the debuglet been started with a TCP listener?")
+	}
+	return string(buf[:n]), nil
 }
 
 // Write writes the whole of b to the connection. The host send functions do not
