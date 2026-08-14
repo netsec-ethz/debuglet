@@ -1,11 +1,16 @@
+[server]
 http_port = 9000
 grpc_port = 9001
+
+[logging]
 log_level = "debug"
-disable_tls = true
+
+[scheduler]
 executor_timeout = 60
 scheduler_granularity_ms = 30000
 
 [tls]
+disable = true
 cert_file = "local/configs/dispatcher/cert"
 key_file = "local/configs/dispatcher/key"
 # ca_file = "local/configs/dispatcher/ca"

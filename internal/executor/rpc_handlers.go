@@ -15,12 +15,12 @@ import (
 func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloResponse, error) {
 	e.logger.Debug("Hello received")
 	var publicHost *string
-	if e.cfg.PublicHost != "" {
-		publicHost = &e.cfg.PublicHost
+	if e.cfg.Network.PublicHost != "" {
+		publicHost = &e.cfg.Network.PublicHost
 	}
 	resp := &pb.HelloResponse{
-		ExecutorId:             e.cfg.ExecutorID,
-		Version:                e.cfg.Version,
+		ExecutorId:             e.cfg.Identity.ExecutorID,
+		Version:                e.cfg.Identity.Version,
 		SourceIp:               "127.0.0.1", // TODO: detect public IP
 		PublicHost:             publicHost,
 		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),

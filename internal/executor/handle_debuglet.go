@@ -97,7 +97,7 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 func (e *Executor) allocateDebuglet(ctx context.Context, spec scheduler.Spec) error {
 	req := &pb.DebugletAllocateRequest{
 		DebugletId:    spec.DebugletID,
-		ExecutorId:    e.cfg.ExecutorID,
+		ExecutorId:    e.cfg.Identity.ExecutorID,
 		TransactionId: spec.TransactionID,
 		Policy: &pb.DebugletPolicy{
 			FloorBw:   spec.Policy.FloorBW,
@@ -124,7 +124,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if len(e.running) >= e.cfg.MaxDebuglets {
+	if len(e.running) >= e.cfg.Resources.MaxDebuglets {
 		err := fmt.Errorf("max debuglet capacity reached (id=%s)", spec.DebugletID)
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (e *Executor) unregisterDebuglet(ctx context.Context, spec scheduler.Spec) 
 func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet) error {
 	_, err := e.Bidi.Client.DebugletState(ctx, &pb.DebugletStateRequest{
 		DebugletId: spec.DebugletID,
-		ExecutorId: e.cfg.ExecutorID,
+		ExecutorId: e.cfg.Identity.ExecutorID,
 		State:      pb.RunState_RUN_STATE_INITIALIZING,
 	})
 	if err != nil {
@@ -208,7 +208,7 @@ func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan
 	if err != nil {
 		return nil, fmt.Errorf("failed to open debuglet stream: %w", err)
 	}
-	err = stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Ident{Ident: &pb.DebugletIdent{DebugletId: id, ExecutorId: e.cfg.ExecutorID}}})
+	err = stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Ident{Ident: &pb.DebugletIdent{DebugletId: id, ExecutorId: e.cfg.Identity.ExecutorID}}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to send debuglet ident: %w", err)
 	}
@@ -228,7 +228,7 @@ func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan
 func (e *Executor) runDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet, outputCh chan<- []byte) error {
 	_, err := e.Bidi.Client.DebugletState(ctx, &pb.DebugletStateRequest{
 		DebugletId: spec.DebugletID,
-		ExecutorId: e.cfg.ExecutorID,
+		ExecutorId: e.cfg.Identity.ExecutorID,
 		State:      pb.RunState_RUN_STATE_STARTED,
 	})
 	if err != nil {

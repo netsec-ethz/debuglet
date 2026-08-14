@@ -40,12 +40,12 @@ func main() {
 		panic(fmt.Sprintf("Failed to load executor config: %v", err))
 	}
 
-	logLevel, err := zap.ParseAtomicLevel(cfg.LogLevel)
+	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)
 	if err != nil {
 		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
 	logCfg := zap.NewDevelopmentConfig()
-	if cfg.JSONLogs {
+	if cfg.Logging.JSONLogs {
 		logCfg = zap.NewProductionConfig()
 	}
 	logCfg.Level = logLevel
@@ -71,7 +71,7 @@ func main() {
 
 	storage := sqlite.NewStorage(db)
 
-	logger.Info("Starting executor:", zap.String("executor_id", cfg.ExecutorID), zap.String("dispatcher_addr", cfg.DispatcherAddr))
+	logger.Info("Starting executor:", zap.String("executor_id", cfg.Identity.ExecutorID), zap.String("dispatcher_addr", cfg.Dispatcher.Addr))
 
 	exec, err := executor.New(cfg, logger, storage)
 	if err != nil {

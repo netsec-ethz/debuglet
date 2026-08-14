@@ -49,7 +49,8 @@ This also means the executor has to be configured to attach any EBPF hooks on th
 
 ```toml
 # executor.toml
-network_interface = "veth-host"
+[network]
+interface = "veth-host"
 ```
 
 **IMPORTANT:** Launch the executor using `make e EBPF=1` .

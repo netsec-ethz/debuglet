@@ -8,7 +8,7 @@ import (
 	"debuglet/internal/executor/config"
 	"debuglet/internal/executor/scheduler/memory"
 	"debuglet/protocol"
-	"fmt"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -45,12 +45,11 @@ func TestRestart(t *testing.T) {
 	go d.Bidi.ServeYamux(t.Context(), lis)
 	go d.Bidi.ServeGRPC(t.Context(), ":9001")
 
-	e, err := executor.New(&config.Config{
-		ExecutorID:          "test",
-		DispatcherAddr:      "127.0.0.1:9001",
-		DispatcherYamuxAddr: "127.0.0.1:9000",
-		Capacity:            int64(resource.Gigabit),
-		DisableTLS:          true,
+	e, err := executor.New(&config.ExecutorConfig{
+		Identity:   config.IdentityConfig{ExecutorID: "test"},
+		Dispatcher: config.DispatcherConfig{Addr: "127.0.0.1:9001", YamuxAddr: "127.0.0.1:9000"},
+		Resources:  config.ResourcesConfig{Capacity: int64(resource.Gigabit)},
+		TLS:        config.TLSConfig{Disable: true},
 	}, logger, memory.NewStorage())
 	if err != nil {
 		t.Fatalf("failed to create executor: %v", err)
@@ -75,7 +74,7 @@ func TestRestart(t *testing.T) {
 	// UPDATE DEBUGLET STATE
 	mock.ExpectQuery("UPDATE debuglets").WillReturnRows(mockDebugletRow(start))
 
-	ids, err := d.SubmitDebuglets(t.Context(), []models.DebugletSpec{models.DebugletSpec{
+	_, err = d.SubmitDebuglets(t.Context(), []models.DebugletSpec{{
 		StartTime:     &start,
 		ExecutorID:    "test",
 		TransactionID: "test",
@@ -86,15 +85,12 @@ func TestRestart(t *testing.T) {
 		},
 	}})
 
-	if err != nil {
-		t.Fatalf("failed to submit debuglet: %v", err)
+	if err == nil {
+		t.Fatalf("expected error when submitting debuglet while executor has no capacity from startup")
 	}
-
-	if len(ids) != 1 {
-		t.Fatalf("expected 1 debuglet ID, got %d", len(ids))
+	if !errors.Is(err, resource.ErrCapacityFull) {
+		t.Fatalf("expected ErrCapacityFull, got: %v", err)
 	}
-
-	fmt.Printf("Submitted debuglet with ID: %s\n", ids[0])
 }
 
 func mockDebugletRow(start time.Time) *sqlmock.Rows {

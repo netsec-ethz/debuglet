@@ -47,12 +47,12 @@ func main() {
 		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
 	}
 
-	logLevel, err := zap.ParseAtomicLevel(cfg.LogLevel)
+	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)
 	if err != nil {
 		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
 	logCfg := zap.NewDevelopmentConfig()
-	if cfg.JSONLogs {
+	if cfg.Logging.JSONLogs {
 		logCfg = zap.NewProductionConfig()
 	}
 	logCfg.Level = logLevel
@@ -72,7 +72,7 @@ func main() {
 	paymentHandler := payments.NewPaymentHandler(db, cfg, logger)
 
 	// ---- Dispatcher init ----
-	d := dispatcher.New(logger, db, cfg.Version, time.Duration(cfg.ExecutorTimeout)*time.Second, time.Duration(cfg.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
+	d := dispatcher.New(logger, db, cfg.Server.Version, time.Duration(cfg.Scheduler.ExecutorTimeout)*time.Second, time.Duration(cfg.Scheduler.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
 	defer d.Close()
 	if err := d.RestoreScheduler(context.Background()); err != nil {
 		logger.Fatal("Failed to restore scheduler from database", zap.Error(err))
@@ -82,7 +82,7 @@ func main() {
 
 	// ---- Start gRPC Server ----
 	g.Go(func() error {
-		addr := fmt.Sprintf(":%d", cfg.GRPCPort)
+		addr := fmt.Sprintf(":%d", cfg.Server.GRPCPort)
 		return d.Bidi.ServeGRPC(subCtx, addr)
 	})
 
@@ -90,7 +90,7 @@ func main() {
 	g.Go(func() error {
 		g2, ctx2 := errgroup.WithContext(subCtx)
 
-		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
+		addr := fmt.Sprintf(":%d", cfg.Server.HTTPPort)
 		var lc net.ListenConfig
 		lis, err := lc.Listen(ctx2, "tcp", addr)
 		if err != nil {
@@ -107,7 +107,7 @@ func main() {
 			lis.Close()
 		}()
 
-		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.HTTPPort))
+		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.Server.HTTPPort))
 
 		g2.Go(func() error { return m.Serve() })
 		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
@@ -133,7 +133,7 @@ func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *conf
 	e.HidePort = true
 	e.Use(middleware.Recover())
 	logFormat := `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n"
-	if !cfg.JSONLogs {
+	if !cfg.Logging.JSONLogs {
 		logFormat = "${time_rfc3339}\t${method}\t${uri} ${status} ${latency_human} ${remote_ip}\n"
 	}
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
@@ -153,7 +153,7 @@ func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *conf
 		Handler:   e,
 		TLSConfig: tlsConfig,
 	}
-	if cfg.DisableTLS {
+	if cfg.TLS.Disable {
 		return server.Serve(lis)
 	} else {
 		return server.Serve(tls.NewListener(lis, tlsConfig))

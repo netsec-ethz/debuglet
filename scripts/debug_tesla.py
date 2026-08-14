@@ -204,7 +204,7 @@ def check_api(server: str, ip: str, verify_tls: bool, n: int):
         print("      • The heartbeat interval is delay/2; check that heartbeats are")
         print("        being received by the dispatcher.")
         print("      • TeslaDelay may be 0 in the executor config (check TOML key")
-        print("        matches the struct tag: toml:\"tesla_delay\" → use tesla_delay).")
+        print("        matches the struct tag: toml:\"delay\" → use [tesla] delay).")
         return None, None
 
     return by_ip, tesla
