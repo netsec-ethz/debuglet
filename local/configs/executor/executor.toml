@@ -14,3 +14,6 @@ price_per_bw = 1
 ca_cert = "local/configs/executor/ca.crt"
 client_cert = "local/configs/executor/cert"
 client_key = "local/configs/executor/key"
+
+[database]
+path = ".data/executor.db"

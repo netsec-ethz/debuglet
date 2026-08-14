@@ -16,15 +16,17 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
 
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite"
 
 	"debuglet/internal/executor"
 	"debuglet/internal/executor/config"
-	"debuglet/internal/executor/scheduler/memory"
+	"debuglet/internal/executor/scheduler/sqlite"
 
 	scionFlag "github.com/scionproto/scion/private/app/flag"
 )
@@ -59,7 +61,15 @@ func main() {
 	}
 	os.Setenv("SCION_DAEMON_ADDRESS", envFlags.Daemon())
 
-	storage := memory.NewStorage()
+	// ---- Database init ----
+	db, err := sql.Open("sqlite", cfg.Database.Path)
+	if err != nil {
+		logger.Fatal("Failed to open database", zap.Error(err))
+	}
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+
+	storage := sqlite.NewStorage(db)
 
 	logger.Info("Starting executor:", zap.String("executor_id", cfg.ExecutorID), zap.String("dispatcher_addr", cfg.DispatcherAddr))
 
@@ -73,6 +83,10 @@ func main() {
 	defer cancel()
 
 	go func() {
+		if err := storage.RestoreFromDatabase(ctx); err != nil {
+			logger.Fatal("Failed to restore storage from database", zap.Error(err))
+			return
+		}
 		if err := storage.StartLoop(ctx); err != nil {
 			logger.Fatal("Failed to start storage loop", zap.Error(err))
 			return

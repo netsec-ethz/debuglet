@@ -6,6 +6,7 @@ import (
 	"debuglet/internal/executor/scheduler"
 	pb "debuglet/protocol"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -54,7 +55,7 @@ func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.Upl
 			ListenSCION: policy.GetListenScion(),
 		},
 	}
-	if err := e.scheduler.Insert(spec); err != nil {
+	if err := e.scheduler.Insert(ctx, spec); err != nil {
 		return nil, err
 	}
 
@@ -65,7 +66,10 @@ func (e *Executor) OnAbort(ctx context.Context, req *pb.AbortRequest) (*pb.Abort
 	debugletID := req.GetDebugletId()
 	e.logger.Debug("Abort received", zap.String("debugletID", debugletID))
 
-	existed := e.scheduler.Remove(debugletID)
+	existed, err := e.scheduler.Remove(ctx, debugletID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to remove debuglet from storage: %w", err)
+	}
 	if existed {
 		e.logger.Info("Removed debuglet from storage before it was started", zap.String("debugletID", debugletID))
 		return &pb.AbortResponse{}, nil

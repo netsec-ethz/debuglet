@@ -4,10 +4,16 @@ import (
 	"context"
 	"debuglet/internal/executor/scheduler"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
 
+// MemoryStorage is a simple in-memory implementation storing all debuglets in a
+// priority queue sorted by their starting time.
+//
+// Because the WASM is also stored in memory, the memory usage of a lot of debuglets
+// can be significant.
 type MemoryStorage struct {
 	onStart func(context.Context, scheduler.Spec)
 
@@ -27,7 +33,7 @@ func NewStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) Insert(u scheduler.Spec) error {
+func (m *MemoryStorage) Insert(ctx context.Context, u scheduler.Spec) error {
 	m.mu.Lock()
 	m.tq.Push(u)
 	m.mu.Unlock()
@@ -36,15 +42,15 @@ func (m *MemoryStorage) Insert(u scheduler.Spec) error {
 	return nil
 }
 
-func (m *MemoryStorage) Remove(debugletID string) bool {
+func (m *MemoryStorage) Remove(ctx context.Context, debugletID string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Already handed to the executor — treat as "already started".
 	if _, ok := m.inflight[debugletID]; ok {
-		return false
+		return false, fmt.Errorf("debuglet %s is already started", debugletID)
 	}
-	return m.tq.Remove(debugletID) != nil
+	return m.tq.Remove(debugletID) != nil, nil
 }
 
 func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, scheduler.Spec)) {

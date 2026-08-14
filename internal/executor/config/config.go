@@ -39,6 +39,11 @@ type Config struct {
 	DisableTLS          bool             `toml:"disable_tls"`
 	JSONLogs            bool             `toml:"json_logs"`
 	NetworkInterface    string           `toml:"network_interface"`
+	Database            DatabaseConfig   `toml:"database"`
+}
+
+type DatabaseConfig struct {
+	Path string `toml:"path"`
 }
 
 type CredentialConfig struct {
