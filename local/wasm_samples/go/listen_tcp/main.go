@@ -19,6 +19,9 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		if remote, err := conn.RemoteAddr(); err == nil {
+			fmt.Println("client:", remote)
+		}
 		buf := make([]byte, 4096)
 		n, err := conn.Read(buf)
 		if err != nil {

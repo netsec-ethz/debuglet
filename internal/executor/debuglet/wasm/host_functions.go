@@ -235,6 +235,21 @@ func HostDrain(env *WasmEnv) func(ctx context.Context, sockID int32) {
 	}
 }
 
+// HostGetRemoteAddr writes the socket peer's full "host:port" address into the
+// guest buffer and returns its length, or -1 if unavailable/too small.
+// WASM key: "get_remote_addr"
+func HostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, sockID int32, bufPtr, bufLen uint32) int32 {
+		sock, err := env.Registry.Get(sockID)
+		if err != nil {
+			env.Logger.Warnw("hostGetRemoteAddr: invalid handle", "handle", sockID, "err", err)
+			panic(fmt.Errorf("get_remote_addr: %w", err))
+		}
+
+		return writeAddr(mod, bufPtr, bufLen, sock.RemoteAddr())
+	}
+}
+
 // =============================================================================
 // TCP socket API
 // =============================================================================

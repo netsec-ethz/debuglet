@@ -7,6 +7,7 @@ import (
 	"debuglet/internal/executor/scheduler"
 	pb "debuglet/protocol"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,12 +69,12 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 		return fmt.Errorf("failed to open stream for debuglet output: %w", err)
 	}
 
-	naturalExit := false
+	naturalExit := atomic.Bool{}
 	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, fmt.Errorf("timeout of %s exceeded", spec.Policy.Timeout))
 	defer cancel()
 	go func() {
 		<-timedCtx.Done()
-		if !naturalExit {
+		if !naturalExit.Load() {
 			e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(timedCtx.Err()))
 			// Forces debuglet to close all it's resources. It could be stuck in a conn.Read() call in a host function, which does not
 			// respect contexts closing nor can't be closed by wazero.
@@ -83,7 +84,7 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 	if err := e.runDebuglet(timedCtx, spec, deb, outputCh); err != nil {
 		return fmt.Errorf("failed to run debuglet: %w", err)
 	}
-	naturalExit = true
+	naturalExit.Store(true)
 
 	e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
 		DebugletId: spec.DebugletID,

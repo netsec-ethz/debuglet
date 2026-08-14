@@ -87,3 +87,5 @@ func (h *HostConn) Addr() string {
 	}
 	return host
 }
+
+func (h *HostConn) RemoteAddr() string { return h.conn.RemoteAddr().String() }

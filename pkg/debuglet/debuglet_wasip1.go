@@ -66,6 +66,9 @@ func sendTCPData(sock, bufp, bufLen uint32)
 //go:wasmimport env drain_connection
 func drain_connection(sock uint32)
 
+//go:wasmimport env get_remote_addr
+func getRemoteAddr(sock, bufPtr, bufLen uint32) int32
+
 //go:wasmimport env close_tcp
 func closeTCP(sock uint32)
 
@@ -221,4 +224,14 @@ func (c *Conn) Drain() error {
 	}
 	drain_connection(uint32(c.handle))
 	return nil
+}
+
+// RemoteAddr returns the remote "host:port" address of the connection.
+func (c *Conn) RemoteAddr() (string, error) {
+	buf := make([]byte, 512)
+	n := getRemoteAddr(uint32(c.handle), bytePtr(buf), uint32(len(buf)))
+	if n < 0 {
+		return "", fmt.Errorf("debuglet: get_remote_addr failed (handle %d)", c.handle)
+	}
+	return string(buf[:n]), nil
 }

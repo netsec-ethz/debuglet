@@ -34,3 +34,4 @@ func (c *Conn) Write(b []byte) error       { panic(offTarget) }
 func (c *Conn) Read(b []byte) (int, error) { panic(offTarget) }
 func (c *Conn) Drain() error               { panic(offTarget) }
 func (c *Conn) Close() error               { panic(offTarget) }
+func (c *Conn) RemoteAddr() (string, error) { panic(offTarget) }

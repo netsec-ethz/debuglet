@@ -272,6 +272,7 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 
 	// ---- Connection Util API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostDrain(d.env)).Export("drain_connection")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetRemoteAddr(d.env)).Export("get_remote_addr")
 
 	// ---- SCION-UDP API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(d.env)).Export("send_scion_udp_packet")
