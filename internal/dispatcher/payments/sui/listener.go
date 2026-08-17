@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"debuglet/internal/dispatcher/config"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 
 	"github.com/block-vision/sui-go-sdk/common/grpcconn"
 	suiModels "github.com/block-vision/sui-go-sdk/models"
@@ -85,7 +85,7 @@ func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, t
 }
 
 func (l *Listener) Start(ctx context.Context) error {
-	queries := ddb.New(l.db)
+	queries := database.New(l.db)
 	raw, err := queries.GetTransactionState(ctx, l.cursorKey)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("load sui cursor: %w", err)
@@ -183,8 +183,8 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 
 	cursor = &tip
 
-	queries := ddb.New(l.db)
-	_, err = queries.UpdateTransactionState(ctx, ddb.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(tip, 10)})
+	queries := database.New(l.db)
+	_, err = queries.UpdateTransactionState(ctx, database.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(tip, 10)})
 	if err != nil {
 		l.logger.Error("failed to persist sui cursor", zap.Error(err))
 	}
@@ -314,8 +314,8 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 		seq := cp.GetSequenceNumber()
 		*cursor = &seq
 
-		queries := ddb.New(l.db)
-		_, err = queries.UpdateTransactionState(ctx, ddb.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(seq, 10)})
+		queries := database.New(l.db)
+		_, err = queries.UpdateTransactionState(ctx, database.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(seq, 10)})
 		if err != nil {
 			l.logger.Error("failed to persist sui cursor", zap.Error(err))
 		}
@@ -338,7 +338,7 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 	amount := int64(receipt.PaymentAmount)
 	receiver := fmt.Sprintf("0x%x", receipt.Receiver)
 	// TODO refund failed purchases
-	queries := ddb.New(l.db)
+	queries := database.New(l.db)
 	transaction, err := queries.GetTransactionByID(ctx, receipt.Nonce)
 	if err != nil {
 		l.logger.Warn("failed to get transaction", zap.String("id", receipt.Nonce), zap.Error(err))
@@ -365,7 +365,7 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 		return
 	}
 	l.fulfiller.CompleteTransaction(transaction.ID, ctx)
-	//_, err = queries.UpdateTransactionStatus(ctx, ddb.UpdateTransactionStatusParams{ID: transaction.ID, Status: int64(models.Paid)})
+	//_, err = queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{ID: transaction.ID, Status: int64(models.Paid)})
 	if err != nil {
 		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.ID), zap.Error(err))
 		return

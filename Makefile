@@ -111,11 +111,11 @@ memory:
 upgrade:
 	mkdir -p .data
 	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations goose sqlite3 .data/dispatcher.db up
-	GOOSE_MIGRATION_DIR=./internal/executor/scheduler/sqlite/migrations goose sqlite3 .data/executor.db up
+	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations goose sqlite3 .data/executor.db up
 
 downgrade:
 	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations goose sqlite3 .data/dispatcher.db down
-	GOOSE_MIGRATION_DIR=./internal/executor/scheduler/sqlite/migrations goose sqlite3 .data/executor.db down
+	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations goose sqlite3 .data/executor.db down
 
 # --------------------------------------------------------------------
 # Docker orchestration

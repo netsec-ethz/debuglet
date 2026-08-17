@@ -3,7 +3,7 @@ package dispatcher
 import (
 	"context"
 	"database/sql"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/resource"
@@ -66,7 +66,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 }
 
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
-	queries := ddb.New(d.db)
+	queries := database.New(d.db)
 	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(time.Now().Add(-1*time.Minute)))
 	if err != nil {
 		return fmt.Errorf("failed to list debuglets from database: %w", err)
