@@ -11,6 +11,32 @@ import (
 	"debuglet/internal/dispatcher/models"
 )
 
+const addEarnings = `-- name: AddEarnings :one
+UPDATE earnings
+SET total_income = total_income + ?1,
+    current_balance = current_balance + ?1
+WHERE executor_id = ?2 AND currency = ?3
+RETURNING executor_id, currency, total_income, current_balance
+`
+
+type AddEarningsParams struct {
+	Amount     int64
+	ExecutorID string
+	Currency   string
+}
+
+func (q *Queries) AddEarnings(ctx context.Context, arg AddEarningsParams) (Earning, error) {
+	row := q.db.QueryRowContext(ctx, addEarnings, arg.Amount, arg.ExecutorID, arg.Currency)
+	var i Earning
+	err := row.Scan(
+		&i.ExecutorID,
+		&i.Currency,
+		&i.TotalIncome,
+		&i.CurrentBalance,
+	)
+	return i, err
+}
+
 const createDebuglet = `-- name: CreateDebuglet :one
 INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses, state)
 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -74,19 +100,76 @@ func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogPa
 	return i, err
 }
 
+const createDebugletOrder = `-- name: CreateDebugletOrder :one
+INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency )
+VALUES (?,?,?,?,?)
+RETURNING transaction_id, order_id, executor_id, price, currency
+`
+
+type CreateDebugletOrderParams struct {
+	TransactionID string
+	OrderID       int64
+	ExecutorID    string
+	Price         int64
+	Currency      string
+}
+
+func (q *Queries) CreateDebugletOrder(ctx context.Context, arg CreateDebugletOrderParams) (DebugletOrder, error) {
+	row := q.db.QueryRowContext(ctx, createDebugletOrder,
+		arg.TransactionID,
+		arg.OrderID,
+		arg.ExecutorID,
+		arg.Price,
+		arg.Currency,
+	)
+	var i DebugletOrder
+	err := row.Scan(
+		&i.TransactionID,
+		&i.OrderID,
+		&i.ExecutorID,
+		&i.Price,
+		&i.Currency,
+	)
+	return i, err
+}
+
+const createEarnings = `-- name: CreateEarnings :one
+INSERT INTO earnings (executor_id, currency, total_income, current_balance)
+VALUES (?,?,0,0)
+RETURNING executor_id, currency, total_income, current_balance
+`
+
+type CreateEarningsParams struct {
+	ExecutorID string
+	Currency   string
+}
+
+func (q *Queries) CreateEarnings(ctx context.Context, arg CreateEarningsParams) (Earning, error) {
+	row := q.db.QueryRowContext(ctx, createEarnings, arg.ExecutorID, arg.Currency)
+	var i Earning
+	err := row.Scan(
+		&i.ExecutorID,
+		&i.Currency,
+		&i.TotalIncome,
+		&i.CurrentBalance,
+	)
+	return i, err
+}
+
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (id, auth_key, price, method, expires_at, paid, hash)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, auth_key, price, method, expires_at, paid, hash
+INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, status, hash)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, auth_key, price, method, expires_at, hash, currency, status
 `
 
 type CreateTransactionParams struct {
 	ID        string
 	AuthKey   string
 	Price     int64
+	Currency  string
 	Method    string
 	ExpiresAt models.UTCTime
-	Paid      bool
+	Status    int64
 	Hash      string
 }
 
@@ -95,9 +178,10 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.ID,
 		arg.AuthKey,
 		arg.Price,
+		arg.Currency,
 		arg.Method,
 		arg.ExpiresAt,
-		arg.Paid,
+		arg.Status,
 		arg.Hash,
 	)
 	var i Transaction
@@ -107,8 +191,9 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.Price,
 		&i.Method,
 		&i.ExpiresAt,
-		&i.Paid,
 		&i.Hash,
+		&i.Currency,
+		&i.Status,
 	)
 	return i, err
 }
@@ -133,6 +218,96 @@ func (q *Queries) GetDebugletByID(ctx context.Context, id string) (Debuglet, err
 	return i, err
 }
 
+const getDebugletOrder = `-- name: GetDebugletOrder :one
+/*
+
+DEBUGLET_ORDER
+
+*/
+
+SELECT transaction_id, order_id, executor_id, price, currency FROM debuglet_order
+WHERE transaction_id = ? AND order_id = ?
+`
+
+type GetDebugletOrderParams struct {
+	TransactionID string
+	OrderID       int64
+}
+
+func (q *Queries) GetDebugletOrder(ctx context.Context, arg GetDebugletOrderParams) (DebugletOrder, error) {
+	row := q.db.QueryRowContext(ctx, getDebugletOrder, arg.TransactionID, arg.OrderID)
+	var i DebugletOrder
+	err := row.Scan(
+		&i.TransactionID,
+		&i.OrderID,
+		&i.ExecutorID,
+		&i.Price,
+		&i.Currency,
+	)
+	return i, err
+}
+
+const getEarnings = `-- name: GetEarnings :many
+/*
+
+EARNINGS
+
+*/
+
+SELECT executor_id, currency, total_income, current_balance FROM earnings
+WHERE executor_id = ?
+`
+
+func (q *Queries) GetEarnings(ctx context.Context, executorID string) ([]Earning, error) {
+	rows, err := q.db.QueryContext(ctx, getEarnings, executorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Earning
+	for rows.Next() {
+		var i Earning
+		if err := rows.Scan(
+			&i.ExecutorID,
+			&i.Currency,
+			&i.TotalIncome,
+			&i.CurrentBalance,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getEarningsIn = `-- name: GetEarningsIn :one
+SELECT executor_id, currency, total_income, current_balance FROM earnings
+WHERE executor_id = ? AND currency = ?
+`
+
+type GetEarningsInParams struct {
+	ExecutorID string
+	Currency   string
+}
+
+func (q *Queries) GetEarningsIn(ctx context.Context, arg GetEarningsInParams) (Earning, error) {
+	row := q.db.QueryRowContext(ctx, getEarningsIn, arg.ExecutorID, arg.Currency)
+	var i Earning
+	err := row.Scan(
+		&i.ExecutorID,
+		&i.Currency,
+		&i.TotalIncome,
+		&i.CurrentBalance,
+	)
+	return i, err
+}
+
 const getTransactionByID = `-- name: GetTransactionByID :one
 /*
 
@@ -140,7 +315,7 @@ TRANSACTION
 
 */
 
-SELECT id, auth_key, price, method, expires_at, paid, hash FROM transactions
+SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions
 WHERE id = ?
 `
 
@@ -153,10 +328,45 @@ func (q *Queries) GetTransactionByID(ctx context.Context, id string) (Transactio
 		&i.Price,
 		&i.Method,
 		&i.ExpiresAt,
-		&i.Paid,
 		&i.Hash,
+		&i.Currency,
+		&i.Status,
 	)
 	return i, err
+}
+
+const getTransactionOrders = `-- name: GetTransactionOrders :many
+SELECT transaction_id, order_id, executor_id, price, currency FROM debuglet_order
+WHERE transaction_id = ?
+`
+
+func (q *Queries) GetTransactionOrders(ctx context.Context, transactionID string) ([]DebugletOrder, error) {
+	rows, err := q.db.QueryContext(ctx, getTransactionOrders, transactionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DebugletOrder
+	for rows.Next() {
+		var i DebugletOrder
+		if err := rows.Scan(
+			&i.TransactionID,
+			&i.OrderID,
+			&i.ExecutorID,
+			&i.Price,
+			&i.Currency,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getTransactionState = `-- name: GetTransactionState :one
@@ -324,33 +534,6 @@ func (q *Queries) UpdateDebugletState(ctx context.Context, arg UpdateDebugletSta
 	return i, err
 }
 
-const updateTransactionPaid = `-- name: UpdateTransactionPaid :one
-UPDATE transactions
-SET paid = ?
-WHERE id = ?
-RETURNING id, auth_key, price, method, expires_at, paid, hash
-`
-
-type UpdateTransactionPaidParams struct {
-	Paid bool
-	ID   string
-}
-
-func (q *Queries) UpdateTransactionPaid(ctx context.Context, arg UpdateTransactionPaidParams) (Transaction, error) {
-	row := q.db.QueryRowContext(ctx, updateTransactionPaid, arg.Paid, arg.ID)
-	var i Transaction
-	err := row.Scan(
-		&i.ID,
-		&i.AuthKey,
-		&i.Price,
-		&i.Method,
-		&i.ExpiresAt,
-		&i.Paid,
-		&i.Hash,
-	)
-	return i, err
-}
-
 const updateTransactionState = `-- name: UpdateTransactionState :one
 INSERT OR REPLACE INTO transaction_states (key, value)
 VALUES (?, ?)
@@ -366,5 +549,33 @@ func (q *Queries) UpdateTransactionState(ctx context.Context, arg UpdateTransact
 	row := q.db.QueryRowContext(ctx, updateTransactionState, arg.Key, arg.Value)
 	var i TransactionState
 	err := row.Scan(&i.Key, &i.Value)
+	return i, err
+}
+
+const updateTransactionStatus = `-- name: UpdateTransactionStatus :one
+UPDATE transactions 
+SET status = ? 
+WHERE id = ? 
+RETURNING id, auth_key, price, method, expires_at, hash, currency, status
+`
+
+type UpdateTransactionStatusParams struct {
+	Status int64
+	ID     string
+}
+
+func (q *Queries) UpdateTransactionStatus(ctx context.Context, arg UpdateTransactionStatusParams) (Transaction, error) {
+	row := q.db.QueryRowContext(ctx, updateTransactionStatus, arg.Status, arg.ID)
+	var i Transaction
+	err := row.Scan(
+		&i.ID,
+		&i.AuthKey,
+		&i.Price,
+		&i.Method,
+		&i.ExpiresAt,
+		&i.Hash,
+		&i.Currency,
+		&i.Status,
+	)
 	return i, err
 }

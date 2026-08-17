@@ -323,7 +323,8 @@ type HelloResponse struct {
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
 	IcmpEnabled            bool                   `protobuf:"varint,7,opt,name=icmp_enabled,json=icmpEnabled,proto3" json:"icmp_enabled,omitempty"`                                      // Whether the executor can handle ICMP packets
-	PricePerBw             int64                  `protobuf:"varint,8,opt,name=price_per_bw,json=pricePerBw,proto3" json:"price_per_bw,omitempty"`                                       // Price per bit/s of bandwidth
+	PricePerBwS            int64                  `protobuf:"varint,8,opt,name=price_per_bw_s,json=pricePerBwS,proto3" json:"price_per_bw_s,omitempty"`                                  // Price per bit/s of bandwidth
+	Currency               string                 `protobuf:"bytes,9,opt,name=currency,proto3" json:"currency,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -407,11 +408,18 @@ func (x *HelloResponse) GetIcmpEnabled() bool {
 	return false
 }
 
-func (x *HelloResponse) GetPricePerBw() int64 {
+func (x *HelloResponse) GetPricePerBwS() int64 {
 	if x != nil {
-		return x.PricePerBw
+		return x.PricePerBwS
 	}
 	return 0
+}
+
+func (x *HelloResponse) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
 }
 
 type DebugletPolicy struct {
@@ -1407,7 +1415,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"executorId\x12-\n" +
 	"\x12bandwidth_capacity\x18\x02 \x01(\x03R\x11bandwidthCapacity\"\x13\n" +
 	"\x11ResourcesResponse\"\x0e\n" +
-	"\fHelloRequest\"\xb9\x02\n" +
+	"\fHelloRequest\"\xd8\x02\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -1416,9 +1424,9 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x0ftesla_delay_sec\x18\x04 \x01(\x03R\rteslaDelaySec\x129\n" +
 	"\x19tesla_anchor_timestamp_ns\x18\x05 \x01(\x03R\x16teslaAnchorTimestampNs\x12(\n" +
 	"\x10tesla_anchor_key\x18\x06 \x01(\fR\x0eteslaAnchorKey\x12!\n" +
-	"\ficmp_enabled\x18\a \x01(\bR\vicmpEnabled\x12 \n" +
-	"\fprice_per_bw\x18\b \x01(\x03R\n" +
-	"pricePerBw\"\xa6\x02\n" +
+	"\ficmp_enabled\x18\a \x01(\bR\vicmpEnabled\x12#\n" +
+	"\x0eprice_per_bw_s\x18\b \x01(\x03R\vpricePerBwS\x12\x1a\n" +
+	"\bcurrency\x18\t \x01(\tR\bcurrency\"\xa6\x02\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +

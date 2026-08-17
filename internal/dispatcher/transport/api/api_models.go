@@ -27,6 +27,8 @@ type DebugletPolicyRequest struct {
 }
 
 type DebugletRequest struct {
+	// Must be unique accross a single request
+	OrderID int64 `json:"request_id"`
 	// Optional start time as unix epoch time
 	StartTimestamp *int64                `json:"start_time,omitempty"`
 	ExecutorID     string                `json:"executor_id"`
@@ -56,6 +58,7 @@ type ExecutorResponse struct {
 	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
 	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
 	PricePerBw             int64  `json:"price_per_bw"`
+	Currency               string `json:"currency"`
 }
 
 // ExecutorByIPResponse is returned by GET /executors/by-ip?ip=<ip>.

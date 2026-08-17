@@ -16,7 +16,7 @@ CREATE TABLE debuglet_logs (
     output BLOB NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE transactions (
     id TEXT PRIMARY KEY NOT NULL,
     auth_key TEXT NOT NULL,
     price INTEGER NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     hash TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS transaction_states (
+CREATE TABLE transaction_states (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );

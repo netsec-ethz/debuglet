@@ -28,8 +28,8 @@ type SuiPaymentIntent struct {
 	ReceiverAddress string
 }
 
-func NewSuiPaymentHandler(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger) *SuiPaymentHandler {
-	listener := NewListener(cfg, db, logger)
+func NewSuiPaymentHandler(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf TransactionFulfiller) *SuiPaymentHandler {
+	listener := NewListener(cfg, db, logger, tf)
 	return &SuiPaymentHandler{lis: listener, db: db}
 }
 
@@ -37,26 +37,24 @@ func (h *SuiPaymentHandler) Start(ctx context.Context) error {
 	return h.lis.Start(ctx)
 }
 
-func (h *SuiPaymentHandler) CreatePaymentIntent(ctx context.Context, price int64, hash string) (SuiPaymentIntent, error) {
-	b_transactionId := make([]byte, 16)
+func (h *SuiPaymentHandler) CreatePaymentIntent(transactionId string, price int64, hash string, ctx context.Context) (SuiPaymentIntent, error) {
 	b_authKey := make([]byte, 16)
-	_, err := rand.Read(b_transactionId)
-	_, err2 := rand.Read(b_authKey)
-	if err != nil || err2 != nil {
+	_, err := rand.Read(b_authKey)
+	if err != nil {
 		return SuiPaymentIntent{}, fmt.Errorf("Failed to create Intent")
 	}
 	expiresAt := time.Now().Add(time.Minute * 5)
-	transactionId := hex.EncodeToString(b_transactionId)
 	authKey := hex.EncodeToString(b_authKey)
 	queries := ddb.New(h.db)
 	if _, err := queries.CreateTransaction(ctx, ddb.CreateTransactionParams{
 		ID:        transactionId,
 		AuthKey:   authKey,
 		Price:     price,
+		Currency:  "SUI",
 		Method:    "SUI",
 		ExpiresAt: models.NewUTCTime(expiresAt),
 		Hash:      hash,
-		Paid:      false,
+		Status:    int64(models.Outstanding),
 	}); err != nil {
 		return SuiPaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}

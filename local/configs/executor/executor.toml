@@ -8,7 +8,6 @@ tesla_delay = 30
 max_debuglets = 1000
 disable_tls = true
 # network_interface = "veth-host"
-price_per_bw = 1
 
 [credentials]
 ca_cert = "local/configs/executor/ca.crt"
@@ -17,3 +16,10 @@ client_key = "local/configs/executor/key"
 
 [database]
 path = ".data/executor.db"
+
+[pricing]
+price_per_bw_s = 1
+currency = "SUI"
+sui_wallet = ""
+trial_price_limit=100000
+trial_time_limit=500

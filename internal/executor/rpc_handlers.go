@@ -22,7 +22,8 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
 		IcmpEnabled:            e.packetCount.Type() == "ebpf", // TODO: have proper system to detect if service has required perms for ICMP
-		PricePerBw:             e.cfg.PricePerBw,
+		PricePerBwS:            e.cfg.Pricing.PricePerBwS,
+		Currency:               e.cfg.Pricing.Currency,
 	}
 	return resp, nil
 }

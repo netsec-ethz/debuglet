@@ -65,7 +65,8 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),
 		h.GetTeslaAnchorKey(),
 		h.GetIcmpEnabled(),
-		h.GetPricePerBw(),
+		h.GetPricePerBwS(),
+		h.GetCurrency(),
 	)
 
 	go func() {

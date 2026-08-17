@@ -28,7 +28,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 	transactionId := req.TransactionId
 	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
-	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Bool("paid", tx.Paid))
+	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Int64("status", tx.Status))
 	if err != nil || tx.AuthKey != req.AuthKey {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
 	}
@@ -36,7 +36,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", hashDebugletRequest(req.Debuglets)))
 		return echo.NewHTTPError(http.StatusBadRequest, "Request does not match the intent")
 	}
-	if !tx.Paid {
+	if tx.Status != int64(models.Paid) {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
 	}
 

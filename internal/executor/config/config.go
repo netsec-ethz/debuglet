@@ -31,11 +31,11 @@ type Config struct {
 	DispatcherYamuxAddr string           `toml:"dispatcher_yamux_addr"`
 	LogLevel            string           `toml:"log_level"`
 	Capacity            int64            `toml:"capacity"`
-	PricePerBw          int64            `toml:"price_per_bw"`
 	TeslaSeed           string           `toml:"tesla_seed"`
 	TeslaDelay          int64            `toml:"tesla_delay"` // in seconds
 	MaxDebuglets        int              `toml:"max_debuglets"`
 	Credentials         CredentialConfig `toml:"credentials"`
+	Pricing             PricingConfig    `toml:"pricing"`
 	DisableTLS          bool             `toml:"disable_tls"`
 	JSONLogs            bool             `toml:"json_logs"`
 	NetworkInterface    string           `toml:"network_interface"`
@@ -50,6 +50,14 @@ type CredentialConfig struct {
 	CACert     string `toml:"ca_cert"`
 	ClientCert string `toml:"client_cert"`
 	ClientKey  string `toml:"client_key"`
+}
+
+type PricingConfig struct {
+	PricePerBwS     int64  `toml:"price_per_bw_s"`
+	Currency        string `toml:"currency"`
+	SuiWallet       string `toml:"sui_wallet"`
+	TrialPriceLimit int64  `toml:"trial_price_limit"`
+	TrialTimeLimit  int64  `toml:"trial_time_limit"`
 }
 
 const DefaultConfigPath = "/etc/debuglet/executor/executor.toml"

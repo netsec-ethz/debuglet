@@ -30,7 +30,7 @@ import (
 	"debuglet/internal/dispatcher/database/ddb"
 
 	"github.com/block-vision/sui-go-sdk/common/grpcconn"
-	"github.com/block-vision/sui-go-sdk/models"
+	suiModels "github.com/block-vision/sui-go-sdk/models"
 	"github.com/block-vision/sui-go-sdk/mystenbcs"
 	v2 "github.com/block-vision/sui-go-sdk/pb/sui/rpc/v2"
 
@@ -41,6 +41,10 @@ import (
 )
 
 const catchUpPageSize = 50
+
+type TransactionFulfiller interface {
+	CompleteTransaction(transactionId string, ctx context.Context)
+}
 
 type Listener struct {
 	grpcEndpoint      string
@@ -54,9 +58,10 @@ type Listener struct {
 	client            *grpcconn.SuiGrpcClient
 	httpClient        *http.Client
 	db                *sql.DB
+	fulfiller         TransactionFulfiller
 }
 
-func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger) *Listener {
+func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf TransactionFulfiller) *Listener {
 	grpcEndpoint := cfg.Sui.GRPCEndpoint
 	paymentKitPackage := cfg.Sui.PaymentKitPackage
 	client := grpcconn.NewSuiGrpcClient(
@@ -75,13 +80,14 @@ func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger) *
 		logger:            logger,
 		client:            client,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		fulfiller:         tf,
 	}
 }
 
 func (l *Listener) Start(ctx context.Context) error {
 	queries := ddb.New(l.db)
 	raw, err := queries.GetTransactionState(ctx, l.cursorKey)
-	if err != nil {
+	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("load sui cursor: %w", err)
 	}
 
@@ -358,8 +364,8 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 		l.logger.Warn("transaction expired", zap.Time("exp_time", transaction.ExpiresAt.Time), zap.Time("executed_at", receipt.Timestamp))
 		return
 	}
-
-	_, err = queries.UpdateTransactionPaid(ctx, ddb.UpdateTransactionPaidParams{ID: transaction.ID, Paid: true})
+	l.fulfiller.CompleteTransaction(transaction.ID, ctx)
+	//_, err = queries.UpdateTransactionStatus(ctx, ddb.UpdateTransactionStatusParams{ID: transaction.ID, Status: int64(models.Paid)})
 	if err != nil {
 		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.ID), zap.Error(err))
 		return
@@ -368,7 +374,7 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 
 type paymentType struct {
 	Ephemeral any
-	Registry  *models.SuiAddressBytes
+	Registry  *suiModels.SuiAddressBytes
 }
 
 func (*paymentType) IsBcsEnum() {}
@@ -377,7 +383,7 @@ type paymentReceipt struct {
 	PaymentType   *paymentType
 	Nonce         string
 	PaymentAmount uint64
-	Receiver      models.SuiAddressBytes
+	Receiver      suiModels.SuiAddressBytes
 	CoinType      string
 	Timestamp     time.Time
 }

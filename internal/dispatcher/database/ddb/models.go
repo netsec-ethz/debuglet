@@ -25,14 +25,30 @@ type DebugletLog struct {
 	Output     []byte
 }
 
+type DebugletOrder struct {
+	TransactionID string
+	OrderID       int64
+	ExecutorID    string
+	Price         int64
+	Currency      string
+}
+
+type Earning struct {
+	ExecutorID     string
+	Currency       string
+	TotalIncome    int64
+	CurrentBalance int64
+}
+
 type Transaction struct {
 	ID        string
 	AuthKey   string
 	Price     int64
 	Method    string
 	ExpiresAt models.UTCTime
-	Paid      bool
 	Hash      string
+	Currency  string
+	Status    int64
 }
 
 type TransactionState struct {

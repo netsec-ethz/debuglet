@@ -29,9 +29,11 @@ type RegisteredExecutor struct {
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
-	history    *debugletHistory
-	PricePerBw int64
-	capacity   resource.Bitrate
+	history *debugletHistory
+
+	PricePerBwS int64
+	Currency    string
+	capacity    resource.Bitrate
 }
 
 // lastDebugletHistory is the default number of recent debuglet IDs to
@@ -85,8 +87,8 @@ func (e *RegisteredExecutor) AppendDebugletID(id string) {
 
 // RegisterExecutor creates or updates the executor record for id. anchorKey is
 // k_0, the public TESLA chain anchor published by the executor at startup.
-func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64) {
-	d.logger.Info("Registering executor", zap.String("id", id), zap.String("ip", ip), zap.Int64("price", price))
+func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64, currency string) {
+	d.logger.Info("Registering executor", zap.String("id", id), zap.String("ip", ip), zap.Int64("price", price), zap.String("currency", currency))
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, exists := d.executors[id]; !exists {
@@ -99,7 +101,8 @@ func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Du
 			history:              &debugletHistory{},
 			LastSeen:             time.Now(),
 			ICMPEnabled:          icmpEnabled,
-			PricePerBw:           price,
+			PricePerBwS:          price,
+			Currency:             currency,
 		}
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))

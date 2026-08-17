@@ -134,3 +134,30 @@ func (t *UTCTime) Scan(src any) error {
 		return fmt.Errorf("cannot scan %T into UTCTime", src)
 	}
 }
+
+type TransactionState int
+
+const (
+	Outstanding TransactionState = iota
+	Expired
+	Aborted
+	Paid
+	Refunded
+)
+
+func (d TransactionState) String() string {
+	switch d {
+	case Outstanding:
+		return "TransactionOutstanding"
+	case Paid:
+		return "TransactionPaid"
+	case Expired:
+		return "TransactionExpired"
+	case Aborted:
+		return "TransactionAborted"
+	case Refunded:
+		return "TransactionRefunded"
+	default:
+		panic("invalid TransactionState")
+	}
+}
