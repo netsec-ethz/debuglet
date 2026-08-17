@@ -119,6 +119,7 @@ type SuiIntent struct {
 	TransactionId   string `json:"transaction_id"`
 	AuthKey         string `json:"auth_key"`
 	Price           int64  `json:"price"`
+	CoinType        string `json:"coin_type"`
 	ExpiresAtS      int64  `json:"expires_at_s"`
 	RegistryAddress string `json:"registry_address"`
 	ReceiverAddress string `json:"receiver_address"`

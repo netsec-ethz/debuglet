@@ -59,6 +59,7 @@ type Listener struct {
 	httpClient        *http.Client
 	db                *sql.DB
 	fulfiller         TransactionFulfiller
+	cfg               *config.DispatcherConfig
 }
 
 func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf TransactionFulfiller) *Listener {
@@ -81,6 +82,7 @@ func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, t
 		client:            client,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 		fulfiller:         tf,
+		cfg:               cfg,
 	}
 }
 
@@ -345,13 +347,22 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 		return
 	}
 
-	if transaction.Method != "SUI" {
+	if transaction.Method != "SUI" && transaction.Method != "USDC" {
 		l.logger.Warn("Wrong method for transaction", zap.String("found", transaction.Method))
 	}
-
-	if !strings.EqualFold(receipt.CoinType, "0x2::sui::SUI") && !strings.EqualFold(receipt.CoinType, "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI") {
-		l.logger.Warn("wrong coin type", zap.String("expected", "0x2::sui::SUI"), zap.String("found", receipt.CoinType))
+	switch transaction.Currency {
+	case "SUI":
+		if !strings.EqualFold(receipt.CoinType, "0x2::sui::SUI") && !strings.EqualFold(receipt.CoinType, "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI") {
+			l.logger.Warn("wrong coin type", zap.String("expected", "0x2::sui::SUI"), zap.String("found", receipt.CoinType))
+			return
+		}
+	case "USDC":
+		if !strings.EqualFold("0x"+receipt.CoinType, GetCoinType(transaction.Currency, l.cfg.Sui.Network)) {
+			l.logger.Warn("wrong coin type", zap.String("expected", GetCoinType(transaction.Currency, l.cfg.Sui.Network)), zap.String("found", receipt.CoinType))
+			return
+		}
 	}
+
 	if amount != transaction.Price {
 		l.logger.Warn("payment didn't match price", zap.Int64("expected", transaction.Price), zap.Int64("actual", amount))
 		return

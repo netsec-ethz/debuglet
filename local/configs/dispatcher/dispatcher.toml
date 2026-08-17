@@ -14,6 +14,7 @@ key_file = "local/configs/dispatcher/key"
 path = ".data/dispatcher.db"
 
 [sui]
+network = "testnet"
 grpc_endpoint       = "fullnode.testnet.sui.io:443"
 graphql_url         = "https://graphql.testnet.sui.io/graphql"
 address          = "0x1737d7dc6b63ef10b7edd316524ab1ece70540a8e012dbc9593a157455ceebef"

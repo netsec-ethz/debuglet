@@ -56,7 +56,7 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
 	}
-	if (req.PaymentMethod != "SUI") && (req.PaymentMethod != "TEST") {
+	if (req.PaymentMethod != "SUI") && (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") {
 		return c.JSON(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
 	}
 	transactionId, err := h.dispatcher.Payment.NewTransactionID()
@@ -79,16 +79,19 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
 	}
 	switch req.PaymentMethod {
+	case "USDC":
+		fallthrough
 	case "SUI":
 		suiIntent, ok := intent.Intent.(sui.SuiPaymentIntent)
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "SUI",
+		return c.JSON(http.StatusOK, IntentResponse{Method: req.PaymentMethod,
 			Intent: SuiIntent{
 				TransactionId:   suiIntent.TransactionId,
 				AuthKey:         suiIntent.AuthKey,
 				Price:           suiIntent.Price,
+				CoinType:        suiIntent.CoinType,
 				ExpiresAtS:      suiIntent.ExpiresAt.Unix(),
 				RegistryAddress: suiIntent.RegistryAddress,
 				ReceiverAddress: suiIntent.ReceiverAddress,

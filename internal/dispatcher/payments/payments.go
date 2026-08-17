@@ -43,8 +43,10 @@ func (p *PaymentHandler) Start(ctx context.Context) error {
 
 func (p *PaymentHandler) CreatePaymentIntent(transactionId string, price int64, method string, hash string, ctx context.Context) (PaymentIntent, error) {
 	switch method {
+	case "USDC":
+		fallthrough
 	case "SUI":
-		suiIntent, err := p.sui.CreatePaymentIntent(transactionId, price, hash, ctx)
+		suiIntent, err := p.sui.CreatePaymentIntent(transactionId, price, method, hash, ctx)
 		if err != nil {
 			return PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
 		}
