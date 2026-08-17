@@ -1,0 +1,43 @@
+version: "2"
+sql:
+  # dispatcher
+  - engine: "sqlite"
+    queries: "internal/dispatcher/database/queries"
+    schema: "internal/dispatcher/database/migrations"
+    gen:
+      go:
+        package: "database"
+        out: "internal/dispatcher/database"
+        overrides:
+          - column: "debuglets.state"
+            go_type:
+              import: "debuglet/internal/dispatcher/models"
+              type: "DebugletRunState"
+          - column: "debuglets.addresses"
+            go_type:
+              import: "debuglet/internal/dispatcher/models"
+              type: "CommaSeparatedList"
+          - db_type: "TIMESTAMP"
+            go_type:
+              import: "debuglet/internal/dispatcher/models"
+              type: "UTCTime"
+
+  # executor
+  - engine: "sqlite"
+    queries: "internal/executor/database/queries"
+    schema: "internal/executor/database/migrations"
+    gen:
+      go:
+        package: "database"
+        out: "internal/executor/database"
+        overrides:
+          - column: "debuglets.addresses"
+            go_type:
+              type: "CommaSeparatedList"
+          - column: "debuglets.args"
+            go_type:
+              type: "CommaSeparatedList"
+          - db_type: "TIMESTAMP"
+            nullable: true
+            go_type:
+              type: "UTCTime"

@@ -1,3 +1,3 @@
-package sqlite
+package debugletgo
 
 //go:generate sqlc generate

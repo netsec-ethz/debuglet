@@ -1,7 +1,7 @@
 package api
 
 import (
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
@@ -77,9 +77,9 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	queries := ddb.New(h.dispatcher.DB())
+	queries := database.New(h.dispatcher.DB())
 
-	dbLogs, err := queries.ListDebugletLogs(ctx, ddb.ListDebugletLogsParams{
+	dbLogs, err := queries.ListDebugletLogs(ctx, database.ListDebugletLogsParams{
 		DebugletID: debugletID,
 		ID:         after,
 		Limit:      limit,

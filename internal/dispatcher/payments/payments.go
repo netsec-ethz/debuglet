@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"debuglet/internal/dispatcher/config"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments/sui"
 	"encoding/hex"
@@ -65,8 +65,8 @@ func (p *PaymentHandler) IsPaid(ctx context.Context, transactionID string) (bool
 	}
 }
 
-func (p *PaymentHandler) GetTransaction(ctx context.Context, transactionID string) (ddb.Transaction, error) {
-	queries := ddb.New(p.db)
+func (p *PaymentHandler) GetTransaction(ctx context.Context, transactionID string) (database.Transaction, error) {
+	queries := database.New(p.db)
 	return queries.GetTransactionByID(ctx, transactionID)
 }
 
@@ -84,8 +84,8 @@ func (p *PaymentHandler) CreateDummyIntent(transactionId string, price int64, ha
 	//TODO check if we can fetch a timestamp from chain to avoid drift
 	expiresAt := time.Now().Add(time.Minute * 5)
 
-	queries := ddb.New(p.db)
-	if t, err := queries.CreateTransaction(ctx, ddb.CreateTransactionParams{
+	queries := database.New(p.db)
+	if t, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{
 		ID:        transactionId,
 		Method:    "TEST",
 		ExpiresAt: models.NewUTCTime(expiresAt),
@@ -101,8 +101,8 @@ func (p *PaymentHandler) CreateDummyIntent(transactionId string, price int64, ha
 
 func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.Context) {
 	p.logger.Info("settling transaction", zap.String("id", transactionId))
-	queries := ddb.New(p.db)
-	queries.UpdateTransactionStatus(ctx, ddb.UpdateTransactionStatusParams{
+	queries := database.New(p.db)
+	queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
 		Status: int64(models.Paid),
 		ID:     transactionId,
 	})
@@ -115,7 +115,7 @@ func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.C
 	for _, order := range orders {
 		p.logger.Info("Crediting", zap.String("id", order.ExecutorID), zap.Int64("amount", order.Price), zap.String("currency", order.Currency))
 		p.CreateEarningsIfNotExists(order.ExecutorID, order.Currency, queries, ctx)
-		i, err := queries.AddEarnings(ctx, ddb.AddEarningsParams{
+		i, err := queries.AddEarnings(ctx, database.AddEarningsParams{
 			Amount:     order.Price,
 			ExecutorID: order.ExecutorID,
 			Currency:   order.Currency,
@@ -128,13 +128,13 @@ func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.C
 	}
 }
 
-func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, queries *ddb.Queries, ctx context.Context) {
-	_, err := queries.GetEarningsIn(ctx, ddb.GetEarningsInParams{
+func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, queries *database.Queries, ctx context.Context) {
+	_, err := queries.GetEarningsIn(ctx, database.GetEarningsInParams{
 		ExecutorID: execID,
 		Currency:   currency,
 	})
 	if err == sql.ErrNoRows {
-		queries.CreateEarnings(ctx, ddb.CreateEarningsParams{
+		queries.CreateEarnings(ctx, database.CreateEarningsParams{
 			ExecutorID: execID,
 			Currency:   currency,
 		})

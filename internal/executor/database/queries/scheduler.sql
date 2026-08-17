@@ -1,9 +1,3 @@
-/*
-
-DEBUGLET
-
-*/
-
 -- name: ListDebuglets :many
 SELECT * FROM debuglets
 LIMIT ?

@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"debuglet/internal/dispatcher/config"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"encoding/hex"
 	"fmt"
@@ -45,8 +45,8 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(transactionId string, price int6
 	}
 	expiresAt := time.Now().Add(time.Minute * 5)
 	authKey := hex.EncodeToString(b_authKey)
-	queries := ddb.New(h.db)
-	if _, err := queries.CreateTransaction(ctx, ddb.CreateTransactionParams{
+	queries := database.New(h.db)
+	if _, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{
 		ID:        transactionId,
 		AuthKey:   authKey,
 		Price:     price,

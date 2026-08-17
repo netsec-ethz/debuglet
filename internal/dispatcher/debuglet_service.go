@@ -2,7 +2,7 @@ package dispatcher
 
 import (
 	"context"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
@@ -48,9 +48,9 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 	defer tx.Rollback()
 
-	qtx := ddb.New(d.db).WithTx(tx)
+	qtx := database.New(d.db).WithTx(tx)
 	for i, store := range stores {
-		if _, err := qtx.CreateDebuglet(ctx, ddb.CreateDebugletParams{
+		if _, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
 			ID:         debugletIDS[i],
 			StartTime:  models.NewUTCTime(store.From),
 			EndTime:    models.NewUTCTime(store.To),
@@ -191,8 +191,8 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		d.debugletStores[debugletID].State = models.RunStateUploaded
 		d.mu.Unlock()
 
-		queries := ddb.New(d.db)
-		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
+		queries := database.New(d.db)
+		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
 			ID:    debugletID,
 			State: models.RunStateUploaded,
 		}); err != nil {
