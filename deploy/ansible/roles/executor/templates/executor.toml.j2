@@ -1,13 +1,24 @@
+[identity]
 executor_id = "{{ executor_id }}"
 version = "{{ executor_version }}"
-dispatcher_addr = "{{ dispatcher_addr }}:{{ dispatcher_grpc_port }}"
-dispatcher_yamux_addr = "{{ dispatcher_addr }}:{{ dispatcher_http_port }}"
-log_level = "{{ executor_log_level }}"
+
+[dispatcher]
+addr = "{{ dispatcher_addr }}:{{ dispatcher_grpc_port }}"
+yamux_addr = "{{ dispatcher_addr }}:{{ dispatcher_http_port }}"
+
+[tls]
+disable = {{ executor_disable_tls | lower }}
+
+[resources]
 capacity = {{ executor_capacity }}
-tesla_seed = "{{ executor_tesla_seed }}"
-tesla_delay = {{ tesla_delay }}
 max_debuglets = {{ executor_max_debuglets }}
-disable_tls = {{ executor_disable_tls | lower }}
+
+[tesla]
+seed = "{{ executor_tesla_seed }}"
+delay = {{ tesla_delay }}
+
+[logging]
+log_level = "{{ executor_log_level }}"
 
 [credentials]
 ca_cert = "{{ config_dir }}/executor/ca.crt"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"debuglet/internal/executor/config"
+	"debuglet/internal/executor/debuglet/socket"
 	"debuglet/internal/executor/ratelimit"
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
@@ -20,7 +21,7 @@ import (
 )
 
 type Executor struct {
-	cfg           config.Config
+	cfg           config.ExecutorConfig
 	teslaSchedule *tesla.KeySchedule
 	logger        *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
@@ -32,25 +33,26 @@ type Executor struct {
 	limiter     *app.Limiter
 	packetCount ratelimit.PacketCount
 	iface       *net.Interface
+	portManager *socket.PortManager
 
 	Bidi *rpc.BidiClient
 }
 
-func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, error) {
+func New(cfg *config.ExecutorConfig, l *zap.Logger, s scheduler.Scheduler) (*Executor, error) {
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  []byte(cfg.TeslaSeed),
-		Delay: time.Duration(cfg.TeslaDelay) * time.Second,
+		Seed:  []byte(cfg.Tesla.Seed),
+		Delay: time.Duration(cfg.Tesla.Delay) * time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Tesla key schedule: %w", err)
 	}
 
 	var iface *net.Interface
-	l.Debug("Network interface for packet counting", zap.String("interface", cfg.NetworkInterface))
-	if cfg.NetworkInterface != "" {
-		f, err := net.InterfaceByName(cfg.NetworkInterface)
+	l.Debug("Network interface for packet counting", zap.String("interface", cfg.Network.Interface))
+	if cfg.Network.Interface != "" {
+		f, err := net.InterfaceByName(cfg.Network.Interface)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get '%s' network interface: %w", cfg.NetworkInterface, err)
+			return nil, fmt.Errorf("failed to get '%s' network interface: %w", cfg.Network.Interface, err)
 		}
 		iface = f
 	}
@@ -63,6 +65,11 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 	limiter := app.NewLimiter(l)
 	limiter.SetExecutorCapacity(app.Gigabit)
 
+	portManager, err := socket.NewPortManager(cfg.Network.PublicHost, cfg.Network.PublicPorts)
+	if err != nil {
+		return nil, fmt.Errorf("invalid public_ports: %w", err)
+	}
+
 	e := &Executor{
 		teslaSchedule: schedule,
 		logger:        l,
@@ -71,18 +78,19 @@ func New(cfg *config.Config, l *zap.Logger, s scheduler.Scheduler) (*Executor, e
 		running:       make(map[string]RunningDebuglet),
 		limiter:       limiter,
 		packetCount:   pc,
+		portManager:   portManager,
 	}
 	s.RegisterOnStart(e.OnDebugletStart)
 
 	var creds credentials.TransportCredentials
 	var tlsCfg *tls.Config
-	if !cfg.DisableTLS {
+	if !cfg.TLS.Disable {
 		tlsCfg, creds, err = getClientCredentials(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get client credentials: %w", err)
 		}
 	}
-	opts := rpc.BidiOptions{Logger: l, Address: cfg.DispatcherAddr, YamuxAddress: cfg.DispatcherYamuxAddr, TLSCreds: creds, TLSConfig: tlsCfg}
+	opts := rpc.BidiOptions{Logger: l, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsCfg}
 	bidi, err := rpc.NewBidiClient(opts, e)
 	if err != nil {
 		return nil, err
@@ -108,7 +116,7 @@ func (e *Executor) setResources(ctx context.Context, capacity app.Bitrate) (*pro
 	e.limiter.SetExecutorCapacity(capacity)
 	return e.Bidi.Client.Resources(ctx, &protocol.ResourcesRequest{
 		BandwidthCapacity: int64(capacity),
-		ExecutorId:        e.cfg.ExecutorID,
+		ExecutorId:        e.cfg.Identity.ExecutorID,
 	})
 }
 
@@ -128,7 +136,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context) {
 			now := time.Now()
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
 			req := &protocol.HeartbeatRequest{
-				ExecutorId:    e.cfg.ExecutorID,
+				ExecutorId:    e.cfg.Identity.ExecutorID,
 				TimestampNs:   now.UnixNano(),
 				TeslaKeyEpoch: epoch,
 				TeslaKey:      key,
@@ -142,7 +150,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context) {
 	}
 }
 
-func getClientCredentials(cfg *config.Config) (*tls.Config, credentials.TransportCredentials, error) {
+func getClientCredentials(cfg *config.ExecutorConfig) (*tls.Config, credentials.TransportCredentials, error) {
 	cert, err := tls.LoadX509KeyPair(
 		cfg.Credentials.ClientCert,
 		cfg.Credentials.ClientKey,

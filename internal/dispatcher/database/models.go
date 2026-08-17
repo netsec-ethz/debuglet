@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package ddb
+package database
 
 import (
 	"debuglet/internal/dispatcher/models"

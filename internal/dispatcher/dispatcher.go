@@ -3,7 +3,7 @@ package dispatcher
 import (
 	"context"
 	"database/sql"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/resource"
@@ -28,14 +28,13 @@ type DebugletStore struct {
 type Dispatcher struct {
 	version string
 
-	executors    map[string]*RegisteredExecutor
-	execTimeout  time.Duration
-	ipToExecutor map[string]string
-	keystore     *tag.KeyStore
-	logger       *zap.Logger
-	Bidi         *rpc.BidiServer
-	mu           sync.RWMutex
-	db           *sql.DB
+	executors   map[string]*RegisteredExecutor
+	execTimeout time.Duration
+	keystore    *tag.KeyStore
+	logger      *zap.Logger
+	Bidi        *rpc.BidiServer
+	mu          sync.RWMutex
+	db          *sql.DB
 
 	// debugletStores tracks in-memory state for active debuglets.
 	debugletStores map[string]*DebugletStore
@@ -53,7 +52,6 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
 		execTimeout:    execTimeout,
-		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
 		logger:         l,
 		db:             db,
@@ -68,7 +66,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 }
 
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
-	queries := ddb.New(d.db)
+	queries := database.New(d.db)
 	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(time.Now().Add(-1*time.Minute)))
 	if err != nil {
 		return fmt.Errorf("failed to list debuglets from database: %w", err)

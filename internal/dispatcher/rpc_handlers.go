@@ -2,7 +2,7 @@ package dispatcher
 
 import (
 	"context"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
@@ -61,6 +61,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		execID,
 		h.GetVersion(),
 		h.GetSourceIp(),
+		h.GetPublicHost(),
 		time.Duration(h.GetTeslaDelaySec())*time.Second,
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),
 		h.GetTeslaAnchorKey(),
@@ -109,8 +110,8 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateR
 
 	if store, ok := d.debugletStores[debugletID]; ok {
 		store.State = state
-		queries := ddb.New(d.db)
-		if _, err := queries.UpdateDebugletState(ctx, ddb.UpdateDebugletStateParams{
+		queries := database.New(d.db)
+		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
 			ID:    debugletID,
 			State: state,
 		}); err != nil {
@@ -242,8 +243,8 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 				}
 				d.mu.Unlock()
 
-				queries := ddb.New(d.db)
-				if _, err := queries.CreateDebugletLog(ctx, ddb.CreateDebugletLogParams{
+				queries := database.New(d.db)
+				if _, err := queries.CreateDebugletLog(ctx, database.CreateDebugletLogParams{
 					DebugletID: debugletID,
 					Timestamp:  models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
 					Output:     output,

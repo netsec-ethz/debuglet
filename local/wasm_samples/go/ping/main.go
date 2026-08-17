@@ -73,12 +73,12 @@ func ping(id, seq uint16) (time.Duration, error) {
 	defer conn.Close()
 
 	start := time.Now()
-	if err := conn.Send(echoPacket(id, seq, 64)); err != nil {
+	if err := conn.Write(echoPacket(id, seq, 64)); err != nil {
 		return 0, err
 	}
 
 	buf := make([]byte, 100)
-	n, err := conn.Receive(buf)
+	n, err := conn.Read(buf)
 	rtt := time.Since(start)
 	if err != nil {
 		return 0, err

@@ -2,30 +2,28 @@
 // versions:
 //   sqlc v1.31.1
 
-package edb
+package database
 
 import (
 	"time"
-
-	"debuglet/internal/executor/scheduler/sqlite/models"
 )
 
 type Debuglet struct {
 	ID            string
-	StartTime     models.UTCTime
-	Args          models.CommaSeparatedList
+	StartTime     UTCTime
+	Args          CommaSeparatedList
 	Wasm          []byte
 	TransactionID string
 	FloorBw       int64
 	CeilBw        int64
 	TimeoutMs     int64
-	Addresses     models.CommaSeparatedList
+	Addresses     CommaSeparatedList
 	RequireIcmp   bool
 	ListenUdp     bool
 	ListenTcp     bool
 	ListenIcmp    bool
 	ListenScion   bool
-	StartedAt     models.UTCTime
+	StartedAt     UTCTime
 }
 
 type DebugletLog struct {

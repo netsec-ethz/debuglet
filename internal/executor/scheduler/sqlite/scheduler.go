@@ -3,10 +3,9 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"debuglet/internal/executor/database"
 	"debuglet/internal/executor/scheduler"
 	"debuglet/internal/executor/scheduler/memory"
-	"debuglet/internal/executor/scheduler/sqlite/edb"
-	"debuglet/internal/executor/scheduler/sqlite/models"
 	"fmt"
 	"log"
 	"time"
@@ -32,11 +31,11 @@ func NewStorage(db *sql.DB) *SqliteStorage {
 }
 
 func (s *SqliteStorage) RestoreFromDatabase(ctx context.Context) error {
-	queries := edb.New(s.db)
+	queries := database.New(s.db)
 	var offset int64 = 0
 
 	for {
-		debs, err := queries.ListDebuglets(ctx, edb.ListDebugletsParams{Limit: 100, Offset: offset})
+		debs, err := queries.ListDebuglets(ctx, database.ListDebugletsParams{Limit: 100, Offset: offset})
 		if err != nil {
 			return fmt.Errorf("failed to list debuglets from database: %w", err)
 		}
@@ -78,10 +77,10 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 		startTime = *spec.StartTime
 	}
 
-	queries := edb.New(s.db)
-	if err := queries.CreateDebuglet(ctx, edb.CreateDebugletParams{
+	queries := database.New(s.db)
+	if err := queries.CreateDebuglet(ctx, database.CreateDebugletParams{
 		ID:            spec.DebugletID,
-		StartTime:     models.NewUTCTime(startTime),
+		StartTime:     database.NewUTCTime(startTime),
 		Args:          spec.Args,
 		Wasm:          spec.Wasm,
 		TransactionID: spec.TransactionID,
@@ -109,7 +108,7 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 
 func (s *SqliteStorage) Remove(ctx context.Context, debugletID string) (bool, error) {
 	exists, localErr := s.local.Remove(ctx, debugletID)
-	queries := edb.New(s.db)
+	queries := database.New(s.db)
 	if err := queries.DeleteDebuglet(ctx, debugletID); err != nil {
 		return false, fmt.Errorf("failed to delete debuglet %s from database: %w", debugletID, err)
 	}
@@ -121,10 +120,10 @@ func (s *SqliteStorage) RegisterOnStart(cb func(context.Context, scheduler.Spec)
 }
 
 func (s *SqliteStorage) onStart(ctx context.Context, spec scheduler.Spec) {
-	queries := edb.New(s.db)
-	deb, err := queries.UpdateDebugletStarted(ctx, edb.UpdateDebugletStartedParams{
+	queries := database.New(s.db)
+	deb, err := queries.UpdateDebugletStarted(ctx, database.UpdateDebugletStartedParams{
 		ID:        spec.DebugletID,
-		StartedAt: models.NewUTCTime(time.Now()),
+		StartedAt: database.NewUTCTime(time.Now()),
 	})
 	if err != nil {
 		log.Printf("Failed to set debuglet %s as started in database: %v", spec.DebugletID, err)

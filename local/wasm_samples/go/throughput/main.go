@@ -58,7 +58,7 @@ func main() {
 	var sent int64
 	start := time.Now()
 	for time.Now().Before(deadline) {
-		if err := conn.Send(buf); err != nil {
+		if err := conn.Write(buf); err != nil {
 			fmt.Printf("[-] send failed after %d bytes: %v\n", sent, err)
 			os.Exit(1)
 		}

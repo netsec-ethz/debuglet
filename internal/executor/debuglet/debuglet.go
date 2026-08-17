@@ -72,7 +72,7 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface) *Debuglet {
+func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if iface != nil && runtime.GOOS == "linux" {
@@ -99,6 +99,8 @@ func New(logger *zap.Logger, debugletID string, transactionID string, policy sch
 
 		Registry:  &socket.SocketRegistry{},
 		ScionConn: socket.NewSCIONConnRegistry(scionConnCapacity),
+
+		PortManager: portManager,
 	}
 
 	return &Debuglet{
@@ -117,10 +119,6 @@ func (d *Debuglet) InitRuntime(ctx context.Context, wasmBytes []byte) error {
 		return err
 	}
 	return nil
-}
-
-func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
-	return d.startServers(ctx, req)
 }
 
 // GetSCIONAddr returns the local SCION address of the server listener started
@@ -145,28 +143,33 @@ type StartServersReq struct {
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
-func (d *Debuglet) startServers(ctx context.Context, req StartServersReq) error {
-
+func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
 	if req.TCP {
 		d.env.Logger.Debug("startServers: starting TCP listener")
-		tcpListener, err := net.Listen("tcp", ":0")
+		if !d.env.PortManager.Enabled() {
+			return fmt.Errorf("startServers: TCP listener requested but not enabled (public_host/public_ports not configured)")
+		}
+		lis, port, addr, err := d.env.PortManager.ListenTCP()
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
 		}
-		if lis, ok := tcpListener.(*net.TCPListener); ok {
-			d.env.TcpServer = lis
-		} else {
-			return fmt.Errorf("startServers: failed to assert TCP listener type")
-		}
+		d.env.TcpServer = lis
+		d.env.TcpServerPort = port
+		d.env.TcpServerAddr = addr
 	}
 
 	if req.UDP {
 		d.env.Logger.Debug("startServers: starting UDP listener")
-		udpServer, err := net.ListenPacket("udp", ":0")
+		if !d.env.PortManager.Enabled() {
+			return fmt.Errorf("startServers: UDP listener requested but not enabled (public_host/public_ports not configured)")
+		}
+		conn, port, addr, err := d.env.PortManager.ListenUDP()
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
 		}
-		d.env.UdpServer = udpServer
+		d.env.UdpServer = conn
+		d.env.UdpServerPort = port
+		d.env.UdpServerAddr = addr
 	}
 
 	if req.ICMP {
@@ -240,24 +243,36 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
 func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.HostModuleBuilder {
-	// ---- Generic socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTCP)).Export("connect_tcp")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTLS)).Export("connect_tls")
+
+	// ---- TCP socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTCP)).Export("connect_tcp")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_tcp_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_tcp_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_tcp")
 
-	// ---- TCP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.env)).Export("accept_tcp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetTCPAddr(d.env)).Export("get_tcp_addr")
 
-	// ---- IP socket API ----
+	// ---- UDP socket API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeUDP)).Export("connect_udp")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_udp_data")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_udp_data")
+
+	// ---- UDP listener API ----
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveUDPFrom(d.env)).Export("receive_udp_from")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetUDPAddr(d.env)).Export("get_udp_addr")
+
+	// ---- ICMP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.env)).Export("accept_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")
 
+	// ---- Connection Util API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostDrain(d.env)).Export("drain_connection")
+	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetRemoteAddr(d.env)).Export("get_remote_addr")
 
 	// ---- SCION-UDP API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(d.env)).Export("send_scion_udp_packet")

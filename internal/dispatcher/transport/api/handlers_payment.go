@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"debuglet/internal/dispatcher/database/ddb"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/payments/sui"
 	"math"
@@ -16,7 +16,7 @@ import (
 )
 
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, ctx context.Context) (int64, error) {
-	queries := ddb.New(h.dispatcher.DB())
+	queries := database.New(h.dispatcher.DB())
 	price := new(big.Int).SetInt64(0)
 	for _, req := range request.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
@@ -32,7 +32,7 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 		timeout := new(big.Int).SetInt64(req.Policy.TimeoutMS / 1000)
 		debugletPrice := new(big.Int).Mul(new(big.Int).Mul(ppb, floorBW), timeout)
 
-		queries.CreateDebugletOrder(ctx, ddb.CreateDebugletOrderParams{
+		queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
 			TransactionID: transactionId,
 			OrderID:       req.OrderID,
 			ExecutorID:    req.ExecutorID,

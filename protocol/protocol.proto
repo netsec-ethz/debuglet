@@ -23,22 +23,6 @@ option go_package = "/protocol";
 // ==================== CONTROL MESSAGES ======================
 // ============================================================
 
-// ================ EXECUTOR -> DISPATCHER =====================
-
-message HeartbeatRequest {
-  string executor_id = 1;
-  int64 timestamp_ns = 2;
-  int64 tesla_key_epoch = 3;
-  bytes tesla_key = 4;
-}
-message HeartbeatResponse {}
-
-message ResourcesRequest {
-  string executor_id = 1;
-  int64 bandwidth_capacity = 2; // Bandwidth capacity (bits/s) the executor can handle
-}
-message ResourcesResponse {}
-
 // ================ DISPATCHER -> EXECUTOR =====================
 
 message HelloRequest {}
@@ -52,6 +36,7 @@ message HelloResponse {
   bool icmp_enabled = 7; // Whether the executor can handle ICMP packets
   int64 price_per_bw_s = 8; // Price per bit/s of bandwidth
   string currency = 9;
+  optional string public_host = 10; // Optional: public host for the executor at which debuglet listeners can be contacted
 }
 
 message DebugletPolicy {
@@ -98,6 +83,20 @@ message BandwidthResponse {}
 // ============================================================
 
 // ================ EXECUTOR -> DISPATCHER ====================
+
+message HeartbeatRequest {
+  string executor_id = 1;
+  int64 timestamp_ns = 2;
+  int64 tesla_key_epoch = 3;
+  bytes tesla_key = 4;
+}
+message HeartbeatResponse {}
+
+message ResourcesRequest {
+  string executor_id = 1;
+  int64 bandwidth_capacity = 2; // Bandwidth capacity (bits/s) the executor can handle
+}
+message ResourcesResponse {}
 
 // The states of a debuglet from when a debuglet is set to start until before it exits
 enum RunState {

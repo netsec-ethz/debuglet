@@ -21,7 +21,35 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+type DispatcherConfig struct {
+	Server    ServerConfig    `toml:"server"`
+	Logging   LoggingConfig   `toml:"logging"`
+	Scheduler SchedulerConfig `toml:"scheduler"`
+	TLS       TLSConfig       `toml:"tls"`
+	Database  DatabaseConfig  `toml:"database"`
+	Sui       SuiConfig       `toml:"sui"`
+}
+
+type ServerConfig struct {
+	Version  string `toml:"version"`
+	GRPCPort int    `toml:"grpc_port"`
+	HTTPPort int    `toml:"http_port"`
+}
+
+type LoggingConfig struct {
+	LogLevel string `toml:"log_level"`
+	JSONLogs bool   `toml:"json_logs"`
+}
+
+type SchedulerConfig struct {
+	// ExecutorTimeout is the maximum amount of seconds between heartbeats.
+	ExecutorTimeout int `toml:"executor_timeout"`
+	// SchedulerGranularityMs is the scheduler granularity in milliseconds for time-range capacity tracking.
+	SchedulerGranularityMs int64 `toml:"scheduler_granularity_ms"`
+}
+
 type TLSConfig struct {
+	Disable  bool   `toml:"disable"`
 	CertFile string `toml:"cert_file"`
 	KeyFile  string `toml:"key_file"`
 	CAFile   string `toml:"ca_file,omitempty"` // optional for client cert validation
@@ -40,22 +68,6 @@ type SuiConfig struct {
 	PaymentKitPackage string `toml:"payment_kit_package"`
 }
 
-type DispatcherConfig struct {
-	Version    string    `toml:"version"`
-	GRPCPort   int       `toml:"grpc_port"`
-	HTTPPort   int       `toml:"http_port"`
-	LogLevel   string    `toml:"log_level"`
-	DisableTLS bool      `toml:"disable_tls"`
-	TLS        TLSConfig `toml:"tls"`
-	// Maximum amount of seconds between heartbeats
-	ExecutorTimeout int            `toml:"executor_timeout"`
-	Database        DatabaseConfig `toml:"database"`
-	Sui             SuiConfig      `toml:"sui"`
-	JSONLogs        bool           `toml:"json_logs"`
-	// Scheduler granularity in milliseconds for time-range capacity tracking.
-	SchedulerGranularityMs int64 `toml:"scheduler_granularity_ms"`
-}
-
 // LoadConfig reads a TOML config file and unmarshals it
 func LoadConfig(path string) (*DispatcherConfig, error) {
 	data, err := os.ReadFile(path)
@@ -67,11 +79,11 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 		return nil, fmt.Errorf("unmarshal toml: %w", err)
 	}
 
-	if cfg.LogLevel == "" {
-		cfg.LogLevel = "info"
+	if cfg.Logging.LogLevel == "" {
+		cfg.Logging.LogLevel = "info"
 	}
-	if cfg.Version == "" {
-		cfg.Version = "unknown"
+	if cfg.Server.Version == "" {
+		cfg.Server.Version = "unknown"
 	}
 
 	return &cfg, nil
