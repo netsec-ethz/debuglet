@@ -57,6 +57,23 @@ func stripPort(addr string) string {
 	return host
 }
 
+// writeAddr writes addr into the guest buffer at (bufPtr, bufLen) and returns
+// its length, or -1 if addr is empty, the buffer is too small, or the write
+// fails.
+func writeAddr(mod api.Module, bufPtr, bufLen uint32, addr string) int32 {
+	if addr == "" {
+		return -1
+	}
+	b := []byte(addr)
+	if bufLen < uint32(len(b)) {
+		return -1
+	}
+	if !mod.Memory().Write(bufPtr, b) {
+		return -1
+	}
+	return int32(len(b))
+}
+
 // =============================================================================
 // Generic socket API
 // =============================================================================
@@ -218,6 +235,21 @@ func HostDrain(env *WasmEnv) func(ctx context.Context, sockID int32) {
 	}
 }
 
+// HostGetRemoteAddr writes the socket peer's full "host:port" address into the
+// guest buffer and returns its length, or -1 if unavailable/too small.
+// WASM key: "get_remote_addr"
+func HostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, sockID int32, bufPtr, bufLen uint32) int32 {
+		sock, err := env.Registry.Get(sockID)
+		if err != nil {
+			env.Logger.Warnw("hostGetRemoteAddr: invalid handle", "handle", sockID, "err", err)
+			panic(fmt.Errorf("get_remote_addr: %w", err))
+		}
+
+		return writeAddr(mod, bufPtr, bufLen, sock.RemoteAddr())
+	}
+}
+
 // =============================================================================
 // TCP socket API
 // =============================================================================
@@ -234,6 +266,69 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 		}
 
 		return env.Registry.Add(socket.NewGenericSocket(conn, socket.SocketTypeTCP, ""))
+	}
+}
+
+// HostGetTCPAddr writes the public "host:port" of the TCP listener into the
+// guest buffer and returns its length, or -1 if unavailable/too small.
+// WASM key: "get_tcp_addr"
+func HostGetTCPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+		return writeAddr(mod, bufPtr, bufLen, env.TcpServerAddr)
+	}
+}
+
+// =============================================================================
+// UDP socket API
+// WASM keys: "get_udp_addr", "receive_udp_from". Connected-UDP reads/writes
+// reuse the generic socket API above ("receive_udp_data", "send_udp_data").
+// =============================================================================
+
+// HostGetUDPAddr writes the public "host:port" of the UDP listener into the
+// guest buffer and returns its length, or -1 if unavailable/too small.
+// WASM key: "get_udp_addr"
+func HostGetUDPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+		return writeAddr(mod, bufPtr, bufLen, env.UdpServerAddr)
+	}
+}
+
+// HostReceiveUDPFrom reads one datagram from the UDP server socket into the
+// buffer at recvp and writes the sender's "host:port" into senderp. The
+// address length is stored as a little-endian uint32 at addrLenp so the guest
+// can slice senderp precisely and avoid trailing NULs. Returns the number of
+// bytes read as I32; a read error panics per the host-function convention. No
+// deadline handling is applied: the executor's debuglet timeout closes
+// UdpServer, which unblocks a pending read.
+// WASM key: "receive_udp_from"
+func HostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod api.Module, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
+	return func(ctx context.Context, mod api.Module, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
+		buf, err := ExtractMem[byte](mod, recvp, recvLen)
+		if err != nil {
+			env.Logger.Warnw("hostReceiveUDPFrom: failed to extract buffer", "err", err)
+			panic(fmt.Errorf("receive_udp_from: failed to extract buffer: %w", err))
+		}
+
+		n, from, err := env.UdpServer.ReadFrom(buf)
+		if err != nil {
+			env.Logger.Warnw("hostReceiveUDPFrom: read error", "err", err, "n", n)
+			panic(fmt.Errorf("receive_udp_from: read error: %w", err))
+		}
+
+		fromAddr := ""
+		if from != nil {
+			fromAddr = from.String()
+		}
+		addrLen := writeAddr(mod, senderp, senderLen, fromAddr)
+		if addrLen < 0 {
+			env.Logger.Warnw("hostReceiveUDPFrom: failed to write sender address", "from", fromAddr)
+			panic(fmt.Errorf("receive_udp_from: sender buffer too small for %q", fromAddr))
+		}
+		if !mod.Memory().WriteUint32Le(addrLenp, uint32(addrLen)) {
+			env.Logger.Warnw("hostReceiveUDPFrom: failed to write sender address length", "from", fromAddr)
+			panic(fmt.Errorf("receive_udp_from: failed to write sender address length"))
+		}
+		return int32(n)
 	}
 }
 

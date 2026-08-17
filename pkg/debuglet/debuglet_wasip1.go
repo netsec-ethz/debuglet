@@ -36,8 +36,26 @@ func connectTCP(addrp, addrLen uint32) int32
 //go:wasmimport env connect_tls
 func connectTLS(addrp, addrLen uint32) int32
 
+//go:wasmimport env connect_udp
+func connectUDP(addrp, addrLen uint32) int32
+
 //go:wasmimport env accept_tcp
 func acceptTCPHost() int32
+
+//go:wasmimport env get_tcp_addr
+func getTCPAddr(bufPtr, bufLen uint32) int32
+
+//go:wasmimport env get_udp_addr
+func getUDPAddr(bufPtr, bufLen uint32) int32
+
+//go:wasmimport env receive_udp_data
+func receiveUDPData(sock, bufp, bufLen uint32) int32
+
+//go:wasmimport env receive_udp_from
+func receiveUDPFrom(recvp, recvLen, senderp, senderLen, addrLenp uint32) int32
+
+//go:wasmimport env send_udp_data
+func sendUDPData(sock, bufp, bufLen uint32)
 
 //go:wasmimport env receive_tcp_data
 func receiveTCPData(sock, bufp, bufLen uint32) int32
@@ -47,6 +65,9 @@ func sendTCPData(sock, bufp, bufLen uint32)
 
 //go:wasmimport env drain_connection
 func drain_connection(sock uint32)
+
+//go:wasmimport env get_remote_addr
+func getRemoteAddr(sock, bufPtr, bufLen uint32) int32
 
 //go:wasmimport env close_tcp
 func closeTCP(sock uint32)
@@ -102,6 +123,17 @@ func dialICMP4(addr string) (*Conn, error) {
 	return &Conn{handle: h, tr: transportICMP4}, nil
 }
 
+func dialUDP(addr string) (*Conn, error) {
+	if addr == "" {
+		return nil, fmt.Errorf("%w: empty address", ErrConnect)
+	}
+	h := connectUDP(strPtr(addr), uint32(len(addr)))
+	if h < 0 {
+		return nil, fmt.Errorf("%w: %s", ErrConnect, addr)
+	}
+	return &Conn{handle: h, tr: transportUDP}, nil
+}
+
 func acceptTCP() (*Conn, error) {
 	h := acceptTCPHost()
 	if h < 0 {
@@ -110,23 +142,53 @@ func acceptTCP() (*Conn, error) {
 	return &Conn{handle: h, tr: transportTCP}, nil
 }
 
-// Send writes the whole of b to the connection. The host send functions do not
-// report short writes, so Send returns an error only for invalid input.
-func (c *Conn) Send(b []byte) error {
+func listenAddr() (string, error) {
+	buf := make([]byte, 512)
+	n := getTCPAddr(bytePtr(buf), uint32(len(buf)))
+	if n < 0 {
+		return "", fmt.Errorf("debuglet: get_tcp_addr failed. Has the debuglet been started with a TCP listener?")
+	}
+	return string(buf[:n]), nil
+}
+
+func listenUDPAddr() (string, error) {
+	buf := make([]byte, 512)
+	n := getUDPAddr(bytePtr(buf), uint32(len(buf)))
+	if n < 0 {
+		return "", fmt.Errorf("debuglet: get_udp_addr failed. Has the debuglet been started with a UDP listener?")
+	}
+	return string(buf[:n]), nil
+}
+
+func readFromUDP(buf []byte) (int, string, error) {
+	if len(buf) == 0 {
+		return 0, "", fmt.Errorf("debuglet: readfrom requires a non-empty buffer")
+	}
+	sender := make([]byte, 64)
+	var addrLen int32
+	n := receiveUDPFrom(bytePtr(buf), uint32(len(buf)), bytePtr(sender), uint32(len(sender)), uint32(uintptr(unsafe.Pointer(&addrLen))))
+	return int(n), string(sender[:addrLen]), nil
+}
+
+// Write writes the whole of b to the connection. The host send functions do not
+// report short writes, so Write returns an error only for invalid input.
+func (c *Conn) Write(b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
 	switch c.tr {
 	case transportICMP4:
 		sendICMP4Data(uint32(c.handle), bytePtr(b), uint32(len(b)))
+	case transportUDP:
+		sendUDPData(uint32(c.handle), bytePtr(b), uint32(len(b)))
 	default:
 		sendTCPData(uint32(c.handle), bytePtr(b), uint32(len(b)))
 	}
 	return nil
 }
 
-// Receive reads up to len(b) bytes into b and returns the number of bytes read.
-func (c *Conn) Receive(b []byte) (int, error) {
+// Read reads up to len(b) bytes into b and returns the number of bytes read.
+func (c *Conn) Read(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
@@ -134,6 +196,8 @@ func (c *Conn) Receive(b []byte) (int, error) {
 	switch c.tr {
 	case transportICMP4:
 		n = receiveICMP4Data(uint32(c.handle), bytePtr(b), uint32(len(b)))
+	case transportUDP:
+		n = receiveUDPData(uint32(c.handle), bytePtr(b), uint32(len(b)))
 	default:
 		n = receiveTCPData(uint32(c.handle), bytePtr(b), uint32(len(b)))
 	}
@@ -160,4 +224,14 @@ func (c *Conn) Drain() error {
 	}
 	drain_connection(uint32(c.handle))
 	return nil
+}
+
+// RemoteAddr returns the remote "host:port" address of the connection.
+func (c *Conn) RemoteAddr() (string, error) {
+	buf := make([]byte, 512)
+	n := getRemoteAddr(uint32(c.handle), bytePtr(buf), uint32(len(buf)))
+	if n < 0 {
+		return "", fmt.Errorf("debuglet: get_remote_addr failed (handle %d)", c.handle)
+	}
+	return string(buf[:n]), nil
 }

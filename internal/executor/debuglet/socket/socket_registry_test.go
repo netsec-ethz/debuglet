@@ -44,7 +44,8 @@ func (f *fakeSocket) Close() error {
 	f.closed = true
 	return nil
 }
-func (f *fakeSocket) Addr() string { return "fake.com" }
+func (f *fakeSocket) Addr() string       { return "fake.com" }
+func (f *fakeSocket) RemoteAddr() string { return "fake.com:1234" }
 
 // TestSocketRegistryAddAndGet verifies that sockets can be added and retrieved
 // by their returned handle.

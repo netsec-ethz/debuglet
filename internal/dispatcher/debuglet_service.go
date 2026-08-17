@@ -111,6 +111,10 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 		return nil, nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
 	}
 
+	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
+		return nil, nil, fmt.Errorf("executor '%s' has no public host, but policy requires a listener", spec.ExecutorID)
+	}
+
 	// Create the stores and determine if the range [from,to] has enough capacity
 	var from time.Time
 	if spec.StartTime == nil {
@@ -167,10 +171,15 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 			Args:          spec.Args,
 			Wasm:          spec.Wasm,
 			Policy: &pb.DebugletPolicy{
-				FloorBw:   int64(spec.Policy.FloorBW),
-				CeilBw:    int64(spec.Policy.CeilBW),
-				TimeoutMs: int64(spec.Policy.Timeout.Milliseconds()),
-				Addresses: spec.Policy.Addresses,
+				FloorBw:     int64(spec.Policy.FloorBW),
+				CeilBw:      int64(spec.Policy.CeilBW),
+				TimeoutMs:   int64(spec.Policy.Timeout.Milliseconds()),
+				Addresses:   spec.Policy.Addresses,
+				RequireIcmp: spec.Policy.RequireICMP,
+				ListenUdp:   spec.Policy.ListenUDP,
+				ListenTcp:   spec.Policy.ListenTCP,
+				ListenIcmp:  spec.Policy.ListenICMP,
+				ListenScion: spec.Policy.ListenSCION,
 			},
 		}
 		if _, err := client.Upload(ctx, req); err != nil {

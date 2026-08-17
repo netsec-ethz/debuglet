@@ -1,12 +1,17 @@
+[server]
 http_port = {{ dispatcher_http_port }}
 grpc_port = {{ dispatcher_grpc_port }}
 version = "{{ deploy_version }}"
+
+[logging]
 log_level = "{{ dispatcher_log_level }}"
-disable_tls = {{ dispatcher_disable_tls | lower }}
+
+[scheduler]
 executor_timeout = {{ dispatcher_executor_timeout }}
 scheduler_granularity_ms = {{ dispatcher_scheduler_granularity_ms }}
 
 [tls]
+disable = {{ dispatcher_disable_tls | lower }}
 cert_file = "{{ config_dir }}/dispatcher/server.crt"
 key_file = "{{ config_dir }}/dispatcher/server.key"
 {% if dispatcher_tls_ca_file %}ca_file = "{{ dispatcher_tls_ca_file }}"{% endif %}

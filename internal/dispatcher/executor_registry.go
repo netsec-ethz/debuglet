@@ -34,6 +34,18 @@ type RegisteredExecutor struct {
 	PricePerBwS int64
 	Currency    string
 	capacity    resource.Bitrate
+
+	sourceIp   string
+	publicHost *string
+}
+
+// PublicHost returns the executor's public host (IP or domain) at which
+// debuglet listeners can be contacted, or "" if none is configured.
+func (e *RegisteredExecutor) PublicHost() string {
+	if e.publicHost == nil {
+		return ""
+	}
+	return *e.publicHost
 }
 
 // lastDebugletHistory is the default number of recent debuglet IDs to
@@ -87,34 +99,36 @@ func (e *RegisteredExecutor) AppendDebugletID(id string) {
 
 // RegisterExecutor creates or updates the executor record for id. anchorKey is
 // k_0, the public TESLA chain anchor published by the executor at startup.
-func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64, currency string) {
-	d.logger.Info("Registering executor", zap.String("id", id), zap.String("ip", ip), zap.Int64("price", price), zap.String("currency", currency))
+func (d *Dispatcher) RegisterExecutor(id, version, sourceIp, publicHost string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64, currency string) {
+	d.logger.Info("Registering executor", zap.String("id", id), zap.String("source_ip", sourceIp), zap.Int64("price", price), zap.String("currency", currency))
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, exists := d.executors[id]; !exists {
+	exec, exists := d.executors[id]
+	if !exists {
 		d.executors[id] = &RegisteredExecutor{
-			ID:                   id,
-			Version:              version,
-			TeslaDelay:           teslaDelay,
-			TeslaAnchorTimestamp: teslaAnchor,
-			TeslaAnchorKey:       anchorKey,
-			history:              &debugletHistory{},
-			LastSeen:             time.Now(),
-			ICMPEnabled:          icmpEnabled,
-			PricePerBwS:          price,
-			Currency:             currency,
+			ID:      id,
+			history: &debugletHistory{},
 		}
+		exec = d.executors[id]
 	} else {
 		d.logger.Debug("Executor is already registered", zap.String("id", id))
 	}
-	exec := d.executors[id]
+
+	exec.Version = version
 	exec.TeslaDelay = teslaDelay
 	exec.TeslaAnchorTimestamp = teslaAnchor
 	if len(anchorKey) > 0 {
 		exec.TeslaAnchorKey = anchorKey
 	}
-	if ip != "" {
-		d.ipToExecutor[ip] = id
+	exec.LastSeen = time.Now()
+	exec.ICMPEnabled = icmpEnabled
+	exec.PricePerBwS = price
+	exec.Currency = currency
+	exec.sourceIp = sourceIp
+	if publicHost != "" {
+		exec.publicHost = &publicHost
+	} else {
+		exec.publicHost = nil
 	}
 }
 
@@ -123,11 +137,12 @@ func (d *Dispatcher) RegisterExecutor(id, version, ip string, teslaDelay time.Du
 func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	id, ok := d.ipToExecutor[ip]
-	if !ok {
-		return RegisteredExecutor{}, false
+	for _, exec := range d.executors {
+		if exec.sourceIp == ip {
+			return *exec, true
+		}
 	}
-	return *d.executors[id], true
+	return RegisteredExecutor{}, false
 }
 
 func (d *Dispatcher) RemoveExecutor(id string) {

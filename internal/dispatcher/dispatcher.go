@@ -28,14 +28,13 @@ type DebugletStore struct {
 type Dispatcher struct {
 	version string
 
-	executors    map[string]*RegisteredExecutor
-	execTimeout  time.Duration
-	ipToExecutor map[string]string
-	keystore     *tag.KeyStore
-	logger       *zap.Logger
-	Bidi         *rpc.BidiServer
-	mu           sync.RWMutex
-	db           *sql.DB
+	executors   map[string]*RegisteredExecutor
+	execTimeout time.Duration
+	keystore    *tag.KeyStore
+	logger      *zap.Logger
+	Bidi        *rpc.BidiServer
+	mu          sync.RWMutex
+	db          *sql.DB
 
 	// debugletStores tracks in-memory state for active debuglets.
 	debugletStores map[string]*DebugletStore
@@ -53,7 +52,6 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		version:        version,
 		executors:      make(map[string]*RegisteredExecutor),
 		execTimeout:    execTimeout,
-		ipToExecutor:   make(map[string]string),
 		keystore:       tag.NewKeyStore(),
 		logger:         l,
 		db:             db,

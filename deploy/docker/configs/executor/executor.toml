@@ -1,14 +1,25 @@
+[identity]
 executor_id = "docker-executor"
 version = "unknown"
-dispatcher_addr = "nginx:9443"
-dispatcher_yamux_addr = "nginx:9444"
-log_level = "debug"
+
+[dispatcher]
+addr = "nginx:9443"
+yamux_addr = "nginx:9444"
+
+[tls]
+disable = false
+
+[resources]
 capacity = 1_000_000_000
-tesla_seed = "test-tesla-seed-do-not-use-in-production"
-tesla_delay = 30
 max_debuglets = 20
+
+[tesla]
+seed = "test-tesla-seed-do-not-use-in-production"
+delay = 30
+
+[logging]
+log_level = "debug"
 json_logs = false
-disable_tls = false
 
 [credentials]
 ca_cert = "/etc/debuglet/certs/server.crt"
