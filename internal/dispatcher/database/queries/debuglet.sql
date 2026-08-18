@@ -13,20 +13,25 @@ OFFSET ?;
 SELECT * FROM debuglets
 WHERE end_time > ?;
 
--- name: GetDebugletByID :one
+-- name: GetDebugletByUUID :one
 SELECT * FROM debuglets
-WHERE id = ?;
+WHERE uuid = ?;
 
 -- name: CreateDebuglet :one
-INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses, state)
+INSERT INTO debuglets (uuid, start_time, end_time, usage, executor_id, addresses, state)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateDebugletState :one
 UPDATE debuglets
 SET state = ?
-WHERE id = ?
+WHERE uuid = ?
 RETURNING *;
+
+-- name: SetDebugletError :exec
+UPDATE debuglets
+SET error = ?
+WHERE uuid = ?;
 
 /*
 
@@ -36,12 +41,15 @@ LOGS
 
 -- name: CreateDebugletLog :one
 INSERT INTO debuglet_logs (debuglet_id, timestamp, output)
-VALUES (?, ?, ?)
+VALUES (
+    (SELECT id FROM debuglets WHERE uuid = ?), ?, ?
+)
 RETURNING *;
 
 -- name: ListDebugletLogs :many
-SELECT id, debuglet_id, timestamp, output
+SELECT debuglet_logs.*
 FROM debuglet_logs
-WHERE debuglet_id = ? AND id > ?
-ORDER BY id ASC
+INNER JOIN debuglets ON debuglet_logs.debuglet_id = debuglets.id
+WHERE uuid = ? AND debuglet_logs.id > :after
+ORDER BY debuglet_logs.id ASC
 LIMIT ?;

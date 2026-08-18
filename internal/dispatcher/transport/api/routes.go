@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"debuglet/internal/dispatcher"
 	"net/http"
 
@@ -24,7 +25,9 @@ func (h *Handler) GetVersion(c echo.Context) error {
 	return c.JSON(http.StatusOK, VersionResponse{Version: h.dispatcher.GetVersion()})
 }
 
-func (h *Handler) RegisterRoutes(e *echo.Echo) {
+func (h *Handler) RegisterRoutes(e *echo.Echo, db *sql.DB) {
+	e.Use(InsecureAuthMiddleware(db, h.logger))
+
 	e.GET("/version", h.GetVersion)
 	// debuglet
 	e.PUT("/debuglet", h.PutDebuglets)
@@ -41,4 +44,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// e.GET("payment/balance", h.GetBalance)
 	e.PUT("/payment/intent", h.PutPaymentIntent)
 	e.GET("/payment/:transaction_id/status", h.GetPaymentStatus)
+	// user
+	e.GET("/user/:id", h.GetUser)
+	e.GET("/user-ids", h.ListUserIDs)
+	e.PUT("/user", h.CreateUser)
+	e.GET("/list-debuglets", h.ListUserDebuglets)
 }

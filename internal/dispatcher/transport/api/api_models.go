@@ -43,6 +43,16 @@ type SubmitDebugletsRequest struct {
 	AuthKey       string            `json:"auth_key"`
 }
 
+type DebugletResponse struct {
+	ID         string   `json:"id"`
+	StartTime  int64    `json:"start_time"`
+	EndTime    int64    `json:"end_time"`
+	Usage      int64    `json:"usage"`
+	ExecutorID string   `json:"executor_id"`
+	Addresses  []string `json:"addresses"`
+	State      string   `json:"state"`
+}
+
 type DebugletDeleteRequest struct {
 	DebugletID string `json:"debuglet_id"`
 	ExecutorID string `json:"executor_id"`
@@ -133,6 +143,15 @@ type DummyIntent struct {
 type PaymentIntentRequest struct {
 	Debuglets     []DebugletRequest `json:"debuglets"`
 	PaymentMethod string            `json:"payment_method"`
+}
+
+type UserResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type CreateUserRequest struct {
+	Name string `json:"name"`
 }
 
 // ================ HELPERS ================

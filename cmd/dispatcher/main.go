@@ -110,7 +110,7 @@ func main() {
 		logger.Info("Combined HTTP+Yamux listener started", zap.Int("port", cfg.Server.HTTPPort))
 
 		g2.Go(func() error { return m.Serve() })
-		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, logger) })
+		g2.Go(func() error { return startHTTPServer(httpL, d, cfg, db, logger) })
 		g2.Go(func() error { return d.Bidi.ServeYamux(ctx2, yamuxL) })
 		return g2.Wait()
 	})
@@ -125,7 +125,7 @@ func main() {
 }
 
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
-func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, logger *zap.Logger) error {
+func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger) error {
 	handler := api.NewHandler(manager, logger)
 
 	e := echo.New()
@@ -141,7 +141,7 @@ func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *conf
 	}))
 	e.Use(middleware.CORS())
 
-	handler.RegisterRoutes(e)
+	handler.RegisterRoutes(e, db)
 
 	logger.Info("Dispatcher HTTP API started", zap.String("address", lis.Addr().String()))
 

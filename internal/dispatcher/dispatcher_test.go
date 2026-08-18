@@ -83,7 +83,7 @@ func TestRestart(t *testing.T) {
 			CeilBW:  resource.Gigabit,
 			Timeout: 10 * time.Second,
 		},
-	}})
+	}}, nil)
 
 	if err == nil {
 		t.Fatalf("expected error when submitting debuglet while executor has no capacity from startup")

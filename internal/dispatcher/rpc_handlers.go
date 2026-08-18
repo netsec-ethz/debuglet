@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"database/sql"
 	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -105,16 +107,19 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateR
 	debugletID := req.GetDebugletId()
 	d.logger.Debug("Received debuglet state update", zap.String("debugletID", debugletID), zap.String("executorID", req.GetExecutorId()), zap.String("state", state.String()))
 
+	id, err := uuid.Parse(debugletID)
+	if err != nil {
+		d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if store, ok := d.debugletStores[debugletID]; ok {
 		store.State = state
 		queries := database.New(d.db)
-		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
-			ID:    debugletID,
-			State: state,
-		}); err != nil {
+		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: state}); err != nil {
 			d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
 		}
 	}
@@ -181,9 +186,27 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		return &pb.DebugletExitResponse{}, nil
 	}
 
+	id, err := uuid.Parse(debugletID)
+	if err != nil {
+		d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
+	}
+
 	st.State = models.RunStateExited
+	queries := database.New(d.db)
+	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: models.RunStateExited}); err != nil {
+		d.logger.Error("Failed to update debuglet state to exited in database", zap.String("debugletID", debugletID), zap.Error(err))
+	}
+
+	var dbErr error
 	if errMsg != nil {
+		dbErr = queries.SetDebugletError(ctx, database.SetDebugletErrorParams{Uuid: id, Error: sql.NullString{String: *errMsg, Valid: true}})
 		st.Err = *errMsg
+	} else {
+		dbErr = queries.SetDebugletError(ctx, database.SetDebugletErrorParams{Uuid: id, Error: sql.NullString{String: "", Valid: false}})
+	}
+	if dbErr != nil {
+		d.logger.Error("Failed to set debuglet error message in database", zap.String("debugletID", debugletID), zap.Error(dbErr))
 	}
 
 	for _, dest := range st.Policy.Addresses {
@@ -243,11 +266,17 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 				}
 				d.mu.Unlock()
 
+				id, err := uuid.Parse(debugletID)
+				if err != nil {
+					d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
+					continue
+				}
+
 				queries := database.New(d.db)
 				if _, err := queries.CreateDebugletLog(ctx, database.CreateDebugletLogParams{
-					DebugletID: debugletID,
-					Timestamp:  models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
-					Output:     output,
+					Uuid:      id,
+					Timestamp: models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
+					Output:    output,
 				}); err != nil {
 					d.logger.Error("Failed to store debuglet log in database", zap.String("debugletID", debugletID), zap.Error(err))
 				}

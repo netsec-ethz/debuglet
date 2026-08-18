@@ -5,22 +5,27 @@
 package database
 
 import (
+	"database/sql"
+
 	"debuglet/internal/dispatcher/models"
+	"github.com/google/uuid"
 )
 
 type Debuglet struct {
-	ID         string
+	ID         int64
+	Uuid       uuid.UUID
 	StartTime  models.UTCTime
 	EndTime    models.UTCTime
 	Usage      int64
 	ExecutorID string
 	Addresses  models.CommaSeparatedList
 	State      models.DebugletRunState
+	Error      sql.NullString
 }
 
 type DebugletLog struct {
 	ID         int64
-	DebugletID string
+	DebugletID int64
 	Timestamp  models.UTCTime
 	Output     []byte
 }
@@ -31,6 +36,11 @@ type DebugletOrder struct {
 	ExecutorID    string
 	Price         int64
 	Currency      string
+}
+
+type DebugletUser struct {
+	DebugletID string
+	UserID     int64
 }
 
 type Earning struct {
@@ -54,4 +64,10 @@ type Transaction struct {
 type TransactionState struct {
 	Key   string
 	Value string
+}
+
+type User struct {
+	ID   int64
+	Uuid uuid.UUID
+	Name string
 }

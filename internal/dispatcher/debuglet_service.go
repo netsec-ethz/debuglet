@@ -16,10 +16,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.DebugletSpec) ([]string, error) {
+func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.DebugletSpec, userID *uuid.UUID) (uuid.UUIDs, error) {
 	g, subCtx := errgroup.WithContext(ctx)
 	// debuglet IDs in the same order as the submission
-	debugletIDS := make([]string, len(specs))
+	debugletIDS := make(uuid.UUIDs, len(specs))
 
 	d.mu.Lock()
 
@@ -32,8 +32,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			d.mu.Unlock()
 			return nil, fmt.Errorf("invalid debuglet spec (i=%d): %w", i, err)
 		} else {
-			debugletID := uuid.New().String()
-			debugletIDS[i] = debugletID
+			debugletIDS[i] = uuid.New()
 			stores = append(stores, *store)
 			sreqs = append(sreqs, *r)
 		}
@@ -51,7 +50,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	qtx := database.New(d.db).WithTx(tx)
 	for i, store := range stores {
 		if _, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
-			ID:         debugletIDS[i],
+			Uuid:       debugletIDS[i],
 			StartTime:  models.NewUTCTime(store.From),
 			EndTime:    models.NewUTCTime(store.To),
 			ExecutorID: store.ExecutorID,
@@ -62,15 +61,26 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			d.mu.Unlock()
 			return nil, fmt.Errorf("failed to create debuglet in database: %w", err)
 		}
+
+		if userID != nil {
+			if err := qtx.InsertDebugletUser(ctx, database.InsertDebugletUserParams{
+				DebUuid:  debugletIDS[i],
+				UserUuid: *userID,
+			}); err != nil {
+				d.mu.Unlock()
+				return nil, fmt.Errorf("failed to associate debuglet with user in database: %w", err)
+			}
+		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		d.mu.Unlock()
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	for i, store := range stores {
-		d.executors[store.ExecutorID].AppendDebugletID(debugletIDS[i])
-		d.debugletStores[debugletIDS[i]] = &store
+		d.executors[store.ExecutorID].AppendDebugletID(debugletIDS[i].String())
+		d.debugletStores[debugletIDS[i].String()] = &store
 		d.scheduler.Submit(sreqs[i])
 		g.Go(d.uploadToExecutor(subCtx, i, debugletIDS[i], specs[i]))
 	}
@@ -80,7 +90,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	if err := g.Wait(); err != nil {
 		for i, id := range debugletIDS {
 			// TODO: cleanup the database and scheduler for the aborted debuglets
-			if err := d.AbortDebuglet(context.Background(), specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
+			if err := d.AbortDebuglet(context.Background(), specs[i].ExecutorID, id.String(), "failed to batch upload all debuglets"); err != nil {
 				d.logger.Error("Failed to abort debuglet: " + err.Error())
 			}
 		}
@@ -153,9 +163,9 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*DebugletS
 	return &store, &r, nil
 }
 
-func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID string, spec models.DebugletSpec) func() error {
+func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID uuid.UUID, spec models.DebugletSpec) func() error {
 	return func() error {
-		d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
+		d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID.String()), zap.String("executorID", spec.ExecutorID))
 		client, ok := d.Bidi.GetClient(spec.ExecutorID)
 		if !ok {
 			return fmt.Errorf("executor '%s' not connected", spec.ExecutorID)
@@ -165,7 +175,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 			startTime = timestamppb.New(*spec.StartTime)
 		}
 		req := &pb.UploadRequest{
-			Id:            debugletID,
+			Id:            debugletID.String(),
 			TransactionId: spec.TransactionID,
 			StartTime:     startTime,
 			Args:          spec.Args,
@@ -185,17 +195,14 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID str
 		if _, err := client.Upload(ctx, req); err != nil {
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
-		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID), zap.String("executorID", spec.ExecutorID))
+		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID.String()), zap.String("executorID", spec.ExecutorID))
 
 		d.mu.Lock()
-		d.debugletStores[debugletID].State = models.RunStateUploaded
+		d.debugletStores[debugletID.String()].State = models.RunStateUploaded
 		d.mu.Unlock()
 
 		queries := database.New(d.db)
-		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
-			ID:    debugletID,
-			State: models.RunStateUploaded,
-		}); err != nil {
+		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: debugletID, State: models.RunStateUploaded}); err != nil {
 			return fmt.Errorf("failed to update debuglet state in database: %w", err)
 		}
 
