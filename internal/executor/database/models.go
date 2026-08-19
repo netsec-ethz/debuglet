@@ -6,10 +6,13 @@ package database
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Debuglet struct {
-	ID            string
+	ID            int64
+	Uuid          uuid.UUID
 	StartTime     UTCTime
 	Args          CommaSeparatedList
 	Wasm          []byte
@@ -28,7 +31,7 @@ type Debuglet struct {
 
 type DebugletLog struct {
 	ID         int64
-	DebugletID string
+	DebugletID int64
 	Timestamp  time.Time
 	Output     []byte
 }

@@ -24,7 +24,7 @@ type RunningDebuglet struct {
 
 func (e *Executor) OnDebugletFailed(ctx context.Context, spec scheduler.Spec, err error) {
 	if errors.Is(err, scheduler.ErrDebugletAlreadyStarted) {
-		e.logger.Warn("Debuglet already started, ignoring", zap.String("debugletID", spec.DebugletID))
+		e.logger.Warn("Debuglet already started, ignoring", zap.String("debugletID", spec.DebugletID.String()))
 		// TODO: refund debuglet
 	}
 }
@@ -34,32 +34,27 @@ func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec) {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("debuglet handler failed due to context error: %w", ctx.Err())
 		}
-		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID.String()), zap.Error(err))
 		errMsg := err.Error()
 
 		if _, err := e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
-			DebugletId:   spec.DebugletID,
+			DebugletId:   spec.DebugletID.String(),
 			ExitCode:     -1,
 			ErrorMessage: &errMsg,
 		}); err != nil {
-			e.logger.Error("Failed to notify debuglet exit", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+			e.logger.Error("Failed to notify debuglet exit", zap.String("debugletID", spec.DebugletID.String()), zap.Error(err))
 		}
 	}
 }
 
 func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) error {
-	debUUID, err := uuid.Parse(spec.DebugletID)
-	if err != nil {
-		return fmt.Errorf("invalid debuglet UUID: %w", err)
-	}
-
 	// TODO: remove allocate step
 	if err := e.allocateDebuglet(ctx, spec); err != nil {
 		return fmt.Errorf("failed to allocate debuglet: %w", err)
 	}
 
 	ctx, cancelDebuglet := context.WithCancelCause(ctx)
-	deb, err := e.registerDebuglet(spec, debUUID, cancelDebuglet)
+	deb, err := e.registerDebuglet(spec, cancelDebuglet)
 	defer e.unregisterDebuglet(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("failed to register debuglet: %w", err)
@@ -83,7 +78,7 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 	go func() {
 		<-timedCtx.Done()
 		if !naturalExit.Load() {
-			e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID), zap.Error(timedCtx.Err()))
+			e.logger.Warn("Debuglet context done, closing debuglet", zap.String("debugletID", spec.DebugletID.String()), zap.Error(timedCtx.Err()))
 			// Forces debuglet to close all it's resources. It could be stuck in a conn.Read() call in a host function, which does not
 			// respect contexts closing nor can't be closed by wazero.
 			deb.Close(timedCtx)
@@ -95,7 +90,7 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 	naturalExit.Store(true)
 
 	e.Bidi.Client.DebugletExit(ctx, &pb.DebugletExitRequest{
-		DebugletId: spec.DebugletID,
+		DebugletId: spec.DebugletID.String(),
 		ExitCode:   0,
 	})
 
@@ -104,7 +99,7 @@ func (e *Executor) debugletHandler(ctx context.Context, spec scheduler.Spec) err
 
 func (e *Executor) allocateDebuglet(ctx context.Context, spec scheduler.Spec) error {
 	req := &pb.DebugletAllocateRequest{
-		DebugletId:    spec.DebugletID,
+		DebugletId:    spec.DebugletID.String(),
 		ExecutorId:    e.cfg.Identity.ExecutorID,
 		TransactionId: spec.TransactionID,
 		Policy: &pb.DebugletPolicy{
@@ -128,7 +123,7 @@ func (e *Executor) allocateDebuglet(ctx context.Context, spec scheduler.Spec) er
 	return err
 }
 
-func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFunc context.CancelCauseFunc) (*debuglet.Debuglet, error) {
+func (e *Executor) registerDebuglet(spec scheduler.Spec, cancelFunc context.CancelCauseFunc) (*debuglet.Debuglet, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -149,7 +144,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 	)
 
 	e.running[spec.DebugletID] = RunningDebuglet{
-		id:        id,
+		id:        spec.DebugletID,
 		cancelCtx: cancelFunc,
 		debuglet:  deb,
 	}
@@ -162,7 +157,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, id uuid.UUID, cancelFun
 	if err != nil {
 		return nil, err
 	}
-	if err = e.packetCount.SetExecLimit(id, execLimit); err != nil {
+	if err = e.packetCount.SetExecLimit(spec.DebugletID, execLimit); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +177,7 @@ func (e *Executor) unregisterDebuglet(ctx context.Context, spec scheduler.Spec) 
 
 func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet) error {
 	_, err := e.Bidi.Client.DebugletState(ctx, &pb.DebugletStateRequest{
-		DebugletId: spec.DebugletID,
+		DebugletId: spec.DebugletID.String(),
 		ExecutorId: e.cfg.Identity.ExecutorID,
 		State:      pb.RunState_RUN_STATE_INITIALIZING,
 	})
@@ -206,17 +201,17 @@ func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, 
 		if spec.Policy.ListenTCP || spec.Policy.ListenUDP {
 			return fmt.Errorf("failed to start listener: %w", err)
 		}
-		e.logger.Warn("Failed to startup servers for debuglet. Ignoring", zap.String("debugletID", spec.DebugletID), zap.Error(err))
+		e.logger.Warn("Failed to startup servers for debuglet. Ignoring", zap.String("debugletID", spec.DebugletID.String()), zap.Error(err))
 	}
 	return nil
 }
 
-func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan<- []byte, error) {
+func (e *Executor) propagateOutputToStream(ctx context.Context, id uuid.UUID) (chan<- []byte, error) {
 	stream, err := e.Bidi.Client.DebugletStream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open debuglet stream: %w", err)
 	}
-	err = stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Ident{Ident: &pb.DebugletIdent{DebugletId: id, ExecutorId: e.cfg.Identity.ExecutorID}}})
+	err = stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Ident{Ident: &pb.DebugletIdent{DebugletId: id.String(), ExecutorId: e.cfg.Identity.ExecutorID}}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to send debuglet ident: %w", err)
 	}
@@ -225,7 +220,7 @@ func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan
 		for out := range outputCh {
 			err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out, Timestamp: timestamppb.Now()}}})
 			if err != nil {
-				e.logger.Error("Failed to send debuglet output", zap.String("debugletID", id), zap.Error(err))
+				e.logger.Error("Failed to send debuglet output", zap.String("debugletID", id.String()), zap.Error(err))
 				return
 			}
 		}
@@ -235,7 +230,7 @@ func (e *Executor) propagateOutputToStream(ctx context.Context, id string) (chan
 
 func (e *Executor) runDebuglet(ctx context.Context, spec scheduler.Spec, deb *debuglet.Debuglet, outputCh chan<- []byte) error {
 	_, err := e.Bidi.Client.DebugletState(ctx, &pb.DebugletStateRequest{
-		DebugletId: spec.DebugletID,
+		DebugletId: spec.DebugletID.String(),
 		ExecutorId: e.cfg.Identity.ExecutorID,
 		State:      pb.RunState_RUN_STATE_STARTED,
 	})

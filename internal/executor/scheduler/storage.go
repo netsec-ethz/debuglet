@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Scheduler interface {
 	Insert(context.Context, Spec) error
 	// Remove removes a debuglet from storage preventing it from being started. It returns false if
 	// the given ID does not exist in the storage anymore (i.e. the debuglet has already started).
-	Remove(ctx context.Context, debugletID string) (bool, error)
+	Remove(ctx context.Context, debugletID uuid.UUID) (bool, error)
 	// RegisterOnStart sets the callback function for when a debuglet should be started.
 	RegisterOnStart(func(context.Context, Spec))
 	// RegisterFailed sets the callback function for when a debuglet fails to start or is not allowed to start anymore.
@@ -32,7 +34,7 @@ type Policy struct {
 }
 
 type Spec struct {
-	DebugletID    string
+	DebugletID    uuid.UUID
 	StartTime     *time.Time
 	Args          []string
 	Wasm          []byte

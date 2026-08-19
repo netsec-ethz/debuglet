@@ -9,20 +9,21 @@ import (
 	"debuglet/internal/executor/tagger"
 	"net"
 
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
 )
 
 type WasmEnv struct {
-	DebugletID string
+	DebugletID uuid.UUID
 	Policy     scheduler.Policy
 
-	Limiter         *app.Limiter
-	PacketCount     ratelimit.PacketCount
-	LastReceived    net.Addr
-	Logger          *zap.SugaredLogger
-	TlsCfg          *tls.Config
-	Tagger          tagger.TaggerInterface
+	Limiter      *app.Limiter
+	PacketCount  ratelimit.PacketCount
+	LastReceived net.Addr
+	Logger       *zap.SugaredLogger
+	TlsCfg       *tls.Config
+	Tagger       tagger.TaggerInterface
 
 	// Listeners
 	PortManager *socket.PortManager

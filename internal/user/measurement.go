@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const baseURL = "localhost:9000"
@@ -116,8 +118,12 @@ func PaymentIntent(specs []api.DebugletRequest) (string, string) {
 }
 
 func AbortDebuglet(ID, executorID string) int {
+	uid, err := uuid.Parse(ID)
+	if err != nil {
+		panic(err)
+	}
 	var delete api.DebugletDeleteRequest = api.DebugletDeleteRequest{
-		DebugletID: ID,
+		DebugletID: uid,
 		ExecutorID: executorID,
 	}
 	data, err := json.Marshal(delete)

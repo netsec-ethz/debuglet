@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -15,6 +17,12 @@ var (
 type storeKey struct {
 	// ID is used for either the debuglet ID or exeutor ID depending on the map it's used in
 	ID, destination string
+}
+
+// activeKey identifies an active debuglet on a specific destination.
+type activeKey struct {
+	id          uuid.UUID
+	destination string
 }
 
 type storeValue struct {
@@ -31,7 +39,7 @@ type DestinationsUsage struct {
 	usedCapacities map[string]Bitrate
 	// The minimum capacities of jobs
 	store           map[storeKey]*storeValue
-	activeDebuglets map[storeKey]struct{}
+	activeDebuglets map[activeKey]struct{}
 	defaultCap      Bitrate
 }
 
@@ -41,7 +49,7 @@ func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 		capacities:      make(map[string]Bitrate),
 		usedCapacities:  make(map[string]Bitrate),
 		store:           make(map[storeKey]*storeValue),
-		activeDebuglets: make(map[storeKey]struct{}),
+		activeDebuglets: make(map[activeKey]struct{}),
 		defaultCap:      defaultCap,
 	}
 }
@@ -72,7 +80,7 @@ func (d *DestinationsUsage) Cap(destination string) Bitrate {
 	return cap
 }
 
-func (d *DestinationsUsage) Insert(debugletID string, destination, executorID string, minimum, maximum Bitrate) error {
+func (d *DestinationsUsage) Insert(debugletID uuid.UUID, destination, executorID string, minimum, maximum Bitrate) error {
 	if minimum > maximum {
 		return fmt.Errorf("insertion failed with min=%d>max=%d: %w", minimum, maximum, ErrMinGreater)
 	}
@@ -83,7 +91,7 @@ func (d *DestinationsUsage) Insert(debugletID string, destination, executorID st
 		return fmt.Errorf("insertion failed with new usage=%d, capacity=%d: %w", used+minimum, cap, ErrCapacityFull)
 
 	}
-	d.activeDebuglets[storeKey{debugletID, destination}] = struct{}{}
+	d.activeDebuglets[activeKey{debugletID, destination}] = struct{}{}
 	d.usedCapacities[destination] += minimum
 	jk := storeKey{ID: executorID, destination: destination}
 	if old, exists := d.store[jk]; exists {
@@ -97,8 +105,8 @@ func (d *DestinationsUsage) Insert(debugletID string, destination, executorID st
 	return nil
 }
 
-func (d *DestinationsUsage) Remove(debugletID, destination, executorID string, minimum, maximum Bitrate) {
-	if _, exists := d.activeDebuglets[storeKey{debugletID, destination}]; !exists {
+func (d *DestinationsUsage) Remove(debugletID uuid.UUID, destination, executorID string, minimum, maximum Bitrate) {
+	if _, exists := d.activeDebuglets[activeKey{debugletID, destination}]; !exists {
 		return
 	}
 
@@ -135,7 +143,7 @@ func (d *DestinationsUsage) Remove(debugletID, destination, executorID string, m
 		delete(d.usedCapacities, destination)
 	}
 
-	delete(d.activeDebuglets, storeKey{debugletID, destination})
+	delete(d.activeDebuglets, activeKey{debugletID, destination})
 
 	old.minimum -= minimum
 	old.maximum -= maximum

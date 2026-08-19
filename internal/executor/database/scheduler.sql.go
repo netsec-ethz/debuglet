@@ -7,11 +7,13 @@ package database
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const createDebuglet = `-- name: CreateDebuglet :exec
 INSERT INTO debuglets (
-    id,
+    uuid,
     start_time,
     args,
     wasm,
@@ -29,7 +31,7 @@ INSERT INTO debuglets (
 `
 
 type CreateDebugletParams struct {
-	ID            string
+	Uuid          uuid.UUID
 	StartTime     UTCTime
 	Args          CommaSeparatedList
 	Wasm          []byte
@@ -47,7 +49,7 @@ type CreateDebugletParams struct {
 
 func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) error {
 	_, err := q.db.ExecContext(ctx, createDebuglet,
-		arg.ID,
+		arg.Uuid,
 		arg.StartTime,
 		arg.Args,
 		arg.Wasm,
@@ -67,28 +69,28 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 
 const deleteDebuglet = `-- name: DeleteDebuglet :exec
 DELETE FROM debuglets
-WHERE id = ?
+WHERE uuid = ?
 `
 
-func (q *Queries) DeleteDebuglet(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteDebuglet, id)
+func (q *Queries) DeleteDebuglet(ctx context.Context, argUuid uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, deleteDebuglet, argUuid)
 	return err
 }
 
 const getDebugletStarted = `-- name: GetDebugletStarted :one
 SELECT started_at FROM debuglets
-WHERE id = ?
+WHERE uuid = ?
 `
 
-func (q *Queries) GetDebugletStarted(ctx context.Context, id string) (UTCTime, error) {
-	row := q.db.QueryRowContext(ctx, getDebugletStarted, id)
+func (q *Queries) GetDebugletStarted(ctx context.Context, argUuid uuid.UUID) (UTCTime, error) {
+	row := q.db.QueryRowContext(ctx, getDebugletStarted, argUuid)
 	var started_at UTCTime
 	err := row.Scan(&started_at)
 	return started_at, err
 }
 
 const listDebuglets = `-- name: ListDebuglets :many
-SELECT id, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at FROM debuglets
+SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at FROM debuglets
 LIMIT ?
 OFFSET ?
 `
@@ -109,6 +111,7 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 		var i Debuglet
 		if err := rows.Scan(
 			&i.ID,
+			&i.Uuid,
 			&i.StartTime,
 			&i.Args,
 			&i.Wasm,
@@ -140,20 +143,21 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 const updateDebugletStarted = `-- name: UpdateDebugletStarted :one
 UPDATE debuglets
 SET started_at = ?
-WHERE id = ?
-RETURNING id, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at
+WHERE uuid = ?
+RETURNING id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at
 `
 
 type UpdateDebugletStartedParams struct {
 	StartedAt UTCTime
-	ID        string
+	Uuid      uuid.UUID
 }
 
 func (q *Queries) UpdateDebugletStarted(ctx context.Context, arg UpdateDebugletStartedParams) (Debuglet, error) {
-	row := q.db.QueryRowContext(ctx, updateDebugletStarted, arg.StartedAt, arg.ID)
+	row := q.db.QueryRowContext(ctx, updateDebugletStarted, arg.StartedAt, arg.Uuid)
 	var i Debuglet
 	err := row.Scan(
 		&i.ID,
+		&i.Uuid,
 		&i.StartTime,
 		&i.Args,
 		&i.Wasm,

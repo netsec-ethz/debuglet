@@ -32,7 +32,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -133,12 +132,6 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			}
 		}
 
-		debugletUUID, err := uuid.Parse(env.DebugletID)
-		if err != nil {
-			env.Logger.Warnw("hostConnect: invalid debuglet UUID", "id", env.DebugletID)
-			panic(fmt.Errorf("connect: invalid debuglet UUID"))
-		}
-
 		connAddr := stripPort(addr)
 		limit, err := env.Limiter.GetLimit(env.DebugletID, connAddr)
 		if err != nil {
@@ -151,7 +144,7 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			MaximumBandwidth: min(limit.Executor, limit.Address),
 			SocketType:       socketType,
 		}
-		hc, err := hostconn.NewConnection(ctx, env.PacketCount, debugletUUID, conn, opts)
+		hc, err := hostconn.NewConnection(ctx, env.PacketCount, env.DebugletID, conn, opts)
 		if err != nil {
 			env.Logger.Warnw("hostConnect: failed to create HostConn", "err", err)
 			panic(fmt.Errorf("connect: %w", err))

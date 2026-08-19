@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SqliteStorage naively uses the memory storage under the hood, but saves all debuglet specs
@@ -46,7 +48,7 @@ func (s *SqliteStorage) RestoreFromDatabase(ctx context.Context) error {
 		offset += int64(len(debs))
 		for _, deb := range debs {
 			spec := scheduler.Spec{
-				DebugletID:    deb.ID,
+				DebugletID:    deb.Uuid,
 				StartTime:     &deb.StartTime.Time,
 				Args:          deb.Args,
 				Wasm:          nil,
@@ -65,7 +67,7 @@ func (s *SqliteStorage) RestoreFromDatabase(ctx context.Context) error {
 			}
 
 			if err := s.local.Insert(ctx, spec); err != nil {
-				return fmt.Errorf("failed to insert debuglet %s into local storage: %w", deb.ID, err)
+				return fmt.Errorf("failed to insert debuglet %s into local storage: %w", deb.Uuid, err)
 			}
 		}
 	}
@@ -80,7 +82,7 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 
 	queries := database.New(s.db)
 	if err := queries.CreateDebuglet(ctx, database.CreateDebugletParams{
-		ID:            spec.DebugletID,
+		Uuid:          spec.DebugletID,
 		StartTime:     database.NewUTCTime(startTime),
 		Args:          spec.Args,
 		Wasm:          spec.Wasm,
@@ -107,7 +109,7 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 	return nil
 }
 
-func (s *SqliteStorage) Remove(ctx context.Context, debugletID string) (bool, error) {
+func (s *SqliteStorage) Remove(ctx context.Context, debugletID uuid.UUID) (bool, error) {
 	exists, localErr := s.local.Remove(ctx, debugletID)
 	queries := database.New(s.db)
 	if err := queries.DeleteDebuglet(ctx, debugletID); err != nil {
@@ -136,7 +138,7 @@ func (s *SqliteStorage) onStart(ctx context.Context, spec scheduler.Spec) {
 		s.onFailedCb(ctx, spec, scheduler.ErrDebugletAlreadyStarted)
 	} else {
 		deb, err := queries.UpdateDebugletStarted(ctx, database.UpdateDebugletStartedParams{
-			ID:        spec.DebugletID,
+			Uuid:      spec.DebugletID,
 			StartedAt: database.NewUTCTime(time.Now()),
 		})
 		if err != nil {

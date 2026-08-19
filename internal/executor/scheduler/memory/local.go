@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MemoryStorage is a simple in-memory implementation storing all debuglets in a
@@ -21,7 +23,7 @@ type MemoryStorage struct {
 	wakeup   chan struct{}
 	mu       sync.RWMutex
 	tq       *TimedQueue
-	inflight map[string]struct{} // popped from queue, waiting for executor to take ownership
+	inflight map[uuid.UUID]struct{} // popped from queue, waiting for executor to take ownership
 }
 
 var _ scheduler.Scheduler = (*MemoryStorage)(nil)
@@ -30,7 +32,7 @@ func NewStorage() *MemoryStorage {
 	return &MemoryStorage{
 		wakeup:   make(chan struct{}, 32),
 		tq:       NewTimedQueue(),
-		inflight: make(map[string]struct{}),
+		inflight: make(map[uuid.UUID]struct{}),
 	}
 }
 
@@ -43,7 +45,7 @@ func (m *MemoryStorage) Insert(ctx context.Context, u scheduler.Spec) error {
 	return nil
 }
 
-func (m *MemoryStorage) Remove(ctx context.Context, debugletID string) (bool, error) {
+func (m *MemoryStorage) Remove(ctx context.Context, debugletID uuid.UUID) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

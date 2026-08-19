@@ -208,7 +208,7 @@ func (h *Handler) ListUserDebuglets(c echo.Context) error {
 	resp := make([]DebugletResponse, len(debuglets))
 	for i, d := range debuglets {
 		resp[i] = DebugletResponse{
-			ID:         d.Uuid.String(),
+			ID:         d.Uuid,
 			StartTime:  d.StartTime.Unix(),
 			EndTime:    d.EndTime.Unix(),
 			Usage:      d.Usage,

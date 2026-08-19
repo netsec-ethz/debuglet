@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +38,11 @@ func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.Upl
 	// TODO: perform checks and throw error if can't submit
 	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("transaction_id", req.GetTransactionId()))
 
+	id, err := uuid.Parse(req.GetId())
+	if err != nil {
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
+	}
+
 	var startTime *time.Time
 	if st := req.GetStartTime(); st != nil {
 		tmp := st.AsTime().UTC()
@@ -44,7 +50,7 @@ func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.Upl
 	}
 	policy := req.GetPolicy()
 	spec := scheduler.Spec{
-		DebugletID:    req.GetId(),
+		DebugletID:    id,
 		TransactionID: req.GetTransactionId(),
 		StartTime:     startTime,
 		Args:          req.GetArgs(),
@@ -72,7 +78,12 @@ func (e *Executor) OnAbort(ctx context.Context, req *pb.AbortRequest) (*pb.Abort
 	debugletID := req.GetDebugletId()
 	e.logger.Debug("Abort received", zap.String("debugletID", debugletID))
 
-	existed, err := e.scheduler.Remove(ctx, debugletID)
+	id, err := uuid.Parse(debugletID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
+	}
+
+	existed, err := e.scheduler.Remove(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to remove debuglet from storage: %w", err)
 	}
@@ -82,7 +93,7 @@ func (e *Executor) OnAbort(ctx context.Context, req *pb.AbortRequest) (*pb.Abort
 	}
 
 	e.mu.Lock()
-	run, exists := e.running[debugletID]
+	run, exists := e.running[id]
 	e.mu.Unlock()
 	if !exists {
 		return nil, errors.New("debuglet not found")
@@ -101,7 +112,7 @@ func (e *Executor) OnBandwidth(ctx context.Context, req *pb.BandwidthRequest) (*
 		e.limiter.SetAddrCapacity(up.Address, app.Bitrate(up.GetBitsLimit()))
 
 		for _, running := range e.running {
-			limit, err := e.limiter.GetLimit(running.id.String(), up.Address)
+			limit, err := e.limiter.GetLimit(running.id, up.Address)
 			if err != nil {
 				continue
 			}

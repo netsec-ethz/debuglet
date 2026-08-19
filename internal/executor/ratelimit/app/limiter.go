@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -49,11 +50,11 @@ type Limiter struct {
 	addrCapacity map[string]Bitrate
 
 	// tree for fairsharing the executors bandwidth
-	execT *avl.AVL[string]
+	execT *avl.AVL[uuid.UUID]
 	// tree for fairsharing a destinations bandwidth
-	addrT map[string]*avl.AVL[string]
+	addrT map[string]*avl.AVL[uuid.UUID]
 
-	stores map[string]*storeValue
+	stores map[uuid.UUID]*storeValue
 
 	mu     sync.RWMutex
 	logger *zap.Logger
@@ -70,9 +71,9 @@ type Limiter struct {
 func NewLimiter(l *zap.Logger) *Limiter {
 	return &Limiter{
 		addrCapacity: make(map[string]Bitrate),
-		execT:        &avl.AVL[string]{},
-		addrT:        make(map[string]*avl.AVL[string]),
-		stores:       make(map[string]*storeValue),
+		execT:        &avl.AVL[uuid.UUID]{},
+		addrT:        make(map[string]*avl.AVL[uuid.UUID]),
+		stores:       make(map[uuid.UUID]*storeValue),
 		dirty:        make(map[string]time.Time),
 		logger:       l,
 	}
@@ -94,7 +95,7 @@ func (l *Limiter) SetAddrCapacity(addr string, c Bitrate) {
 	l.addrCapacity[addr] = c
 }
 
-func (l *Limiter) InsertDebuglet(ID string, minimum, maximum Bitrate, addrs []string) error {
+func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum Bitrate, addrs []string) error {
 	if minimum > maximum {
 		return fmt.Errorf("invalid input (Got minimum (%s) > maximum (%s), Want maximum >= minimum)", minimum, maximum)
 	}
@@ -117,7 +118,7 @@ func (l *Limiter) InsertDebuglet(ID string, minimum, maximum Bitrate, addrs []st
 	for _, a := range addrs {
 		addrLimit[a] = -1
 		if _, ok := l.addrT[a]; !ok {
-			l.addrT[a] = &avl.AVL[string]{}
+			l.addrT[a] = &avl.AVL[uuid.UUID]{}
 		}
 		l.addrT[a].Insert(ID, residual)
 		l.dirty[a] = time.Now()
@@ -125,7 +126,7 @@ func (l *Limiter) InsertDebuglet(ID string, minimum, maximum Bitrate, addrs []st
 	return nil
 }
 
-func (l *Limiter) RemoveDebuglet(ID string) {
+func (l *Limiter) RemoveDebuglet(ID uuid.UUID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -148,7 +149,7 @@ func (l *Limiter) RemoveDebuglet(ID string) {
 	delete(l.stores, ID)
 }
 
-func (l *Limiter) GetExecLimit(ID string) (Bitrate, bool, error) {
+func (l *Limiter) GetExecLimit(ID uuid.UUID) (Bitrate, bool, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
@@ -177,7 +178,7 @@ func (l *Limiter) GetExecLimit(ID string) (Bitrate, bool, error) {
 	return execLimit, updated, nil
 }
 
-func (l *Limiter) GetAddrLimit(ID string, addr string) (Bitrate, bool, error) {
+func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (Bitrate, bool, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
@@ -214,7 +215,7 @@ func (l *Limiter) GetAddrLimit(ID string, addr string) (Bitrate, bool, error) {
 	return addrLimit, updated, nil
 }
 
-func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
+func (l *Limiter) GetLimit(ID uuid.UUID, addr string) (Limit, error) {
 	execLimit, execUpdated, err := l.GetExecLimit(ID)
 	if err != nil {
 		return Limit{}, err
@@ -230,7 +231,7 @@ func (l *Limiter) GetLimit(ID string, addr string) (Limit, error) {
 	return Limit{Executor: execLimit, Address: addrLimit, Updated: updated}, nil
 }
 
-func (l *Limiter) Wait(ctx context.Context, direction TransferDirection, ID, addr string, size Bitrate) error {
+func (l *Limiter) Wait(ctx context.Context, direction TransferDirection, ID uuid.UUID, addr string, size Bitrate) error {
 	l.mu.RLock()
 	store, ok := l.stores[ID]
 	if !ok {

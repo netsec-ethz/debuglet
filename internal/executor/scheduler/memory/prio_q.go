@@ -3,6 +3,8 @@ package memory
 import (
 	"container/heap"
 	"debuglet/internal/executor/scheduler"
+
+	"github.com/google/uuid"
 )
 
 type item struct {
@@ -50,13 +52,13 @@ func (pq *priorityQueue) Pop() any {
 // specific IDs in amortized O(1)
 type TimedQueue struct {
 	pq   *priorityQueue
-	refs map[string]*item
+	refs map[uuid.UUID]*item
 }
 
 func NewTimedQueue() *TimedQueue {
 	pq := &priorityQueue{}
 	heap.Init(pq)
-	return &TimedQueue{pq: pq, refs: make(map[string]*item)}
+	return &TimedQueue{pq: pq, refs: make(map[uuid.UUID]*item)}
 }
 
 func (tq *TimedQueue) Push(x scheduler.Spec) {
@@ -79,7 +81,7 @@ func (tq *TimedQueue) Len() int {
 	return tq.pq.Len()
 }
 
-func (tq *TimedQueue) Remove(ID string) *scheduler.Spec {
+func (tq *TimedQueue) Remove(ID uuid.UUID) *scheduler.Spec {
 	it, exists := tq.refs[ID]
 	if !exists {
 		return nil

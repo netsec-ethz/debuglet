@@ -8,6 +8,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type VersionResponse struct {
@@ -44,18 +46,18 @@ type SubmitDebugletsRequest struct {
 }
 
 type DebugletResponse struct {
-	ID         string   `json:"id"`
-	StartTime  int64    `json:"start_time"`
-	EndTime    int64    `json:"end_time"`
-	Usage      int64    `json:"usage"`
-	ExecutorID string   `json:"executor_id"`
-	Addresses  []string `json:"addresses"`
-	State      string   `json:"state"`
+	ID         uuid.UUID `json:"id"`
+	StartTime  int64     `json:"start_time"`
+	EndTime    int64     `json:"end_time"`
+	Usage      int64     `json:"usage"`
+	ExecutorID string    `json:"executor_id"`
+	Addresses  []string  `json:"addresses"`
+	State      string    `json:"state"`
 }
 
 type DebugletDeleteRequest struct {
-	DebugletID string `json:"debuglet_id"`
-	ExecutorID string `json:"executor_id"`
+	DebugletID uuid.UUID `json:"debuglet_id"`
+	ExecutorID string    `json:"executor_id"`
 }
 
 type ExecutorResponse struct {
@@ -75,8 +77,8 @@ type ExecutorResponse struct {
 // It identifies which executor corresponds to a given source IP and lists the
 // most recent debuglet IDs that were dispatched to it.
 type ExecutorByIPResponse struct {
-	ExecutorID  string   `json:"executor_id"`
-	DebugletIDs []string `json:"debuglet_ids"` // newest first, up to ?n= (default 10)
+	ExecutorID  string      `json:"executor_id"`
+	DebugletIDs []uuid.UUID `json:"debuglet_ids"` // newest first, up to ?n= (default 10)
 }
 
 // ExecutorTeslaResponse is returned by GET /executors/:id/tesla.

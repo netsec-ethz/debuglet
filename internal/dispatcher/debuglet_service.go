@@ -78,7 +78,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 
 	for i := range sreqs {
-		d.executors[specs[i].ExecutorID].AppendDebugletID(debugletIDS[i].String())
+		d.executors[specs[i].ExecutorID].AppendDebugletID(debugletIDS[i])
 		d.scheduler.Submit(sreqs[i])
 		g.Go(d.uploadToExecutor(subCtx, i, debugletIDS[i], specs[i]))
 	}
@@ -88,7 +88,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	if err := g.Wait(); err != nil {
 		for i, id := range debugletIDS {
 			// TODO: cleanup the database and scheduler for the aborted debuglets
-			if err := d.AbortDebuglet(context.Background(), specs[i].ExecutorID, id.String(), "failed to batch upload all debuglets"); err != nil {
+			if err := d.AbortDebuglet(context.Background(), specs[i].ExecutorID, id, "failed to batch upload all debuglets"); err != nil {
 				d.logger.Error("Failed to abort debuglet: " + err.Error())
 			}
 		}
@@ -197,14 +197,14 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID uui
 	}
 }
 
-func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID, debugletID, reason string) error {
+func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debugletID uuid.UUID, reason string) error {
 	client, ok := d.Bidi.GetClient(executorID)
 	if !ok {
 		return fmt.Errorf("executor '%s' not connected", executorID)
 	}
-	if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: debugletID, Reason: reason}); err != nil {
+	if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: debugletID.String(), Reason: reason}); err != nil {
 		return fmt.Errorf("failed to abort debuglet: %w", err)
 	}
-	d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: -1, ErrorMessage: &reason})
+	d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID.String(), ExitCode: -1, ErrorMessage: &reason})
 	return nil
 }
