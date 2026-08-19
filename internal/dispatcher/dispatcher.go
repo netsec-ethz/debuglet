@@ -17,14 +17,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type DebugletStore struct {
-	Policy     models.DebugletPolicy
-	ExecutorID string
-	State      models.DebugletRunState
-	Err        string
-	From, To   time.Time
-}
-
 type Dispatcher struct {
 	version string
 
@@ -36,9 +28,6 @@ type Dispatcher struct {
 	mu          sync.RWMutex
 	db          *sql.DB
 
-	// debugletStores tracks in-memory state for active debuglets.
-	debugletStores map[string]*DebugletStore
-
 	destinations *resource.DestinationsUsage
 	Payment      *payments.PaymentHandler
 	scheduler    *schedule.JobScheduler
@@ -49,16 +38,15 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		granularity = 30 * time.Second
 	}
 	d := &Dispatcher{
-		version:        version,
-		executors:      make(map[string]*RegisteredExecutor),
-		execTimeout:    execTimeout,
-		keystore:       tag.NewKeyStore(),
-		logger:         l,
-		db:             db,
-		debugletStores: make(map[string]*DebugletStore),
-		destinations:   resource.NewDestinations(resource.Gigabit),
-		Payment:        paymentHandler,
-		scheduler:      schedule.New(granularity),
+		version:      version,
+		executors:    make(map[string]*RegisteredExecutor),
+		execTimeout:  execTimeout,
+		keystore:     tag.NewKeyStore(),
+		logger:       l,
+		db:           db,
+		destinations: resource.NewDestinations(resource.Gigabit),
+		Payment:      paymentHandler,
+		scheduler:    schedule.New(granularity),
 	}
 
 	d.Bidi = rpc.NewBidiServer(l, d)
@@ -88,16 +76,6 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 func (d *Dispatcher) Close()                     { d.Bidi.Close() }
 func (d *Dispatcher) GetVersion() string         { return d.version }
 func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
-
-func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if st, ok := d.debugletStores[debugletID]; ok {
-		return *st, nil
-	} else {
-		return DebugletStore{}, fmt.Errorf("debuglet with '%s' does not exist", debugletID)
-	}
-}
 
 func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) {
 	d.mu.Lock()

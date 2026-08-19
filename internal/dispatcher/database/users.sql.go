@@ -61,7 +61,7 @@ func (q *Queries) InsertDebugletUser(ctx context.Context, arg InsertDebugletUser
 }
 
 const listDebugletsByUserUUID = `-- name: ListDebugletsByUserUUID :many
-SELECT id, uuid, start_time, end_time, usage, executor_id, addresses, state, error
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error
 FROM debuglets
 WHERE id IN (
     SELECT debuglet_id
@@ -93,6 +93,7 @@ func (q *Queries) ListDebugletsByUserUUID(ctx context.Context, arg ListDebuglets
 			&i.StartTime,
 			&i.EndTime,
 			&i.Usage,
+			&i.CeilBw,
 			&i.ExecutorID,
 			&i.Addresses,
 			&i.State,

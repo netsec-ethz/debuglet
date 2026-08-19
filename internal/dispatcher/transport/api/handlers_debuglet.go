@@ -132,14 +132,25 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 // GET /debuglet/:id/state
 func (h *Handler) GetDebugletState(c echo.Context) error {
 	debugletID := c.Param("id")
-	store, err := h.dispatcher.GetStore(debugletID)
+
+	id, err := uuid.Parse(debugletID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet: "+err.Error())
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet id: "+err.Error())
 	}
+
+	queries := database.New(h.db)
+	deb, err := queries.GetDebugletByUUID(c.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "debuglet not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query debuglet: "+err.Error())
+	}
+
 	return c.JSON(http.StatusOK, DebugletStateResponse{
-		State:      store.State.String(),
-		Error:      store.Err,
-		ExecutorID: store.ExecutorID,
+		State:      deb.State.String(),
+		Error:      deb.Error.String,
+		ExecutorID: deb.ExecutorID,
 	})
 }
 

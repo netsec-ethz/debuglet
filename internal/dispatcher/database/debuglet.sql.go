@@ -14,9 +14,9 @@ import (
 )
 
 const createDebuglet = `-- name: CreateDebuglet :one
-INSERT INTO debuglets (uuid, start_time, end_time, usage, executor_id, addresses, state)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, uuid, start_time, end_time, usage, executor_id, addresses, state, error
+INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error
 `
 
 type CreateDebugletParams struct {
@@ -24,6 +24,7 @@ type CreateDebugletParams struct {
 	StartTime  models.UTCTime
 	EndTime    models.UTCTime
 	Usage      int64
+	CeilBw     int64
 	ExecutorID string
 	Addresses  models.CommaSeparatedList
 	State      models.DebugletRunState
@@ -35,6 +36,7 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		arg.StartTime,
 		arg.EndTime,
 		arg.Usage,
+		arg.CeilBw,
 		arg.ExecutorID,
 		arg.Addresses,
 		arg.State,
@@ -46,6 +48,7 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		&i.StartTime,
 		&i.EndTime,
 		&i.Usage,
+		&i.CeilBw,
 		&i.ExecutorID,
 		&i.Addresses,
 		&i.State,
@@ -87,7 +90,7 @@ func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogPa
 }
 
 const getDebugletByUUID = `-- name: GetDebugletByUUID :one
-SELECT id, uuid, start_time, end_time, usage, executor_id, addresses, state, error FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets
 WHERE uuid = ?
 `
 
@@ -100,6 +103,7 @@ func (q *Queries) GetDebugletByUUID(ctx context.Context, argUuid uuid.UUID) (Deb
 		&i.StartTime,
 		&i.EndTime,
 		&i.Usage,
+		&i.CeilBw,
 		&i.ExecutorID,
 		&i.Addresses,
 		&i.State,
@@ -158,7 +162,7 @@ DEBUGLET
 
 */
 
-SELECT id, uuid, start_time, end_time, usage, executor_id, addresses, state, error FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets
 LIMIT ?
 OFFSET ?
 `
@@ -183,6 +187,7 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 			&i.StartTime,
 			&i.EndTime,
 			&i.Usage,
+			&i.CeilBw,
 			&i.ExecutorID,
 			&i.Addresses,
 			&i.State,
@@ -202,7 +207,7 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 }
 
 const listDebugletsEndAfter = `-- name: ListDebugletsEndAfter :many
-SELECT id, uuid, start_time, end_time, usage, executor_id, addresses, state, error FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets
 WHERE end_time > ?
 `
 
@@ -221,6 +226,7 @@ func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime models.UTCT
 			&i.StartTime,
 			&i.EndTime,
 			&i.Usage,
+			&i.CeilBw,
 			&i.ExecutorID,
 			&i.Addresses,
 			&i.State,
@@ -259,7 +265,7 @@ const updateDebugletState = `-- name: UpdateDebugletState :one
 UPDATE debuglets
 SET state = ?
 WHERE uuid = ?
-RETURNING id, uuid, start_time, end_time, usage, executor_id, addresses, state, error
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error
 `
 
 type UpdateDebugletStateParams struct {
@@ -276,6 +282,7 @@ func (q *Queries) UpdateDebugletState(ctx context.Context, arg UpdateDebugletSta
 		&i.StartTime,
 		&i.EndTime,
 		&i.Usage,
+		&i.CeilBw,
 		&i.ExecutorID,
 		&i.Addresses,
 		&i.State,

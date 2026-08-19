@@ -17,6 +17,7 @@ type Debuglet struct {
 	StartTime  models.UTCTime
 	EndTime    models.UTCTime
 	Usage      int64
+	CeilBw     int64
 	ExecutorID string
 	Addresses  models.CommaSeparatedList
 	State      models.DebugletRunState

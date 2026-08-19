@@ -8,6 +8,7 @@ CREATE TABLE debuglets (
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP NOT NULL,
     usage INTEGER NOT NULL,
+    ceil_bw INTEGER NOT NULL,
     executor_id TEXT NOT NULL,
     addresses TEXT,
     state INTEGER NOT NULL,

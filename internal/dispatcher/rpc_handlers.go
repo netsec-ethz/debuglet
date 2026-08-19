@@ -8,6 +8,7 @@ import (
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -113,15 +114,12 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateR
 		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if store, ok := d.debugletStores[debugletID]; ok {
-		store.State = state
-		queries := database.New(d.db)
-		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: state}); err != nil {
-			d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
+	queries := database.New(d.db)
+	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: state}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &pb.DebugletStateResponse{}, nil
 		}
+		d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
 	}
 
 	return &pb.DebugletStateResponse{}, nil
@@ -175,33 +173,31 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 	errMsg := req.ErrorMessage
 	d.logger.Debug("Received debuglet exit", zap.String("debugletID", debugletID), zap.Int32("exitCode", exitCode), zap.Stringp("errMsg", errMsg))
 
-	d.mu.Lock()
-	st, exists := d.debugletStores[debugletID]
-	if !exists {
-		d.mu.Unlock()
-		return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
-	}
-	if st.State == models.RunStateExited {
-		d.mu.Unlock()
-		return &pb.DebugletExitResponse{}, nil
-	}
-
 	id, err := uuid.Parse(debugletID)
 	if err != nil {
 		d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
 		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
 	}
 
-	st.State = models.RunStateExited
 	queries := database.New(d.db)
+	deb, err := queries.GetDebugletByUUID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
+		}
+		return nil, fmt.Errorf("failed to get debuglet: %w", err)
+	}
+
 	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: models.RunStateExited}); err != nil {
-		d.logger.Error("Failed to update debuglet state to exited in database", zap.String("debugletID", debugletID), zap.Error(err))
+		if errors.Is(err, sql.ErrNoRows) {
+			return &pb.DebugletExitResponse{}, nil
+		}
+		return nil, fmt.Errorf("failed to mark debuglet exited: %w", err)
 	}
 
 	var dbErr error
 	if errMsg != nil {
 		dbErr = queries.SetDebugletError(ctx, database.SetDebugletErrorParams{Uuid: id, Error: sql.NullString{String: *errMsg, Valid: true}})
-		st.Err = *errMsg
 	} else {
 		dbErr = queries.SetDebugletError(ctx, database.SetDebugletErrorParams{Uuid: id, Error: sql.NullString{String: "", Valid: false}})
 	}
@@ -209,22 +205,22 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 		d.logger.Error("Failed to set debuglet error message in database", zap.String("debugletID", debugletID), zap.Error(dbErr))
 	}
 
-	for _, dest := range st.Policy.Addresses {
-		d.destinations.Remove(debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
+	floor := resource.Bitrate(deb.Usage)
+	ceil := resource.Bitrate(deb.CeilBw)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for _, dest := range deb.Addresses {
+		d.destinations.Remove(debugletID, dest, deb.ExecutorID, floor, ceil)
 	}
 
-	d.releaseFloor(st)
-	d.mu.Unlock()
+	d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
 
 	go func() {
-		if err := d.sendFairshare(context.Background(), st.Policy.Addresses); err != nil {
+		if err := d.sendFairshare(context.Background(), deb.Addresses); err != nil {
 			d.logger.Error("Failed to send fairshare update", zap.Error(err))
 		}
-
-		time.Sleep(10 * time.Minute)
-		d.mu.Lock()
-		delete(d.debugletStores, debugletID)
-		d.mu.Unlock()
 	}()
 
 	return &pb.DebugletExitResponse{}, nil
@@ -257,14 +253,6 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 			case *pb.DebugletStreamRequest_Output:
 				output := msg.Output.GetOutput()
 				d.logger.Debug("Received debuglet output", zap.String("debugletID", debugletID), zap.Int("outputSize", len(output)))
-				d.mu.Lock()
-				_, exists := d.debugletStores[debugletID]
-				if !exists {
-					d.mu.Unlock()
-					d.logger.Error("Debuglet output for unknown debuglet", zap.String("debugletID", debugletID))
-					continue
-				}
-				d.mu.Unlock()
 
 				id, err := uuid.Parse(debugletID)
 				if err != nil {
@@ -328,13 +316,13 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, dests []string) error {
 	return g.Wait()
 }
 
-func (d *Dispatcher) releaseFloor(st *DebugletStore) {
+func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.Time, use resource.Bitrate) {
 	r := schedule.Request{
-		Executor:    st.ExecutorID,
-		Destination: st.Policy.Addresses,
-		From:        st.From,
-		To:          st.To,
-		Use:         st.Policy.FloorBW,
+		Executor:    executor,
+		Destination: dest,
+		From:        from,
+		To:          to,
+		Use:         use,
 	}
 	d.scheduler.Remove(r)
 }

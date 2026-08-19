@@ -18,8 +18,8 @@ SELECT * FROM debuglets
 WHERE uuid = ?;
 
 -- name: CreateDebuglet :one
-INSERT INTO debuglets (uuid, start_time, end_time, usage, executor_id, addresses, state)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateDebugletState :one
