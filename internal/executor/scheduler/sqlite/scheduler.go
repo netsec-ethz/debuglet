@@ -14,9 +14,10 @@ import (
 // SqliteStorage naively uses the memory storage under the hood, but saves all debuglet specs
 // to a SQLite database to persist states across executor restarts.
 type SqliteStorage struct {
-	db        *sql.DB
-	local     *memory.MemoryStorage
-	onStartCb func(context.Context, scheduler.Spec)
+	db         *sql.DB
+	local      *memory.MemoryStorage
+	onStartCb  func(context.Context, scheduler.Spec)
+	onFailedCb func(context.Context, scheduler.Spec, error)
 }
 
 var _ scheduler.Scheduler = (*SqliteStorage)(nil)
@@ -119,19 +120,34 @@ func (s *SqliteStorage) RegisterOnStart(cb func(context.Context, scheduler.Spec)
 	s.onStartCb = cb
 }
 
+func (s *SqliteStorage) RegisterFailed(cb func(context.Context, scheduler.Spec, error)) {
+	s.onFailedCb = cb
+}
+
 func (s *SqliteStorage) onStart(ctx context.Context, spec scheduler.Spec) {
 	queries := database.New(s.db)
-	deb, err := queries.UpdateDebugletStarted(ctx, database.UpdateDebugletStartedParams{
-		ID:        spec.DebugletID,
-		StartedAt: database.NewUTCTime(time.Now()),
-	})
+	oldStarted, err := queries.GetDebugletStarted(ctx, spec.DebugletID)
 	if err != nil {
-		log.Printf("Failed to set debuglet %s as started in database: %v", spec.DebugletID, err)
+		log.Printf("Failed to get debuglet %s started time from database: %v", spec.DebugletID, err)
 		return
 	}
-	spec.Wasm = deb.Wasm
 
-	s.onStartCb(ctx, spec)
+	if !oldStarted.IsZero() {
+		s.onFailedCb(ctx, spec, scheduler.ErrDebugletAlreadyStarted)
+	} else {
+		deb, err := queries.UpdateDebugletStarted(ctx, database.UpdateDebugletStartedParams{
+			ID:        spec.DebugletID,
+			StartedAt: database.NewUTCTime(time.Now()),
+		})
+		if err != nil {
+			log.Printf("Failed to set debuglet %s as started in database: %v", spec.DebugletID, err)
+			return
+		}
+		spec.Wasm = deb.Wasm
+
+		s.onStartCb(ctx, spec)
+	}
+
 	if err := queries.DeleteDebuglet(ctx, spec.DebugletID); err != nil {
 		log.Printf("Failed to delete debuglet %s from database: %v", spec.DebugletID, err)
 	}

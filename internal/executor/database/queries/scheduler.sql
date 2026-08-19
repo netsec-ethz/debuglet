@@ -30,3 +30,7 @@ INSERT INTO debuglets (
     listen_icmp,
     listen_scion
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetDebugletStarted :one
+SELECT started_at FROM debuglets
+WHERE id = ?;

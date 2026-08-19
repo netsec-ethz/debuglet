@@ -15,7 +15,8 @@ import (
 // Because the WASM is also stored in memory, the memory usage of a lot of debuglets
 // can be significant.
 type MemoryStorage struct {
-	onStart func(context.Context, scheduler.Spec)
+	onStartCb  func(context.Context, scheduler.Spec)
+	onFailedCb func(context.Context, scheduler.Spec, error)
 
 	wakeup   chan struct{}
 	mu       sync.RWMutex
@@ -54,11 +55,15 @@ func (m *MemoryStorage) Remove(ctx context.Context, debugletID string) (bool, er
 }
 
 func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, scheduler.Spec)) {
-	m.onStart = onStart
+	m.onStartCb = onStart
+}
+
+func (s *MemoryStorage) RegisterFailed(cb func(context.Context, scheduler.Spec, error)) {
+	s.onFailedCb = cb
 }
 
 func (m *MemoryStorage) StartLoop(ctx context.Context) error {
-	if m.onStart == nil {
+	if m.onStartCb == nil {
 		return errors.New("onStart is not registered")
 	}
 
@@ -75,7 +80,7 @@ func (m *MemoryStorage) StartLoop(ctx context.Context) error {
 				m.inflight[nextItem.DebugletID] = struct{}{}
 				m.mu.Unlock()
 				go func() {
-					m.onStart(ctx, *nextItem)
+					m.onStartCb(ctx, *nextItem)
 					m.mu.Lock()
 					delete(m.inflight, nextItem.DebugletID)
 					m.mu.Unlock()

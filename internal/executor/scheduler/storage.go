@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -12,6 +13,8 @@ type Scheduler interface {
 	Remove(ctx context.Context, debugletID string) (bool, error)
 	// RegisterOnStart sets the callback function for when a debuglet should be started.
 	RegisterOnStart(func(context.Context, Spec))
+	// RegisterFailed sets the callback function for when a debuglet fails to start or is not allowed to start anymore.
+	RegisterFailed(cb func(context.Context, Spec, error))
 	// StartLoop starts the loop that checks if any jobs are to be started and correspondingly calls the registered onStart function
 	StartLoop(ctx context.Context) error
 }
@@ -36,3 +39,8 @@ type Spec struct {
 	Policy        Policy
 	TransactionID string
 }
+
+var (
+	// ErrDebugletAlreadyStarted is returned when a debuglet has already started, but the executor was restarted before it could finish.
+	ErrDebugletAlreadyStarted = errors.New("debuglet has already started. won't restart")
+)

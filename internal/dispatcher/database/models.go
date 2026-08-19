@@ -39,7 +39,7 @@ type DebugletOrder struct {
 }
 
 type DebugletUser struct {
-	DebugletID string
+	DebugletID int64
 	UserID     int64
 }
 

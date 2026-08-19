@@ -75,6 +75,18 @@ func (q *Queries) DeleteDebuglet(ctx context.Context, id string) error {
 	return err
 }
 
+const getDebugletStarted = `-- name: GetDebugletStarted :one
+SELECT started_at FROM debuglets
+WHERE id = ?
+`
+
+func (q *Queries) GetDebugletStarted(ctx context.Context, id string) (UTCTime, error) {
+	row := q.db.QueryRowContext(ctx, getDebugletStarted, id)
+	var started_at UTCTime
+	err := row.Scan(&started_at)
+	return started_at, err
+}
+
 const listDebuglets = `-- name: ListDebuglets :many
 SELECT id, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at FROM debuglets
 LIMIT ?

@@ -81,6 +81,7 @@ func New(cfg *config.ExecutorConfig, l *zap.Logger, s scheduler.Scheduler) (*Exe
 		portManager:   portManager,
 	}
 	s.RegisterOnStart(e.OnDebugletStart)
+	s.RegisterFailed(e.OnDebugletFailed)
 
 	var creds credentials.TransportCredentials
 	var tlsCfg *tls.Config

@@ -6,6 +6,7 @@ import (
 	"debuglet/internal/executor/ratelimit/app"
 	"debuglet/internal/executor/scheduler"
 	pb "debuglet/protocol"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -19,6 +20,13 @@ type RunningDebuglet struct {
 	id        uuid.UUID
 	cancelCtx func(error)
 	debuglet  *debuglet.Debuglet
+}
+
+func (e *Executor) OnDebugletFailed(ctx context.Context, spec scheduler.Spec, err error) {
+	if errors.Is(err, scheduler.ErrDebugletAlreadyStarted) {
+		e.logger.Warn("Debuglet already started, ignoring", zap.String("debugletID", spec.DebugletID))
+		// TODO: refund debuglet
+	}
 }
 
 func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec) {
