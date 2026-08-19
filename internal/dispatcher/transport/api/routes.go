@@ -12,11 +12,13 @@ import (
 type Handler struct {
 	dispatcher *dispatcher.Dispatcher
 	logger     *zap.Logger
+	db         *sql.DB
 }
 
-func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
+func NewHandler(d *dispatcher.Dispatcher, db *sql.DB, l *zap.Logger) *Handler {
 	return &Handler{
 		dispatcher: d,
+		db:         db,
 		logger:     l,
 	}
 }
@@ -25,8 +27,8 @@ func (h *Handler) GetVersion(c echo.Context) error {
 	return c.JSON(http.StatusOK, VersionResponse{Version: h.dispatcher.GetVersion()})
 }
 
-func (h *Handler) RegisterRoutes(e *echo.Echo, db *sql.DB) {
-	e.Use(InsecureAuthMiddleware(db, h.logger))
+func (h *Handler) RegisterRoutes(e *echo.Echo) {
+	e.Use(InsecureAuthMiddleware(h.db, h.logger))
 
 	e.GET("/version", h.GetVersion)
 	// debuglet
@@ -45,7 +47,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo, db *sql.DB) {
 	e.PUT("/payment/intent", h.PutPaymentIntent)
 	e.GET("/payment/:transaction_id/status", h.GetPaymentStatus)
 	// user
-	e.GET("/user/:id", h.GetUser)
+	e.GET("/me", h.GetMe)
 	e.GET("/user-ids", h.ListUserIDs)
 	e.PUT("/user", h.CreateUser)
 	e.GET("/list-debuglets", h.ListUserDebuglets)

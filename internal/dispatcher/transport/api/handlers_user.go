@@ -32,25 +32,22 @@ import (
  * ████▀  ██  ██ ██   ██  ▀███▀  ██▄▄▄▄ ██   ██
  */
 
-// GET /user/:id
-func (h *Handler) GetUser(c echo.Context) error {
-	userID := c.Param("id")
-	if strings.TrimSpace(userID) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "missing user ID")
-	}
-	id, err := uuid.Parse(userID)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid user ID")
+// GET /me
+// GetMe returns the currently authenticated user's information.
+func (h *Handler) GetMe(c echo.Context) error {
+	user, ok := GetUser(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "user not authenticated")
 	}
 
-	queries := database.New(h.dispatcher.DB())
-	user, err := queries.GetUserByUUID(c.Request().Context(), id)
+	queries := database.New(h.db)
+	user, err := queries.GetUserByUUID(c.Request().Context(), user.Uuid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "user does not exist")
 		}
 
-		h.logger.Warn("Failed to fetch user", zap.String("uuid", id.String()), zap.Error(err))
+		h.logger.Warn("Failed to fetch user", zap.String("uuid", user.Uuid.String()), zap.Error(err))
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retrieve user")
 	}
 
@@ -62,7 +59,7 @@ func (h *Handler) GetUser(c echo.Context) error {
 
 // GET /user-ids
 func (h *Handler) ListUserIDs(c echo.Context) error {
-	queries := database.New(h.dispatcher.DB())
+	queries := database.New(h.db)
 	uuids, err := queries.ListUserUUIDs(c.Request().Context())
 	if err != nil {
 		h.logger.Warn("Failed to fetch user IDs", zap.Error(err))
@@ -87,7 +84,7 @@ func (h *Handler) CreateUser(c echo.Context) error {
 	}
 
 	newUUID := uuid.New()
-	queries := database.New(h.dispatcher.DB())
+	queries := database.New(h.db)
 	user, err := queries.CreateUser(c.Request().Context(), database.CreateUserParams{
 		Uuid: newUUID,
 		Name: req.Name,

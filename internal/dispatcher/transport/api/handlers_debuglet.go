@@ -90,7 +90,7 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	queries := database.New(h.dispatcher.DB())
+	queries := database.New(h.db)
 
 	dbLogs, err := queries.ListDebugletLogs(ctx, database.ListDebugletLogsParams{
 		Uuid:  id,
@@ -183,7 +183,7 @@ func (h *Handler) ListUserDebuglets(c echo.Context) error {
 		offset = int64(o)
 	}
 
-	queries := database.New(h.dispatcher.DB())
+	queries := database.New(h.db)
 	debuglets, err := queries.ListDebugletsByUserUUID(c.Request().Context(), database.ListDebugletsByUserUUIDParams{
 		Uuid:   user.Uuid,
 		Limit:  limit,

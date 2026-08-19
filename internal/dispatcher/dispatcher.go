@@ -88,7 +88,6 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 func (d *Dispatcher) Close()                     { d.Bidi.Close() }
 func (d *Dispatcher) GetVersion() string         { return d.version }
 func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
-func (d *Dispatcher) DB() *sql.DB                { return d.db }
 
 func (d *Dispatcher) GetStore(debugletID string) (DebugletStore, error) {
 	d.mu.Lock()

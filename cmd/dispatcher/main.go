@@ -126,7 +126,7 @@ func main() {
 
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
 func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger) error {
-	handler := api.NewHandler(manager, logger)
+	handler := api.NewHandler(manager, db, logger)
 
 	e := echo.New()
 	e.HideBanner = true
@@ -141,7 +141,7 @@ func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *conf
 	}))
 	e.Use(middleware.CORS())
 
-	handler.RegisterRoutes(e, db)
+	handler.RegisterRoutes(e)
 
 	logger.Info("Dispatcher HTTP API started", zap.String("address", lis.Addr().String()))
 

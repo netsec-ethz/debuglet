@@ -16,7 +16,7 @@ import (
 )
 
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, ctx context.Context) (int64, error) {
-	queries := database.New(h.dispatcher.DB())
+	queries := database.New(h.db)
 	price := new(big.Int).SetInt64(0)
 	for _, req := range request.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
