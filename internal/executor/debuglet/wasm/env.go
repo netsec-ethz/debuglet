@@ -36,7 +36,6 @@ type WasmEnv struct {
 	UdpServerPort int
 	UdpServerAddr string
 
-	IpServer    net.PacketConn
 	ScionServer pan.ListenConn
 
 	Registry  *socket.SocketRegistry
@@ -59,9 +58,6 @@ func (e *WasmEnv) Close() {
 		if e.PortManager != nil {
 			e.PortManager.Release(e.TcpServerPort)
 		}
-	}
-	if e.IpServer != nil {
-		e.IpServer.Close()
 	}
 	if e.Tagger != nil {
 		e.Tagger.Close()

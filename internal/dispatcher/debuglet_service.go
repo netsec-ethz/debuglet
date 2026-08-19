@@ -115,7 +115,7 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 		return nil, fmt.Errorf("executor '%s' not found", spec.ExecutorID)
 	}
 
-	if (spec.Policy.RequireICMP || spec.Policy.ListenICMP) && !exec.ICMPEnabled {
+	if spec.Policy.RequireICMP && !exec.ICMPEnabled {
 		return nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
 	}
 
@@ -179,7 +179,6 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, i int, debugletID uui
 				RequireIcmp: spec.Policy.RequireICMP,
 				ListenUdp:   spec.Policy.ListenUDP,
 				ListenTcp:   spec.Policy.ListenTCP,
-				ListenIcmp:  spec.Policy.ListenICMP,
 				ListenScion: spec.Policy.ListenSCION,
 			},
 		}

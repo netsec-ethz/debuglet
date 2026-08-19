@@ -47,7 +47,7 @@ Registered functions (see
 | Group   | Functions                                                                                                                                                                               |
 | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TCP/TLS | `connect_tcp`, `connect_tls`, `accept_tcp`, `send_tcp_data`, `receive_tcp_data`, `close_tcp`                                                                                            |
-| ICMPv4  | `connect_icmp4`, `accept_icmp4`, `send_icmp4_data`, `receive_icmp4_data`, `close_icmp4`                                                                                                 |
+| ICMPv4  | `connect_icmp4`, `send_icmp4_data`, `receive_icmp4_data`, `close_icmp4`                                                                                                 |
 | SCION   | `send_scion_udp_packet`, `receive_scion_server_udp_packet`, `answer_scion_udp_packet`, `scion_available_paths`, `scion_path_length`, `scion_get_interface_details`, `scion_select_path` |
 
 ## Building a sample

@@ -326,37 +326,6 @@ func HostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod api.Module, 
 }
 
 // =============================================================================
-// IP socket API
-// WASM keys: "connect_ip", "accept_ip", "receive_ip_data",
-//
-//	"send_ip_data", "close_ip"
-//
-// =============================================================================
-
-// HostAcceptIP accepts one incoming IP connection on the server and registers
-// it in the SocketRegistry. Returns the socket handle as I32.
-// WASM key: "accept_ip"
-func HostAcceptIP(env *WasmEnv) func() int32 {
-	return func() int32 {
-		// TODO: implement
-		return 0
-
-		// conn, err := env.IpServer.Accept()
-		// if err != nil {
-		// 	env.Logger.Warnw("hostAcceptIP: failed to accept", "err", err)
-		// 	panic(fmt.Errorf("accept_ip: %w", err))
-		// }
-
-		// ipConn, ok := conn.(*net.IPConn)
-		// if !ok {
-		// 	panic(fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn))
-		// }
-
-		// return env.Registry.Add(socket.NewGenericSocket(ipConn, socket.SocketTypeICMP4, ""))
-	}
-}
-
-// =============================================================================
 // SCION-UDP API
 // WASM keys: "send_scion_udp_packet", "receive_scion_server_udp_packet",
 //

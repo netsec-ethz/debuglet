@@ -137,7 +137,6 @@ func (d *Debuglet) Registry() *socket.SocketRegistry { return d.env.Registry }
 type StartServersReq struct {
 	UDP   bool
 	TCP   bool
-	ICMP  bool
 	SCION bool
 }
 
@@ -171,15 +170,6 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		d.env.UdpServer = conn
 		d.env.UdpServerPort = port
 		d.env.UdpServerAddr = addr
-	}
-
-	if req.ICMP {
-		d.env.Logger.Debug("startServers: starting ICMP listener")
-		icmpServer, err := net.ListenPacket("ip4:icmp", ":0")
-		if err != nil {
-			return fmt.Errorf("startServers: failed to start ICMP listener: %w", err)
-		}
-		d.env.IpServer = icmpServer
 	}
 
 	if req.SCION {
@@ -266,7 +256,6 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 
 	// ---- ICMP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.env)).Export("accept_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")

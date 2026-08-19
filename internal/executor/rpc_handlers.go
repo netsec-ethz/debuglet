@@ -63,7 +63,6 @@ func (e *Executor) OnUpload(ctx context.Context, req *pb.UploadRequest) (*pb.Upl
 			RequireICMP: policy.GetRequireIcmp(),
 			ListenUDP:   policy.GetListenUdp(),
 			ListenTCP:   policy.GetListenTcp(),
-			ListenICMP:  policy.GetListenIcmp(),
 			ListenSCION: policy.GetListenScion(),
 		},
 	}

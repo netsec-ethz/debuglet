@@ -47,8 +47,7 @@ message DebugletPolicy {
   bool require_icmp = 5; // whether ICMP is required
   bool listen_udp = 6; // whether the debuglet should setup a UDP listening server
   bool listen_tcp = 7; // whether the debuglet should setup a TCP listening server
-  bool listen_icmp = 8; // whether the debuglet should setup an ICMP listening server
-  bool listen_scion = 9; // whether the debuglet should setup a SCION listening server
+  bool listen_scion = 8; // whether the debuglet should setup a SCION listening server
 }
 
 message UploadRequest {

@@ -61,7 +61,6 @@ func (s *SqliteStorage) RestoreFromDatabase(ctx context.Context) error {
 					RequireICMP: deb.RequireIcmp,
 					ListenUDP:   deb.ListenUdp,
 					ListenTCP:   deb.ListenTcp,
-					ListenICMP:  deb.ListenIcmp,
 					ListenSCION: deb.ListenScion,
 				},
 			}
@@ -95,7 +94,6 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 		RequireIcmp: spec.Policy.RequireICMP,
 		ListenUdp:   spec.Policy.ListenUDP,
 		ListenTcp:   spec.Policy.ListenTCP,
-		ListenIcmp:  spec.Policy.ListenICMP,
 		ListenScion: spec.Policy.ListenSCION,
 	}); err != nil {
 		return err

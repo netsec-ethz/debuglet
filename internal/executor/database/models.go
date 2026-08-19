@@ -24,7 +24,6 @@ type Debuglet struct {
 	RequireIcmp   bool
 	ListenUdp     bool
 	ListenTcp     bool
-	ListenIcmp    bool
 	ListenScion   bool
 	StartedAt     UTCTime
 }

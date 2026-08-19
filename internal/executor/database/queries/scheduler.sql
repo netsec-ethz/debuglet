@@ -27,9 +27,8 @@ INSERT INTO debuglets (
     require_icmp,
     listen_udp,
     listen_tcp,
-    listen_icmp,
     listen_scion
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetDebugletStarted :one
 SELECT started_at FROM debuglets

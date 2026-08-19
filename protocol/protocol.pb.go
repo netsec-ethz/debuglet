@@ -247,8 +247,7 @@ type DebugletPolicy struct {
 	RequireIcmp   bool                   `protobuf:"varint,5,opt,name=require_icmp,json=requireIcmp,proto3" json:"require_icmp,omitempty"` // whether ICMP is required
 	ListenUdp     bool                   `protobuf:"varint,6,opt,name=listen_udp,json=listenUdp,proto3" json:"listen_udp,omitempty"`       // whether the debuglet should setup a UDP listening server
 	ListenTcp     bool                   `protobuf:"varint,7,opt,name=listen_tcp,json=listenTcp,proto3" json:"listen_tcp,omitempty"`       // whether the debuglet should setup a TCP listening server
-	ListenIcmp    bool                   `protobuf:"varint,8,opt,name=listen_icmp,json=listenIcmp,proto3" json:"listen_icmp,omitempty"`    // whether the debuglet should setup an ICMP listening server
-	ListenScion   bool                   `protobuf:"varint,9,opt,name=listen_scion,json=listenScion,proto3" json:"listen_scion,omitempty"` // whether the debuglet should setup a SCION listening server
+	ListenScion   bool                   `protobuf:"varint,8,opt,name=listen_scion,json=listenScion,proto3" json:"listen_scion,omitempty"` // whether the debuglet should setup a SCION listening server
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -328,13 +327,6 @@ func (x *DebugletPolicy) GetListenUdp() bool {
 func (x *DebugletPolicy) GetListenTcp() bool {
 	if x != nil {
 		return x.ListenTcp
-	}
-	return false
-}
-
-func (x *DebugletPolicy) GetListenIcmp() bool {
-	if x != nil {
-		return x.ListenIcmp
 	}
 	return false
 }
@@ -1426,7 +1418,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vpublic_host\x18\n" +
 	" \x01(\tH\x00R\n" +
 	"publicHost\x88\x01\x01B\x0e\n" +
-	"\f_public_host\"\xa6\x02\n" +
+	"\f_public_host\"\x85\x02\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +
@@ -1437,10 +1429,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
 	"listen_udp\x18\x06 \x01(\bR\tlistenUdp\x12\x1d\n" +
 	"\n" +
-	"listen_tcp\x18\a \x01(\bR\tlistenTcp\x12\x1f\n" +
-	"\vlisten_icmp\x18\b \x01(\bR\n" +
-	"listenIcmp\x12!\n" +
-	"\flisten_scion\x18\t \x01(\bR\vlistenScion\"\xf8\x01\n" +
+	"listen_tcp\x18\a \x01(\bR\tlistenTcp\x12!\n" +
+	"\flisten_scion\x18\b \x01(\bR\vlistenScion\"\xf8\x01\n" +
 	"\rUploadRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
 	"\n" +

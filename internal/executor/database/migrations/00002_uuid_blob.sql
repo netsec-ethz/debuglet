@@ -17,7 +17,6 @@ CREATE TABLE debuglets (
     require_icmp BOOLEAN NOT NULL,
     listen_udp BOOLEAN NOT NULL,
     listen_tcp BOOLEAN NOT NULL,
-    listen_icmp BOOLEAN NOT NULL,
     listen_scion BOOLEAN NOT NULL,
 
     started_at TIMESTAMP

@@ -25,9 +25,8 @@ INSERT INTO debuglets (
     require_icmp,
     listen_udp,
     listen_tcp,
-    listen_icmp,
     listen_scion
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateDebugletParams struct {
@@ -43,7 +42,6 @@ type CreateDebugletParams struct {
 	RequireIcmp   bool
 	ListenUdp     bool
 	ListenTcp     bool
-	ListenIcmp    bool
 	ListenScion   bool
 }
 
@@ -61,7 +59,6 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		arg.RequireIcmp,
 		arg.ListenUdp,
 		arg.ListenTcp,
-		arg.ListenIcmp,
 		arg.ListenScion,
 	)
 	return err
@@ -90,7 +87,7 @@ func (q *Queries) GetDebugletStarted(ctx context.Context, argUuid uuid.UUID) (UT
 }
 
 const listDebuglets = `-- name: ListDebuglets :many
-SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at FROM debuglets
+SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at FROM debuglets
 LIMIT ?
 OFFSET ?
 `
@@ -123,7 +120,6 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 			&i.RequireIcmp,
 			&i.ListenUdp,
 			&i.ListenTcp,
-			&i.ListenIcmp,
 			&i.ListenScion,
 			&i.StartedAt,
 		); err != nil {
@@ -144,7 +140,7 @@ const updateDebugletStarted = `-- name: UpdateDebugletStarted :one
 UPDATE debuglets
 SET started_at = ?
 WHERE uuid = ?
-RETURNING id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_icmp, listen_scion, started_at
+RETURNING id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at
 `
 
 type UpdateDebugletStartedParams struct {
@@ -169,7 +165,6 @@ func (q *Queries) UpdateDebugletStarted(ctx context.Context, arg UpdateDebugletS
 		&i.RequireIcmp,
 		&i.ListenUdp,
 		&i.ListenTcp,
-		&i.ListenIcmp,
 		&i.ListenScion,
 		&i.StartedAt,
 	)

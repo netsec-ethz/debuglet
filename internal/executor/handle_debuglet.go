@@ -194,7 +194,6 @@ func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, 
 	req := debuglet.StartServersReq{
 		TCP:   spec.Policy.ListenTCP,
 		UDP:   spec.Policy.ListenUDP,
-		ICMP:  spec.Policy.ListenICMP,
 		SCION: spec.Policy.ListenSCION,
 	}
 	if err := deb.StartServers(subCtx, req); err != nil {

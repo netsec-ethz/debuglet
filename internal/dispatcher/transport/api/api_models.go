@@ -24,7 +24,6 @@ type DebugletPolicyRequest struct {
 	RequireICMP bool     `json:"require_icmp"`
 	ListenUDP   bool     `json:"listen_udp"`
 	ListenTCP   bool     `json:"listen_tcp"`
-	ListenICMP  bool     `json:"listen_icmp"`
 	ListenSCION bool     `json:"listen_scion"`
 }
 
@@ -197,7 +196,6 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 			RequireICMP: r.Policy.RequireICMP,
 			ListenUDP:   r.Policy.ListenUDP,
 			ListenTCP:   r.Policy.ListenTCP,
-			ListenICMP:  r.Policy.ListenICMP,
 			ListenSCION: r.Policy.ListenSCION,
 		},
 	}, nil
