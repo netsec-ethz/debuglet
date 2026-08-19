@@ -2,15 +2,18 @@ package dispatcher
 
 import (
 	"context"
+	"database/sql"
 	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/resource"
 	"debuglet/internal/dispatcher/resource/schedule"
 	pb "debuglet/protocol"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -105,18 +108,18 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, req *pb.DebugletStateR
 	debugletID := req.GetDebugletId()
 	d.logger.Debug("Received debuglet state update", zap.String("debugletID", debugletID), zap.String("executorID", req.GetExecutorId()), zap.String("state", state.String()))
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	id, err := uuid.Parse(debugletID)
+	if err != nil {
+		d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
+	}
 
-	if store, ok := d.debugletStores[debugletID]; ok {
-		store.State = state
-		queries := database.New(d.db)
-		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
-			ID:    debugletID,
-			State: state,
-		}); err != nil {
-			d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
+	queries := database.New(d.db)
+	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: state}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &pb.DebugletStateResponse{}, nil
 		}
+		d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
 	}
 
 	return &pb.DebugletStateResponse{}, nil
@@ -129,6 +132,11 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 	transactionID := req.GetTransactionId()
 	floorBW := resource.Bitrate(policy.GetFloorBw())
 	ceilBW := resource.Bitrate(policy.GetCeilBw())
+	id, err := uuid.Parse(debugletID)
+	if err != nil {
+		d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
+	}
 	d.logger.Debug("Received debuglet allocation request", zap.String("debugletID", debugletID), zap.String("executorID", executorID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
 
 	d.logger.Debug("Checking debuglet capacity usage", zap.String("debugletID", debugletID), zap.Strings("destinations", policy.Addresses), zap.String("floorBW", floorBW.String()), zap.String("ceilBW", ceilBW.String()))
@@ -137,22 +145,22 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, req *pb.DebugletAll
 	if paid, err := d.Payment.IsPaid(ctx, transactionID); err != nil || !paid {
 		d.logger.Error("Debuglet has not been paid yet", zap.Error(err))
 		// TODO only abort if the transaction expired, otherwise wait
-		if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "Debuglet has not been paid for"); errAbort != nil {
+		if errAbort := d.AbortDebuglet(ctx, executorID, id, "Debuglet has not been paid for"); errAbort != nil {
 			d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
 		}
 		return nil, err
 	}
 	for _, dest := range policy.Addresses {
 		if err := d.destinations.CheckCapacity(dest, floorBW); err != nil {
-			if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "not enough capacity"); errAbort != nil {
+			if errAbort := d.AbortDebuglet(ctx, executorID, id, "not enough capacity"); errAbort != nil {
 				d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
 			}
 			return nil, err
 		}
 	}
 	for _, dest := range policy.Addresses {
-		if err := d.destinations.Insert(debugletID, dest, executorID, floorBW, ceilBW); err != nil {
-			if errAbort := d.AbortDebuglet(ctx, executorID, debugletID, "not enough capacity"); errAbort != nil {
+		if err := d.destinations.Insert(id, dest, executorID, floorBW, ceilBW); err != nil {
+			if errAbort := d.AbortDebuglet(ctx, executorID, id, "not enough capacity"); errAbort != nil {
 				d.logger.Error("Failed to abort debuglet", zap.Error(errAbort))
 			}
 			return nil, err
@@ -170,38 +178,54 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 	errMsg := req.ErrorMessage
 	d.logger.Debug("Received debuglet exit", zap.String("debugletID", debugletID), zap.Int32("exitCode", exitCode), zap.Stringp("errMsg", errMsg))
 
-	d.mu.Lock()
-	st, exists := d.debugletStores[debugletID]
-	if !exists {
-		d.mu.Unlock()
-		return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
-	}
-	if st.State == models.RunStateExited {
-		d.mu.Unlock()
-		return &pb.DebugletExitResponse{}, nil
+	id, err := uuid.Parse(debugletID)
+	if err != nil {
+		d.logger.Error("Invalid debuglet ID", zap.String("debugletID", debugletID), zap.Error(err))
+		return nil, fmt.Errorf("invalid debuglet ID: %w", err)
 	}
 
-	st.State = models.RunStateExited
+	queries := database.New(d.db)
+	deb, err := queries.GetDebugletByUUID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
+		}
+		return nil, fmt.Errorf("failed to get debuglet: %w", err)
+	}
+
+	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: models.RunStateExited}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &pb.DebugletExitResponse{}, nil
+		}
+		return nil, fmt.Errorf("failed to mark debuglet exited: %w", err)
+	}
+
+	var dbErr error
 	if errMsg != nil {
-		st.Err = *errMsg
+		dbErr = queries.SetDebugletError(ctx, database.SetDebugletErrorParams{Uuid: id, Error: sql.NullString{String: *errMsg, Valid: true}})
+	} else {
+		dbErr = queries.SetDebugletError(ctx, database.SetDebugletErrorParams{Uuid: id, Error: sql.NullString{String: "", Valid: false}})
+	}
+	if dbErr != nil {
+		d.logger.Error("Failed to set debuglet error message in database", zap.String("debugletID", debugletID), zap.Error(dbErr))
 	}
 
-	for _, dest := range st.Policy.Addresses {
-		d.destinations.Remove(debugletID, dest, st.ExecutorID, st.Policy.FloorBW, st.Policy.CeilBW)
+	floor := resource.Bitrate(deb.Usage)
+	ceil := resource.Bitrate(deb.CeilBw)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for _, dest := range deb.Addresses {
+		d.destinations.Remove(id, dest, deb.ExecutorID, floor, ceil)
 	}
 
-	d.releaseFloor(st)
-	d.mu.Unlock()
+	d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
 
 	go func() {
-		if err := d.sendFairshare(context.Background(), st.Policy.Addresses); err != nil {
+		if err := d.sendFairshare(context.Background(), deb.Addresses); err != nil {
 			d.logger.Error("Failed to send fairshare update", zap.Error(err))
 		}
-
-		time.Sleep(10 * time.Minute)
-		d.mu.Lock()
-		delete(d.debugletStores, debugletID)
-		d.mu.Unlock()
 	}()
 
 	return &pb.DebugletExitResponse{}, nil
@@ -209,7 +233,7 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 
 func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.DebugletStreamRequest, pb.DebugletStreamResponse]) error {
 	d.logger.Debug("Debuglet stream started")
-	var debugletID string
+	var debugletID uuid.UUID
 	ctx := stream.Context()
 
 	err := func() error {
@@ -221,7 +245,7 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 			if err != nil {
 				st := status.Convert(err)
 				if st.Code() == codes.Canceled || ctx.Err() != nil {
-					d.logger.Info("Debuglet disconnected (context canceled)", zap.String("debugletID", debugletID))
+					d.logger.Info("Debuglet disconnected (context canceled)", zap.String("debugletID", debugletID.String()))
 				} else {
 					d.logger.Error("Debuglet stream error", zap.Error(err))
 				}
@@ -230,26 +254,22 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 
 			switch msg := in.GetMsg().(type) {
 			case *pb.DebugletStreamRequest_Ident:
-				debugletID = msg.Ident.GetDebugletId()
-			case *pb.DebugletStreamRequest_Output:
-				output := msg.Output.GetOutput()
-				d.logger.Debug("Received debuglet output", zap.String("debugletID", debugletID), zap.Int("outputSize", len(output)))
-				d.mu.Lock()
-				_, exists := d.debugletStores[debugletID]
-				if !exists {
-					d.mu.Unlock()
-					d.logger.Error("Debuglet output for unknown debuglet", zap.String("debugletID", debugletID))
+				id, err := uuid.Parse(msg.Ident.GetDebugletId())
+				if err != nil {
+					d.logger.Error("Invalid debuglet ID", zap.String("debugletID", msg.Ident.GetDebugletId()), zap.Error(err))
 					continue
 				}
-				d.mu.Unlock()
-
+				debugletID = id
+			case *pb.DebugletStreamRequest_Output:
+				output := msg.Output.GetOutput()
+				d.logger.Debug("Received debuglet output", zap.String("debugletID", debugletID.String()), zap.Int("outputSize", len(output)))
 				queries := database.New(d.db)
 				if _, err := queries.CreateDebugletLog(ctx, database.CreateDebugletLogParams{
-					DebugletID: debugletID,
-					Timestamp:  models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
-					Output:     output,
+					Uuid:      debugletID,
+					Timestamp: models.NewUTCTime(msg.Output.GetTimestamp().AsTime()),
+					Output:    output,
 				}); err != nil {
-					d.logger.Error("Failed to store debuglet log in database", zap.String("debugletID", debugletID), zap.Error(err))
+					d.logger.Error("Failed to store debuglet log in database", zap.String("debugletID", debugletID.String()), zap.Error(err))
 				}
 			default:
 				d.logger.Warn("Unknown debuglet message")
@@ -257,11 +277,11 @@ func (d *Dispatcher) OnDebugletStream(stream grpc.BidiStreamingServer[pb.Debugle
 		}
 	}()
 
-	if debugletID != "" {
+	if debugletID != uuid.Nil {
 		if err != nil && ctx.Err() == nil {
-			d.logger.Error("Debuglet stream ended with error", zap.String("debugletID", debugletID), zap.Error(err))
+			d.logger.Error("Debuglet stream ended with error", zap.String("debugletID", debugletID.String()), zap.Error(err))
 			errMsg := err.Error()
-			d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID, ExitCode: -1, ErrorMessage: &errMsg})
+			d.OnDebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: debugletID.String(), ExitCode: -1, ErrorMessage: &errMsg})
 		}
 	}
 
@@ -299,13 +319,13 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, dests []string) error {
 	return g.Wait()
 }
 
-func (d *Dispatcher) releaseFloor(st *DebugletStore) {
+func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.Time, use resource.Bitrate) {
 	r := schedule.Request{
-		Executor:    st.ExecutorID,
-		Destination: st.Policy.Addresses,
-		From:        st.From,
-		To:          st.To,
-		Use:         st.Policy.FloorBW,
+		Executor:    executor,
+		Destination: dest,
+		From:        from,
+		To:          to,
+		Use:         use,
 	}
 	d.scheduler.Remove(r)
 }

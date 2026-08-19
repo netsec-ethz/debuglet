@@ -9,14 +9,17 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SqliteStorage naively uses the memory storage under the hood, but saves all debuglet specs
 // to a SQLite database to persist states across executor restarts.
 type SqliteStorage struct {
-	db        *sql.DB
-	local     *memory.MemoryStorage
-	onStartCb func(context.Context, scheduler.Spec)
+	db         *sql.DB
+	local      *memory.MemoryStorage
+	onStartCb  func(context.Context, scheduler.Spec)
+	onFailedCb func(context.Context, scheduler.Spec, error)
 }
 
 var _ scheduler.Scheduler = (*SqliteStorage)(nil)
@@ -45,7 +48,7 @@ func (s *SqliteStorage) RestoreFromDatabase(ctx context.Context) error {
 		offset += int64(len(debs))
 		for _, deb := range debs {
 			spec := scheduler.Spec{
-				DebugletID:    deb.ID,
+				DebugletID:    deb.Uuid,
 				StartTime:     &deb.StartTime.Time,
 				Args:          deb.Args,
 				Wasm:          nil,
@@ -58,13 +61,12 @@ func (s *SqliteStorage) RestoreFromDatabase(ctx context.Context) error {
 					RequireICMP: deb.RequireIcmp,
 					ListenUDP:   deb.ListenUdp,
 					ListenTCP:   deb.ListenTcp,
-					ListenICMP:  deb.ListenIcmp,
 					ListenSCION: deb.ListenScion,
 				},
 			}
 
 			if err := s.local.Insert(ctx, spec); err != nil {
-				return fmt.Errorf("failed to insert debuglet %s into local storage: %w", deb.ID, err)
+				return fmt.Errorf("failed to insert debuglet %s into local storage: %w", deb.Uuid, err)
 			}
 		}
 	}
@@ -79,7 +81,7 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 
 	queries := database.New(s.db)
 	if err := queries.CreateDebuglet(ctx, database.CreateDebugletParams{
-		ID:            spec.DebugletID,
+		Uuid:          spec.DebugletID,
 		StartTime:     database.NewUTCTime(startTime),
 		Args:          spec.Args,
 		Wasm:          spec.Wasm,
@@ -92,7 +94,6 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 		RequireIcmp: spec.Policy.RequireICMP,
 		ListenUdp:   spec.Policy.ListenUDP,
 		ListenTcp:   spec.Policy.ListenTCP,
-		ListenIcmp:  spec.Policy.ListenICMP,
 		ListenScion: spec.Policy.ListenSCION,
 	}); err != nil {
 		return err
@@ -106,7 +107,7 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 	return nil
 }
 
-func (s *SqliteStorage) Remove(ctx context.Context, debugletID string) (bool, error) {
+func (s *SqliteStorage) Remove(ctx context.Context, debugletID uuid.UUID) (bool, error) {
 	exists, localErr := s.local.Remove(ctx, debugletID)
 	queries := database.New(s.db)
 	if err := queries.DeleteDebuglet(ctx, debugletID); err != nil {
@@ -119,19 +120,34 @@ func (s *SqliteStorage) RegisterOnStart(cb func(context.Context, scheduler.Spec)
 	s.onStartCb = cb
 }
 
+func (s *SqliteStorage) RegisterFailed(cb func(context.Context, scheduler.Spec, error)) {
+	s.onFailedCb = cb
+}
+
 func (s *SqliteStorage) onStart(ctx context.Context, spec scheduler.Spec) {
 	queries := database.New(s.db)
-	deb, err := queries.UpdateDebugletStarted(ctx, database.UpdateDebugletStartedParams{
-		ID:        spec.DebugletID,
-		StartedAt: database.NewUTCTime(time.Now()),
-	})
+	oldStarted, err := queries.GetDebugletStarted(ctx, spec.DebugletID)
 	if err != nil {
-		log.Printf("Failed to set debuglet %s as started in database: %v", spec.DebugletID, err)
+		log.Printf("Failed to get debuglet %s started time from database: %v", spec.DebugletID, err)
 		return
 	}
-	spec.Wasm = deb.Wasm
 
-	s.onStartCb(ctx, spec)
+	if !oldStarted.IsZero() {
+		s.onFailedCb(ctx, spec, scheduler.ErrDebugletAlreadyStarted)
+	} else {
+		deb, err := queries.UpdateDebugletStarted(ctx, database.UpdateDebugletStartedParams{
+			Uuid:      spec.DebugletID,
+			StartedAt: database.NewUTCTime(time.Now()),
+		})
+		if err != nil {
+			log.Printf("Failed to set debuglet %s as started in database: %v", spec.DebugletID, err)
+			return
+		}
+		spec.Wasm = deb.Wasm
+
+		s.onStartCb(ctx, spec)
+	}
+
 	if err := queries.DeleteDebuglet(ctx, spec.DebugletID); err != nil {
 		log.Printf("Failed to delete debuglet %s from database: %v", spec.DebugletID, err)
 	}

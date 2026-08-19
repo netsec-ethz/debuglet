@@ -16,12 +16,12 @@ import (
 )
 
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, ctx context.Context) (int64, error) {
-	queries := database.New(h.dispatcher.DB())
+	queries := database.New(h.db)
 	price := new(big.Int).SetInt64(0)
 	for _, req := range request.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
 		if !exists {
-			return 0, fmt.Errorf("Executor does not exists: %w", req.ExecutorID)
+			return 0, fmt.Errorf("Executor does not exists: %s", req.ExecutorID)
 		}
 		if req.Policy.TimeoutMS < 0 || req.Policy.FloorBW < 0 || req.Policy.CeilBW < req.Policy.FloorBW {
 			return 0, fmt.Errorf("Invalid request. Timeout and FloorBW must be poisitive. CeilBW must be at least FloorBW")

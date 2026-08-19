@@ -52,7 +52,6 @@ IMPORT(close_tcp)          void close_tcp(int sock);
 
 // ---- ICMPv4 socket API -------------------------------------------------------
 IMPORT(connect_icmp4)      int  connect_icmp4(const void *addr, int addr_len);
-IMPORT(accept_icmp4)       int  accept_icmp4(void);
 IMPORT(receive_icmp4_data) int  receive_icmp4_data(int sock, void *buf, int len);
 IMPORT(send_icmp4_data)    void send_icmp4_data(int sock, const void *buf, int len);
 IMPORT(close_icmp4)        void close_icmp4(int sock);

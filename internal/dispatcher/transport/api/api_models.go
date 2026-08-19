@@ -8,6 +8,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type VersionResponse struct {
@@ -22,7 +24,6 @@ type DebugletPolicyRequest struct {
 	RequireICMP bool     `json:"require_icmp"`
 	ListenUDP   bool     `json:"listen_udp"`
 	ListenTCP   bool     `json:"listen_tcp"`
-	ListenICMP  bool     `json:"listen_icmp"`
 	ListenSCION bool     `json:"listen_scion"`
 }
 
@@ -43,9 +44,19 @@ type SubmitDebugletsRequest struct {
 	AuthKey       string            `json:"auth_key"`
 }
 
+type DebugletResponse struct {
+	ID         uuid.UUID `json:"id"`
+	StartTime  int64     `json:"start_time"`
+	EndTime    int64     `json:"end_time"`
+	Usage      int64     `json:"usage"`
+	ExecutorID string    `json:"executor_id"`
+	Addresses  []string  `json:"addresses"`
+	State      string    `json:"state"`
+}
+
 type DebugletDeleteRequest struct {
-	DebugletID string `json:"debuglet_id"`
-	ExecutorID string `json:"executor_id"`
+	DebugletID uuid.UUID `json:"debuglet_id"`
+	ExecutorID string    `json:"executor_id"`
 }
 
 type ExecutorResponse struct {
@@ -65,8 +76,8 @@ type ExecutorResponse struct {
 // It identifies which executor corresponds to a given source IP and lists the
 // most recent debuglet IDs that were dispatched to it.
 type ExecutorByIPResponse struct {
-	ExecutorID  string   `json:"executor_id"`
-	DebugletIDs []string `json:"debuglet_ids"` // newest first, up to ?n= (default 10)
+	ExecutorID  string      `json:"executor_id"`
+	DebugletIDs []uuid.UUID `json:"debuglet_ids"` // newest first, up to ?n= (default 10)
 }
 
 // ExecutorTeslaResponse is returned by GET /executors/:id/tesla.
@@ -135,6 +146,15 @@ type PaymentIntentRequest struct {
 	PaymentMethod string            `json:"payment_method"`
 }
 
+type UserResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type CreateUserRequest struct {
+	Name string `json:"name"`
+}
+
 // ================ HELPERS ================
 
 func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
@@ -176,7 +196,6 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 			RequireICMP: r.Policy.RequireICMP,
 			ListenUDP:   r.Policy.ListenUDP,
 			ListenTCP:   r.Policy.ListenTCP,
-			ListenICMP:  r.Policy.ListenICMP,
 			ListenSCION: r.Policy.ListenSCION,
 		},
 	}, nil

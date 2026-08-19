@@ -32,7 +32,7 @@ func TestRestart(t *testing.T) {
 	d := dispatcher.New(logger, db, "test", time.Hour, time.Minute, nil)
 
 	// RESTORE
-	mock.ExpectQuery("SELECT id, start_time, end_time, usage, executor_id, addresses, state FROM debuglets").
+	mock.ExpectQuery("SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets").
 		WillReturnRows(mockDebugletRow(start))
 	if err := d.RestoreScheduler(t.Context()); err != nil {
 		t.Fatalf("failed to restore scheduler: %v", err)
@@ -83,7 +83,7 @@ func TestRestart(t *testing.T) {
 			CeilBW:  resource.Gigabit,
 			Timeout: 10 * time.Second,
 		},
-	}})
+	}}, nil)
 
 	if err == nil {
 		t.Fatalf("expected error when submitting debuglet while executor has no capacity from startup")
@@ -94,13 +94,16 @@ func TestRestart(t *testing.T) {
 }
 
 func mockDebugletRow(start time.Time) *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "start_time", "end_time", "usage", "executor_id", "addresses", "state"}).AddRow(
-		uuid.New().String(),
+	return sqlmock.NewRows([]string{"id", "uuid", "start_time", "end_time", "usage", "ceil_bw", "executor_id", "addresses", "state", "error"}).AddRow(
+		int64(1),
+		uuid.New(),
 		start,
 		start.Add(10*time.Second),
+		int64(resource.Gigabit),
 		int64(resource.Gigabit),
 		"test",
 		nil,
 		models.RunStateUploading,
+		nil,
 	)
 }

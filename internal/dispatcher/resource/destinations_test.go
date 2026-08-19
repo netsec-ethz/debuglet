@@ -6,10 +6,22 @@ import (
 	"fmt"
 	"maps"
 	"testing"
+
+	"github.com/google/uuid"
+)
+
+var (
+	testDebugletID  = uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	testDebugletID2 = uuid.MustParse("00000000-0000-4000-8000-000000000002")
+	testDebugletID3 = uuid.MustParse("00000000-0000-4000-8000-000000000003")
+	testDebugletID4 = uuid.MustParse("00000000-0000-4000-8000-000000000004")
+	testDebugletID5 = uuid.MustParse("00000000-0000-4000-8000-000000000005")
+	testDebugletID6 = uuid.MustParse("00000000-0000-4000-8000-000000000006")
+	testDebugletID7 = uuid.MustParse("00000000-0000-4000-8000-000000000007")
 )
 
 func TestMultiDest(t *testing.T) {
-	debugletID := "d-1"
+	debugletID := testDebugletID
 	d := resource.NewDestinations(100)
 	dests := []string{"128.0.0.0", "128.0.0.1"}
 	d.Insert(debugletID, dests[0], "e1", 1, 100)
@@ -29,8 +41,8 @@ func TestMultiDest(t *testing.T) {
 func TestMinimum(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert("d-1", dest, "e1", 60, 100)
-	d.Insert("d-1", dest, "e2", 0, 100)
+	d.Insert(testDebugletID, dest, "e1", 60, 100)
+	d.Insert(testDebugletID2, dest, "e2", 0, 100)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
 	if len(jobCaps) != 2 || jobCaps["e1"] != 80 || jobCaps["e2"] != 20 {
@@ -41,9 +53,9 @@ func TestMinimum(t *testing.T) {
 func TestZero(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert("d-1", dest, "e1", 5, 100)
-	d.Insert("d-1", dest, "e2", 5, 100)
-	d.Insert("d-1", dest, "j3", 20, 20)
+	d.Insert(testDebugletID, dest, "e1", 5, 100)
+	d.Insert(testDebugletID2, dest, "e2", 5, 100)
+	d.Insert(testDebugletID3, dest, "j3", 20, 20)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
 	if len(jobCaps) != 3 || jobCaps["e1"] != 40 || jobCaps["e2"] != 40 || jobCaps["j3"] != 20 {
@@ -54,9 +66,9 @@ func TestZero(t *testing.T) {
 func TestNotFull(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert("d-1", dest, "e1", 5, 5)
-	d.Insert("d-1", dest, "e2", 5, 5)
-	d.Insert("d-1", dest, "j3", 20, 20)
+	d.Insert(testDebugletID, dest, "e1", 5, 5)
+	d.Insert(testDebugletID2, dest, "e2", 5, 5)
+	d.Insert(testDebugletID3, dest, "j3", 20, 20)
 
 	jobCaps := maps.Collect(d.Fairshare(dest))
 	if len(jobCaps) != 3 || jobCaps["e1"] != 5 || jobCaps["e2"] != 5 || jobCaps["j3"] != 20 {
@@ -67,18 +79,19 @@ func TestNotFull(t *testing.T) {
 func TestErrors(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	err := d.Insert("d-1", dest, "e2", 10, 5)
+	err := d.Insert(testDebugletID, dest, "e2", 10, 5)
 	if err == nil || !errors.Is(err, resource.ErrMinGreater) {
 		t.Fatalf("Expected to receive ErrMinGreater, got %v", err)
 	}
 
+	ids := []uuid.UUID{testDebugletID2, testDebugletID3, testDebugletID4, testDebugletID5, testDebugletID6}
 	for i := range 5 {
-		err := d.Insert("d-1", dest, fmt.Sprintf("j%d", i), 20, 100000)
+		err := d.Insert(ids[i], dest, fmt.Sprintf("j%d", i), 20, 100000)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
-	err = d.Insert("d-1", dest, "e2", 5, 5)
+	err = d.Insert(testDebugletID7, dest, "e2", 5, 5)
 	if err == nil || !errors.Is(err, resource.ErrCapacityFull) {
 		t.Fatalf("Expected to receive ErrCapacityFull, got %v", err)
 	}
@@ -87,9 +100,9 @@ func TestErrors(t *testing.T) {
 func TestRemove(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert("d-1", dest, "e1", 10, 10)
-	d.Insert("d-1", dest, "e2", 20, 100)
-	d.Remove("d-1", dest, "e1", 10, 10)
+	d.Insert(testDebugletID, dest, "e1", 10, 10)
+	d.Insert(testDebugletID2, dest, "e2", 20, 100)
+	d.Remove(testDebugletID, dest, "e1", 10, 10)
 	if x := d.Len(); x != 1 {
 		t.Fatalf("Expected Len()=1, got %d", x)
 	}
@@ -102,10 +115,10 @@ func TestRemove(t *testing.T) {
 func TestAdd(t *testing.T) {
 	d := resource.NewDestinations(100)
 	dest := "128.0.0.0"
-	d.Insert("d-1", dest, "exec1", 2, 10)
-	d.Insert("d-1", dest, "exec1", 10, 10)
+	d.Insert(testDebugletID, dest, "exec1", 2, 10)
+	d.Insert(testDebugletID2, dest, "exec1", 10, 10)
 
-	d.Insert("d-1", dest, "exec2", 2, 10)
+	d.Insert(testDebugletID3, dest, "exec2", 2, 10)
 
 	caps := maps.Collect(d.Fairshare(dest))
 	if len(caps) != 2 || caps["exec1"] != 20 || caps["exec2"] != 10 {
@@ -128,14 +141,16 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 	d := resource.NewDestinations(100)
 	for i := range initial {
 		dest := fmt.Sprintf("prefill-%d", i)
-		if err := d.Insert("d-1", dest, "prefill-job", 1, 100); err != nil {
+		if err := d.Insert(testDebugletID, dest, "prefill-job", 1, 100); err != nil {
 			b.Fatalf("prefill insert failed at %d: %v", i, err)
 		}
 	}
 
 	benchDests := make([]string, b.N)
+	benchIDs := make([]uuid.UUID, b.N)
 	for i := 0; i < b.N; i++ {
 		benchDests[i] = fmt.Sprintf("bench-%d", i)
+		benchIDs[i] = uuid.New()
 	}
 
 	b.ResetTimer()
@@ -150,14 +165,14 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 		b.StartTimer()
 		for j := 0; j < batch; j++ {
 			dest := benchDests[i+j]
-			if err := d.Insert(fmt.Sprintf("j-%d", j), dest, "bench-job", 1, 100); err != nil {
+			if err := d.Insert(benchIDs[i+j], dest, "bench-job", 1, 100); err != nil {
 				b.Fatalf("benchmark insert failed at %d: %v", i+j, err)
 			}
 		}
 		b.StopTimer()
 
 		for j := 0; j < batch; j++ {
-			d.Remove(fmt.Sprintf("j-%d", j), benchDests[i+j], "bench-job", 1, 100)
+			d.Remove(benchIDs[i+j], benchDests[i+j], "bench-job", 1, 100)
 		}
 		i += batch
 	}

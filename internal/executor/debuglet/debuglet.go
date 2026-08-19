@@ -34,6 +34,7 @@ import (
 	"debuglet/internal/executor/tagger/ebpf"
 	"debuglet/internal/executor/tagger/tesla"
 
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/tetratelabs/wazero"
 	wasi "github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -56,7 +57,7 @@ const (
 // Debuglet is the engine that loads, initialises, and runs a single WASM
 // debuglet module. One Debuglet instance corresponds to one session.
 type Debuglet struct {
-	id     string
+	id     uuid.UUID
 	policy scheduler.Policy
 
 	// wazero runtime state
@@ -72,11 +73,11 @@ type Debuglet struct {
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
-func New(logger *zap.Logger, debugletID string, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager) *Debuglet {
+func New(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	if iface != nil && runtime.GOOS == "linux" {
-		if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID)); err == nil {
+		if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID.String())); err == nil {
 			pktTagger = bt
 		} else {
 			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
@@ -85,7 +86,7 @@ func New(logger *zap.Logger, debugletID string, transactionID string, policy sch
 
 	if pktTagger == nil {
 		logger.Info("Using fallback pure-Go tagger")
-		pktTagger = tagger.New(schedule, []byte(debugletID))
+		pktTagger = tagger.New(schedule, []byte(debugletID.String()))
 	}
 
 	env := wasm.WasmEnv{
@@ -130,13 +131,12 @@ func (d *Debuglet) GetSCIONAddr() string {
 	return d.env.ScionServer.LocalAddr().String()
 }
 
-func (d *Debuglet) ID() string                       { return d.id }
+func (d *Debuglet) ID() uuid.UUID                    { return d.id }
 func (d *Debuglet) Registry() *socket.SocketRegistry { return d.env.Registry }
 
 type StartServersReq struct {
 	UDP   bool
 	TCP   bool
-	ICMP  bool
 	SCION bool
 }
 
@@ -170,15 +170,6 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		d.env.UdpServer = conn
 		d.env.UdpServerPort = port
 		d.env.UdpServerAddr = addr
-	}
-
-	if req.ICMP {
-		d.env.Logger.Debug("startServers: starting ICMP listener")
-		icmpServer, err := net.ListenPacket("ip4:icmp", ":0")
-		if err != nil {
-			return fmt.Errorf("startServers: failed to start ICMP listener: %w", err)
-		}
-		d.env.IpServer = icmpServer
 	}
 
 	if req.SCION {
@@ -265,7 +256,6 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 
 	// ---- ICMP socket API ----
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptIP(d.env)).Export("accept_icmp4")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
 	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")

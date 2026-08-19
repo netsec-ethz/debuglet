@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/credentials"
 )
@@ -28,7 +29,7 @@ type Executor struct {
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
 	scheduler   scheduler.Scheduler
-	running     map[string]RunningDebuglet
+	running     map[uuid.UUID]RunningDebuglet
 	mu          sync.RWMutex
 	limiter     *app.Limiter
 	packetCount ratelimit.PacketCount
@@ -75,12 +76,13 @@ func New(cfg *config.ExecutorConfig, l *zap.Logger, s scheduler.Scheduler) (*Exe
 		logger:        l,
 		cfg:           *cfg,
 		scheduler:     s,
-		running:       make(map[string]RunningDebuglet),
+		running:       make(map[uuid.UUID]RunningDebuglet),
 		limiter:       limiter,
 		packetCount:   pc,
 		portManager:   portManager,
 	}
 	s.RegisterOnStart(e.OnDebugletStart)
+	s.RegisterFailed(e.OnDebugletFailed)
 
 	var creds credentials.TransportCredentials
 	var tlsCfg *tls.Config

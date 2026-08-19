@@ -32,7 +32,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"github.com/tetratelabs/wazero/api"
 )
@@ -133,12 +132,6 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			}
 		}
 
-		debugletUUID, err := uuid.Parse(env.DebugletID)
-		if err != nil {
-			env.Logger.Warnw("hostConnect: invalid debuglet UUID", "id", env.DebugletID)
-			panic(fmt.Errorf("connect: invalid debuglet UUID"))
-		}
-
 		connAddr := stripPort(addr)
 		limit, err := env.Limiter.GetLimit(env.DebugletID, connAddr)
 		if err != nil {
@@ -151,7 +144,7 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			MaximumBandwidth: min(limit.Executor, limit.Address),
 			SocketType:       socketType,
 		}
-		hc, err := hostconn.NewConnection(ctx, env.PacketCount, debugletUUID, conn, opts)
+		hc, err := hostconn.NewConnection(ctx, env.PacketCount, env.DebugletID, conn, opts)
 		if err != nil {
 			env.Logger.Warnw("hostConnect: failed to create HostConn", "err", err)
 			panic(fmt.Errorf("connect: %w", err))
@@ -329,37 +322,6 @@ func HostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod api.Module, 
 			panic(fmt.Errorf("receive_udp_from: failed to write sender address length"))
 		}
 		return int32(n)
-	}
-}
-
-// =============================================================================
-// IP socket API
-// WASM keys: "connect_ip", "accept_ip", "receive_ip_data",
-//
-//	"send_ip_data", "close_ip"
-//
-// =============================================================================
-
-// HostAcceptIP accepts one incoming IP connection on the server and registers
-// it in the SocketRegistry. Returns the socket handle as I32.
-// WASM key: "accept_ip"
-func HostAcceptIP(env *WasmEnv) func() int32 {
-	return func() int32 {
-		// TODO: implement
-		return 0
-
-		// conn, err := env.IpServer.Accept()
-		// if err != nil {
-		// 	env.Logger.Warnw("hostAcceptIP: failed to accept", "err", err)
-		// 	panic(fmt.Errorf("accept_ip: %w", err))
-		// }
-
-		// ipConn, ok := conn.(*net.IPConn)
-		// if !ok {
-		// 	panic(fmt.Errorf("accept_ip: expected *net.IPConn, got %T", conn))
-		// }
-
-		// return env.Registry.Add(socket.NewGenericSocket(ipConn, socket.SocketTypeICMP4, ""))
 	}
 }
 

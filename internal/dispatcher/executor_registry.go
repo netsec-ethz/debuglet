@@ -6,12 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 type debugletHistory struct {
 	mu  sync.RWMutex
-	ids []string
+	ids []uuid.UUID
 }
 
 // RegisteredExecutor represents a registered executor and its metadata.
@@ -55,7 +56,7 @@ const lastDebugletHistory = 10
 // RecentDebugletIDs returns up to n recent debuglet IDs for this
 // executor, newest first. If n ≤ 0 the default (lastDebugletHistory) is
 // used.
-func (e *RegisteredExecutor) RecentDebugletIDs(n int) []string {
+func (e *RegisteredExecutor) RecentDebugletIDs(n int) []uuid.UUID {
 	if n <= 0 {
 		n = lastDebugletHistory
 	}
@@ -66,7 +67,7 @@ func (e *RegisteredExecutor) RecentDebugletIDs(n int) []string {
 	defer e.history.mu.RUnlock()
 
 	if len(e.history.ids) == 0 {
-		return []string{}
+		return []uuid.UUID{}
 	}
 	start := 0
 	if len(e.history.ids) > n {
@@ -74,7 +75,7 @@ func (e *RegisteredExecutor) RecentDebugletIDs(n int) []string {
 	}
 	// Return a copy, newest first.
 	slice := e.history.ids[start:]
-	out := make([]string, len(slice))
+	out := make([]uuid.UUID, len(slice))
 	for i, v := range slice {
 		out[len(slice)-1-i] = v
 	}
@@ -83,7 +84,7 @@ func (e *RegisteredExecutor) RecentDebugletIDs(n int) []string {
 
 // AppendDebugletID adds id to the executor's history, trimming old entries
 // so the total length stays within 2× the maximum to bound memory usage.
-func (e *RegisteredExecutor) AppendDebugletID(id string) {
+func (e *RegisteredExecutor) AppendDebugletID(id uuid.UUID) {
 	if e.history == nil {
 		panic("history not initialized")
 	}

@@ -28,7 +28,6 @@ type DebugletPolicy struct {
 	RequireICMP bool
 	ListenUDP   bool
 	ListenTCP   bool
-	ListenICMP  bool
 	ListenSCION bool
 }
 

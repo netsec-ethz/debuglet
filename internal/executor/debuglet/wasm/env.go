@@ -9,20 +9,21 @@ import (
 	"debuglet/internal/executor/tagger"
 	"net"
 
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
 )
 
 type WasmEnv struct {
-	DebugletID string
+	DebugletID uuid.UUID
 	Policy     scheduler.Policy
 
-	Limiter         *app.Limiter
-	PacketCount     ratelimit.PacketCount
-	LastReceived    net.Addr
-	Logger          *zap.SugaredLogger
-	TlsCfg          *tls.Config
-	Tagger          tagger.TaggerInterface
+	Limiter      *app.Limiter
+	PacketCount  ratelimit.PacketCount
+	LastReceived net.Addr
+	Logger       *zap.SugaredLogger
+	TlsCfg       *tls.Config
+	Tagger       tagger.TaggerInterface
 
 	// Listeners
 	PortManager *socket.PortManager
@@ -35,7 +36,6 @@ type WasmEnv struct {
 	UdpServerPort int
 	UdpServerAddr string
 
-	IpServer    net.PacketConn
 	ScionServer pan.ListenConn
 
 	Registry  *socket.SocketRegistry
@@ -58,9 +58,6 @@ func (e *WasmEnv) Close() {
 		if e.PortManager != nil {
 			e.PortManager.Release(e.TcpServerPort)
 		}
-	}
-	if e.IpServer != nil {
-		e.IpServer.Close()
 	}
 	if e.Tagger != nil {
 		e.Tagger.Close()

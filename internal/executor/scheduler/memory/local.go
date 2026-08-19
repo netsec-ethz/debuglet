@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MemoryStorage is a simple in-memory implementation storing all debuglets in a
@@ -15,12 +17,13 @@ import (
 // Because the WASM is also stored in memory, the memory usage of a lot of debuglets
 // can be significant.
 type MemoryStorage struct {
-	onStart func(context.Context, scheduler.Spec)
+	onStartCb  func(context.Context, scheduler.Spec)
+	onFailedCb func(context.Context, scheduler.Spec, error)
 
 	wakeup   chan struct{}
 	mu       sync.RWMutex
 	tq       *TimedQueue
-	inflight map[string]struct{} // popped from queue, waiting for executor to take ownership
+	inflight map[uuid.UUID]struct{} // popped from queue, waiting for executor to take ownership
 }
 
 var _ scheduler.Scheduler = (*MemoryStorage)(nil)
@@ -29,7 +32,7 @@ func NewStorage() *MemoryStorage {
 	return &MemoryStorage{
 		wakeup:   make(chan struct{}, 32),
 		tq:       NewTimedQueue(),
-		inflight: make(map[string]struct{}),
+		inflight: make(map[uuid.UUID]struct{}),
 	}
 }
 
@@ -42,7 +45,7 @@ func (m *MemoryStorage) Insert(ctx context.Context, u scheduler.Spec) error {
 	return nil
 }
 
-func (m *MemoryStorage) Remove(ctx context.Context, debugletID string) (bool, error) {
+func (m *MemoryStorage) Remove(ctx context.Context, debugletID uuid.UUID) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -54,11 +57,15 @@ func (m *MemoryStorage) Remove(ctx context.Context, debugletID string) (bool, er
 }
 
 func (m *MemoryStorage) RegisterOnStart(onStart func(context.Context, scheduler.Spec)) {
-	m.onStart = onStart
+	m.onStartCb = onStart
+}
+
+func (s *MemoryStorage) RegisterFailed(cb func(context.Context, scheduler.Spec, error)) {
+	s.onFailedCb = cb
 }
 
 func (m *MemoryStorage) StartLoop(ctx context.Context) error {
-	if m.onStart == nil {
+	if m.onStartCb == nil {
 		return errors.New("onStart is not registered")
 	}
 
@@ -75,7 +82,7 @@ func (m *MemoryStorage) StartLoop(ctx context.Context) error {
 				m.inflight[nextItem.DebugletID] = struct{}{}
 				m.mu.Unlock()
 				go func() {
-					m.onStart(ctx, *nextItem)
+					m.onStartCb(ctx, *nextItem)
 					m.mu.Lock()
 					delete(m.inflight, nextItem.DebugletID)
 					m.mu.Unlock()

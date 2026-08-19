@@ -6,16 +6,16 @@ OFFSET ?;
 -- name: UpdateDebugletStarted :one
 UPDATE debuglets
 SET started_at = ?
-WHERE id = ?
+WHERE uuid = ?
 RETURNING *;
 
 -- name: DeleteDebuglet :exec
 DELETE FROM debuglets
-WHERE id = ?;
+WHERE uuid = ?;
 
 -- name: CreateDebuglet :exec
 INSERT INTO debuglets (
-    id,
+    uuid,
     start_time,
     args,
     wasm,
@@ -27,6 +27,9 @@ INSERT INTO debuglets (
     require_icmp,
     listen_udp,
     listen_tcp,
-    listen_icmp,
     listen_scion
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetDebugletStarted :one
+SELECT started_at FROM debuglets
+WHERE uuid = ?;

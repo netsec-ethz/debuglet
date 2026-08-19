@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"debuglet/internal/dispatcher"
 	"net/http"
 
@@ -11,11 +12,13 @@ import (
 type Handler struct {
 	dispatcher *dispatcher.Dispatcher
 	logger     *zap.Logger
+	db         *sql.DB
 }
 
-func NewHandler(d *dispatcher.Dispatcher, l *zap.Logger) *Handler {
+func NewHandler(d *dispatcher.Dispatcher, db *sql.DB, l *zap.Logger) *Handler {
 	return &Handler{
 		dispatcher: d,
+		db:         db,
 		logger:     l,
 	}
 }
@@ -25,6 +28,8 @@ func (h *Handler) GetVersion(c echo.Context) error {
 }
 
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
+	e.Use(InsecureAuthMiddleware(h.db, h.logger))
+
 	e.GET("/version", h.GetVersion)
 	// debuglet
 	e.PUT("/debuglet", h.PutDebuglets)
@@ -41,4 +46,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// e.GET("payment/balance", h.GetBalance)
 	e.PUT("/payment/intent", h.PutPaymentIntent)
 	e.GET("/payment/:transaction_id/status", h.GetPaymentStatus)
+	// user
+	e.GET("/me", h.GetMe)
+	e.GET("/user-ids", h.ListUserIDs)
+	e.PUT("/user", h.CreateUser)
+	e.GET("/list-debuglets", h.ListUserDebuglets)
 }
