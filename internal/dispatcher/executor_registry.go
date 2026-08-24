@@ -1,6 +1,8 @@
 package dispatcher
 
 import (
+	"context"
+	"debuglet/internal/dispatcher/database"
 	"debuglet/internal/dispatcher/resource"
 	"fmt"
 	"sync"
@@ -34,6 +36,7 @@ type RegisteredExecutor struct {
 
 	PricePerBwS int64
 	Currency    string
+	SuiWallet   string
 	capacity    resource.Bitrate
 
 	sourceIp   string
@@ -100,7 +103,7 @@ func (e *RegisteredExecutor) AppendDebugletID(id uuid.UUID) {
 
 // RegisterExecutor creates or updates the executor record for id. anchorKey is
 // k_0, the public TESLA chain anchor published by the executor at startup.
-func (d *Dispatcher) RegisterExecutor(id, version, sourceIp, publicHost string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64, currency string) {
+func (d *Dispatcher) RegisterExecutor(id, version, sourceIp, publicHost string, teslaDelay time.Duration, teslaAnchor time.Time, anchorKey []byte, icmpEnabled bool, price int64, currency string, suiWallet string) {
 	d.logger.Info("Registering executor", zap.String("id", id), zap.String("source_ip", sourceIp), zap.Int64("price", price), zap.String("currency", currency))
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -125,12 +128,14 @@ func (d *Dispatcher) RegisterExecutor(id, version, sourceIp, publicHost string, 
 	exec.ICMPEnabled = icmpEnabled
 	exec.PricePerBwS = price
 	exec.Currency = currency
+	exec.SuiWallet = suiWallet
 	exec.sourceIp = sourceIp
 	if publicHost != "" {
 		exec.publicHost = &publicHost
 	} else {
 		exec.publicHost = nil
 	}
+	d.Payment.CreateEarningsIfNotExists(id, currency, suiWallet, database.New(d.db), context.Background())
 }
 
 // GetExecutorByIPFull returns the full Executor record for the given source IP,

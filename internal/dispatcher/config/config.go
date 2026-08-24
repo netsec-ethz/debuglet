@@ -66,6 +66,7 @@ type SuiConfig struct {
 	Address           string `toml:"address"`
 	PaymentRegistryId string `toml:"payment_registry_id"`
 	PaymentKitPackage string `toml:"payment_kit_package"`
+	KeystorePath      string `toml:"keystore_path"`
 }
 
 // LoadConfig reads a TOML config file and unmarshals it

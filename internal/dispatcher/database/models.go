@@ -12,16 +12,18 @@ import (
 )
 
 type Debuglet struct {
-	ID         int64
-	Uuid       uuid.UUID
-	StartTime  models.UTCTime
-	EndTime    models.UTCTime
-	Usage      int64
-	CeilBw     int64
-	ExecutorID string
-	Addresses  models.CommaSeparatedList
-	State      models.DebugletRunState
-	Error      sql.NullString
+	ID            int64
+	Uuid          uuid.UUID
+	StartTime     models.UTCTime
+	EndTime       models.UTCTime
+	Usage         int64
+	CeilBw        int64
+	ExecutorID    string
+	Addresses     models.CommaSeparatedList
+	State         models.DebugletRunState
+	Error         sql.NullString
+	TransactionID string
+	OrderID       int64
 }
 
 type DebugletLog struct {
@@ -37,6 +39,8 @@ type DebugletOrder struct {
 	ExecutorID    string
 	Price         int64
 	Currency      string
+	State         int64
+	RefundAddress string
 }
 
 type DebugletUser struct {
@@ -45,10 +49,11 @@ type DebugletUser struct {
 }
 
 type Earning struct {
-	ExecutorID     string
-	Currency       string
-	TotalIncome    int64
-	CurrentBalance int64
+	ExecutorID       string
+	Currency         string
+	TotalIncome      int64
+	CurrentBalance   int64
+	SuiWalletAddress string
 }
 
 type Transaction struct {

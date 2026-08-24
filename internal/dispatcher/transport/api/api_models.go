@@ -144,6 +144,7 @@ type DummyIntent struct {
 type PaymentIntentRequest struct {
 	Debuglets     []DebugletRequest `json:"debuglets"`
 	PaymentMethod string            `json:"payment_method"`
+	RefundAddress string            `json:"refund_address"`
 }
 
 type UserResponse struct {

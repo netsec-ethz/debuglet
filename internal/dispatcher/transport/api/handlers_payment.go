@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"debuglet/internal/dispatcher/database"
+	"debuglet/internal/dispatcher/models"
 	"debuglet/internal/dispatcher/payments"
 	"debuglet/internal/dispatcher/payments/sui"
 	"math"
@@ -15,7 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, ctx context.Context) (int64, error) {
+func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, refundAddress string, ctx context.Context) (int64, error) {
 	queries := database.New(h.db)
 	price := new(big.Int).SetInt64(0)
 	for _, req := range request.Debuglets {
@@ -31,14 +32,19 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 		floorBW := new(big.Int).SetInt64(req.Policy.FloorBW)
 		timeout := new(big.Int).SetInt64(req.Policy.TimeoutMS / 1000)
 		debugletPrice := new(big.Int).Mul(new(big.Int).Mul(ppb, floorBW), timeout)
-
-		queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
+		h.logger.Debug("Create order", zap.String("txid", transactionId), zap.Int64("orderID", req.OrderID))
+		_, err := queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
 			TransactionID: transactionId,
 			OrderID:       req.OrderID,
 			ExecutorID:    req.ExecutorID,
 			Price:         debugletPrice.Int64(),
-			Currency:      executor.Currency,
+			Currency:      request.PaymentMethod,
+			RefundAddress: refundAddress,
+			State:         int64(models.Outstanding),
 		})
+		if err != nil {
+			return 0, fmt.Errorf("Failed to store order: %s", err.Error())
+		}
 
 		price.Add(price, debugletPrice)
 	}
@@ -56,7 +62,7 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
 	}
-	if (req.PaymentMethod != "SUI") && (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") {
+	if (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") {
 		return c.JSON(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
 	}
 	transactionId, err := h.dispatcher.Payment.NewTransactionID()
@@ -66,8 +72,9 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	price, err := h.LockPrice(req, transactionId, ctx)
+	price, err := h.LockPrice(req, transactionId, req.RefundAddress, ctx)
 	if err != nil {
+		h.logger.Debug("failed to lock price", zap.String("error", err.Error()))
 		return c.JSON(http.StatusBadRequest, err)
 	}
 	h.logger.Info("intent", zap.Int64("price", price))

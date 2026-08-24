@@ -7,11 +7,10 @@ INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, sta
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
--- name: UpdateTransactionStatus :one
+-- name: UpdateTransactionStatus :exec
 UPDATE transactions
 SET status = ?
-WHERE id = ?
-RETURNING *;
+WHERE id = ?;
 
 -- name: GetTransactionState :one
 SELECT * FROM transaction_states
@@ -37,10 +36,20 @@ SELECT * FROM debuglet_order
 WHERE transaction_id = ?;
 
 -- name: CreateDebugletOrder :one
-INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency )
-VALUES (?,?,?,?,?)
+INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, refund_address, state )
+VALUES (?,?,?,?,?,?,?)
 RETURNING *;
 
+-- name: UpdateDebugletOrderState :one
+UPDATE debuglet_order
+SET state = ? 
+WHERE transaction_id = ? AND order_id = ?
+RETURNING *;
+
+-- name: SetRefundAddress :exec
+UPDATE debuglet_order
+SET refund_address = ?
+WHERE transaction_id = ? AND order_id = ?; 
 
 /*
 
@@ -49,6 +58,9 @@ EARNINGS
 */
 
 -- name: GetEarnings :many
+SELECT * FROM earnings;
+
+-- name: GetEarningsOf :many
 SELECT * FROM earnings
 WHERE executor_id = ?;
 
@@ -57,13 +69,17 @@ SELECT * FROM earnings
 WHERE executor_id = ? AND currency = ?;
 
 -- name: CreateEarnings :one
-INSERT INTO earnings (executor_id, currency, total_income, current_balance)
-VALUES (?,?,0,0)
+INSERT INTO earnings (executor_id, currency, sui_wallet_address, total_income, current_balance)
+VALUES (?,?,?,0,0)
 RETURNING *;
 
--- name: AddEarnings :one
+-- name: AddEarnings :exec
 UPDATE earnings
 SET total_income = total_income + sqlc.arg(amount),
     current_balance = current_balance + sqlc.arg(amount)
-WHERE executor_id = sqlc.arg(executor_id) AND currency = sqlc.arg(currency)
-RETURNING *;
+WHERE executor_id = sqlc.arg(executor_id) AND currency = sqlc.arg(currency);
+
+-- name: SettleEarning :exec
+UPDATE earnings 
+SET current_balance = 0
+WHERE executor_id = ? AND currency = ?

@@ -134,6 +134,7 @@ type HelloResponse struct {
 	PricePerBwS            int64                  `protobuf:"varint,8,opt,name=price_per_bw_s,json=pricePerBwS,proto3" json:"price_per_bw_s,omitempty"`                                  // Price per bit/s of bandwidth
 	Currency               string                 `protobuf:"bytes,9,opt,name=currency,proto3" json:"currency,omitempty"`
 	PublicHost             *string                `protobuf:"bytes,10,opt,name=public_host,json=publicHost,proto3,oneof" json:"public_host,omitempty"` // Optional: public host for the executor at which debuglet listeners can be contacted
+	SuiWallet              *string                `protobuf:"bytes,11,opt,name=sui_wallet,json=suiWallet,proto3,oneof" json:"sui_wallet,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -234,6 +235,13 @@ func (x *HelloResponse) GetCurrency() string {
 func (x *HelloResponse) GetPublicHost() string {
 	if x != nil && x.PublicHost != nil {
 		return *x.PublicHost
+	}
+	return ""
+}
+
+func (x *HelloResponse) GetSuiWallet() string {
+	if x != nil && x.SuiWallet != nil {
+		return *x.SuiWallet
 	}
 	return ""
 }
@@ -1403,7 +1411,7 @@ var File_protocol_protocol_proto protoreflect.FileDescriptor
 const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
 	"\x17protocol/protocol.proto\x12\x11debuglet.protocol\x1a\x1fgoogle/protobuf/timestamp.proto\"\x0e\n" +
-	"\fHelloRequest\"\x8e\x03\n" +
+	"\fHelloRequest\"\xc1\x03\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -1417,8 +1425,11 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\bcurrency\x18\t \x01(\tR\bcurrency\x12$\n" +
 	"\vpublic_host\x18\n" +
 	" \x01(\tH\x00R\n" +
-	"publicHost\x88\x01\x01B\x0e\n" +
-	"\f_public_host\"\x85\x02\n" +
+	"publicHost\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"sui_wallet\x18\v \x01(\tH\x01R\tsuiWallet\x88\x01\x01B\x0e\n" +
+	"\f_public_hostB\r\n" +
+	"\v_sui_wallet\"\x85\x02\n" +
 	"\x0eDebugletPolicy\x12\x19\n" +
 	"\bfloor_bw\x18\x01 \x01(\x03R\afloorBw\x12\x17\n" +
 	"\aceil_bw\x18\x02 \x01(\x03R\x06ceilBw\x12\x1d\n" +

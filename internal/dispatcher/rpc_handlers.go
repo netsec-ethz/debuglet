@@ -38,6 +38,12 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, req *pb.HeartbeatRequest) 
 		return nil, fmt.Errorf("executor '%s' not found", execID)
 	}
 
+	queries := database.New(d.db)
+	earnings, _ := queries.GetEarningsIn(ctx, database.GetEarningsInParams{
+		ExecutorID: execID,
+		Currency:   "USDC",
+	})
+	d.logger.Info("Earnings", zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
 	err := d.keystore.Store(execID, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
 	if err != nil {
 		return nil, fmt.Errorf("failed to store Tesla key: %w", err)
@@ -71,6 +77,7 @@ func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
 		h.GetIcmpEnabled(),
 		h.GetPricePerBwS(),
 		h.GetCurrency(),
+		h.GetSuiWallet(),
 	)
 
 	go func() {
@@ -191,6 +198,25 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, req *pb.DebugletExitReq
 			return nil, fmt.Errorf("debuglet with id '%s' does not exist", debugletID)
 		}
 		return nil, fmt.Errorf("failed to get debuglet: %w", err)
+	}
+
+	if deb.State != models.RunStateExited {
+		switch exitCode {
+		case 0:
+			//credit executor
+			d.logger.Debug("Debuglet Completed. Credit executor")
+			err = d.Payment.SetDebugletOrderComplete(&deb, ctx)
+			if err != nil {
+				d.logger.Error(err.Error())
+			}
+		default:
+			//refund
+			d.logger.Debug("Debuglet Aborted. Refund Buyer")
+			err = d.Payment.RefundDebugletOrder(&deb, "", ctx)
+			if err != nil {
+				d.logger.Error(err.Error())
+			}
+		}
 	}
 
 	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{Uuid: id, State: models.RunStateExited}); err != nil {

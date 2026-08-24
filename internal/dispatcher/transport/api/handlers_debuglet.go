@@ -31,6 +31,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	transactionId := req.TransactionId
 	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
 	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Int64("status", tx.Status))
+	// TODO we could replace this by a user authentication
 	if err != nil || tx.AuthKey != req.AuthKey {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
 	}
@@ -49,6 +50,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
 		spec.TransactionID = transactionId
+		spec.OrderID = req.OrderID
 		specs = append(specs, spec)
 	}
 

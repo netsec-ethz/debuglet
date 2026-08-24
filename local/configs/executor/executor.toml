@@ -36,7 +36,7 @@ path = ".data/executor.db"
 
 [pricing]
 price_per_bw_s = 1
-currency = "SUI"
+currency = "USDC"
 sui_wallet = ""
 trial_price_limit=100000
 trial_time_limit=500

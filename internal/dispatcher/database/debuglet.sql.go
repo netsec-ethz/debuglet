@@ -14,20 +14,22 @@ import (
 )
 
 const createDebuglet = `-- name: CreateDebuglet :one
-INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error
+INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, transaction_id, order_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ? ,?)
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id
 `
 
 type CreateDebugletParams struct {
-	Uuid       uuid.UUID
-	StartTime  models.UTCTime
-	EndTime    models.UTCTime
-	Usage      int64
-	CeilBw     int64
-	ExecutorID string
-	Addresses  models.CommaSeparatedList
-	State      models.DebugletRunState
+	Uuid          uuid.UUID
+	StartTime     models.UTCTime
+	EndTime       models.UTCTime
+	Usage         int64
+	CeilBw        int64
+	ExecutorID    string
+	Addresses     models.CommaSeparatedList
+	State         models.DebugletRunState
+	TransactionID string
+	OrderID       int64
 }
 
 func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) (Debuglet, error) {
@@ -40,6 +42,8 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		arg.ExecutorID,
 		arg.Addresses,
 		arg.State,
+		arg.TransactionID,
+		arg.OrderID,
 	)
 	var i Debuglet
 	err := row.Scan(
@@ -53,6 +57,8 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		&i.Addresses,
 		&i.State,
 		&i.Error,
+		&i.TransactionID,
+		&i.OrderID,
 	)
 	return i, err
 }
@@ -90,7 +96,7 @@ func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogPa
 }
 
 const getDebugletByUUID = `-- name: GetDebugletByUUID :one
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id FROM debuglets
 WHERE uuid = ?
 `
 
@@ -108,6 +114,8 @@ func (q *Queries) GetDebugletByUUID(ctx context.Context, argUuid uuid.UUID) (Deb
 		&i.Addresses,
 		&i.State,
 		&i.Error,
+		&i.TransactionID,
+		&i.OrderID,
 	)
 	return i, err
 }
@@ -162,7 +170,7 @@ DEBUGLET
 
 */
 
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id FROM debuglets
 LIMIT ?
 OFFSET ?
 `
@@ -192,6 +200,8 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 			&i.Addresses,
 			&i.State,
 			&i.Error,
+			&i.TransactionID,
+			&i.OrderID,
 		); err != nil {
 			return nil, err
 		}
@@ -207,7 +217,7 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 }
 
 const listDebugletsEndAfter = `-- name: ListDebugletsEndAfter :many
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id FROM debuglets
 WHERE end_time > ?
 `
 
@@ -231,6 +241,8 @@ func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime models.UTCT
 			&i.Addresses,
 			&i.State,
 			&i.Error,
+			&i.TransactionID,
+			&i.OrderID,
 		); err != nil {
 			return nil, err
 		}
@@ -265,7 +277,7 @@ const updateDebugletState = `-- name: UpdateDebugletState :one
 UPDATE debuglets
 SET state = ?
 WHERE uuid = ?
-RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id
 `
 
 type UpdateDebugletStateParams struct {
@@ -287,6 +299,8 @@ func (q *Queries) UpdateDebugletState(ctx context.Context, arg UpdateDebugletSta
 		&i.Addresses,
 		&i.State,
 		&i.Error,
+		&i.TransactionID,
+		&i.OrderID,
 	)
 	return i, err
 }

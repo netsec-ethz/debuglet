@@ -13,12 +13,15 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type PaymentHandler struct {
 	db     *sql.DB
 	sui    *sui.SuiPaymentHandler
 	logger *zap.Logger
+	cfg    *config.DispatcherConfig
+	pt     *PayoutTicker
 }
 
 type PaymentIntent struct {
@@ -32,13 +35,17 @@ type DummyIntent struct {
 }
 
 func NewPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
-	handler := &PaymentHandler{db: db, logger: logger}
+	handler := &PaymentHandler{db: db, logger: logger, cfg: cfg}
 	handler.sui = sui.NewSuiPaymentHandler(cfg, db, logger, handler)
+	handler.pt = NewPayoutTicker(db, handler, logger)
 	return handler
 }
 
 func (p *PaymentHandler) Start(ctx context.Context) error {
-	return p.sui.Start(ctx)
+	g, subCtx := errgroup.WithContext(ctx)
+	g.Go(func() error { return p.pt.StartPayoutLoop(subCtx) })
+	g.Go(func() error { return p.sui.Start(subCtx) })
+	return g.Wait()
 }
 
 func (p *PaymentHandler) CreatePaymentIntent(transactionId string, price int64, method string, hash string, ctx context.Context) (PaymentIntent, error) {
@@ -108,37 +115,98 @@ func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.C
 		Status: int64(models.Paid),
 		ID:     transactionId,
 	})
-	orders, err := queries.GetTransactionOrders(ctx, transactionId)
-	if err != nil {
-		p.logger.Warn("failed to load orders of transaction")
-		//TODO refund order
-		return
-	}
-	for _, order := range orders {
-		p.logger.Info("Crediting", zap.String("id", order.ExecutorID), zap.Int64("amount", order.Price), zap.String("currency", order.Currency))
-		p.CreateEarningsIfNotExists(order.ExecutorID, order.Currency, queries, ctx)
-		i, err := queries.AddEarnings(ctx, database.AddEarningsParams{
-			Amount:     order.Price,
-			ExecutorID: order.ExecutorID,
-			Currency:   order.Currency,
-		})
-		if err != nil {
-			p.logger.Error("Failed to credit executor", zap.String("error", err.Error()))
-		} else {
-			p.logger.Info("new balance: ", zap.Int64("total", i.TotalIncome), zap.Int64("current", i.CurrentBalance))
-		}
-	}
 }
 
-func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, queries *database.Queries, ctx context.Context) {
+func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, ctx context.Context) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	queries := database.New(p.db).WithTx(tx)
+	p.logger.Debug("Update", zap.String("transactionId", debuglet.TransactionID), zap.Int64("orderId", debuglet.OrderID))
+	order, err := queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
+		State:         int64(models.Credited),
+		TransactionID: debuglet.TransactionID,
+		OrderID:       debuglet.OrderID,
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to update state of %s: %s", debuglet.Uuid.String(), err.Error())
+	}
+	p.CreateEarningsIfNotExists(debuglet.ExecutorID, order.Currency, "", queries, ctx)
+	err = queries.AddEarnings(ctx, database.AddEarningsParams{
+		Amount:     order.Price,
+		ExecutorID: debuglet.ExecutorID,
+		Currency:   order.Currency,
+	})
+	p.logger.Debug("Credited Executor", zap.String("ID", debuglet.ExecutorID), zap.String("currency", order.Currency), zap.Int64("amount", order.Price))
+	return tx.Commit()
+}
+
+func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refundAddress string, ctx context.Context) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	queries := database.New(p.db).WithTx(tx)
+	order, err := queries.GetDebugletOrder(ctx, database.GetDebugletOrderParams{
+		TransactionID: debuglet.TransactionID,
+		OrderID:       debuglet.OrderID,
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to find debuglet order")
+	}
+	if order.State == int64(models.Refunded) {
+		return fmt.Errorf("Debuglet has already been refunded")
+	}
+
+	order, err = queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
+		TransactionID: debuglet.TransactionID,
+		OrderID:       debuglet.OrderID,
+		State:         int64(models.Refunded),
+	})
+
+	if err != nil {
+		return err
+	}
+	switch order.Currency {
+	case "USDC":
+		err = p.sui.RefundDebuglet(&order, refundAddress, ctx)
+	default:
+		err = fmt.Errorf("Refunds not supported for currency %s", order.Currency)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, wallet string, queries *database.Queries, ctx context.Context) {
 	_, err := queries.GetEarningsIn(ctx, database.GetEarningsInParams{
 		ExecutorID: execID,
 		Currency:   currency,
 	})
 	if err == sql.ErrNoRows {
 		queries.CreateEarnings(ctx, database.CreateEarningsParams{
-			ExecutorID: execID,
-			Currency:   currency,
+			ExecutorID:       execID,
+			Currency:         currency,
+			SuiWalletAddress: wallet,
 		})
+	}
+}
+
+func (p *PaymentHandler) TransferUSDC(amount uint64, receiver string, ctx context.Context) error {
+	return p.sui.TransferCoins(amount, receiver, sui.GetCoinType("USDC", p.cfg.Sui.Network), ctx)
+}
+
+func (p *PaymentHandler) PayoutExecutor(earning database.Earning, ctx context.Context) error {
+	switch earning.Currency {
+	case "USDC":
+		return p.sui.TransferCoins(uint64(earning.CurrentBalance), sui.GetCoinType("USDC", p.cfg.Sui.Network), earning.SuiWalletAddress, ctx)
+	default:
+		return fmt.Errorf("Unknown/unallowed currency %s", earning.Currency)
 	}
 }

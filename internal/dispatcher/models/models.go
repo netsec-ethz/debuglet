@@ -18,6 +18,7 @@ type DebugletSpec struct {
 	ExecutorID string
 	// TransactionID is required for refunding aborted debuglets
 	TransactionID string
+	OrderID       int64
 }
 
 type DebugletPolicy struct {
@@ -142,6 +143,7 @@ const (
 	Aborted
 	Paid
 	Refunded
+	Credited
 )
 
 func (d TransactionState) String() string {
@@ -156,6 +158,8 @@ func (d TransactionState) String() string {
 		return "TransactionAborted"
 	case Refunded:
 		return "TransactionRefunded"
+	case Credited:
+		return "TransactionCredited"
 	default:
 		panic("invalid TransactionState")
 	}

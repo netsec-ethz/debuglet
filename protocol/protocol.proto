@@ -37,6 +37,7 @@ message HelloResponse {
   int64 price_per_bw_s = 8; // Price per bit/s of bandwidth
   string currency = 9;
   optional string public_host = 10; // Optional: public host for the executor at which debuglet listeners can be contacted
+  optional string sui_wallet = 11;
 }
 
 message DebugletPolicy {

@@ -30,6 +30,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		IcmpEnabled:            e.packetCount.Type() == "ebpf", // TODO: have proper system to detect if service has required perms for ICMP
 		PricePerBwS:            e.cfg.Pricing.PricePerBwS,
 		Currency:               e.cfg.Pricing.Currency,
+		SuiWallet:              &e.cfg.Pricing.SuiWallet,
 	}
 	return resp, nil
 }

@@ -48,14 +48,16 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	qtx := database.New(d.db).WithTx(tx)
 	for i := range sreqs {
 		if _, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
-			Uuid:       debugletIDS[i],
-			StartTime:  models.NewUTCTime(sreqs[i].From),
-			EndTime:    models.NewUTCTime(sreqs[i].To),
-			ExecutorID: specs[i].ExecutorID,
-			Usage:      int64(specs[i].Policy.FloorBW),
-			CeilBw:     int64(specs[i].Policy.CeilBW),
-			State:      models.RunStateUploading,
-			Addresses:  specs[i].Policy.Addresses,
+			Uuid:          debugletIDS[i],
+			StartTime:     models.NewUTCTime(sreqs[i].From),
+			EndTime:       models.NewUTCTime(sreqs[i].To),
+			ExecutorID:    specs[i].ExecutorID,
+			Usage:         int64(specs[i].Policy.FloorBW),
+			CeilBw:        int64(specs[i].Policy.CeilBW),
+			State:         models.RunStateUploading,
+			Addresses:     specs[i].Policy.Addresses,
+			TransactionID: specs[i].TransactionID,
+			OrderID:       specs[i].OrderID,
 		}); err != nil {
 			d.mu.Unlock()
 			return nil, fmt.Errorf("failed to create debuglet in database: %w", err)
