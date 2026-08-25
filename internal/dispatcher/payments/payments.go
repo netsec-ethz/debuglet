@@ -184,6 +184,58 @@ func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refund
 	return tx.Commit()
 }
 
+func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Context) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("Failed to begin transaction: %s", err.Error())
+	}
+	defer tx.Rollback()
+	queries := database.New(p.db).WithTx(tx)
+	transaction, err := queries.GetTransactionByID(ctx, transactionId)
+	if err != nil {
+		return err
+	}
+	if transaction.Status != int64(models.Paid) {
+		return fmt.Errorf("Tried to refund transaction that has not been payed: %s", transactionId)
+	}
+	orders, err := queries.GetTransactionOrders(ctx, transactionId)
+	if err != nil {
+		return err
+	}
+	currency := orders[0].Currency
+	refundAddress := orders[0].RefundAddress
+	totalRefundValue := int64(0)
+	for _, order := range orders {
+		if order.Currency != currency || order.RefundAddress != refundAddress {
+			// should never happen because these values are always set together but let's guard anyway
+			return fmt.Errorf("Inconsistent orders in transaction %s", transactionId)
+		}
+		if order.State == int64(models.Refunded) {
+			p.logger.Warn("Order has already been refunded", zap.String("transactionID", transactionId), zap.Int64("orderID", order.OrderID))
+			continue
+		}
+		totalRefundValue += order.Price
+		queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
+			State:         int64(models.Refunded),
+			TransactionID: transactionId,
+			OrderID:       order.OrderID,
+		})
+	}
+
+	switch currency {
+	case "USDC":
+		err = p.sui.TransferCoins(uint64(totalRefundValue), sui.GetCoinType("USDC", p.cfg.Sui.Network), refundAddress, ctx)
+	default:
+		err = fmt.Errorf("Refunds are not supported for currency %s", orders[0].Currency)
+	}
+
+	if err != nil {
+		return fmt.Errorf("Failed to execute refund transaction: %s", err.Error())
+	}
+
+	return tx.Commit()
+}
+
 func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, wallet string, queries *database.Queries, ctx context.Context) {
 	_, err := queries.GetEarningsIn(ctx, database.GetEarningsInParams{
 		ExecutorID: execID,

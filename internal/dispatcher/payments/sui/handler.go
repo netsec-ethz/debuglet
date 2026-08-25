@@ -160,10 +160,7 @@ func (h *SuiPaymentHandler) GetTransactionCoin(tx *transaction.Transaction, amou
 		Owner:    h.signer.Address,
 		CoinType: &cointype,
 	})
-	for _, coin := range OwnCoins.Objects {
-		h.logger.Info(coin.Balance)
-		h.logger.Info(coin.Type)
-	}
+
 	if err != nil {
 		return transaction.Argument{}, fmt.Errorf("Failed to fetch coins: %s", err.Error())
 	}

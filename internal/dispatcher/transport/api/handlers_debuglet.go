@@ -61,6 +61,10 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs, userID); err != nil {
+		err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context())
+		if err2 != nil {
+			h.logger.Error("Failed to refund transaction", zap.String("ID", transactionId), zap.String("error", err2.Error()))
+		}
 		if errors.Is(err, resource.ErrCapacityFull) {
 			return echo.NewHTTPError(http.StatusConflict, "capacity exceeded: "+err.Error())
 		}
