@@ -29,7 +29,7 @@ type DebugletPolicyRequest struct {
 
 type DebugletRequest struct {
 	// Must be unique accross a single request
-	OrderID int64 `json:"request_id"`
+	OrderID int64 `json:"order_id"`
 	// Optional start time as unix epoch time
 	StartTimestamp *int64                `json:"start_time,omitempty"`
 	ExecutorID     string                `json:"executor_id"`
