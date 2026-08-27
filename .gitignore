@@ -36,3 +36,9 @@ __pycache__
 .claude
 
 .data
+
+# Real Ansible inventory identifies private infrastructure (dispatcher
+# address, executor hostnames, SSH usernames). Copy hosts.yml.example to
+# hosts.yml locally; in CI it's injected as a Secure File / protected
+# variable. See deploy/ansible/hosts.yml.example.
+/deploy/ansible/hosts.yml
