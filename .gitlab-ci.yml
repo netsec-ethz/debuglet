@@ -31,37 +31,39 @@ deploy:
     - dev
   before_script:
     - apt-get update && apt-get install -y ansible openssh-client curl
-    - eval $(ssh-agent -s)
-    - echo "$ANSIBLE_SSH_PRIVATE_KEY" | base64 -d | ssh-add -
-    # Fetch the private Ansible inventories (hosts.yml for prod,
-    # hosts.dev.yml for dev) from GitLab's Secure Files store — they're
-    # gitignored, see .gitignore and deploy/ansible/hosts*.yml.example.
-    - curl --silent "https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer" | bash
-    - cp .secure_files/hosts.yml deploy/ansible/hosts.yml
-    - cp .secure_files/hosts.dev.yml deploy/ansible/hosts.dev.yml
-  script:
-    - export ANSIBLE_HOST_KEY_CHECKING=False
-    - VERSION=$CI_COMMIT_SHORT_SHA
-    # Inventory and dispatcher_addr/dispatcher_base_url all differ per
-    # environment; pick the dev inventory + _DEV-suffixed CI/CD variable
-    # pair on the dev branch, the prod inventory + plain pair everywhere
+    # Everything below differs per environment (prod vs dev): the SSH
+    # deploy key, the inventory file, and the dispatcher_addr/
+    # dispatcher_base_url extra-vars. Pick the _DEV-suffixed CI/CD
+    # variable/file on the dev branch, the plain (prod) one everywhere
     # else. See deploy/ansible/group_vars/all.yml.
     - |
       if [ "$CI_COMMIT_BRANCH" = "dev" ]; then
+        DEPLOY_SSH_KEY_VALUE="$DEPLOY_SSH_KEY_DEV"
         INVENTORY="hosts.dev.yml"
         DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR_DEV"
         DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL_DEV"
       else
+        DEPLOY_SSH_KEY_VALUE="$DEPLOY_SSH_KEY"
         INVENTORY="hosts.yml"
         DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR"
         DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL"
       fi
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_KEY_VALUE" | base64 -d | ssh-add -
+    # Fetch the private Ansible inventory for this environment from
+    # GitLab's Secure Files store — it's gitignored, see .gitignore and
+    # deploy/ansible/hosts*.yml.example.
+    - curl --silent "https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer" | bash
+    - cp ".secure_files/$INVENTORY" "deploy/ansible/$INVENTORY"
     # The inventory's dispatcher host entry is a __DISPATCHER_ADDR__
     # placeholder (see hosts.yml.example) — substitute in the same value
     # used for the dispatcher_addr extra-var below, so the address is only
     # ever entered once (in the CI/CD variable), not duplicated into the
     # Secure File inventory too.
     - sed -i "s/__DISPATCHER_ADDR__/$DISPATCHER_ADDR_VALUE/" "deploy/ansible/$INVENTORY"
+  script:
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - VERSION=$CI_COMMIT_SHORT_SHA
     - cd deploy/ansible && ansible-playbook -i "$INVENTORY" site.yml -e "deploy_version=$VERSION dispatcher_addr=$DISPATCHER_ADDR_VALUE dispatcher_base_url=$DISPATCHER_BASE_URL_VALUE"
   dependencies:
     - build
