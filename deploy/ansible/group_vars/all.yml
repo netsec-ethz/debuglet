@@ -30,7 +30,7 @@ dispatcher_disable_tls: true
 # empty list leaves CORS wide open ("*") but WITHOUT credentials, so the
 # session cookie is never sent and endpoints like /me always 401. Set to the
 # frontend's exact origin(s), e.g. ["https://app.db.netsec.ethz.ch"].
-dispatcher_cors_allowed_origins: ["https://console.db.netsec.ethz.ch"]
+dispatcher_cors_allowed_origins: []
 
 # Dispatcher service defaults
 dispatcher_log_level: info
