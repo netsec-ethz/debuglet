@@ -154,17 +154,20 @@ deploy-build:
 	chmod +x deploy/scripts/build-linux.sh
 	deploy/scripts/build-linux.sh
 
-# Generate a schema-only executor SQLite DB → deploy/dist/executor-seed.db.
-# The ansible executor role installs this on first deploy only (it never
-# overwrites an existing DB, so persisted debuglet state survives redeploys).
-# Not committed to git: deploy/dist/ is gitignored and this is regenerated
-# from internal/executor/database/migrations on every build, same as the
-# binaries in this directory.
+# Generate schema-only executor/dispatcher SQLite DBs → deploy/dist/*-seed.db.
+# The ansible roles install these on first deploy only (they never overwrite
+# an existing DB, so persisted state survives redeploys). Not committed to
+# git: deploy/dist/ is gitignored and these are regenerated from the
+# migrations directories on every build, same as the binaries in this
+# directory.
 deploy-seed-db:
 	mkdir -p deploy/dist
 	rm -f deploy/dist/executor-seed.db
 	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations \
 		$(GO) run github.com/pressly/goose/v3/cmd/goose@v3.27.3 sqlite3 deploy/dist/executor-seed.db up
+	rm -f deploy/dist/dispatcher-seed.db
+	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations \
+		$(GO) run github.com/pressly/goose/v3/cmd/goose@v3.27.3 sqlite3 deploy/dist/dispatcher-seed.db up
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/
 # Extracts executor IDs automatically from deploy/ansible/hosts.yml.
@@ -193,7 +196,7 @@ deploy: deploy-build deploy-seed-db
 	cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
 
 # Deploy only the dispatcher
-deploy-dispatcher: deploy-build
+deploy-dispatcher: deploy-build deploy-seed-db
 	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-dispatcher.yml
 
 # One-time bootstrap: grant passwordless sudo on executor nodes.

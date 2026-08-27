@@ -1,5 +1,5 @@
 # Build Stage
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -9,8 +9,8 @@ COPY cmd/dispatcher ./cmd/dispatcher
 COPY internal/dispatcher ./internal/dispatcher
 COPY protocol ./protocol
 
-RUN go install github.com/sqlc-dev/sqlc/cmd/sqlc@1.31.1
-RUN go install github.com/pressly/goose/v3/cmd/goose@3.27.3
+RUN go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+RUN go install github.com/pressly/goose/v3/cmd/goose@v3.27.3
 RUN go generate ./...
 RUN CGO_ENABLED=0 go build -o /debuglet-dispatcher ./cmd/dispatcher
 
