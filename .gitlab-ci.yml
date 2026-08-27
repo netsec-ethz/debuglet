@@ -6,7 +6,13 @@ build:
   stage: build
   image: ubuntu:22.04
   before_script:
-    - apt-get update && apt-get install -y curl make llvm clang
+    # linux-libc-dev provides the kernel UAPI headers (asm/types.h etc.) that
+    # the eBPF C sources in internal/executor/{ratelimit,tagger}/ebpf need
+    # (compiled via `go generate` -> bpf2go -> clang). gcc is required too:
+    # clang locates the multiarch header dir (/usr/include/x86_64-linux-gnu,
+    # where linux-libc-dev puts them) by probing for a GCC installation, and
+    # without one it never searches that path even though the headers exist.
+    - apt-get update && apt-get install -y curl make llvm clang gcc linux-libc-dev
     - ./deploy/bin/mise install
   script:
     - ./deploy/bin/mise x -- make all
