@@ -56,6 +56,12 @@ deploy:
         DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR"
         DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL"
       fi
+    # The inventory's dispatcher host entry is a __DISPATCHER_ADDR__
+    # placeholder (see hosts.yml.example) — substitute in the same value
+    # used for the dispatcher_addr extra-var below, so the address is only
+    # ever entered once (in the CI/CD variable), not duplicated into the
+    # Secure File inventory too.
+    - sed -i "s/__DISPATCHER_ADDR__/$DISPATCHER_ADDR_VALUE/" "deploy/ansible/$INVENTORY"
     - cd deploy/ansible && ansible-playbook -i "$INVENTORY" site.yml -e "deploy_version=$VERSION dispatcher_addr=$DISPATCHER_ADDR_VALUE dispatcher_base_url=$DISPATCHER_BASE_URL_VALUE"
   dependencies:
     - build

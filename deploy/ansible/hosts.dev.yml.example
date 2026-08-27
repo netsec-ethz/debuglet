@@ -11,6 +11,12 @@
 # and written to deploy/ansible/hosts.dev.yml before the ansible-playbook
 # step runs on the dev branch — see .gitlab-ci.yml. hosts.dev.yml is
 # gitignored so it can never be committed by accident.
+#
+# The dispatcher's host entry is the literal string __DISPATCHER_ADDR__, NOT
+# a real address — the deploy job substitutes it (via sed) with the
+# DISPATCHER_ADDR_DEV CI/CD variable before running ansible-playbook, so the
+# address is entered once, not duplicated between the inventory and the CI
+# variable. Keep this placeholder as-is in your real hosts.dev.yml too.
 
 all:
   children:
@@ -19,7 +25,7 @@ all:
     # ------------------------------------------------------------------
     dispatcher:
       hosts:
-        dispatcher-dev.example.com:
+        __DISPATCHER_ADDR__:
           ansible_user: deploy
 
     # ------------------------------------------------------------------
