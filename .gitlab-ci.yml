@@ -59,7 +59,14 @@ deploy:
     - main
     - dev
   before_script:
-    - apt-get update && apt-get install -y ansible openssh-client curl
+    # ubuntu:22.04's apt `ansible` package is 2.10.8 (~2021) — too old to
+    # reliably run against a target running a very new Python (hit
+    # "ModuleNotFoundError: No module named 'ansible.module_utils.six.moves'"
+    # against a Python 3.14 host; a modern pip-installed ansible-core
+    # doesn't have this problem — verified against the real host before
+    # switching).
+    - apt-get update && apt-get install -y python3-pip openssh-client curl
+    - python3 -m pip install ansible-core
     # Everything below differs per environment (prod vs dev): the SSH
     # deploy key, the inventory file, and the dispatcher_addr/
     # dispatcher_base_url extra-vars. Pick the _DEV-suffixed CI/CD
