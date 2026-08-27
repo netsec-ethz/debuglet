@@ -39,7 +39,11 @@ deps:
 # Build local binaries
 # --------------------------------------------------------------------
 build-exec:
-	$(GO) generate ./...
+	# clang's bpf target never searches the multiarch include dir (unlike
+	# its native target, where it auto-probes gcc for this), so
+	# <asm/types.h> from linux-libc-dev is invisible to it by default even
+	# with gcc installed. Point bpf2go's clang invocation at it explicitly.
+	BPF2GO_CFLAGS="-I/usr/include/$$(gcc -print-multiarch)" $(GO) generate ./...
 	$(GO) build -o $(EXECUTOR_BINARY) ./cmd/executor
 
 build-disp:
