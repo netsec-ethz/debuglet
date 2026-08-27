@@ -67,6 +67,10 @@ deploy:
     # switching).
     - apt-get update && apt-get install -y python3-pip openssh-client curl
     - python3 -m pip install ansible-core
+    # ansible-core ships with no collections (unlike apt's `ansible` package,
+    # which bundles them) — the executor role's community.general.capabilities
+    # task needs this installed explicitly.
+    - ansible-galaxy collection install community.general
     # Everything below differs per environment (prod vs dev): the SSH
     # deploy key, the inventory file, and the dispatcher_addr/
     # dispatcher_base_url extra-vars. Pick the _DEV-suffixed CI/CD
