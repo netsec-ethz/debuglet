@@ -20,6 +20,9 @@ delay = {{ tesla_delay }}
 [logging]
 log_level = "{{ executor_log_level }}"
 
+[database]
+path = "{{ config_dir }}/executor/executor.db"
+
 [credentials]
 ca_cert = "{{ config_dir }}/executor/ca.crt"
 client_cert = "{{ config_dir }}/executor/client.crt"

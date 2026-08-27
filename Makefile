@@ -154,6 +154,18 @@ deploy-build:
 	chmod +x deploy/scripts/build-linux.sh
 	deploy/scripts/build-linux.sh
 
+# Generate a schema-only executor SQLite DB → deploy/dist/executor-seed.db.
+# The ansible executor role installs this on first deploy only (it never
+# overwrites an existing DB, so persisted debuglet state survives redeploys).
+# Not committed to git: deploy/dist/ is gitignored and this is regenerated
+# from internal/executor/database/migrations on every build, same as the
+# binaries in this directory.
+deploy-seed-db:
+	mkdir -p deploy/dist
+	rm -f deploy/dist/executor-seed.db
+	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations \
+		$(GO) run github.com/pressly/goose/v3/cmd/goose@v3.27.3 sqlite3 deploy/dist/executor-seed.db up
+
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/
 # Extracts executor IDs automatically from deploy/ansible/hosts.yml.
 # Override by passing EXECUTOR_IDS manually:
@@ -177,7 +189,7 @@ print(' '.join(ids))" 2>/dev/null); \
 	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-certs.yml
 
 # Full deploy: build → dispatcher → all executors
-deploy: deploy-build
+deploy: deploy-build deploy-seed-db
 	cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
 
 # Deploy only the dispatcher
@@ -192,7 +204,7 @@ bootstrap-sudo:
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
-deploy-executors: deploy-build
+deploy-executors: deploy-build deploy-seed-db
 	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-executors.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 

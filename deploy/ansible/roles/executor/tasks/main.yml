@@ -7,6 +7,16 @@
     group: "{{ debuglet_group }}"
     mode: "0700"
 
+- name: Provision executor database (schema only, preserved on redeploy)
+  ansible.builtin.copy:
+    src: "{{ dist_dir }}/executor-seed.db" # built by `make deploy-seed-db`, not committed
+    dest: "{{ config_dir }}/executor/executor.db"
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0600"
+    force: false # never overwrite an existing DB (would wipe persisted debuglet state)
+  notify: Restart executor
+
 - name: Install executor binary
   ansible.builtin.copy:
     src: "{{ dist_dir }}/debuglet-executor"

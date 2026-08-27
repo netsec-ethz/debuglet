@@ -10,6 +10,7 @@ build:
     - ./deploy/bin/mise install
   script:
     - ./deploy/bin/mise x -- make all
+    - ./deploy/bin/mise x -- make deploy-seed-db
     - mkdir -p deploy/dist
     - cp debuglet-executor debuglet-dispatcher deploy/dist/
   artifacts:
