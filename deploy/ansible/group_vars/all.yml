@@ -13,9 +13,10 @@
 # resolver dials the default port 443.
 dispatcher_addr: "db-dispatch.netsec.ethz.ch"
 
-# Internal ports on the dispatcher machine. The dispatcher listens on these;
-# the nginx reverse proxy forwards to them from :443. They are NOT what
-# executors dial — executors reach nginx over HTTPS on the default port 443.
+# Ports the dispatcher listens on and executors dial directly: gRPC on
+# dispatcher_grpc_port, cmux HTTP/yamux on dispatcher_http_port. The firewall
+# exposes these directly, so executors connect straight to them (no nginx in
+# the executor path).
 dispatcher_grpc_port: 9001
 dispatcher_http_port: 9000
 
