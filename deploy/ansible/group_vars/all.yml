@@ -1,16 +1,17 @@
 ---
 # =============================================================================
-# Global deployment variables
+# Global deployment variables (applies to EVERY host: dispatcher + executors)
 # =============================================================================
 #
-# dispatcher_addr and dispatcher_base_url differ per environment (prod vs
-# dev), so they're NOT set here — the deploy CI job passes them as -e
-# extra-vars, sourced from the DISPATCHER_ADDR/DISPATCHER_ADDR_DEV and
-# DISPATCHER_BASE_URL/DISPATCHER_BASE_URL_DEV CI/CD variables (branch
-# picks which pair). See .gitlab-ci.yml. The defaults below are only hit
-# for a manual/local run, e.g.:
-#   ansible-playbook -i hosts.yml site.yml \
-#     -e "dispatcher_addr=my-dispatcher.example.com dispatcher_base_url=my-dispatcher.example.com"
+# Dispatcher-only settings (nothing here that an executor template or
+# group_vars/executors.yml reads) live in group_vars/dispatcher.yml instead.
+#
+# dispatcher_addr differs per environment (prod vs dev), so it's NOT set
+# here — the deploy CI job passes it as an -e extra-var, sourced from the
+# DISPATCHER_ADDR/DISPATCHER_ADDR_DEV CI/CD variables (branch picks which
+# one). See .gitlab-ci.yml. The default below is only hit for a
+# manual/local run, e.g.:
+#   ansible-playbook -i hosts.yml site.yml -e "dispatcher_addr=my-dispatcher.example.com"
 #
 # To update the dispatcher address on ALL executors at once:
 #   1. Run: make deploy-update-addr DISPATCHER_ADDR=new-dispatcher.example.com
@@ -20,14 +21,6 @@
 # executors reach the nginx reverse proxy over HTTPS, and the gRPC client's dns
 # resolver dials the default port 443.
 dispatcher_addr: "localhost"
-
-# Public origin the HTTP API will eventually sit behind (bare domain, no
-# scheme/port). Used to compute dispatcher_cors_allowed_origins below — the
-# origin allowed to make credentialed (cookie-based, session_token) requests
-# to the dispatcher API. Browser clients need this to authenticate: without
-# it, the session cookie is never sent cross-origin and endpoints like /me
-# always 401.
-dispatcher_base_url: "localhost"
 
 # Ports the dispatcher listens on and executors dial directly: gRPC on
 # dispatcher_grpc_port, cmux HTTP/yamux on dispatcher_http_port. The firewall
@@ -40,14 +33,6 @@ dispatcher_http_port: 9000
 # gRPC port (nginx -> dispatcher is localhost cleartext). Executors, however,
 # must speak TLS to nginx — see executor_disable_tls in executors.yml.
 dispatcher_disable_tls: true
-
-dispatcher_cors_allowed_origins: ["https://{{ dispatcher_base_url }}"]
-
-# Dispatcher service defaults
-dispatcher_log_level: info
-dispatcher_executor_timeout: 60
-dispatcher_scheduler_granularity_ms: 30000
-dispatcher_tls_ca_file: "{{ config_dir }}/dispatcher/ca.crt"
 
 # Deploy version — injected by CI from commit message; overridable via -e
 deploy_version: "unknown"
