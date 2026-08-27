@@ -33,15 +33,25 @@ deploy:
     - apt-get update && apt-get install -y ansible openssh-client curl
     - eval $(ssh-agent -s)
     - echo "$ANSIBLE_SSH_PRIVATE_KEY" | base64 -d | ssh-add -
-    # Fetch private deployment files (hosts.yml, group_vars/all.yml) from
-    # GitLab's Secure Files store — they're gitignored, see .gitignore and
-    # deploy/ansible/{hosts.yml.example,group_vars/all.yml.example}.
+    # Fetch the private Ansible inventory (hosts.yml) from GitLab's Secure
+    # Files store — it's gitignored, see .gitignore and
+    # deploy/ansible/hosts.yml.example.
     - curl --silent "https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer" | bash
     - cp .secure_files/hosts.yml deploy/ansible/hosts.yml
-    - cp .secure_files/all.yml deploy/ansible/group_vars/all.yml
   script:
     - export ANSIBLE_HOST_KEY_CHECKING=False
     - VERSION=$CI_COMMIT_SHORT_SHA
-    - cd deploy/ansible && ansible-playbook -i hosts.yml site.yml -e "deploy_version=$VERSION"
+    # dispatcher_addr/dispatcher_base_url differ per environment; pick the
+    # _DEV-suffixed CI/CD variable pair on the dev branch, the plain (prod)
+    # pair everywhere else. See deploy/ansible/group_vars/all.yml.
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "dev" ]; then
+        DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR_DEV"
+        DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL_DEV"
+      else
+        DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR"
+        DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL"
+      fi
+    - cd deploy/ansible && ansible-playbook -i hosts.yml site.yml -e "deploy_version=$VERSION dispatcher_addr=$DISPATCHER_ADDR_VALUE dispatcher_base_url=$DISPATCHER_BASE_URL_VALUE"
   dependencies:
     - build
