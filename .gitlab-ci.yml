@@ -30,9 +30,15 @@ deploy:
     - main
     - dev
   before_script:
-    - apt-get update && apt-get install -y ansible openssh-client
+    - apt-get update && apt-get install -y ansible openssh-client curl
     - eval $(ssh-agent -s)
     - echo "$ANSIBLE_SSH_PRIVATE_KEY" | base64 -d | ssh-add -
+    # Fetch private deployment files (hosts.yml, group_vars/all.yml) from
+    # GitLab's Secure Files store — they're gitignored, see .gitignore and
+    # deploy/ansible/{hosts.yml.example,group_vars/all.yml.example}.
+    - curl --silent "https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer" | bash
+    - cp .secure_files/hosts.yml deploy/ansible/hosts.yml
+    - cp .secure_files/all.yml deploy/ansible/group_vars/all.yml
   script:
     - export ANSIBLE_HOST_KEY_CHECKING=False
     - VERSION=$CI_COMMIT_SHORT_SHA
