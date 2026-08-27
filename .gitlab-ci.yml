@@ -5,6 +5,28 @@ stages:
 build:
   stage: build
   image: ubuntu:22.04
+  variables:
+    # Project-relative so GitLab CI can cache them (cache paths must live
+    # under CI_PROJECT_DIR). Set GOMODCACHE explicitly rather than relying
+    # on it deriving from GOPATH — some base images persist their own
+    # GOMODCACHE default via `go env -w`, which would silently win over a
+    # GOPATH-only override. deploy/bin/mise already localizes all of
+    # mise's own state to deploy/.mise/ the same way.
+    GOPATH: $CI_PROJECT_DIR/.cache/go
+    GOMODCACHE: $CI_PROJECT_DIR/.cache/go/pkg/mod
+    GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+  cache:
+    # Keyed on the files that pin tool/dependency versions, so a mise.toml
+    # or go.sum bump invalidates the cache instead of silently reusing
+    # stale toolchains or modules.
+    key:
+      files:
+        - mise.toml
+        - go.sum
+    paths:
+      - deploy/.mise/
+      - .cache/go/
+      - .cache/go-build/
   before_script:
     # linux-libc-dev provides the kernel UAPI headers (asm/types.h etc.) that
     # the eBPF C sources in internal/executor/{ratelimit,tagger}/ebpf need

@@ -10,6 +10,11 @@ tagger.o
 /executor
 __debug*
 
+# mise's project-local install/cache dir (see deploy/bin/mise) and the
+# project-relative Go module/build caches CI caches between runs.
+/deploy/.mise
+/.cache
+
 # Python env
 .venv
 

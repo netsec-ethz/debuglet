@@ -5,6 +5,11 @@ DISPATCHER_BINARY = debuglet-dispatcher
 # Go command
 GO ?= go
 
+# Goose command (installed via mise, see mise.toml) — avoid `go run
+# .../goose@version`, which rebuilds goose from source on every invocation
+# since it's not mise's already-installed binary.
+GOOSE ?= goose
+
 # --------------------------------------------------------------------
 # Toolchains for building debuglet WASM samples (override as needed).
 # Go needs nothing extra. The others are only required to build their
@@ -110,12 +115,12 @@ memory:
 # --------------------------------------------------------------------
 upgrade:
 	mkdir -p .data
-	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations goose sqlite3 .data/dispatcher.db up
-	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations goose sqlite3 .data/executor.db up
+	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations $(GOOSE) sqlite3 .data/dispatcher.db up
+	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations $(GOOSE) sqlite3 .data/executor.db up
 
 downgrade:
-	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations goose sqlite3 .data/dispatcher.db down
-	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations goose sqlite3 .data/executor.db down
+	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations $(GOOSE) sqlite3 .data/dispatcher.db down
+	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations $(GOOSE) sqlite3 .data/executor.db down
 
 # --------------------------------------------------------------------
 # Docker orchestration
@@ -164,10 +169,10 @@ deploy-seed-db:
 	mkdir -p deploy/dist
 	rm -f deploy/dist/executor-seed.db
 	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations \
-		$(GO) run github.com/pressly/goose/v3/cmd/goose@v3.27.3 sqlite3 deploy/dist/executor-seed.db up
+		$(GOOSE) sqlite3 deploy/dist/executor-seed.db up
 	rm -f deploy/dist/dispatcher-seed.db
 	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations \
-		$(GO) run github.com/pressly/goose/v3/cmd/goose@v3.27.3 sqlite3 deploy/dist/dispatcher-seed.db up
+		$(GOOSE) sqlite3 deploy/dist/dispatcher-seed.db up
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/
 # Extracts executor IDs automatically from deploy/ansible/hosts.yml.
