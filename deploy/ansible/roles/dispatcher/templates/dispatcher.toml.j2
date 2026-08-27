@@ -18,6 +18,3 @@ key_file = "{{ config_dir }}/dispatcher/server.key"
 
 [database]
 path = "{{ config_dir }}/dispatcher/dispatcher.db"
-
-[cors]
-allowed_origins = {{ dispatcher_cors_allowed_origins | to_json }}

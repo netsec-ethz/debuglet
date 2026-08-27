@@ -139,12 +139,7 @@ func startHTTPServer(lis net.Listener, manager *dispatcher.Dispatcher, cfg *conf
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
 		Format: logFormat,
 	}))
-	corsConfig := middleware.DefaultCORSConfig
-	if len(cfg.CORS.AllowedOrigins) > 0 {
-		corsConfig.AllowOrigins = cfg.CORS.AllowedOrigins
-		corsConfig.AllowCredentials = true
-	}
-	e.Use(middleware.CORSWithConfig(corsConfig))
+	e.Use(middleware.CORS())
 
 	handler.RegisterRoutes(e)
 

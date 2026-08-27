@@ -28,7 +28,6 @@ type DispatcherConfig struct {
 	TLS       TLSConfig       `toml:"tls"`
 	Database  DatabaseConfig  `toml:"database"`
 	Sui       SuiConfig       `toml:"sui"`
-	CORS      CORSConfig      `toml:"cors"`
 }
 
 type ServerConfig struct {
@@ -58,15 +57,6 @@ type TLSConfig struct {
 
 type DatabaseConfig struct {
 	Path string `toml:"path"`
-}
-
-type CORSConfig struct {
-	// AllowedOrigins is the list of origins allowed to make credentialed
-	// (cookie-based) requests to the API. Cookie auth (session_token) only
-	// works cross-origin for origins listed here — an empty list leaves CORS
-	// wide open ("*") but without credentials, so browser clients can't send
-	// the session cookie at all.
-	AllowedOrigins []string `toml:"allowed_origins"`
 }
 
 type SuiConfig struct {
