@@ -37,6 +37,6 @@ path = ".data/executor.db"
 [pricing]
 price_per_bw_s = 1
 currency = "USDC"
-sui_wallet = ""
+sui_wallet = "0xf71483ddbe609e52ef0ec5a0030f16b73f4a2831c9e84b4e559f4b240d5a0d76"
 trial_price_limit=100000
 trial_time_limit=500

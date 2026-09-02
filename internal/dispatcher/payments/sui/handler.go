@@ -74,7 +74,7 @@ func NewSuiPaymentHandler(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.
 	listener := NewListener(cfg, db, logger, tf)
 	signer, err := LoadKeypair(cfg.Sui.KeystorePath, cfg.Sui.Address, logger)
 	if err != nil {
-		logger.Error(fmt.Errorf("Failed to load keypair: %s. USDC refunds and payouts can not be completed ", err.Error()).Error())
+		logger.Warn(fmt.Errorf("Failed to load keypair: %s. USDC refunds and payouts can not be completed ", err.Error()).Error())
 	}
 	return &SuiPaymentHandler{lis: listener, db: db, cfg: cfg, signer: signer, client: client, logger: logger}
 }

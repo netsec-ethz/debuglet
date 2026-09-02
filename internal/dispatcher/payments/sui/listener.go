@@ -376,7 +376,6 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 		return
 	}
 	l.fulfiller.CompleteTransaction(transaction.ID, ctx)
-	//_, err = queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{ID: transaction.ID, Status: int64(models.Paid)})
 	if err != nil {
 		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.ID), zap.Error(err))
 		return
