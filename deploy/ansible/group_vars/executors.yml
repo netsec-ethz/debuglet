@@ -18,11 +18,16 @@ executor_log_level: info
 # When false: capabilities are not set and the systemd unit omits BPF caps.
 executor_enable_bpf: false
 
-# TLS for executor → dispatcher gRPC connection.
-# Executors reach the dispatcher through the nginx reverse proxy on :443, which
-# terminates TLS — so the executor's gRPC client MUST use TLS. Do not couple
-# this to dispatcher_disable_tls (the dispatcher runs cleartext behind nginx).
-executor_disable_tls: false
+# Whether the systemd unit grants capabilities via the AmbientCapabilities set.
+# Set to false on restricted environments (some containers / EdgeNet) where
+# systemd can't manipulate the ambient set — exec fails with 203/EXEC. With BPF
+# enabled, the binary still receives its capabilities from setcap (file caps),
+# so ambient caps are redundant there. Only meaningful when executor_enable_bpf.
+executor_ambient_caps: true
+
+# TLS for executor → dispatcher connection. Executors connect directly to the
+# dispatcher's cleartext :9001/:9000, so match the dispatcher (cleartext).
+executor_disable_tls: "{{ dispatcher_disable_tls }}"
 
 # TESLA seed (leave empty to auto-generate; set per-host for deterministic keys)
 executor_tesla_seed: ""

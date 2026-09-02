@@ -15,6 +15,8 @@ import (
 )
 
 var (
+	dispatcherAddr    = flag.String("dispatcher", "localhost:9000", "dispatcher address (host:port)")
+	dispatcherTLS     = flag.Bool("tls", false, "use HTTPS when talking to the dispatcher")
 	measurementAmount = flag.Int("measurements", 1, "amount of measurements to add")
 	debugletAmount    = flag.Int("debuglets", 1, "amount of debuglets per measurement to add")
 	wasmPath          = flag.String("wasm", "local/wasm_samples/go/ping/debuglet.wasm", "wasm to use")
@@ -39,6 +41,9 @@ func main() {
 	flag.Parse()
 	// collects arguments after `--`
 	passthroughArgs := flag.Args()
+
+	user.DispatcherAddr = *dispatcherAddr
+	user.DispatcherTLS = *dispatcherTLS
 
 	if *floorBW == 0 {
 		floorBW = ceilBW

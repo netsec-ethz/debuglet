@@ -15,7 +15,18 @@ import (
 	"github.com/google/uuid"
 )
 
-const baseURL = "localhost:9000"
+var (
+	DispatcherAddr = "localhost:9000"
+	DispatcherTLS  = false
+)
+
+func dispatcherURL(path string) string {
+	scheme := "http"
+	if DispatcherTLS {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, DispatcherAddr, path)
+}
 
 func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletRequest) []string {
 	dat, err := os.ReadFile(wasmPath)
@@ -43,7 +54,7 @@ func CreateMeasurement(wasmPath string, numDebuglets int, spec api.DebugletReque
 		panic(err)
 	}
 
-	url := fmt.Sprintf("http://%s/debuglet", baseURL)
+	url := dispatcherURL("/debuglet")
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(data))
 	if err != nil {
 		panic(err)
@@ -78,7 +89,7 @@ func PaymentIntent(specs []api.DebugletRequest) (string, string) {
 		panic(err)
 	}
 
-	url := fmt.Sprintf("http://%s/payment/intent", baseURL)
+	url := dispatcherURL("/payment/intent")
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(data))
 	if err != nil {
 		panic(err)
@@ -131,7 +142,7 @@ func AbortDebuglet(ID, executorID string) int {
 		panic(err)
 	}
 
-	url := fmt.Sprintf("http://%s/debuglet", baseURL)
+	url := dispatcherURL("/debuglet")
 	req, err := http.NewRequest(http.MethodDelete, url, bytes.NewBuffer(data))
 	if err != nil {
 		panic(err)
@@ -149,7 +160,7 @@ func AbortDebuglet(ID, executorID string) int {
 func ReadOutput(debugletID string) error {
 	after := int64(0)
 	for {
-		url := fmt.Sprintf("http://%s/debuglet/%s/logs?after=%d&limit=100", baseURL, debugletID, after)
+		url := dispatcherURL(fmt.Sprintf("/debuglet/%s/logs?after=%d&limit=100", debugletID, after))
 		resp, err := http.Get(url)
 		if err != nil {
 			return err
@@ -175,7 +186,7 @@ func ReadOutput(debugletID string) error {
 }
 
 func ReadState(debugletID string) (api.DebugletStateResponse, error) {
-	url := fmt.Sprintf("http://%s/debuglet/%s/state", baseURL, debugletID)
+	url := dispatcherURL(fmt.Sprintf("/debuglet/%s/state", debugletID))
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return api.DebugletStateResponse{}, err

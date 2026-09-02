@@ -7,6 +7,16 @@
     group: "{{ debuglet_group }}"
     mode: "0700"
 
+- name: Provision dispatcher database (schema only, preserved on redeploy)
+  ansible.builtin.copy:
+    src: "{{ dist_dir }}/dispatcher-seed.db" # built by `make deploy-seed-db`, not committed
+    dest: "{{ config_dir }}/dispatcher/dispatcher.db"
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0600"
+    force: false # never overwrite an existing DB (would wipe persisted debuglet state)
+  notify: Restart dispatcher
+
 - name: Install dispatcher binary
   ansible.builtin.copy:
     src: "{{ dist_dir }}/debuglet-dispatcher"
