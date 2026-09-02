@@ -58,7 +58,13 @@ type ResourcesConfig struct {
 
 type TeslaConfig struct {
 	Seed  string `toml:"seed"`
-	Delay int64  `toml:"delay"` // in seconds
+	Delay int64  `toml:"delay"` // epoch duration, in seconds
+	// ChainLength is the number of epochs the hash chain covers. Zero
+	// derives it from Delay so the chain lasts tesla.DefaultChainHorizon.
+	// The schedule stops advancing once the chain runs out, and packets
+	// tagged after that point can never be verified, so this must exceed
+	// the executor's expected uptime between restarts.
+	ChainLength int64 `toml:"chain_length"`
 }
 
 type NetworkConfig struct {

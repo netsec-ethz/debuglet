@@ -18,6 +18,17 @@
 #define TCX_DROP 2
 #endif
 
+// TCX_NEXT (== TC_ACT_UNSPEC) means "no verdict from this program, run the
+// next one". A program returning TCX_PASS *terminates* the TCX chain, so any
+// program attached after this one on the same hook — notably the packet
+// accountability tagger in internal/executor/tagger/ebpf — would never run.
+// This program only counts and rate-limits, so it must hand accepted packets
+// on with TCX_NEXT and reserve a terminal verdict for drops. TCX_NEXT from
+// the last program in the chain accepts the packet.
+#ifndef TCX_NEXT
+#define TCX_NEXT -1
+#endif
+
 #define NS_PER_SEC (1000000000ULL)
 #define MAX_BURST_BYTES (65536ULL)
 
@@ -198,10 +209,10 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
 
   if (!is_ingress) {
     if (!skb->sk)
-      return TCX_PASS;
+      return TCX_NEXT;
     uuid = bpf_sk_storage_get(&debuglet_sk_map, skb->sk, 0, 0);
     if (!uuid)
-      return TCX_PASS;
+      return TCX_NEXT;
   }
 
   // =========== BUILD DEBUGLET KEY {ip,uuid} ===========
@@ -213,7 +224,7 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
 
   struct ethhdr *eth = data;
   if ((void *)(eth + 1) > data_end)
-    return TCX_PASS;
+    return TCX_NEXT;
 
   struct iphdr *ip = NULL;
   struct ipv6hdr *ip6 = NULL;
@@ -221,7 +232,7 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
   if (eth->h_proto == __bpf_constant_htons(ETH_P_IP)) {
     ip = (void *)(eth + 1);
     if ((void *)(ip + 1) > data_end)
-      return TCX_PASS;
+      return TCX_NEXT;
 
     key.ipv6[10] = 0xff;
     key.ipv6[11] = 0xff;
@@ -234,7 +245,7 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
   } else if (eth->h_proto == __bpf_constant_htons(ETH_P_IPV6)) {
     ip6 = (void *)(eth + 1);
     if ((void *)(ip6 + 1) > data_end)
-      return TCX_PASS;
+      return TCX_NEXT;
 
     if (is_ingress) {
       __builtin_memcpy(key.ipv6, &ip6->saddr, sizeof(key.ipv6));
@@ -243,11 +254,11 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
     }
 
   } else {
-    return TCX_PASS;
+    return TCX_NEXT;
   }
 
   struct bpf_sock *looked_up_sk = NULL;
-  int action = TCX_PASS;
+  int action = TCX_NEXT;
   // --- INGRESS: look up socket via 5-tuple ---
   if (is_ingress) {
     looked_up_sk = lookup_ingress_sk(skb, eth, ip, ip6, data_end);

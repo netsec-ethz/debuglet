@@ -138,17 +138,30 @@ func (d *Dispatcher) RegisterExecutor(id, version, sourceIp, publicHost string, 
 	d.Payment.CreateEarningsIfNotExists(id, currency, suiWallet, database.New(d.db), context.Background())
 }
 
-// GetExecutorByIPFull returns the full Executor record for the given source IP,
-// or nil if no executor is registered with that IP.
+// GetExecutorByIPFull returns the full Executor record for the given source IP.
+//
+// Several executors can share one source address (a NAT, or several executors
+// on one host), so the most recently seen match wins — that keeps the answer
+// deterministic instead of depending on map iteration order.
 func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
+	if ip == "" {
+		return RegisteredExecutor{}, false
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	var best *RegisteredExecutor
 	for _, exec := range d.executors {
-		if exec.sourceIp == ip {
-			return *exec, true
+		if exec.sourceIp != ip {
+			continue
+		}
+		if best == nil || exec.LastSeen.After(best.LastSeen) {
+			best = exec
 		}
 	}
-	return RegisteredExecutor{}, false
+	if best == nil {
+		return RegisteredExecutor{}, false
+	}
+	return *best, true
 }
 
 func (d *Dispatcher) RemoveExecutor(id string) {

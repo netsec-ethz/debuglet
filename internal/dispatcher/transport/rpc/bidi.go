@@ -5,6 +5,7 @@ import (
 	pb "debuglet/protocol"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 
 	"github.com/hashicorp/yamux"
@@ -135,7 +136,10 @@ func (b *BidiServer) handleSession(ctx context.Context, conn net.Conn) {
 	}
 	defer b.RemoveClient(hello.GetExecutorId())
 
-	b.state.OnExecutorConnected(hello)
+	// Trust the observed peer address over the executor's self-reported
+	// source IP: it is what a probe recipient sees, and it cannot be
+	// spoofed by a misconfigured (or malicious) executor.
+	b.state.OnExecutorConnected(hello, remoteIP(session.RemoteAddr()))
 	defer b.state.OnExecutorDisconnected(hello.GetExecutorId())
 
 	b.waitForDisconnect(ctx, session, hello.GetExecutorId())
@@ -194,4 +198,21 @@ func (b *BidiServer) waitForDisconnect(ctx context.Context, session *yamux.Sessi
 		b.logger.Info("context cancelled, closing session", zap.String("executor_id", execID))
 		session.Close()
 	}
+}
+
+// remoteIP extracts the bare IP from a network address, dropping the port and
+// any IPv6 zone. It returns "" if addr is nil or unparseable.
+func remoteIP(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		host = addr.String()
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return ""
+	}
+	return ip.WithZone("").Unmap().String()
 }

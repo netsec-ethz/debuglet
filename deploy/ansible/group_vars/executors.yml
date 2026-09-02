@@ -10,24 +10,55 @@ executor_capacity: 1_000_000_000
 # TESLA epoch duration in seconds
 tesla_delay: 10
 
+# Number of epochs the TESLA hash chain covers. 0 derives it from tesla_delay
+# so the chain lasts 7 days (tesla.DefaultChainHorizon). Once the chain runs
+# out the executor keeps tagging with a key it never discloses, and those
+# packets can no longer be verified — so this has to outlast the executor's
+# uptime between restarts.
+tesla_chain_length: 0
+
+# Egress interface the eBPF TC tagger attaches to. Auto-detected from the
+# host's default IPv4 route; override per-host in hosts.yml when a node
+# probes out of a different interface. An empty value disables packet
+# tagging altogether, which makes probe attribution unverifiable.
+executor_interface: "{{ ansible_default_ipv4.interface | default('') }}"
+
+# Public endpoint for debuglets that request TCP/UDP listeners. Empty
+# disables listening; set both to enable it (see socket.NewPortManager).
+executor_public_host: ""
+executor_public_ports: ""
+
 # Log level: debug | info | warn | error
 executor_log_level: info
 
 # Enable eBPF TC egress tagging (embedded in binary).
+# This grants the binary cap_net_admin,cap_bpf, without which the TC egress
+# tagger cannot attach and outgoing probes carry no attribution tag — so
+# packet verification depends on it.
 # Set to false on hosts where BPF is unavailable (PlanetLab, restricted kernels).
 # When false: capabilities are not set and the systemd unit omits BPF caps.
-executor_enable_bpf: false
+executor_enable_bpf: true
 
 # Whether the systemd unit grants capabilities via the AmbientCapabilities set.
-# Set to false on restricted environments (some containers / EdgeNet) where
-# systemd can't manipulate the ambient set — exec fails with 203/EXEC. With BPF
-# enabled, the binary still receives its capabilities from setcap (file caps),
-# so ambient caps are redundant there. Only meaningful when executor_enable_bpf.
-executor_ambient_caps: true
+# Off by default: with BPF enabled the binary already gets its capabilities
+# from setcap (file caps, applied by the executor role), so the ambient set is
+# redundant — while on restricted environments (some containers / EdgeNet)
+# systemd cannot manipulate it at all and exec fails with 203/EXEC, taking the
+# executor down entirely. Turn it on per-host if you want the unit to carry a
+# CapabilityBoundingSet as well. Only meaningful when executor_enable_bpf.
+executor_ambient_caps: false
 
-# TLS for executor → dispatcher connection. Executors connect directly to the
-# dispatcher's cleartext :9001/:9000, so match the dispatcher (cleartext).
-executor_disable_tls: "{{ dispatcher_disable_tls }}"
+# TLS for executor → dispatcher connection. Independent from
+# dispatcher_disable_tls: executors go through nginx (TLS-terminated at
+# dispatcher_addr, cert + grpc_pass already set up — see
+# deploy/certs/nginx or the live host's /etc/nginx config), which then
+# proxies to the dispatcher's own listener in cleartext ("nginx ->
+# dispatcher is localhost cleartext" — see dispatcher_disable_tls above).
+# So this is enabled even though the dispatcher's own TLS stays disabled.
+# Server cert verification is skipped executor-side (InsecureSkipVerify,
+# see internal/executor/executor.go) so this only needs to encrypt the
+# channel, not validate nginx's cert chain.
+executor_disable_tls: false
 
 # TESLA seed (leave empty to auto-generate; set per-host for deterministic keys)
 executor_tesla_seed: ""

@@ -63,13 +63,18 @@ func (d *Dispatcher) OnResources(ctx context.Context, req *pb.ResourcesRequest) 
 	return &pb.ResourcesResponse{}, nil
 }
 
-func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse) {
+func (d *Dispatcher) OnExecutorConnected(h *pb.HelloResponse, sourceIP string) {
 	execID := h.GetExecutorId()
 	d.logger.Debug("Executor connected", zap.String("executor_id", execID))
+	// sourceIP is observed on the control connection. Only fall back to the
+	// executor's self-reported address when the peer address is unavailable.
+	if sourceIP == "" {
+		sourceIP = h.GetSourceIp()
+	}
 	d.RegisterExecutor(
 		execID,
 		h.GetVersion(),
-		h.GetSourceIp(),
+		sourceIP,
 		h.GetPublicHost(),
 		time.Duration(h.GetTeslaDelaySec())*time.Second,
 		time.Unix(0, h.GetTeslaAnchorTimestampNs()),

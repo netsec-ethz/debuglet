@@ -23,6 +23,16 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+// TCX_NEXT (== TC_ACT_UNSPEC) means "no verdict, run the next program on this
+// hook". Returning TC_ACT_OK here would terminate the TCX chain and silently
+// disable every program attached after this one (e.g. the rate limiter in
+// internal/executor/ratelimit/ebpf). This program only rewrites a header
+// field, so it always hands the packet on. TCX_NEXT from the last program in
+// the chain accepts the packet.
+#ifndef TCX_NEXT
+#define TCX_NEXT -1
+#endif
+
 // Maximum number of concurrent measurements tracked.
 #define MAX_MEASUREMENTS 256
 
@@ -100,12 +110,12 @@ int debuglet_tag(struct __sk_buff *skb) {
     // 1. Fast path: check socket mark to immediately bypass untagged traffic
     __u32 map_key = skb->mark;
     if (map_key == 0)
-        return TC_ACT_OK;
+        return TCX_NEXT;
 
     // 2. Perform map lookup only for marked packets
     struct ak_entry *ak = bpf_map_lookup_elem(&ak_map, &map_key);
     if (!ak)
-        return TC_ACT_OK;
+        return TCX_NEXT;
 
     void *data     = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
@@ -125,27 +135,27 @@ int debuglet_tag(struct __sk_buff *skb) {
 
     // Safety check for IP header access.
     if ((void *)(iph + 1) > data_end || iph->version != 4)
-        return TC_ACT_OK;
+        return TCX_NEXT;
 
     // Compute SipHash over the IP header + first 56 bytes of payload.
     __u8 buf[64] = {};
     __u32 pkt_len = skb->len;
     if (pkt_len < off)
-        return TC_ACT_OK;
+        return TCX_NEXT;
     pkt_len -= off;
 
     __u32 copy_len = pkt_len;
     if (copy_len > 64)
         copy_len = 64;
     if (copy_len == 0)
-        return TC_ACT_OK;
+        return TCX_NEXT;
 
     // BPF Verifier trick: force the range to [1, 64] to avoid "invalid zero-sized read"
     // and satisfy scalar tracking.
     copy_len = ((copy_len - 1) & 63) + 1;
 
     if (bpf_skb_load_bytes(skb, off, buf, copy_len) < 0)
-        return TC_ACT_OK;
+        return TCX_NEXT;
 
     // Canonical form: zero mutable IP header fields before hashing (IPID at 4-5, checksum at 10-11).
     if (copy_len >= 12) {
@@ -164,25 +174,17 @@ int debuglet_tag(struct __sk_buff *skb) {
     bpf_skb_load_bytes(skb, ipid_off, &old_id, 2);
 
     __be16 tag_be = bpf_htons(tag);
-    __be16 frag_off_be = 0;
-    bpf_skb_load_bytes(skb, off + offsetof(struct iphdr, frag_off), &frag_off_be, 2);
-    __u16 frag_off = bpf_ntohs(frag_off_be);
-    __u16 flags = frag_off >> 13;
-
-    bpf_printk("tagger: tagging packet at off=%d old_id=0x%x new_id=0x%x flags=0x%x\n",
-               ipid_off, bpf_ntohs(old_id), bpf_ntohs(tag_be), flags);
-
     __u32 csum_off = off + offsetof(struct iphdr, check);
     if (bpf_l3_csum_replace(skb, csum_off, old_id, tag_be, 2) < 0) {
-        return TC_ACT_OK;
+        return TCX_NEXT;
     }
 
     if (bpf_skb_store_bytes(skb, ipid_off, &tag_be, sizeof(tag_be), 0) < 0) {
         bpf_printk("tagger: bpf_skb_store_bytes failed at off=%d\n", ipid_off);
-        return TC_ACT_OK;
+        return TCX_NEXT;
     }
 
-    return TC_ACT_OK;
+    return TCX_NEXT;
 }
 
 char _license[] SEC("license") = "Dual MIT/GPL";

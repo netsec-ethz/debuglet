@@ -16,6 +16,15 @@ max_debuglets = {{ executor_max_debuglets }}
 [tesla]
 seed = "{{ executor_tesla_seed }}"
 delay = {{ tesla_delay }}
+chain_length = {{ tesla_chain_length }}
+
+[network]
+# Egress interface the eBPF TC tagger attaches to. Packet attribution is only
+# applied to traffic leaving this interface, so leaving it empty disables
+# tagging entirely (see executor_interface in group_vars/executors.yml).
+interface = "{{ executor_interface }}"
+public_host = "{{ executor_public_host }}"
+public_ports = "{{ executor_public_ports }}"
 
 [logging]
 log_level = "{{ executor_log_level }}"

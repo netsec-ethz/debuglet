@@ -78,14 +78,19 @@ func New(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy 
 	var pktTagger tagger.TaggerInterface
 	if iface != nil && runtime.GOOS == "linux" {
 		if bt, err := ebpf.NewBPFTagger(iface, schedule, []byte(debugletID.String())); err == nil {
+			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name))
 			pktTagger = bt
 		} else {
-			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go")
+			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go", zap.Error(err))
 		}
 	}
 
 	if pktTagger == nil {
-		logger.Info("Using fallback pure-Go tagger")
+		// The pure-Go tagger only rewrites buffers handed to it explicitly;
+		// the socket data path relies on SO_MARK + TC egress, so nothing is
+		// tagged on this path and packet attribution is unavailable.
+		logger.Warn("No eBPF tagger available: outgoing packets will NOT carry attribution tags",
+			zap.Bool("interface_configured", iface != nil), zap.String("goos", runtime.GOOS))
 		pktTagger = tagger.New(schedule, []byte(debugletID.String()))
 	}
 

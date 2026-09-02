@@ -20,6 +20,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 			LastSeen:               e.LastSeen.Unix(),
 			TeslaDelaySec:          int64(e.TeslaDelay.Seconds()),
 			TeslaAnchorTimestampNs: e.TeslaAnchorTimestamp.UnixNano(),
+			TeslaAnchorKey:         e.TeslaAnchorKey,
 			PricePerBw:             e.PricePerBwS,
 			Currency:               e.Currency,
 		})

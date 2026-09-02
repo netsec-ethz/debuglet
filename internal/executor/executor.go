@@ -41,12 +41,17 @@ type Executor struct {
 
 func New(cfg *config.ExecutorConfig, l *zap.Logger, s scheduler.Scheduler) (*Executor, error) {
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  []byte(cfg.Tesla.Seed),
-		Delay: time.Duration(cfg.Tesla.Delay) * time.Second,
+		Seed:        []byte(cfg.Tesla.Seed),
+		Delay:       time.Duration(cfg.Tesla.Delay) * time.Second,
+		ChainLength: cfg.Tesla.ChainLength,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Tesla key schedule: %w", err)
 	}
+	l.Info("Initialized TESLA key schedule",
+		zap.Duration("epoch_length", schedule.Config().Delay),
+		zap.Int64("chain_length", schedule.ChainLength()),
+		zap.Time("expires_at", schedule.Expiry()))
 
 	var iface *net.Interface
 	l.Debug("Network interface for packet counting", zap.String("interface", cfg.Network.Interface))
@@ -79,6 +84,7 @@ func New(cfg *config.ExecutorConfig, l *zap.Logger, s scheduler.Scheduler) (*Exe
 		running:       make(map[uuid.UUID]RunningDebuglet),
 		limiter:       limiter,
 		packetCount:   pc,
+		iface:         iface,
 		portManager:   portManager,
 	}
 	s.RegisterOnStart(e.OnDebugletStart)
@@ -104,9 +110,7 @@ func New(cfg *config.ExecutorConfig, l *zap.Logger, s scheduler.Scheduler) (*Exe
 func (e *Executor) Listen(ctx context.Context) error {
 	go func() {
 		e.Bidi.WaitReady()
-		if _, err := e.setResources(ctx, e.limiter.ExecutorCapacity()); err != nil {
-			e.logger.Error("Failed to announce resources", zap.Error(err))
-		}
+		e.announceResources(ctx)
 		e.startHeartbeatLoop(ctx)
 	}()
 
@@ -120,6 +124,37 @@ func (e *Executor) setResources(ctx context.Context, capacity app.Bitrate) (*pro
 		BandwidthCapacity: int64(capacity),
 		ExecutorId:        e.cfg.Identity.ExecutorID,
 	})
+}
+
+// announceResources reports this executor's bandwidth capacity to the
+// dispatcher, retrying while the dispatcher does not know us yet.
+//
+// The control channel becomes ready as soon as the yamux session is up, which
+// is before the dispatcher has finished its Hello handshake and registered the
+// executor. A single attempt therefore races and can leave the executor
+// registered with zero capacity, in which case every debuglet submitted to it
+// is rejected as "insufficient capacity" until it reconnects.
+func (e *Executor) announceResources(ctx context.Context) {
+	const (
+		attempts = 10
+		backoff  = time.Second
+	)
+	for i := 0; i < attempts; i++ {
+		if _, err := e.setResources(ctx, e.limiter.ExecutorCapacity()); err == nil {
+			e.logger.Info("Announced resources", zap.String("capacity", e.limiter.ExecutorCapacity().String()))
+			return
+		} else if i == attempts-1 {
+			e.logger.Error("Failed to announce resources", zap.Error(err))
+			return
+		} else {
+			e.logger.Debug("Failed to announce resources, retrying", zap.Error(err), zap.Int("attempt", i+1))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+	}
 }
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context) {
@@ -136,6 +171,14 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			now := time.Now()
+			if e.teslaSchedule.Exhausted(now) {
+				e.logger.Error("TESLA key chain exhausted: outgoing packets can no longer be verified; restart the executor or raise tesla.chain_length",
+					zap.Time("expired_at", e.teslaSchedule.Expiry()))
+			} else if remaining := time.Until(e.teslaSchedule.Expiry()); remaining < time.Hour {
+				e.logger.Warn("TESLA key chain nearly exhausted",
+					zap.Duration("remaining", remaining),
+					zap.Time("expires_at", e.teslaSchedule.Expiry()))
+			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
 			req := &protocol.HeartbeatRequest{
 				ExecutorId:    e.cfg.Identity.ExecutorID,

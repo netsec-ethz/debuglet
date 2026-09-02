@@ -76,6 +76,43 @@ go run cmd/user/main.go -wasm local/wasm_samples/go/ping/debuglet.wasm -debuglet
 
 The local user client allows for args to be passed through to the WASM by adding the flags after `--` at the end.
 
+### Packet accountability (attribution tags)
+
+Every outgoing IPv4 probe carries a 16-bit authentication tag in the IP
+Identification field, keyed by a TESLA hash chain the executor discloses one
+epoch late. Tagging is done by the eBPF TC egress program in
+`internal/executor/tagger/ebpf`, which needs **both** of:
+
+- `network.interface` set in the executor config — the egress interface the TC
+  program attaches to. With it empty the tagger is never created and probes go
+  out untagged (the executor logs a warning saying so).
+- `cap_net_admin,cap_bpf` on the binary (`make setcaps`, or
+  `executor_enable_bpf: true` for the Ansible deploy).
+
+Note that TCX programs on the same hook form a chain: a program returning
+`TCX_PASS` ends it, so anything attached after it never runs. Both eBPF
+programs here (the tagger and the rate limiter in
+`internal/executor/ratelimit/ebpf`) therefore return `TCX_NEXT` on accept and
+reserve terminal verdicts for drops. Keep it that way if you add another
+program to these hooks.
+
+To verify a capture against the dispatcher's published keys:
+
+```bash
+python3 local/scripts/verify_pcap.py --pcap capture.pcap \
+    --server https://debuglet.netsec.ethz.ch/api
+```
+
+It needs nothing but the standard library, and is the reference implementation
+of the verification the website performs in-browser
+(`debuglet-website/src/lib/verify.ts`). The two, and the tagger itself, have to
+stay in sync.
+
+The hash chain is finite: `tesla.chain_length` epochs (0 = derive from
+`tesla.delay` to cover 7 days). When it runs out the executor keeps tagging
+with a key it never discloses, and those packets can no longer be verified —
+it logs an error when that happens, and a warning in the hour before.
+
 ### Optional Requirements
 
 The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.

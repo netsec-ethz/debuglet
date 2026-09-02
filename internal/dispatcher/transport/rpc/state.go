@@ -16,6 +16,10 @@ type DispatcherState interface {
 
 	OnDebugletStream(stream grpc.BidiStreamingServer[pb.DebugletStreamRequest, pb.DebugletStreamResponse]) error
 
-	OnExecutorConnected(hello *pb.HelloResponse)
+	// OnExecutorConnected is called once the Hello handshake completes.
+	// sourceIP is the executor's address as observed on the control
+	// connection — the address its probe traffic will appear to come
+	// from, and the key used by GET /executors/by-ip.
+	OnExecutorConnected(hello *pb.HelloResponse, sourceIP string)
 	OnExecutorDisconnected(execID string)
 }

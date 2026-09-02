@@ -80,8 +80,8 @@ func TestAnchorIsHashOfChain(t *testing.T) {
 		key = h.Sum(nil)
 	}
 
-	if !bytes.Equal(key, ks.anchor) {
-		t.Errorf("anchor mismatch: H^%d(seed) = %x, anchor = %x", L, key, ks.anchor)
+	if !bytes.Equal(key, ks.Anchor()) {
+		t.Errorf("anchor mismatch: H^%d(seed) = %x, anchor = %x", L, key, ks.Anchor())
 	}
 }
 

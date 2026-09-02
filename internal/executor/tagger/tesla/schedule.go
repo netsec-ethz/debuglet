@@ -55,11 +55,23 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"golang.org/x/crypto/hkdf"
 )
+
+// DefaultChainHorizon is the uptime a default-sized chain covers. The
+// default ChainLength is DefaultChainHorizon/Delay, so a longer epoch gives
+// a shorter chain rather than a shorter usable lifetime.
+const DefaultChainHorizon = 7 * 24 * time.Hour
+
+// maxDefaultChainLength caps the derived default so a very short Delay cannot
+// allocate an unreasonable amount of memory. Keys are 32 bytes each, so this
+// bound is ~19 MiB.
+const maxDefaultChainLength = 604800
+
+// keySize is the length in bytes of one chain key (SHA-256 output).
+const keySize = sha256.Size
 
 // Config carries the tuneable parameters of the TESLA key schedule.
 type Config struct {
@@ -72,7 +84,12 @@ type Config struct {
 	// ChainLength L is the total number of epochs supported by this
 	// schedule. The keys k_0 … k_L are generated; k_0 is the public
 	// anchor and k_L is derived from the seed.
-	// Defaults to 3600 (one hour at 1-second intervals).
+	//
+	// If zero, it is derived from Delay so that the chain covers
+	// DefaultChainHorizon of uptime. Sizing this from a wall-clock horizon
+	// matters: once epoch L is reached the schedule stops advancing, keeps
+	// tagging with the never-disclosed k_L, and every packet from then on
+	// becomes unverifiable.
 	ChainLength int64
 
 	// Delay is the interval duration I (one epoch). A key disclosed after
@@ -97,11 +114,14 @@ type Config struct {
 type KeySchedule struct {
 	cfg Config
 
-	// anchor is k_0 = H^L(seed), computed once at construction time.
-	anchor []byte
-
-	mu    sync.RWMutex
-	cache map[int64][]byte // epoch → chain key (memoised)
+	// keys holds the whole precomputed chain as one contiguous buffer:
+	// keys[i*keySize:(i+1)*keySize] is k_i for i ∈ [0, L]. A slice rather
+	// than a map keeps a multi-day chain cheap (32 bytes per epoch, no
+	// per-entry overhead) and makes lookups allocation-free.
+	//
+	// The buffer is written once during construction and never mutated
+	// afterwards, so concurrent reads need no locking.
+	keys []byte
 }
 
 // NewKeySchedule creates a KeySchedule from cfg.
@@ -110,8 +130,10 @@ type KeySchedule struct {
 // stored internally and the public anchor k_0 = H^L(seed) is computed once.
 //
 // If cfg.Seed is empty a cryptographically random 32-byte seed is generated.
-// If cfg.ChainLength is zero it defaults to 3600.
+// A seed that is not exactly 32 bytes long is folded through SHA-256 so that
+// k_L is always one key wide.
 // If cfg.Delay is zero it defaults to 10 seconds.
+// If cfg.ChainLength is zero it is derived from Delay (see DefaultChainHorizon).
 func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 	if len(cfg.Seed) == 0 {
 		cfg.Seed = make([]byte, 32)
@@ -119,36 +141,40 @@ func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 			return nil, fmt.Errorf("tesla: failed to generate seed: %w", err)
 		}
 	}
-	if cfg.ChainLength == 0 {
-		cfg.ChainLength = 3600
-	}
-	if cfg.Delay == 0 {
+	if cfg.Delay <= 0 {
 		cfg.Delay = 10 * time.Second
+	}
+	if cfg.ChainLength <= 0 {
+		cfg.ChainLength = min(int64(DefaultChainHorizon/cfg.Delay), maxDefaultChainLength)
 	}
 	if cfg.Epoch.IsZero() {
 		cfg.Epoch = time.Now()
 	}
 
-	// Pre-compute the full backward chain and store all keys.
+	// Pre-compute the full backward chain into one contiguous buffer.
 	// k_L = seed (private tail), k_i = H(k_{i+1}) for i = L-1 … 0.
-	cache := make(map[int64][]byte, cfg.ChainLength+1)
-
-	key := make([]byte, len(cfg.Seed))
-	copy(key, cfg.Seed)
-	cache[cfg.ChainLength] = key
+	//
+	// The seed may be any length; k_L is stored as the SHA-256 of the seed
+	// when the seed is not already one key wide, so every slot is keySize.
+	keys := make([]byte, (cfg.ChainLength+1)*keySize)
+	tail := keys[cfg.ChainLength*keySize:]
+	if len(cfg.Seed) == keySize {
+		copy(tail, cfg.Seed)
+	} else {
+		sum := sha256.Sum256(cfg.Seed)
+		copy(tail, sum[:])
+	}
 
 	h := sha256.New()
 	for i := cfg.ChainLength - 1; i >= 0; i-- {
 		h.Reset()
-		h.Write(key)
-		key = h.Sum(nil)
-		cache[i] = key
+		h.Write(keys[(i+1)*keySize : (i+2)*keySize])
+		h.Sum(keys[i*keySize : i*keySize : (i+1)*keySize])
 	}
 
 	return &KeySchedule{
-		cfg:    cfg,
-		anchor: cache[0],
-		cache:  cache,
+		cfg:  cfg,
+		keys: keys,
 	}, nil
 }
 
@@ -160,9 +186,24 @@ func (ks *KeySchedule) Config() Config {
 // Anchor returns k_0, the public anchor that should be published at setup.
 // Verifiers use it to check consistency: H^t(k_t) == k_0.
 func (ks *KeySchedule) Anchor() []byte {
-	out := make([]byte, len(ks.anchor))
-	copy(out, ks.anchor)
+	out := make([]byte, keySize)
+	copy(out, ks.keys[:keySize])
 	return out
+}
+
+// ChainLength returns L, the highest epoch this schedule can serve.
+func (ks *KeySchedule) ChainLength() int64 { return ks.cfg.ChainLength }
+
+// Exhausted reports whether time t falls at or past the end of the chain. Once
+// exhausted the schedule keeps returning k_L, which is never disclosed, so
+// packets tagged from then on can no longer be verified.
+func (ks *KeySchedule) Exhausted(t time.Time) bool {
+	return ks.epochOf(t) >= ks.cfg.ChainLength
+}
+
+// Expiry returns the wall-clock time at which the chain runs out.
+func (ks *KeySchedule) Expiry() time.Time {
+	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength) * ks.cfg.Delay)
 }
 
 // epochOf returns the epoch index for a given wall-clock time.
@@ -178,13 +219,14 @@ func (ks *KeySchedule) epochOf(t time.Time) int64 {
 	return e
 }
 
-// keyForEpoch returns the chain key k_epoch. Results are already fully cached
-// during construction so this is always O(1).
+// keyForEpoch returns the chain key k_epoch. The chain is fully precomputed
+// during construction so this is always O(1). The returned slice aliases the
+// schedule's immutable buffer and must not be modified.
 func (ks *KeySchedule) keyForEpoch(epoch int64) []byte {
-	ks.mu.RLock()
-	k := ks.cache[epoch]
-	ks.mu.RUnlock()
-	return k
+	if epoch < 0 || epoch > ks.cfg.ChainLength {
+		return nil
+	}
+	return ks.keys[epoch*keySize : (epoch+1)*keySize]
 }
 
 // CurrentKey returns the chain key k_t for the epoch that contains time t.

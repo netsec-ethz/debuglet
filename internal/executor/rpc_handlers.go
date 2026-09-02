@@ -20,9 +20,12 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		publicHost = &e.cfg.Network.PublicHost
 	}
 	resp := &pb.HelloResponse{
-		ExecutorId:             e.cfg.Identity.ExecutorID,
-		Version:                e.cfg.Identity.Version,
-		SourceIp:               "127.0.0.1", // TODO: detect public IP
+		ExecutorId: e.cfg.Identity.ExecutorID,
+		Version:    e.cfg.Identity.Version,
+		// The dispatcher records the address it observes on the control
+		// connection, which is what probe recipients see. Reporting an
+		// address here would only be a hint, so leave it empty.
+		SourceIp:               "",
 		PublicHost:             publicHost,
 		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
