@@ -1,6 +1,11 @@
 *.crt
 *.key
 *.pcap
+# Local dev TLS material predating the convention above: these files have
+# no extension, so *.crt / *.key never matched them and they ended up
+# tracked. `make generate-certs` writes server.* / client.* instead.
+local/configs/*/cert
+local/configs/*/key
 
 # binaries
 debuglet-executor*

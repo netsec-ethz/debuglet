@@ -28,8 +28,8 @@ json_logs = false
 
 [credentials]
 ca_cert = "local/configs/executor/ca.crt"
-client_cert = "local/configs/executor/cert"
-client_key = "local/configs/executor/key"
+client_cert = "local/configs/executor/client.crt"
+client_key = "local/configs/executor/client.key"
 
 [database]
 path = ".data/executor.db"
