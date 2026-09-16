@@ -1,21 +1,21 @@
 [Unit]
-Description=Debuglet Executor ({{ executor_id }})
+Description=Debuglet Executor ({{ executor_id }}, {{ debuglet_env }})
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User={{ debuglet_user }}
-Group={{ debuglet_group }}
-ExecStart={{ install_prefix }}/bin/debuglet-executor \
-    -config {{ config_dir }}/executor/executor.toml
+User={{ executor_user }}
+Group={{ executor_group }}
+ExecStart={{ executor_binary }} \
+    -config {{ executor_config_dir }}/executor.toml
 # Restart on any exit (including code 0). A dropped control stream should always
 # bring the executor back; a deliberate `systemctl stop` still stops it.
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=debuglet-executor
+SyslogIdentifier={{ executor_service }}
 
 {% if (executor_enable_bpf | default(true)) and (executor_ambient_caps | default(true)) %}
 # systemd hands these to the process at exec (ambient set). On restricted

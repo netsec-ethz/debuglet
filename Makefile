@@ -158,6 +158,19 @@ generate-certs:
 # Remote deployment (requires: docker, ansible, openssl)
 # --------------------------------------------------------------------
 
+# Ansible inventory to target — hosts.yml (prod) by default, or
+# hosts.dev.yml for the dev environment:
+#   make deploy-dispatcher INVENTORY=hosts.dev.yml DEPLOY_ENV=dev
+INVENTORY ?= hosts.yml
+
+# Environment whose vars file is layered on top of group_vars — must match
+# INVENTORY. It decides the names an executor deploy claims on each machine
+# (debuglet-<env> user, /etc/debuglet/executor-<env>, debuglet-executor-<env>
+# unit), so pointing a prod-env run at the dev inventory would take over the
+# prod executor's install. See deploy/ansible/vars/.
+DEPLOY_ENV ?= prod
+ENV_VARS := -e @vars/$(DEPLOY_ENV).yml
+
 # Build Linux x86_64 binaries via Docker → deploy/dist/
 deploy-build:
 	chmod +x deploy/scripts/build-linux.sh
@@ -179,13 +192,13 @@ deploy-seed-db:
 		$(GOOSE) sqlite3 deploy/dist/dispatcher-seed.db up
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/
-# Extracts executor IDs automatically from deploy/ansible/hosts.yml.
+# Extracts executor IDs automatically from deploy/ansible/$(INVENTORY).
 # Override by passing EXECUTOR_IDS manually:
 #   make deploy-certs EXECUTOR_IDS="id1 id2"
 deploy-certs:
 	chmod +x deploy/scripts/generate-certs.sh
 	@if [ -z "$(EXECUTOR_IDS)" ]; then \
-		EXECUTOR_IDS=$$(cd deploy/ansible && ansible-inventory -i hosts.yml --list 2>/dev/null | python3 -c "\
+		EXECUTOR_IDS=$$(cd deploy/ansible && ansible-inventory -i $(INVENTORY) --list 2>/dev/null | python3 -c "\
 import sys, json; \
 inv = json.load(sys.stdin); \
 groups = inv.get('executors', {}).get('children', {}); \
@@ -198,32 +211,33 @@ print(' '.join(ids))" 2>/dev/null); \
 	else \
 		deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
 	fi
-	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-certs.yml
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) deploy-certs.yml
 
 # Full deploy: build → dispatcher → all executors
 deploy: deploy-build deploy-seed-db
-	cd deploy/ansible && ansible-playbook -i hosts.yml site.yml
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) site.yml
 
 # Deploy only the dispatcher
 deploy-dispatcher: deploy-build deploy-seed-db
-	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-dispatcher.yml
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) deploy-dispatcher.yml
 
-# One-time bootstrap: grant passwordless sudo on executor nodes.
+# One-time bootstrap: grant passwordless sudo on dispatcher/executor nodes.
 # Run this first on any host whose user requires a sudo password.
 # Example: make bootstrap-sudo LIMIT=ordroid-ethz
+#          make bootstrap-sudo INVENTORY=hosts.dev.yml LIMIT=172.31.201.110
 bootstrap-sudo:
-	cd deploy/ansible && ansible-playbook -i hosts.yml bootstrap-sudo.yml -K \
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
 deploy-executors: deploy-build deploy-seed-db
-	cd deploy/ansible && ansible-playbook -i hosts.yml deploy-executors.yml \
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) deploy-executors.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Push a new dispatcher address to all running executors (no binary redeploy)
 # Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
 deploy-update-addr:
-	cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # Re-render dispatcher + executor configs and restart changed services (no
@@ -232,7 +246,7 @@ deploy-update-addr:
 #          make deploy-update-config DEPLOY_VERSION=v1.2.3
 DEPLOY_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 deploy-update-config:
-	cd deploy/ansible && ansible-playbook -i hosts.yml update-config.yml \
+	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) update-config.yml \
 		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
 
 # --------------------------------------------------------------------

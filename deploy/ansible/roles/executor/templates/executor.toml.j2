@@ -30,9 +30,9 @@ public_ports = "{{ executor_public_ports }}"
 log_level = "{{ executor_log_level }}"
 
 [database]
-path = "{{ config_dir }}/executor/executor.db"
+path = "{{ executor_config_dir }}/executor.db"
 
 [credentials]
-ca_cert = "{{ config_dir }}/executor/ca.crt"
-client_cert = "{{ config_dir }}/executor/client.crt"
-client_key = "{{ config_dir }}/executor/client.key"
+ca_cert = "{{ executor_config_dir }}/ca.crt"
+client_cert = "{{ executor_config_dir }}/client.crt"
+client_key = "{{ executor_config_dir }}/client.key"

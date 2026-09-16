@@ -17,13 +17,14 @@
     - name: Regenerate executor config
       ansible.builtin.template:
         src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"
-        dest: "{{ config_dir }}/executor/executor.toml"
-        owner: "{{ debuglet_user }}"
+        dest: "{{ executor_config_dir }}/executor.toml"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
         mode: "0640"
       register: config_changed
 
     - name: Restart executor if config changed
       ansible.builtin.systemd:
-        name: debuglet-executor
+        name: "{{ executor_service }}"
         state: restarted
       when: config_changed.changed

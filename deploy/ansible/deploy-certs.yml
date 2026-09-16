@@ -34,6 +34,9 @@
         name: debuglet-dispatcher
         state: restarted
 
+# Credentials land in the environment's own config dir, so a machine that is
+# an executor in both prod and dev holds one client cert per environment
+# (their executor_ids differ, so the certs do too).
 - name: Deploy TLS certificates to executors
   hosts: executors
   serial: 1
@@ -41,31 +44,34 @@
   tasks:
     - name: Create executor config directory
       ansible.builtin.file:
-        path: "{{ config_dir }}/executor"
+        path: "{{ executor_config_dir }}"
         state: directory
-        owner: "{{ debuglet_user }}"
-        group: "{{ debuglet_group }}"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
         mode: "0700"
 
     - name: Deploy CA certificate
       ansible.builtin.copy:
         src: "{{ certs_dir }}/ca.crt"
-        dest: "{{ config_dir }}/executor/ca.crt"
-        owner: "{{ debuglet_user }}"
+        dest: "{{ executor_config_dir }}/ca.crt"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
         mode: "0644"
 
     - name: Deploy executor client certificate
       ansible.builtin.copy:
         src: "{{ certs_dir }}/executors/{{ executor_id }}/client.crt"
-        dest: "{{ config_dir }}/executor/client.crt"
-        owner: "{{ debuglet_user }}"
+        dest: "{{ executor_config_dir }}/client.crt"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
         mode: "0640"
 
     - name: Deploy executor client key
       ansible.builtin.copy:
         src: "{{ certs_dir }}/executors/{{ executor_id }}/client.key"
-        dest: "{{ config_dir }}/executor/client.key"
-        owner: "{{ debuglet_user }}"
+        dest: "{{ executor_config_dir }}/client.key"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
         mode: "0600"
 
     - name: Reload systemd
@@ -74,5 +80,5 @@
 
     - name: Restart executor
       ansible.builtin.systemd:
-        name: debuglet-executor
+        name: "{{ executor_service }}"
         state: restarted

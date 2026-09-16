@@ -18,6 +18,16 @@
 # address is entered once, not duplicated between the inventory and the CI
 # variable. Keep this placeholder as-is in your real hosts.dev.yml too.
 
+#
+# NOTE: a machine can appear in BOTH inventories — ordroid-ethz is an executor
+# in prod and in dev. Give it a distinct executor_id per environment (they get
+# distinct TLS client certs, and the dispatcher keys its registry on the id).
+# Everything else is kept apart automatically: the deploy job layers on
+# vars/<env>.yml, and each environment's executor gets its own service user,
+# config directory, binary and systemd unit (debuglet-<env>,
+# /etc/debuglet/executor-<env>, debuglet-executor-<env>). See
+# deploy/ansible/group_vars/executors.yml.
+
 all:
   children:
     # ------------------------------------------------------------------
