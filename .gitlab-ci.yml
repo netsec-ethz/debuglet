@@ -49,6 +49,11 @@ build:
     - mkdir -p deploy/dist
     - cp debuglet-executor debuglet-dispatcher deploy/dist/
   artifacts:
+    # The deploy job consumes these in the same pipeline, so they only need to
+    # outlive the build by minutes. A short window still leaves room to re-run
+    # a failed deploy against the same binaries the next morning; beyond that,
+    # re-run the build rather than deploying a stale artifact.
+    expire_in: 1 day
     paths:
       - deploy/dist/
 
