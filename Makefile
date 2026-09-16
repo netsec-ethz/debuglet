@@ -224,7 +224,7 @@ deploy-dispatcher: deploy-build deploy-seed-db
 # One-time bootstrap: grant passwordless sudo on dispatcher/executor nodes.
 # Run this first on any host whose user requires a sudo password.
 # Example: make bootstrap-sudo LIMIT=ordroid-ethz
-#          make bootstrap-sudo INVENTORY=hosts.dev.yml LIMIT=172.31.201.110
+#          make bootstrap-sudo INVENTORY=hosts.dev.yml LIMIT=dispatcher.example.com
 bootstrap-sudo:
 	cd deploy/ansible && ansible-playbook -i $(INVENTORY) bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
