@@ -4,5 +4,5 @@
 
 - name: Restart executor
   ansible.builtin.systemd:
-    name: debuglet-executor
+    name: "{{ executor_service }}"
     state: restarted

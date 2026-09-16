@@ -4,6 +4,32 @@
 # =============================================================================
 # Override per-host in hosts.yml using host_vars if needed.
 
+# ---------------------------------------------------------------------------
+# Per-environment namespacing
+# ---------------------------------------------------------------------------
+# Every filesystem and systemd name an executor owns carries the environment
+# (see debuglet_env in group_vars/all.yml), so a prod and a dev executor can
+# run side by side on the same machine — which ordroid-ethz does. Nothing is
+# shared between the two but /etc/debuglet itself and the SSH login used to
+# deploy: separate service users, separate config dirs (so separate TLS
+# credentials, TESLA seed and executor.db), separate binaries, separate units.
+executor_user: "{{ debuglet_user }}-{{ debuglet_env }}"
+executor_group: "{{ debuglet_group }}-{{ debuglet_env }}"
+executor_config_dir: "{{ config_dir }}/executor-{{ debuglet_env }}"
+executor_binary: "{{ install_prefix }}/bin/debuglet-executor-{{ debuglet_env }}"
+executor_service: "debuglet-executor-{{ debuglet_env }}"
+
+# The pre-split install: one unsuffixed user/dir/binary/unit shared by both
+# environments. The executor role stops and disables the legacy unit and
+# carries its executor.db over to whichever environment claims the machine
+# first, so a redeploy migrates a node instead of leaving two executors
+# racing for the same executor_id. Set to false once every node has been
+# through a post-split deploy.
+executor_retire_legacy_install: true
+executor_legacy_config_dir: "{{ config_dir }}/executor"
+executor_legacy_binary: "{{ install_prefix }}/bin/debuglet-executor"
+executor_legacy_service: "debuglet-executor"
+
 # Bandwidth capacity in bits/sec (default: 1 Gbps)
 executor_capacity: 1_000_000_000
 
@@ -48,17 +74,19 @@ executor_enable_bpf: true
 # CapabilityBoundingSet as well. Only meaningful when executor_enable_bpf.
 executor_ambient_caps: false
 
-# TLS for executor → dispatcher connection. Independent from
-# dispatcher_disable_tls: executors go through nginx (TLS-terminated at
-# dispatcher_addr, cert + grpc_pass already set up — see
-# deploy/certs/nginx or the live host's /etc/nginx config), which then
-# proxies to the dispatcher's own listener in cleartext ("nginx ->
-# dispatcher is localhost cleartext" — see dispatcher_disable_tls above).
-# So this is enabled even though the dispatcher's own TLS stays disabled.
-# Server cert verification is skipped executor-side (InsecureSkipVerify,
-# see internal/executor/executor.go) so this only needs to encrypt the
-# channel, not validate nginx's cert chain.
-executor_disable_tls: false
+# TLS for the executor → dispatcher connection. Disabled, because nothing
+# terminates TLS in front of the dispatcher's gRPC/yamux ports any more:
+# executors dial dispatcher_grpc_port/dispatcher_http_port directly (the
+# firewall exposes them — see group_vars/all.yml), and the dispatcher itself
+# runs with dispatcher_disable_tls, so the far end speaks cleartext. nginx
+# only fronts the REST API and the web origins now. This matches what every
+# deployed executor already runs with.
+#
+# Turning this on requires putting a TLS terminator back in front of the gRPC
+# port first; a TLS client against a cleartext listener just fails to connect.
+# Server cert verification is skipped executor-side anyway (InsecureSkipVerify,
+# see internal/executor/executor.go).
+executor_disable_tls: true
 
 # TESLA seed (leave empty to auto-generate; set per-host for deterministic keys)
 executor_tesla_seed: ""

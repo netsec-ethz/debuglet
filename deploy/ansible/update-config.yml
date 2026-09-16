@@ -5,8 +5,12 @@
 # Use this to push a config-only change (version, dispatcher address, log level,
 # ports, TLS flags, capacity, …) to running services.
 #
+# Executor paths and unit names are environment-scoped, so pass the matching
+# vars file (or use the Makefile targets, which do it for you):
+#
 # Usage:
-#   cd deploy/ansible && ansible-playbook -i hosts.yml update-config.yml
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml update-config.yml
+#   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml update-config.yml
 #
 #   Stamp a version (overrides the "unknown" default) without editing files:
 #     ansible-playbook -i hosts.yml update-config.yml \
@@ -40,13 +44,14 @@
     - name: Regenerate executor config
       ansible.builtin.template:
         src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"
-        dest: "{{ config_dir }}/executor/executor.toml"
-        owner: "{{ debuglet_user }}"
+        dest: "{{ executor_config_dir }}/executor.toml"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
         mode: "0640"
       register: executor_config
 
     - name: Restart executor if config changed
       ansible.builtin.systemd:
-        name: debuglet-executor
+        name: "{{ executor_service }}"
         state: restarted
       when: executor_config.changed

@@ -1,18 +1,102 @@
 ---
+# Everything below is namespaced by debuglet_env (see
+# group_vars/executors.yml), so a prod and a dev executor coexist on one
+# machine instead of overwriting each other on every pipeline.
+
+- name: Create executor service user and group
+  ansible.builtin.user:
+    name: "{{ executor_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+# ---------------------------------------------------------------------------
+# Retire the pre-split install (one unsuffixed unit/dir shared by both envs)
+# ---------------------------------------------------------------------------
+# Left running it would race the new unit for the same executor_id, and its
+# executor.db holds persisted debuglet state worth keeping. Stopping the unit
+# but leaving it on disk keeps the change reversible.
+
+- name: Check for a pre-split executor install
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ executor_legacy_service }}.service"
+  register: legacy_unit
+  when: executor_retire_legacy_install | default(true)
+
+- name: Stop and disable the pre-split executor unit
+  ansible.builtin.systemd:
+    name: "{{ executor_legacy_service }}"
+    state: stopped
+    enabled: false
+  when:
+    - executor_retire_legacy_install | default(true)
+    - legacy_unit.stat.exists | default(false)
+
 - name: Create executor config directory
   ansible.builtin.file:
-    path: "{{ config_dir }}/executor"
+    path: "{{ executor_config_dir }}"
     state: directory
-    owner: "{{ debuglet_user }}"
-    group: "{{ debuglet_group }}"
+    owner: "{{ executor_user }}"
+    group: "{{ executor_group }}"
     mode: "0700"
+
+# The persisted debuglet state and the TLS credentials deploy-certs.yml
+# installed both lived in the legacy config dir. Carry them into the
+# environment's dir so a redeploy migrates a node rather than silently
+# starting it from scratch and leaving its certs behind. force: false, so a
+# config dir that already has its own copy is never overwritten.
+- name: Check for pre-split executor state
+  ansible.builtin.stat:
+    path: "{{ executor_legacy_config_dir }}/{{ item }}"
+  register: legacy_state
+  loop:
+    - executor.db
+    - ca.crt
+    - client.crt
+    - client.key
+  when: executor_retire_legacy_install | default(true)
+
+- name: Carry pre-split executor state over to this environment
+  ansible.builtin.copy:
+    src: "{{ executor_legacy_config_dir }}/{{ item.item }}"
+    remote_src: true
+    dest: "{{ executor_config_dir }}/{{ item.item }}"
+    owner: "{{ executor_user }}"
+    group: "{{ executor_group }}"
+    mode: "{{ {'ca.crt': '0644', 'client.crt': '0640'}[item.item] | default('0600') }}"
+    force: false
+  loop: "{{ legacy_state.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - executor_retire_legacy_install | default(true)
+    - item.stat.exists | default(false)
+  notify: Restart executor
+
+# A crashed first start leaves behind the empty file sql.Open() creates before
+# it fails, and `force: false` alone would treat that as a database to preserve
+# — permanently blocking the seed and leaving the executor in a "no such table"
+# restart loop. Only a non-empty file counts as real state.
+- name: Check the executor database for real state
+  ansible.builtin.stat:
+    path: "{{ executor_config_dir }}/executor.db"
+  register: executor_db
+
+- name: Discard an empty executor database
+  ansible.builtin.file:
+    path: "{{ executor_config_dir }}/executor.db"
+    state: absent
+  when:
+    - executor_db.stat.exists
+    - executor_db.stat.size == 0
 
 - name: Provision executor database (schema only, preserved on redeploy)
   ansible.builtin.copy:
     src: "{{ dist_dir }}/executor-seed.db" # built by `make deploy-seed-db`, not committed
-    dest: "{{ config_dir }}/executor/executor.db"
-    owner: "{{ debuglet_user }}"
-    group: "{{ debuglet_group }}"
+    dest: "{{ executor_config_dir }}/executor.db"
+    owner: "{{ executor_user }}"
+    group: "{{ executor_group }}"
     mode: "0600"
     force: false # never overwrite an existing DB (would wipe persisted debuglet state)
   notify: Restart executor
@@ -20,7 +104,7 @@
 - name: Install executor binary
   ansible.builtin.copy:
     src: "{{ dist_dir }}/debuglet-executor"
-    dest: "{{ install_prefix }}/bin/debuglet-executor"
+    dest: "{{ executor_binary }}"
     owner: root
     group: root
     mode: "0755"
@@ -29,8 +113,9 @@
 - name: Deploy executor configuration
   ansible.builtin.template:
     src: executor.toml.j2
-    dest: "{{ config_dir }}/executor/executor.toml"
-    owner: "{{ debuglet_user }}"
+    dest: "{{ executor_config_dir }}/executor.toml"
+    owner: "{{ executor_user }}"
+    group: "{{ executor_group }}"
     mode: "0640"
   notify: Restart executor
 
@@ -42,7 +127,7 @@
 # executor_enable_bpf=false on such a host to skip the attempt entirely.
 - name: Set eBPF capabilities on executor binary
   community.general.capabilities:
-    path: "{{ install_prefix }}/bin/debuglet-executor"
+    path: "{{ executor_binary }}"
     capability: "cap_net_admin,cap_bpf+ep"
     state: present
   when: executor_enable_bpf | default(true)
@@ -63,7 +148,7 @@
 - name: Install executor systemd unit
   ansible.builtin.template:
     src: executor.service.j2
-    dest: /etc/systemd/system/debuglet-executor.service
+    dest: "/etc/systemd/system/{{ executor_service }}.service"
     owner: root
     mode: "0644"
   notify:
@@ -72,7 +157,7 @@
 
 - name: Enable and start executor
   ansible.builtin.systemd:
-    name: debuglet-executor
+    name: "{{ executor_service }}"
     enabled: true
     state: started
     daemon_reload: true

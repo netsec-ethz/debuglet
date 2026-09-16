@@ -1,0 +1,23 @@
+---
+# Dev/testing environment values, applied on top of group_vars/ by the deploy
+# job on `dev`:  ansible-playbook ... -e @vars/dev.yml
+#
+# Only environment-wide settings belong here. These are passed as extra-vars,
+# which outrank inventory host_vars — anything a single host needs to override
+# (executor_interface, executor_enable_bpf, ...) must stay in hosts.dev.yml.
+#
+# Addresses are deliberately absent: dispatcher_addr identifies private
+# infrastructure and still comes from the DISPATCHER_ADDR_DEV CI/CD variable.
+
+debuglet_env: dev
+
+# Public origin the dev dispatcher API is served from — debuglet-jump proxies
+# https://dev.debuglet.netsec.ethz.ch/api/ to the dev dispatcher's port 9000,
+# and serves the dev website and console from the same origin. Drives
+# dispatcher_cors_allowed_origins (see group_vars/dispatcher.yml).
+#
+# This is committed rather than read from a CI/CD variable because it is not
+# secret and an unset variable is silently destructive: an empty value renders
+# allowed_origins as the literal ["https://"], which switches echo's CORS
+# middleware into credentialed mode with an allow-list that matches nothing.
+dispatcher_base_url: dev.debuglet.netsec.ethz.ch

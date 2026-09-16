@@ -9,20 +9,30 @@
 # it belongs in group_vars/all.yml instead — group_vars/dispatcher.yml is
 # invisible to executor hosts.
 
-# Public origin the HTTP API will eventually sit behind (bare domain, no
-# scheme/port). Differs per environment (prod vs dev), so it's NOT set here
-# — the deploy CI job passes it as an -e extra-var, sourced from the
-# DISPATCHER_BASE_URL/DISPATCHER_BASE_URL_DEV CI/CD variables (branch picks
-# which one). See .gitlab-ci.yml. The default below is only hit for a
-# manual/local run.
+# Public origin the HTTP API sits behind (bare domain, no scheme/port).
+# Differs per environment, so the real value lives in the committed
+# deploy/ansible/vars/<env>.yml that the CI deploy job passes as
+# -e @vars/<env>.yml (see .gitlab-ci.yml). The default below is only hit for
+# a manual/local run.
 #
-# Used to compute dispatcher_cors_allowed_origins below — the origin
+# Used to compute dispatcher_cors_allowed_origins below — the origins
 # allowed to make credentialed (cookie-based, session_token) requests to
-# the dispatcher API. Browser clients need this to authenticate: without
-# it, the session cookie is never sent cross-origin and endpoints like /me
-# always 401.
+# the dispatcher API. A browser client on a different origin needs this to
+# authenticate: without it the session cookie is never sent cross-origin and
+# endpoints like /me always 401.
+#
+# Both deployed consoles are same-origin with their API
+# (debuglet.netsec.ethz.ch/console -> /api, and dev.debuglet.netsec.ethz.ch
+# likewise), so CORS is not on their critical path — it matters for clients
+# served from somewhere else, e.g. a local `npm run dev` of the website or
+# console pointed at a deployed dispatcher.
 dispatcher_base_url: "localhost"
-dispatcher_cors_allowed_origins: ["https://{{ dispatcher_base_url }}"]
+
+# Guard the derived value: an empty or placeholder base URL used to render as
+# the literal origin ["https://"], which is worse than no config at all. An
+# empty list leaves echo's CORS middleware at its permissive default ("*"
+# without credentials) instead of a credentialed allow-list matching nothing.
+dispatcher_cors_allowed_origins: "{{ ['https://' ~ dispatcher_base_url] if (dispatcher_base_url | default('', true)) not in ['', 'localhost'] else [] }}"
 
 # Dispatcher service defaults
 dispatcher_log_level: info
