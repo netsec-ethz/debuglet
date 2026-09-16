@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+
 # Build Linux x86_64 deployment artifacts via Docker.
 #
 # Outputs to deploy/dist/:

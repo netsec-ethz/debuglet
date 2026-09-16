@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+
 # Generate TLS certificates for deployment.
 #
 # Creates a shared CA, a dispatcher server cert, and per-executor client certs.

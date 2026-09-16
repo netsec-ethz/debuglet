@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 ETH Zurich
+ */
+
 //go:build ignore
 
 #include <linux/bpf.h>
