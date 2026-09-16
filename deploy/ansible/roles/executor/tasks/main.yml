@@ -74,6 +74,23 @@
     - item.stat.exists | default(false)
   notify: Restart executor
 
+# A crashed first start leaves behind the empty file sql.Open() creates before
+# it fails, and `force: false` alone would treat that as a database to preserve
+# — permanently blocking the seed and leaving the executor in a "no such table"
+# restart loop. Only a non-empty file counts as real state.
+- name: Check the executor database for real state
+  ansible.builtin.stat:
+    path: "{{ executor_config_dir }}/executor.db"
+  register: executor_db
+
+- name: Discard an empty executor database
+  ansible.builtin.file:
+    path: "{{ executor_config_dir }}/executor.db"
+    state: absent
+  when:
+    - executor_db.stat.exists
+    - executor_db.stat.size == 0
+
 - name: Provision executor database (schema only, preserved on redeploy)
   ansible.builtin.copy:
     src: "{{ dist_dir }}/executor-seed.db" # built by `make deploy-seed-db`, not committed
