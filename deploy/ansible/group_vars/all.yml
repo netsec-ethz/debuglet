@@ -17,9 +17,10 @@
 #   1. Run: make deploy-update-addr DISPATCHER_ADDR=new-dispatcher.example.com
 #      or:  cd deploy/ansible && ansible-playbook update-dispatcher-addr.yml -e "dispatcher_addr=..."
 
-# Dispatcher endpoint — executors point here. This is a bare hostname (no port):
-# executors reach the nginx reverse proxy over HTTPS, and the gRPC client's dns
-# resolver dials the default port 443.
+# Dispatcher endpoint — executors point here. A bare hostname or IP, no port:
+# the executor config appends dispatcher_grpc_port/dispatcher_http_port below.
+# Prod resolves to the dispatcher host, dev to the dev dispatcher's ETH-internal
+# address; both are dialled directly, with no nginx in between.
 dispatcher_addr: "localhost"
 
 # Ports the dispatcher listens on and executors dial directly: gRPC on
@@ -29,9 +30,10 @@ dispatcher_addr: "localhost"
 dispatcher_grpc_port: 9001
 dispatcher_http_port: 9000
 
-# The dispatcher runs WITHOUT TLS because nginx terminates it in front of the
-# gRPC port (nginx -> dispatcher is localhost cleartext). Executors, however,
-# must speak TLS to nginx — see executor_disable_tls in executors.yml.
+# The dispatcher's own listeners run WITHOUT TLS. Nothing terminates TLS in
+# front of the gRPC/yamux ports any more — nginx only fronts the REST API and
+# the web origins — so executors dial them in cleartext too; see
+# executor_disable_tls in executors.yml, which has to stay in step with this.
 dispatcher_disable_tls: true
 
 # Deploy version — injected by CI from commit message; overridable via -e

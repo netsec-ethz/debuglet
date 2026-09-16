@@ -48,17 +48,19 @@ executor_enable_bpf: true
 # CapabilityBoundingSet as well. Only meaningful when executor_enable_bpf.
 executor_ambient_caps: false
 
-# TLS for executor → dispatcher connection. Independent from
-# dispatcher_disable_tls: executors go through nginx (TLS-terminated at
-# dispatcher_addr, cert + grpc_pass already set up — see
-# deploy/certs/nginx or the live host's /etc/nginx config), which then
-# proxies to the dispatcher's own listener in cleartext ("nginx ->
-# dispatcher is localhost cleartext" — see dispatcher_disable_tls above).
-# So this is enabled even though the dispatcher's own TLS stays disabled.
-# Server cert verification is skipped executor-side (InsecureSkipVerify,
-# see internal/executor/executor.go) so this only needs to encrypt the
-# channel, not validate nginx's cert chain.
-executor_disable_tls: false
+# TLS for the executor → dispatcher connection. Disabled, because nothing
+# terminates TLS in front of the dispatcher's gRPC/yamux ports any more:
+# executors dial dispatcher_grpc_port/dispatcher_http_port directly (the
+# firewall exposes them — see group_vars/all.yml), and the dispatcher itself
+# runs with dispatcher_disable_tls, so the far end speaks cleartext. nginx
+# only fronts the REST API and the web origins now. This matches what every
+# deployed executor already runs with.
+#
+# Turning this on requires putting a TLS terminator back in front of the gRPC
+# port first; a TLS client against a cleartext listener just fails to connect.
+# Server cert verification is skipped executor-side anyway (InsecureSkipVerify,
+# see internal/executor/executor.go).
+executor_disable_tls: true
 
 # TESLA seed (leave empty to auto-generate; set per-host for deterministic keys)
 executor_tesla_seed: ""
