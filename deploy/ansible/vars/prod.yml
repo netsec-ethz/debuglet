@@ -1,0 +1,17 @@
+---
+# Production environment values, applied on top of group_vars/ by the deploy
+# job on `main`:  ansible-playbook ... -e @vars/prod.yml
+#
+# Only environment-wide settings belong here. These are passed as extra-vars,
+# which outrank inventory host_vars — anything a single host needs to override
+# (executor_interface, executor_enable_bpf, ...) must stay in hosts.yml.
+#
+# Addresses are deliberately absent: dispatcher_addr identifies private
+# infrastructure and still comes from the DISPATCHER_ADDR CI/CD variable.
+
+debuglet_env: prod
+
+# Public origin the dispatcher API is served from. Drives
+# dispatcher_cors_allowed_origins (see group_vars/dispatcher.yml), which is
+# what lets the console authenticate with its session cookie.
+dispatcher_base_url: debuglet.netsec.ethz.ch

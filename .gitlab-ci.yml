@@ -71,23 +71,37 @@ deploy:
     # which bundles them) — the executor role's community.general.capabilities
     # task needs this installed explicitly.
     - ansible-galaxy collection install community.general
-    # Everything below differs per environment (prod vs dev): the SSH
-    # deploy key, the inventory file, and the dispatcher_addr/
-    # dispatcher_base_url extra-vars. Pick the _DEV-suffixed CI/CD
-    # variable/file on the dev branch, the plain (prod) one everywhere
-    # else. See deploy/ansible/group_vars/all.yml.
+    # Everything below differs per environment (prod vs dev): the SSH deploy
+    # key, the inventory file, the dispatcher_addr extra-var, and the vars
+    # file carrying the rest (debuglet_env, dispatcher_base_url, ...). Pick
+    # the _DEV-suffixed CI/CD variable/file on the dev branch, the plain
+    # (prod) one everywhere else. See deploy/ansible/vars/.
+    #
+    # Non-secret per-environment values live in the committed
+    # deploy/ansible/vars/<env>.yml rather than in CI/CD variables: an unset
+    # variable used to reach ansible as an empty extra-var, which silently
+    # produced broken config (dispatcher_base_url="" rendered CORS
+    # allowed_origins as the literal ["https://"]). Only addresses, which
+    # identify private infrastructure, still come from CI/CD variables — and
+    # the job fails below rather than deploying with an empty one.
     - |
       if [ "$CI_COMMIT_BRANCH" = "dev" ]; then
         DEPLOY_SSH_KEY_VALUE="$DEPLOY_SSH_KEY_DEV"
         INVENTORY="hosts.dev.yml"
+        ENV_VARS_FILE="vars/dev.yml"
         DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR_DEV"
-        DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL_DEV"
       else
         DEPLOY_SSH_KEY_VALUE="$DEPLOY_SSH_KEY"
         INVENTORY="hosts.yml"
+        ENV_VARS_FILE="vars/prod.yml"
         DISPATCHER_ADDR_VALUE="$DISPATCHER_ADDR"
-        DISPATCHER_BASE_URL_VALUE="$DISPATCHER_BASE_URL"
       fi
+      if [ -z "$DISPATCHER_ADDR_VALUE" ]; then
+        echo "ERROR: dispatcher address CI/CD variable is empty for branch '$CI_COMMIT_BRANCH'."
+        echo "Set DISPATCHER_ADDR (main) / DISPATCHER_ADDR_DEV (dev) in Settings > CI/CD > Variables."
+        exit 1
+      fi
+      echo "deploying environment: $ENV_VARS_FILE, inventory: $INVENTORY"
     - eval $(ssh-agent -s)
     - echo "$DEPLOY_SSH_KEY_VALUE" | base64 -d | ssh-add -
     # Fetch the private Ansible inventory for this environment from
@@ -104,6 +118,11 @@ deploy:
   script:
     - export ANSIBLE_HOST_KEY_CHECKING=False
     - VERSION=$CI_COMMIT_SHORT_SHA
-    - cd deploy/ansible && ansible-playbook -i "$INVENTORY" site.yml -e "deploy_version=$VERSION dispatcher_addr=$DISPATCHER_ADDR_VALUE dispatcher_base_url=$DISPATCHER_BASE_URL_VALUE"
+    # -e @vars/<env>.yml comes before the inline -e so the inline one wins for
+    # the values it sets (later extra-vars take precedence in ansible).
+    - >
+      cd deploy/ansible && ansible-playbook -i "$INVENTORY" site.yml
+      -e "@$ENV_VARS_FILE"
+      -e "deploy_version=$VERSION dispatcher_addr=$DISPATCHER_ADDR_VALUE"
   dependencies:
     - build
