@@ -1,8 +1,11 @@
 ---
+- import_playbook: preflight.yml
+
 - name: Deploy Debuglet Executors
   hosts: executors
   serial: 1
   become: true
   roles:
     - common
+    - payload
     - executor

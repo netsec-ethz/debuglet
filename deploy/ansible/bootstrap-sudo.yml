@@ -1,11 +1,13 @@
 ---
-# One-time bootstrap: grant passwordless sudo to the SSH user on the
-# dispatcher and executor nodes. Run this once with -K (ask for the current
-# sudo password), then all subsequent deploys work without interaction.
+# One-time bootstrap: grant passwordless sudo to the SSH user on dispatcher and executor nodes.
+# Run this once with -K (ask for the current sudo password), then all subsequent
+# deploys work without interaction.
 #
 # Usage:
-#   cd deploy/ansible && ansible-playbook -i hosts.yml bootstrap-sudo.yml -K [--limit host]
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml bootstrap-sudo.yml -K [--limit host]
 #   or: make bootstrap-sudo [LIMIT=hostname]
+
+- import_playbook: preflight-host-keys.yml
 
 - name: Bootstrap passwordless sudo on dispatcher and executor nodes
   hosts: dispatcher:executors

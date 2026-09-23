@@ -1,7 +1,23 @@
 ---
+# Install the TLS material deploy/scripts/generate-certs.sh issued: the
+# dispatcher's server keypair, and on every executor the CA it verifies the
+# dispatcher with plus that host's own client certificate. The dispatcher gets
+# the CA too, so requiring client certificates later needs no second run.
+#
+#   DISPATCHER_SANS="DNS:dispatcher.example.com" ./deploy/scripts/generate-certs.sh <uuid> ...
+#   cd deploy/ansible && ../scripts/provisioner.sh ansible-playbook -i hosts.yml -e @vars/prod.yml deploy-certs.yml
+#
+# It runs before site.yml, which renders paths to this material.
+
+- import_playbook: preflight.yml
+
 - name: Deploy TLS certificates to dispatcher
   hosts: dispatcher
   become: true
+  # This runs before site.yml on a fresh host, so the service account and the
+  # directory skeleton the copies below need are created here too.
+  roles:
+    - common
   tasks:
     - name: Create dispatcher config directory
       ansible.builtin.file:
@@ -24,15 +40,34 @@
         dest: "{{ config_dir }}/dispatcher/server.key"
         owner: "{{ debuglet_user }}"
         mode: "0600"
+      no_log: true
 
+    # Read only when dispatcher_require_client_cert is on, and installed
+    # either way so that turning it on is a configuration change alone.
+    - name: Deploy the authority for client certificates
+      ansible.builtin.copy:
+        src: "{{ certs_dir }}/ca.crt"
+        dest: "{{ dispatcher_tls_ca_file }}"
+        owner: "{{ debuglet_user }}"
+        mode: "0644"
+
+    - name: Inspect the dispatcher unit
+      ansible.builtin.stat:
+        path: "{{ systemd_unit_dir }}/debuglet-dispatcher.service"
+      register: dispatcher_unit
+
+    # site.yml installs the units, and this playbook runs before it, so a
+    # first deployment has no service to restart.
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+      when: debuglet_manage_services | bool and dispatcher_unit.stat.exists
 
     - name: Restart dispatcher
       ansible.builtin.systemd:
         name: debuglet-dispatcher
         state: restarted
+      when: debuglet_manage_services | bool and dispatcher_unit.stat.exists
 
 # Credentials land in the environment's own config dir, so a machine that is
 # an executor in both prod and dev holds one client cert per environment
@@ -41,6 +76,8 @@
   hosts: executors
   serial: 1
   become: true
+  roles:
+    - common
   tasks:
     - name: Create executor config directory
       ansible.builtin.file:
@@ -73,12 +110,20 @@
         owner: "{{ executor_user }}"
         group: "{{ executor_group }}"
         mode: "0600"
+      no_log: true
+
+    - name: Inspect the executor unit
+      ansible.builtin.stat:
+        path: "{{ systemd_unit_dir }}/{{ executor_service }}.service"
+      register: executor_unit
 
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+      when: debuglet_manage_services | bool and executor_unit.stat.exists
 
     - name: Restart executor
       ansible.builtin.systemd:
         name: "{{ executor_service }}"
         state: restarted
+      when: debuglet_manage_services | bool and executor_unit.stat.exists

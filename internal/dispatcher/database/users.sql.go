@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (uuid, name)
 VALUES (?, ?)
-RETURNING id, uuid, name
+RETURNING id, uuid, name, role
 `
 
 type CreateUserParams struct {
@@ -25,12 +25,41 @@ type CreateUserParams struct {
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRowContext(ctx, createUser, arg.Uuid, arg.Name)
 	var i User
-	err := row.Scan(&i.ID, &i.Uuid, &i.Name)
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.Name,
+		&i.Role,
+	)
+	return i, err
+}
+
+const createUserWithRole = `-- name: CreateUserWithRole :one
+INSERT INTO users (uuid, name, role)
+VALUES (?, ?, ?)
+RETURNING id, uuid, name, role
+`
+
+type CreateUserWithRoleParams struct {
+	Uuid uuid.UUID
+	Name string
+	Role string
+}
+
+func (q *Queries) CreateUserWithRole(ctx context.Context, arg CreateUserWithRoleParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, createUserWithRole, arg.Uuid, arg.Name, arg.Role)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.Name,
+		&i.Role,
+	)
 	return i, err
 }
 
 const getUserByUUID = `-- name: GetUserByUUID :one
-SELECT id, uuid, name
+SELECT id, uuid, name, role
 FROM users
 WHERE uuid=?
 `
@@ -38,7 +67,12 @@ WHERE uuid=?
 func (q *Queries) GetUserByUUID(ctx context.Context, argUuid uuid.UUID) (User, error) {
 	row := q.db.QueryRowContext(ctx, getUserByUUID, argUuid)
 	var i User
-	err := row.Scan(&i.ID, &i.Uuid, &i.Name)
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.Name,
+		&i.Role,
+	)
 	return i, err
 }
 
@@ -61,7 +95,7 @@ func (q *Queries) InsertDebugletUser(ctx context.Context, arg InsertDebugletUser
 }
 
 const listDebugletsByUserUUID = `-- name: ListDebugletsByUserUUID :many
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id
 FROM debuglets
 WHERE id IN (
     SELECT debuglet_id
@@ -100,6 +134,8 @@ func (q *Queries) ListDebugletsByUserUUID(ctx context.Context, arg ListDebuglets
 			&i.Error,
 			&i.TransactionID,
 			&i.OrderID,
+			&i.DispatcherIncarnation,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}

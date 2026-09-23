@@ -1,6 +1,25 @@
+# Dispatcher configuration for the local TEST compose rig.
+#
+# Profile: local TEST. Wallet-free, credential-free and self-contained. Every
+# input this file names is either created by the compose rig itself or carried
+# by the image; nothing here reads an operator's private file, a wallet or an
+# external network. It is a fixture for trying the two daemons out on one
+# machine, not a deployment: deploy/ansible installs the daemons on a managed
+# host, and its configuration is rendered from
+# deploy/ansible/roles/dispatcher/templates/dispatcher.toml.j2.
+#
+# See deploy/README.md for the rig, and docs/environments.md for what each key
+# means and which ones may be omitted.
+
 [server]
+# The container's own interface, not the host's: docker-compose.yml publishes
+# the HTTP port on 127.0.0.1 only. bind_host stays unset so both listeners
+# accept the compose network the executor service reaches them on.
 http_port = 9000
 grpc_port = 9001
+# Labels this fixture in GET /version. A packaged release reports its own
+# version through `dbl version`; this string is not a release version.
+version = "local-test"
 
 [logging]
 log_level = "debug"
@@ -10,8 +29,34 @@ json_logs = false
 executor_timeout = 60
 scheduler_granularity_ms = 30000
 
-# TLS is terminated by nginx in front
+# The rig terminates no TLS on the daemon. The optional nginx edge in
+# docker-compose.yml is the only TLS in it, and the dispatcher stays behind it
+# on the compose network.
 [tls]
 disable = true
-cert_file = "/etc/debuglet/dispatcher/cert"
-key_file = "/etc/debuglet/dispatcher/key"
+cert_file = ""
+key_file = ""
+
+# Blockchain payments are switched off explicitly; TEST submissions keep
+# working. Nothing is inferred from the empty fields below.
+[sui]
+disabled = true
+network = ""
+grpc_endpoint = ""
+graphql_url = ""
+address = ""
+payment_registry_id = ""
+payment_kit_package = ""
+keystore_path = ""
+
+# The daemon opens this database and does not create its schema. The compose
+# service keeps it on its own named volume, outside the read-only
+# configuration mount; `deploy/docker/seed-state.sh` creates it. See
+# deploy/README.md.
+[database]
+path = "/var/lib/debuglet/dispatcher.db"
+
+# No browser origin is allowed to send credentials to this fixture. An empty
+# list leaves credential-free wildcard CORS in place.
+[cors]
+allowed_origins = []

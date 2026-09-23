@@ -1,0 +1,6 @@
+{
+  "guest_abi": "debuglet-go-wasi-imports-v1",
+  "toolchain": "go1.25.11",
+  "sha256": "dc51f0f824a6a2daff0e0a85c6a3695ccaab83efcd03edaa7460765beb86a848",
+  "bytes": 2506492
+}

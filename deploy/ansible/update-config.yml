@@ -13,11 +13,13 @@
 #   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml update-config.yml
 #
 #   Stamp a version (overrides the "unknown" default) without editing files:
-#     ansible-playbook -i hosts.yml update-config.yml \
+#     ansible-playbook -i hosts.yml -e @vars/prod.yml update-config.yml \
 #         -e "deploy_version=$(git rev-parse --short HEAD)"
 #
 #   Limit to some hosts:
-#     ansible-playbook -i hosts.yml update-config.yml --limit kisti-hk
+#     ansible-playbook -i hosts.yml -e @vars/prod.yml update-config.yml --limit executor.example.com
+
+- import_playbook: preflight.yml
 
 - name: Update dispatcher config
   hosts: dispatcher
@@ -35,7 +37,7 @@
       ansible.builtin.systemd:
         name: debuglet-dispatcher
         state: restarted
-      when: dispatcher_config.changed
+      when: debuglet_manage_services | bool and dispatcher_config.changed
 
 - name: Update executor config
   hosts: executors
@@ -48,10 +50,11 @@
         owner: "{{ executor_user }}"
         group: "{{ executor_group }}"
         mode: "0640"
+      no_log: true
       register: executor_config
 
     - name: Restart executor if config changed
       ansible.builtin.systemd:
         name: "{{ executor_service }}"
         state: restarted
-      when: executor_config.changed
+      when: debuglet_manage_services | bool and executor_config.changed

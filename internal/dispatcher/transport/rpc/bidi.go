@@ -5,11 +5,17 @@ package rpc
 
 import (
 	"context"
-	pb "debuglet/protocol"
+	"crypto/rand"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/controlrpc"
+	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	pb "github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/hashicorp/yamux"
 	"go.uber.org/zap"
@@ -19,142 +25,399 @@ import (
 )
 
 type ExecutorConn struct {
+	owner   *SessionOwner
 	gconn   *grpc.ClientConn
-	client  pb.ExecutorServiceClient
+	client  BoundExecutorClient
+	offer   *controlOffer
 	session *yamux.Session
 }
 
-// BidiServer handles the bidirectional connection between the dispatcher and multiple executors.
-// It serves a gRPC server for DispatcherService and a yamux listener for executor callbacks.
-//
-// [BidiServer.GetClient] can be used to get a specific connected executor client for sending messages (i.e. uploading a debuglet).
+// BidiServer serves direct DispatcherService RPCs and reverse executor callbacks.
+// One negotiated owner binds direct calls and reverse callbacks.
 type BidiServer struct {
-	grpcServer *grpc.Server
-	logger     *zap.Logger
-	state      DispatcherState
+	grpcServer  *grpc.Server
+	logger      *zap.Logger
+	state       DispatcherState
+	incarnation string
+	lease       controlsession.LeaseTiming
+	now         func() time.Time
 
-	clients  map[string]ExecutorConn
-	mu       sync.RWMutex
-	sessions sync.WaitGroup
+	nodes        NodeAuthority // Enrollment authority, nil where it is not enforced; mu
+	clients      map[string]ExecutorConn
+	offers       map[string]*controlOffer
+	lanes        map[string]*sessionLane
+	mu           sync.RWMutex
+	invocations  sync.WaitGroup
+	closed       bool
+	stop         chan struct{}
+	closeOnce    sync.Once
+	grpcStopOnce sync.Once
+
+	// reverseListeners and directListeners count the control listeners
+	// currently accepting. They are counted apart because an executor needs
+	// both: it dials the reverse listener to open the session this dispatcher
+	// calls back on, and the direct listener to renew that session's lease.
+	reverseListeners atomic.Int64
+	directListeners  atomic.Int64
 }
 
-func NewBidiServer(l *zap.Logger, state DispatcherState) *BidiServer {
-	bidi := &BidiServer{
-		grpcServer: grpc.NewServer(),
-		logger:     l,
-		state:      state,
-		clients:    make(map[string]ExecutorConn),
+func NewBidiServer(l *zap.Logger, state DispatcherState, incarnation string, duration time.Duration) (*BidiServer, error) {
+	return NewBidiServerWithClock(l, state, incarnation, duration, time.Now)
+}
+
+// NewBidiServerWithClock fixes one receiver-local clock for all of its owners.
+// It is never negotiated or changed by a peer.
+func NewBidiServerWithClock(l *zap.Logger, state DispatcherState, incarnation string, duration time.Duration, now func() time.Time) (*BidiServer, error) {
+	if now == nil {
+		return nil, fmt.Errorf("control transport requires a clock")
 	}
-	pb.RegisterDispatcherServiceServer(bidi.grpcServer, &server{state: state})
-	reflection.Register(bidi.grpcServer)
-	return bidi
+	if _, err := controlsession.ParseBinding(incarnation, incarnation); err != nil {
+		return nil, err
+	}
+	lease, err := controlsession.NewLeaseTiming(duration)
+	if err != nil {
+		return nil, err
+	}
+	b := &BidiServer{
+		grpcServer:  grpc.NewServer(grpc.WaitForHandlers(true), grpc.Creds(terminatedTLS{})),
+		logger:      l,
+		state:       state,
+		incarnation: incarnation,
+		lease:       lease, now: now,
+		clients: make(map[string]ExecutorConn),
+		offers:  make(map[string]*controlOffer),
+		lanes:   make(map[string]*sessionLane),
+		stop:    make(chan struct{}),
+	}
+	pb.RegisterDispatcherServiceServer(b.grpcServer, &server{state: state, bidi: b})
+	reflection.Register(b.grpcServer)
+	return b, nil
 }
 
-// Close shuts down the gRPC server and closes all client connections. It waits for all sessions to finish before returning.
+// Close retires current owners, stops serving and joins every admitted listener
+// invocation and session, including unpublished and replaced connections.
+// Concurrent callers join the same shutdown. Callbacks must not call Close.
 func (b *BidiServer) Close() {
-	b.grpcServer.GracefulStop()
-	b.mu.Lock()
-	for _, conn := range b.clients {
-		conn.gconn.Close()
-		conn.session.Close()
-	}
-	b.mu.Unlock()
-	b.sessions.Wait()
+	b.closeOnce.Do(func() {
+		b.mu.Lock()
+		b.closed = true
+		close(b.stop)
+		for _, conn := range b.clients {
+			b.retireLocked(conn.owner)
+		}
+		b.mu.Unlock()
+		b.stopGRPC()
+		b.invocations.Wait()
+	})
 }
 
-// GetClient retrieves the gRPC client for a specific executor by its ID. It returns the client and a boolean indicating whether the client exists.
-func (b *BidiServer) GetClient(executorID string) (pb.ExecutorServiceClient, bool) {
+// stopGRPC starts forceful transport stopping after two seconds. Joining the
+// graceful-stop worker still depends on RPC handlers returning; a handler that
+// ignores cancellation can outlive that grace period. The demo supervisor owns
+// the separate hard process-lifetime deadline.
+func (b *BidiServer) stopGRPC() {
+	b.grpcStopOnce.Do(func() {
+		done := make(chan struct{})
+		go func() { b.grpcServer.GracefulStop(); close(done) }()
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+			b.grpcServer.Stop()
+			<-done
+		}
+	})
+}
+
+// Serving reports whether this transport currently accepts executor control
+// sessions: it has not been stopped and both of its control listeners are
+// accepting, half a control channel being no service. It is read from the
+// transport itself, never from a record written once at startup.
+func (b *BidiServer) Serving() bool {
+	return b != nil && !b.stopping() && b.reverseListeners.Load() > 0 && b.directListeners.Load() > 0
+}
+
+// GetClientFor never substitutes another owner with the same executor ID.
+func (b *BidiServer) GetClientFor(owner *SessionOwner) (BoundExecutorClient, bool) {
+	if owner == nil {
+		return nil, false
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	conn, exists := b.clients[executorID]
-	return conn.client, exists
+	conn, exists := b.clients[owner.ExecutorID()]
+	if !exists || conn.owner != owner || !owner.Available() {
+		return nil, false
+	}
+	return conn.client, true
 }
 
-func (b *BidiServer) RemoveClient(executorID string) {
+// RemoveClient retires only the exact current owner. Its tracked handler
+// performs cancellation and cleanup independently; this return is not a join.
+func (b *BidiServer) RemoveClient(owner *SessionOwner) bool {
+	if owner == nil {
+		return false
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if conn, exists := b.clients[executorID]; exists {
-		conn.gconn.Close()
-		conn.session.Close()
-		delete(b.clients, executorID)
+	if conn, exists := b.clients[owner.ExecutorID()]; exists && conn.owner == owner {
+		b.retireLocked(owner)
+		return true
 	}
+	return false
 }
 
-// ServeGRPC starts the gRPC server on the given address for DispatcherService RPCs.
-func (b *BidiServer) ServeGRPC(ctx context.Context, addr string) error {
+// Admission and Close's Wait share one mutex. Invocations own their listener
+// and accepted handlers, including sessions absent from the current-client map.
+func (b *BidiServer) beginInvocation() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return false
+	}
+	b.invocations.Add(1)
+	return true
+}
+
+func (b *BidiServer) ServeGRPC(parent context.Context, addr string) error {
+	if !b.beginInvocation() {
+		return net.ErrClosed
+	}
+	defer b.invocations.Done()
+	ctx, cancel := context.WithCancel(parent)
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		select {
+		case <-ctx.Done():
+		case <-b.stop:
+			cancel()
+		}
+	}()
+	defer func() { cancel(); <-joined }()
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %v", addr, err)
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	go func() {
-		<-ctx.Done()
-		b.Close()
-		lis.Close()
-	}()
-	b.logger.Info("gRPC server listening", zap.String("address", addr))
-	return b.grpcServer.Serve(lis)
+	return b.serveGRPCListener(ctx, lis)
 }
 
-// ServeYamux accepts yamux connections from executors on the given listener.
-func (b *BidiServer) ServeYamux(ctx context.Context, lis net.Listener) error {
-	b.logger.Info("Yamux listener started", zap.String("address", lis.Addr().String()))
+// ServeGRPCListener takes ownership of lis, including when admission fails.
+func (b *BidiServer) ServeGRPCListener(ctx context.Context, lis net.Listener) error {
+	if !b.beginInvocation() {
+		lis.Close()
+		return net.ErrClosed
+	}
+	defer b.invocations.Done()
+	return b.serveGRPCListener(ctx, lis)
+}
 
+func (b *BidiServer) serveGRPCListener(ctx context.Context, listener net.Listener) error {
+	lis := &sessionListener{Listener: listener}
+	defer lis.Close()
+	b.directListeners.Add(1)
+	defer b.directListeners.Add(-1)
+	done, joined := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(joined)
+		select {
+		case <-ctx.Done():
+			lis.Close()
+			b.stopGRPC()
+		case <-b.stop:
+			lis.Close()
+		case <-done:
+		}
+	}()
+	defer func() { close(done); <-joined }()
+	b.logger.Info("gRPC server listening", zap.String("address", lis.Addr().String()))
+	err := b.grpcServer.Serve(lis)
+	if ctx.Err() != nil || b.stopping() {
+		return nil
+	}
+	return err
+}
+
+// ServeYamux owns lis and joins all accepted handlers before returning.
+func (b *BidiServer) ServeYamux(parent context.Context, listener net.Listener) error {
+	if !b.beginInvocation() {
+		listener.Close()
+		return net.ErrClosed
+	}
+	defer b.invocations.Done()
+	lis := &sessionListener{Listener: listener}
+	ctx, cancel := context.WithCancel(parent)
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		select {
+		case <-ctx.Done():
+		case <-b.stop:
+			cancel()
+		}
+		lis.Close()
+	}()
+	var sessions sync.WaitGroup
+	defer func() { cancel(); <-joined; sessions.Wait() }()
+	b.reverseListeners.Add(1)
+	defer b.reverseListeners.Add(-1)
+	b.logger.Info("Yamux listener started", zap.String("address", lis.Addr().String()))
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return nil
-			default:
-				b.logger.Error("failed to accept connection", zap.Error(err))
-				continue
 			}
+			return fmt.Errorf("accept yamux connection: %w", err)
 		}
-		b.sessions.Go(func() { b.handleSession(ctx, conn) })
+		b.mu.Lock()
+		if b.closed || ctx.Err() != nil {
+			b.mu.Unlock()
+			conn.Close()
+			return nil
+		}
+		sessions.Add(1)
+		b.mu.Unlock()
+		go func() {
+			defer sessions.Done()
+			b.handleSession(ctx, conn)
+		}()
 	}
 }
 
-// handleSession manages the full lifecycle of a single executor connection, including establishing a yamux session, creating a gRPC client, registering the executor, and waiting for disconnection.
-func (b *BidiServer) handleSession(ctx context.Context, conn net.Conn) {
-	session, err := b.acceptYamux(conn)
+// handleSession owns one reverse connection for its whole life, in this order:
+// negotiate Hello and publish an owner, admit the setup mutation, wait for the
+// predecessors of that executor ID to drain, call registration, wait for the
+// executor to confirm the offer over the direct channel, and only then mark the
+// owner registered. Every step rechecks that this is still the current owner, so
+// a session that has been replaced marks nothing registered.
+//
+// Its deferred teardown is the reverse, and is a join rather than a signal: the
+// owner is retired, Connected is canceled before any Close that could block, the
+// session and its I/O watcher are closed, the setup mutation is finished, and
+// only after the owner has drained are the offer and the lane forgotten.
+func (b *BidiServer) handleSession(parent context.Context, raw net.Conn) {
+	ctx, cancel := context.WithCancel(parent)
+	conn := &sessionConn{Conn: raw}
+	ioJoined := make(chan struct{})
+	go func() {
+		defer close(ioJoined)
+		<-ctx.Done()
+		conn.Close()
+	}()
+	var session *yamux.Session
+	var gconn *grpc.ClientConn
+	var owner *SessionOwner
+	var ownerJoined <-chan struct{}
+	var setup *Mutation
+	defer func() {
+		if owner != nil {
+			b.RemoveClient(owner)
+		}
+		cancel() // Cancel Connected before any possibly blocking Close.
+		if session != nil {
+			session.Close()
+		}
+		if gconn != nil {
+			gconn.Close()
+		}
+		conn.Close()
+		<-ioJoined
+		if ownerJoined != nil {
+			<-ownerJoined
+		}
+		if setup != nil {
+			setup.Finish()
+		}
+		if owner != nil {
+			b.state.OnExecutorDisconnected(owner)
+			<-owner.MutationsDrained()
+			b.mu.Lock()
+			delete(b.offers, owner.Binding().SessionID)
+			b.sweepLaneLocked(owner.ExecutorID())
+			b.mu.Unlock()
+		}
+	}()
+
+	// The verified client certificate of this connection is fixed by its
+	// handshake and is the node credential every later check compares against.
+	fingerprint, err := nodeCredential(ctx, raw)
+	if err != nil {
+		b.logger.Debug("Control connection handshake did not complete", zap.Error(err))
+		return
+	}
+
+	session, err = b.acceptYamux(conn)
 	if err != nil {
 		b.logger.Error("failed to listen for yamux", zap.Error(err))
 		return
 	}
-
-	gconn, err := b.createExecutorClient(session)
+	gconn, err = b.createExecutorClient(session)
 	if err != nil {
 		b.logger.Error("failed to create gRPC connection", zap.Error(err))
-		session.Close()
 		return
 	}
-
-	hello, err := b.registerExecutor(ctx, gconn, session)
+	var hello *pb.HelloResponse
+	owner, hello, err = b.registerExecutor(ctx, gconn, session, fingerprint)
 	if err != nil {
 		b.logger.Error("failed to register executor", zap.Error(err))
-		gconn.Close()
-		session.Close()
 		return
 	}
-	defer b.RemoveClient(hello.GetExecutorId())
+	joined := make(chan struct{})
+	ownerJoined = joined
+	go func() {
+		defer close(joined)
+		select {
+		case <-owner.Done():
+		case <-session.CloseChan():
+		case <-ctx.Done():
+		}
+		b.RemoveClient(owner)
+		cancel()
+	}()
 
-	// Trust the observed peer address over the executor's self-reported
-	// source IP: it is what a probe recipient sees, and it cannot be
-	// spoofed by a misconfigured (or malicious) executor.
-	b.state.OnExecutorConnected(hello, remoteIP(session.RemoteAddr()))
-	defer b.state.OnExecutorDisconnected(hello.GetExecutorId())
-
-	b.waitForDisconnect(ctx, session, hello.GetExecutorId())
+	// The one setup mutation of a registration. It stays counted through the
+	// callback below, cancelled or not, so a replacement waits for its work.
+	setup, err = owner.AdmitSetup(ctx)
+	if err != nil {
+		return
+	}
+	if err = b.waitPredecessors(ctx, owner); err != nil {
+		return
+	}
+	if err = b.state.OnExecutorConnected(setup.Context(), owner, hello, remoteIP(conn.RemoteAddr())); err != nil {
+		b.logger.Warn("executor registration callback failed")
+		return
+	}
+	b.mu.RLock()
+	offer := b.offers[owner.Binding().SessionID]
+	b.mu.RUnlock()
+	select {
+	case <-offer.confirmed:
+	case <-ctx.Done():
+		return
+	}
+	b.mu.Lock()
+	current, exists := b.clients[owner.ExecutorID()]
+	active := exists && current.owner == owner && ctx.Err() == nil && owner.MarkRegistered()
+	if active {
+		close(offer.activated)
+	}
+	b.mu.Unlock()
+	if !active {
+		return
+	}
+	setup.Finish()
+	<-ctx.Done()
 }
 
 func (b *BidiServer) acceptYamux(conn net.Conn) (*yamux.Session, error) {
 	b.logger.Debug("Accepted connection", zap.String("remote_addr", conn.RemoteAddr().String()))
 	session, err := yamux.Server(conn, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create yamux session: %v", err)
+		return nil, fmt.Errorf("failed to create yamux session: %w", err)
 	}
-	b.logger.Info("Yamux session established", zap.String("remote_addr", session.RemoteAddr().String()))
 	return session, nil
 }
 
@@ -165,46 +428,112 @@ func (b *BidiServer) createExecutorClient(session *yamux.Session) (*grpc.ClientC
 		grpc.WithContextDialer(dial),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC client: %v", err)
+		return nil, fmt.Errorf("failed to create gRPC client: %w", err)
 	}
 	return gconn, nil
 }
 
-func (b *BidiServer) registerExecutor(ctx context.Context, gconn *grpc.ClientConn, session *yamux.Session) (*pb.HelloResponse, error) {
-	client := pb.NewExecutorServiceClient(gconn)
-	out, err := client.Hello(ctx, &pb.HelloRequest{})
+func (b *BidiServer) registerExecutor(ctx context.Context, gconn *grpc.ClientConn, session *yamux.Session, fingerprint string) (*SessionOwner, *pb.HelloResponse, error) {
+	binding, err := controlsession.NewBinding(b.incarnation)
 	if err != nil {
-		return nil, fmt.Errorf("hello: %w", err)
+		return nil, nil, fmt.Errorf("create control session identity: %w", err)
 	}
-
+	offer := &controlOffer{credentials: controlrpc.Credentials{Binding: binding}, fingerprint: fingerprint, published: make(chan struct{}), confirmed: make(chan struct{}), activated: make(chan struct{})}
+	if _, err := rand.Read(offer.credentials.Token[:]); err != nil {
+		return nil, nil, fmt.Errorf("create control session token: %w", err)
+	}
 	b.mu.Lock()
-	execID := out.GetExecutorId()
-	b.logger.Info("registered executor", zap.String("executor_id", execID))
-	if old, exists := b.clients[execID]; exists {
-		b.logger.Warn("executor already registered, closing previous connection and overwriting", zap.String("executor_id", execID))
-		old.gconn.Close()
-		old.session.Close()
-		b.state.OnExecutorDisconnected(execID)
+	if b.closed || ctx.Err() != nil {
+		b.mu.Unlock()
+		return nil, nil, controlrpc.Unavailable()
 	}
-	b.clients[execID] = ExecutorConn{gconn: gconn, client: client, session: session}
+	b.offers[binding.SessionID] = offer
 	b.mu.Unlock()
-
-	return out, nil
+	published := false
+	defer func() {
+		if !published {
+			b.mu.Lock()
+			delete(b.offers, binding.SessionID)
+			close(offer.published)
+			b.mu.Unlock()
+		}
+	}()
+	client := pb.NewExecutorServiceClient(gconn)
+	helloCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := client.Hello(helloCtx, &pb.HelloRequest{ControlVersion: controlsession.ProtocolVersion, DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID, SessionToken: append([]byte(nil), offer.credentials.Token[:]...), LeaseDurationMs: b.lease.Duration.Milliseconds()})
+	if err != nil {
+		return nil, nil, controlrpc.Unavailable()
+	}
+	if out.GetControlVersion() != controlsession.ProtocolVersion || out.GetDispatcherIncarnation() != binding.Incarnation || out.GetSessionId() != binding.SessionID || out.GetLeaseDurationMs() != b.lease.Duration.Milliseconds() {
+		return nil, nil, controlrpc.Unavailable()
+	}
+	// The claimed ID is checked against the enrolled node before an owner
+	// exists, so a peer that is not this executor replaces nothing.
+	if err := b.admitNode(ctx, out.GetExecutorId(), fingerprint, out.GetEnrollmentToken()); err != nil {
+		return nil, nil, err
+	}
+	owner, err := NewSessionOwnerWithClock(out.GetExecutorId(), binding, b.lease.Duration, b.now)
+	if err != nil {
+		return nil, nil, controlrpc.Unavailable()
+	}
+	b.mu.Lock()
+	if b.closed || ctx.Err() != nil {
+		b.mu.Unlock()
+		owner.Retire()
+		return nil, nil, controlrpc.Unavailable()
+	}
+	if old, exists := b.clients[owner.ExecutorID()]; exists {
+		b.retireLocked(old.owner)
+	}
+	lane := b.lanes[owner.ExecutorID()]
+	if lane == nil {
+		lane = &sessionLane{predecessors: make(map[*SessionOwner]struct{})}
+		b.lanes[owner.ExecutorID()] = lane
+	}
+	lane.current = owner
+	offer.owner = owner
+	b.clients[owner.ExecutorID()] = ExecutorConn{owner: owner, gconn: gconn, client: &boundExecutorClient{client: client, credentials: offer.credentials}, offer: offer, session: session}
+	close(offer.published)
+	published = true
+	b.mu.Unlock()
+	return owner, out, nil
 }
 
-// waitForDisconnect waits for either the yamux session to close or the context to close.
-func (b *BidiServer) waitForDisconnect(ctx context.Context, session *yamux.Session, execID string) {
+func (b *BidiServer) stopping() bool {
 	select {
-	case <-session.CloseChan():
-		b.logger.Info("yamux session closed", zap.String("executor_id", execID))
-	case <-ctx.Done():
-		b.logger.Info("context cancelled, closing session", zap.String("executor_id", execID))
-		session.Close()
+	case <-b.stop:
+		return true
+	default:
+		return false
 	}
 }
 
-// remoteIP extracts the bare IP from a network address, dropping the port and
-// any IPv6 zone. It returns "" if addr is nil or unparseable.
+// Protocol libraries also close their inputs, so one release is shared and
+// repeat callers join it, including while a wrapped Close is still blocked.
+type sessionConn struct {
+	net.Conn
+	once sync.Once
+	err  error
+}
+
+func (c *sessionConn) Close() error {
+	c.once.Do(func() { c.err = c.Conn.Close() })
+	return c.err
+}
+
+type sessionListener struct {
+	net.Listener
+	once sync.Once
+	err  error
+}
+
+func (l *sessionListener) Close() error {
+	l.once.Do(func() { l.err = l.Listener.Close() })
+	return l.err
+}
+
+// remoteIP extracts a bare IP, dropping the port and IPv6 zone.
 func remoteIP(addr net.Addr) string {
 	if addr == nil {
 		return ""

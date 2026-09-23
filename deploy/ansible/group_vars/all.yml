@@ -1,66 +1,130 @@
 ---
 # =============================================================================
-# Global deployment variables (applies to EVERY host: dispatcher + executors)
+# Deployment variables for every managed host (dispatcher and executors)
 # =============================================================================
 #
-# Dispatcher-only settings (nothing here that an executor template or
-# group_vars/executors.yml reads) live in group_vars/dispatcher.yml instead.
+# Profile: authenticated deployment. These variables configure the two daemons
+# as systemd services on machines you control. They are not the local TEST
+# fixture: that one is the compose rig in docker-compose.yml, which needs none
+# of this.
 #
-# dispatcher_addr differs per environment (prod vs dev), so it's NOT set
-# here — the deploy CI job passes it as an -e extra-var, sourced from the
-# DISPATCHER_ADDR/DISPATCHER_ADDR_DEV CI/CD variables (branch picks which
-# one). See .gitlab-ci.yml. The default below is only hit for a
-# manual/local run, e.g.:
-#   ansible-playbook -i hosts.yml site.yml -e "dispatcher_addr=my-dispatcher.example.com"
+# Dispatcher-only settings — nothing an executor template or
+# group_vars/executors.yml reads — live in group_vars/dispatcher.yml, which is
+# invisible to executor hosts.
 #
-# To update the dispatcher address on ALL executors at once:
-#   1. Run: make deploy-update-addr DISPATCHER_ADDR=new-dispatcher.example.com
-#      or:  cd deploy/ansible && ansible-playbook update-dispatcher-addr.yml -e "dispatcher_addr=..."
+# CI builds, packages and checks the release payload and deploys nowhere.
+# Variables are set here, in the inventory or in the selected vars/<env>.yml,
+# or passed on the command line with -e. `deploy/ansible/preflight-variables.yml` runs
+# before any task and names the ones that are missing or malformed.
 
-# Dispatcher endpoint — executors point here. A bare hostname or IP, no port:
-# the executor config appends dispatcher_grpc_port/dispatcher_http_port below.
-# Prod resolves to the dispatcher host, dev to the dev dispatcher's ETH-internal
-# address; both are dialled directly, with no nginx in between.
-dispatcher_addr: "localhost"
+# =============================================================================
+# Required: no default, set it per environment
+# =============================================================================
+#
+# dispatcher_addr is the dispatcher's address as executors reach it: a bare
+# host name or IPv4 address, with no scheme and no port. The templates render
+# host:port directly, so an IPv6 literal, which would need brackets, is not
+# supported here. It differs per
+# environment, so it is deliberately not defaulted here — a default would
+# silently point a production executor at the wrong dispatcher. Pass it on the
+# command line or set it in the inventory:
+#
+#   ansible-playbook -i hosts.yml -e @vars/prod.yml site.yml -e dispatcher_addr=dispatcher.example.com
+#
+# To move every executor to a new dispatcher without redeploying binaries:
+#
+#   make deploy-update-addr DISPATCHER_ADDR=new-dispatcher.example.com
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml update-dispatcher-addr.yml \
+#       -e dispatcher_addr=new-dispatcher.example.com
+#
+# dispatcher_addr: set per environment
 
 # Ports the dispatcher listens on and executors dial directly: gRPC on
-# dispatcher_grpc_port, cmux HTTP/yamux on dispatcher_http_port. The firewall
-# exposes these directly, so executors connect straight to them (no nginx in
-# the executor path).
+# dispatcher_grpc_port, cmux HTTP/yamux on dispatcher_http_port. Both have to
+# be reachable from every executor host. Nothing proxies the executor path:
+# an executor connects to dispatcher_addr on these two ports, so those are the
+# endpoints the dispatcher's certificate has to match. A proxy may still front
+# the HTTP API for browsers, on its own name and its own certificate.
 dispatcher_grpc_port: 9001
 dispatcher_http_port: 9000
 
-# The dispatcher's own listeners run WITHOUT TLS. Nothing terminates TLS in
-# front of the gRPC/yamux ports any more — nginx only fronts the REST API and
-# the web origins — so executors dial them in cleartext too; see
-# executor_disable_tls in executors.yml, which has to stay in step with this.
-dispatcher_disable_tls: true
+# The dispatcher terminates TLS on its own listeners, with the certificate
+# deploy-certs.yml installs. Because executors reach those listeners directly
+# and verify what they are given, that certificate must carry dispatcher_addr
+# in its subjectAltName: generate it with
+#
+#   DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10" \
+#       ./deploy/scripts/generate-certs.sh <executor-uuid> ...
+#
+# Turn this off only for a dispatcher every executor reaches over loopback on
+# the same machine, and turn executor_disable_tls off with it: a remote
+# control channel in cleartext is not a supported configuration.
+dispatcher_disable_tls: false
 
-# Deploy version — injected by CI from commit message; overridable via -e
+# Version string the daemons report. Set it to the release being deployed;
+# `make deploy-update-config DEPLOY_VERSION=v1.2.3` passes it through.
 deploy_version: "unknown"
 
-# Which environment this deploy belongs to: "prod" or "dev". Selected by the
-# CI deploy job from the branch (main -> prod, dev -> dev) via -e @vars/<env>.yml
-# — see .gitlab-ci.yml and deploy/ansible/vars/.
+# =============================================================================
+# SSH host identities
+# =============================================================================
 #
-# Executors namespace everything they own by this value (service user, config
-# directory, binary, systemd unit — see group_vars/executors.yml), because a
-# single machine can be an executor in BOTH environments at once: ordroid-ethz
-# is in hosts.yml as `ordroid-ethz` and in hosts.dev.yml as `ordroid-ethz-dev`,
-# and before this split whichever pipeline ran last overwrote the other's
-# install. The dispatcher does NOT use it — prod and dev dispatchers are
-# separate machines, so they never collide.
+# Managed hosts are authenticated against this file and nothing else: an
+# unknown or a changed key ends the connection before any task runs, and no
+# playbook or make target adds a key that was merely offered or scanned.
+#
+# The file is not committed for the same reason hosts.yml is not: it names
+# private infrastructure. Provision it next to hosts.yml by copying it into
+# place, and rotate it through the procedure in deploy/README.md. See
+# known_hosts.example for the format.
+known_hosts_file: "{{ playbook_dir }}/known_hosts"
+ansible_ssh_common_args: >-
+  -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile={{ known_hosts_file }}
+  -o GlobalKnownHostsFile=/dev/null
+  -o HashKnownHosts=no
+
+# =============================================================================
+# Filesystem layout on managed hosts
+# =============================================================================
+
+# Programs. The release package is installed under this prefix by its own
+# installer: payload_prefix/lib/debuglet/VERSION holds the verified payload and
+# payload_prefix/bin holds the commands, including the managed `dbl` link. Add
+# payload_prefix/bin to an operator's PATH to use the CLI on a managed host.
+# Select vars/prod.yml or vars/dev.yml with the matching inventory. Executors
+# may share a host, so package activation and staging must be separate too.
 debuglet_env: prod
-
-# Filesystem layout on remote machines
-install_prefix: /usr/local
+payload_prefix: "/opt/debuglet/{{ debuglet_env }}"
+# Configuration. One private directory per role, readable by the service
+# account only.
 config_dir: /etc/debuglet
+# Writable state: each daemon's SQLite database lives in its own directory
+# here, owned by the service account. Configuration stays read-only, so the
+# databases are deliberately not under config_dir.
+state_dir: /var/lib/debuglet
 log_dir: /var/log/debuglet
+# Where the release package is copied to before its installer runs. It holds
+# no state between deployments.
+payload_staging_dir: "/var/tmp/debuglet-payload-{{ debuglet_env }}"
+# Where the role installs the systemd units it renders.
+systemd_unit_dir: /etc/systemd/system
 
-# Service account used to run both services
+# Dispatcher service account and the base name for executor accounts.
 debuglet_user: debuglet
 debuglet_group: debuglet
 
-# Paths to local build artifacts (relative to deploy/)
+# The two things the roles do to a machine that only a real managed host can
+# accept: create the system account, and drive systemd. A deployment leaves
+# both on. deploy/test/ansible-render.sh turns them off to apply the same
+# roles to a temporary directory tree, which is the only supported reason to
+# change them.
+debuglet_manage_account: true
+debuglet_manage_services: true
+
+# Local inputs, relative to deploy/. Neither is committed:
+# deploy/scripts/build-linux.sh writes dist_dir — the release archive, its
+# checksums, its installer and the release record — and
+# deploy/scripts/generate-certs.sh writes certs_dir.
 dist_dir: "{{ playbook_dir }}/../dist"
 certs_dir: "{{ playbook_dir }}/../certs"

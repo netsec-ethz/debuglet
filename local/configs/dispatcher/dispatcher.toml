@@ -1,3 +1,9 @@
+# Dispatcher configuration for local development, run straight from a source
+# checkout: `make dispatcher` starts the daemon against this file.
+#
+# Wallet-free and credential-free, like the local services `dbl up` writes for
+# itself. It names no private file and reaches no external network.
+
 [server]
 http_port = 9000
 grpc_port = 9001
@@ -9,22 +15,26 @@ log_level = "debug"
 executor_timeout = 60
 scheduler_granularity_ms = 30000
 
+# The executor reaches this dispatcher over loopback on the same machine, so
+# the control channel carries no TLS and these paths stay empty. `make
+# generate-certs` writes a keypair into this directory for experiments.
 [tls]
 disable = true
-cert_file = "local/configs/dispatcher/server.crt"
-key_file = "local/configs/dispatcher/server.key"
-# ca_file = "local/configs/dispatcher/ca"
+cert_file = ""
+key_file = ""
 
 [database]
 path = ".data/dispatcher.db"
 
+# Blockchain payments are switched off explicitly; TEST submissions keep
+# working. Nothing is inferred from the empty fields below, and no keystore,
+# account or network is named.
 [sui]
-network = "testnet"
-grpc_endpoint       = "fullnode.testnet.sui.io:443"
-graphql_url         = "https://graphql.testnet.sui.io/graphql"
-address          = "0x1737d7dc6b63ef10b7edd316524ab1ece70540a8e012dbc9593a157455ceebef"
-payment_registry_id = "0x856d588d43b547c0e1866ff26d61af5ce3531f9c8c3ee2fba4b0553e5a3ee830"
-payment_kit_package = "0x7e069abe383e80d32f2aec17b3793da82aabc8c2edf84abbf68dd7b719e71497"
-# Set to your own Sui keystore. Not expanded — the config loader passes this
-# string straight through, so ~ and ${HOME} are read literally.
-keystore_path = "/path/to/.sui/sui_config/sui.keystore"
+disabled = true
+network = ""
+grpc_endpoint = ""
+graphql_url = ""
+address = ""
+payment_registry_id = ""
+payment_kit_package = ""
+keystore_path = ""

@@ -1,7 +1,10 @@
 ---
+- import_playbook: preflight.yml
+
 - name: Deploy Debuglet Dispatcher
   hosts: dispatcher
   become: true
   roles:
     - common
+    - payload
     - dispatcher

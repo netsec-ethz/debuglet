@@ -7,23 +7,25 @@ package database
 import (
 	"database/sql"
 
-	"debuglet/internal/dispatcher/models"
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
 type Debuglet struct {
-	ID            int64
-	Uuid          uuid.UUID
-	StartTime     models.UTCTime
-	EndTime       models.UTCTime
-	Usage         int64
-	CeilBw        int64
-	ExecutorID    string
-	Addresses     models.CommaSeparatedList
-	State         models.DebugletRunState
-	Error         sql.NullString
-	TransactionID string
-	OrderID       int64
+	ID                    int64
+	Uuid                  uuid.UUID
+	StartTime             models.UTCTime
+	EndTime               models.UTCTime
+	Usage                 int64
+	CeilBw                int64
+	ExecutorID            string
+	Addresses             models.CommaSeparatedList
+	State                 models.DebugletRunState
+	Error                 sql.NullString
+	TransactionID         string
+	OrderID               int64
+	DispatcherIncarnation string
+	SessionID             string
 }
 
 type DebugletLog struct {
@@ -56,6 +58,31 @@ type Earning struct {
 	SuiWalletAddress string
 }
 
+type ExecutorEnrollment struct {
+	ExecutorID  string
+	Fingerprint string
+	EnrolledAt  models.UTCTime
+}
+
+type ExecutorEnrollmentToken struct {
+	Selector   string
+	ExecutorID string
+	SecretHash []byte
+	CreatedAt  models.UTCTime
+	ExpiresAt  models.UTCTime
+}
+
+type Session struct {
+	ID           int64
+	Selector     string
+	VerifierHash []byte
+	CsrfHash     []byte
+	UserID       int64
+	CreatedAt    models.UTCTime
+	ExpiresAt    models.UTCTime
+	Revoked      int64
+}
+
 type Transaction struct {
 	ID        string
 	AuthKey   string
@@ -72,8 +99,22 @@ type TransactionState struct {
 	Value string
 }
 
+type TransactionUser struct {
+	TransactionID string
+	UserID        int64
+}
+
 type User struct {
 	ID   int64
 	Uuid uuid.UUID
 	Name string
+	Role string
+}
+
+type UserCredential struct {
+	UserID     int64
+	Kind       string
+	Selector   string
+	SecretHash []byte
+	CreatedAt  models.UTCTime
 }

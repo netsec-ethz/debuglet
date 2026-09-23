@@ -8,7 +8,7 @@ package database
 import (
 	"context"
 
-	"debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
 const addEarnings = `-- name: AddEarnings :exec

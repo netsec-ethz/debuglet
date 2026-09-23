@@ -5,10 +5,10 @@ package models
 
 import (
 	"database/sql/driver"
-	"debuglet/internal/dispatcher/resource"
-	pb "debuglet/protocol"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 	"strings"
 	"time"
 )
@@ -47,14 +47,35 @@ const (
 	RunStateExited
 )
 
-func GrpcToRunState(r pb.RunState) DebugletRunState {
+func GrpcToRunState(r pb.RunState) (DebugletRunState, bool) {
 	switch r {
 	case pb.RunState_RUN_STATE_INITIALIZING:
-		return RunStateInitializing
+		return RunStateInitializing, true
 	case pb.RunState_RUN_STATE_STARTED:
-		return RunStateStarted
+		return RunStateStarted, true
 	default:
-		return RunStateUnspecified
+		return RunStateUnspecified, false
+	}
+}
+
+// SemanticRank is the run's lifecycle position. The persisted enum values are
+// historical and intentionally do not define transition order.
+func (d DebugletRunState) SemanticRank() DebugletRunState {
+	switch d {
+	case RunStateUnspecified:
+		return 0
+	case RunStateUploading:
+		return 1
+	case RunStateUploaded:
+		return 2
+	case RunStateInitializing:
+		return 3
+	case RunStateStarted:
+		return 4
+	case RunStateExited:
+		return 5
+	default:
+		return -1
 	}
 }
 

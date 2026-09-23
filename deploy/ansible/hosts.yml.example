@@ -1,45 +1,61 @@
-# Example Ansible inventory for the Debuglet deployment.
+# Example Ansible inventory for a Debuglet deployment.
 #
-# The real hosts.yml is NOT committed to this repo (it identifies private
-# infrastructure — dispatcher address, executor hostnames, SSH usernames).
-# Copy this file to hosts.yml and fill in your real hosts:
+# The real hosts.yml is not committed: it identifies private infrastructure —
+# the dispatcher address, the executor host names and the SSH users. Copy this
+# file and fill in your own hosts:
 #
 #   cp deploy/ansible/hosts.yml.example deploy/ansible/hosts.yml
 #
-# In CI, the real hosts.yml is injected as a GitLab CI/CD "Secure File" (or a
-# protected file variable) and written to deploy/ansible/hosts.yml before the
-# ansible-playbook step runs — see .gitlab-ci.yml. hosts.yml is gitignored so
-# it can never be committed by accident.
+# Every host listed here must also have a pinned public host key in
+# deploy/ansible/known_hosts, provisioned the same way; a host missing from
+# that file cannot be deployed to. See known_hosts.example.
 #
-# The dispatcher's host entry is the literal string __DISPATCHER_ADDR__, NOT
-# a real address — the deploy job substitutes it (via sed) with the
-# DISPATCHER_ADDR/DISPATCHER_ADDR_DEV CI/CD variable before running
-# ansible-playbook, so the address is entered once, not duplicated between
-# the inventory and the CI variable. Keep this placeholder as-is in your
-# real hosts.yml too.
+# Supply dispatcher_addr here or with -e. vars/prod.yml supplies the official
+# public API origin; override that with a later -e for another deployment:
+#
+#   dispatcher_addr       the dispatcher as executors reach it, a bare host
+#                         name or IP address with no scheme or port
+#   dispatcher_base_url   the bare domain the HTTP API is served from
+#
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml site.yml \
+#       -e dispatcher_addr=dispatcher.example.com \
+#       -e dispatcher_base_url=debuglet.example.com
+#
+# Every executor also needs its own executor_id: a lowercase UUID, the
+# identity form the CLI generates and the dispatcher records. Generate one per
+# host and keep it with that host's provisioning details; it is not derived
+# from the host name, so a rebuilt machine keeps its identity.
+#
+# Nothing supplies these automatically: CI builds, packages
+# and checks the release payload, and deploys nowhere.
 
 #
-# NOTE: a machine can appear in BOTH inventories — ordroid-ethz is an executor
-# in prod and in dev. Give it a distinct executor_id per environment (they get
+# A machine can appear in both inventories. Give it a distinct executor_id
+# per environment (they get
 # distinct TLS client certs, and the dispatcher keys its registry on the id).
-# Everything else is kept apart automatically: the deploy job layers on
-# vars/<env>.yml, and each environment's executor gets its own service user,
-# config directory, binary and systemd unit (debuglet-<env>,
-# /etc/debuglet/executor-<env>, debuglet-executor-<env>). See
+# Everything else is kept apart automatically: the selected vars file supplies
+# debuglet_env, and each environment's executor gets its own service user,
+# config/state directories, package prefix and systemd unit (debuglet-<env>,
+# /etc/debuglet/executor-<env>, /var/lib/debuglet/executor-<env>,
+# /opt/debuglet/<env>, debuglet-executor-<env>). See
 # deploy/ansible/group_vars/executors.yml.
 
 all:
+  vars:
+    # The selected vars file supplies the API origin; override it with a later -e.
+    dispatcher_addr: dispatcher.example.com
+
   children:
     # ------------------------------------------------------------------
     # Dispatcher — one machine
     # ------------------------------------------------------------------
     dispatcher:
       hosts:
-        __DISPATCHER_ADDR__:
+        dispatcher.example.com:
           ansible_user: deploy
 
     # ------------------------------------------------------------------
-    # Executors — all executor machines
+    # Executors — every executor machine
     # ------------------------------------------------------------------
     executors:
       children:
@@ -48,23 +64,11 @@ all:
           hosts:
             executor1.example.com:
               ansible_user: deploy
-              executor_id: executor-1
+              executor_id: 5fe02882-0410-416c-9935-235090bcba0d
 
-            # A restricted host (container / limited kernel capabilities):
+            # A restricted host (container or limited kernel capabilities):
             # executor2.example.com:
             #   ansible_user: deploy
-            #   executor_id: executor-2
-            #   executor_enable_bpf: true
-            #   executor_ambient_caps: false   # see group_vars/executors.yml
-
-        # PlanetLab / EdgeNet nodes
-        # SSH user is typically your slice name (e.g. eth_debuglet).
-        # edgenet:
-        #   vars:
-        #     ansible_user: eth_debuglet     # <-- update to your slice name
-        #   hosts:
-        #     planetlab1.example.eu:
-        #       executor_id: executor-pl1
-        #
-        #     planetlab2.example.eu:
-        #       executor_id: executor-pl2
+            #   executor_id: 0b0f3bb8-6a0a-4a3e-9f39-4c6f2b8b1f10
+            #   executor_enable_bpf: false   # no eBPF egress tagger there
+            #   executor_ambient_caps: false # see group_vars/executors.yml

@@ -25,24 +25,28 @@ INSERT INTO debuglets (
     require_icmp,
     listen_udp,
     listen_tcp,
-    listen_scion
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    listen_scion,
+    dispatcher_incarnation,
+    session_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateDebugletParams struct {
-	Uuid          uuid.UUID
-	StartTime     UTCTime
-	Args          CommaSeparatedList
-	Wasm          []byte
-	TransactionID string
-	FloorBw       int64
-	CeilBw        int64
-	TimeoutMs     int64
-	Addresses     CommaSeparatedList
-	RequireIcmp   bool
-	ListenUdp     bool
-	ListenTcp     bool
-	ListenScion   bool
+	Uuid                  uuid.UUID
+	StartTime             UTCTime
+	Args                  CommaSeparatedList
+	Wasm                  []byte
+	TransactionID         string
+	FloorBw               int64
+	CeilBw                int64
+	TimeoutMs             int64
+	Addresses             CommaSeparatedList
+	RequireIcmp           bool
+	ListenUdp             bool
+	ListenTcp             bool
+	ListenScion           bool
+	DispatcherIncarnation string
+	SessionID             string
 }
 
 func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) error {
@@ -60,6 +64,8 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		arg.ListenUdp,
 		arg.ListenTcp,
 		arg.ListenScion,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
 	)
 	return err
 }
@@ -74,6 +80,67 @@ func (q *Queries) DeleteDebuglet(ctx context.Context, argUuid uuid.UUID) error {
 	return err
 }
 
+const getDebugletByUUID = `-- name: GetDebugletByUUID :one
+SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation, session_id FROM debuglets
+WHERE uuid = ?
+`
+
+func (q *Queries) GetDebugletByUUID(ctx context.Context, argUuid uuid.UUID) (Debuglet, error) {
+	row := q.db.QueryRowContext(ctx, getDebugletByUUID, argUuid)
+	var i Debuglet
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.StartTime,
+		&i.Args,
+		&i.Wasm,
+		&i.TransactionID,
+		&i.FloorBw,
+		&i.CeilBw,
+		&i.TimeoutMs,
+		&i.Addresses,
+		&i.RequireIcmp,
+		&i.ListenUdp,
+		&i.ListenTcp,
+		&i.ListenScion,
+		&i.StartedAt,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
+	)
+	return i, err
+}
+
+const getDebugletIdentity = `-- name: GetDebugletIdentity :one
+SELECT uuid, dispatcher_incarnation, session_id, transaction_id, start_time, started_at
+FROM debuglets
+WHERE uuid = ?
+`
+
+type GetDebugletIdentityRow struct {
+	Uuid                  uuid.UUID
+	DispatcherIncarnation string
+	SessionID             string
+	TransactionID         string
+	StartTime             UTCTime
+	StartedAt             UTCTime
+}
+
+// Identity, original binding and start marker only: inspection never reads the
+// stored WASM blob or arguments.
+func (q *Queries) GetDebugletIdentity(ctx context.Context, argUuid uuid.UUID) (GetDebugletIdentityRow, error) {
+	row := q.db.QueryRowContext(ctx, getDebugletIdentity, argUuid)
+	var i GetDebugletIdentityRow
+	err := row.Scan(
+		&i.Uuid,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
+		&i.TransactionID,
+		&i.StartTime,
+		&i.StartedAt,
+	)
+	return i, err
+}
+
 const getDebugletStarted = `-- name: GetDebugletStarted :one
 SELECT started_at FROM debuglets
 WHERE uuid = ?
@@ -86,8 +153,47 @@ func (q *Queries) GetDebugletStarted(ctx context.Context, argUuid uuid.UUID) (UT
 	return started_at, err
 }
 
+const getOwnedDebugletByUUID = `-- name: GetOwnedDebugletByUUID :one
+SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation, session_id FROM debuglets
+WHERE uuid = ?1
+  AND dispatcher_incarnation = ?2
+  AND session_id = ?3
+  AND dispatcher_incarnation <> '' AND session_id <> ''
+`
+
+type GetOwnedDebugletByUUIDParams struct {
+	Uuid                  uuid.UUID
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+func (q *Queries) GetOwnedDebugletByUUID(ctx context.Context, arg GetOwnedDebugletByUUIDParams) (Debuglet, error) {
+	row := q.db.QueryRowContext(ctx, getOwnedDebugletByUUID, arg.Uuid, arg.DispatcherIncarnation, arg.SessionID)
+	var i Debuglet
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.StartTime,
+		&i.Args,
+		&i.Wasm,
+		&i.TransactionID,
+		&i.FloorBw,
+		&i.CeilBw,
+		&i.TimeoutMs,
+		&i.Addresses,
+		&i.RequireIcmp,
+		&i.ListenUdp,
+		&i.ListenTcp,
+		&i.ListenScion,
+		&i.StartedAt,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
+	)
+	return i, err
+}
+
 const listDebuglets = `-- name: ListDebuglets :many
-SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at FROM debuglets
+SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation, session_id FROM debuglets
 LIMIT ?
 OFFSET ?
 `
@@ -122,6 +228,8 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 			&i.ListenTcp,
 			&i.ListenScion,
 			&i.StartedAt,
+			&i.DispatcherIncarnation,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +248,7 @@ const updateDebugletStarted = `-- name: UpdateDebugletStarted :one
 UPDATE debuglets
 SET started_at = ?
 WHERE uuid = ?
-RETURNING id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at
+RETURNING id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation, session_id
 `
 
 type UpdateDebugletStartedParams struct {
@@ -167,6 +275,8 @@ func (q *Queries) UpdateDebugletStarted(ctx context.Context, arg UpdateDebugletS
 		&i.ListenTcp,
 		&i.ListenScion,
 		&i.StartedAt,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
 	)
 	return i, err
 }

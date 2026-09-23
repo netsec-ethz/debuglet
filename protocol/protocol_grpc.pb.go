@@ -28,6 +28,8 @@ const (
 	DispatcherService_DebugletAllocate_FullMethodName = "/debuglet.protocol.DispatcherService/DebugletAllocate"
 	DispatcherService_DebugletExit_FullMethodName     = "/debuglet.protocol.DispatcherService/DebugletExit"
 	DispatcherService_DebugletStream_FullMethodName   = "/debuglet.protocol.DispatcherService/DebugletStream"
+	DispatcherService_BindSession_FullMethodName      = "/debuglet.protocol.DispatcherService/BindSession"
+	DispatcherService_RenewLease_FullMethodName       = "/debuglet.protocol.DispatcherService/RenewLease"
 )
 
 // DispatcherServiceClient is the client API for DispatcherService service.
@@ -41,6 +43,8 @@ type DispatcherServiceClient interface {
 	DebugletAllocate(ctx context.Context, in *DebugletAllocateRequest, opts ...grpc.CallOption) (*DebugletAllocateResponse, error)
 	DebugletExit(ctx context.Context, in *DebugletExitRequest, opts ...grpc.CallOption) (*DebugletExitResponse, error)
 	DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DebugletStreamRequest, DebugletStreamResponse], error)
+	BindSession(ctx context.Context, in *BindSessionRequest, opts ...grpc.CallOption) (*BindSessionResponse, error)
+	RenewLease(ctx context.Context, in *RenewLeaseRequest, opts ...grpc.CallOption) (*RenewLeaseResponse, error)
 }
 
 type dispatcherServiceClient struct {
@@ -114,6 +118,26 @@ func (c *dispatcherServiceClient) DebugletStream(ctx context.Context, opts ...gr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DispatcherService_DebugletStreamClient = grpc.BidiStreamingClient[DebugletStreamRequest, DebugletStreamResponse]
 
+func (c *dispatcherServiceClient) BindSession(ctx context.Context, in *BindSessionRequest, opts ...grpc.CallOption) (*BindSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BindSessionResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_BindSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dispatcherServiceClient) RenewLease(ctx context.Context, in *RenewLeaseRequest, opts ...grpc.CallOption) (*RenewLeaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewLeaseResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_RenewLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DispatcherServiceServer is the server API for DispatcherService service.
 // All implementations must embed UnimplementedDispatcherServiceServer
 // for forward compatibility.
@@ -125,6 +149,8 @@ type DispatcherServiceServer interface {
 	DebugletAllocate(context.Context, *DebugletAllocateRequest) (*DebugletAllocateResponse, error)
 	DebugletExit(context.Context, *DebugletExitRequest) (*DebugletExitResponse, error)
 	DebugletStream(grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]) error
+	BindSession(context.Context, *BindSessionRequest) (*BindSessionResponse, error)
+	RenewLease(context.Context, *RenewLeaseRequest) (*RenewLeaseResponse, error)
 	mustEmbedUnimplementedDispatcherServiceServer()
 }
 
@@ -152,6 +178,12 @@ func (UnimplementedDispatcherServiceServer) DebugletExit(context.Context, *Debug
 }
 func (UnimplementedDispatcherServiceServer) DebugletStream(grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]) error {
 	return status.Error(codes.Unimplemented, "method DebugletStream not implemented")
+}
+func (UnimplementedDispatcherServiceServer) BindSession(context.Context, *BindSessionRequest) (*BindSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BindSession not implemented")
+}
+func (UnimplementedDispatcherServiceServer) RenewLease(context.Context, *RenewLeaseRequest) (*RenewLeaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewLease not implemented")
 }
 func (UnimplementedDispatcherServiceServer) mustEmbedUnimplementedDispatcherServiceServer() {}
 func (UnimplementedDispatcherServiceServer) testEmbeddedByValue()                           {}
@@ -271,6 +303,42 @@ func _DispatcherService_DebugletStream_Handler(srv interface{}, stream grpc.Serv
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type DispatcherService_DebugletStreamServer = grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]
 
+func _DispatcherService_BindSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BindSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).BindSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_BindSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).BindSession(ctx, req.(*BindSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DispatcherService_RenewLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).RenewLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_RenewLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).RenewLease(ctx, req.(*RenewLeaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DispatcherService_ServiceDesc is the grpc.ServiceDesc for DispatcherService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -298,6 +366,14 @@ var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DebugletExit",
 			Handler:    _DispatcherService_DebugletExit_Handler,
 		},
+		{
+			MethodName: "BindSession",
+			Handler:    _DispatcherService_BindSession_Handler,
+		},
+		{
+			MethodName: "RenewLease",
+			Handler:    _DispatcherService_RenewLease_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -311,10 +387,12 @@ var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	ExecutorService_Hello_FullMethodName     = "/debuglet.protocol.ExecutorService/Hello"
-	ExecutorService_Upload_FullMethodName    = "/debuglet.protocol.ExecutorService/Upload"
-	ExecutorService_Abort_FullMethodName     = "/debuglet.protocol.ExecutorService/Abort"
-	ExecutorService_Bandwidth_FullMethodName = "/debuglet.protocol.ExecutorService/Bandwidth"
+	ExecutorService_Hello_FullMethodName              = "/debuglet.protocol.ExecutorService/Hello"
+	ExecutorService_Upload_FullMethodName             = "/debuglet.protocol.ExecutorService/Upload"
+	ExecutorService_Abort_FullMethodName              = "/debuglet.protocol.ExecutorService/Abort"
+	ExecutorService_Bandwidth_FullMethodName          = "/debuglet.protocol.ExecutorService/Bandwidth"
+	ExecutorService_ProbeSession_FullMethodName       = "/debuglet.protocol.ExecutorService/ProbeSession"
+	ExecutorService_InspectRetainedRun_FullMethodName = "/debuglet.protocol.ExecutorService/InspectRetainedRun"
 )
 
 // ExecutorServiceClient is the client API for ExecutorService service.
@@ -325,6 +403,11 @@ type ExecutorServiceClient interface {
 	Upload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (*UploadResponse, error)
 	Abort(ctx context.Context, in *AbortRequest, opts ...grpc.CallOption) (*AbortResponse, error)
 	Bandwidth(ctx context.Context, in *BandwidthRequest, opts ...grpc.CallOption) (*BandwidthResponse, error)
+	ProbeSession(ctx context.Context, in *ProbeSessionRequest, opts ...grpc.CallOption) (*ProbeSessionResponse, error)
+	// Optional. Reads one retained run without scheduling, starting, finalizing
+	// or deleting it. An executor without inspection answers UNIMPLEMENTED,
+	// which is never a missing-row answer.
+	InspectRetainedRun(ctx context.Context, in *InspectRetainedRunRequest, opts ...grpc.CallOption) (*InspectRetainedRunResponse, error)
 }
 
 type executorServiceClient struct {
@@ -375,6 +458,26 @@ func (c *executorServiceClient) Bandwidth(ctx context.Context, in *BandwidthRequ
 	return out, nil
 }
 
+func (c *executorServiceClient) ProbeSession(ctx context.Context, in *ProbeSessionRequest, opts ...grpc.CallOption) (*ProbeSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProbeSessionResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_ProbeSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executorServiceClient) InspectRetainedRun(ctx context.Context, in *InspectRetainedRunRequest, opts ...grpc.CallOption) (*InspectRetainedRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectRetainedRunResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_InspectRetainedRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ExecutorServiceServer is the server API for ExecutorService service.
 // All implementations must embed UnimplementedExecutorServiceServer
 // for forward compatibility.
@@ -383,6 +486,11 @@ type ExecutorServiceServer interface {
 	Upload(context.Context, *UploadRequest) (*UploadResponse, error)
 	Abort(context.Context, *AbortRequest) (*AbortResponse, error)
 	Bandwidth(context.Context, *BandwidthRequest) (*BandwidthResponse, error)
+	ProbeSession(context.Context, *ProbeSessionRequest) (*ProbeSessionResponse, error)
+	// Optional. Reads one retained run without scheduling, starting, finalizing
+	// or deleting it. An executor without inspection answers UNIMPLEMENTED,
+	// which is never a missing-row answer.
+	InspectRetainedRun(context.Context, *InspectRetainedRunRequest) (*InspectRetainedRunResponse, error)
 	mustEmbedUnimplementedExecutorServiceServer()
 }
 
@@ -404,6 +512,12 @@ func (UnimplementedExecutorServiceServer) Abort(context.Context, *AbortRequest) 
 }
 func (UnimplementedExecutorServiceServer) Bandwidth(context.Context, *BandwidthRequest) (*BandwidthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Bandwidth not implemented")
+}
+func (UnimplementedExecutorServiceServer) ProbeSession(context.Context, *ProbeSessionRequest) (*ProbeSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ProbeSession not implemented")
+}
+func (UnimplementedExecutorServiceServer) InspectRetainedRun(context.Context, *InspectRetainedRunRequest) (*InspectRetainedRunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InspectRetainedRun not implemented")
 }
 func (UnimplementedExecutorServiceServer) mustEmbedUnimplementedExecutorServiceServer() {}
 func (UnimplementedExecutorServiceServer) testEmbeddedByValue()                         {}
@@ -498,6 +612,42 @@ func _ExecutorService_Bandwidth_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ExecutorService_ProbeSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProbeSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).ProbeSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_ProbeSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).ProbeSession(ctx, req.(*ProbeSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutorService_InspectRetainedRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InspectRetainedRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).InspectRetainedRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_InspectRetainedRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).InspectRetainedRun(ctx, req.(*InspectRetainedRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ExecutorService_ServiceDesc is the grpc.ServiceDesc for ExecutorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -520,6 +670,14 @@ var ExecutorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Bandwidth",
 			Handler:    _ExecutorService_Bandwidth_Handler,
+		},
+		{
+			MethodName: "ProbeSession",
+			Handler:    _ExecutorService_ProbeSession_Handler,
+		},
+		{
+			MethodName: "InspectRetainedRun",
+			Handler:    _ExecutorService_InspectRetainedRun_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

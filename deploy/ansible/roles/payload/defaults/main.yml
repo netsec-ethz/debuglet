@@ -1,0 +1,7 @@
+---
+# The services this host runs, derived from the groups it is in. The payload
+# role restarts exactly these when the installed release changes, so it does
+# not have to know which daemon role follows it.
+debuglet_services: >-
+  {{ (['debuglet-dispatcher'] if inventory_hostname in (groups['dispatcher'] | default([])) else [])
+     + ([executor_service] if inventory_hostname in (groups['executors'] | default([])) else []) }}

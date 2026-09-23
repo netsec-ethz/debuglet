@@ -4,10 +4,10 @@
 package main
 
 import (
-	"debuglet/internal/dispatcher/transport/api"
-	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/user"
 	"flag"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/user"
 	"log"
 	"os"
 	"os/signal"
@@ -25,7 +25,7 @@ var (
 	wasmPath          = flag.String("wasm", "local/wasm_samples/go/ping/debuglet.wasm", "wasm to use")
 	abort             = flag.Bool("abort", false, "if measurements should be aborted right after they're submitted")
 	delay             = flag.Duration("delay", 0, "the delay after which to start debuglets")
-	executor          = flag.String("executor", "local-executor", "the executor to connect to")
+	executor          = flag.String("executor", "ac4e023b-1b69-44ed-905f-640e7a1841b4", "the executor to connect to")
 	floorBW           = flag.Int64("floor", 0, "Floor bandwidth (in bits) to request in the policy. Defaults to ceil.")
 	ceilBW            = flag.Int64("ceil", 4096, "Ceiling bandwidth (in bits) to request in the policy")
 	timeout           = flag.Duration("timeout", 10*time.Second, "Timeout for debuglet execution")

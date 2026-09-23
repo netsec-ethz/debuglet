@@ -33,7 +33,7 @@ import (
 	"io"
 	"time"
 
-	"debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 
 	"golang.org/x/crypto/hkdf"
 )

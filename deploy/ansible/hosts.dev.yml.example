@@ -1,45 +1,46 @@
-# Example Ansible inventory for the Debuglet DEV deployment.
+# Example Ansible inventory for a Debuglet dev deployment.
 #
-# The real hosts.dev.yml is NOT committed to this repo (it identifies
-# private infrastructure — dispatcher address, executor hostnames, SSH
-# usernames), same as hosts.yml for prod. Copy this file to hosts.dev.yml
-# and fill in your real dev hosts:
+# The real hosts.dev.yml is not committed, for the same reason hosts.yml is
+# not: it identifies private infrastructure. Copy this file and fill in your
+# own dev hosts:
 #
 #   cp deploy/ansible/hosts.dev.yml.example deploy/ansible/hosts.dev.yml
 #
-# In CI, the real hosts.dev.yml is injected as a GitLab CI/CD "Secure File"
-# and written to deploy/ansible/hosts.dev.yml before the ansible-playbook
-# step runs on the dev branch — see .gitlab-ci.yml. hosts.dev.yml is
-# gitignored so it can never be committed by accident.
+# The dev inventory has its own hosts, so it needs its own pinned host keys.
+# Give it its own known-hosts file and select it explicitly:
 #
-# The dispatcher's host entry is the literal string __DISPATCHER_ADDR__, NOT
-# a real address — the deploy job substitutes it (via sed) with the
-# DISPATCHER_ADDR_DEV CI/CD variable before running ansible-playbook, so the
-# address is entered once, not duplicated between the inventory and the CI
-# variable. Keep this placeholder as-is in your real hosts.dev.yml too.
+#   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml site.yml \
+#       -e known_hosts_file="{{ playbook_dir }}/known_hosts.dev"
+#
+# dispatcher_addr and a per-host UUID executor_id are required. The selected
+# vars/dev.yml supplies the public API origin; see hosts.yml.example.
 
 #
-# NOTE: a machine can appear in BOTH inventories — ordroid-ethz is an executor
-# in prod and in dev. Give it a distinct executor_id per environment (they get
+# A machine can appear in both inventories. Give it a distinct executor_id
+# per environment (they get
 # distinct TLS client certs, and the dispatcher keys its registry on the id).
-# Everything else is kept apart automatically: the deploy job layers on
-# vars/<env>.yml, and each environment's executor gets its own service user,
-# config directory, binary and systemd unit (debuglet-<env>,
-# /etc/debuglet/executor-<env>, debuglet-executor-<env>). See
+# Everything else is kept apart automatically: the selected vars file supplies
+# debuglet_env, and each environment's executor gets its own service user,
+# config/state directories, package prefix and systemd unit (debuglet-<env>,
+# /etc/debuglet/executor-<env>, /var/lib/debuglet/executor-<env>,
+# /opt/debuglet/<env>, debuglet-executor-<env>). See
 # deploy/ansible/group_vars/executors.yml.
 
 all:
+  vars:
+    dispatcher_addr: dispatcher-dev.example.com
+
   children:
     # ------------------------------------------------------------------
     # Dispatcher — one machine
     # ------------------------------------------------------------------
     dispatcher:
       hosts:
-        __DISPATCHER_ADDR__:
+        dispatcher-dev.example.com:
           ansible_user: deploy
 
     # ------------------------------------------------------------------
-    # Executors — all executor machines
+    # Executors — every executor machine
     # ------------------------------------------------------------------
     executors:
       children:
@@ -47,4 +48,4 @@ all:
           hosts:
             executor-dev-1.example.com:
               ansible_user: deploy
-              executor_id: executor-dev-1
+              executor_id: 1144ad6e-2c14-4e5c-ab72-c05a8e8770f2

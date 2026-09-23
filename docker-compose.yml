@@ -1,38 +1,117 @@
-version: "3.8"
+# Local TEST rig: the two daemons from the release payload, on one machine.
+#
+# Profile: local TEST. The default services are wallet-free and
+# credential-free. They need no private file, no external network and no
+# container privileges: the dispatcher's HTTP API is published on loopback
+# only, the executor shares the dispatcher's network namespace and reaches it
+# over loopback — the one shape a control channel without transport security
+# is supported in — and each daemon keeps its database on its own named
+# volume.
+#
+#   docker compose build
+#   docker compose --profile seed run --rm seed     # create the databases
+#   docker compose up -d
+#   deploy/docker/compose-smoke.sh                  # end-to-end check
+#
+# Because the executor lives in the dispatcher's network namespace, it has to
+# be out of the way while the dispatcher is down. Restart the rig in that
+# order — `docker compose stop executor`, `docker compose restart dispatcher`,
+# `docker compose start executor` — or bring the whole rig down and up again;
+# restarting both at once leaves the executor trying to join a namespace that
+# no longer exists. Its restart policy recovers from that on its own, but the
+# ordered form does not fail in the first place.
+#
+# A daemon opens the database its configuration names and never creates the
+# schema, so the seed step above has to run once before the first start. It
+# uses the packaged CLI in the image itself and is safe to repeat: it keeps
+# databases that already exist.
+#
+# The optional "tls-edge" profile puts nginx in front of the dispatcher for
+# trying a TLS-terminating proxy out, for API clients only: it requires no
+# client identity and the executor does not go through it. It is provisional:
+# the daemons' own transport security is being reworked, and this rig will
+# follow it. It needs a server certificate and key in
+# deploy/docker/nginx/certs, issued for the name a client uses — see
+# deploy/README.md.
+#
+# This is a fixture, not a deployment. deploy/ansible installs the daemons on
+# a managed host.
+
+name: debuglet-local-test
 
 services:
-  executor:
-    build:
-      context: .
-      dockerfile: deploy/docker/executor.Dockerfile
-    volumes:
-      - ./deploy/docker/configs/executor:/etc/debuglet/executor
-      - ./deploy/docker/nginx/certs:/etc/debuglet/certs:ro
-    restart: unless-stopped
-    privileged: true
-    depends_on:
-      - nginx
-
   dispatcher:
     build:
       context: .
-      dockerfile: deploy/docker/dispatcher.Dockerfile
+      dockerfile: deploy/docker/debuglet.Dockerfile
+      target: dispatcher
     volumes:
       - ./deploy/docker/configs/dispatcher:/etc/debuglet/dispatcher:ro
-    restart: unless-stopped
+      - dispatcher-state:/var/lib/debuglet
+    # The API enforces authentication, and deploy/docker/compose-smoke.sh gets
+    # a session for it with `dbl login --register`, because the unset bind_host
+    # this port is published from rules out the credential-free
+    # server.local_development profile `dbl up` and `dbl demo` use. Set
+    # DEBUGLET_LOCAL_HTTP to another loopback address and port to run a second
+    # rig next to this one.
     ports:
-      - "9000:9000" # expose http for local frontend
+      - "${DEBUGLET_LOCAL_HTTP:-127.0.0.1:9000}:9000"
+    restart: unless-stopped
 
+  # The executor shares the dispatcher's network namespace, so it reaches the
+  # dispatcher over loopback on the same machine and its control channel needs
+  # no transport security and no certificates. A control channel that leaves a
+  # machine is a different profile: deploy/ansible serves TLS on the
+  # dispatcher and the executor verifies it.
+  executor:
+    build:
+      context: .
+      dockerfile: deploy/docker/debuglet.Dockerfile
+      target: executor
+    network_mode: "service:dispatcher"
+    volumes:
+      - ./deploy/docker/configs/executor:/etc/debuglet/executor:ro
+      - executor-state:/var/lib/debuglet
+    depends_on:
+      - dispatcher
+    restart: unless-stopped
 
-  # Nginx proxy for local TLS termination testing
+  # One-shot: create the two databases in the volumes above, using the
+  # packaged CLI from the image the rig already builds. It starts the local
+  # services on their own private state directory, which applies the packaged
+  # migrations, then copies each schema into the volume the daemons read.
+  # Nothing outside the rig is needed and nothing is published.
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      dockerfile: deploy/docker/debuglet.Dockerfile
+      target: dispatcher
+    entrypoint: ["/bin/sh", "/usr/local/bin/seed-state.sh"]
+    network_mode: none
+    volumes:
+      - ./deploy/docker/seed-state.sh:/usr/local/bin/seed-state.sh:ro
+      - dispatcher-state:/seed/dispatcher
+      - executor-state:/seed/executor
+    restart: "no"
+
+  # Provisional TLS-terminating edge for API clients; see the note at the top
+  # of this file. It fronts the dispatcher's HTTP and gRPC ports for clients
+  # outside the rig and asks for no client certificate; the executor does not
+  # go through it.
   nginx:
+    profiles: ["tls-edge"]
     image: nginx:alpine
     volumes:
       - ./deploy/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/docker/nginx/certs:/etc/nginx/certs:ro
     ports:
-      - "9443:9443"
-      - "9444:9444"
-    restart: unless-stopped
+      - "127.0.0.1:9443:9443"
+      - "127.0.0.1:9444:9444"
     depends_on:
       - dispatcher
+    restart: unless-stopped
+
+volumes:
+  dispatcher-state:
+  executor-state:

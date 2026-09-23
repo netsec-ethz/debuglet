@@ -4,9 +4,9 @@
 package fallback
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
-	"debuglet/internal/executor/ratelimit/app"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"net"
 	"net/netip"
 	"sync"
@@ -39,6 +39,7 @@ type FallbackCount struct {
 	execRates map[uuid.UUID]app.Bitrate
 
 	domainIPs map[domainKey]map[netutil.IPv6]int
+	attached  map[debugletKey]int
 
 	mu sync.RWMutex
 }
@@ -49,6 +50,7 @@ func NewFallbackCount() (*FallbackCount, error) {
 		execPacketSize: make(map[uuid.UUID]*bucketState),
 		rates:          make(map[debugletKey]app.Bitrate),
 		execRates:      make(map[uuid.UUID]app.Bitrate),
+		attached:       make(map[debugletKey]int),
 	}, nil
 }
 
@@ -73,14 +75,19 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 		f.domainIPs[dk] = make(map[netutil.IPv6]int)
 	}
 	f.domainIPs[dk][ipv6]++
+	f.attached[debugletKey{id: id, dest: ipv6}]++
 
 	fc := &FallbackConn{conn: conn,
-		count: f,
-		id:    id,
-		mu:    NewFIFOLock(),
-		ipv6:  ipv6,
-		addr:  addr,
-		close: make(chan struct{}),
+		count:                f,
+		id:                   id,
+		readMu:               NewFIFOLock(),
+		writeMu:              NewFIFOLock(),
+		ipv6:                 ipv6,
+		addr:                 addr,
+		close:                make(chan struct{}),
+		readDeadlineChanged:  make(chan struct{}),
+		writeDeadlineChanged: make(chan struct{}),
+		waitForLimiter:       waitForLimiter,
 	}
 	return fc, nil
 }
@@ -129,22 +136,35 @@ func (f *FallbackCount) DeleteExecLimit(id uuid.UUID) error {
 func (f *FallbackCount) Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.detachLocked(addr, id, ipv6)
+	return nil
+}
+
+func (f *FallbackCount) detachLocked(addr string, id uuid.UUID, ipv6 netutil.IPv6) {
 	dk := domainKey{domain: addr, id: id}
 	ips, ok := f.domainIPs[dk]
 	if !ok {
-		return nil
+		return
 	}
-	ips[ipv6]--
-	if ips[ipv6] <= 0 {
+	attachments, ok := ips[ipv6]
+	if !ok || attachments <= 0 {
+		return
+	}
+	if attachments == 1 {
 		delete(ips, ipv6)
-		key := debugletKey{id: id, dest: ipv6}
+	} else {
+		ips[ipv6] = attachments - 1
+	}
+	key := debugletKey{id: id, dest: ipv6}
+	f.attached[key]--
+	if f.attached[key] <= 0 {
+		delete(f.attached, key)
 		delete(f.rates, key)
 		delete(f.packetSize, key)
 	}
 	if len(ips) == 0 {
 		delete(f.domainIPs, dk)
 	}
-	return nil
 }
 
 func (f *FallbackCount) Close() error { return nil }

@@ -7,7 +7,13 @@
 //
 // Run (args after `--` are passed verbatim to the guest):
 //
-//	go run ./cmd/user -wasm local/wasm_samples/go/ping/debuglet.wasm -- -addr 1.1.1.1 -iter 5
+//	dbl run --wasm local/wasm_samples/go/ping/debuglet.wasm \
+//	  --executor EXECUTOR_ID --allow 1.1.1.1 --wait -- -addr 1.1.1.1 -iter 5
+//
+// ICMP needs a raw socket, so the executor must be allowed to open one; on an
+// executor without that permission the connect call ends the job. The address
+// must also be in the job's --allow list, and only addresses you are
+// authorized to probe belong there.
 package main
 
 import (
@@ -17,7 +23,7 @@ import (
 	"os"
 	"time"
 
-	"debuglet/pkg/debuglet"
+	"github.com/netsec-ethz/debuglet/pkg/debuglet"
 )
 
 var (

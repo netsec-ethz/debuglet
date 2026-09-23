@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"debuglet/internal/dispatcher/config"
-	"debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 
 	"github.com/block-vision/sui-go-sdk/common/grpcconn"
 	suiModels "github.com/block-vision/sui-go-sdk/models"

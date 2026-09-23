@@ -1,36 +1,23 @@
-# JavaScript debuglets
+# JavaScript sample
 
-JavaScript debuglets are compiled to WASM with
-[Javy](https://github.com/bytecodealliance/javy), which bundles the QuickJS
-engine into a self-contained WASI command module. `console.log` is streamed back
-to the user as stdout. See the [shared model](../README.md) for the execution
-contract.
+`helloworld` prints a greeting with `console.log`. It is compiled with [Javy](https://github.com/bytecodealliance/javy), which embeds a JavaScript engine in a WASI module.
 
-## Important limitation
+**Experimental. Not a supported quickstart.** The JavaScript example is
+stdout-only, and nothing in this repository builds, executes or checks it. This
+repository provides no JavaScript bindings to the executor's custom network
+imports. Use the [Go samples](../go/README.md) for supported measurements.
 
-Javy guests run **pure JavaScript over QuickJS** and have **no mechanism to
-import the executor's custom `env` host functions** (`connect_tcp`,
-`connect_icmp4`, …). That means JavaScript debuglets are limited to computation
-and stdout — the `ping` and `throughput` measurements are **not available** in
-JS. Use Go, Rust, or C for anything that touches the network.
-
-Only `helloworld` ships here for that reason.
-
-## The sample
-
-| Sample       | What it does |
-|--------------|--------------|
-| `helloworld` | `console.log` a greeting |
-
-## Prerequisites
-
-Install the `javy` CLI (binary releases at
-<https://github.com/bytecodealliance/javy/releases>), then make sure `make` can
-find it (it's on `PATH`, or pass `JAVY=/path/to/javy`).
-
-## Build & run
+Install Javy, then build from the repository root:
 
 ```sh
 make wasm SAMPLE_DIR=local/wasm_samples/javascript/helloworld JAVY=/path/to/javy
-go run ./cmd/user -wasm local/wasm_samples/javascript/helloworld/debuglet.wasm --
 ```
+
+If `javy` is already on `PATH`, omit the override. Submit the resulting file to an existing dispatcher/executor:
+
+```sh
+dbl run --wasm local/wasm_samples/javascript/helloworld/debuglet.wasm \
+  --executor EXECUTOR_ID --wait
+```
+
+Replace the ID with one returned by `dbl nodes`. See the [shared guide](../README.md) for the WASI argument and output model. Building the module alone does not verify its runtime compatibility.

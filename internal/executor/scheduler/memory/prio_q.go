@@ -5,7 +5,7 @@ package memory
 
 import (
 	"container/heap"
-	"debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 
 	"github.com/google/uuid"
 )

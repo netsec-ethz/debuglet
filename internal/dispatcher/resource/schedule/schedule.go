@@ -4,8 +4,8 @@
 package schedule
 
 import (
-	"debuglet/internal/dispatcher/resource"
-	"debuglet/internal/dispatcher/resource/schedule/dyn"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule/dyn"
 	"sync"
 	"time"
 )
@@ -57,7 +57,12 @@ func (j *JobScheduler) Submit(req Request) {
 	defer j.mu.Unlock()
 
 	j.submitExec(req.Executor, from, to, req.Use)
+	seen := make(map[string]struct{}, len(req.Destination))
 	for _, d := range req.Destination {
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
 		j.submitDest(d, from, to, req.Use)
 	}
 }

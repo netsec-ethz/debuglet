@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"debuglet/pkg/debuglet"
+	"github.com/netsec-ethz/debuglet/pkg/debuglet"
 )
 
 var (

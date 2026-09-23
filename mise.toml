@@ -1,7 +1,11 @@
 [tools]
 go = "1.25.11"
+# protoc is the protocol compiler version the generated sources record.
+# scripts/ci-generate.sh reproduces that output through the Go toolchain and
+# never needs the binary itself.
 protoc = "34.0"
 protoc-gen-go = "1.36.11"
 protoc-gen-go-grpc = "1.6.1"
+"go:github.com/bufbuild/buf/cmd/buf" = "1.72.0"
 sqlc = "1.31.1"
 "go:github.com/pressly/goose/v3/cmd/goose" = "3.27.3"

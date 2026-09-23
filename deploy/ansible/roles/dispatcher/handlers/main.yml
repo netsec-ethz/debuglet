@@ -1,8 +1,11 @@
+---
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+  when: debuglet_manage_services | bool
 
 - name: Restart dispatcher
   ansible.builtin.systemd:
     name: debuglet-dispatcher
     state: restarted
+  when: debuglet_manage_services | bool

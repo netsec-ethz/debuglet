@@ -4,19 +4,34 @@
 package api
 
 import (
-	"debuglet/internal/dispatcher/models"
-	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"math"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 )
 
+// VersionResponse reports the version identities of a dispatcher. They are
+// independent: api_version is the HTTP contract this dispatcher serves,
+// binary_version identifies the build and protocol_version is the executor
+// control protocol, which no HTTP client speaks. Version is the dispatcher's
+// configured string, retained for clients written before the contract was
+// versioned.
 type VersionResponse struct {
-	Version string `json:"version"`
+	Version         string   `json:"version"`
+	APIVersion      string   `json:"api_version"`
+	APIVersions     []string `json:"api_versions"`
+	BinaryVersion   string   `json:"binary_version"`
+	BinaryRevision  string   `json:"binary_revision,omitempty"`
+	ProtocolVersion string   `json:"protocol_version"`
 }
 
 type DebugletPolicyRequest struct {
@@ -153,6 +168,9 @@ type PaymentIntentRequest struct {
 type UserResponse struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Role is the account's role, "user" or "operator". It reports what the
+	// account may do; it is not a credential and grants nothing by itself.
+	Role string `json:"role"`
 }
 
 type CreateUserRequest struct {
@@ -161,6 +179,60 @@ type CreateUserRequest struct {
 
 // ================ HELPERS ================
 
+// maxTimeoutMS and maxBandwidthBPS are the bounds of the domain, named here as
+// the request fields they bound. api/openapi.yaml documents the same bounds.
+const (
+	maxTimeoutMS    = models.MaxPolicyTimeoutMS
+	maxBandwidthBPS = models.MaxPolicyBandwidthBPS
+)
+
+// minStartTimestamp and maxStartTimestamp bound start_time, in Unix seconds.
+// Below zero a start time is not a Unix timestamp, and above the bound the
+// reserved window no longer fits the nanosecond timeline the dispatcher
+// reserves capacity on. api/openapi.yaml documents the same bounds.
+const (
+	minStartTimestamp = int64(0)
+	maxStartTimestamp = int64(math.MaxInt64) / int64(time.Second)
+)
+
+// validatePolicy rejects a requested policy the API does not admit. It runs
+// where a policy first enters the system, pricing an intent and admitting a
+// submission, so that what the contract documents is what the server enforces.
+// It checks the numbers as they were requested: they are converted into internal
+// units and then summed, and neither conversion nor sum may depend on a client
+// having checked them first.
+func validatePolicy(orderID int64, policy DebugletPolicyRequest) *echo.HTTPError {
+	switch models.CheckPolicyNumbers(policy.FloorBW, policy.CeilBW, policy.TimeoutMS) {
+	case models.PolicyBoundTimeout:
+		return policyError(orderID, fmt.Sprintf("timeout_ms must be positive and at most %d", maxTimeoutMS))
+	case models.PolicyBoundFloor:
+		return policyError(orderID, fmt.Sprintf("floor_bw must be between 0 and %d bits per second", maxBandwidthBPS))
+	case models.PolicyBoundCeil:
+		return policyError(orderID, fmt.Sprintf("ceil_bw must be between 0 and %d bits per second", maxBandwidthBPS))
+	case models.PolicyBoundCeilBelowFloor:
+		return policyError(orderID, "ceil_bw must be at least floor_bw")
+	}
+	return nil
+}
+
+// validateStartTimestamp rejects a start time that is not a Unix second the
+// dispatcher can reserve a window from. time.Unix wraps silently outside this
+// range, which would turn a far future start into an arbitrary past one.
+func validateStartTimestamp(start *int64) error {
+	if start == nil {
+		return nil
+	}
+	if *start < minStartTimestamp || *start > maxStartTimestamp {
+		return fmt.Errorf("start_time must be a Unix timestamp between %d and %d", minStartTimestamp, maxStartTimestamp)
+	}
+	return nil
+}
+
+func policyError(orderID int64, reason string) *echo.HTTPError {
+	return apiError(http.StatusBadRequest, CodeInvalidPolicy,
+		fmt.Sprintf("invalid policy (order %d): %s", orderID, reason))
+}
+
 func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
 	if err != nil {
@@ -168,6 +240,10 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 	}
 	if strings.TrimSpace(r.ExecutorID) == "" {
 		return models.DebugletSpec{}, errors.New("missing executor ID")
+	}
+
+	if err := validateStartTimestamp(r.StartTimestamp); err != nil {
+		return models.DebugletSpec{}, err
 	}
 
 	var startTime *time.Time

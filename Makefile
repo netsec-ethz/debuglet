@@ -1,9 +1,79 @@
 # Project settings
+.DEFAULT_GOAL := all
 EXECUTOR_BINARY = debuglet-executor
 DISPATCHER_BINARY = debuglet-dispatcher
 
 # Go command
 GO ?= go
+
+# CI uses explicit native package roots so WASI examples are built for
+# their actual target instead of being treated as host programs.
+CI_PACKAGES = ./api/... ./cmd/... ./internal/... ./pkg/... ./protocol/...
+CI_TEST_TIMEOUT ?= 4m
+CI_DIST ?= .cache/ci/dist
+
+# Race-detector lane: the scheduler, session/transport, registry and
+# owned-resource cleanup packages whose regressions depend on concurrent
+# lifecycles. These are explicit native roots for the same reason as above.
+# Keep the lane bounded; see docs/ci.md for the budget and what it excludes.
+CI_RACE_PACKAGES = \
+	./internal/connections \
+	./internal/controlsession \
+	./internal/dispatcher \
+	./internal/dispatcher/resource/schedule \
+	./internal/dispatcher/resource/schedule/dyn \
+	./internal/dispatcher/transport/rpc \
+	./internal/executor/debuglet \
+	./internal/executor/debuglet/socket \
+	./internal/executor/debuglet/wasm \
+	./internal/executor/debuglet/wasm/hostconn \
+	./internal/executor/ratelimit/fallback \
+	./internal/executor/scheduler/memory \
+	./internal/executor/transport/rpc \
+	./internal/readiness
+CI_RACE_TIMEOUT ?= 5m
+CI_RACE_BUDGET_SECONDS ?= 240
+CI_RACE_PACKAGE_PARALLEL ?= 2
+
+.PHONY: ci-test ci-vet ci-fmt ci-race ci-build ci-kernel ci-package ci-demo ci-compatibility ci-local
+
+ci-test:
+	python3 -m unittest -v tools/test_make_targets.py tools/test_ci_github.py
+	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-test.sh $(CI_PACKAGES)
+
+ci-vet:
+	$(GO) vet -mod=readonly $(CI_PACKAGES)
+
+# Report tracked Go files that the pinned toolchain would reformat.
+ci-fmt:
+	GO="$(GO)" bash scripts/ci-fmt.sh
+
+# Concurrency regressions under the race detector, with their JSON results.
+ci-race:
+	GO="$(GO)" CI_RACE_TIMEOUT="$(CI_RACE_TIMEOUT)" \
+	CI_RACE_BUDGET_SECONDS="$(CI_RACE_BUDGET_SECONDS)" \
+	CI_RACE_PACKAGE_PARALLEL="$(CI_RACE_PACKAGE_PARALLEL)" \
+	bash scripts/ci-race.sh $(CI_RACE_PACKAGES)
+
+# Build from committed eBPF objects. ci-kernel loads those bytes, then
+# regenerates them to check compiler compatibility in the hosted Linux VM.
+ci-build:
+	GO="$(GO)" $(GO) run -mod=readonly ./internal/packaging build -dist "$(CI_DIST)"
+
+ci-package:
+	GO="$(GO)" CI_DIST="$(CI_DIST)" bash scripts/ci-package.sh
+
+ci-demo:
+	GO="$(GO)" bash scripts/ci-demo.sh
+
+ci-compatibility:
+	GO="$(GO)" COMPAT_ARCHIVE="$(COMPAT_ARCHIVE)" COMPAT_SHA256SUMS="$(COMPAT_SHA256SUMS)" bash scripts/ci-compatibility.sh
+
+ci-local:
+	GO="$(GO)" bash scripts/ci-local.sh
+
+ci-kernel:
+	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-kernel.sh
 
 # Goose command (installed via mise, see mise.toml) — avoid `go run
 # .../goose@version`, which rebuilds goose from source on every invocation
@@ -25,7 +95,7 @@ CARGO       ?= cargo
 JAVY        ?= javy
 RUST_TARGET ?= wasm32-wasip1
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config bootstrap-sudo
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config bootstrap-sudo generate-sql
 
 all: deps build
 
@@ -70,10 +140,10 @@ endif
 #   Usage: make wasm SAMPLE_DIR=local/wasm_samples/<lang>/<sample>
 wasm:
 	@if [ -z "$(SAMPLE_DIR)" ]; then echo "SAMPLE_DIR is required. Usage: make wasm SAMPLE_DIR=..."; exit 1; fi
-	@out="$(SAMPLE_DIR)/debuglet.wasm"; \
+	@set -e; out="$(SAMPLE_DIR)/debuglet.wasm"; \
 	if [ -f "$(SAMPLE_DIR)/Cargo.toml" ]; then \
 		echo "[rust] building $(SAMPLE_DIR)"; \
-		( cd "$(SAMPLE_DIR)" && $(CARGO) build --release --target $(RUST_TARGET) ) && \
+		( cd "$(SAMPLE_DIR)" && $(CARGO) build --release --target $(RUST_TARGET) ); \
 		cp "$(SAMPLE_DIR)/target/$(RUST_TARGET)/release/debuglet.wasm" "$$out"; \
 	elif [ -f "$(SAMPLE_DIR)/main.go" ]; then \
 		echo "[go] building $(SAMPLE_DIR)"; \
@@ -89,11 +159,18 @@ wasm:
 	fi; \
 	echo "wrote $$out"
 
+# Regenerate the protocol bindings from protocol/protocol.proto with the
+# generators pinned in mise.toml. The result is what the pinned protocol
+# compiler produces, and scripts/ci-generate.sh rejects any difference between
+# it and the committed sources. Both targets fetch the pinned generators from
+# the Go module proxy the first time they are used. See docs/generation.md.
 proto:
-	protoc \
-	  --go_out=. --go_opt=paths=source_relative,Mschema.proto=. \
-	  --go-grpc_out=. --go-grpc_opt=paths=source_relative,Mschema.proto=. \
-	  protocol/protocol.proto
+	GO="$(GO)" bash scripts/ci-generate.sh write-proto
+
+# Regenerate the dispatcher and executor database bindings with the pinned
+# sqlc, reading the query and schema directories named in sqlc.yml.
+generate-sql:
+	GO="$(GO)" bash scripts/ci-generate.sh write-sql
 
 setcaps: build
 	sudo setcap cap_net_admin,cap_bpf+ep ./$(EXECUTOR_BINARY)
@@ -109,10 +186,31 @@ benchmark:
 	$(GO) test $$($(GO) list ./... | grep -v /local/) -bench=. -count=10 -benchtime=5s | tee benchmarks/bench.txt
 	benchstat benchmarks/bench.txt
 
+MEMORY_PACKAGE = ./internal/dispatcher/resource
+MEMORY_BENCHMARK = ^BenchmarkDestinationsInsert/Initial10000$$
+MEMORY_PROFILE ?= benchmarks/dispatcher-resource-mem.out
+MEMORY_TIMEOUT ?= 30s
+
 memory:
-	mkdir -p benchmarks
-	$(GO) test ./internal/executor/engine/ -bench=. -memprofile benchmarks/engine-mem.out
-	$(GO) tool pprof -http=:8080 benchmarks/engine-mem.out
+	@mkdir -p '$(dir $(MEMORY_PROFILE))'
+	@set -eu; \
+	profile_tmp=$$(mktemp '$(dir $(MEMORY_PROFILE)).memory-profile.XXXXXX'); \
+	report_tmp=$$(mktemp '$(dir $(MEMORY_PROFILE)).memory-report.XXXXXX'); \
+	trap 'rm -f "$$profile_tmp" "$$report_tmp"' EXIT HUP INT TERM; \
+	if ! $(GO) test $(MEMORY_PACKAGE) -run '^$$' -bench '$(MEMORY_BENCHMARK)' -benchtime=1x -count=1 -timeout '$(MEMORY_TIMEOUT)' -memprofile "$$profile_tmp" >"$$report_tmp" 2>&1; then \
+		cat "$$report_tmp" >&2; exit 1; \
+	fi; \
+	cat "$$report_tmp"; \
+	if ! grep -Eq '^BenchmarkDestinationsInsert/Initial10000(-[0-9]+)?[[:space:]]+[1-9][0-9]*[[:space:]]' "$$report_tmp"; then \
+		echo "memory benchmark did not run: BenchmarkDestinationsInsert/Initial10000" >&2; exit 1; \
+	fi; \
+	test -s "$$profile_tmp" || { echo "memory profile was not created: $(MEMORY_PROFILE)" >&2; exit 1; }; \
+	mv "$$profile_tmp" '$(MEMORY_PROFILE)'; \
+	echo "wrote $(MEMORY_PROFILE)"
+
+memory-view:
+	@test -s '$(MEMORY_PROFILE)' || { echo "memory profile is missing or empty; run 'make memory' first" >&2; exit 1; }
+	$(GO) tool pprof -http=:8080 '$(MEMORY_PROFILE)'
 
 # --------------------------------------------------------------------
 # Database
@@ -145,31 +243,36 @@ docker-down:
 	docker compose down
 
 # --------------------------------------------------------------------
-# Generate test certificates in configs directory
+# Generate self-signed certificates for local development in local/configs.
+# A client matches a certificate by its subjectAltName, so both carry the
+# loopback names, and each names the role it may be used for. The local
+# configurations run with TLS disabled and do not read these; deployment
+# material is a different thing, see deploy/scripts/generate-certs.sh.
 # --------------------------------------------------------------------
 generate-certs:
-	@mkdir -p configs/executor configs/dispatcher
+	@mkdir -p local/configs/executor local/configs/dispatcher
 	@echo "Generating executor certificates..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/executor/client.key -out local/configs/executor/client.crt -subj "/CN=executor"
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/executor/client.key -out local/configs/executor/client.crt -subj "/CN=executor" -addext "basicConstraints=critical,CA:FALSE" -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=clientAuth" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 	@echo "Generating dispatcher certificates..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/dispatcher/server.key -out local/configs/dispatcher/server.crt -subj "/CN=dispatcher"
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/dispatcher/server.key -out local/configs/dispatcher/server.crt -subj "/CN=dispatcher" -addext "basicConstraints=critical,CA:FALSE" -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=serverAuth" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
 # --------------------------------------------------------------------
-# Remote deployment (requires: docker, ansible, openssl)
+# Remote deployment (requires: docker). deploy-certs additionally runs openssl
+# through deploy/scripts/generate-certs.sh and shells out to python3 to read
+# the executor identities out of the inventory.
 # --------------------------------------------------------------------
+# Deployment runs in the pinned provisioner container, which carries the
+# Ansible version and collections deploy/provisioner.env pins; the playbooks
+# refuse to run anywhere else. deploy/scripts/provisioner.sh builds it if it
+# is absent and runs one command in it.
+ANSIBLE_PLAYBOOK ?= ../scripts/provisioner.sh ansible-playbook
+ANSIBLE_INVENTORY ?= ../scripts/provisioner.sh ansible-inventory
 
-# Ansible inventory to target — hosts.yml (prod) by default, or
-# hosts.dev.yml for the dev environment:
-#   make deploy-dispatcher INVENTORY=hosts.dev.yml DEPLOY_ENV=dev
+# Select the matching inventory and environment. Each environment owns its
+# executor accounts, service units, configuration, state and installed binaries.
 INVENTORY ?= hosts.yml
-
-# Environment whose vars file is layered on top of group_vars — must match
-# INVENTORY. It decides the names an executor deploy claims on each machine
-# (debuglet-<env> user, /etc/debuglet/executor-<env>, debuglet-executor-<env>
-# unit), so pointing a prod-env run at the dev inventory would take over the
-# prod executor's install. See deploy/ansible/vars/.
 DEPLOY_ENV ?= prod
-ENV_VARS := -e @vars/$(DEPLOY_ENV).yml
+ENV_VARS = -e @vars/$(DEPLOY_ENV).yml
 
 # Build Linux x86_64 binaries via Docker → deploy/dist/
 deploy-build:
@@ -182,62 +285,70 @@ deploy-build:
 # git: deploy/dist/ is gitignored and these are regenerated from the
 # migrations directories on every build, same as the binaries in this
 # directory.
+#
+# goose runs in the pinned provisioner, which is the only tool version a
+# deployment is allowed to have used: the databases go to every managed host,
+# so the migration tool that wrote them is pinned like the rest. deploy/dist is
+# the one directory the container may write to.
+DEPLOY_GOOSE = DEBUGLET_PROVISIONER_WRITE_DIR=$(CURDIR)/deploy/dist \
+	DEBUGLET_PROVISIONER_AS_CALLER=1 deploy/scripts/provisioner.sh goose
 deploy-seed-db:
 	mkdir -p deploy/dist
 	rm -f deploy/dist/executor-seed.db
-	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations \
-		$(GOOSE) sqlite3 deploy/dist/executor-seed.db up
+	$(DEPLOY_GOOSE) -dir /repository/internal/executor/database/migrations \
+		sqlite3 /output/executor-seed.db up
 	rm -f deploy/dist/dispatcher-seed.db
-	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations \
-		$(GOOSE) sqlite3 deploy/dist/dispatcher-seed.db up
+	$(DEPLOY_GOOSE) -dir /repository/internal/dispatcher/database/migrations \
+		sqlite3 /output/dispatcher-seed.db up
 
-# Generate CA + dispatcher + executor TLS certs → deploy/certs/
-# Extracts executor IDs automatically from deploy/ansible/$(INVENTORY).
-# Override by passing EXECUTOR_IDS manually:
-#   make deploy-certs EXECUTOR_IDS="id1 id2"
+# Generate CA + dispatcher + executor TLS certs → deploy/certs/, then install
+# them. Extracts executor IDs from the selected inventory and environment.
+# DISPATCHER_SANS is required: an executor verifies the dispatcher against the
+# name it dialled, so the certificate has to carry it.
+#   make deploy-certs DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10"
+#   make deploy-certs DISPATCHER_SANS=... EXECUTOR_IDS="uuid1 uuid2"
 deploy-certs:
 	chmod +x deploy/scripts/generate-certs.sh
-	@if [ -z "$(EXECUTOR_IDS)" ]; then \
-		EXECUTOR_IDS=$$(cd deploy/ansible && ansible-inventory -i $(INVENTORY) --list 2>/dev/null | python3 -c "\
-import sys, json; \
-inv = json.load(sys.stdin); \
-groups = inv.get('executors', {}).get('children', {}); \
-hosts = [h for g in groups.values() for h in g.get('hosts', {}).keys()]; \
-meta = inv.get('_meta', {}).get('hostvars', {}); \
-ids = [meta.get(h, {}).get('executor_id', h) for h in hosts]; \
-print(' '.join(ids))" 2>/dev/null); \
-		echo "Auto-extracted executor IDs: $$EXECUTOR_IDS"; \
-		deploy/scripts/generate-certs.sh $$EXECUTOR_IDS; \
-	else \
-		deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
+	@if [ -z "$(DISPATCHER_SANS)" ]; then \
+		echo "make deploy-certs requires DISPATCHER_SANS, for example" >&2; \
+		echo "  make deploy-certs DISPATCHER_SANS=\"DNS:dispatcher.example.com\"" >&2; \
+		exit 2; \
 	fi
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) deploy-certs.yml
+	@if [ -z "$(EXECUTOR_IDS)" ]; then \
+		inventory=$$(cd deploy/ansible && $(ANSIBLE_INVENTORY) -i "$(INVENTORY)" $(ENV_VARS) --list) || \
+			{ echo "Could not read Ansible inventory" >&2; exit 1; }; \
+		EXECUTOR_IDS=$$(printf '%s\n' "$$inventory" | python3 deploy/scripts/executor-ids.py) || exit 1; \
+		echo "Auto-extracted executor IDs: $$EXECUTOR_IDS"; \
+		DISPATCHER_SANS="$(DISPATCHER_SANS)" deploy/scripts/generate-certs.sh $$EXECUTOR_IDS; \
+	else \
+		DISPATCHER_SANS="$(DISPATCHER_SANS)" deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
+	fi
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) deploy-certs.yml
 
 # Full deploy: build → dispatcher → all executors
 deploy: deploy-build deploy-seed-db
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) site.yml
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) site.yml
 
 # Deploy only the dispatcher
 deploy-dispatcher: deploy-build deploy-seed-db
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) deploy-dispatcher.yml
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) deploy-dispatcher.yml
 
 # One-time bootstrap: grant passwordless sudo on dispatcher/executor nodes.
 # Run this first on any host whose user requires a sudo password.
-# Example: make bootstrap-sudo LIMIT=ordroid-ethz
-#          make bootstrap-sudo INVENTORY=hosts.dev.yml LIMIT=dispatcher.example.com
+# Example: make bootstrap-sudo LIMIT=executor.example.com
 bootstrap-sudo:
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) bootstrap-sudo.yml -K \
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
 deploy-executors: deploy-build deploy-seed-db
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) deploy-executors.yml \
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) deploy-executors.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Push a new dispatcher address to all running executors (no binary redeploy)
 # Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
 deploy-update-addr:
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) update-dispatcher-addr.yml \
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # Re-render dispatcher + executor configs and restart changed services (no
@@ -246,7 +357,7 @@ deploy-update-addr:
 #          make deploy-update-config DEPLOY_VERSION=v1.2.3
 DEPLOY_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 deploy-update-config:
-	cd deploy/ansible && ansible-playbook -i $(INVENTORY) $(ENV_VARS) update-config.yml \
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml \
 		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
 
 # --------------------------------------------------------------------

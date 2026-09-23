@@ -1,0 +1,36 @@
+# Build context for the images under deploy/docker: debuglet.Dockerfile,
+# which builds the role images from the release payload, and
+# provisioner.Dockerfile, which builds the deployment provisioner.
+#
+# The context is the repository root and deliberately keeps .git: the
+# packaging tool reads the revision from it and refuses a modified checkout.
+# Everything listed here is generated locally, is ignored by git, and is not
+# part of the source the payload is built from. No tracked file matches any of
+# these patterns, so a clean checkout still builds.
+
+.cache
+.ci
+.data
+.venv
+.DS_Store
+deploy/certs
+deploy/dist
+**/__pycache__
+**/*.pyc
+
+# Operator material that a working tree is expected to hold and that must
+# never reach an image layer: the inventories and pinned host identities that
+# name private infrastructure, the certificates the deployment and the local
+# compose rig use, and captured traffic.
+deploy/ansible/hosts.yml
+deploy/ansible/hosts.dev.yml
+deploy/ansible/known_hosts
+deploy/ansible/known_hosts.dev
+deploy/docker/nginx/certs
+local/configs/dispatcher/server.crt
+local/configs/dispatcher/server.key
+local/configs/executor/client.crt
+local/configs/executor/client.key
+**/*.crt
+**/*.key
+**/*.pcap
