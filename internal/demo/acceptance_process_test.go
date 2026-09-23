@@ -508,9 +508,10 @@ func captureCLIState(track *ownership, cliPID int, tmp string, assets Assets) (p
 				continue
 			}
 			if name == "dispatcher-ready.json" && p.Executable == assets.Dispatcher && validateAddress(record.HTTPAddr) == nil && validateAddress(record.GRPCAddr) == nil {
-				// Readiness can appear after this poll's child enumeration.
-				// Capture the now-bound daemon sockets before SIGINT can close
-				// them; waiting for the next poll would lose valid evidence.
+				// Readiness can appear after this poll's initial socket capture.
+				// Capture the CLI target and daemon sockets before SIGINT can
+				// close them; waiting for the next poll would lose valid evidence.
+				track.captureListeners(cliPID, "")
 				track.captureListeners(p.PID, "")
 				dispatcher = p
 				found = true
