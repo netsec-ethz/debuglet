@@ -202,7 +202,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -272,7 +272,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -347,7 +347,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -432,7 +432,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -512,7 +512,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -988,7 +988,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -1051,7 +1051,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -1267,7 +1267,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."

@@ -169,4 +169,15 @@ func TestRequestBodyLimit(t *testing.T) {
 			t.Fatalf("GET /version without a body: status = %d, want %d; body %s", status, http.StatusOK, body)
 		}
 	})
+
+	t.Run("every registered route", func(t *testing.T) {
+		values := strings.NewReplacer(":id", "00000000-0000-0000-0000-000000000000", ":transaction_id", "bl-transaction")
+		for _, route := range f.routes {
+			t.Run(route, func(t *testing.T) {
+				method, path, _ := strings.Cut(route, " ")
+				status, header, body := blSend(t, f, root, method, f.root.URL+values.Replace(path), intentOver, false)
+				blAssertTooLarge(t, status, header, body)
+			})
+		}
+	})
 }
