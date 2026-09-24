@@ -1396,8 +1396,8 @@ func TestLoweredRateDelaysWaitingWrite(t *testing.T) {
 
 // Regression: a rate raised while a write waited had no effect until the wait
 // computed under the old rate ran out. The write now observes the new
-// permission without any other event: its reservation is taken again, and it
-// waits for what the bucket still owes at the new rate.
+// permission without any other event: its wait is recomputed, and it waits
+// for what the bucket still owes at the new rate.
 func TestRaisedRateShortensWaitingWrite(t *testing.T) {
 	const (
 		oldBytes  = 1   // per second: the write below waits 30s
@@ -1482,7 +1482,7 @@ func TestRevokedRateFailsWaitingWrite(t *testing.T) {
 		{
 			name:     "destination zero",
 			revoke:   func(fc *FallbackConn) error { return fc.count.SetLimit(testAddr, fc.id, 0) },
-			wantErr:  func(err error) bool { return errors.Is(err, ErrEmptyWrite) },
+			wantErr:  func(err error) bool { return err != nil && strings.Contains(err.Error(), "no dest rate") },
 			destLeft: true,
 			execLeft: true,
 		},
@@ -1602,9 +1602,9 @@ func TestRateUpdatesDuringCanceledWaitConserveAccounting(t *testing.T) {
 	}
 }
 
-// A datagram waiting for its reservation is taken again whole when the rate
-// moves: once the rate is raised it leaves as one write, well before the old
-// rate would have allowed it.
+// A datagram waiting for its reservation keeps it whole when the rate moves:
+// once the rate is raised it leaves as one write, well before the old rate
+// would have allowed it.
 func TestRaisedRateReleasesWaitingDatagramWhole(t *testing.T) {
 	const (
 		oldBytes = 10 // per second: the full bucket holds a third of the datagram
@@ -1740,8 +1740,8 @@ func TestZeroRateRefusesDatagram(t *testing.T) {
 			if err := fc.count.SetLimit(testAddr, fc.id, 0); err != nil {
 				t.Fatalf("SetLimit: %v", err)
 			}
-			if n, err := tc.run(fc); n != 0 || !errors.Is(err, ErrEmptyWrite) {
-				t.Fatalf("%s = (%d, %v), want (0, %v)", tc.name, n, err, ErrEmptyWrite)
+			if n, err := tc.run(fc); n != 0 || err == nil || !strings.Contains(err.Error(), "no dest rate") {
+				t.Fatalf("%s = (%d, %v), want (0, the no dest rate error)", tc.name, n, err)
 			}
 			if reads, _ := raw.reads(); reads != 0 {
 				t.Fatalf("underlying reads = %d, want 0", reads)
@@ -1799,5 +1799,58 @@ func TestDatagramWriteResult(t *testing.T) {
 			}
 			assertTokens(t, fc, app.FromBytes(destBytes-tc.charged), app.FromBytes(execBytes-tc.charged))
 		})
+	}
+}
+
+// Regression: a rate change woke a datagram waiting for a reservation beyond
+// one second of the rate, and the reservation was given back and taken again.
+// The refund is capped at one second of the rate, so the wait already served
+// was lost and the datagram waited for the whole deficit once more. A change
+// that does not shorten what it owes now leaves its release where it was.
+func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
+	const (
+		destBytes = 10 // per second: the full bucket holds a third of the datagram
+		size      = 30
+		execBytes = 1 << 20
+		wakeAfter = 1500 * time.Millisecond
+		margin    = 750 * time.Millisecond
+	)
+	raw := newScriptedConn(nil)
+	raw.network = "udp"
+	fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+	owed := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+
+	var (
+		n    int
+		err  error
+		done = make(chan struct{})
+	)
+	start := time.Now()
+	go func() {
+		defer close(done)
+		n, err = fc.Write(bytes.Repeat([]byte{'d'}, size))
+	}()
+	waitUntil(t, func() bool {
+		dest, ok, _, _ := bucketTokens(fc)
+		return ok && dest < 0
+	}, "reservation by the waiting datagram")
+	time.Sleep(time.Until(start.Add(wakeAfter)))
+	if err := fc.count.SetExecLimit(fc.id, app.FromBytes(execBytes/2)); err != nil {
+		t.Fatalf("SetExecLimit: %v", err)
+	}
+	waitBounded(t, done, "datagram after the executor rate moved", func() { _ = fc.Close() })
+	elapsed := time.Since(start)
+
+	if n != size || err != nil {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
+	}
+	if writes := raw.written(); len(writes) != 1 || len(writes[0]) != size {
+		t.Fatalf("underlying writes = %d, want one write of the whole %d-byte datagram", len(writes), size)
+	}
+	if elapsed < owed {
+		t.Errorf("datagram released after %v, want at least the %v the deficit takes", elapsed, owed)
+	}
+	if elapsed > owed+margin {
+		t.Errorf("datagram released after %v, want at most %v: the wait served before the rate change was lost", elapsed, owed+margin)
 	}
 }

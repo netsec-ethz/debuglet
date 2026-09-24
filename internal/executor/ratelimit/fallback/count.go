@@ -31,6 +31,27 @@ type bucketState struct {
 	last   time.Time
 }
 
+// refill credits b for the time since it was last updated at rate, up to one
+// second of rate, and moves it to now.
+func (b *bucketState) refill(now time.Time, rate app.Bitrate) {
+	b.tokens = min(rate, b.tokens+app.Bitrate(now.Sub(b.last).Seconds()*float64(rate)))
+	b.last = now
+}
+
+// bucketLocked returns the bucket under key refilled up to now at rate. A
+// missing bucket is created full and reported as created. The count's mu
+// must be held.
+func bucketLocked[K comparable](buckets map[K]*bucketState, key K, rate app.Bitrate, now time.Time) (*bucketState, bool) {
+	b, ok := buckets[key]
+	if !ok {
+		b = &bucketState{last: now, tokens: rate}
+		buckets[key] = b
+		return b, true
+	}
+	b.refill(now, rate)
+	return b, false
+}
+
 type FallbackCount struct {
 	// The current amount of bandwidth being used
 	packetSize     map[debugletKey]*bucketState
@@ -41,7 +62,7 @@ type FallbackCount struct {
 	// ratesChanged is closed and replaced whenever a rate moves or is
 	// deleted. A reservation keeps the channel that was current when it was
 	// taken, so a wait computed under rates that no longer hold is woken and
-	// taken again (see FallbackConn.admit).
+	// recomputed (see FallbackConn.admit).
 	ratesChanged chan struct{}
 
 	domainIPs map[domainKey]map[netutil.IPv6]int
@@ -123,10 +144,14 @@ func (f *FallbackCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	old, ok := f.execRates[id]
-	f.execRates[id] = limit
 	if ok && old != limit {
+		// Settled at the old rate first, as in setRateLocked.
+		if eb, ok := f.execPacketSize[id]; ok {
+			eb.refill(time.Now(), old)
+		}
 		f.ratesChangedLocked()
 	}
+	f.execRates[id] = limit
 	return nil
 }
 
@@ -151,17 +176,23 @@ func (f *FallbackCount) DeleteExecLimit(id uuid.UUID) error {
 
 // setRateLocked stores the destination rate for key. A rate that moves wakes
 // the waiting reservations; a rate set for the first time has no reservation
-// taken under it yet. f.mu must be held.
+// taken under it yet. Every interval is credited at the rate in force during
+// it: the bucket is settled up to now at the old rate before the new one is
+// stored, so a waiting reservation pays the old rate until the change and the
+// new rate after it. f.mu must be held.
 func (f *FallbackCount) setRateLocked(key debugletKey, limit app.Bitrate) {
 	old, ok := f.rates[key]
-	f.rates[key] = limit
 	if ok && old != limit {
+		if b, ok := f.packetSize[key]; ok {
+			b.refill(time.Now(), old)
+		}
 		f.ratesChangedLocked()
 	}
+	f.rates[key] = limit
 }
 
 // ratesChangedLocked wakes every reservation waiting under the rates in force
-// until now, so that it is taken again under the current ones. f.mu must be
+// until now, so that its wait is recomputed under the current ones. f.mu must be
 // held.
 func (f *FallbackCount) ratesChangedLocked() {
 	close(f.ratesChanged)

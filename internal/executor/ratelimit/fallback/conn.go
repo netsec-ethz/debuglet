@@ -4,7 +4,6 @@
 package fallback
 
 import (
-	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
@@ -16,10 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-)
-
-var (
-	ErrEmptyWrite = errors.New("write size is empty (=0)")
 )
 
 type FallbackConn struct {
@@ -233,10 +228,11 @@ func (f *FallbackConn) Close() error {
 // admit reserves bandwidth for up to size bytes and sleeps until the
 // reservation may be used. The caller must hold the corresponding I/O lock. A reservation that is
 // canceled by a deadline or by Close is refunded in full before the error is
-// returned. A reservation whose rates change while it sleeps is refunded and
-// taken again under the current rates, so a lowered or revoked rate never
-// admits I/O under the old one and a raised rate shortens the sleep. The I/O
-// lock stays held throughout, so the caller keeps its place.
+// returned. A reservation whose rates change while it sleeps keeps its charge
+// and has its remaining wait recomputed under the current rates, so a lowered
+// or revoked rate never admits I/O under the old one, a raised rate shortens
+// the sleep, and the wait already served is never lost. The I/O lock stays
+// held throughout, so the caller keeps its place.
 func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 	r, err := f.reserve(size)
 	if err != nil {
@@ -278,11 +274,11 @@ func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 			return r, nil
 		case limiterChanged:
 		case limiterRatesChanged:
-			// The wait was computed under rates that no longer hold. A new
-			// wait of zero still goes round once more, so Close and the
-			// deadline are checked before the I/O as after any other wait.
-			r.free()
-			if r, err = f.reserve(size); err != nil {
+			// The wait was computed under rates that no longer hold. A
+			// recomputed wait of zero still goes round once more, so Close
+			// and the deadline are checked before the I/O as after any other
+			// wait.
+			if err := r.reevaluate(); err != nil {
 				return nil, fmt.Errorf("failed to reserve: %w", err)
 			}
 			readyAt = time.Now().Add(r.waitFor)
@@ -314,8 +310,8 @@ type reservation struct {
 	allocated int
 	// Amount of time to sleep before writing.
 	waitFor time.Duration
-	// ratesChanged is closed when a rate changes after the reservation was
-	// taken, which makes waitFor stale.
+	// ratesChanged is closed when a rate changes after waitFor was computed,
+	// which makes waitFor stale until it is recomputed.
 	ratesChanged <-chan struct{}
 
 	conn *FallbackConn
@@ -350,73 +346,78 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 	if f.closed {
 		return nil, net.ErrClosed
 	}
-	key := debugletKey{id: f.id, dest: f.ipv6}
-
-	rate, ok := f.count.rates[key]
-	if !ok {
-		return nil, fmt.Errorf("no dest rate allowed for addr '%s'", f.ipv6.String())
-	}
-	execRate, ok := f.count.execRates[f.id]
-	if !ok {
-		return nil, fmt.Errorf("no exec rate allowed for addr '%s'", f.ipv6.String())
+	rate, execRate, err := f.ratesLocked()
+	if err != nil {
+		return nil, err
 	}
 
-	maxWrite := min(rate, execRate).Bytes()
-	toWrite := min(size, maxWrite)
-	if f.datagram && maxWrite > 0 {
+	// Both rates are positive, so at least one byte is admitted.
+	toWrite := min(size, min(rate, execRate).Bytes())
+	if f.datagram {
 		// A datagram is reserved whole, because no part of it can be sent or
 		// received on its own. Beyond one second of the rate it waits for the
-		// deficit like any other reservation; a rate of zero still admits
-		// nothing.
+		// deficit like any other reservation.
 		toWrite = size
 	}
-	if toWrite == 0 {
-		return nil, ErrEmptyWrite
-	}
-	now := time.Now()
+	r := &reservation{allocated: toWrite, conn: f}
+	r.chargeLocked(rate, execRate, true)
+	return r, nil
+}
 
-	// token buckets
-	// dest
-	b, ok := f.count.packetSize[key]
-	if !ok {
-		b = &bucketState{last: now, tokens: rate}
-		f.count.packetSize[key] = b
-	} else { // fill up token bucket
-		delta := now.Sub(b.last)
-		b.tokens = min(rate, b.tokens+app.Bitrate(delta.Seconds()*float64(rate)))
-		b.last = now
+// ratesLocked returns the destination and executor rates of f. A missing rate
+// and a rate of zero both admit nothing. count.mu must be held.
+func (f *FallbackConn) ratesLocked() (app.Bitrate, app.Bitrate, error) {
+	rate, ok := f.count.rates[debugletKey{id: f.id, dest: f.ipv6}]
+	if !ok || rate <= 0 {
+		return 0, 0, fmt.Errorf("no dest rate allowed for addr '%s'", f.ipv6.String())
 	}
-	// exec
-	eb, ok := f.count.execPacketSize[f.id]
-	if !ok {
-		eb = &bucketState{last: now, tokens: execRate}
-		f.count.execPacketSize[f.id] = eb
-	} else { // fill up token bucket
-		delta := now.Sub(eb.last)
-		eb.tokens = min(execRate, eb.tokens+app.Bitrate(delta.Seconds()*float64(execRate)))
-		eb.last = now
+	execRate, ok := f.count.execRates[f.id]
+	if !ok || execRate <= 0 {
+		return 0, 0, fmt.Errorf("no exec rate allowed for addr '%s'", f.ipv6.String())
 	}
+	return rate, execRate, nil
+}
 
-	// compute how long we have to sleep for and allocate the tokens
-	reserved := app.FromBytes(toWrite)
-	var waitFor, execWaitFor time.Duration
-	if deficit := reserved - b.tokens; deficit > 0 {
-		waitFor = tokenWait(deficit, rate)
+// chargeLocked refills both buckets up to now at the current rates, charges
+// the reservation to every bucket that does not hold it yet, and computes how
+// long it must still wait under these rates. A new reservation charges both
+// buckets; a recomputed one only a bucket that was deleted and created again
+// since, which lost the charge with the old bucket. count.mu must be held.
+func (r *reservation) chargeLocked(rate, execRate app.Bitrate, charge bool) {
+	count, now := r.conn.count, time.Now()
+	reserved := app.FromBytes(r.allocated)
+	b, created := bucketLocked(count.packetSize, debugletKey{id: r.conn.id, dest: r.conn.ipv6}, rate, now)
+	if charge || created {
+		b.tokens -= reserved
 	}
-	b.tokens -= reserved
+	eb, created := bucketLocked(count.execPacketSize, r.conn.id, execRate, now)
+	if charge || created {
+		eb.tokens -= reserved
+	}
+	r.waitFor = max(tokenWait(-b.tokens, rate), tokenWait(-eb.tokens, execRate))
+	r.ratesChanged = count.ratesChanged
+}
 
-	if deficit := reserved - eb.tokens; deficit > 0 {
-		execWaitFor = tokenWait(deficit, execRate)
+// reevaluate recomputes the remaining wait of r after a rate change. The
+// charge stays in the buckets, so the wait already served is kept and no
+// other reservation can take the bandwidth in between. A closed connection
+// or a rate that no longer admits anything gives the reservation back and
+// returns the error a new reservation gets.
+func (r *reservation) reevaluate() error {
+	f := r.conn
+	f.count.mu.Lock()
+	defer f.count.mu.Unlock()
+	if f.closed {
+		r.refundLocked(r.allocated)
+		return net.ErrClosed
 	}
-	eb.tokens -= reserved
-
-	resv := &reservation{
-		allocated:    toWrite,
-		waitFor:      max(waitFor, execWaitFor),
-		ratesChanged: f.count.ratesChanged,
-		conn:         f,
+	rate, execRate, err := f.ratesLocked()
+	if err != nil {
+		r.refundLocked(r.allocated)
+		return err
 	}
-	return resv, nil
+	r.chargeLocked(rate, execRate, false)
+	return nil
 }
 
 // free reverts the whole reservation, for example when the wait is canceled.
@@ -433,10 +434,14 @@ func (r *reservation) refund(unused int) {
 	if unused <= 0 {
 		return
 	}
-	count := r.conn.count
-	count.mu.Lock()
-	defer count.mu.Unlock()
+	r.conn.count.mu.Lock()
+	defer r.conn.count.mu.Unlock()
+	r.refundLocked(unused)
+}
 
+// refundLocked is refund with count.mu held.
+func (r *reservation) refundLocked(unused int) {
+	count := r.conn.count
 	key := debugletKey{id: r.conn.id, dest: r.conn.ipv6}
 	if b, ok := count.packetSize[key]; ok {
 		if rate, ok := count.rates[key]; ok {
