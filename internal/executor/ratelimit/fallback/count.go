@@ -9,6 +9,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,11 @@ type FallbackCount struct {
 	// The maximum allowed bandwidth rates
 	rates     map[debugletKey]app.Bitrate
 	execRates map[uuid.UUID]app.Bitrate
+	// ratesChanged is closed and replaced whenever a rate moves or is
+	// deleted. A reservation keeps the channel that was current when it was
+	// taken, so a wait computed under rates that no longer hold is woken and
+	// taken again (see FallbackConn.admit).
+	ratesChanged chan struct{}
 
 	domainIPs map[domainKey]map[netutil.IPv6]int
 	attached  map[debugletKey]int
@@ -51,6 +57,7 @@ func NewFallbackCount() (*FallbackCount, error) {
 		rates:          make(map[debugletKey]app.Bitrate),
 		execRates:      make(map[uuid.UUID]app.Bitrate),
 		attached:       make(map[debugletKey]int),
+		ratesChanged:   make(chan struct{}),
 	}, nil
 }
 
@@ -64,6 +71,8 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 		return nil, fmt.Errorf("invalid address: %w", err)
 	}
 	ipv6 := netutil.ToIPv6(remoteIP)
+	local := conn.LocalAddr()
+	datagram := local != nil && strings.HasPrefix(local.Network(), "udp")
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -84,6 +93,7 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 		writeMu:              NewFIFOLock(),
 		ipv6:                 ipv6,
 		addr:                 addr,
+		datagram:             datagram,
 		close:                make(chan struct{}),
 		readDeadlineChanged:  make(chan struct{}),
 		writeDeadlineChanged: make(chan struct{}),
@@ -97,14 +107,14 @@ func (f *FallbackCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) e
 	if err == nil {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.rates[debugletKey{id: id, dest: netutil.ToIPv6(parsedIP)}] = limit
+		f.setRateLocked(debugletKey{id: id, dest: netutil.ToIPv6(parsedIP)}, limit)
 		return nil
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for ipv6 := range f.domainIPs[domainKey{domain: addr, id: id}] {
-		f.rates[debugletKey{id: id, dest: ipv6}] = limit
+		f.setRateLocked(debugletKey{id: id, dest: ipv6}, limit)
 	}
 	return nil
 }
@@ -112,7 +122,11 @@ func (f *FallbackCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) e
 func (f *FallbackCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	old, ok := f.execRates[id]
 	f.execRates[id] = limit
+	if ok && old != limit {
+		f.ratesChangedLocked()
+	}
 	return nil
 }
 
@@ -122,6 +136,7 @@ func (f *FallbackCount) DeleteLimit(addr netutil.IPv6, id uuid.UUID) error {
 	k := debugletKey{id: id, dest: addr}
 	delete(f.rates, k)
 	delete(f.packetSize, k)
+	f.ratesChangedLocked()
 	return nil
 }
 
@@ -130,7 +145,27 @@ func (f *FallbackCount) DeleteExecLimit(id uuid.UUID) error {
 	defer f.mu.Unlock()
 	delete(f.execRates, id)
 	delete(f.execPacketSize, id)
+	f.ratesChangedLocked()
 	return nil
+}
+
+// setRateLocked stores the destination rate for key. A rate that moves wakes
+// the waiting reservations; a rate set for the first time has no reservation
+// taken under it yet. f.mu must be held.
+func (f *FallbackCount) setRateLocked(key debugletKey, limit app.Bitrate) {
+	old, ok := f.rates[key]
+	f.rates[key] = limit
+	if ok && old != limit {
+		f.ratesChangedLocked()
+	}
+}
+
+// ratesChangedLocked wakes every reservation waiting under the rates in force
+// until now, so that it is taken again under the current ones. f.mu must be
+// held.
+func (f *FallbackCount) ratesChangedLocked() {
+	close(f.ratesChanged)
+	f.ratesChanged = make(chan struct{})
 }
 
 func (f *FallbackCount) Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error {

@@ -34,13 +34,17 @@ type FallbackConn struct {
 	// closed is protected by count.mu so admission and detach observe one
 	// connection lifecycle order.
 	closed bool
+	// datagram is set for a connection whose socket carries datagrams: every
+	// Read and Write is then admitted whole and is exactly one socket call,
+	// so one datagram stays one datagram.
+	datagram bool
 
 	deadlineMu           sync.Mutex
 	readDeadline         time.Time
 	writeDeadline        time.Time
 	readDeadlineChanged  chan struct{}
 	writeDeadlineChanged chan struct{}
-	waitForLimiter       func(time.Duration, <-chan struct{}, <-chan struct{}) limiterWaitResult
+	waitForLimiter       func(time.Duration, <-chan struct{}, <-chan struct{}, <-chan struct{}) limiterWaitResult
 	once                 sync.Once
 }
 
@@ -49,10 +53,11 @@ type limiterWaitResult uint8
 const (
 	limiterReady limiterWaitResult = iota
 	limiterChanged
+	limiterRatesChanged
 	limiterClosed
 )
 
-func waitForLimiter(duration time.Duration, changed, closed <-chan struct{}) limiterWaitResult {
+func waitForLimiter(duration time.Duration, changed, ratesChanged, closed <-chan struct{}) limiterWaitResult {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 	select {
@@ -60,6 +65,8 @@ func waitForLimiter(duration time.Duration, changed, closed <-chan struct{}) lim
 		return limiterReady
 	case <-changed:
 		return limiterChanged
+	case <-ratesChanged:
+		return limiterRatesChanged
 	case <-closed:
 		return limiterClosed
 	}
@@ -123,7 +130,10 @@ func (f *FallbackConn) Read(b []byte) (n int, err error) {
 
 	// Exactly one underlying read, returned unchanged: a short read, data
 	// returned together with an error, (n>0, io.EOF) and (0, nil) are all
-	// passed through. Stream interpretation belongs to the host layer.
+	// passed through. Stream interpretation belongs to the host layer. A
+	// datagram connection reserved the whole buffer, so the datagram is read
+	// into all of it: the limiter never truncates a datagram, and one longer
+	// than the caller's buffer is truncated by the socket as usual.
 	n, err = f.conn.Read(b[:r.allocated])
 	r.refund(r.allocated - n)
 	return n, err
@@ -136,6 +146,10 @@ func (f *FallbackConn) Write(b []byte) (int, error) {
 		return 0, err
 	}
 	defer f.writeMu.Unlock()
+
+	if f.datagram {
+		return f.writeDatagram(b)
+	}
 
 	var n int
 	for len(b) > 0 {
@@ -166,6 +180,36 @@ func (f *FallbackConn) Write(b []byte) (int, error) {
 	return n, nil
 }
 
+// writeDatagram sends b as exactly one datagram with one underlying write.
+// The whole payload is reserved at once, even when it is larger than one
+// second of the rate, in which case the write waits for the deficit. An empty
+// datagram needs no bandwidth and is still sent. The limiter never splits or
+// truncates a datagram: one the socket cannot send, such as one larger than
+// the largest datagram, fails with the socket's own error.
+func (f *FallbackConn) writeDatagram(b []byte) (int, error) {
+	if len(b) == 0 {
+		return f.conn.Write(b)
+	}
+	r, err := f.admit(len(b), true)
+	if err != nil {
+		return 0, err
+	}
+
+	n, err := f.conn.Write(b)
+	if n < 0 || n > len(b) {
+		if err != nil {
+			return 0, fmt.Errorf("invalid write count %d: %w", n, err)
+		}
+		return 0, fmt.Errorf("invalid write count %d", n)
+	}
+	r.refund(len(b) - n)
+	if err == nil && n < len(b) {
+		// The rest cannot follow without becoming a second datagram.
+		err = io.ErrShortWrite
+	}
+	return n, err
+}
+
 func (f *FallbackConn) deadlineState(write bool) (time.Time, <-chan struct{}) {
 	f.deadlineMu.Lock()
 	defer f.deadlineMu.Unlock()
@@ -189,7 +233,10 @@ func (f *FallbackConn) Close() error {
 // admit reserves bandwidth for up to size bytes and sleeps until the
 // reservation may be used. The caller must hold the corresponding I/O lock. A reservation that is
 // canceled by a deadline or by Close is refunded in full before the error is
-// returned.
+// returned. A reservation whose rates change while it sleeps is refunded and
+// taken again under the current rates, so a lowered or revoked rate never
+// admits I/O under the old one and a raised rate shortens the sleep. The I/O
+// lock stays held throughout, so the caller keeps its place.
 func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 	r, err := f.reserve(size)
 	if err != nil {
@@ -219,7 +266,7 @@ func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 			wakeAt = deadline
 			deadlineWake = true
 		}
-		switch f.waitForLimiter(time.Until(wakeAt), changed, f.close) {
+		switch f.waitForLimiter(time.Until(wakeAt), changed, r.ratesChanged, f.close) {
 		case limiterReady:
 			if err := f.waitCompletionError(write); err != nil {
 				r.free()
@@ -230,6 +277,15 @@ func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 			}
 			return r, nil
 		case limiterChanged:
+		case limiterRatesChanged:
+			// The wait was computed under rates that no longer hold. A new
+			// wait of zero still goes round once more, so Close and the
+			// deadline are checked before the I/O as after any other wait.
+			r.free()
+			if r, err = f.reserve(size); err != nil {
+				return nil, fmt.Errorf("failed to reserve: %w", err)
+			}
+			readyAt = time.Now().Add(r.waitFor)
 		case limiterClosed:
 			r.free()
 			return nil, net.ErrClosed
@@ -258,6 +314,9 @@ type reservation struct {
 	allocated int
 	// Amount of time to sleep before writing.
 	waitFor time.Duration
+	// ratesChanged is closed when a rate changes after the reservation was
+	// taken, which makes waitFor stale.
+	ratesChanged <-chan struct{}
 
 	conn *FallbackConn
 }
@@ -304,6 +363,13 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 
 	maxWrite := min(rate, execRate).Bytes()
 	toWrite := min(size, maxWrite)
+	if f.datagram && maxWrite > 0 {
+		// A datagram is reserved whole, because no part of it can be sent or
+		// received on its own. Beyond one second of the rate it waits for the
+		// deficit like any other reservation; a rate of zero still admits
+		// nothing.
+		toWrite = size
+	}
 	if toWrite == 0 {
 		return nil, ErrEmptyWrite
 	}
@@ -332,7 +398,6 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 	}
 
 	// compute how long we have to sleep for and allocate the tokens
-	// NOTE: this does not handle the case where rates are updated while sleeping
 	reserved := app.FromBytes(toWrite)
 	var waitFor, execWaitFor time.Duration
 	if deficit := reserved - b.tokens; deficit > 0 {
@@ -346,9 +411,10 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 	eb.tokens -= reserved
 
 	resv := &reservation{
-		allocated: toWrite,
-		waitFor:   max(waitFor, execWaitFor),
-		conn:      f,
+		allocated:    toWrite,
+		waitFor:      max(waitFor, execWaitFor),
+		ratesChanged: f.count.ratesChanged,
+		conn:         f,
 	}
 	return resv, nil
 }
