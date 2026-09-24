@@ -479,7 +479,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: "The executor acknowledged the cancellation but the dispatcher could not record its result (internal_error). The debuglet may be stopping while its recorded state does not show the cancellation; read its state before deciding, and repeat the cancellation to record it."
+          description: "The executor acknowledged the cancellation but the dispatcher could not record its result, or could not confirm that it did (internal_error). The debuglet may be stopping even if its recorded state does not show the cancellation; read its state before deciding, and repeat the cancellation to record it."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
