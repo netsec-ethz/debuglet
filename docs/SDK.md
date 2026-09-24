@@ -35,7 +35,7 @@ func (c *Client) Whoami(ctx context.Context) (User, error)
 func (c *Client) WithCredential(token string) (*Client, error)
 ```
 
-Types mirror the dispatcher's JSON keys (`order_id`, `executor_id`, `floor_bw`, `timeout_ms`, `tesla_anchor_key`, `has_more`, ...). `State.State` is an opaque string; `client.StateExited` (`RunStateExited`) is the terminal value. An exited debuglet with an empty `Error` succeeded; a nonempty `Error` is a workload failure such as `debuglet exited with code 7`.
+Types mirror the dispatcher's JSON keys (`order_id`, `executor_id`, `floor_bw`, `timeout_ms`, `tesla_anchor_key`, `has_more`, ...). `State.State` is an opaque string; `client.StateExited` (`RunStateExited`) is the terminal value. An exited debuglet with an empty `Error` succeeded; a nonempty `Error` is a workload failure such as `debuglet exited with code 7`, `timeout of 30s exceeded`, `cancelled via API`, `destination refused: ...`, `module does not compile: ...` or `debuglet failed; the executor log has the details` ([the recorded results](API.md#units-and-limits)), and it is one bounded line that the client preserves verbatim.
 
 ## API contract version
 

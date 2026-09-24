@@ -3,12 +3,19 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"github.com/tetratelabs/wazero/sys"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -58,11 +65,13 @@ func (e *Executor) endDelivery(id uuid.UUID) {
 // under the run's immutable identity, and then tries to deliver it. Successful
 // retention preserves evidence after a lost response or connection. A failed
 // retention write is logged but does not prevent execution storage deletion.
+// A failure's whole outcome is logged here under the run ID; the result that
+// is retained and delivered carries only its public classification.
 func (e *Executor) reportDebugletExit(op *debugletOperation, spec scheduler.Spec) {
 	request := &pb.DebugletExitRequest{DebugletId: spec.DebugletID.String()}
 	if op.outcome != nil {
 		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID.String()), zap.Error(op.outcome))
-		message := op.outcome.Error()
+		message := publicOutcome(op.outcome)
 		request.ExitCode, request.ErrorMessage = -1, &message
 	}
 	// Reporting is bounded and independent of execution cancellation. Its
@@ -86,6 +95,80 @@ func (e *Executor) reportDebugletExit(op *debugletOperation, spec scheduler.Spec
 		}
 	}
 	e.settleDebugletExit(reportCtx, retention, retained, spec.DebugletID, spec.Binding, request)
+}
+
+const (
+	// maxPublicOutcome bounds the text a failed run reports, before the "..."
+	// that marks a cut.
+	maxPublicOutcome = 256
+	// failedOutcome is the result of a failure the executor does not attribute
+	// to the run itself.
+	failedOutcome = "debuglet failed; the executor log has the details"
+)
+
+// abortReason is the cause of a run the dispatcher aborted with a reason. The
+// reason is the dispatcher's own text, and the run reports it as given.
+type abortReason struct{ reason string }
+
+func (a abortReason) Error() string { return a.reason }
+
+// policyTimeout is the cause of a run that used up its policy's timeout.
+type policyTimeout struct{ budget time.Duration }
+
+func (p policyTimeout) Error() string { return fmt.Sprintf("timeout of %s exceeded", p.budget) }
+
+// publicOutcome classifies a failed run's outcome into the result its owner
+// reads: an abort reason, the policy timeout, the guest's exit code, a refused
+// destination, a module that does not compile, or a cancellation. Any other
+// failure is the executor's own, and its text can carry the executor's
+// addresses, its configuration and the stack traces wazero attaches to a
+// failing host call; it reports failedOutcome. A trap is among them, because
+// wazero reports it through a type no other package can match.
+func publicOutcome(outcome error) string {
+	var (
+		abort   abortReason
+		timeout policyTimeout
+		exit    *sys.ExitError
+		compile *debuglet.CompileError
+	)
+	text := failedOutcome
+	switch {
+	case errors.As(outcome, &abort):
+		text = abort.reason
+	case errors.As(outcome, &timeout):
+		text = timeout.Error()
+	case errors.As(outcome, &exit) && exit.ExitCode() != sys.ExitCodeContextCanceled && exit.ExitCode() != sys.ExitCodeDeadlineExceeded:
+		text = fmt.Sprintf("debuglet exited with code %d", exit.ExitCode())
+	case errors.Is(outcome, netpolicy.ErrNotInPolicy):
+		text = "destination refused: " + netpolicy.ErrNotInPolicy.Error()
+	case errors.Is(outcome, netpolicy.ErrDenied):
+		text = "destination refused: " + netpolicy.ErrDenied.Error()
+	case errors.Is(outcome, netpolicy.ErrTransportUnavailable):
+		text = "destination refused: " + netpolicy.ErrTransportUnavailable.Error()
+	case errors.As(outcome, &compile):
+		text = "module does not compile: " + compile.Err.Error()
+	case errors.Is(outcome, context.Canceled):
+		text = "debuglet cancelled"
+	}
+	return publicLine(text, maxPublicOutcome)
+}
+
+// publicLine returns text as one line of valid UTF-8: an invalid byte becomes
+// the replacement character, a control character a space, and text longer
+// than limit bytes is cut on a rune boundary and marked with "...".
+func publicLine(text string, limit int) string {
+	var line strings.Builder
+	for _, r := range text { // An invalid byte ranges as utf8.RuneError.
+		if unicode.IsControl(r) {
+			r = ' '
+		}
+		if line.Len()+utf8.RuneLen(r) > limit {
+			line.WriteString("...")
+			break
+		}
+		line.WriteRune(r)
+	}
+	return line.String()
 }
 
 // settleDebugletExit delivers one already chosen result and records what the

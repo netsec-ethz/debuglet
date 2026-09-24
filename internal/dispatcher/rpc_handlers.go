@@ -16,7 +16,10 @@ import (
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"io"
 	"maps"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -255,18 +258,42 @@ func destinationSet(addresses []string) map[string]struct{} {
 	return set
 }
 
+// maxTerminalError bounds a stored error message, before the "..." that marks
+// a cut.
+const maxTerminalError = 512
+
 // terminalError normalizes an executor's exit report into the stored error
-// column: a supplied nonempty message is preserved verbatim; otherwise a
-// nonzero exit code becomes "debuglet exited with code N" and a zero exit
-// stores SQL NULL. A zero exit with a nonempty message is therefore a failure.
+// column: a supplied nonempty message is stored as one bounded line (see
+// terminalLine); otherwise a nonzero exit code becomes "debuglet exited with
+// code N" and a zero exit stores SQL NULL. A zero exit with a nonempty message
+// is therefore a failure.
 func terminalError(exitCode int32, errMsg *string) sql.NullString {
 	if errMsg != nil && *errMsg != "" {
-		return sql.NullString{String: *errMsg, Valid: true}
+		return sql.NullString{String: terminalLine(*errMsg), Valid: true}
 	}
 	if exitCode != 0 {
 		return sql.NullString{String: fmt.Sprintf("debuglet exited with code %d", exitCode), Valid: true}
 	}
 	return sql.NullString{}
+}
+
+// terminalLine returns message as one line of valid UTF-8: an invalid byte
+// becomes the replacement character, a control character a space, and a
+// message longer than maxTerminalError bytes is cut on a rune boundary and
+// marked with "...".
+func terminalLine(message string) string {
+	var line strings.Builder
+	for _, r := range message { // An invalid byte ranges as utf8.RuneError.
+		if unicode.IsControl(r) {
+			r = ' '
+		}
+		if line.Len()+utf8.RuneLen(r) > maxTerminalError {
+			line.WriteString("...")
+			break
+		}
+		line.WriteRune(r)
+	}
+	return line.String()
 }
 
 // OnDebugletExit handles the exit of a debuglet, cleaning up its state and notifying any connected log streams.

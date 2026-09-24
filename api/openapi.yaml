@@ -1562,7 +1562,7 @@ components:
           description: "Opaque run state. RunStateExited is terminal."
         error:
           type: string
-          description: "Recorded workload error. Empty when the run has not failed."
+          description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Empty when the run has not failed."
         executor_id:
           type: string
     DebugletLogsResponse:
@@ -1579,7 +1579,7 @@ components:
           description: "Opaque run state at the time of the query."
         error:
           type: string
-          description: "Recorded workload error. Absent when empty."
+          description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Absent when empty."
         after:
           type: integer
           format: int64

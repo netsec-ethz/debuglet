@@ -318,7 +318,7 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 		}
 	})
 	report := operationReport(t, peer, id)
-	if report.GetExitCode() == 0 || !strings.Contains(report.GetErrorMessage(), "allocate destination") {
+	if report.GetExitCode() == 0 || report.GetErrorMessage() != genericOutcome || strings.Contains(report.GetErrorMessage(), "allocate destination") {
 		t.Fatalf("wrong rejection outcome: %+v", report)
 	}
 	// An observed report precedes callback return; wait separately for the
@@ -346,7 +346,7 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.State != models.RunStateExited || !row.Error.Valid || !strings.Contains(row.Error.String, "allocate destination") {
+	if row.State != models.RunStateExited || !row.Error.Valid || row.Error.String != genericOutcome {
 		t.Fatalf("dispatcher lost failed outcome: %+v", row)
 	}
 	if created.Load() != 0 {

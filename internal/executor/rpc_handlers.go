@@ -149,7 +149,7 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 
 	cause := error(context.Canceled)
 	if req.Reason != "" {
-		cause = errors.New(req.Reason)
+		cause = abortReason{reason: req.Reason}
 	}
 	existed, err := e.scheduler.CancelBound(ctx, id, binding, cause)
 	if err != nil {
