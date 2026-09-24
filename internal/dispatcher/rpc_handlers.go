@@ -386,14 +386,10 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 		}
 		if err != nil {
 			if identified && ctx.Err() == nil && status.Code(err) != codes.Canceled {
-				// A receive failure on an identified stream reports the run as
-				// failed, under a freshly admitted mutation. Frame errors do not.
-				mutation, admitErr := owner.AdmitMutation(ctx)
-				if admitErr == nil {
-					message := "debuglet output stream failed"
-					_, _ = d.OnDebugletExit(mutation.Context(), mutation, &pb.DebugletExitRequest{DebugletId: runID.String(), ExitCode: -1, ErrorMessage: &message})
-					mutation.Finish()
-				}
+				// A failed output transport is no evidence of how the guest
+				// ended; its executor reports that outcome. The run keeps the
+				// state its reports give it, and only the delivery is logged.
+				d.logger.Warn("Debuglet output stream failed", zap.String("debugletID", runID.String()), zap.Error(err))
 			}
 			return err
 		}
