@@ -1838,6 +1838,9 @@ func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
 	if err := fc.count.SetExecLimit(fc.id, app.FromBytes(execBytes/2)); err != nil {
 		t.Fatalf("SetExecLimit: %v", err)
 	}
+	if moved := time.Since(start); moved >= owed {
+		t.Fatalf("executor rate moved %v after the start, not within the %v wait", moved, owed)
+	}
 	waitBounded(t, done, "datagram after the executor rate moved", func() { _ = fc.Close() })
 	elapsed := time.Since(start)
 
