@@ -122,7 +122,11 @@ deploy:
     - sed -i "s/__DISPATCHER_ADDR__/$DISPATCHER_ADDR_VALUE/" "deploy/ansible/$INVENTORY"
   script:
     - export ANSIBLE_HOST_KEY_CHECKING=False
-    - VERSION=$CI_COMMIT_SHORT_SHA
+    # Prefer the tag so a released deploy stamps executor.toml with v0.1.0
+    # rather than an opaque SHA. CI_COMMIT_TAG is set only on tag pipelines,
+    # so fall back to `git describe` (which still resolves to the tag when
+    # main sits on one) and finally to the short SHA if tags were not fetched.
+    - VERSION=${CI_COMMIT_TAG:-$(git describe --tags --always 2>/dev/null || echo $CI_COMMIT_SHORT_SHA)}
     # -e @vars/<env>.yml comes before the inline -e so the inline one wins for
     # the values it sets (later extra-vars take precedence in ansible).
     - >
