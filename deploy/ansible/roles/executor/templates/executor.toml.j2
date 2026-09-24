@@ -3,8 +3,13 @@ executor_id = "{{ executor_id }}"
 version = "{{ executor_version }}"
 
 [dispatcher]
-addr = "{{ dispatcher_addr }}:{{ dispatcher_grpc_port }}"
-yamux_addr = "{{ dispatcher_addr }}:{{ dispatcher_http_port }}"
+{# executor_dispatcher_addr lets a single host override the fleet-wide
+   dispatcher_addr from its inventory entry. dispatcher_addr arrives as an
+   extra-var, which outranks host_vars, so it cannot be overridden per host
+   under its own name. Needed by an executor co-located with the dispatcher:
+   the public name is split-horizon DNS and does not resolve on that host. #}
+addr = "{{ executor_dispatcher_addr | default(dispatcher_addr) }}:{{ dispatcher_grpc_port }}"
+yamux_addr = "{{ executor_dispatcher_addr | default(dispatcher_addr) }}:{{ dispatcher_http_port }}"
 
 [tls]
 disable = {{ executor_disable_tls | lower }}
