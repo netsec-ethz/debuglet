@@ -56,6 +56,17 @@ const (
 	commandRowMinimum = 250 * time.Millisecond
 	// commandBusyTimeoutMS is the busy timeout the services' own DSNs carry.
 	commandBusyTimeoutMS = 1000
+	// commandRequestTimeout bounds each request of the fixture's client. A
+	// TEST submission makes two, the payment intent and then the submission
+	// the dispatcher admits, so a submission that succeeds was admitted within
+	// twice this bound; a slower one fails on its own.
+	commandRequestTimeout = 5 * time.Second
+	// commandRetireMargin bounds how long before the queued start the first
+	// transport is retired. The successor sends its Bind only after that, and
+	// its registration is held until the start, so the hold delays the Bind's
+	// acknowledgement by at most this much: the rest of the executor's fixed
+	// five-second Bind bound is left to the dispatcher's own registration.
+	commandRetireMargin = 3 * time.Second
 )
 
 // This is the actual command function, dispatcher and guest path. The only
@@ -99,9 +110,20 @@ func TestExecutorCommandReconnectWithRealGuest(t *testing.T) {
 
 	queuedTarget := f.target("queued")
 	// Submit after real guest entry so its compilation does not consume this
-	// interval. Hold the next registration until this timestamp is due: the
-	// three-second window leaves margin under the fixed five-second Bind bound.
-	future := time.Now().Add(3 * time.Second).Unix()
+	// interval. The queued start is fixed before the submission, and each part
+	// of its window stands for a bound, not for an expected duration:
+	//   - admission: the dispatcher drops a start that has already passed, so
+	//     the start lies beyond the longest submission that can succeed, two
+	//     requests of commandRequestTimeout, plus the second that truncation
+	//     to a whole Unix timestamp can take off;
+	//   - retirement: the first transport is retired while the run is still
+	//     queued, so commandRetireMargin is kept beyond the admission bound for
+	//     the read and the retirement that follow even the longest submission;
+	//   - Bind: the next registration is held until this timestamp is due, and
+	//     the retirement waits until no more than commandRetireMargin remains,
+	//     so that hold stays under the fixed five-second Bind bound however
+	//     quickly the submission completes.
+	future := time.Now().Add(2*commandRequestTimeout + time.Second + commandRetireMargin).Unix()
 	queued := f.submit(guest, queuedTarget, &future)
 	// This read happens inside the window the queued start is still due in, so
 	// it may not spend the part of it that the retirement below needs.
@@ -114,6 +136,18 @@ func TestExecutorCommandReconnectWithRealGuest(t *testing.T) {
 	}
 	if !bytes.Equal(before.Wasm, guest) || !reflect.DeepEqual([]string(before.Args), []string{queuedTarget.addr(), queuedTarget.nonce}) {
 		t.Fatal("queued canonical bytes/arguments differ from the submitted guest")
+	}
+	// Retire at an observed distance from the start, not as soon as the row
+	// was read: after a quick submission the rest of the window is longer than
+	// the held registration may take.
+	if delay := time.Until(time.Unix(future, 0)) - commandRetireMargin; delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatal("queued retirement observation exceeded the owned runtime budget")
+		}
 	}
 	if !time.Now().Before(time.Unix(future, 0)) {
 		t.Fatal("queued start elapsed before retirement; no future-queue control was established")
@@ -312,7 +346,7 @@ func (f *commandRecovery) open(dir string) {
 	e.HideBanner = true
 	api.NewHandler(f.dispatcher, f.dispatcherDB, logger, api.LocalDevelopment(true)).RegisterRoutes(e)
 	f.http = httptest.NewServer(e)
-	f.sdk, err = client.New(f.http.URL, client.Options{HTTPClient: f.http.Client(), RequestTimeout: 5 * time.Second})
+	f.sdk, err = client.New(f.http.URL, client.Options{HTTPClient: f.http.Client(), RequestTimeout: commandRequestTimeout})
 	if err != nil {
 		f.t.Fatal(err)
 	}
