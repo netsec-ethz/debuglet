@@ -29,6 +29,7 @@ package dispatcher
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -57,6 +58,7 @@ type Dispatcher struct {
 	db          *sql.DB
 
 	closed             bool
+	restored           bool // set under mu once a RestoreScheduler call has succeeded
 	closeOnce          sync.Once
 	registrations      map[*registrationOperation]struct{}
 	registrationWG     sync.WaitGroup
@@ -118,7 +120,23 @@ func (d *Dispatcher) ControlIncarnation() string { return d.incarnation }
 // with the incarnation by any such replacement.
 func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming.Duration }
 
+// RestoreScheduler reserves again, when the dispatcher starts, the floors of
+// the stored runs whose window has not ended, or ended less than a minute ago,
+// so that admission counts them as the previous dispatcher did. A run whose
+// stored state is exited released its floor when it finished and reserves
+// nothing; every other run, pending or of uncertain outcome, keeps its
+// reservation until its window ends.
+//
+// Reservations are restored once per dispatcher lifetime: after a restore has
+// succeeded, a further call reserves nothing and returns an error, so no run is
+// counted twice. A call that fails has reserved nothing and may be repeated.
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
+	// mu is held from the check to the mark, so two calls cannot both restore.
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.restored {
+		return errors.New("debuglet schedule was already restored in this dispatcher lifetime")
+	}
 	queries := database.New(d.db)
 	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(time.Now().Add(-1*time.Minute)))
 	if err != nil {
@@ -126,6 +144,10 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	}
 	d.logger.Info("Restoring debuglet schedule from database", zap.Int("count", len(debuglets)))
 	for _, deb := range debuglets {
+		if deb.State == models.RunStateExited {
+			d.logger.Debug("Skipping finished debuglet", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))
+			continue
+		}
 		d.logger.Info("Restoring debuglet schedule", zap.String("executor", deb.ExecutorID), zap.Strings("addresses", deb.Addresses), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time), zap.Int64("usage", deb.Usage))
 		d.scheduler.Submit(schedule.Request{
 			Executor:    deb.ExecutorID,
@@ -135,6 +157,7 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 			Use:         resource.Bitrate(deb.Usage),
 		})
 	}
+	d.restored = true
 	return nil
 }
 
