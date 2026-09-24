@@ -89,7 +89,12 @@ func TestExecutorCommandReconnectWithRealGuest(t *testing.T) {
 		}
 	})
 	guest := commandRecoveryGuest(t, dir)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	// This budget covers everything after the guest build: the queued start's
+	// window, which is derived from bounds and so costs about fourteen seconds
+	// on any host, the reconnect with its held registration, the fresh guest run
+	// and the join. It only decides how quickly a genuine hang is reported, and
+	// stays well inside the package timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	f = &commandRecovery{t: t, ctx: ctx, cancel: cancel, ready: filepath.Join(dir, "ready.json"), done: make(chan struct{})}
 	t.Cleanup(f.close)
 	f.open(dir)
