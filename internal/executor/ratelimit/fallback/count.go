@@ -29,27 +29,32 @@ type domainKey struct {
 type bucketState struct {
 	tokens app.Bitrate
 	last   time.Time
+	// refilled only grows, by every credit refill grants, including the part
+	// the cap keeps out of tokens. A waiting charge is paid once refilled
+	// reaches the level it recorded when it was charged.
+	refilled app.Bitrate
 }
 
 // refill credits b for the time since it was last updated at rate, up to one
 // second of rate, and moves it to now.
 func (b *bucketState) refill(now time.Time, rate app.Bitrate) {
-	b.tokens = min(rate, b.tokens+app.Bitrate(now.Sub(b.last).Seconds()*float64(rate)))
+	credit := app.Bitrate(now.Sub(b.last).Seconds() * float64(rate))
+	b.tokens = min(rate, b.tokens+credit)
+	b.refilled += credit
 	b.last = now
 }
 
 // bucketLocked returns the bucket under key refilled up to now at rate. A
-// missing bucket is created full and reported as created. The count's mu
-// must be held.
-func bucketLocked[K comparable](buckets map[K]*bucketState, key K, rate app.Bitrate, now time.Time) (*bucketState, bool) {
+// missing bucket is created full. The count's mu must be held.
+func bucketLocked[K comparable](buckets map[K]*bucketState, key K, rate app.Bitrate, now time.Time) *bucketState {
 	b, ok := buckets[key]
 	if !ok {
 		b = &bucketState{last: now, tokens: rate}
 		buckets[key] = b
-		return b, true
+		return b
 	}
 	b.refill(now, rate)
-	return b, false
+	return b
 }
 
 type FallbackCount struct {

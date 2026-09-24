@@ -1812,8 +1812,8 @@ func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
 		destBytes = 10 // per second: the full bucket holds a third of the datagram
 		size      = 30
 		execBytes = 1 << 20
-		wakeAfter = 1500 * time.Millisecond
-		margin    = 750 * time.Millisecond
+		wakeAfter = time.Second
+		margin    = time.Second
 	)
 	raw := newScriptedConn(nil)
 	raw.network = "udp"
@@ -1855,5 +1855,128 @@ func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
 	}
 	if elapsed > owed+margin {
 		t.Errorf("datagram released after %v, want at most %v: the wait served before the rate change was lost", elapsed, owed+margin)
+	}
+}
+
+// Regression: a rate change made a waiting reservation wait for the whole
+// balance of the shared buckets, including what reservations charged after it
+// owe, instead of what it still owes itself. Two connections of one run to one
+// destination share both buckets: the first keeps its place ahead of the
+// second, and once the rates are raised it waits only for its own deficit at
+// the new rate.
+func TestRateChangeKeepsOwnDeficitOfWaitingReservation(t *testing.T) {
+	const (
+		oldBytes = 10 // per second, both levels: from empty buckets A waits 1s, B 5s
+		newBytes = 20
+		sizeA    = 10
+		sizeB    = 40
+		raiseAt  = 500 * time.Millisecond
+		margin   = time.Second
+		labelA   = "A"
+		labelB   = "B"
+	)
+	type release struct {
+		label string
+		at    time.Time
+	}
+	released := make(chan release, 2)
+	record := func(label string) func([]byte) (int, error) {
+		return func(b []byte) (int, error) {
+			released <- release{label: label, at: time.Now()}
+			return len(b), nil
+		}
+	}
+	rawA := newScriptedConn(nil)
+	rawA.network = "udp"
+	rawA.write = record(labelA)
+	fcA := newTestConn(t, rawA, app.FromBytes(oldBytes), app.FromBytes(oldBytes))
+	rawB := newScriptedConn(nil)
+	rawB.network = "udp"
+	rawB.write = record(labelB)
+	connB, err := fcA.count.Attach(rawB, fcA.id, testAddr)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	fcB := connB.(*FallbackConn)
+	t.Cleanup(func() { _ = fcB.Close() })
+	seeded := time.Now()
+	seedBuckets(t, fcA, 0, 0)
+
+	var (
+		errA, errB   error
+		nA, nB       int
+		doneA, doneB = make(chan struct{}), make(chan struct{})
+	)
+	go func() {
+		defer close(doneA)
+		nA, errA = fcA.Write(bytes.Repeat([]byte{'a'}, sizeA))
+	}()
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fcA)
+		return dest < 0
+	}, "reservation by A")
+	go func() {
+		defer close(doneB)
+		nB, errB = fcB.Write(bytes.Repeat([]byte{'b'}, sizeB))
+	}()
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fcA)
+		return dest < -app.FromBytes(sizeA)
+	}, "reservation by B behind A")
+	time.Sleep(time.Until(seeded.Add(raiseAt)))
+	if err := fcA.count.SetLimit(testAddr, fcA.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetLimit: %v", err)
+	}
+	if err := fcA.count.SetExecLimit(fcA.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetExecLimit: %v", err)
+	}
+	raised := time.Now()
+	if ownWait := tokenWait(app.FromBytes(sizeA), app.FromBytes(oldBytes)); raised.Sub(seeded) >= ownWait {
+		t.Fatalf("rates raised %v after the seed, not within A's %v wait", raised.Sub(seeded), ownWait)
+	}
+	waitBounded(t, doneA, "A after the rates were raised", func() { _ = fcA.Close() })
+	waitBounded(t, doneB, "B after the rates were raised", func() { _ = fcB.Close() })
+
+	if nA != sizeA || errA != nil || nB != sizeB || errB != nil {
+		t.Fatalf("Writes = A (%d, %v), B (%d, %v), want (%d, nil) and (%d, nil)", nA, errA, nB, errB, sizeA, sizeB)
+	}
+	if writesA, writesB := rawA.written(), rawB.written(); len(writesA) != 1 || len(writesB) != 1 {
+		t.Fatalf("underlying writes = A %d, B %d, want one each", len(writesA), len(writesB))
+	}
+	first, second := <-released, <-released
+	if first.label != labelA || second.label != labelB || !first.at.Before(second.at) {
+		t.Fatalf("released %s then %s, want A before B", first.label, second.label)
+	}
+	// Until the raise the empty buckets gained at most the old rate; the rest
+	// of A's own charge accrues at the new rate after it.
+	gained := raised.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
+	owed := (float64(app.FromBytes(sizeA)) - gained) / float64(app.FromBytes(newBytes))
+	if least := time.Duration(owed * float64(time.Second)); first.at.Sub(raised) < least {
+		t.Errorf("A released %v after the raise, want at least %v", first.at.Sub(raised), least)
+	}
+	if most := raised.Sub(seeded) + tokenWait(app.FromBytes(sizeA), app.FromBytes(newBytes)) + margin; first.at.Sub(seeded) > most {
+		t.Errorf("A released %v after the seed, want at most %v: it waited for the deficit of B charged after it", first.at.Sub(seeded), most)
+	}
+}
+
+// Regression: a rate revoked just as the limiter timer fired could let the
+// timer win the select, and the write was admitted under the revoked rate. The
+// timer wake now checks for a rate change before admitting anything.
+func TestRateRevokedAsTimerFiresFailsWrite(t *testing.T) {
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	forceReservationWait(t, fc)
+	fc.waitForLimiter = func(time.Duration, <-chan struct{}, <-chan struct{}, <-chan struct{}) limiterWaitResult {
+		// Both the timer and the rate change are ready; the timer is chosen.
+		if err := fc.count.DeleteLimit(fc.ipv6, fc.id); err != nil {
+			t.Errorf("DeleteLimit: %v", err)
+		}
+		return limiterReady
+	}
+	if n, err := fc.Write([]byte("x")); n != 0 || err == nil || !strings.Contains(err.Error(), "no dest rate") {
+		t.Fatalf("Write = (%d, %v), want (0, the no dest rate error)", n, err)
+	}
+	if writes := raw.written(); len(writes) != 0 {
+		t.Fatalf("underlying writes = %d, want 0", len(writes))
 	}
 }

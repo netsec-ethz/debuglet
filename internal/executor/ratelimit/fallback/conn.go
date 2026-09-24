@@ -229,10 +229,11 @@ func (f *FallbackConn) Close() error {
 // reservation may be used. The caller must hold the corresponding I/O lock. A reservation that is
 // canceled by a deadline or by Close is refunded in full before the error is
 // returned. A reservation whose rates change while it sleeps keeps its charge
-// and has its remaining wait recomputed under the current rates, so a lowered
-// or revoked rate never admits I/O under the old one, a raised rate shortens
-// the sleep, and the wait already served is never lost. The I/O lock stays
-// held throughout, so the caller keeps its place.
+// and its place ahead of later charges, and then waits for what it still owes
+// itself at the current rates: a lowered or revoked rate never admits I/O
+// under the old one, a raised rate shortens the sleep, and the wait already
+// served is never lost. The I/O lock stays held throughout, so the caller
+// keeps its place.
 func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 	r, err := f.reserve(size)
 	if err != nil {
@@ -271,8 +272,14 @@ func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 			if deadlineWake {
 				continue
 			}
-			return r, nil
-		case limiterChanged:
+			select {
+			case <-r.ratesChanged:
+			default:
+				return r, nil
+			}
+			// A rate moved as the timer fired: the wait is recomputed
+			// before anything is admitted under the old rates.
+			fallthrough
 		case limiterRatesChanged:
 			// The wait was computed under rates that no longer hold. A
 			// recomputed wait of zero still goes round once more, so Close
@@ -282,6 +289,7 @@ func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
 				return nil, fmt.Errorf("failed to reserve: %w", err)
 			}
 			readyAt = time.Now().Add(r.waitFor)
+		case limiterChanged:
 		case limiterClosed:
 			r.free()
 			return nil, net.ErrClosed
@@ -313,6 +321,8 @@ type reservation struct {
 	// ratesChanged is closed when a rate changes after waitFor was computed,
 	// which makes waitFor stale until it is recomputed.
 	ratesChanged <-chan struct{}
+	// dest and exec are the charges held on the two buckets.
+	dest, exec charge
 
 	conn *FallbackConn
 }
@@ -360,7 +370,7 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 		toWrite = size
 	}
 	r := &reservation{allocated: toWrite, conn: f}
-	r.chargeLocked(rate, execRate, true)
+	r.chargeLocked(rate, execRate)
 	return r, nil
 }
 
@@ -379,28 +389,42 @@ func (f *FallbackConn) ratesLocked() (app.Bitrate, app.Bitrate, error) {
 }
 
 // chargeLocked refills both buckets up to now at the current rates, charges
-// the reservation to every bucket that does not hold it yet, and computes how
-// long it must still wait under these rates. A new reservation charges both
-// buckets; a recomputed one only a bucket that was deleted and created again
-// since, which lost the charge with the old bucket. count.mu must be held.
-func (r *reservation) chargeLocked(rate, execRate app.Bitrate, charge bool) {
+// the reservation to every bucket that does not hold it yet, and sets waitFor
+// to what the reservation still owes itself at these rates. A new reservation
+// charges both buckets; a recomputed one only a bucket that was deleted and
+// created again since, which lost the charge with the old bucket. count.mu
+// must be held.
+func (r *reservation) chargeLocked(rate, execRate app.Bitrate) {
 	count, now := r.conn.count, time.Now()
 	reserved := app.FromBytes(r.allocated)
-	b, created := bucketLocked(count.packetSize, debugletKey{id: r.conn.id, dest: r.conn.ipv6}, rate, now)
-	if charge || created {
-		b.tokens -= reserved
-	}
-	eb, created := bucketLocked(count.execPacketSize, r.conn.id, execRate, now)
-	if charge || created {
-		eb.tokens -= reserved
-	}
-	r.waitFor = max(tokenWait(-b.tokens, rate), tokenWait(-eb.tokens, execRate))
+	b := bucketLocked(count.packetSize, debugletKey{id: r.conn.id, dest: r.conn.ipv6}, rate, now)
+	eb := bucketLocked(count.execPacketSize, r.conn.id, execRate, now)
+	r.waitFor = max(r.dest.owed(b, reserved, rate), r.exec.owed(eb, reserved, execRate))
 	r.ratesChanged = count.ratesChanged
 }
 
+// charge is a reservation's charge on one bucket.
+type charge struct {
+	bucket *bucketState
+	// need is the refill level of bucket at which the charge is paid.
+	need app.Bitrate
+}
+
+// owed charges b with reserved unless c already holds a charge on it, and
+// returns how long the charge still waits at rate. The wait covers this
+// charge's own deficit only, never what later charges on b owe.
+func (c *charge) owed(b *bucketState, reserved, rate app.Bitrate) time.Duration {
+	if c.bucket != b {
+		c.bucket, c.need = b, b.refilled+max(0, reserved-b.tokens)
+		b.tokens -= reserved
+	}
+	return tokenWait(c.need-b.refilled, rate)
+}
+
 // reevaluate recomputes the remaining wait of r after a rate change. The
-// charge stays in the buckets, so the wait already served is kept and no
-// other reservation can take the bandwidth in between. A closed connection
+// charge stays in the buckets, so r keeps the wait already served and its
+// place ahead of later charges, and then waits for what it still owes itself
+// at the current rates. A closed connection
 // or a rate that no longer admits anything gives the reservation back and
 // returns the error a new reservation gets.
 func (r *reservation) reevaluate() error {
@@ -416,7 +440,7 @@ func (r *reservation) reevaluate() error {
 		r.refundLocked(r.allocated)
 		return err
 	}
-	r.chargeLocked(rate, execRate, false)
+	r.chargeLocked(rate, execRate)
 	return nil
 }
 

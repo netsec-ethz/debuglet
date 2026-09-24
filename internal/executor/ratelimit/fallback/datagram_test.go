@@ -204,7 +204,8 @@ func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
 	want := udpDatagram("oversized read", oversizedDatagram)
 	sendToLimited(t, peer, fc, want)
 
-	// Drained buckets: the datagram owes its whole size.
+	// Drained buckets: the read charges the whole buffer it is given and
+	// refunds the part the datagram leaves unused only afterwards.
 	start := time.Now()
 	seedBuckets(t, fc, 0, 0)
 	buf := make([]byte, oversizedDatagram+datagramRate/2)
@@ -213,7 +214,7 @@ func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
 	if n != len(want) || err != nil || !bytes.Equal(buf[:n], want) {
 		t.Errorf("Read = (%d, %v), want (%d, nil) with the datagram intact", n, err, len(want))
 	}
-	earliest := transferTime(oversizedDatagram, datagramRate)
+	earliest := transferTime(len(buf), datagramRate)
 	checkElapsed(t, "Read", elapsed, earliest, earliest+wakeSlack)
 
 	next := udpDatagram("next read", 32)
