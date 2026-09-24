@@ -70,7 +70,7 @@ Both directions share one identity. `registerExecutor` mints a `controlsession.B
 5. `debugletHandler` (`internal/executor/handle_debuglet.go`) allocates on the dispatcher (`DebugletAllocate`), applies the returned bandwidth limits, registers the run, reports `INITIALIZING`, compiles and instantiates the module, opens the output stream, reports `STARTED`, and runs the guest under the policy timeout.
 6. Guest stdout and stderr reach the dispatcher through `DebugletStream`: the first frame identifies the run, later frames are appended to `debuglet_logs` after `ownedDebuglet` confirms the run belongs to the streaming session. A stream that fails is logged with the run ID and changes no run state; only the executor's own report ends the run.
 7. `reportDebugletExit` sends one bounded `DebugletExit`. The dispatcher writes the terminal row; `UpdateDebugletState` never lets an ordinary state overwrite a terminal one.
-8. `DELETE /debuglet` reaches `Dispatcher.AbortDebuglet`, which admits a mutation, confirms ownership, calls `Abort` over the reverse stream, and records one local terminal attempt. `Executor.OnAbort` cancels through `scheduler.CancelBound`, which rejects a run bound to another session.
+8. `DELETE /debuglet` reaches `Dispatcher.AbortDebuglet`, which admits a mutation, confirms ownership, calls `Abort` over the reverse stream, and records one local terminal attempt. When that attempt fails after the executor acknowledged the `Abort`, the route answers 500 `internal_error` instead of 204, so a client never takes an unrecorded cancellation for a recorded one. `Executor.OnAbort` cancels through `scheduler.CancelBound`, which rejects a run bound to another session.
 
 ## Configuration and state
 

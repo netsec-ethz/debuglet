@@ -282,6 +282,12 @@ func (h *Handler) DeleteDebuglet(c echo.Context) error {
 	}
 
 	if err := h.dispatcher.AbortDebuglet(c.Request().Context(), req.ExecutorID, req.DebugletID, "cancelled via API"); err != nil {
+		// The executor acknowledged the cancellation, but its result was not
+		// recorded and the run's state does not show it. That is neither a
+		// refusal nor the 204 acknowledgement; the cause stays in the log.
+		if errors.Is(err, dispatcher.ErrCancellationNotRecorded) {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "cancellation acknowledged but its result was not recorded", err)
+		}
 		// The dispatcher's own diagnostic carries transport and session
 		// internals; the caller learns that the cancellation was refused.
 		return apiErrorFrom(http.StatusBadRequest, CodeCancelRefused, "cancellation refused", err)

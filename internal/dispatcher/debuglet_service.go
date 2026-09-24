@@ -170,6 +170,12 @@ var (
 // the server.
 var ErrInvalidPolicy = errors.New("invalid policy")
 
+// ErrCancellationNotRecorded marks a cancellation its executor acknowledged
+// but whose terminal result the dispatcher failed to record. It is no
+// refusal: the run may already be stopping, while its stored state does not
+// show the cancellation.
+var ErrCancellationNotRecorded = errors.New("cancellation acknowledged but its result was not recorded")
+
 // validatePolicyNumbers rejects a policy whose numbers are outside the ranges
 // [models.CheckPolicyNumbers] admits. It runs before any duration, window or
 // aggregate is computed from them, so no derived value can depend on a number
@@ -358,6 +364,12 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 	}
 }
 
+// AbortDebuglet asks the run's executor to cancel it and records the
+// cancellation as the run's terminal result. A nil error means that result is
+// recorded, or that the run was already terminal and keeps its own. An error
+// wrapping ErrCancellationNotRecorded means the executor acknowledged the
+// cancellation but its result is not recorded; any other error is a refusal
+// before or at the executor.
 func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debugletID uuid.UUID, reason string) error {
 	// Reserve the registry's current owner before the read. The persisted
 	// binding then rejects a same-ID replacement or another executor's run.
@@ -398,7 +410,11 @@ func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, 
 		return fmt.Errorf("failed to abort debuglet: %w", err)
 	}
 	// One local terminal attempt follows the remote acknowledgement, under the
-	// same live mutation. It is no durable terminal or refund guarantee.
-	_, _ = d.OnDebugletExit(ctx, mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason})
+	// same live mutation. It is no durable terminal or refund guarantee, and a
+	// failed attempt is reported rather than acknowledged. A run that is
+	// already terminal keeps its result and is acknowledged.
+	if _, err := d.OnDebugletExit(ctx, mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
+		return fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)
+	}
 	return nil
 }
