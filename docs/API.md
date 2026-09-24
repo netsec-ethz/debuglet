@@ -82,7 +82,7 @@ Every failure answers with one envelope, whatever the route and whichever layer 
 | `not_found` | 404 | No such debuglet, transaction, user, executor or route — or one that belongs to another account. |
 | `method_not_allowed` | 405 | The route does not serve that method. |
 | `capacity_exhausted` | 409 | The scheduler cannot admit the batch. |
-| `payload_too_large` | 413 | The body exceeds what the route accepts. |
+| `payload_too_large` | 413 | The body exceeds the 33554432-byte (32 MiB) limit every route applies; nothing of the request took effect. |
 | `unsupported_media_type` | 415 | The route does not read that representation. |
 | `internal_error` | 500 | A failure inside the dispatcher. |
 | `payments_disabled` | 503 | A chain payment method while blockchain payments are disabled. |
@@ -125,7 +125,7 @@ Request limits:
 - `GET /debuglet/{id}/logs`: `after` must be a non-negative integer and `limit` a positive integer when present; both are rejected with 400 otherwise. `limit` defaults to 100 and is clamped to 1000.
 - `GET /list-debuglets`: `limit` defaults to 100 and is clamped to 100; `offset` defaults to 0. Neither may be negative and `limit` may not be zero.
 - `GET /executors/by-ip`: `ip` is required; `n` defaults to 10 and must be positive when present. It is clamped to 100 candidates before ownership is applied, but the executor registry retains at most 20 recent identifiers per executor, so at most 20 can ever be returned and usually fewer, since only the caller's own are listed. An account owning none of them receives an empty array, never null.
-- `PUT /payment/intent` and `PUT /debuglet` bodies are limited to 33554432 bytes (32 MiB) by the SDK, which measures the exact encoded envelope of each of the two requests.
+- Every request body is limited to 33554432 bytes (32 MiB) by the dispatcher, which answers 413 `payload_too_large` to a larger one before any handler acts on it: a declared length above the limit is refused without reading the body, and a body of unknown length as soon as the limit is exceeded. The SDK measures the exact encoded envelope of `PUT /payment/intent` and `PUT /debuglet` against the same bound before sending, so nothing it sends is refused for size.
 
 ## Authentication
 

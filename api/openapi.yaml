@@ -201,6 +201,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           description: "The session could not be issued."
           headers:
@@ -251,6 +262,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: "The request presented no credential, or one that is unknown, expired or already revoked (unauthorized)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -315,6 +337,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: "The recovery code is unknown or has already been replaced (unauthorized)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -398,6 +431,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           description: "The batch was rejected by the dispatcher after admission (internal_error)."
           headers:
@@ -458,6 +502,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -932,6 +987,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /payment/intent:
     put:
       operationId: "createPaymentIntent"
@@ -975,6 +1041,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -1180,6 +1257,17 @@ paths:
                 $ref: "#/components/schemas/AccountResponse"
         "400":
           description: "Malformed body or a blank name."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A body whose declared length exceeds the limit is refused before it is read, one of unknown length as soon as the limit is exceeded; nothing of the request takes effect."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
