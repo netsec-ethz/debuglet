@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/yamux"
 	"go.uber.org/zap"
@@ -170,9 +171,37 @@ func (b *BidiServer) createExecutorClient(session *yamux.Session) (*grpc.ClientC
 	return gconn, nil
 }
 
+// registerTimeout bounds the reverse Hello handshake below.
+//
+// Registration is bidirectional: the executor dials in and establishes the
+// yamux session, then the dispatcher opens a gRPC stream back over that same
+// session to ask who it is. Nothing guarantees the stream ever opens, and an
+// unbounded Hello leaves this session's goroutine parked forever — the
+// executor is never added to b.clients, so it sits connected and heartbeating
+// into a registry it is not in, with both sides believing they are fine. The
+// executor cannot detect this state and never retries, so a whole fleet can
+// stay silently unregistered while the dispatcher looks healthy.
+//
+// Bounding the call turns that permanent stall into an ordinary error: the
+// session is closed, the executor's ConnectAndServe returns, and it
+// reconnects. Generous relative to a real handshake (observed yamux ping
+// times are tens of milliseconds even on intercontinental links) so it only
+// ever fires on a genuinely stuck stream.
+// A var rather than a const so tests can shorten it.
+var registerTimeout = 15 * time.Second
+
 func (b *BidiServer) registerExecutor(ctx context.Context, gconn *grpc.ClientConn, session *yamux.Session) (*pb.HelloResponse, error) {
 	client := pb.NewExecutorServiceClient(gconn)
-	out, err := client.Hello(ctx, &pb.HelloRequest{})
+
+	// Logged before the call so a stalled handshake is distinguishable in the
+	// logs from a session that was never accepted: without this, a hang looks
+	// identical to silence after "Yamux session established".
+	b.logger.Debug("sending hello to executor", zap.String("remote_addr", session.RemoteAddr().String()))
+
+	helloCtx, cancel := context.WithTimeout(ctx, registerTimeout)
+	defer cancel()
+
+	out, err := client.Hello(helloCtx, &pb.HelloRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("hello: %w", err)
 	}
