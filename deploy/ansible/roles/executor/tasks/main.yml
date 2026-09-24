@@ -41,23 +41,29 @@
     group: "{{ executor_group }}"
     mode: "0700"
 
-# The persisted debuglet state and the TLS credentials deploy-certs.yml
-# installed both lived in the legacy config dir. Carry them into the
-# environment's dir so a redeploy migrates a node rather than silently
-# starting it from scratch and leaving its certs behind. force: false, so a
-# config dir that already has its own copy is never overwritten.
-- name: Check for pre-split executor state
+# The TLS credentials deploy-certs.yml installed live in the legacy config
+# dir, so carry them into the environment's dir rather than leaving a migrated
+# node without certs. force: false, so a config dir that already has its own
+# copy is never overwritten.
+#
+# executor.db is deliberately NOT carried over. The legacy database is
+# whatever schema that node was last deployed with, and copying it lands an
+# out-of-date database exactly where the correctly-migrated seed would
+# otherwise go — the executor then dies on startup with "no such column", and
+# because the copy happens on every run, no amount of redeploying recovers it.
+# Nothing is lost by seeding fresh: 00002_uuid_blob drops and recreates
+# debuglets/debuglet_logs, so no executor state survives that boundary anyway.
+- name: Check for pre-split executor credentials
   ansible.builtin.stat:
     path: "{{ executor_legacy_config_dir }}/{{ item }}"
   register: legacy_state
   loop:
-    - executor.db
     - ca.crt
     - client.crt
     - client.key
   when: executor_retire_legacy_install | default(true)
 
-- name: Carry pre-split executor state over to this environment
+- name: Carry pre-split executor credentials over to this environment
   ansible.builtin.copy:
     src: "{{ executor_legacy_config_dir }}/{{ item.item }}"
     remote_src: true
