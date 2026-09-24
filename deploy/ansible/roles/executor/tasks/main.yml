@@ -31,7 +31,8 @@
     enabled: false
   when:
     - executor_retire_legacy_install | default(true)
-    - legacy_unit.stat.exists | default(false)
+    - legacy_unit.stat is defined
+    - legacy_unit.stat.exists
 
 - name: Create executor config directory
   ansible.builtin.file:
@@ -77,7 +78,8 @@
     label: "{{ item.item | default('') }}"
   when:
     - executor_retire_legacy_install | default(true)
-    - item.stat.exists | default(false)
+    - item.stat is defined
+    - item.stat.exists
   notify: Restart executor
 
 # A crashed first start leaves behind the empty file sql.Open() creates before
@@ -94,6 +96,14 @@
     path: "{{ executor_config_dir }}/executor.db"
     state: absent
   when:
+    # `is defined` guard, not `| default(...)`: when the stat above is skipped
+    # or ignored (ignore_unreachable marks a host's tasks ignored the moment it
+    # drops out), the registered variable is a plain result dict with no `stat`
+    # key, and dereferencing it raises before any default filter can apply.
+    # That turns a merely unreachable host into a *failed* one, and under
+    # serial: 1 a failed host ends the play — so every host after it is
+    # silently never attempted.
+    - executor_db.stat is defined
     - executor_db.stat.exists
     - executor_db.stat.size == 0
 
