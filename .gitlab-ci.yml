@@ -14,6 +14,21 @@ workflow:
     - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_TAG'
     - when: never
 
+# This is deliberately dependency-free: it verifies what the shared runner
+# provides before the build and deployment jobs rely on those tools.
+runner_preflight:
+  stage: build
+  script:
+    - id
+    - uname -a
+    - command -v make || true
+    - command -v docker || true
+    - command -v glab || true
+    - command -v ssh-agent || true
+    - command -v python3 || true
+    - command -v docker >/dev/null && docker version || true
+  allow_failure: true
+
 build_release:
   stage: build
   script:
