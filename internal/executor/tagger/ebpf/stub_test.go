@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
 // TestNewBPFTaggerUnavailable verifies that the stub correctly reports that

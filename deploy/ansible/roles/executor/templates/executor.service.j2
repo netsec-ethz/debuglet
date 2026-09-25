@@ -1,5 +1,5 @@
 [Unit]
-Description=Debuglet Executor ({{ executor_id }}, {{ debuglet_env }})
+Description=Debuglet Executor ({{ executor_id }})
 After=network-online.target
 Wants=network-online.target
 
@@ -17,7 +17,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier={{ executor_service }}
 
-{% if (executor_enable_bpf | default(true)) and (executor_ambient_caps | default(true)) %}
+{% if (executor_enable_bpf | default(true)) and (executor_ambient_caps | default(false)) %}
 # systemd hands these to the process at exec (ambient set). On restricted
 # environments (some containers/EdgeNet) manipulating the ambient set fails with
 # 203/EXEC; set executor_ambient_caps=false there and rely on the binary's file

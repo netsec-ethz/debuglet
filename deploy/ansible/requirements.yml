@@ -1,0 +1,25 @@
+---
+# Ansible collections the deployment roles use, pinned to exact versions.
+#
+# Only one collection is used directly: community.general, for the
+# `capabilities` module the executor role applies to the installed binary.
+# community.library_inventory_filtering_v1 is its dependency and is pinned
+# here as well, so the set installs the same way whether or not dependency
+# resolution changes upstream.
+#
+# The versions here are checked against the installed provisioner by
+# deploy/ansible/preflight-provisioner.yml before any deployment runs, and the
+# digest of each collection artifact is recorded in deploy/provisioner.env.
+#
+#   ansible-galaxy collection install -r deploy/ansible/requirements.yml
+#
+# Update process: download the new artifacts with
+#   ansible-galaxy collection download -r requirements.yml -p dl
+# record their sha256 in deploy/provisioner.env, update
+# DEBUGLET_PROVISIONER_COLLECTIONS_SHA256, and rebuild the image.
+
+collections:
+  - name: community.general
+    version: "13.4.0"
+  - name: community.library_inventory_filtering_v1
+    version: "1.1.5"

@@ -1,5 +1,5 @@
 ---
-- name: Create dispatcher config directory
+- name: Create dispatcher configuration directory
   ansible.builtin.file:
     path: "{{ config_dir }}/dispatcher"
     state: directory
@@ -7,23 +7,42 @@
     group: "{{ debuglet_group }}"
     mode: "0700"
 
+# Writable state stays separate from read-only configuration.
+- name: Create dispatcher state directory
+  ansible.builtin.file:
+    path: "{{ state_dir }}/dispatcher"
+    state: directory
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0700"
+
+- name: Inspect the dispatcher database locations
+  ansible.builtin.stat:
+    path: "{{ item }}/dispatcher/dispatcher.db"
+  loop:
+    - "{{ config_dir }}"
+    - "{{ state_dir }}"
+  register: dispatcher_databases
+
+- name: Require an explicit upgrade of existing dispatcher state
+  ansible.builtin.assert:
+    that:
+      - (dispatcher_databases.results[0].stat.size | default(0) | int == 0) or (dispatcher_databases.results[1].stat.size | default(0) | int > 0)
+    fail_msg: >-
+      Existing dispatcher state at {{ config_dir }}/dispatcher/dispatcher.db
+      has been preserved. This alpha does not upgrade old database schemas.
+      Back up and establish compatibility before placing the upgraded database
+      in {{ state_dir }}/dispatcher; no seed or configuration change has been applied.
+    quiet: true
+
 - name: Provision dispatcher database (schema only, preserved on redeploy)
   ansible.builtin.copy:
     src: "{{ dist_dir }}/dispatcher-seed.db" # built by `make deploy-seed-db`, not committed
-    dest: "{{ config_dir }}/dispatcher/dispatcher.db"
+    dest: "{{ state_dir }}/dispatcher/dispatcher.db"
     owner: "{{ debuglet_user }}"
     group: "{{ debuglet_group }}"
     mode: "0600"
-    force: false # never overwrite an existing DB (would wipe persisted debuglet state)
-  notify: Restart dispatcher
-
-- name: Install dispatcher binary
-  ansible.builtin.copy:
-    src: "{{ dist_dir }}/debuglet-dispatcher"
-    dest: "{{ install_prefix }}/bin/debuglet-dispatcher"
-    owner: root
-    group: root
-    mode: "0755"
+    force: false # never overwrite an existing database: it holds recorded runs
   notify: Restart dispatcher
 
 - name: Deploy dispatcher configuration
@@ -31,14 +50,16 @@
     src: dispatcher.toml.j2
     dest: "{{ config_dir }}/dispatcher/dispatcher.toml"
     owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
     mode: "0640"
   notify: Restart dispatcher
 
 - name: Install dispatcher systemd unit
   ansible.builtin.template:
     src: dispatcher.service.j2
-    dest: /etc/systemd/system/debuglet-dispatcher.service
+    dest: "{{ systemd_unit_dir }}/debuglet-dispatcher.service"
     owner: root
+    group: root
     mode: "0644"
   notify:
     - Reload systemd
@@ -50,3 +71,4 @@
     enabled: true
     state: started
     daemon_reload: true
+  when: debuglet_manage_services | bool

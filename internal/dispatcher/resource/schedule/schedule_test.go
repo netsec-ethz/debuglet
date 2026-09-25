@@ -4,7 +4,7 @@
 package schedule
 
 import (
-	"debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"testing"
 	"time"
 )
@@ -131,6 +131,42 @@ func TestMultipleDestinations(t *testing.T) {
 	}
 	if got := s.QueryMaxDest("d2", from, to); got != 0 {
 		t.Fatalf("QueryMaxDest d2 after remove = %d; want 0", got)
+	}
+}
+
+func TestDuplicateDestinations(t *testing.T) {
+	s := New(time.Second)
+	from := baseTime()
+	to := from.Add(10 * time.Second)
+	req1 := makeReq("e1", []string{"d1", "d2", "d1"}, from, to, 60)
+	req2 := makeReq("e2", []string{"d1"}, from, to, 40)
+
+	s.Submit(req1)
+	s.Submit(req2)
+	if got := s.QueryMaxDest("d1", from, to); got != 100 {
+		t.Fatalf("QueryMaxDest d1 = %d; want 100", got)
+	}
+	if got := s.QueryMaxDest("d2", from, to); got != 60 {
+		t.Fatalf("QueryMaxDest d2 = %d; want 60", got)
+	}
+	if got := s.QueryMaxExec("e1", from, to); got != 60 {
+		t.Fatalf("QueryMaxExec e1 = %d; want 60", got)
+	}
+
+	s.Remove(req1)
+	if got := s.QueryMaxDest("d1", from, to); got != 40 {
+		t.Fatalf("QueryMaxDest d1 after first remove = %d; want 40", got)
+	}
+	s.Remove(req2)
+	for _, d := range []string{"d1", "d2"} {
+		if got := s.QueryMaxDest(d, from, to); got != 0 {
+			t.Fatalf("QueryMaxDest %s after removes = %d; want 0", d, got)
+		}
+	}
+	for _, e := range []string{"e1", "e2"} {
+		if got := s.QueryMaxExec(e, from, to); got != 0 {
+			t.Fatalf("QueryMaxExec %s after removes = %d; want 0", e, got)
+		}
 	}
 }
 

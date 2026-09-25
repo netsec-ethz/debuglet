@@ -1,4 +1,4 @@
-module debuglet
+module github.com/netsec-ethz/debuglet
 
 go 1.25.7
 
@@ -11,6 +11,7 @@ require (
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/netsec-ethz/scion-apps v0.6.0
 	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/pressly/goose/v3 v3.27.3
 	github.com/scionproto/scion v0.11.1-0.20240610170620-50b971ca2d4b
 	github.com/soheilhy/cmux v0.1.5
 	github.com/tetratelabs/wazero v1.12.0
@@ -53,6 +54,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
+	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/netsec-ethz/rains v0.5.1-0.20240619143424-8e9ef27f2403 // indirect
@@ -65,6 +67,7 @@ require (
 	github.com/quic-go/quic-go v0.43.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/samber/lo v1.49.1 // indirect
+	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect

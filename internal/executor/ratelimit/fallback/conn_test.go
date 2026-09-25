@@ -1,0 +1,1293 @@
+package fallback
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+)
+
+const (
+	testAddr = "127.0.0.1"
+	// boundedWait is the maximum time a canceled or empty Read may take.
+	boundedWait = 10 * time.Second
+)
+
+// errExtraRead is returned by a scriptedConn whose read budget is exhausted.
+// It keeps a fill loop in the layer under test bounded and visible instead of
+// spinning or panicking.
+var errExtraRead = errors.New("unexpected additional underlying read")
+
+// scriptedConn is a net.Conn whose Read and Write are driven by the test.
+// It records every underlying call so tests can assert exact call counts
+// and the size of the slice handed to the socket.
+type scriptedConn struct {
+	// read is invoked for every Read; nil blocks until Close is called.
+	read func(b []byte) (int, error)
+	// maxReads > 0 limits how many times read is invoked.
+	maxReads int
+	// write is invoked for every Write; nil accepts the complete slice.
+	write func(b []byte) (int, error)
+	// blocked is closed the first time a nil-read Read starts blocking.
+	blocked     chan struct{}
+	blockedOnce sync.Once
+
+	mu        sync.Mutex
+	readCalls int
+	readSizes []int
+	writes    [][]byte
+
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+type readStartedConn struct {
+	net.Conn
+	started chan struct{}
+	once    sync.Once
+}
+
+type gatedDeadlineConn struct {
+	*scriptedConn
+	setDeadlineEntered chan struct{}
+	releaseSetDeadline chan struct{}
+	enteredOnce        sync.Once
+
+	deadlineMu    sync.Mutex
+	writeDeadline time.Time
+}
+
+func newGatedDeadlineConn() *gatedDeadlineConn {
+	return &gatedDeadlineConn{
+		scriptedConn:       newScriptedConn(nil),
+		setDeadlineEntered: make(chan struct{}),
+		releaseSetDeadline: make(chan struct{}),
+	}
+}
+
+func (c *gatedDeadlineConn) SetDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	c.writeDeadline = t
+	c.deadlineMu.Unlock()
+	c.enteredOnce.Do(func() { close(c.setDeadlineEntered) })
+	<-c.releaseSetDeadline
+	return nil
+}
+
+func (c *gatedDeadlineConn) SetWriteDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	c.writeDeadline = t
+	c.deadlineMu.Unlock()
+	return nil
+}
+
+func (c *gatedDeadlineConn) currentWriteDeadline() time.Time {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	return c.writeDeadline
+}
+
+func (c *readStartedConn) Read(b []byte) (int, error) {
+	c.once.Do(func() { close(c.started) })
+	return c.Conn.Read(b)
+}
+
+func newScriptedConn(read func(b []byte) (int, error)) *scriptedConn {
+	return &scriptedConn{
+		read:    read,
+		blocked: make(chan struct{}),
+		closed:  make(chan struct{}),
+	}
+}
+
+// oneRead returns a scriptedConn that answers exactly one read with the
+// given result and reports any further read as errExtraRead.
+func oneRead(n int, err error) *scriptedConn {
+	s := newScriptedConn(func(b []byte) (int, error) {
+		for i := 0; i < n && i < len(b); i++ {
+			b[i] = 'x'
+		}
+		return n, err
+	})
+	s.maxReads = 1
+	return s
+}
+
+func (s *scriptedConn) Read(b []byte) (int, error) {
+	s.mu.Lock()
+	s.readCalls++
+	s.readSizes = append(s.readSizes, len(b))
+	read := s.read
+	extra := s.maxReads > 0 && s.readCalls > s.maxReads
+	s.mu.Unlock()
+
+	if extra {
+		return 0, errExtraRead
+	}
+	if read != nil {
+		return read(b)
+	}
+	s.blockedOnce.Do(func() { close(s.blocked) })
+	<-s.closed
+	return 0, net.ErrClosed
+}
+
+func (s *scriptedConn) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	s.writes = append(s.writes, bytes.Clone(b))
+	write := s.write
+	s.mu.Unlock()
+	if write != nil {
+		return write(b)
+	}
+	return len(b), nil
+}
+
+func (s *scriptedConn) Close() error {
+	s.closeOnce.Do(func() { close(s.closed) })
+	return nil
+}
+
+func (s *scriptedConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
+}
+
+func (s *scriptedConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 2}
+}
+
+func (s *scriptedConn) SetDeadline(time.Time) error      { return nil }
+func (s *scriptedConn) SetReadDeadline(time.Time) error  { return nil }
+func (s *scriptedConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (s *scriptedConn) reads() (int, []int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readCalls, append([]int(nil), s.readSizes...)
+}
+
+func (s *scriptedConn) written() [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([][]byte, len(s.writes))
+	copy(out, s.writes)
+	return out
+}
+
+// newTestConn attaches raw to a fresh FallbackCount. A zero rate leaves the
+// corresponding limit unconfigured.
+func newTestConn(t *testing.T, raw net.Conn, destRate, execRate app.Bitrate) *FallbackConn {
+	t.Helper()
+	count, err := NewFallbackCount()
+	if err != nil {
+		t.Fatalf("NewFallbackCount: %v", err)
+	}
+	id := uuid.New()
+	conn, err := count.Attach(raw, id, testAddr)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if destRate > 0 {
+		if err := count.SetLimit(testAddr, id, destRate); err != nil {
+			t.Fatalf("SetLimit: %v", err)
+		}
+	}
+	if execRate > 0 {
+		if err := count.SetExecLimit(id, execRate); err != nil {
+			t.Fatalf("SetExecLimit: %v", err)
+		}
+	}
+	fc := conn.(*FallbackConn)
+	t.Cleanup(func() { _ = fc.Close() })
+	return fc
+}
+
+// bucketTokens reads the current credit of both accounting levels.
+func bucketTokens(fc *FallbackConn) (dest app.Bitrate, destOK bool, exec app.Bitrate, execOK bool) {
+	fc.count.mu.Lock()
+	defer fc.count.mu.Unlock()
+	if b, ok := fc.count.packetSize[debugletKey{id: fc.id, dest: fc.ipv6}]; ok {
+		dest, destOK = b.tokens, true
+	}
+	if eb, ok := fc.count.execPacketSize[fc.id]; ok {
+		exec, execOK = eb.tokens, true
+	}
+	return dest, destOK, exec, execOK
+}
+
+func assertTokens(t *testing.T, fc *FallbackConn, wantDest, wantExec app.Bitrate) {
+	t.Helper()
+	dest, destOK, exec, execOK := bucketTokens(fc)
+	if !destOK || dest != wantDest {
+		t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, wantDest)
+	}
+	if !execOK || exec != wantExec {
+		t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, wantExec)
+	}
+}
+
+// forceReservationWait drives the buckets of a one-byte-per-second
+// connection into debt so that the next reservation on fc must sleep for
+// well over boundedWait. It uses the production reserve path only.
+func forceReservationWait(t *testing.T, fc *FallbackConn) {
+	t.Helper()
+	const debt = 3 * int(boundedWait/time.Second)
+	for i := 0; i < debt; i++ {
+		if _, err := fc.reserve(1); err != nil {
+			t.Fatalf("reserve: %v", err)
+		}
+	}
+	probe, err := fc.reserve(1)
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	probe.free()
+	if probe.waitFor <= boundedWait {
+		t.Fatalf("forced wait is %v, want more than %v", probe.waitFor, boundedWait)
+	}
+}
+
+// loopbackPair returns a client connection to a loopback TCP server. The
+// server runs serve on the accepted connection until serve returns or stop
+// is closed; join waits for it to exit.
+func loopbackPair(t *testing.T, serve func(c net.Conn, stop <-chan struct{})) (client net.Conn, join func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		serve(c, stop)
+	}()
+	join = func() {
+		stopOnce.Do(func() { close(stop) })
+		_ = ln.Close()
+		<-done
+	}
+	client, err = net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		join()
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		join()
+	})
+	return client, join
+}
+
+// waitBounded fails the test when done is not closed within boundedWait. It
+// then runs release (which must unblock the helper) and joins on done so no
+// helper goroutine outlives the test.
+func waitBounded(t *testing.T, done <-chan struct{}, what string, release func()) {
+	t.Helper()
+	select {
+	case <-done:
+		return
+	case <-time.After(boundedWait):
+		t.Errorf("%s did not terminate within %v", what, boundedWait)
+	}
+	if release != nil {
+		release()
+	}
+	<-done
+}
+
+// waitUntil polls cond until it holds, failing after boundedWait.
+func waitUntil(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(boundedWait)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not happen within %v", what, boundedWait)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// Regression 1: a short reply from an open peer is delivered as a positive
+// prefix instead of waiting to fill the whole buffer.
+func TestReadReturnsShortReplyWhilePeerOpen(t *testing.T) {
+	reply := []byte("pong\n")
+	var replyConsumed atomic.Bool
+	ackBeforeClose := make(chan bool, 1)
+
+	raw, join := loopbackPair(t, func(c net.Conn, stop <-chan struct{}) {
+		if _, err := c.Write(reply); err != nil {
+			ackBeforeClose <- false
+			return
+		}
+		<-stop
+		ackBeforeClose <- replyConsumed.Load()
+	})
+	fc := newTestConn(t, raw, app.FromBytes(1<<20), app.FromBytes(1<<20))
+	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+
+	buf := make([]byte, 4096)
+	var got []byte
+	for len(got) < len(reply) {
+		n, err := fc.Read(buf)
+		if err != nil {
+			t.Fatalf("Read while the peer is open: n=%d err=%v (got %q so far)", n, err, got)
+		}
+		if n <= 0 || n > len(buf) {
+			t.Fatalf("Read returned n=%d while the peer is open, want a positive prefix", n)
+		}
+		got = append(got, buf[:n]...)
+	}
+	if !bytes.Equal(got, reply) {
+		t.Fatalf("accumulated %q, want %q", got, reply)
+	}
+
+	// The peer is still open: only now let it close.
+	replyConsumed.Store(true)
+	join()
+	if !<-ackBeforeClose {
+		t.Fatal("server closed before the short reply was fully read")
+	}
+
+	n, err := fc.Read(buf)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("Read after peer close = (%d, %v), want (0, io.EOF)", n, err)
+	}
+}
+
+func TestBlockedReadAllowsWriteToReachPeer(t *testing.T) {
+	request := []byte("request\n")
+	reply := []byte("reply\n")
+	serverDone := make(chan error, 1)
+	raw, join := loopbackPair(t, func(c net.Conn, _ <-chan struct{}) {
+		got := make([]byte, len(request))
+		if _, err := io.ReadFull(c, got); err != nil {
+			serverDone <- fmt.Errorf("read request: %w", err)
+			return
+		}
+		if !bytes.Equal(got, request) {
+			serverDone <- fmt.Errorf("request = %q, want %q", got, request)
+			return
+		}
+		_, err := c.Write(reply)
+		serverDone <- err
+	})
+	readStarted := make(chan struct{})
+	fc := newTestConn(t, &readStartedConn{Conn: raw, started: readStarted}, app.FromBytes(1024), app.FromBytes(1024))
+	if err := fc.SetDeadline(time.Now().Add(boundedWait)); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+
+	readDone := make(chan struct{})
+	gotReply := make([]byte, len(reply))
+	var readErr error
+	go func() {
+		defer close(readDone)
+		_, readErr = io.ReadFull(fc, gotReply)
+	}()
+	waitBounded(t, readStarted, "underlying read start", func() { _ = fc.Close() })
+
+	if n, err := fc.Write(request); n != len(request) || err != nil {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, len(request))
+	}
+	waitBounded(t, readDone, "read after full-duplex handshake", func() { _ = fc.Close() })
+	join()
+	if readErr != nil {
+		t.Fatalf("ReadFull: %v", readErr)
+	}
+	if !bytes.Equal(gotReply, reply) {
+		t.Fatalf("reply = %q, want %q", gotReply, reply)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("server: %v", err)
+	}
+}
+
+// Regression 2: exactly one underlying read, its result returned unchanged.
+func TestReadReturnsSingleUnderlyingResult(t *testing.T) {
+	sentinel := errors.New("sentinel read error")
+	const (
+		bufSize   = 64
+		destBytes = 16 // caps the slice handed to the socket at 16 bytes
+		execBytes = 1024
+	)
+	cases := []struct {
+		name string
+		n    int
+		err  error
+	}{
+		{"positive nil", 5, nil},
+		{"positive EOF", 5, io.EOF},
+		{"positive sentinel", 5, sentinel},
+		{"zero EOF", 0, io.EOF},
+		{"zero nil", 0, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := oneRead(tc.n, tc.err)
+			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+
+			buf := make([]byte, bufSize)
+			n, err := fc.Read(buf)
+			if n != tc.n || err != tc.err {
+				t.Fatalf("Read = (%d, %v), want (%d, %v)", n, err, tc.n, tc.err)
+			}
+			if want := bytes.Repeat([]byte{'x'}, tc.n); !bytes.Equal(buf[:n], want) {
+				t.Fatalf("Read data = %q, want %q", buf[:n], want)
+			}
+			calls, sizes := raw.reads()
+			if calls != 1 {
+				t.Fatalf("underlying Read calls = %d, want 1", calls)
+			}
+			if sizes[0] != destBytes {
+				t.Fatalf("underlying Read slice length = %d, want %d", sizes[0], destBytes)
+			}
+		})
+	}
+}
+
+// Regression 3: unused reserved bytes are credited back to both accounting
+// levels, independently and capped at the current rate.
+func TestReadRefundsUnusedReservation(t *testing.T) {
+	const (
+		destBytes = 100
+		execBytes = 400
+		bufSize   = 100 // one reservation of the full destination rate
+	)
+
+	t.Run("partial refund", func(t *testing.T) {
+		raw := oneRead(30, nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Read(make([]byte, bufSize)); n != 30 || err != nil {
+			t.Fatalf("Read = (%d, %v), want (30, nil)", n, err)
+		}
+		// Fresh buckets start full: dest 100-100+70, exec 400-100+70.
+		assertTokens(t, fc, app.FromBytes(70), app.FromBytes(370))
+	})
+
+	t.Run("full refund on zero read", func(t *testing.T) {
+		raw := oneRead(0, io.EOF)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Read(make([]byte, bufSize)); n != 0 || !errors.Is(err, io.EOF) {
+			t.Fatalf("Read = (%d, %v), want (0, io.EOF)", n, err)
+		}
+		assertTokens(t, fc, app.FromBytes(destBytes), app.FromBytes(execBytes))
+	})
+
+	t.Run("no refund when everything was used", func(t *testing.T) {
+		raw := oneRead(bufSize, nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Read(make([]byte, bufSize)); n != bufSize || err != nil {
+			t.Fatalf("Read = (%d, %v), want (%d, nil)", n, err, bufSize)
+		}
+		assertTokens(t, fc, 0, app.FromBytes(execBytes-destBytes))
+	})
+
+	t.Run("executor refunded after destination detach", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		r, err := fc.reserve(bufSize)
+		if err != nil {
+			t.Fatalf("reserve: %v", err)
+		}
+		assertTokens(t, fc, 0, app.FromBytes(execBytes-destBytes))
+
+		// Close detaches the destination entry first; the executor entry stays.
+		if err := fc.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		r.free()
+
+		_, destOK, exec, execOK := bucketTokens(fc)
+		if destOK {
+			t.Error("destination bucket was recreated after detach")
+		}
+		if !execOK || exec != app.FromBytes(execBytes) {
+			t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes))
+		}
+	})
+
+	t.Run("destination refunded after executor delete", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		r, err := fc.reserve(bufSize)
+		if err != nil {
+			t.Fatalf("reserve: %v", err)
+		}
+		if err := fc.count.DeleteExecLimit(fc.id); err != nil {
+			t.Fatalf("DeleteExecLimit: %v", err)
+		}
+		r.free()
+
+		dest, destOK, _, execOK := bucketTokens(fc)
+		if execOK {
+			t.Error("executor bucket was recreated after delete")
+		}
+		if !destOK || dest != app.FromBytes(destBytes) {
+			t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, app.FromBytes(destBytes))
+		}
+	})
+
+	t.Run("refund is capped at the current rate", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		r, err := fc.reserve(bufSize)
+		if err != nil {
+			t.Fatalf("reserve: %v", err)
+		}
+		if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(50)); err != nil {
+			t.Fatalf("SetLimit: %v", err)
+		}
+		if err := fc.count.SetExecLimit(fc.id, app.FromBytes(200)); err != nil {
+			t.Fatalf("SetExecLimit: %v", err)
+		}
+		r.free()
+		assertTokens(t, fc, app.FromBytes(50), app.FromBytes(200))
+	})
+}
+
+// Regression 4: an empty read never reaches the socket, the limiter or the
+// FIFO lock.
+func TestEmptyReadNeedsNoLimits(t *testing.T) {
+	t.Run("no limits configured", func(t *testing.T) {
+		raw := oneRead(0, nil)
+		fc := newTestConn(t, raw, 0, 0) // no destination or executor limit at all
+
+		for _, b := range [][]byte{nil, {}} {
+			if n, err := fc.Read(b); n != 0 || err != nil {
+				t.Fatalf("Read(len %d) = (%d, %v), want (0, nil)", len(b), n, err)
+			}
+		}
+		if calls, _ := raw.reads(); calls != 0 {
+			t.Fatalf("underlying Read calls = %d, want 0", calls)
+		}
+		if _, destOK, _, execOK := bucketTokens(fc); destOK || execOK {
+			t.Fatal("empty Read created accounting state")
+		}
+
+		// A nonempty read on the same connection still fails admission without I/O.
+		if n, err := fc.Read(make([]byte, 1)); n != 0 || err == nil {
+			t.Fatalf("Read without limits = (%d, %v), want an admission error", n, err)
+		}
+		if calls, _ := raw.reads(); calls != 0 {
+			t.Fatalf("underlying Read calls after admission failure = %d, want 0", calls)
+		}
+	})
+
+	t.Run("does not wait for the FIFO lock", func(t *testing.T) {
+		raw := newScriptedConn(nil) // blocks until closed
+		fc := newTestConn(t, raw, app.FromBytes(1024), app.FromBytes(1024))
+
+		blockedRead := make(chan struct{})
+		go func() {
+			defer close(blockedRead)
+			_, _ = fc.Read(make([]byte, 16))
+		}()
+		waitBounded(t, raw.blocked, "underlying read start", func() { _ = fc.Close() })
+
+		emptyRead := make(chan struct{})
+		var n int
+		var err error
+		go func() {
+			defer close(emptyRead)
+			n, err = fc.Read(nil)
+		}()
+		waitBounded(t, emptyRead, "empty Read while another Read holds the lock", func() { _ = fc.Close() })
+		if n != 0 || err != nil {
+			t.Errorf("empty Read = (%d, %v), want (0, nil)", n, err)
+		}
+
+		_ = fc.Close()
+		<-blockedRead
+		if calls, _ := raw.reads(); calls != 1 {
+			t.Fatalf("underlying Read calls = %d, want 1 (only the blocked read)", calls)
+		}
+	})
+}
+
+// Regression 5a: an already expired deadline cancels a forced reservation wait
+// with the deadline error, without I/O and without losing the reservation.
+func TestReadExpiredDeadlineDuringReservationWait(t *testing.T) {
+	set := map[string]func(*FallbackConn, time.Time) error{
+		"read deadline": (*FallbackConn).SetReadDeadline,
+		"deadline":      (*FallbackConn).SetDeadline,
+	}
+	for name, setDeadline := range set {
+		t.Run(name, func(t *testing.T) {
+			raw := oneRead(1, nil)
+			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			forceReservationWait(t, fc)
+			destBefore, _, execBefore, _ := bucketTokens(fc)
+
+			if err := setDeadline(fc, time.Now().Add(-time.Second)); err != nil {
+				t.Fatalf("set deadline: %v", err)
+			}
+			start := time.Now()
+			n, err := fc.Read(make([]byte, 1))
+			if n != 0 || !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatalf("Read = (%d, %v), want (0, %v)", n, err, os.ErrDeadlineExceeded)
+			}
+			if elapsed := time.Since(start); elapsed > boundedWait {
+				t.Fatalf("Read took %v", elapsed)
+			}
+			if calls, _ := raw.reads(); calls != 0 {
+				t.Fatalf("underlying Read calls = %d, want 0", calls)
+			}
+			// The canceled reservation was refunded: at one byte per second a
+			// missing 8-bit refund cannot be masked by refill within this test.
+			dest, _, exec, _ := bucketTokens(fc)
+			if dest < destBefore || exec < execBefore {
+				t.Fatalf("buckets after canceled wait = (%d, %d) bits, want at least (%d, %d)", dest, exec, destBefore, execBefore)
+			}
+		})
+	}
+}
+
+func TestLimiterWaitTracksDeadlineChanges(t *testing.T) {
+	t.Run("earlier", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+		forceReservationWait(t, fc)
+		if err := fc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
+			t.Fatalf("SetWriteDeadline: %v", err)
+		}
+		destBefore, _, _, _ := bucketTokens(fc)
+		done := make(chan error, 1)
+		go func() {
+			_, err := fc.Write([]byte("x"))
+			done <- err
+		}()
+		waitUntil(t, func() bool {
+			dest, _, _, _ := bucketTokens(fc)
+			return dest < destBefore
+		}, "reservation by waiting Write")
+		if err := fc.SetWriteDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+			t.Fatalf("move deadline earlier: %v", err)
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatalf("Write error = %v, want %v", err, os.ErrDeadlineExceeded)
+			}
+		case <-time.After(boundedWait):
+			t.Fatal("limiter wait did not observe earlier deadline")
+		}
+		if writes := raw.written(); len(writes) != 0 {
+			t.Fatalf("underlying writes = %d, want 0", len(writes))
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		update func(*FallbackConn) error
+	}{
+		{"later", func(fc *FallbackConn) error { return fc.SetWriteDeadline(time.Now().Add(time.Hour)) }},
+		{"cleared", func(fc *FallbackConn) error { return fc.SetWriteDeadline(time.Time{}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := newScriptedConn(nil)
+			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+			forceReservationWait(t, fc)
+			if err := fc.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+				t.Fatalf("SetWriteDeadline: %v", err)
+			}
+			destBefore, _, _, _ := bucketTokens(fc)
+			done := make(chan error, 1)
+			go func() {
+				_, err := fc.Write([]byte("x"))
+				done <- err
+			}()
+			waitUntil(t, func() bool {
+				dest, _, _, _ := bucketTokens(fc)
+				return dest < destBefore
+			}, "reservation by waiting Write")
+			if err := tc.update(fc); err != nil {
+				t.Fatalf("update deadline: %v", err)
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("Write returned at old deadline: %v", err)
+			case <-time.After(250 * time.Millisecond):
+			}
+			if err := fc.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if err := <-done; !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("Write error after Close = %v, want %v", err, net.ErrClosed)
+			}
+		})
+	}
+}
+
+func TestDirectionalDeadlineOverride(t *testing.T) {
+	fc := newTestConn(t, newScriptedConn(nil), app.FromBytes(1), app.FromBytes(1))
+	common := time.Now().Add(time.Minute)
+	if err := fc.SetDeadline(common); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+	if err := fc.SetWriteDeadline(time.Time{}); err != nil {
+		t.Fatalf("clear write deadline: %v", err)
+	}
+	read, _ := fc.deadlineState(false)
+	write, _ := fc.deadlineState(true)
+	if !read.Equal(common) {
+		t.Fatalf("read deadline = %v, want %v", read, common)
+	}
+	if !write.IsZero() {
+		t.Fatalf("write deadline = %v, want cleared", write)
+	}
+}
+
+func TestDeadlineSettersKeepSocketAndWrapperOrdered(t *testing.T) {
+	raw := newGatedDeadlineConn()
+	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+	first := time.Now().Add(time.Minute)
+	second := first.Add(time.Minute)
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- fc.SetDeadline(first) }()
+	<-raw.setDeadlineEntered
+	released := false
+	defer func() {
+		if !released {
+			close(raw.releaseSetDeadline)
+		}
+	}()
+	if fc.deadlineMu.TryLock() {
+		fc.deadlineMu.Unlock()
+		t.Fatal("wrapper deadline lock was not held across the underlying setter")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- fc.SetWriteDeadline(second) }()
+	close(raw.releaseSetDeadline)
+	released = true
+	if err := <-firstDone; err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+	wrapper, _ := fc.deadlineState(true)
+	if socket := raw.currentWriteDeadline(); !socket.Equal(wrapper) || !wrapper.Equal(second) {
+		t.Fatalf("write deadlines: socket=%v wrapper=%v, want %v", socket, wrapper, second)
+	}
+}
+
+func TestLimiterTimerWakeRechecksCurrentDeadlineBeforeWrite(t *testing.T) {
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	forceReservationWait(t, fc)
+	if err := fc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("initial SetWriteDeadline: %v", err)
+	}
+	waitEntered := make(chan struct{})
+	releaseTimer := make(chan struct{})
+	fc.waitForLimiter = func(time.Duration, <-chan struct{}, <-chan struct{}) limiterWaitResult {
+		close(waitEntered)
+		<-releaseTimer
+		return limiterReady
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := fc.Write([]byte("x"))
+		done <- err
+	}()
+	<-waitEntered
+	if err := fc.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+	close(releaseTimer)
+	select {
+	case err := <-done:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("Write error = %v, want %v", err, os.ErrDeadlineExceeded)
+		}
+	case <-time.After(boundedWait):
+		t.Fatal("Write did not finish after controlled limiter timer wake")
+	}
+	if writes := raw.written(); len(writes) != 0 {
+		t.Fatalf("underlying writes = %d, want 0", len(writes))
+	}
+}
+
+func TestQueuedWriteTracksEarlierDeadline(t *testing.T) {
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(1024), app.FromBytes(1024))
+	fc.writeMu.Lock()
+	defer fc.writeMu.Unlock()
+	if err := fc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetWriteDeadline: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := fc.Write([]byte("queued"))
+		done <- err
+	}()
+	waitForFIFOQueue(t, fc.writeMu, 1)
+	if err := fc.SetWriteDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatalf("move deadline earlier: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("Write error = %v, want %v", err, os.ErrDeadlineExceeded)
+		}
+	case <-time.After(boundedWait):
+		t.Fatal("queued Write did not observe earlier deadline")
+	}
+	if writes := raw.written(); len(writes) != 0 {
+		t.Fatalf("underlying writes = %d, want 0", len(writes))
+	}
+}
+
+// Regression 5b: Close cancels a reservation wait within a bounded time.
+func TestCloseDuringReservationWait(t *testing.T) {
+	raw := oneRead(1, nil)
+	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	forceReservationWait(t, fc)
+	destBefore, _, _, _ := bucketTokens(fc)
+
+	var (
+		n    int
+		err  error
+		done = make(chan struct{})
+	)
+	go func() {
+		defer close(done)
+		n, err = fc.Read(make([]byte, 1))
+	}()
+	// Only close once the Read has taken its reservation and is sleeping.
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fc)
+		return dest < destBefore
+	}, "reservation by the sleeping Read")
+	if cerr := fc.Close(); cerr != nil {
+		t.Errorf("Close: %v", cerr)
+	}
+	waitBounded(t, done, "Read canceled by Close during reservation wait", nil)
+
+	if n != 0 || !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Read = (%d, %v), want (0, %v)", n, err, net.ErrClosed)
+	}
+	if calls, _ := raw.reads(); calls != 0 {
+		t.Fatalf("underlying Read calls = %d, want 0", calls)
+	}
+}
+
+func TestOperationQueuedBeforeCloseReturnsNetErrClosedWithoutIO(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*FallbackConn) (int, error)
+	}{
+		{"read", func(fc *FallbackConn) (int, error) { return fc.Read(make([]byte, 1)) }},
+		{"write", func(fc *FallbackConn) (int, error) { return fc.Write([]byte("x")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := oneRead(1, nil)
+			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			gate := fc.writeMu
+			if tc.name == "read" {
+				gate = fc.readMu
+			}
+			gate.Lock()
+			defer gate.Unlock()
+
+			done := make(chan struct{})
+			var n int
+			var err error
+			go func() {
+				defer close(done)
+				n, err = tc.run(fc)
+			}()
+			waitForFIFOQueue(t, gate, 1)
+			if cerr := fc.Close(); cerr != nil {
+				t.Fatalf("Close: %v", cerr)
+			}
+			waitBounded(t, done, tc.name+" queued before Close", nil)
+
+			if n != 0 || !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("operation = (%d, %v), want (0, %v)", n, err, net.ErrClosed)
+			}
+			if reads, _ := raw.reads(); reads != 0 {
+				t.Fatalf("underlying reads = %d, want 0", reads)
+			}
+			if writes := raw.written(); len(writes) != 0 {
+				t.Fatalf("underlying writes = %d, want 0", len(writes))
+			}
+		})
+	}
+}
+
+// Regression 5c: Close terminates a Read blocked inside the underlying socket
+// read, and the executor bucket is still refunded although Close already
+// detached the destination entry.
+func TestCloseDuringBlockedRead(t *testing.T) {
+	const (
+		destBytes = 8192
+		execBytes = 8192
+		bufSize   = 4096
+	)
+
+	t.Run("scripted blocking conn", func(t *testing.T) {
+		raw := newScriptedConn(nil) // blocks until closed
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+
+		var (
+			n    int
+			err  error
+			done = make(chan struct{})
+		)
+		go func() {
+			defer close(done)
+			n, err = fc.Read(make([]byte, bufSize))
+		}()
+		waitBounded(t, raw.blocked, "underlying read start", func() { _ = fc.Close() })
+		if cerr := fc.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
+		}
+		waitBounded(t, done, "Read blocked in the socket", nil)
+
+		if n != 0 || err == nil {
+			t.Fatalf("Read = (%d, %v), want (0, error)", n, err)
+		}
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] != bufSize {
+			t.Fatalf("underlying Read calls = %d sizes = %v, want one call of %d", calls, sizes, bufSize)
+		}
+		_, destOK, exec, execOK := bucketTokens(fc)
+		if destOK {
+			t.Error("destination bucket was recreated after Close")
+		}
+		if !execOK || exec != app.FromBytes(execBytes) {
+			t.Errorf("executor bucket = %d bits (present=%v), want full refund to %d bits", exec, execOK, app.FromBytes(execBytes))
+		}
+	})
+
+	t.Run("loopback tcp", func(t *testing.T) {
+		raw, join := loopbackPair(t, func(c net.Conn, stop <-chan struct{}) { <-stop })
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		// Final bound in case Close does not wake the socket read.
+		if err := fc.SetReadDeadline(time.Now().Add(2 * boundedWait)); err != nil {
+			t.Fatalf("SetReadDeadline: %v", err)
+		}
+
+		var (
+			n    int
+			err  error
+			done = make(chan struct{})
+		)
+		go func() {
+			defer close(done)
+			n, err = fc.Read(make([]byte, bufSize))
+		}()
+		if cerr := fc.Close(); cerr != nil {
+			t.Errorf("Close: %v", cerr)
+		}
+		waitBounded(t, done, "Read on a closed loopback socket", nil)
+		join()
+
+		if n != 0 || err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("Read = (%d, %v), want (0, close error)", n, err)
+		}
+		if _, destOK, _, _ := bucketTokens(fc); destOK {
+			t.Error("destination bucket was recreated after Close")
+		}
+	})
+}
+
+// Regression 6: Write still splits output at the reservation cap and
+// delivers every chunk in order.
+func TestWriteCompletesMultiChunkInOrder(t *testing.T) {
+	const (
+		destBytes = 1000 // caps one reservation at 1000 bytes
+		execBytes = 1 << 20
+		payload   = 1020 // second chunk of 20 bytes waits about 20ms
+	)
+	data := make([]byte, payload)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+
+	n, err := fc.Write(data)
+	if n != payload || err != nil {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
+	}
+
+	writes := raw.written()
+	wantSizes := []int{destBytes, payload - destBytes}
+	if len(writes) != len(wantSizes) {
+		t.Fatalf("underlying Write calls = %d, want %d", len(writes), len(wantSizes))
+	}
+	var joined []byte
+	for i, w := range writes {
+		if len(w) != wantSizes[i] {
+			t.Errorf("chunk %d has %d bytes, want %d", i, len(w), wantSizes[i])
+		}
+		joined = append(joined, w...)
+	}
+	if !bytes.Equal(joined, data) {
+		t.Fatal("chunks were not delivered in order")
+	}
+	if calls, _ := raw.reads(); calls != 0 {
+		t.Fatalf("Write performed %d underlying reads", calls)
+	}
+}
+
+func TestWriteRefundsUnusedReservation(t *testing.T) {
+	const (
+		destBytes = 200
+		execBytes = 400
+		payload   = 100
+	)
+	sentinel := errors.New("sentinel write error")
+
+	t.Run("full write", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Write(make([]byte, payload)); n != payload || err != nil {
+			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
+		}
+		assertTokens(t, fc, app.FromBytes(destBytes-payload), app.FromBytes(execBytes-payload))
+	})
+
+	t.Run("short successful writes", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		calls := 0
+		raw.write = func(b []byte) (int, error) {
+			calls++
+			if calls == 1 {
+				return 30, nil
+			}
+			return len(b), nil
+		}
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Write(make([]byte, payload)); n != payload || err != nil {
+			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
+		}
+		if calls != 2 {
+			t.Fatalf("underlying Write calls = %d, want 2", calls)
+		}
+		assertTokens(t, fc, app.FromBytes(destBytes-payload), app.FromBytes(execBytes-payload))
+	})
+
+	t.Run("accumulates short write before error", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		calls := 0
+		raw.write = func([]byte) (int, error) {
+			calls++
+			if calls == 1 {
+				return 30, nil
+			}
+			return 20, sentinel
+		}
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Write(make([]byte, payload)); n != 50 || !errors.Is(err, sentinel) {
+			t.Fatalf("Write = (%d, %v), want (50, %v)", n, err, sentinel)
+		}
+		assertTokens(t, fc, app.FromBytes(destBytes-50), app.FromBytes(execBytes-50))
+	})
+
+	for _, tc := range []struct {
+		name     string
+		n        int
+		err      error
+		wantErr  error
+		wantDest int
+		wantExec int
+	}{
+		{"partial with error", 30, sentinel, sentinel, destBytes - 30, execBytes - 30},
+		{"zero with error", 0, sentinel, sentinel, destBytes, execBytes},
+		{"zero progress", 0, nil, io.ErrNoProgress, destBytes, execBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := newScriptedConn(nil)
+			raw.write = func([]byte) (int, error) { return tc.n, tc.err }
+			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			n, err := fc.Write(make([]byte, payload))
+			if n != tc.n || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Write = (%d, %v), want (%d, %v)", n, err, tc.n, tc.wantErr)
+			}
+			if calls := len(raw.written()); calls != 1 {
+				t.Fatalf("underlying Write calls = %d, want 1", calls)
+			}
+			assertTokens(t, fc, app.FromBytes(tc.wantDest), app.FromBytes(tc.wantExec))
+		})
+	}
+
+	t.Run("executor refunded after destination detach", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		raw.write = func([]byte) (int, error) {
+			fc.count.Detach(fc.addr, fc.id, fc.ipv6)
+			return 30, sentinel
+		}
+		if n, err := fc.Write(make([]byte, payload)); n != 30 || !errors.Is(err, sentinel) {
+			t.Fatalf("Write = (%d, %v), want (30, %v)", n, err, sentinel)
+		}
+		_, destOK, exec, execOK := bucketTokens(fc)
+		if destOK {
+			t.Error("destination bucket was recreated after detach")
+		}
+		if !execOK || exec != app.FromBytes(execBytes-30) {
+			t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes-30))
+		}
+	})
+
+	t.Run("destination refunded after executor delete", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		raw.write = func([]byte) (int, error) {
+			if err := fc.count.DeleteExecLimit(fc.id); err != nil {
+				t.Fatalf("DeleteExecLimit: %v", err)
+			}
+			return 30, sentinel
+		}
+		if n, err := fc.Write(make([]byte, payload)); n != 30 || !errors.Is(err, sentinel) {
+			t.Fatalf("Write = (%d, %v), want (30, %v)", n, err, sentinel)
+		}
+		dest, destOK, _, execOK := bucketTokens(fc)
+		if execOK {
+			t.Error("executor bucket was recreated after delete")
+		}
+		if !destOK || dest != app.FromBytes(destBytes-30) {
+			t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, app.FromBytes(destBytes-30))
+		}
+	})
+
+	for _, invalid := range []int{-1, payload + 1} {
+		t.Run(fmt.Sprintf("invalid count %d", invalid), func(t *testing.T) {
+			raw := newScriptedConn(nil)
+			raw.write = func([]byte) (int, error) { return invalid, nil }
+			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			n, err := fc.Write(make([]byte, payload))
+			if n != 0 || err == nil {
+				t.Fatalf("Write = (%d, %v), want (0, invalid-count error)", n, err)
+			}
+			// The writer's actual byte count is unknowable after it violates the
+			// contract, so retain the reservation rather than creating credit.
+			assertTokens(t, fc, app.FromBytes(destBytes-payload), app.FromBytes(execBytes-payload))
+		})
+	}
+}
+
+func TestSharedIPRateLivesUntilLastAliasDetaches(t *testing.T) {
+	count, err := NewFallbackCount()
+	if err != nil {
+		t.Fatalf("NewFallbackCount: %v", err)
+	}
+	id := uuid.New()
+	otherID := uuid.New()
+	attach := func(id uuid.UUID, alias string) *FallbackConn {
+		t.Helper()
+		conn, err := count.Attach(newScriptedConn(nil), id, alias)
+		if err != nil {
+			t.Fatalf("Attach(%q): %v", alias, err)
+		}
+		return conn.(*FallbackConn)
+	}
+	first := attach(id, "first.example")
+	second := attach(id, "second.example")
+	otherRun := attach(otherID, "first.example")
+	t.Cleanup(func() {
+		_ = first.Close()
+		_ = second.Close()
+		_ = otherRun.Close()
+	})
+
+	const limitBytes = 1024
+	for _, item := range []struct {
+		alias string
+		id    uuid.UUID
+	}{
+		{"first.example", id},
+		{"second.example", id},
+		{"first.example", otherID},
+	} {
+		if err := count.SetLimit(item.alias, item.id, app.FromBytes(limitBytes)); err != nil {
+			t.Fatalf("SetLimit(%q): %v", item.alias, err)
+		}
+		if err := count.SetExecLimit(item.id, app.FromBytes(limitBytes)); err != nil {
+			t.Fatalf("SetExecLimit: %v", err)
+		}
+	}
+
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first alias: %v", err)
+	}
+	if n, err := second.Write([]byte("still attached")); n != len("still attached") || err != nil {
+		t.Fatalf("second alias Write = (%d, %v), want (%d, nil)", n, err, len("still attached"))
+	}
+
+	key := debugletKey{id: id, dest: second.ipv6}
+	otherKey := debugletKey{id: otherID, dest: otherRun.ipv6}
+	reservation, err := second.reserve(10)
+	if err != nil {
+		t.Fatalf("reserve before final detach: %v", err)
+	}
+	start := make(chan struct{})
+	closeDone := make(chan error, 1)
+	refundDone := make(chan struct{})
+	go func() {
+		<-start
+		closeDone <- second.Close()
+	}()
+	go func() {
+		defer close(refundDone)
+		<-start
+		reservation.free()
+	}()
+	close(start)
+	if err := <-closeDone; err != nil {
+		t.Fatalf("close final alias: %v", err)
+	}
+	<-refundDone
+
+	count.mu.Lock()
+	_, rateExists := count.rates[key]
+	_, bucketExists := count.packetSize[key]
+	_, attachmentExists := count.attached[key]
+	_, otherRateExists := count.rates[otherKey]
+	count.mu.Unlock()
+	if rateExists || bucketExists || attachmentExists {
+		t.Fatalf("final detach retained state: rate=%v bucket=%v attachment=%v", rateExists, bucketExists, attachmentExists)
+	}
+	if !otherRateExists {
+		t.Fatal("final detach removed another run's rate")
+	}
+}
+
+func TestClosedConnWithExpiredDeadlineReportsClosed(t *testing.T) {
+	fc := newTestConn(t, newScriptedConn(nil), app.FromBytes(1024), app.FromBytes(1024))
+	if err := fc.SetDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fc.Write([]byte("x")); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Write after Close = %v, want %v", err, net.ErrClosed)
+	}
+	if _, err := fc.Read(make([]byte, 1)); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Read after Close = %v, want %v", err, net.ErrClosed)
+	}
+}

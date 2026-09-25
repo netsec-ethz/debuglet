@@ -5,12 +5,15 @@ package wasm
 
 import (
 	"crypto/tls"
-	"debuglet/internal/executor/debuglet/socket"
-	"debuglet/internal/executor/ratelimit"
-	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/executor/scheduler"
-	"debuglet/internal/executor/tagger"
+	"errors"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"net"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -18,11 +21,24 @@ import (
 )
 
 type WasmEnv struct {
+	mu           sync.Mutex
+	closed       bool
+	closeOnce    sync.Once
+	closeErr     error
+	lateCloseErr error
+
 	DebugletID uuid.UUID
 	Policy     scheduler.Policy
+	// Net is the network policy every transport is checked against. It is the
+	// operator's rules and this run's declared destinations together; without
+	// it no transport is available.
+	Net *netpolicy.Policy
 
-	Limiter      *app.Limiter
-	PacketCount  ratelimit.PacketCount
+	Limiter     *app.Limiter
+	PacketCount ratelimit.PacketCount
+	// Accountant covers the traffic no connection wrapper does: listener
+	// datagrams and SCION packets.
+	Accountant   *ratelimit.Accountant
 	LastReceived net.Addr
 	Logger       *zap.SugaredLogger
 	TlsCfg       *tls.Config
@@ -45,24 +61,115 @@ type WasmEnv struct {
 	ScionConn *socket.SCIONConnRegistry
 }
 
-func (e *WasmEnv) Close() {
-	e.Registry.CloseAll()
-	if e.ScionServer != nil {
-		e.ScionServer.Close()
-	}
-	if e.UdpServer != nil {
-		e.UdpServer.Close()
+// Listener publication competes with terminal closure. References remain
+// immutable after successful publication; late resources are consumed/closed.
+func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error {
+	e.mu.Lock()
+	if e.closed || e.TcpServer != nil {
+		e.mu.Unlock()
+		err := lis.Close()
 		if e.PortManager != nil {
-			e.PortManager.Release(e.UdpServerPort)
+			e.PortManager.Release(port)
 		}
+		e.RecordCleanupError(err)
+		return errors.Join(net.ErrClosed, err)
 	}
-	if e.TcpServer != nil {
-		e.TcpServer.Close()
+	e.TcpServer, e.TcpServerPort, e.TcpServerAddr = lis, port, addr
+	e.mu.Unlock()
+	return nil
+}
+func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
+	e.mu.Lock()
+	if e.closed || e.UdpServer != nil {
+		e.mu.Unlock()
+		err := conn.Close()
 		if e.PortManager != nil {
-			e.PortManager.Release(e.TcpServerPort)
+			e.PortManager.Release(port)
 		}
+		e.RecordCleanupError(err)
+		return errors.Join(net.ErrClosed, err)
 	}
-	if e.Tagger != nil {
-		e.Tagger.Close()
+	e.UdpServer, e.UdpServerPort, e.UdpServerAddr = conn, port, addr
+	e.mu.Unlock()
+	return nil
+}
+func (e *WasmEnv) InstallSCION(conn pan.ListenConn) error {
+	e.mu.Lock()
+	if e.closed || e.ScionServer != nil {
+		e.mu.Unlock()
+		err := conn.Close()
+		e.RecordCleanupError(err)
+		return errors.Join(net.ErrClosed, err)
 	}
+	e.ScionServer = conn
+	e.mu.Unlock()
+	return nil
+}
+func (e *WasmEnv) SCIONAddr() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ScionServer == nil {
+		return ""
+	}
+	return e.ScionServer.LocalAddr().String()
+}
+
+func (e *WasmEnv) Close() error {
+	e.closeOnce.Do(func() {
+		e.mu.Lock()
+		e.closed = true
+		tcp, tcpPort := e.TcpServer, e.TcpServerPort
+		udp, udpPort := e.UdpServer, e.UdpServerPort
+		scion := e.ScionServer
+		e.mu.Unlock()
+		if tcp != nil {
+			e.closeErr = errors.Join(e.closeErr, tcp.Close())
+			if e.PortManager != nil {
+				e.PortManager.Release(tcpPort)
+			}
+		}
+		if udp != nil {
+			e.closeErr = errors.Join(e.closeErr, udp.Close())
+			if e.PortManager != nil {
+				e.PortManager.Release(udpPort)
+			}
+		}
+		if scion != nil {
+			e.closeErr = errors.Join(e.closeErr, scion.Close())
+		}
+		if e.Registry != nil {
+			_ = e.Registry.CloseAll()
+		}
+		if e.ScionConn != nil {
+			_ = e.ScionConn.CloseAll()
+		}
+		if e.Tagger != nil {
+			e.closeErr = errors.Join(e.closeErr, e.Tagger.Close())
+		}
+	})
+	// Producers may complete after the I/O watcher. Its final caller invokes
+	// Close again after those producers join to obtain their late close errors.
+	e.mu.Lock()
+	lateErr := e.lateCloseErr
+	e.mu.Unlock()
+	var registryErr error
+	if e.Registry != nil {
+		registryErr = e.Registry.CloseAll()
+	}
+	var scionErr error
+	if e.ScionConn != nil {
+		scionErr = e.ScionConn.CloseAll()
+	}
+	return errors.Join(e.closeErr, registryErr, scionErr, lateErr)
+}
+
+// RecordCleanupError records a resource-release failure independently of the
+// operation's selected execution/cancellation outcome. Nil is a no-op.
+func (e *WasmEnv) RecordCleanupError(err error) {
+	if err == nil {
+		return
+	}
+	e.mu.Lock()
+	e.lateCloseErr = errors.Join(e.lateCloseErr, err)
+	e.mu.Unlock()
 }

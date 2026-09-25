@@ -1,2 +1,7 @@
 certs/
 dist/
+
+# Pinned SSH host identities for the managed hosts; provisioned next to
+# hosts.yml, never committed. See ansible/known_hosts.example.
+ansible/known_hosts
+ansible/known_hosts.dev

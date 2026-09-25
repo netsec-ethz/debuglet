@@ -1,39 +1,5 @@
 ---
-# Everything below is namespaced by debuglet_env (see
-# group_vars/executors.yml), so a prod and a dev executor coexist on one
-# machine instead of overwriting each other on every pipeline.
-
-- name: Create executor service user and group
-  ansible.builtin.user:
-    name: "{{ executor_user }}"
-    system: true
-    shell: /usr/sbin/nologin
-    create_home: false
-    state: present
-
-# ---------------------------------------------------------------------------
-# Retire the pre-split install (one unsuffixed unit/dir shared by both envs)
-# ---------------------------------------------------------------------------
-# Left running it would race the new unit for the same executor_id, and its
-# executor.db holds persisted debuglet state worth keeping. Stopping the unit
-# but leaving it on disk keeps the change reversible.
-
-- name: Check for a pre-split executor install
-  ansible.builtin.stat:
-    path: "/etc/systemd/system/{{ executor_legacy_service }}.service"
-  register: legacy_unit
-  when: executor_retire_legacy_install | default(true)
-
-- name: Stop and disable the pre-split executor unit
-  ansible.builtin.systemd:
-    name: "{{ executor_legacy_service }}"
-    state: stopped
-    enabled: false
-  when:
-    - executor_retire_legacy_install | default(true)
-    - legacy_unit.stat.exists | default(false)
-
-- name: Create executor config directory
+- name: Create executor configuration directory
   ansible.builtin.file:
     path: "{{ executor_config_dir }}"
     state: directory
@@ -41,57 +7,70 @@
     group: "{{ executor_group }}"
     mode: "0700"
 
-# The TLS credentials deploy-certs.yml installed live in the legacy config
-# dir, so carry them into the environment's dir rather than leaving a migrated
-# node without certs. force: false, so a config dir that already has its own
-# copy is never overwritten.
-#
-# executor.db is deliberately NOT carried over. The legacy database is
-# whatever schema that node was last deployed with, and copying it lands an
-# out-of-date database exactly where the correctly-migrated seed would
-# otherwise go — the executor then dies on startup with "no such column", and
-# because the copy happens on every run, no amount of redeploying recovers it.
-# Nothing is lost by seeding fresh: 00002_uuid_blob drops and recreates
-# debuglets/debuglet_logs, so no executor state survives that boundary anyway.
-- name: Check for pre-split executor credentials
-  ansible.builtin.stat:
-    path: "{{ executor_legacy_config_dir }}/{{ item }}"
-  register: legacy_state
-  loop:
-    - ca.crt
-    - client.crt
-    - client.key
-  when: executor_retire_legacy_install | default(true)
-
-- name: Carry pre-split executor credentials over to this environment
-  ansible.builtin.copy:
-    src: "{{ executor_legacy_config_dir }}/{{ item.item }}"
-    remote_src: true
-    dest: "{{ executor_config_dir }}/{{ item.item }}"
+# Writable state stays separate from read-only configuration.
+- name: Create executor state directory
+  ansible.builtin.file:
+    path: "{{ executor_state_dir }}"
+    state: directory
     owner: "{{ executor_user }}"
     group: "{{ executor_group }}"
-    mode: "{{ {'ca.crt': '0644', 'client.crt': '0640'}[item.item] | default('0600') }}"
-    force: false
-  loop: "{{ legacy_state.results | default([]) }}"
-  loop_control:
-    label: "{{ item.item | default('') }}"
-  when:
-    - executor_retire_legacy_install | default(true)
-    - item.stat.exists | default(false)
-  notify: Restart executor
+    mode: "0700"
 
-# A crashed first start leaves behind the empty file sql.Open() creates before
-# it fails, and `force: false` alone would treat that as a database to preserve
-# — permanently blocking the seed and leaving the executor in a "no such table"
-# restart loop. Only a non-empty file counts as real state.
-- name: Check the executor database for real state
+- name: Inspect the executor database
   ansible.builtin.stat:
-    path: "{{ executor_config_dir }}/executor.db"
+    path: "{{ executor_state_dir }}/executor.db"
   register: executor_db
 
+- name: Inspect existing executor databases at previous locations
+  ansible.builtin.stat:
+    path: "{{ item }}/executor.db"
+  loop: "{{ [executor_legacy_config_dir, executor_legacy_state_dir, executor_config_dir] | unique }}"
+  register: executor_previous_databases
+
+- name: Require an explicit upgrade of existing executor state
+  ansible.builtin.assert:
+    that:
+      - not (item.stat.exists and (item.stat.size | default(0) | int > 0)) or (executor_db.stat.size | default(0) | int > 0)
+    fail_msg: >-
+      Existing executor state at {{ item.item }}/executor.db has been preserved.
+      This alpha does not upgrade old database schemas. Back up and establish
+      compatibility before placing the upgraded database in {{ executor_state_dir }};
+      no seed or legacy service change has been applied.
+    quiet: true
+  loop: "{{ executor_previous_databases.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inspect the legacy executor unit
+  ansible.builtin.stat:
+    path: "{{ systemd_unit_dir }}/{{ executor_legacy_service }}.service"
+  register: executor_legacy_unit
+
+- name: Require explicit ownership of legacy executor retirement
+  ansible.builtin.assert:
+    that:
+      - not executor_legacy_unit.stat.exists or executor_retire_legacy_install | bool
+    fail_msg: >-
+      The unsuffixed {{ executor_legacy_service }} unit may belong to another
+      environment. Check its ownership and state before explicitly setting
+      executor_retire_legacy_install=true; it has not been stopped.
+    quiet: true
+
+- name: Stop and disable the legacy executor unit
+  ansible.builtin.systemd:
+    name: "{{ executor_legacy_service }}"
+    state: stopped
+    enabled: false
+  when:
+    - debuglet_manage_services | bool
+    - executor_retire_legacy_install | bool
+    - executor_legacy_unit.stat.exists | default(false)
+
+# An interrupted initial start can leave a zero-byte database. It contains no
+# state; unlike a nonempty database it must not block installation of the seed.
 - name: Discard an empty executor database
   ansible.builtin.file:
-    path: "{{ executor_config_dir }}/executor.db"
+    path: "{{ executor_state_dir }}/executor.db"
     state: absent
   when:
     - executor_db.stat.exists
@@ -100,22 +79,15 @@
 - name: Provision executor database (schema only, preserved on redeploy)
   ansible.builtin.copy:
     src: "{{ dist_dir }}/executor-seed.db" # built by `make deploy-seed-db`, not committed
-    dest: "{{ executor_config_dir }}/executor.db"
+    dest: "{{ executor_state_dir }}/executor.db"
     owner: "{{ executor_user }}"
     group: "{{ executor_group }}"
     mode: "0600"
-    force: false # never overwrite an existing DB (would wipe persisted debuglet state)
+    force: false # never overwrite an existing database: it holds recorded runs
   notify: Restart executor
 
-- name: Install executor binary
-  ansible.builtin.copy:
-    src: "{{ dist_dir }}/debuglet-executor"
-    dest: "{{ executor_binary }}"
-    owner: root
-    group: root
-    mode: "0755"
-  notify: Restart executor
-
+# The rendered configuration carries the TESLA seed, so its content stays out
+# of task output and diffs.
 - name: Deploy executor configuration
   ansible.builtin.template:
     src: executor.toml.j2
@@ -123,6 +95,7 @@
     owner: "{{ executor_user }}"
     group: "{{ executor_group }}"
     mode: "0640"
+  no_log: true
   notify: Restart executor
 
 # Without these the TC egress tagger cannot attach and probes leave untagged,
@@ -133,7 +106,9 @@
 # executor_enable_bpf=false on such a host to skip the attempt entirely.
 - name: Set eBPF capabilities on executor binary
   community.general.capabilities:
-    path: "{{ executor_binary }}"
+    # The installed payload itself, not the link next to it: file
+    # capabilities live on the executable.
+    path: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
     capability: "cap_net_admin,cap_bpf+ep"
     state: present
   when: executor_enable_bpf | default(true)
@@ -154,8 +129,9 @@
 - name: Install executor systemd unit
   ansible.builtin.template:
     src: executor.service.j2
-    dest: "/etc/systemd/system/{{ executor_service }}.service"
+    dest: "{{ systemd_unit_dir }}/{{ executor_service }}.service"
     owner: root
+    group: root
     mode: "0644"
   notify:
     - Reload systemd
@@ -167,3 +143,4 @@
     enabled: true
     state: started
     daemon_reload: true
+  when: debuglet_manage_services | bool

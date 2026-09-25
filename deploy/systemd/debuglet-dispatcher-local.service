@@ -1,0 +1,36 @@
+[Unit]
+Description=Debuglet dispatcher local (0.0.0-reference)
+Documentation=https://github.com/netsec-ethz/debuglet/blob/hardening/docs/environments.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=debuglet
+Group=debuglet
+ExecStart=/usr/local/lib/debuglet/0.0.0-reference/bin/debuglet-dispatcher -config /var/lib/debuglet/dispatchers/local/service.toml -ready-file /run/debuglet/dispatchers/local/ready.json
+WorkingDirectory=/var/lib/debuglet/dispatchers/local
+Environment=LANG=C LC_ALL=C TZ=UTC
+Environment=DEBUGLET_MAINTENANCE_FILE=/etc/debuglet/services/dispatcher-local.maintenance
+RuntimeDirectory=debuglet/dispatchers/local
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=45
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ReadWritePaths=/var/lib/debuglet/dispatchers/local
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=debuglet-dispatcher
+
+[Install]
+WantedBy=multi-user.target

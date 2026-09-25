@@ -6,7 +6,7 @@ package payments
 import (
 	"context"
 	"database/sql"
-	"debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"time"
 
 	"go.uber.org/zap"
@@ -41,13 +41,21 @@ func NewPayoutTicker(db *sql.DB, h Handler, logger *zap.Logger) *PayoutTicker {
 	}
 }
 
+// StartPayoutLoop pays executors on every tick until ctx is cancelled. On
+// cancellation it stops the ticker and returns nil, mirroring the Sui listener,
+// so PaymentHandler.Start can join both loops promptly instead of waiting for
+// the next midnight.
 func (pt *PayoutTicker) StartPayoutLoop(ctx context.Context) error {
-
+	defer pt.ticker.Stop()
 	for {
-		<-pt.ticker.C
-		pt.logger.Info("Starting payout")
-		pt.PayExecutors(ctx)
-		pt.ticker.Reset(NextTickDuration())
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-pt.ticker.C:
+			pt.logger.Info("Starting payout")
+			pt.PayExecutors(ctx)
+			pt.ticker.Reset(NextTickDuration())
+		}
 	}
 }
 

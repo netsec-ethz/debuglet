@@ -11,15 +11,15 @@ sql:
         overrides:
           - column: "debuglets.state"
             go_type:
-              import: "debuglet/internal/dispatcher/models"
+              import: "github.com/netsec-ethz/debuglet/internal/dispatcher/models"
               type: "DebugletRunState"
           - column: "debuglets.addresses"
             go_type:
-              import: "debuglet/internal/dispatcher/models"
+              import: "github.com/netsec-ethz/debuglet/internal/dispatcher/models"
               type: "CommaSeparatedList"
           - db_type: "TIMESTAMP"
             go_type:
-              import: "debuglet/internal/dispatcher/models"
+              import: "github.com/netsec-ethz/debuglet/internal/dispatcher/models"
               type: "UTCTime"
           - column: "users.uuid"
             go_type: "github.com/google/uuid.UUID"

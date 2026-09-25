@@ -7,6 +7,7 @@ package debuglet
 
 import (
 	"fmt"
+	"io"
 	"unsafe"
 )
 
@@ -137,6 +138,9 @@ func listenAddr() (string, error) {
 	if n < 0 {
 		return "", fmt.Errorf("debuglet: get_tcp_addr failed. Has the debuglet been started with a TCP listener?")
 	}
+	if int(n) > len(buf) {
+		return "", fmt.Errorf("debuglet: get_tcp_addr returned %d bytes for a %d-byte buffer", n, len(buf))
+	}
 	return string(buf[:n]), nil
 }
 
@@ -145,6 +149,9 @@ func listenUDPAddr() (string, error) {
 	n := getUDPAddr(bytePtr(buf), uint32(len(buf)))
 	if n < 0 {
 		return "", fmt.Errorf("debuglet: get_udp_addr failed. Has the debuglet been started with a UDP listener?")
+	}
+	if int(n) > len(buf) {
+		return "", fmt.Errorf("debuglet: get_udp_addr returned %d bytes for a %d-byte buffer", n, len(buf))
 	}
 	return string(buf[:n]), nil
 }
@@ -156,27 +163,69 @@ func readFromUDP(buf []byte) (int, string, error) {
 	sender := make([]byte, 64)
 	var addrLen int32
 	n := receiveUDPFrom(bytePtr(buf), uint32(len(buf)), bytePtr(sender), uint32(len(sender)), uint32(uintptr(unsafe.Pointer(&addrLen))))
+	if n < 0 {
+		return 0, "", fmt.Errorf("debuglet: receive_udp_from failed")
+	}
+	if int(n) > len(buf) {
+		return 0, "", fmt.Errorf("debuglet: receive_udp_from returned %d bytes for a %d-byte buffer", n, len(buf))
+	}
+	if addrLen < 0 || int(addrLen) > len(sender) {
+		return 0, "", fmt.Errorf("debuglet: receive_udp_from returned a %d-byte sender address for a %d-byte buffer", addrLen, len(sender))
+	}
 	return int(n), string(sender[:addrLen]), nil
 }
 
-// Write writes the whole of b to the connection. The host send functions do not
-// report short writes, so Write returns an error only for invalid input.
+// Write writes the whole of b to the connection. One host call carries at most
+// MaxIOBytes bytes, so a longer stream payload becomes consecutive calls; the
+// bytes on a TCP or TLS connection are the same either way.
+//
+// A datagram cannot be split without changing what the peer receives, so a UDP
+// or ICMP payload longer than MaxIOBytes returns ErrTooLarge and sends nothing.
+//
+// The host send functions do not report short writes: a failure to write aborts
+// the guest instead, so Write returns an error only for input it rejects
+// itself.
 func (c *Conn) Write(b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
-	switch c.tr {
-	case transportICMP4:
-		sendICMP4Data(uint32(c.handle), bytePtr(b), uint32(len(b)))
-	case transportUDP:
-		sendUDPData(uint32(c.handle), bytePtr(b), uint32(len(b)))
-	default:
-		sendTCPData(uint32(c.handle), bytePtr(b), uint32(len(b)))
+	if c.tr != transportTCP && len(b) > MaxIOBytes {
+		return fmt.Errorf("%w: %d bytes (limit %d)", ErrTooLarge, len(b), MaxIOBytes)
+	}
+	for len(b) > 0 {
+		chunk := b
+		if len(chunk) > MaxIOBytes {
+			chunk = chunk[:MaxIOBytes]
+		}
+		switch c.tr {
+		case transportICMP4:
+			sendICMP4Data(uint32(c.handle), bytePtr(chunk), uint32(len(chunk)))
+		case transportUDP:
+			sendUDPData(uint32(c.handle), bytePtr(chunk), uint32(len(chunk)))
+		default:
+			sendTCPData(uint32(c.handle), bytePtr(chunk), uint32(len(chunk)))
+		}
+		b = b[len(chunk):]
 	}
 	return nil
 }
 
 // Read reads up to len(b) bytes into b and returns the number of bytes read.
+// It follows the io.Reader contract: a short read (0 < n < len(b)) is normal
+// and carries no error. One host call transfers at most MaxIOBytes bytes, so a
+// larger buffer is filled only that far.
+//
+// An empty buffer returns (0, nil) without calling the host, even after EOF.
+// For TCP streams (ConnectTCP, ConnectTLS and AcceptTCP all use the TCP
+// receive import) a host count of zero for a nonempty buffer means the peer
+// closed its side and Read returns (0, io.EOF), so io.ReadAll and similar
+// helpers terminate normally. For UDP and ICMP a zero count is an empty
+// datagram and Read returns (0, nil).
+//
+// A negative count or a count larger than len(b) is a host-protocol error and
+// Read returns 0 bytes with a non-EOF error. Socket errors other than a clean
+// TCP EOF, and invalid handles, do not reach this function: the host aborts
+// the guest with a trap instead.
 func (c *Conn) Read(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
@@ -192,6 +241,12 @@ func (c *Conn) Read(b []byte) (int, error) {
 	}
 	if n < 0 {
 		return 0, fmt.Errorf("debuglet: receive failed (handle %d)", c.handle)
+	}
+	if int(n) > len(b) {
+		return 0, fmt.Errorf("debuglet: receive returned %d bytes for a %d-byte buffer (handle %d)", n, len(b), c.handle)
+	}
+	if n == 0 && c.tr == transportTCP {
+		return 0, io.EOF
 	}
 	return int(n), nil
 }

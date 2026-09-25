@@ -1,10 +1,21 @@
+# Executor configuration for local development, run straight from a source
+# checkout: `make executor` starts the daemon against this file.
+#
+# Wallet-free and credential-free, like the local services `dbl up` writes for
+# itself. It names no private file, offers no public listener and reaches no
+# external network.
+
 [identity]
-executor_id = "local-executor"
+# Executor identities are UUIDs, the form the CLI generates and the dispatcher
+# records.
+executor_id = "ac4e023b-1b69-44ed-905f-640e7a1841b4"
 version = "unknown"
 
+# The dispatcher over loopback on this machine. A control channel without
+# transport security is accepted for a loopback address and nothing else.
 [dispatcher]
-addr = "localhost:9001"
-yamux_addr = "localhost:9000"
+addr = "127.0.0.1:9001"
+yamux_addr = "127.0.0.1:9000"
 
 [tls]
 disable = true
@@ -19,24 +30,37 @@ delay = 30
 
 [network]
 # interface = "veth-host"
-public_host = "203.0.113.10"              # public IP or domain for TCP/UDP listeners (empty disables listening)
-public_ports = "2022,2025-3005,56000-62000"  # allowed public listener ports (comma-separated ranges)
+public_host = ""    # public IP or domain for TCP/UDP listeners; empty disables listening
+public_ports = ""   # allowed public listener ports, comma-separated ranges
+
+[network.policy]
+# This is the local profile: guests measure against targets on this machine.
+# An executor that serves submitters it does not trust leaves this out, and
+# then reaches no loopback service. Reserved, private and link-local ranges are
+# denied either way.
+local_targets = true
+# denied_destinations = "10.0.0.0/8, opted-out.example"  # extra operator denials
+# permitted_ports = "80,443,8000-8100"                   # empty permits every port
 
 [logging]
 log_level = "debug"
 json_logs = false
 
+# Read only when tls.disable is false; `make generate-certs` writes a keypair
+# into this directory for experiments.
 [credentials]
-ca_cert = "local/configs/executor/ca.crt"
-client_cert = "local/configs/executor/client.crt"
-client_key = "local/configs/executor/client.key"
+ca_cert = ""
+client_cert = ""
+client_key = ""
 
 [database]
 path = ".data/executor.db"
 
+# TEST pricing with no wallet: submissions are settled in the dispatcher's
+# TEST mode and no chain account is involved.
 [pricing]
 price_per_bw_s = 1
-currency = "USDC"
-sui_wallet = "0xf71483ddbe609e52ef0ec5a0030f16b73f4a2831c9e84b4e559f4b240d5a0d76"
-trial_price_limit=100000
-trial_time_limit=500
+currency = "TEST"
+sui_wallet = ""
+trial_price_limit = 0
+trial_time_limit = 0

@@ -1,27 +1,89 @@
+# Executor configuration for the local TEST compose rig.
+#
+# Profile: local TEST. Wallet-free, credential-free and self-contained, and
+# the counterpart of configs/dispatcher/dispatcher.toml. It matches the
+# configuration the product writes for itself when `dbl up` or
+# `dbl executor up` runs a local service: TEST pricing, no wallet, no client
+# certificates, no packet counter and no SCION environment, so the rig needs
+# no privileges and no external network.
+#
+# A deployment is a different profile: deploy/ansible renders the executor
+# configuration from roles/executor/templates/executor.toml.j2.
+#
+# See deploy/README.md for the rig, and docs/environments.md for what each key
+# means and which ones may be omitted.
+
 [identity]
-executor_id = "docker-executor"
-version = "unknown"
+# Executor identities are UUIDs. `dbl executor up` generates one per service
+# state directory and keeps it; this fixture carries a fixed one so a rebuilt
+# rig registers as the same executor. Replace it with another UUID when two
+# rigs share a dispatcher.
+executor_id = "efdc0afc-b92e-4305-9311-6510463889f5"
+version = "local-test"
 
+# The dispatcher over loopback: the compose service shares the dispatcher's
+# network namespace, so these are the dispatcher's own listeners on the same
+# machine. gRPC is the control channel, yamux shares the HTTP port.
 [dispatcher]
-addr = "nginx:9443"
-yamux_addr = "nginx:9444"
+addr = "127.0.0.1:9001"
+yamux_addr = "127.0.0.1:9000"
 
+# A loopback control channel on one machine carries no transport security, so
+# there is nothing to verify and the credentials below stay empty. This is the
+# only shape that is supported without TLS; an executor that reaches the
+# dispatcher over a network verifies a certificate, as deploy/ansible does.
 [tls]
-disable = false
+disable = true
+
+[credentials]
+ca_cert = ""
+client_cert = ""
+client_key = ""
 
 [resources]
 capacity = 1_000_000_000
 max_debuglets = 20
 
 [tesla]
-seed = "test-tesla-seed-do-not-use-in-production"
-delay = 30
+# Empty seed: the executor generates its own key schedule at startup. One
+# second per epoch with a chain of 3600 epochs covers an hour of rig uptime.
+seed = ""
+delay = 1
+chain_length = 3600
+
+[network]
+# The fallback packet counter keeps the executor off the eBPF egress tagger,
+# so the container needs no capabilities and its probes carry no attribution
+# tag. Attribution and traffic policy are deployment concerns; this rig is for
+# trying the daemons out on one machine. The empty interface follows from the
+# fallback counter, and no public listener is offered.
+packet_counter = "fallback"
+disable_scion_environment = true
+interface = ""
+public_host = ""
+public_ports = ""
+
+[network.policy]
+# The local profile: a guest measures against targets on this machine, which a
+# policy that omits this switch denies along with the other internal ranges.
+local_targets = true
 
 [logging]
 log_level = "debug"
 json_logs = false
 
-[credentials]
-ca_cert = "/etc/debuglet/certs/server.crt"
-client_cert = "/etc/debuglet/certs/server.crt"
-client_key = "/etc/debuglet/certs/server.key"
+# TEST pricing with no wallet: submissions are settled in the dispatcher's
+# TEST mode and no chain account is involved.
+[pricing]
+price_per_bw_s = 1
+currency = "TEST"
+sui_wallet = ""
+trial_price_limit = 0
+trial_time_limit = 0
+
+# The daemon opens this database and does not create its schema. The compose
+# service keeps it on its own named volume, outside the read-only
+# configuration mount; `deploy/docker/seed-state.sh` creates it. See
+# deploy/README.md.
+[database]
+path = "/var/lib/debuglet/executor.db"

@@ -1,0 +1,21 @@
+# Debian packages that the pinned CI tools image adds to, or requires from, the
+# pinned Go base image. Versions are the ones published in the Debian snapshot
+# named by DEBUGLET_CI_DEBIAN_SNAPSHOT in images.env, which is the same snapshot
+# the base image was built from. deploy/ci/Dockerfile installs exactly these
+# versions and fails if apt resolves anything else; deploy/ci/verify-image.sh
+# re-checks them inside every job that uses the image.
+#
+# Format: one "name version" pair per line. Comments start with '#'.
+
+# eBPF generation and kernel checks (scripts/ci-kernel.sh).
+clang 1:14.0-55.7~deb12u1
+llvm 1:14.0-55.7~deb12u1
+libbpf-dev 1:1.1.2-0+deb12u1
+linux-libc-dev 6.1.174-1
+
+# Kernel-runner isolation evidence (deploy/ci/kernel-isolation.py).
+bpftool 7.1.0+6.1.174-1
+
+# Installed-package checks (scripts/ci-local.sh, tools/test_bootstrap.py).
+unzip 6.0-28
+python3 3.11.2-1+b1

@@ -4,17 +4,18 @@
 package resource
 
 import (
-	"debuglet/internal/dispatcher/resource/avl"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/avl"
 	"iter"
 
 	"github.com/google/uuid"
 )
 
 var (
-	ErrMinGreater   = errors.New("minimum is greater than maximum bandwidth limit")
-	ErrCapacityFull = errors.New("insufficient capacity")
+	ErrMinGreater     = errors.New("minimum is greater than maximum bandwidth limit")
+	ErrCapacityFull   = errors.New("insufficient capacity")
+	ErrPolicyConflict = errors.New("destination is already allocated to the run with different limits")
 )
 
 type storeKey struct {
@@ -28,9 +29,24 @@ type activeKey struct {
 	destination string
 }
 
+// allocation is the decision recorded for one debuglet on one destination. It
+// is immutable for the lifetime of the debuglet: a repeated request carrying
+// the same values returns the recorded decision without charging again, a
+// request carrying different ones is rejected, and the release subtracts
+// exactly the values that were charged.
+type allocation struct {
+	executorID string
+	minimum    Bitrate
+	maximum    Bitrate
+}
+
 type storeValue struct {
 	minimum Bitrate
 	maximum Bitrate
+	// runs is the number of allocations aggregated in this value. An executor
+	// keeps its place on a destination while it holds at least one of them,
+	// even when none of them leaves residual bandwidth behind.
+	runs int
 }
 
 type DestinationsUsage struct {
@@ -42,7 +58,7 @@ type DestinationsUsage struct {
 	usedCapacities map[string]Bitrate
 	// The minimum capacities of jobs
 	store           map[storeKey]*storeValue
-	activeDebuglets map[activeKey]struct{}
+	activeDebuglets map[activeKey]allocation
 	defaultCap      Bitrate
 }
 
@@ -52,11 +68,14 @@ func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 		capacities:      make(map[string]Bitrate),
 		usedCapacities:  make(map[string]Bitrate),
 		store:           make(map[storeKey]*storeValue),
-		activeDebuglets: make(map[activeKey]struct{}),
+		activeDebuglets: make(map[activeKey]allocation),
 		defaultCap:      defaultCap,
 	}
 }
 
+// CheckCapacity reports whether a floor still fits on a destination. The
+// allocation path decides capacity itself, so this remains only as a capacity
+// query for callers and tests of other packages.
 func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) error {
 	cap := d.Cap(destination)
 	used := d.usedCapacities[destination]
@@ -83,75 +102,121 @@ func (d *DestinationsUsage) Cap(destination string) Bitrate {
 	return cap
 }
 
+// Insert records the allocation of one debuglet on a single destination. It is
+// the one-destination form of Allocate and shares its behaviour.
 func (d *DestinationsUsage) Insert(debugletID uuid.UUID, destination, executorID string, minimum, maximum Bitrate) error {
+	return d.Allocate(debugletID, executorID, []string{destination}, minimum, maximum)
+}
+
+// Allocate records the allocation of one debuglet on every given destination
+// as a single decision. A repeated destination is charged once. A destination
+// already recorded for the debuglet keeps its decision, so repeating an
+// identical allocation charges nothing more, while a request that changes a
+// recorded decision is rejected before anything is charged. If any destination
+// cannot be charged, the destinations charged by this call are released again:
+// the allocation either holds for every destination or for none.
+func (d *DestinationsUsage) Allocate(debugletID uuid.UUID, executorID string, destinations []string, minimum, maximum Bitrate) error {
 	if minimum > maximum {
-		return fmt.Errorf("insertion failed with min=%d>max=%d: %w", minimum, maximum, ErrMinGreater)
+		return fmt.Errorf("allocation failed with min=%d>max=%d: %w", minimum, maximum, ErrMinGreater)
 	}
-	tree, cap := d.getTreeCap(destination)
-
-	used := d.usedCapacities[destination]
-	if used+minimum > cap {
-		return fmt.Errorf("insertion failed with new usage=%d, capacity=%d: %w", used+minimum, cap, ErrCapacityFull)
-
+	decision := allocation{executorID: executorID, minimum: minimum, maximum: maximum}
+	pending := make([]string, 0, len(destinations))
+	seen := make(map[string]struct{}, len(destinations))
+	for _, destination := range destinations {
+		if _, repeated := seen[destination]; repeated {
+			continue
+		}
+		seen[destination] = struct{}{}
+		if recorded, active := d.activeDebuglets[activeKey{debugletID, destination}]; active {
+			if recorded != decision {
+				return fmt.Errorf("allocation failed for an already allocated debuglet on %s: %w", destination, ErrPolicyConflict)
+			}
+			continue
+		}
+		pending = append(pending, destination)
 	}
-	d.activeDebuglets[activeKey{debugletID, destination}] = struct{}{}
-	d.usedCapacities[destination] += minimum
-	jk := storeKey{ID: executorID, destination: destination}
-	if old, exists := d.store[jk]; exists {
-		old.minimum += minimum
-		old.maximum += maximum
-	} else {
-		d.store[jk] = &storeValue{minimum: minimum, maximum: maximum}
+	for i, destination := range pending {
+		if err := d.charge(debugletID, destination, decision); err != nil {
+			for _, charged := range pending[:i] {
+				d.Remove(debugletID, charged)
+			}
+			return err
+		}
 	}
-
-	tree.Add(executorID, int64(maximum-minimum))
 	return nil
 }
 
-func (d *DestinationsUsage) Remove(debugletID uuid.UUID, destination, executorID string, minimum, maximum Bitrate) {
-	if _, exists := d.activeDebuglets[activeKey{debugletID, destination}]; !exists {
-		return
+// charge applies a decision that is known not to be recorded yet.
+func (d *DestinationsUsage) charge(debugletID uuid.UUID, destination string, decision allocation) error {
+	used := d.usedCapacities[destination]
+	if cap := d.Cap(destination); used+decision.minimum > cap {
+		return fmt.Errorf("%s destination capacity exceeded (want %s, have %s): %w", destination, decision.minimum, cap-used, ErrCapacityFull)
 	}
-
-	tree, exists := d.trees[destination]
+	tree, _ := d.getTreeCap(destination)
+	d.activeDebuglets[activeKey{debugletID, destination}] = decision
+	d.usedCapacities[destination] += decision.minimum
+	jk := storeKey{ID: decision.executorID, destination: destination}
+	total, exists := d.store[jk]
 	if !exists {
+		total = &storeValue{}
+		d.store[jk] = total
+	}
+	total.minimum += decision.minimum
+	total.maximum += decision.maximum
+	total.runs++
+
+	tree.Replace(decision.executorID, int64(total.maximum-total.minimum))
+	return nil
+}
+
+// Remove releases the recorded allocation of one debuglet on one destination.
+// The recorded decision, not the caller, determines what is subtracted, so a
+// release always returns exactly the capacity its allocation charged. Removing
+// an allocation that is not recorded does nothing.
+func (d *DestinationsUsage) Remove(debugletID uuid.UUID, destination string) {
+	key := activeKey{debugletID, destination}
+	recorded, active := d.activeDebuglets[key]
+	if !active {
 		return
 	}
-
-	node := tree.Get(executorID)
-	if node == nil {
+	jk := storeKey{ID: recorded.executorID, destination: destination}
+	total, charged := d.store[jk]
+	if !charged {
+		// Nothing aggregates this record. Leave the record, the charged
+		// capacity and the totals as they are rather than subtracting from
+		// one of them alone.
 		return
 	}
+	delete(d.activeDebuglets, key)
 
-	jk := storeKey{ID: executorID, destination: destination}
-	old, exists := d.store[jk]
-	if !exists {
-		return
-	}
-
-	diff := int64(maximum - minimum)
-	if diff >= node.Value {
-		// there is no more usage on the destination for this executor after the removal
-		tree.Delete(executorID)
-		if tree.Len() == 0 {
-			delete(d.trees, destination)
-		}
-	} else {
-		// there is still usage on the destination for this executor. Do not fully remove
-		tree.Replace(executorID, node.Value-diff)
-	}
-
-	d.usedCapacities[destination] -= minimum
+	d.usedCapacities[destination] -= recorded.minimum
 	if d.usedCapacities[destination] <= 0 {
 		delete(d.usedCapacities, destination)
 	}
 
-	delete(d.activeDebuglets, activeKey{debugletID, destination})
+	total.minimum -= recorded.minimum
+	total.maximum -= recorded.maximum
+	total.runs--
 
-	old.minimum -= minimum
-	old.maximum -= maximum
-	if old.minimum <= 0 && old.maximum <= 0 {
-		delete(d.store, jk)
+	tree := d.trees[destination]
+	if total.runs > 0 {
+		// The executor still runs other debuglets on this destination. Their
+		// floors keep it in the fairshare even when they leave no residual
+		// bandwidth to share, so the remaining allocations decide, never the
+		// residual difference of the released one.
+		if tree != nil {
+			tree.Replace(recorded.executorID, int64(total.maximum-total.minimum))
+		}
+		return
+	}
+
+	// The last allocation of this executor on the destination is gone.
+	delete(d.store, jk)
+	if tree != nil {
+		tree.Delete(recorded.executorID)
+		if tree.Len() == 0 {
+			delete(d.trees, destination)
+		}
 	}
 }
 
@@ -165,11 +230,23 @@ func (d *DestinationsUsage) Len() int {
 //
 // The fairshare respects the minimum bandwidth of each ID.
 // It is guaranteed that ID.maximum >= fairshare >= ID.minimum for all IDs.
+//
+// An executor is a member of the tree of a destination exactly while it holds
+// totals there, and it is a member once, so every node has its totals and each
+// executor is yielded a single time.
 func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitrate] {
 	tree, cap := d.getTreeCap(destination)
 	usage := d.usedCapacities[destination]
 
-	fairshare := tree.Fairshare(int64(cap - usage))
+	// Only what is left after the charged floors is shared. A limit that was
+	// lowered below what is already charged leaves nothing to share rather
+	// than a negative share, which would take bandwidth away from the floors
+	// the allocations were admitted with.
+	shareable := cap - usage
+	if shareable < 0 {
+		shareable = 0
+	}
+	fairshare := tree.Fairshare(int64(shareable))
 	return func(yield func(string, Bitrate) bool) {
 		for n := range tree.Range(avl.Unbounded, avl.Unbounded) {
 			jk := storeKey{ID: n.ID, destination: destination}

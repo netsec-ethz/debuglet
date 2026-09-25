@@ -1,7 +1,16 @@
-// Downloads a file from the target while indicating the download speed.
-// Requires http-compatible endpoint.
+// download — HTTP download rate over the raw host imports.
 //
-// go run ./cmd/user -addr ash-speed.hetzner.com -ceil 1000000 -wasm local/wasm_samples/go/download/debuglet.wasm -- -target http://ash-speed.hetzner.com/100MB.bin
+// This sample calls the executor's imports directly instead of using the guest
+// SDK, so it shows what the SDK does with pointers and lengths. Prefer the SDK
+// (see the http_get sample) unless you need that level of detail.
+//
+// It reports the transfer rate of one HTTP response body. Point it at a target
+// you are authorized to measure and add that target to the job's --allow list:
+//
+//	make wasm SAMPLE_DIR=local/wasm_samples/go/download
+//	dbl run --wasm local/wasm_samples/go/download/debuglet.wasm \
+//	  --executor EXECUTOR_ID --allow 127.0.0.1 --ceil-bps 1000000 --wait \
+//	  -- -target http://127.0.0.1:8080/payload.bin
 
 package main
 
@@ -30,7 +39,7 @@ func receive_tcp_data(sockID int32, bufPtr uint32, bufLen uint32) int32
 func send_tcp_data(sockID int32, bufPtr, bufLen uint32)
 
 var (
-	target = flag.String("target", "http://ash-speed.hetzner.com/100MB.bin", "http path to download from")
+	target = flag.String("target", "http://127.0.0.1:8080/", "http URL to download")
 )
 
 type WasmReader struct {
@@ -101,7 +110,9 @@ func main() {
 	reader := bufio.NewReader(wasmReader)
 
 	done := make(chan struct{})
-	var contentLength int64
+	// contentLength is published by the main goroutine and read by the
+	// progress goroutine, so it is stored atomically.
+	var contentLength atomic.Int64
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -115,8 +126,8 @@ func main() {
 				lastBytes = currentBytes
 
 				fmt.Printf("Current Speed: %s/s", FromBytes(speed))
-				if contentLength > 0 {
-					percentage := float64(currentBytes) / float64(contentLength) * 100
+				if total := contentLength.Load(); total > 0 {
+					percentage := float64(currentBytes) / float64(total) * 100
 					fmt.Printf(" (%.2f%%)", percentage)
 				}
 				fmt.Println()
@@ -134,7 +145,7 @@ func main() {
 	}
 	defer resp.Body.Close()
 
-	contentLength = resp.ContentLength
+	contentLength.Store(resp.ContentLength)
 	body, err := io.ReadAll(resp.Body)
 	close(done)
 	if err != nil {

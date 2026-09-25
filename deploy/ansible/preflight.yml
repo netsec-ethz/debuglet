@@ -1,0 +1,12 @@
+---
+# The checks every deployment playbook runs before it connects to a managed
+# host. Each of them runs locally, connects to nothing and changes nothing, so
+# a deployment that cannot succeed stops before it has changed anything.
+#
+# Run them on their own against an inventory at any time:
+#
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml preflight.yml
+
+- import_playbook: preflight-provisioner.yml
+- import_playbook: preflight-host-keys.yml
+- import_playbook: preflight-variables.yml

@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"net"
 
-	"debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
 // BPFTagger is a no-op stub on non-Linux platforms.

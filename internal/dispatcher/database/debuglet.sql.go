@@ -9,41 +9,38 @@ import (
 	"context"
 	"database/sql"
 
-	"debuglet/internal/dispatcher/models"
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
-const createDebuglet = `-- name: CreateDebuglet :one
-INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, transaction_id, order_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ? ,?)
-RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id
+const completeDebuglet = `-- name: CompleteDebuglet :one
+UPDATE debuglets
+SET state = ?1, error = ?2
+WHERE uuid = ?3 AND state <> ?1
+  AND executor_id = ?4
+  AND dispatcher_incarnation = ?5
+  AND session_id = ?6
+  AND dispatcher_incarnation <> '' AND session_id <> ''
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id
 `
 
-type CreateDebugletParams struct {
-	Uuid          uuid.UUID
-	StartTime     models.UTCTime
-	EndTime       models.UTCTime
-	Usage         int64
-	CeilBw        int64
-	ExecutorID    string
-	Addresses     models.CommaSeparatedList
-	State         models.DebugletRunState
-	TransactionID string
-	OrderID       int64
+type CompleteDebugletParams struct {
+	ExitedState           models.DebugletRunState
+	Error                 sql.NullString
+	Uuid                  uuid.UUID
+	ExecutorID            string
+	DispatcherIncarnation string
+	SessionID             string
 }
 
-func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) (Debuglet, error) {
-	row := q.db.QueryRowContext(ctx, createDebuglet,
+func (q *Queries) CompleteDebuglet(ctx context.Context, arg CompleteDebugletParams) (Debuglet, error) {
+	row := q.db.QueryRowContext(ctx, completeDebuglet,
+		arg.ExitedState,
+		arg.Error,
 		arg.Uuid,
-		arg.StartTime,
-		arg.EndTime,
-		arg.Usage,
-		arg.CeilBw,
 		arg.ExecutorID,
-		arg.Addresses,
-		arg.State,
-		arg.TransactionID,
-		arg.OrderID,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
 	)
 	var i Debuglet
 	err := row.Scan(
@@ -59,6 +56,64 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 		&i.Error,
 		&i.TransactionID,
 		&i.OrderID,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
+	)
+	return i, err
+}
+
+const createDebuglet = `-- name: CreateDebuglet :one
+INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, transaction_id, order_id, dispatcher_incarnation, session_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id
+`
+
+type CreateDebugletParams struct {
+	Uuid                  uuid.UUID
+	StartTime             models.UTCTime
+	EndTime               models.UTCTime
+	Usage                 int64
+	CeilBw                int64
+	ExecutorID            string
+	Addresses             models.CommaSeparatedList
+	State                 models.DebugletRunState
+	TransactionID         string
+	OrderID               int64
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) (Debuglet, error) {
+	row := q.db.QueryRowContext(ctx, createDebuglet,
+		arg.Uuid,
+		arg.StartTime,
+		arg.EndTime,
+		arg.Usage,
+		arg.CeilBw,
+		arg.ExecutorID,
+		arg.Addresses,
+		arg.State,
+		arg.TransactionID,
+		arg.OrderID,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
+	)
+	var i Debuglet
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.StartTime,
+		&i.EndTime,
+		&i.Usage,
+		&i.CeilBw,
+		&i.ExecutorID,
+		&i.Addresses,
+		&i.State,
+		&i.Error,
+		&i.TransactionID,
+		&i.OrderID,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
 	)
 	return i, err
 }
@@ -71,20 +126,34 @@ LOGS
 */
 
 INSERT INTO debuglet_logs (debuglet_id, timestamp, output)
-VALUES (
-    (SELECT id FROM debuglets WHERE uuid = ?), ?, ?
-)
+SELECT id, ?1, ?2
+FROM debuglets
+WHERE uuid = ?3
+  AND executor_id = ?4
+  AND dispatcher_incarnation = ?5
+  AND session_id = ?6
+  AND dispatcher_incarnation <> '' AND session_id <> ''
 RETURNING id, debuglet_id, timestamp, output
 `
 
 type CreateDebugletLogParams struct {
-	Uuid      uuid.UUID
-	Timestamp models.UTCTime
-	Output    []byte
+	Timestamp             models.UTCTime
+	Output                []byte
+	Uuid                  uuid.UUID
+	ExecutorID            string
+	DispatcherIncarnation string
+	SessionID             string
 }
 
 func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogParams) (DebugletLog, error) {
-	row := q.db.QueryRowContext(ctx, createDebugletLog, arg.Uuid, arg.Timestamp, arg.Output)
+	row := q.db.QueryRowContext(ctx, createDebugletLog,
+		arg.Timestamp,
+		arg.Output,
+		arg.Uuid,
+		arg.ExecutorID,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
+	)
 	var i DebugletLog
 	err := row.Scan(
 		&i.ID,
@@ -96,7 +165,7 @@ func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogPa
 }
 
 const getDebugletByUUID = `-- name: GetDebugletByUUID :one
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets
 WHERE uuid = ?
 `
 
@@ -116,6 +185,70 @@ func (q *Queries) GetDebugletByUUID(ctx context.Context, argUuid uuid.UUID) (Deb
 		&i.Error,
 		&i.TransactionID,
 		&i.OrderID,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
+	)
+	return i, err
+}
+
+const getDebugletIdentityByUUID = `-- name: GetDebugletIdentityByUUID :one
+SELECT executor_id, dispatcher_incarnation, session_id
+FROM debuglets
+WHERE uuid = ?
+`
+
+type GetDebugletIdentityByUUIDRow struct {
+	ExecutorID            string
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+func (q *Queries) GetDebugletIdentityByUUID(ctx context.Context, argUuid uuid.UUID) (GetDebugletIdentityByUUIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getDebugletIdentityByUUID, argUuid)
+	var i GetDebugletIdentityByUUIDRow
+	err := row.Scan(&i.ExecutorID, &i.DispatcherIncarnation, &i.SessionID)
+	return i, err
+}
+
+const getOwnedDebugletByUUID = `-- name: GetOwnedDebugletByUUID :one
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets
+WHERE uuid = ?1
+  AND executor_id = ?2
+  AND dispatcher_incarnation = ?3
+  AND session_id = ?4
+  AND dispatcher_incarnation <> '' AND session_id <> ''
+`
+
+type GetOwnedDebugletByUUIDParams struct {
+	Uuid                  uuid.UUID
+	ExecutorID            string
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+func (q *Queries) GetOwnedDebugletByUUID(ctx context.Context, arg GetOwnedDebugletByUUIDParams) (Debuglet, error) {
+	row := q.db.QueryRowContext(ctx, getOwnedDebugletByUUID,
+		arg.Uuid,
+		arg.ExecutorID,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
+	)
+	var i Debuglet
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.StartTime,
+		&i.EndTime,
+		&i.Usage,
+		&i.CeilBw,
+		&i.ExecutorID,
+		&i.Addresses,
+		&i.State,
+		&i.Error,
+		&i.TransactionID,
+		&i.OrderID,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
 	)
 	return i, err
 }
@@ -170,7 +303,7 @@ DEBUGLET
 
 */
 
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets
 LIMIT ?
 OFFSET ?
 `
@@ -202,6 +335,8 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 			&i.Error,
 			&i.TransactionID,
 			&i.OrderID,
+			&i.DispatcherIncarnation,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}
@@ -217,7 +352,7 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 }
 
 const listDebugletsEndAfter = `-- name: ListDebugletsEndAfter :many
-SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id FROM debuglets
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets
 WHERE end_time > ?
 `
 
@@ -243,6 +378,8 @@ func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime models.UTCT
 			&i.Error,
 			&i.TransactionID,
 			&i.OrderID,
+			&i.DispatcherIncarnation,
+			&i.SessionID,
 		); err != nil {
 			return nil, err
 		}
@@ -257,36 +394,45 @@ func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime models.UTCT
 	return items, nil
 }
 
-const setDebugletError = `-- name: SetDebugletError :exec
-UPDATE debuglets
-SET error = ?
-WHERE uuid = ?
-`
-
-type SetDebugletErrorParams struct {
-	Error sql.NullString
-	Uuid  uuid.UUID
-}
-
-func (q *Queries) SetDebugletError(ctx context.Context, arg SetDebugletErrorParams) error {
-	_, err := q.db.ExecContext(ctx, setDebugletError, arg.Error, arg.Uuid)
-	return err
-}
-
 const updateDebugletState = `-- name: UpdateDebugletState :one
-UPDATE debuglets
-SET state = ?
-WHERE uuid = ?
-RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id
+UPDATE debuglets SET state = ?1
+WHERE uuid = ?2 AND state <> ?3
+  AND CASE state
+    WHEN 0 THEN 0
+    WHEN 3 THEN 1
+    WHEN 4 THEN 2
+    WHEN 1 THEN 3
+    WHEN 2 THEN 4
+    WHEN 5 THEN 5
+    ELSE 999
+  END < ?4
+  AND executor_id = ?5
+  AND dispatcher_incarnation = ?6
+  AND session_id = ?7
+  AND dispatcher_incarnation <> '' AND session_id <> ''
+RETURNING id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id
 `
 
 type UpdateDebugletStateParams struct {
-	State models.DebugletRunState
-	Uuid  uuid.UUID
+	State                 models.DebugletRunState
+	Uuid                  uuid.UUID
+	ExitedState           models.DebugletRunState
+	StateRank             models.DebugletRunState
+	ExecutorID            string
+	DispatcherIncarnation string
+	SessionID             string
 }
 
 func (q *Queries) UpdateDebugletState(ctx context.Context, arg UpdateDebugletStateParams) (Debuglet, error) {
-	row := q.db.QueryRowContext(ctx, updateDebugletState, arg.State, arg.Uuid)
+	row := q.db.QueryRowContext(ctx, updateDebugletState,
+		arg.State,
+		arg.Uuid,
+		arg.ExitedState,
+		arg.StateRank,
+		arg.ExecutorID,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
+	)
 	var i Debuglet
 	err := row.Scan(
 		&i.ID,
@@ -301,6 +447,8 @@ func (q *Queries) UpdateDebugletState(ctx context.Context, arg UpdateDebugletSta
 		&i.Error,
 		&i.TransactionID,
 		&i.OrderID,
+		&i.DispatcherIncarnation,
+		&i.SessionID,
 	)
 	return i, err
 }

@@ -1,3 +1,10 @@
+# Dispatcher configuration, rendered by deploy/ansible for a managed host.
+# Do not edit it there: the next deployment overwrites it. Change the
+# variables in deploy/ansible/group_vars instead.
+#
+# Profile: authenticated deployment. The local TEST fixture is a different
+# profile; see deploy/docker/configs/dispatcher/dispatcher.toml.
+
 [server]
 http_port = {{ dispatcher_http_port }}
 grpc_port = {{ dispatcher_grpc_port }}
@@ -5,19 +12,41 @@ version = "{{ deploy_version }}"
 
 [logging]
 log_level = "{{ dispatcher_log_level }}"
+json_logs = true
 
 [scheduler]
 executor_timeout = {{ dispatcher_executor_timeout }}
 scheduler_granularity_ms = {{ dispatcher_scheduler_granularity_ms }}
 
+# The dispatcher serves its own listeners; executors verify this certificate
+# against the name they dialled, so it has to carry dispatcher_addr in its
+# subjectAltName. deploy/scripts/generate-certs.sh issues it and
+# deploy-certs.yml installs it.
 [tls]
-disable = {{ dispatcher_disable_tls | lower }}
+disable = {{ dispatcher_disable_tls | bool | lower }}
 cert_file = "{{ config_dir }}/dispatcher/server.crt"
 key_file = "{{ config_dir }}/dispatcher/server.key"
-{% if dispatcher_tls_ca_file %}ca_file = "{{ dispatcher_tls_ca_file }}"{% endif %}
+{% if dispatcher_require_client_cert | bool %}
+# Client certificates are required, so the authority they are checked against
+# is read at startup.
+ca_file = "{{ dispatcher_tls_ca_file }}"
+require_client_cert = {{ dispatcher_require_client_cert | bool | lower }}
+{% endif %}
 
+[sui]
+disabled = {{ dispatcher_sui_disabled | bool | lower }}
+network = "{{ dispatcher_sui_network }}"
+grpc_endpoint = "{{ dispatcher_sui_grpc_endpoint }}"
+graphql_url = "{{ dispatcher_sui_graphql_url }}"
+address = "{{ dispatcher_sui_address }}"
+payment_registry_id = "{{ dispatcher_sui_payment_registry_id }}"
+payment_kit_package = "{{ dispatcher_sui_payment_kit_package }}"
+keystore_path = "{{ dispatcher_sui_keystore_path }}"
+
+# Writable state, in the service account's own directory. The daemon opens
+# this database and does not create its schema; the role installs one.
 [database]
-path = "{{ config_dir }}/dispatcher/dispatcher.db"
+path = "{{ state_dir }}/dispatcher/dispatcher.db"
 
 [cors]
 allowed_origins = {{ dispatcher_cors_allowed_origins | to_json }}

@@ -6,10 +6,12 @@
 package ebpf
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
-	"debuglet/internal/executor/ratelimit/app"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
+	"io"
 	"net"
 	"net/netip"
 	"sync"
@@ -28,53 +30,80 @@ type domainKey struct {
 // BpfCount employs ratelimiting using an EBPF layer. It requires root priviliges to work.
 type BpfCount struct {
 	objs    countObjects
-	egress  link.Link
-	ingress link.Link
+	cleanup counterCleanup
 
 	mu        sync.Mutex
 	domainIPs map[domainKey]map[netutil.IPv6]int
 }
 
 func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
-	var objs countObjects
-	if err := loadCountObjects(&objs, nil); err != nil {
-		return nil, fmt.Errorf("failed to load eBPF objects: %w", err)
+	return newBPFCount(iface, counterDependencies{
+		load: func() (countObjects, []counterResource, error) {
+			var objects countObjects
+			if err := loadCountObjects(&objects, nil); err != nil {
+				// cilium/ebpf v0.21.0 LoadAndAssign retains ownership on error
+				// and closes partial loads itself, without exposing close errors.
+				// Do not close the partially assigned fields a second time.
+				return countObjects{}, nil, err
+			}
+			return objects, counterObjectResources(&objects), nil
+		},
+		attach: func(opts link.TCXOptions) (io.Closer, error) {
+			attached, err := link.AttachTCX(opts)
+			if attached == nil {
+				return nil, err
+			}
+			return attached, err
+		},
+	})
+}
+
+// Construction-fixed test seams model ownership transfer, not kernel behavior.
+// load transfers its resources only on success. attach transfers any returned
+// nonnil handle, including a handle returned alongside an error.
+type counterDependencies struct {
+	load   func() (countObjects, []counterResource, error)
+	attach func(link.TCXOptions) (io.Closer, error)
+}
+
+func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, error) {
+	if iface == nil {
+		return nil, errors.New("packet counter requires a network interface")
+	}
+	objs, resources, err := deps.load()
+	if err != nil {
+		return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, fmt.Errorf("failed to load eBPF objects: %w", err))
+	}
+	bc := &BpfCount{
+		objs: objs, cleanup: counterCleanup{resources: resources},
+		domainIPs: make(map[domainKey]map[netutil.IPv6]int),
 	}
 
-	egr, err := link.AttachTCX(link.TCXOptions{
+	egr, err := deps.attach(link.TCXOptions{
 		Program:   objs.HandleEgress,
 		Interface: iface.Index,
 		Attach:    ebpf.AttachTCXEgress,
 	})
+	bc.cleanup.add("egress TCX", egr)
 	if err != nil {
-		objs.Close()
-		return nil, fmt.Errorf("failed to attach egress TCX: %w", err)
+		return nil, errors.Join(fmt.Errorf("failed to attach egress TCX: %w", err), bc.Close())
 	}
 
-	ingr, err := link.AttachTCX(link.TCXOptions{
+	ingr, err := deps.attach(link.TCXOptions{
 		Program:   objs.HandleIngress,
 		Interface: iface.Index,
 		Attach:    ebpf.AttachTCXIngress,
 	})
+	bc.cleanup.add("ingress TCX", ingr)
 	if err != nil {
-		egr.Close()
-		objs.Close()
-		return nil, fmt.Errorf("failed to attach ingress TCX: %w", err)
+		return nil, errors.Join(fmt.Errorf("failed to attach ingress TCX: %w", err), bc.Close())
 	}
 
-	return &BpfCount{
-		objs:      objs,
-		egress:    egr,
-		ingress:   ingr,
-		domainIPs: make(map[domainKey]map[netutil.IPv6]int),
-	}, nil
+	return bc, nil
 }
 
 func (bc *BpfCount) Close() error {
-	bc.egress.Close()
-	bc.ingress.Close()
-	bc.objs.Close()
-	return nil
+	return bc.cleanup.Close()
 }
 
 func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, error) {

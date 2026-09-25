@@ -4,7 +4,9 @@
 package socket
 
 import (
+	"errors"
 	"io"
+	"net"
 	"testing"
 )
 
@@ -44,8 +46,14 @@ func TestSocketRegistryAddAndGet(t *testing.T) {
 	tcp := &fakeSocket{socketType: SocketTypeTCP}
 	tls := &fakeSocket{socketType: SocketTypeTLS}
 
-	h1 := reg.Add(tcp)
-	h2 := reg.Add(tls)
+	h1, addErr := reg.Add(tcp)
+	if addErr != nil {
+		t.Fatal(addErr)
+	}
+	h2, addErr := reg.Add(tls)
+	if addErr != nil {
+		t.Fatal(addErr)
+	}
 
 	if h1 != 0 {
 		t.Errorf("expected first handle to be 0, got %d", h1)
@@ -92,7 +100,10 @@ func TestSocketRegistryInvalidHandle(t *testing.T) {
 func TestSocketRegistryClose(t *testing.T) {
 	reg := &SocketRegistry{}
 	sock := &fakeSocket{socketType: SocketTypeTCP}
-	h := reg.Add(sock)
+	h, addErr := reg.Add(sock)
+	if addErr != nil {
+		t.Fatal(addErr)
+	}
 
 	if err := reg.Close(h); err != nil {
 		t.Fatalf("Close(%d) unexpected error: %v", h, err)
@@ -141,7 +152,12 @@ func TestSocketRegistryCloseAllIdempotent(t *testing.T) {
 	reg.CloseAll() // must not panic
 
 	sock := &fakeSocket{socketType: SocketTypeTCP}
-	reg.Add(sock)
+	if _, err := reg.Add(sock); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("late Add: %v", err)
+	}
+	if !sock.closed {
+		t.Fatal("late socket was not closed")
+	}
 	reg.CloseAll()
 	reg.CloseAll() // second call must not panic or error
 }

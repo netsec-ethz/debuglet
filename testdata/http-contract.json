@@ -1,0 +1,254 @@
+{
+  "purpose": "Illustrative HTTP request and response examples, not recorded endpoint captures or executable WASM. Regression tests exercise the real handlers. The /api prefix is explicit client configuration, not a server default.",
+  "base_url": "http://127.0.0.1:9000/api",
+  "exchanges": [
+    {
+      "name": "test-intent",
+      "method": "PUT",
+      "path": "/api/payment/intent",
+      "request": {
+        "debuglets": [
+          {
+            "order_id": 0,
+            "executor_id": "fixture-executor",
+            "args": [
+              "127.0.0.1:12345",
+              "two words"
+            ],
+            "wasm": "AQID",
+            "policy": {
+              "floor_bw": 1048576,
+              "ceil_bw": 1048576,
+              "timeout_ms": 10000,
+              "addresses": [
+                "127.0.0.1"
+              ],
+              "require_icmp": false,
+              "listen_udp": false,
+              "listen_tcp": false,
+              "listen_scion": false
+            }
+          }
+        ],
+        "payment_method": "TEST",
+        "refund_address": ""
+      },
+      "status": 200,
+      "response": {
+        "method": "TEST",
+        "intent": {
+          "transaction_id": "0123456789abcdef0123456789abcdef",
+          "auth_key": ""
+        }
+      }
+    },
+    {
+      "name": "same-values-submit",
+      "method": "PUT",
+      "path": "/api/debuglet",
+      "request": {
+        "debuglets": [
+          {
+            "order_id": 0,
+            "executor_id": "fixture-executor",
+            "args": [
+              "127.0.0.1:12345",
+              "two words"
+            ],
+            "wasm": "AQID",
+            "policy": {
+              "floor_bw": 1048576,
+              "ceil_bw": 1048576,
+              "timeout_ms": 10000,
+              "addresses": [
+                "127.0.0.1"
+              ],
+              "require_icmp": false,
+              "listen_udp": false,
+              "listen_tcp": false,
+              "listen_scion": false
+            }
+          }
+        ],
+        "transaction_id": "0123456789abcdef0123456789abcdef",
+        "auth_key": ""
+      },
+      "status": 200,
+      "response": [
+        "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0"
+      ]
+    },
+    {
+      "name": "nodes",
+      "method": "GET",
+      "path": "/api/executors",
+      "status": 200,
+      "response": [
+        {
+          "id": "fixture-executor",
+          "ready": false,
+          "last_seen": 1700000000,
+          "version": "fixture",
+          "tesla_delay_sec": 5,
+          "tesla_anchor_timestamp_ns": 1700000000000000000,
+          "tesla_anchor_key": "AQIDBA==",
+          "price_per_bw": 0,
+          "currency": "TEST"
+        }
+      ]
+    },
+    {
+      "name": "terminal-failure",
+      "method": "GET",
+      "path": "/api/debuglet/a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0/state",
+      "status": 200,
+      "response": {
+        "state": "RunStateExited",
+        "error": "debuglet exited with code 7",
+        "executor_id": "fixture-executor"
+      }
+    },
+    {
+      "name": "binary-full-page",
+      "method": "GET",
+      "path": "/api/debuglet/a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0/logs?after=0&limit=1",
+      "status": 200,
+      "response": {
+        "state": "RunStateExited",
+        "after": 7,
+        "logs": [
+          {
+            "id": 7,
+            "timestamp": "2026-09-08T12:00:00Z",
+            "output": "AP8K"
+          }
+        ],
+        "has_more": true,
+        "error": "debuglet exited with code 7"
+      }
+    },
+    {
+      "name": "next-empty-page",
+      "method": "GET",
+      "path": "/api/debuglet/a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0/logs?after=7&limit=1",
+      "status": 200,
+      "response": {
+        "state": "RunStateExited",
+        "after": 7,
+        "logs": null,
+        "has_more": false,
+        "error": "debuglet exited with code 7"
+      }
+    },
+    {
+      "name": "cancel-ack",
+      "method": "DELETE",
+      "path": "/api/debuglet",
+      "request": {
+        "debuglet_id": "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0",
+        "executor_id": "fixture-executor"
+      },
+      "status": 204,
+      "empty_body": true
+    },
+    {
+      "name": "version",
+      "method": "GET",
+      "path": "/api/version",
+      "status": 200,
+      "response": {
+        "version": "fixture"
+      }
+    },
+    {
+      "name": "missing-state",
+      "method": "GET",
+      "path": "/api/debuglet/a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0/state",
+      "status": 404,
+      "response": {
+        "message": "debuglet not found"
+      }
+    },
+    {
+      "name": "unknown-payment-method",
+      "method": "PUT",
+      "path": "/api/payment/intent",
+      "request": {
+        "debuglets": [
+          {
+            "order_id": 0,
+            "executor_id": "fixture-executor",
+            "args": [
+              "127.0.0.1:12345",
+              "two words"
+            ],
+            "wasm": "AQID",
+            "policy": {
+              "floor_bw": 1048576,
+              "ceil_bw": 1048576,
+              "timeout_ms": 10000,
+              "addresses": [
+                "127.0.0.1"
+              ],
+              "require_icmp": false,
+              "listen_udp": false,
+              "listen_tcp": false,
+              "listen_scion": false
+            }
+          }
+        ],
+        "payment_method": "UNKNOWN",
+        "refund_address": ""
+      },
+      "status": 400,
+      "response": "unknown payment method: UNKNOWN"
+    }
+  ],
+  "client_error_examples": [
+    {
+      "status": 502,
+      "content_type": "text/plain",
+      "body": "upstream unavailable",
+      "expected": "HTTPError with bounded text; submission outcome unknown if returned for the submit step"
+    },
+    {
+      "status": 200,
+      "content_type": "application/json",
+      "body": "{} {}",
+      "expected": "protocol error for trailing JSON, never successful decode of first value only"
+    }
+  ],
+  "cli_receipts": [
+    {
+      "name": "submitted",
+      "exit_code": 0,
+      "stdout": {
+        "id": "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0",
+        "transaction_id": "0123456789abcdef0123456789abcdef",
+        "executor_id": "fixture-executor",
+        "state": "submitted"
+      }
+    },
+    {
+      "name": "wait-failure",
+      "exit_code": 3,
+      "stdout": {
+        "id": "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0",
+        "transaction_id": "0123456789abcdef0123456789abcdef",
+        "executor_id": "fixture-executor",
+        "state": "RunStateExited",
+        "error": "debuglet exited with code 7"
+      }
+    },
+    {
+      "name": "submit-timeout",
+      "exit_code": 124,
+      "stdout": {
+        "transaction_id": "0123456789abcdef0123456789abcdef",
+        "executor_id": "fixture-executor",
+        "state": "submission_unknown"
+      },
+      "stderr_contains": "submission outcome unknown"
+    }
+  ]
+}

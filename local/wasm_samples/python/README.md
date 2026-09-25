@@ -1,29 +1,12 @@
-# Python debuglets — not currently supported
+# Python example
 
-Python debuglets are **not runnable on the current executor.** The source in
-`helloworld/main.py` is kept as a reference for if/when that changes, but it
-cannot be built into a working `debuglet.wasm` today. Here is why, concretely.
+Python guests are not supported by the current executor. `helloworld/main.py` is source-only; this repository provides no Python build target that produces a runnable guest.
 
-The executor runs guests on [wazero](https://github.com/tetratelabs/wazero) as
-**WASI preview 1 core modules**, with **no filesystem mounted** and **no
-component-model support**. None of the practical Python→WASM paths fit:
+The executor accepts WASI preview1 core modules, supplies no guest filesystem, and does not run WASI components. A Python interpreter/toolchain would have to fit those requirements before this example could be submitted.
 
-1. **Official CPython WASI build (`python.wasm`)** — this *is* pure
-   `wasi_snapshot_preview1` and runs on wazero, but it loads your script and the
-   standard library from a **preopened directory**. The executor configures no
-   filesystem (`debuglet.go` sets stdout/stderr/clocks/argv only), so the
-   interpreter has nothing to run.
+**Unsupported.** There is no build path here, so there is nothing to submit and
+nothing this repository can check.
 
-2. **`py2wasm` (Wasmer, Nuitka-based)** — produces a self-contained module that
-   needs no filesystem, but it (a) supports only Python ≤3.11 and crashes on
-   newer interpreters, and (b) targets Wasmer's **`wasix`** runtime extensions,
-   which wazero (pure WASI p1) does not implement, so the output won't
-   instantiate on the executor.
-
-3. **`componentize-py`** — emits a **wasip2 component**, and wazero does not
-   support the component model.
-
-Making Python work would require either teaching the executor to preopen a
-directory containing `python.wasm` + the script (option 1), or a wasip1-only,
-filesystem-free Python toolchain that does not yet exist in a form wazero can
-run. Until then, use **Go**, **Rust**, or **C** (see [../README.md](../README.md)).
+Use the [Go guest SDK](../go/README.md) for supported measurements. The other
+experimental language examples are listed in the [shared guide](../README.md),
+and the supported set is in the [guest guide](../../../docs/GUESTS.md).

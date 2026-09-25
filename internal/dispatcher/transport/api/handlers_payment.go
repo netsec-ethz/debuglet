@@ -5,30 +5,44 @@ package api
 
 import (
 	"context"
-	"debuglet/internal/dispatcher/database"
-	"debuglet/internal/dispatcher/models"
-	"debuglet/internal/dispatcher/payments"
-	"debuglet/internal/dispatcher/payments/sui"
+	"errors"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
 	"math"
-	"net/http"
-
-	"fmt"
 	"math/big"
+	"net/http"
 
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 )
 
+// paymentsDisabledMessage is the bounded JSON error message returned with HTTP
+// 503 when a chain payment method is requested while Sui payments are disabled.
+const paymentsDisabledMessage = "blockchain payments are disabled"
+
+// LockPrice creates the Outstanding debuglet_order rows for an intent and returns
+// the total price. The payment-mode preflight runs first so that a disabled
+// chain method never reaches the executor lookup or any order write, even when
+// this function is called directly rather than via PutPaymentIntent.
+// Every failure it reports is already a documented API error, so a caller can
+// return it unchanged.
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, refundAddress string, ctx context.Context) (int64, error) {
+	if err := h.dispatcher.Payment.CheckPaymentMethod(request.PaymentMethod); err != nil {
+		return 0, paymentMethodError(request.PaymentMethod, err)
+	}
 	queries := database.New(h.db)
 	price := new(big.Int).SetInt64(0)
 	for _, req := range request.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
 		if !exists {
-			return 0, fmt.Errorf("Executor does not exists: %s", req.ExecutorID)
+			return 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
+				"unknown executor: "+echoed(req.ExecutorID))
 		}
-		if req.Policy.TimeoutMS < 0 || req.Policy.FloorBW < 0 || req.Policy.CeilBW < req.Policy.FloorBW {
-			return 0, fmt.Errorf("Invalid request. Timeout and FloorBW must be poisitive. CeilBW must be at least FloorBW")
+		if err := validatePolicy(req.OrderID, req.Policy); err != nil {
+			return 0, err
 		}
 
 		ppb := new(big.Int).SetInt64(executor.PricePerBwS)
@@ -46,14 +60,15 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 			State:         int64(models.Outstanding),
 		})
 		if err != nil {
-			return 0, fmt.Errorf("Failed to store order: %s", err.Error())
+			return 0, apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the order", err)
 		}
 
 		price.Add(price, debugletPrice)
 	}
 	//TODO? Add margin on price
 	if price.Cmp(new(big.Int).SetInt64(math.MaxInt64)) == 1 {
-		return 0, fmt.Errorf("Invalid Request - Price overflowed")
+		return 0, apiError(http.StatusBadRequest, CodeInvalidPolicy,
+			"invalid policy: the total price of the batch overflows")
 	}
 	return price.Int64(), nil
 }
@@ -61,32 +76,72 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 // PUT /payment/intent
 func (h *Handler) PutPaymentIntent(c echo.Context) error {
 
+	// A payment order belongs to the account that asked for it, so the caller
+	// is established before the body is read, priced or written: an
+	// unauthenticated request costs no megabytes of parsing.
+	established, err := requireCaller(c)
+	if err != nil {
+		return err
+	}
+	// Maintenance stops the admission of new work, and pricing new work is
+	// the first half of admitting it: an intent issued now would be paid for
+	// a batch this dispatcher will not accept, and the money would then have
+	// to be given back. Nothing is priced, no transaction id is minted and no
+	// order row is written. The check follows the caller being established,
+	// so the operator's note reaches only a request that may act.
+	if err := dispatcher.AdmissionPaused(); err != nil {
+		return apiError(http.StatusServiceUnavailable, CodeUnavailable, err.Error())
+	}
+
 	var req PaymentIntentRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
+		return bindError(err)
 	}
+	// Payment-mode preflight before the allowlist and before any transaction ID,
+	// order write or intent creation: a disabled chain method (USDC or SUI) is
+	// answered with 503 regardless of the HTTP allowlist below, so that the
+	// disabled-mode classification does not depend on which chain methods the
+	// API currently admits. Any other preflight failure (an unknown method) keeps
+	// the 400 response of an invalid request.
+	if err := h.dispatcher.Payment.CheckPaymentMethod(req.PaymentMethod); err != nil {
+		return paymentMethodError(req.PaymentMethod, err)
+	}
+	// The HTTP allowlist: SUI is not admitted over the API in enabled mode.
 	if (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") {
-		return c.JSON(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
+		return unknownPaymentMethod(req.PaymentMethod)
 	}
 	transactionId, err := h.dispatcher.Payment.NewTransactionID()
 	//TODO ensure transactionId unique
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, "failed to generate id")
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to generate a transaction id", err)
 	}
 
 	ctx := c.Request().Context()
 	price, err := h.LockPrice(req, transactionId, req.RefundAddress, ctx)
 	if err != nil {
-		h.logger.Debug("failed to lock price", zap.String("error", err.Error()))
-		return c.JSON(http.StatusBadRequest, err)
+		// LockPrice reports documented API errors; returning the value
+		// serializes the envelope instead of the error itself.
+		return err
 	}
 	h.logger.Info("intent", zap.Int64("price", price))
 
 	hash := hashDebugletRequest(req.Debuglets)
 	intent, err := h.dispatcher.Payment.CreatePaymentIntent(transactionId, price, req.PaymentMethod, hash, c.Request().Context())
 	if err != nil {
-		h.logger.Info("INTENT", zap.String("hash", hash), zap.String("err", err.Error()))
-		return c.JSON(http.StatusInternalServerError, "failed to create payment Intent: "+err.Error())
+		h.logger.Info("INTENT", zap.String("hash", hash))
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)
+	}
+	// Record the owner before the intent is handed out, so that the auth key
+	// this response carries can only ever be spent by the account it was
+	// issued to. The local development bypass names no account and keeps the
+	// ownerless behaviour it had.
+	if owner, ok := established.owner(); ok {
+		if err := database.New(h.db).SetTransactionOwner(ctx, database.SetTransactionOwnerParams{
+			TransactionID: transactionId,
+			Uuid:          owner,
+		}); err != nil {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to record the payment order owner", err)
+		}
 	}
 	switch req.PaymentMethod {
 	case "USDC":
@@ -94,7 +149,7 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	case "SUI":
 		suiIntent, ok := intent.Intent.(sui.SuiPaymentIntent)
 		if !ok {
-			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
+			return apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")
 		}
 		return c.JSON(http.StatusOK, IntentResponse{Method: req.PaymentMethod,
 			Intent: SuiIntent{
@@ -109,7 +164,7 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	case "TEST":
 		dummyIntent, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {
-			return c.JSON(http.StatusInternalServerError, "unexpected payment intent type")
+			return apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")
 		}
 		intent := DummyIntent{
 			TransactionID: dummyIntent.TransactionId,
@@ -117,15 +172,43 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 		}
 		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: intent})
 	}
-	return echo.NewHTTPError(http.StatusBadRequest, "unknown payment method: "+req.PaymentMethod)
+	return unknownPaymentMethod(req.PaymentMethod)
+}
+
+// paymentMethodError classifies a rejected payment method: a chain method
+// while blockchain payments are disabled is a temporarily unavailable
+// capability, anything else is an unsupported method.
+// The cause is retained so that a caller of LockPrice can still classify the
+// failure with errors.Is; it is never serialized.
+func paymentMethodError(method string, err error) *echo.HTTPError {
+	if errors.Is(err, payments.ErrPaymentsDisabled) {
+		return apiErrorFrom(http.StatusServiceUnavailable, CodePaymentsDisabled, paymentsDisabledMessage, err)
+	}
+	return apiErrorFrom(http.StatusBadRequest, CodeUnsupportedPaymentMethod,
+		"unknown payment method: "+echoed(method), err)
+}
+
+func unknownPaymentMethod(method string) *echo.HTTPError {
+	return apiError(http.StatusBadRequest, CodeUnsupportedPaymentMethod, "unknown payment method: "+echoed(method))
 }
 
 // GET /payment/:transaction_id/status
+//
+// GetPaymentStatus reports whether one payment order is paid. The order is
+// private to the account that created it: another account's order and an
+// unknown one answer alike.
 func (h *Handler) GetPaymentStatus(c echo.Context) error {
+	established, err := requireCaller(c)
+	if err != nil {
+		return err
+	}
 	transactionID := c.Param("transaction_id")
+	if err := h.authorizeTransactionOwner(c, established, transactionID, transactionNotFound()); err != nil {
+		return err
+	}
 	paid, err := h.dispatcher.Payment.IsPaid(c.Request().Context(), transactionID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the payment status", err)
 	}
 	return c.JSON(http.StatusOK, paid)
 }

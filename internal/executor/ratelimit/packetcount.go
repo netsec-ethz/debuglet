@@ -4,12 +4,13 @@
 package ratelimit
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
-	"debuglet/internal/executor/ratelimit/app"
-	"debuglet/internal/executor/ratelimit/ebpf"
-	"debuglet/internal/executor/ratelimit/fallback"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/fallback"
 	"net"
 
 	"github.com/google/uuid"
@@ -38,15 +39,29 @@ type PacketCount interface {
 }
 
 func New(iface *net.Interface, logger *zap.Logger) (PacketCount, error) {
+	return newPacketCount(iface, logger, func(iface *net.Interface) (PacketCount, error) {
+		counter, err := ebpf.NewBPFCount(iface)
+		if err != nil {
+			return nil, err
+		}
+		return counter, nil
+	})
+}
+
+// A construction-fixed factory permits testing fallback decisions without
+// loading kernel objects. A failed factory retains/cleans its own resources.
+func newPacketCount(iface *net.Interface, logger *zap.Logger, newBPF func(*net.Interface) (PacketCount, error)) (PacketCount, error) {
 	var err error
 	if iface != nil {
-		var bpf *ebpf.BpfCount
-		bpf, err = ebpf.NewBPFCount(iface)
+		var bpf PacketCount
+		bpf, err = newBPF(iface)
 		if err == nil {
 			return bpf, nil
-		} else {
-			logger.Warn("Failed to initialize eBPF packet count (possible permission issues), falling back to fallback packet count", zap.Error(err))
 		}
+		if errors.Is(err, cleanup.ErrCleanupFailed) || errors.Is(err, cleanup.ErrCleanupUnconfirmed) {
+			return nil, fmt.Errorf("failed to initialize packet count: %w", err)
+		}
+		logger.Warn("Failed to initialize eBPF packet count after clean rollback, using fallback packet count", zap.Error(err))
 	}
 	fc, err2 := fallback.NewFallbackCount()
 	if err2 != nil {

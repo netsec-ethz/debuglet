@@ -42,7 +42,12 @@
 
 // ---- Generic / TCP / TLS socket API -----------------------------------------
 // connect_* dials the address in addr[0 .. addr_len) and returns a non-negative
-// socket handle on success, or -1 on failure.
+// socket handle. A dial the host cannot complete - refused, or outside the
+// job's allowed destinations - ends the job inside the call instead of
+// returning, so the -1 result is defensive rather than the usual failure path.
+//
+// One call transfers at most 8192 bytes of the buffer it is given, whatever
+// len says, so send_* and receive_* belong in a loop.
 IMPORT(connect_tcp)        int  connect_tcp(const void *addr, int addr_len);
 IMPORT(connect_tls)        int  connect_tls(const void *addr, int addr_len);
 IMPORT(accept_tcp)         int  accept_tcp(void);

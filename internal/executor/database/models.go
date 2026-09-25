@@ -5,27 +5,43 @@
 package database
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type Debuglet struct {
-	ID            int64
-	Uuid          uuid.UUID
-	StartTime     UTCTime
-	Args          CommaSeparatedList
-	Wasm          []byte
-	TransactionID string
-	FloorBw       int64
-	CeilBw        int64
-	TimeoutMs     int64
-	Addresses     CommaSeparatedList
-	RequireIcmp   bool
-	ListenUdp     bool
-	ListenTcp     bool
-	ListenScion   bool
-	StartedAt     UTCTime
+	ID                    int64
+	Uuid                  uuid.UUID
+	StartTime             UTCTime
+	Args                  CommaSeparatedList
+	Wasm                  []byte
+	TransactionID         string
+	FloorBw               int64
+	CeilBw                int64
+	TimeoutMs             int64
+	Addresses             CommaSeparatedList
+	RequireIcmp           bool
+	ListenUdp             bool
+	ListenTcp             bool
+	ListenScion           bool
+	StartedAt             UTCTime
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+type DebugletExit struct {
+	DebugletID            string
+	DispatcherIncarnation string
+	SessionID             string
+	ExitCode              int64
+	ErrorMessage          sql.NullString
+	RecordedAt            UTCTime
+	Attempts              int64
+	LastAttemptAt         UTCTime
+	LastError             string
+	Rejected              bool
 }
 
 type DebugletLog struct {

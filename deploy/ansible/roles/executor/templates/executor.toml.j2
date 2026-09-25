@@ -1,3 +1,10 @@
+# Executor configuration, rendered by deploy/ansible for a managed host.
+# Do not edit it there: the next deployment overwrites it. Change the
+# variables in deploy/ansible/group_vars instead.
+#
+# Profile: authenticated deployment. The local TEST fixture is a different
+# profile; see deploy/docker/configs/executor/executor.toml.
+
 [identity]
 executor_id = "{{ executor_id }}"
 version = "{{ executor_version }}"
@@ -11,8 +18,18 @@ version = "{{ executor_version }}"
 addr = "{{ executor_dispatcher_addr | default(dispatcher_addr) }}:{{ dispatcher_grpc_port }}"
 yamux_addr = "{{ executor_dispatcher_addr | default(dispatcher_addr) }}:{{ dispatcher_http_port }}"
 
+# The executor verifies the dispatcher's certificate against credentials.ca_cert
+# below and against the name it dialled, or server_name when that differs.
 [tls]
-disable = {{ executor_disable_tls | lower }}
+disable = {{ executor_disable_tls | bool | lower }}
+{% if executor_tls_server_name %}
+server_name = "{{ executor_tls_server_name }}"
+{% endif %}
+
+[credentials]
+ca_cert = "{{ executor_config_dir }}/ca.crt"
+client_cert = "{{ executor_config_dir }}/client.crt"
+client_key = "{{ executor_config_dir }}/client.key"
 
 [resources]
 capacity = {{ executor_capacity }}
@@ -33,11 +50,16 @@ public_ports = "{{ executor_public_ports }}"
 
 [logging]
 log_level = "{{ executor_log_level }}"
+json_logs = true
 
+[pricing]
+price_per_bw_s = {{ executor_price_per_bw_s }}
+currency = "{{ executor_currency }}"
+sui_wallet = "{{ executor_sui_wallet }}"
+trial_price_limit = {{ executor_trial_price_limit }}
+trial_time_limit = {{ executor_trial_time_limit }}
+
+# Writable state, in the service account's own directory. The daemon opens
+# this database and does not create its schema; the role installs one.
 [database]
-path = "{{ executor_config_dir }}/executor.db"
-
-[credentials]
-ca_cert = "{{ executor_config_dir }}/ca.crt"
-client_cert = "{{ executor_config_dir }}/client.crt"
-client_key = "{{ executor_config_dir }}/client.key"
+path = "{{ executor_state_dir }}/executor.db"

@@ -6,9 +6,9 @@
 package ebpf
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
-	"debuglet/internal/executor/ratelimit/app"
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"net"
 
 	"github.com/google/uuid"

@@ -1,5 +1,6 @@
 ---
-# Shared setup: service user + directory skeleton (runs on all managed hosts)
+# Shared setup for every managed host: the service account and the directory
+# skeleton both roles install into.
 
 - name: Create debuglet system user
   ansible.builtin.user:
@@ -8,7 +9,31 @@
     shell: /usr/sbin/nologin
     create_home: false
     state: present
+  when: debuglet_manage_account | bool
 
+- name: Create executor service group
+  ansible.builtin.group:
+    name: "{{ executor_group }}"
+    system: true
+  when:
+    - debuglet_manage_account | bool
+    - inventory_hostname in (groups['executors'] | default([]))
+
+- name: Create executor service user
+  ansible.builtin.user:
+    name: "{{ executor_user }}"
+    group: "{{ executor_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+  when:
+    - debuglet_manage_account | bool
+    - inventory_hostname in (groups['executors'] | default([]))
+
+# Shared parents allow each environment to reach its own private directory.
+# Only the service-owned child directories contain writable daemon state;
+# the parent directories remain owned by root.
 - name: Create directory skeleton
   ansible.builtin.file:
     path: "{{ item.path }}"
@@ -17,6 +42,6 @@
     group: "{{ item.group | default(debuglet_group) }}"
     mode: "{{ item.mode | default('0755') }}"
   loop:
-    - { path: "{{ config_dir }}" }
+    - { path: "{{ config_dir }}", owner: root, group: root }
+    - { path: "{{ state_dir }}", owner: root, group: root }
     - { path: "{{ log_dir }}" }
-    - { path: "{{ install_prefix }}/bin", owner: root, group: root }

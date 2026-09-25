@@ -1,80 +1,50 @@
-# C debuglets
+# C measurements
 
-Write a debuglet in C as a normal `int main(int argc, char **argv)`, build it for
-the `wasm32-wasi` target, and the executor streams your stdout back to the user.
-See the [shared model](../README.md) for the execution contract.
+**Experimental. Not a supported quickstart.** Nothing in this repository builds,
+executes or checks these samples, and no C toolchain is part of the pinned
+build. The header below is not covered by the guest ABI compatibility suite. Use
+the [Go samples](../go/README.md) for supported measurements.
 
-## Starter samples
+The C samples use a normal `int main(int argc, char **argv)` and compile for
+`wasm32-wasi`. The executor records stdout and stderr as job output. See the
+[shared guide](../README.md) and the [guest guide](../../../docs/GUESTS.md) for
+the imports the header declares.
 
-| Sample        | Transport | What it does |
-|---------------|-----------|--------------|
-| `helloworld`  | —         | prints a greeting |
-| `ping`        | ICMPv4    | echo-request latency probe |
-| `throughput`  | TCP       | sends for N seconds, reports Mbps |
+## Samples and bindings
 
-## Advanced / benchmark samples
+`helloworld`, `ping`, and `throughput` demonstrate output, ICMPv4, and TCP. Additional latency and iperf-related examples are available for specialized setups; they are not exercised by the installed Go demo.
 
-| Sample | Transport | Role |
-|--------|-----------|------|
-| `fidelity_ping`         | ICMP | latency probe (`RTT_SAMPLE` + `Result:` lines) |
-| `latency_icmp`          | ICMP | average ICMP RTT |
-| `latency_tcp`           | TCP  | average TCP echo RTT (client) |
-| `latency_tcp_server`    | TCP  | echo server for `latency_tcp` |
-| `iperf_tcp_client`      | TCP  | throughput sender |
-| `iperf_tcp_server`      | TCP  | throughput sink |
-| `iperf3_tcp_client`     | TCP  | iperf3-wire-compatible sender |
-| `fidelity_iperf_client` | TCP  | 30 s throughput sender |
-| `fidelity_iperf_server` | TCP  | throughput sink for the above |
-
-The `*_server` samples call `accept_tcp()`, which depends on the host's TCP
-listener — currently a placeholder in `startServers`
-(`internal/executor/debuglet/debuglet.go`). They are included for API
-completeness and will work once the listener is enabled.
-
-## The C bindings (`common/debuglet_api.h`)
-
-All samples include the shared header, which declares the `env` host imports and
-provides small helpers:
+The header [`common/debuglet_api.h`](common/debuglet_api.h) declares the custom `env` imports:
 
 ```c
 #include "../common/debuglet_api.h"
 
-int sock = connect_tcp(addr, addr_len);          // -> handle, or -1
-send_tcp_data(sock, buf, len);
-int n = receive_tcp_data(sock, buf, sizeof buf); // -> bytes read
-close_tcp(sock);
-
-long long t  = get_timestamp();   // monotonic nanoseconds (WASI clock)
-sleep_ns(1000000000LL);           // sleep 1 s
-const char *a = arg_addr(argc, argv, "1.1.1.1");
+int sock = connect_tcp(addr, addr_len);
+if (sock >= 0) {
+    send_tcp_data(sock, buf, len);
+    int n = receive_tcp_data(sock, buf, sizeof buf);
+    close_tcp(sock);
+}
 ```
 
-The ICMPv4 family (`connect_icmp4`, `send_icmp4_data`, …) mirrors the TCP one.
-Buffers and addresses are passed by pointer and length directly — the WASM
-runtime reads them straight out of linear memory.
+Addresses and buffers use pointers and lengths into guest memory, and one call
+transfers at most 8192 bytes: `send_tcp_data` of a larger buffer sends only the
+first 8192, and `receive_tcp_data` fills a larger buffer only that far, so both
+belong in a loop. A connect that is refused or disallowed by the job's policy
+ends the job inside the call rather than returning `-1`.
 
-## Reading arguments
+The header also provides WASI clock helpers and basic argument parsing. The first actual argument is `argv[0]`; no program name is inserted.
 
-WASI argv has no program name; the first real argument is `argv[0]`. Use the
-`arg_addr` helper for `-addr`, and the small `arg_int` helper in the `ping` /
-`throughput` samples for integer flags.
+Server samples that call `accept_tcp()` require a job requesting a listener and configured executor public-host/port resources. They cannot assume an arbitrary host port is available.
 
-## Prerequisites
+## Build and submit
 
-You need a `wasm32-wasi` clang from the
-[wasi-sdk](https://github.com/WebAssembly/wasi-sdk) (Apple/Linux system clang
-cannot target `wasm32-wasi`). Download a release, unpack it, then point the
-build at it.
-
-## Build & run
+Use [wasi-sdk](https://github.com/WebAssembly/wasi-sdk), then run from the repository root:
 
 ```sh
-# either set WASI_SDK (CLANG defaults to $WASI_SDK/bin/clang) ...
-make wasm SAMPLE_DIR=local/wasm_samples/c/ping WASI_SDK=/opt/wasi-sdk
-# ... or pass CLANG directly
-make wasm SAMPLE_DIR=local/wasm_samples/c/ping CLANG=/opt/wasi-sdk/bin/clang
-
-go run ./cmd/user -wasm local/wasm_samples/c/ping/debuglet.wasm -- -addr 1.1.1.1 -iter 5
+make wasm SAMPLE_DIR=local/wasm_samples/c/helloworld WASI_SDK=/path/to/wasi-sdk
+dbl run --wasm local/wasm_samples/c/helloworld/debuglet.wasm \
+  --executor EXECUTOR_ID --wait
 ```
 
-`make wasm` compiles `main.c` with `-O2 -lm`.
+Alternatively set `CLANG=/path/to/wasi-sdk/bin/clang`. Replace the executor ID with a node from `dbl nodes`. Network examples additionally need an allowed target and appropriate executor capabilities; compilation alone does not validate those conditions.

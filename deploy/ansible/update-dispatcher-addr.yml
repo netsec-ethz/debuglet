@@ -4,11 +4,13 @@
 # changes — no need to redeploy binaries.
 #
 # Usage:
-#   cd deploy/ansible && ansible-playbook -i hosts.yml update-dispatcher-addr.yml
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml update-dispatcher-addr.yml
 #
 #   Or pass the new address inline without editing the file:
-#   ansible-playbook -i hosts.yml update-dispatcher-addr.yml \
+#   ansible-playbook -i hosts.yml -e @vars/prod.yml update-dispatcher-addr.yml \
 #       -e "dispatcher_addr=new-dispatcher.example.com"
+
+- import_playbook: preflight.yml
 
 - name: Update dispatcher address on all executors
   hosts: executors
@@ -21,10 +23,11 @@
         owner: "{{ executor_user }}"
         group: "{{ executor_group }}"
         mode: "0640"
+      no_log: true
       register: config_changed
 
     - name: Restart executor if config changed
       ansible.builtin.systemd:
         name: "{{ executor_service }}"
         state: restarted
-      when: config_changed.changed
+      when: debuglet_manage_services | bool and config_changed.changed

@@ -27,7 +27,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"net"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,7 +37,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 
-	"debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
 // akEntry mirrors the struct ak_entry in tagger.c.
@@ -60,12 +62,17 @@ func akFromKey(ak []byte) akEntry {
 // It implements tagger.TaggerInterface (eBPF side) and exposes a
 // KeyManager for periodic key updates.
 type BPFTagger struct {
-	objs      taggerObjects
-	qdisc     link.Link
-	iface     *net.Interface
-	schedule  *tesla.KeySchedule
-	measureID []byte
-	stopCh    chan struct{}
+	objs        taggerObjects
+	qdisc       link.Link
+	iface       *net.Interface
+	schedule    *tesla.KeySchedule
+	measureID   []byte
+	stopCh      chan struct{}
+	refreshDone chan struct{}
+	closeOnce   sync.Once
+	closeErr    error
+	// Immutable owned resources; Close attempts every release even after errors.
+	closers []io.Closer
 }
 
 // NewBPFTagger loads the compiled eBPF object, attaches the TC egress program
@@ -86,13 +93,18 @@ func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurement
 	}
 
 	// Attach to TC egress using TCX.
-	l, err := link.AttachTCX(link.TCXOptions{
-		Interface: iface.Index,
-		Program:   objs.DebugletTag,
-		Attach:    ebpf.AttachTCXEgress,
-	})
+	l, err := attachWithRollback(func() (link.Link, error) {
+		attached, err := link.AttachTCX(link.TCXOptions{
+			Interface: iface.Index,
+			Program:   objs.DebugletTag,
+			Attach:    ebpf.AttachTCXEgress,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return attached, nil
+	}, objs.DebugletTag, objs.AkMap)
 	if err != nil {
-		objs.Close()
 		return nil, fmt.Errorf("ebpf: attach TCX: %w", err)
 	}
 
@@ -106,18 +118,31 @@ func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurement
 		schedule:  schedule,
 		measureID: mid,
 		stopCh:    make(chan struct{}),
+		closers:   []io.Closer{l, objs.DebugletTag, objs.AkMap},
 	}
 
-	// Push initial key.
-	if err := bt.updateKey(); err != nil {
-		bt.Close()
+	if err := bt.initializeRefresh(bt.updateKey, func() (<-chan time.Time, func()) {
+		ticker := time.NewTicker(bt.schedule.Config().Delay / 2)
+		return ticker.C, ticker.Stop
+	}); err != nil {
 		return nil, fmt.Errorf("ebpf: initial key update: %w", err)
 	}
 
-	// Start background key refresh.
-	go bt.keyRefreshLoop()
-
 	return bt, nil
+}
+
+// attachWithRollback owns the already-loaded program/maps until successful
+// attachment transfers them to BPFTagger. Even a failed link returned alongside
+// an error is released, followed by every independently acquired object.
+func attachWithRollback(attach func() (link.Link, error), owned ...io.Closer) (link.Link, error) {
+	attached, err := attach()
+	if err == nil {
+		return attached, nil
+	}
+	if attached != nil {
+		owned = append([]io.Closer{attached}, owned...)
+	}
+	return nil, withCleanupError(err, closeResources(owned...))
 }
 
 // updateKey derives the current ak and writes it to the BPF map at the slot
@@ -140,17 +165,32 @@ func (bt *BPFTagger) MapKey() uint32 {
 	return h.Sum32()
 }
 
-// keyRefreshLoop updates the BPF map at the start of each new TESLA epoch.
-func (bt *BPFTagger) keyRefreshLoop() {
-	cfg := bt.schedule.Config()
-	ticker := time.NewTicker(cfg.Delay / 2)
-	defer ticker.Stop()
+// initializeRefresh runs before the constructor publishes bt. An initial
+// failure has no refresh goroutine to join and still releases every resource.
+func (bt *BPFTagger) initializeRefresh(update func() error, newTicks func() (<-chan time.Time, func())) error {
+	if err := update(); err != nil {
+		return withCleanupError(err, bt.Close())
+	}
+	ticks, stopTicker := newTicks()
+	bt.refreshDone = make(chan struct{})
+	go bt.keyRefreshLoop(update, ticks, stopTicker)
+	return nil
+}
+
+func (bt *BPFTagger) keyRefreshLoop(update func() error, ticks <-chan time.Time, stopTicker func()) {
+	defer close(bt.refreshDone)
+	defer stopTicker()
 	for {
 		select {
 		case <-bt.stopCh:
 			return
-		case <-ticker.C:
-			_ = bt.updateKey() // best-effort; errors are transient
+		default:
+		}
+		select {
+		case <-bt.stopCh:
+			return
+		case <-ticks:
+			_ = update() // refresh failures remain best-effort
 		}
 	}
 }
@@ -166,12 +206,16 @@ func (bt *BPFTagger) TagPacket(pkt []byte) ([]byte, error) {
 
 // Close detaches the eBPF program and releases all BPF resources.
 func (bt *BPFTagger) Close() error {
-	close(bt.stopCh)
-	if bt.qdisc != nil {
-		bt.qdisc.Close()
-	}
-	bt.objs.Close()
-	return nil
+	bt.closeOnce.Do(func() {
+		if bt.stopCh != nil {
+			close(bt.stopCh)
+		}
+		if bt.refreshDone != nil {
+			<-bt.refreshDone
+		}
+		bt.closeErr = closeResources(bt.closers...)
+	})
+	return bt.closeErr
 }
 
 func (bt *BPFTagger) Schedule() *tesla.KeySchedule {

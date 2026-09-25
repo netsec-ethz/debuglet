@@ -4,10 +4,12 @@
 package fallback
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
-	"debuglet/internal/executor/ratelimit/app"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"io"
+	"math"
 	"net"
 	"os"
 	"sync"
@@ -21,103 +23,234 @@ var (
 )
 
 type FallbackConn struct {
-	conn  net.Conn
-	count *FallbackCount
-	id    uuid.UUID
-	mu    *FIFOLock // Ensures FIFO for the write operation
-	ipv6  netutil.IPv6
-	addr  string
-	close chan struct{}
+	conn    net.Conn
+	count   *FallbackCount
+	id      uuid.UUID
+	readMu  *FIFOLock
+	writeMu *FIFOLock // Ensures FIFO for the write operation
+	ipv6    netutil.IPv6
+	addr    string
+	close   chan struct{}
+	// closed is protected by count.mu so admission and detach observe one
+	// connection lifecycle order.
+	closed bool
 
-	deadline      time.Time
-	readDeadline  time.Time
-	writeDeadline time.Time
-	once          sync.Once
+	deadlineMu           sync.Mutex
+	readDeadline         time.Time
+	writeDeadline        time.Time
+	readDeadlineChanged  chan struct{}
+	writeDeadlineChanged chan struct{}
+	waitForLimiter       func(time.Duration, <-chan struct{}, <-chan struct{}) limiterWaitResult
+	once                 sync.Once
+}
+
+type limiterWaitResult uint8
+
+const (
+	limiterReady limiterWaitResult = iota
+	limiterChanged
+	limiterClosed
+)
+
+func waitForLimiter(duration time.Duration, changed, closed <-chan struct{}) limiterWaitResult {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return limiterReady
+	case <-changed:
+		return limiterChanged
+	case <-closed:
+		return limiterClosed
+	}
 }
 
 func (f *FallbackConn) LocalAddr() net.Addr  { return f.conn.LocalAddr() }
 func (f *FallbackConn) RemoteAddr() net.Addr { return f.conn.RemoteAddr() }
 func (f *FallbackConn) SetDeadline(t time.Time) error {
-	f.deadline = t
-	return f.conn.SetDeadline(t)
+	f.deadlineMu.Lock()
+	defer f.deadlineMu.Unlock()
+	if err := f.conn.SetDeadline(t); err != nil {
+		return err
+	}
+	f.readDeadline = t
+	f.writeDeadline = t
+	close(f.readDeadlineChanged)
+	close(f.writeDeadlineChanged)
+	f.readDeadlineChanged = make(chan struct{})
+	f.writeDeadlineChanged = make(chan struct{})
+	return nil
 }
 func (f *FallbackConn) SetReadDeadline(t time.Time) error {
+	f.deadlineMu.Lock()
+	defer f.deadlineMu.Unlock()
+	if err := f.conn.SetReadDeadline(t); err != nil {
+		return err
+	}
 	f.readDeadline = t
-	return f.conn.SetReadDeadline(t)
+	close(f.readDeadlineChanged)
+	f.readDeadlineChanged = make(chan struct{})
+	return nil
 }
 func (f *FallbackConn) SetWriteDeadline(t time.Time) error {
+	f.deadlineMu.Lock()
+	defer f.deadlineMu.Unlock()
+	if err := f.conn.SetWriteDeadline(t); err != nil {
+		return err
+	}
 	f.writeDeadline = t
-	return f.conn.SetWriteDeadline(t)
+	close(f.writeDeadlineChanged)
+	f.writeDeadlineChanged = make(chan struct{})
+	return nil
 }
 
 func (f *FallbackConn) Read(b []byte) (n int, err error) {
-	return f.ratelimit(b, f.conn.Read, false)
+	// An empty read needs no bandwidth: return before taking the FIFO lock,
+	// reserving tokens or touching the socket.
+	if len(b) == 0 {
+		return 0, nil
+	}
+
+	if err := f.readMu.LockUntil(f.close, func() (time.Time, <-chan struct{}) { return f.deadlineState(false) }); err != nil {
+		return 0, err
+	}
+	defer f.readMu.Unlock()
+
+	r, err := f.admit(len(b), false)
+	if err != nil {
+		return 0, err
+	}
+
+	// Exactly one underlying read, returned unchanged: a short read, data
+	// returned together with an error, (n>0, io.EOF) and (0, nil) are all
+	// passed through. Stream interpretation belongs to the host layer.
+	n, err = f.conn.Read(b[:r.allocated])
+	r.refund(r.allocated - n)
+	return n, err
 }
 
 func (f *FallbackConn) Write(b []byte) (int, error) {
-	return f.ratelimit(b, f.conn.Write, true)
-}
-
-func (f *FallbackConn) Close() error {
-	f.once.Do(func() {
-		f.count.Detach(f.addr, f.id, f.ipv6)
-		close(f.close)
-	})
-	return f.conn.Close()
-}
-
-func (f *FallbackConn) ratelimit(b []byte, rw func([]byte) (int, error), write bool) (int, error) {
 	// Connection lock is held even while being ratelimited and sleeping
 	// to ensure concurrent writes are handled in the correct order.
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	if err := f.writeMu.LockUntil(f.close, func() (time.Time, <-chan struct{}) { return f.deadlineState(true) }); err != nil {
+		return 0, err
+	}
+	defer f.writeMu.Unlock()
 
 	var n int
 	for len(b) > 0 {
-		r, err := f.reserve(len(b))
+		r, err := f.admit(len(b), true)
 		if err != nil {
-			return n, fmt.Errorf("failed to reserve: %w", err)
+			return n, err
 		}
 
-		if r.waitFor > 0 {
-			var dCh, wdCh <-chan time.Time
-			if !f.deadline.IsZero() {
-				dCh = time.After(time.Until(f.deadline))
+		nn, err := f.conn.Write(b[:r.allocated])
+		if nn < 0 || nn > r.allocated {
+			if err != nil {
+				return n, fmt.Errorf("invalid write count %d: %w", nn, err)
 			}
-			if write && !f.writeDeadline.IsZero() {
-				wdCh = time.After(time.Until(f.writeDeadline))
-			} else if !write && !f.readDeadline.IsZero() {
-				wdCh = time.After(time.Until(f.readDeadline))
-			}
-
-			sleep := time.NewTimer(r.waitFor)
-			select {
-			case <-sleep.C:
-			case <-wdCh:
-				sleep.Stop()
-				r.free()
-				return n, os.ErrDeadlineExceeded
-			case <-dCh:
-				sleep.Stop()
-				r.free()
-				return n, os.ErrDeadlineExceeded
-			case <-f.close:
-				sleep.Stop()
-				r.free()
-				return n, net.ErrClosed
-			}
-			sleep.Stop()
+			return n, fmt.Errorf("invalid write count %d", nn)
 		}
 
-		nn, err := rw(b[:r.allocated])
+		r.refund(r.allocated - nn)
 		n += nn
 		if err != nil {
 			return n, err
+		}
+		if nn == 0 {
+			return n, io.ErrNoProgress
 		}
 		b = b[nn:]
 	}
 
 	return n, nil
+}
+
+func (f *FallbackConn) deadlineState(write bool) (time.Time, <-chan struct{}) {
+	f.deadlineMu.Lock()
+	defer f.deadlineMu.Unlock()
+	if write {
+		return f.writeDeadline, f.writeDeadlineChanged
+	}
+	return f.readDeadline, f.readDeadlineChanged
+}
+
+func (f *FallbackConn) Close() error {
+	f.once.Do(func() {
+		f.count.mu.Lock()
+		f.closed = true
+		f.count.detachLocked(f.addr, f.id, f.ipv6)
+		close(f.close)
+		f.count.mu.Unlock()
+	})
+	return f.conn.Close()
+}
+
+// admit reserves bandwidth for up to size bytes and sleeps until the
+// reservation may be used. The caller must hold the corresponding I/O lock. A reservation that is
+// canceled by a deadline or by Close is refunded in full before the error is
+// returned.
+func (f *FallbackConn) admit(size int, write bool) (*reservation, error) {
+	r, err := f.reserve(size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reserve: %w", err)
+	}
+	if r.waitFor <= 0 {
+		return r, nil
+	}
+
+	readyAt := time.Now().Add(r.waitFor)
+	for {
+		select {
+		case <-f.close:
+			r.free()
+			return nil, net.ErrClosed
+		default:
+		}
+		deadline, changed := f.deadlineState(write)
+		now := time.Now()
+		if !deadline.IsZero() && !now.Before(deadline) {
+			r.free()
+			return nil, os.ErrDeadlineExceeded
+		}
+		wakeAt := readyAt
+		deadlineWake := false
+		if !deadline.IsZero() && deadline.Before(wakeAt) {
+			wakeAt = deadline
+			deadlineWake = true
+		}
+		switch f.waitForLimiter(time.Until(wakeAt), changed, f.close) {
+		case limiterReady:
+			if err := f.waitCompletionError(write); err != nil {
+				r.free()
+				return nil, err
+			}
+			if deadlineWake {
+				continue
+			}
+			return r, nil
+		case limiterChanged:
+		case limiterClosed:
+			r.free()
+			return nil, net.ErrClosed
+		}
+	}
+}
+
+// waitCompletionError is checked on every timer wake because a deadline
+// update and the timer can become ready together. Socket I/O is admitted only
+// against current lifecycle state, regardless of which ready case select chose.
+func (f *FallbackConn) waitCompletionError(write bool) error {
+	select {
+	case <-f.close:
+		return net.ErrClosed
+	default:
+	}
+	deadline, _ := f.deadlineState(write)
+	if !deadline.IsZero() && !time.Now().Before(deadline) {
+		return os.ErrDeadlineExceeded
+	}
+	return nil
 }
 
 type reservation struct {
@@ -129,11 +262,35 @@ type reservation struct {
 	conn *FallbackConn
 }
 
+// tokenWait is how long a bucket filling at rate needs to cover a deficit.
+// Both are bits: a balance rounded to whole bytes first either loses the part
+// of a debt that is smaller than a byte, which grants the next reservation
+// before it is paid for, or charges for a wait that is not owed. A rate of
+// zero admits nothing, so reserve refuses the write before reaching this.
+//
+// The result is rounded up, and a deficit that is owed never waits nothing: on
+// a fast enough link the exact wait is a fraction of a nanosecond, which the
+// clock cannot express and truncation would turn back into the early grant
+// this accounting exists to prevent.
+func tokenWait(deficit, rate app.Bitrate) time.Duration {
+	if deficit <= 0 || rate <= 0 {
+		return 0
+	}
+	wait := time.Duration(math.Ceil(float64(deficit) / float64(rate) * float64(time.Second)))
+	if wait <= 0 {
+		return 1
+	}
+	return wait
+}
+
 func (f *FallbackConn) reserve(size int) (*reservation, error) {
 	// TODO: replace the locking with some atomic flag indicating when the last change took place, so we
 	// don't have to constantly lock and access the maps again
 	f.count.mu.Lock()
 	defer f.count.mu.Unlock()
+	if f.closed {
+		return nil, net.ErrClosed
+	}
 	key := debugletKey{id: f.id, dest: f.ipv6}
 
 	rate, ok := f.count.rates[key]
@@ -176,16 +333,17 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 
 	// compute how long we have to sleep for and allocate the tokens
 	// NOTE: this does not handle the case where rates are updated while sleeping
+	reserved := app.FromBytes(toWrite)
 	var waitFor, execWaitFor time.Duration
-	if bt := b.tokens.Bytes(); toWrite > bt {
-		waitFor = time.Duration(float64(toWrite-bt) / float64(rate.Bytes()) * float64(time.Second))
+	if deficit := reserved - b.tokens; deficit > 0 {
+		waitFor = tokenWait(deficit, rate)
 	}
-	b.tokens -= app.FromBytes(toWrite)
+	b.tokens -= reserved
 
-	if bt := eb.tokens.Bytes(); toWrite > bt {
-		execWaitFor = time.Duration(float64(toWrite-bt) / float64(execRate.Bytes()) * float64(time.Second))
+	if deficit := reserved - eb.tokens; deficit > 0 {
+		execWaitFor = tokenWait(deficit, execRate)
 	}
-	eb.tokens -= app.FromBytes(toWrite)
+	eb.tokens -= reserved
 
 	resv := &reservation{
 		allocated: toWrite,
@@ -195,29 +353,33 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 	return resv, nil
 }
 
-// free reverts the reservation and frees up the tokens in the token bucket
-// as much as is possible.
+// free reverts the whole reservation, for example when the wait is canceled.
 func (r *reservation) free() {
-	r.conn.count.mu.Lock()
-	defer r.conn.count.mu.Unlock()
+	r.refund(r.allocated)
+}
+
+// refund returns unused reserved bytes to the accounting state that still
+// exists. Each bucket is refunded independently and capped at its current
+// rate. Detached or deleted entries are never recreated: Close can delete
+// the destination entry before the executor entry, so a refund must not
+// require both to exist.
+func (r *reservation) refund(unused int) {
+	if unused <= 0 {
+		return
+	}
+	count := r.conn.count
+	count.mu.Lock()
+	defer count.mu.Unlock()
 
 	key := debugletKey{id: r.conn.id, dest: r.conn.ipv6}
-	rate, ok := r.conn.count.rates[key]
-	if !ok {
-		return
+	if b, ok := count.packetSize[key]; ok {
+		if rate, ok := count.rates[key]; ok {
+			b.tokens = min(rate, b.tokens+app.FromBytes(unused))
+		}
 	}
-	execRate, ok := r.conn.count.execRates[r.conn.id]
-	if !ok {
-		return
+	if eb, ok := count.execPacketSize[r.conn.id]; ok {
+		if execRate, ok := count.execRates[r.conn.id]; ok {
+			eb.tokens = min(execRate, eb.tokens+app.FromBytes(unused))
+		}
 	}
-	b, ok := r.conn.count.packetSize[key]
-	if !ok {
-		return
-	}
-	eb, ok := r.conn.count.execPacketSize[r.conn.id]
-	if !ok {
-		return
-	}
-	b.tokens = min(rate, b.tokens+app.FromBytes(r.allocated))
-	eb.tokens = min(execRate, eb.tokens+app.FromBytes(r.allocated))
 }
