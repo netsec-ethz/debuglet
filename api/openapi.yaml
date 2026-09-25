@@ -936,7 +936,7 @@ paths:
     put:
       operationId: "createPaymentIntent"
       summary: "Create a payment intent for a batch of debuglets."
-      description: "Prices the batch, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits the methods TEST and USDC; TEST is the local alpha's bookkeeping-only method. The encoded request body must not exceed 33554432 bytes."
+      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits the methods TEST and USDC; TEST is the local alpha's bookkeeping-only method. The encoded request body must not exceed 33554432 bytes."
       requestBody:
         required: true
         content:
@@ -963,7 +963,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IntentResponse"
         "400":
-          description: "Malformed body (invalid_request), an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor) or an invalid policy (invalid_policy)."
+          description: "Malformed body or an empty batch (invalid_request), an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor), or an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer (invalid_policy). Nothing is written in any of these cases."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -1692,7 +1692,7 @@ components:
         price_per_bw:
           type: integer
           format: int64
-          description: "Price per bit per second and second of run time, in the executor's currency."
+          description: "Price per bit per second and second of run time, in the executor's currency. An order costs price_per_bw × floor_bw × timeout_ms / 1000, rounded up to the next whole unit."
         currency:
           type: string
     ExecutorList:
