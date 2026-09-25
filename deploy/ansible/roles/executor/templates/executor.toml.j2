@@ -41,6 +41,7 @@ delay = {{ tesla_delay }}
 chain_length = {{ tesla_chain_length }}
 
 [network]
+packet_counter = "{{ executor_packet_counter }}"
 # Egress interface the eBPF TC tagger attaches to. Packet attribution is only
 # applied to traffic leaving this interface, so leaving it empty disables
 # tagging entirely (see executor_interface in group_vars/executors.yml).

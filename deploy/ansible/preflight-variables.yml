@@ -287,9 +287,12 @@
           - executor_max_debuglets | int > 0
           - tesla_delay | int > 0
           - tesla_chain_length | int >= 0
+          - executor_packet_counter in ['auto', 'fallback']
+          - (executor_packet_counter == 'fallback') or (executor_enable_bpf | bool)
         fail_msg: >-
           executor_capacity, executor_max_debuglets and tesla_delay must be
-          positive and tesla_chain_length must not be negative.
+          positive; tesla_chain_length must not be negative; and the packet
+          counter must be auto with BPF enabled or explicit fallback.
         quiet: true
 
     - name: Require client credentials when the control channel uses TLS

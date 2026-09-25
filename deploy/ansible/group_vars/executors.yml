@@ -84,6 +84,12 @@ executor_log_level: info
 # unit omits BPF capabilities.
 executor_enable_bpf: true
 
+# Packet-counter mode rendered into the daemon configuration. `auto` tries
+# eBPF and falls back only after a confirmed clean rollback. Hosts whose
+# kernels reject the bundled BPF program should explicitly use `fallback` and
+# disable executor_enable_bpf so startup remains deterministic.
+executor_packet_counter: "{{ (executor_enable_bpf | bool) | ternary('auto', 'fallback') }}"
+
 # Whether the systemd unit grants capabilities through the ambient set. Off by
 # default: with BPF enabled the binary already gets its capabilities from
 # setcap (file capabilities, applied by the executor role), so the ambient set
