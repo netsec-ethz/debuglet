@@ -86,6 +86,7 @@ func main() {
 	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
+	logCfg.DisableStacktrace = true
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
