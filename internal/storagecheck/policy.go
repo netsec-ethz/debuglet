@@ -30,8 +30,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 7
-	MinimumExecutorVersion   int64 = 4
+	MinimumDispatcherVersion int64 = 8
+	MinimumExecutorVersion   int64 = 5
 )
 
 // Policy is the schema contract of one database for this build.
@@ -67,7 +67,7 @@ func PolicyFor(role Role) (Policy, error) {
 		}, Tables: map[string][]string{
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output"},
-			"debuglet_order":             {"transaction_id", "state", "refund_address"},
+			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
 			"debuglet_users":             {"debuglet_id", "user_id"},
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
 			"executor_enrollments":       {"executor_id", "fingerprint"},
@@ -89,6 +89,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglets":      {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":  {"debuglet_id", "output"},
 			"debuglet_exits": {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
+			"tesla_chains":   {"generation", "anchor", "epoch_base", "delay_ns", "chain_length"},
 		}}, nil
 	default:
 		return Policy{}, fmt.Errorf("unknown database role %q", role)

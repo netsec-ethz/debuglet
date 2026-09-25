@@ -43,6 +43,7 @@ type DebugletOrder struct {
 	Currency      string
 	State         int64
 	RefundAddress string
+	DebugletID    sql.NullInt64
 }
 
 type DebugletUser struct {

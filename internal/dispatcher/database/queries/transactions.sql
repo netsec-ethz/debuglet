@@ -46,6 +46,17 @@ SET state = ?
 WHERE transaction_id = ? AND order_id = ?
 RETURNING *;
 
+-- name: ClaimDebugletOrder :execrows
+UPDATE debuglet_order
+SET debuglet_id = ?
+WHERE transaction_id = ? AND order_id = ? AND debuglet_id IS NULL;
+
+-- name: GetAdmittedRuns :many
+SELECT o.order_id, d.uuid FROM debuglet_order o
+JOIN debuglets d ON d.id = o.debuglet_id
+WHERE o.transaction_id = ?
+ORDER BY o.order_id;
+
 -- name: SetRefundAddress :exec
 UPDATE debuglet_order
 SET refund_address = ?

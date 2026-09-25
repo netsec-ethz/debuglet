@@ -117,7 +117,7 @@ func newRecoveryHarness(t *testing.T, peer *operationPeer) *recoveryHarness {
 		Network:    config.NetworkConfig{PacketCounter: "fallback", DisableSCIONEnvironment: true},
 		Pricing:    config.PricingConfig{Currency: "TEST", PricePerBwS: 1},
 	}
-	f.node, err = NewNode(&cfg, zap.NewNop())
+	f.node, err = NewNode(&cfg, zap.NewNop(), f.db)
 	if err != nil {
 		t.Fatal(err)
 	}

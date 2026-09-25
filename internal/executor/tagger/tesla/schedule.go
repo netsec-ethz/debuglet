@@ -324,6 +324,21 @@ func DeriveAK(k []byte, measurementID []byte) ([]byte, error) {
 	return ak, nil
 }
 
+// ChainSeed derives the tail k_L of one chain from a configured seed:
+//
+//	k_L = HKDF-SHA256(secret=seed, info="debuglet tesla chain <generation>", length=32)
+//
+// Each generation of the same seed yields a different chain, so a restart
+// with an unchanged seed does not reuse keys an earlier chain disclosed.
+func ChainSeed(seed []byte, generation int64) ([]byte, error) {
+	r := hkdf.New(sha256.New, seed, nil, []byte(fmt.Sprintf("debuglet tesla chain %d", generation)))
+	tail := make([]byte, keySize)
+	if _, err := io.ReadFull(r, tail); err != nil {
+		return nil, fmt.Errorf("tesla: HKDF failed: %w", err)
+	}
+	return tail, nil
+}
+
 // ComputeTag computes the 16-bit authentication tag for a packet payload:
 //
 //	tag = HMAC-SHA256(ak, payload)[0:2]

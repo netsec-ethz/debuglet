@@ -164,7 +164,8 @@ func TestFallbackPacketCounter(t *testing.T) {
 		TLS:        config.TLSConfig{Disable: true}, Tesla: config.TeslaConfig{Delay: 1, ChainLength: 10},
 		Network: config.NetworkConfig{PacketCounter: "fallback", Interface: "deliberately-nonexistent-interface"},
 	}
-	node, err := NewNode(cfg, zap.NewNop())
+	db := newFixtureDatabase(t)
+	node, err := NewNode(cfg, zap.NewNop(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,11 +178,11 @@ func TestFallbackPacketCounter(t *testing.T) {
 		t.Fatalf("fallback selected iface=%v counter=%s", node.iface, node.packetCount.Type())
 	}
 	cfg.Network.PacketCounter = "unknown"
-	if _, err := NewNode(cfg, zap.NewNop()); err == nil {
+	if _, err := NewNode(cfg, zap.NewNop(), db); err == nil {
 		t.Fatal("direct config bypassed mode validation")
 	}
 	cfg.Network.PacketCounter = "auto"
-	if _, err := NewNode(cfg, zap.NewNop()); err == nil {
+	if _, err := NewNode(cfg, zap.NewNop(), db); err == nil {
 		t.Fatal("auto ignored supplied invalid interface")
 	}
 }
