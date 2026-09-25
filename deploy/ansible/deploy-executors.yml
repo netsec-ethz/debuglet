@@ -4,6 +4,17 @@
 - name: Deploy Debuglet Executors
   hosts: executors
   serial: 1
+  # Executors are independent, so one dead host must not cancel the rest. With
+  # serial: 1 every host is its own batch, and an unreachable node ends the
+  # play — every later batch is dropped and those hosts are simply absent from
+  # the recap, which reads as success unless you count the lines.
+  #
+  # max_fail_percentage does NOT cover this: it weighs *failed* hosts, and an
+  # unreachable host is not a failed one, so the play still ends. Verified
+  # against an unroutable host — with max_fail_percentage: 100 the following
+  # host was still never attempted; with ignore_unreachable it runs, and the
+  # dead host is reported as ignored.
+  ignore_unreachable: true
   become: true
   roles:
     - common
