@@ -198,8 +198,8 @@ func serveCombined(ctx context.Context, lis net.Listener, d *dispatcher.Dispatch
 	return serveCombinedWithMetadata(ctx, lis, d, cfg, security, db, logger, nil)
 }
 
-func serveCombinedWithMetadata(ctx context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
-	g, ctx := errgroup.WithContext(ctx)
+func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
+	g, ctx := errgroup.WithContext(parent)
 	// cmux.Close does not interrupt a connection still sniffing its protocol.
 	// Keep ownership until HTTP/yamux closes it or this listener shuts down.
 	owned := &connectionListener{Listener: lis, conns: make(map[*ownedConn]struct{})}
@@ -223,15 +223,19 @@ func serveCombinedWithMetadata(ctx context.Context, lis net.Listener, d *dispatc
 		m.Close()
 		owned.Close()
 	}()
-	g.Go(func() error {
-		err := m.Serve()
-		if ctx.Err() != nil {
+	// Service ends by closing the multiplexer and the listener, and an accept
+	// loop can see that closure before its own context reports the cancellation
+	// behind it. Only the caller's context tells a requested stop from a
+	// failure: it reports the stop first, and the group's is cancelled by either.
+	failure := func(err error) error {
+		if parent.Err() != nil && (errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, cmux.ErrListenerClosed) || errors.Is(err, net.ErrClosed)) {
 			return nil
 		}
 		return err
-	})
-	g.Go(func() error { return startHTTPServer(ctx, httpL, d, cfg, db, logger, connection) })
-	g.Go(func() error { return d.Bidi.ServeYamux(ctx, yamuxL) })
+	}
+	g.Go(func() error { return failure(m.Serve()) })
+	g.Go(func() error { return failure(startHTTPServer(ctx, httpL, d, cfg, db, logger, connection)) })
+	g.Go(func() error { return failure(d.Bidi.ServeYamux(ctx, yamuxL)) })
 	err := g.Wait()
 	<-joined // Wait cancels the errgroup context, including successful exits.
 	return err
