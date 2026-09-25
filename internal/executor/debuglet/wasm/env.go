@@ -6,14 +6,17 @@ package wasm
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"net"
 	"sync"
+	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -61,17 +64,40 @@ type WasmEnv struct {
 	ScionConn *socket.SCIONConnRegistry
 }
 
+// markSocket puts conn under this run's packet attribution. Without a tagger
+// there is nothing to mark.
+func markSocket(e *WasmEnv, conn syscall.Conn) error {
+	if e.Tagger == nil {
+		return nil
+	}
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("mark socket: %w", err)
+	}
+	return hostconn.MarkSocket(raw, e.Tagger)
+}
+
 // Listener publication competes with terminal closure. References remain
 // immutable after successful publication; late resources are consumed/closed.
+// A listener is marked before it is published, and never after closure, so
+// everything it sends, including its handshake replies, is attributed to this
+// run; one that cannot be marked is closed.
 func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error {
 	e.mu.Lock()
-	if e.closed || e.TcpServer != nil {
+	var markErr error
+	if !e.closed && e.TcpServer == nil {
+		markErr = markSocket(e, lis)
+	}
+	if markErr != nil || e.closed || e.TcpServer != nil {
 		e.mu.Unlock()
 		err := lis.Close()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
 		e.RecordCleanupError(err)
+		if markErr != nil {
+			return errors.Join(markErr, err)
+		}
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.TcpServer, e.TcpServerPort, e.TcpServerAddr = lis, port, addr
@@ -80,13 +106,20 @@ func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error 
 }
 func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
 	e.mu.Lock()
-	if e.closed || e.UdpServer != nil {
+	var markErr error
+	if !e.closed && e.UdpServer == nil {
+		markErr = markSocket(e, conn)
+	}
+	if markErr != nil || e.closed || e.UdpServer != nil {
 		e.mu.Unlock()
 		err := conn.Close()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
 		e.RecordCleanupError(err)
+		if markErr != nil {
+			return errors.Join(markErr, err)
+		}
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.UdpServer, e.UdpServerPort, e.UdpServerAddr = conn, port, addr
