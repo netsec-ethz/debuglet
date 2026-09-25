@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -245,6 +246,43 @@ func TestCombinedListenerStopsWhenCancelled(t *testing.T) {
 				t.Fatal("combined listener did not return")
 			}
 		})
+	}
+}
+
+// TestCombinedListenerReportsControlServerClosure closes the control server
+// while the caller's context is live. The combined listener ends and reports
+// that closure, not the multiplexer's or the socket's closure it causes.
+func TestCombinedListenerReportsControlServerClosure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := startCombinedFixture(t, ctx, false)
+	done := f.done
+	defer func() {
+		cancel()
+		f.bidi.Close()
+		f.lis.Close()
+		if done != nil {
+			<-done
+		}
+	}()
+	status, err := f.httpStatus(t, f.ca.ClientConfig(nil, ""))
+	if err != nil || status != http.StatusNotFound {
+		t.Fatalf("HTTP API over TLS: status=%d %v", status, err)
+	}
+	if err := f.controlPing(t, f.ca.ClientConfig(f.client, "")); err != nil {
+		t.Fatalf("control stream over TLS: %v", err)
+	}
+	f.bidi.Close()
+	select {
+	case err := <-done:
+		done = nil
+		if !errors.Is(err, errControlServerClosed) {
+			t.Fatalf("control server closed while serving: got %v, want %v", err, errControlServerClosed)
+		}
+		if msg := err.Error(); strings.Contains(msg, "mux: server closed") || strings.Contains(msg, "use of closed network connection") {
+			t.Fatalf("control server closure reported as a knock-on error: %v", err)
+		}
+	case <-time.After(combinedTestWait):
+		t.Fatal("combined listener did not return")
 	}
 }
 
