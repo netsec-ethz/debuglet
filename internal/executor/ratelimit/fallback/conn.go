@@ -4,6 +4,7 @@
 package fallback
 
 import (
+	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
@@ -34,6 +35,10 @@ type FallbackConn struct {
 	// datagram it returns, and each is exactly one socket call, so one
 	// datagram stays one datagram.
 	datagram bool
+	// datagramBuf receives a datagram read into a caller buffer that may be
+	// shorter than it, so the whole datagram is charged. It is only used under
+	// readMu.
+	datagramBuf []byte
 
 	deadlineMu           sync.Mutex
 	readDeadline         time.Time
@@ -216,23 +221,40 @@ func (f *FallbackConn) writeDatagram(b []byte) (int, error) {
 // Later reservations wait for that debt; the next call also checks the current
 // closure, deadline and rates. A charge refused because the connection was
 // closed or a rate revoked during the socket read drops the datagram and returns
-// the refusal: nothing is delivered uncharged. The limiter never truncates a
-// datagram: one longer than b is truncated by the socket as usual.
+// the refusal: nothing is delivered uncharged. A datagram longer than b is
+// truncated to b as the socket would truncate it, but is charged for its whole
+// size: it is received into a buffer that holds any datagram, so a small
+// buffer cannot take in large datagrams at the price of the buffer.
 func (f *FallbackConn) readDatagram(b []byte) (int, error) {
 	if _, err := f.admit(0, false); err != nil {
 		return 0, err
 	}
-	n, err := f.conn.Read(b)
-	if n > 0 {
-		r, rerr := f.reserve(n)
+	into := b
+	if len(b) < maxDatagram {
+		if f.datagramBuf == nil {
+			f.datagramBuf = make([]byte, maxDatagram)
+		}
+		into = f.datagramBuf
+	}
+	received, err := f.conn.Read(into)
+	if received > 0 {
+		r, rerr := f.reserve(received)
 		if rerr != nil {
-			return 0, fmt.Errorf("failed to reserve: %w", rerr)
+			return 0, errors.Join(fmt.Errorf("failed to reserve: %w", rerr), err)
 		}
 		r.delivered = true
 		_ = f.await(r, false)
 	}
+	n := received
+	if len(into) != len(b) {
+		n = copy(b, into[:received])
+	}
 	return n, err
 }
+
+// maxDatagram holds the largest datagram a UDP or IP socket returns: the
+// 16-bit IP total length bounds every datagram without jumbograms.
+const maxDatagram = 1 << 16
 
 func (f *FallbackConn) deadlineState(write bool) (time.Time, <-chan struct{}) {
 	f.deadlineMu.Lock()

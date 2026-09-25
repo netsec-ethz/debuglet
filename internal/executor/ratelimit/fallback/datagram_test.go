@@ -312,6 +312,29 @@ func TestUDPReadIntoSmallerBufferTruncatesAsTheSocketDoes(t *testing.T) {
 	}
 }
 
+// A datagram read into a buffer smaller than it is charged for its whole
+// size, not for the part that fits: a guest reading with a small buffer takes
+// in large datagrams at their price.
+func TestUDPReadIntoSmallerBufferChargesTheWholeDatagram(t *testing.T) {
+	fc, peer := udpPair(t, app.FromBytes(datagramRate))
+	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	want := udpDatagram("charged whole", datagramRate)
+	sendToLimited(t, peer, fc, want)
+
+	start := time.Now()
+	seedBuckets(t, fc, 0, 0)
+	buf := make([]byte, 1)
+	n, err := fc.Read(buf)
+	elapsed := time.Since(start)
+	if n != 1 || err != nil || buf[0] != want[0] {
+		t.Errorf("Read into 1 byte = (%d, %v), want (1, nil) with the first byte of the datagram", n, err)
+	}
+	earliest := transferTime(len(want), datagramRate)
+	checkElapsed(t, "Read", elapsed, earliest, earliest+wakeSlack)
+}
+
 // Canceling a datagram write's wait, by a deadline or by Close, returns the
 // usual error and leaves no trace: nothing reaches the peer and the whole
 // reservation is returned. The write starts from full buckets: one rate-second

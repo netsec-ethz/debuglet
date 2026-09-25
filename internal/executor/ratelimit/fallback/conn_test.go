@@ -1696,8 +1696,8 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 		if elapsed := time.Since(start); elapsed >= bufferWait {
 			t.Errorf("Read returned after %v, want less than the %v a charge for the buffer takes", elapsed, bufferWait)
 		}
-		if calls, sizes := raw.reads(); calls != 1 || sizes[0] != bufSize {
-			t.Fatalf("underlying reads = %d of sizes %v, want one read into the whole %d-byte buffer", calls, sizes, bufSize)
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] < bufSize {
+			t.Fatalf("underlying reads = %d of sizes %v, want one read into at least the whole %d-byte buffer", calls, sizes, bufSize)
 		}
 		// Only the datagram that arrived is charged.
 		assertTokens(t, fc, app.FromBytes(destBytes-5), app.FromBytes(execBytes-5))
@@ -1731,7 +1731,8 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 // An IP socket, such as the ip4:icmp socket of a ping, carries datagrams as
 // a UDP socket does: a message larger than one second of the rate is one
 // socket write after the wait its size implies, and a read hands the socket
-// the whole buffer, so the limiter neither splits nor truncates a message.
+// at least the whole buffer, so the limiter neither splits nor truncates a
+// message.
 func TestIPConnectionCarriesDatagrams(t *testing.T) {
 	const (
 		destBytes = 1000
@@ -1764,8 +1765,8 @@ func TestIPConnectionCarriesDatagrams(t *testing.T) {
 		if n, err := fc.Read(make([]byte, size)); n != 64 || err != nil {
 			t.Fatalf("Read = (%d, %v), want (64, nil)", n, err)
 		}
-		if calls, sizes := raw.reads(); calls != 1 || sizes[0] != size {
-			t.Fatalf("underlying reads = %d of sizes %v, want one read into the whole %d-byte buffer", calls, sizes, size)
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] < size {
+			t.Fatalf("underlying reads = %d of sizes %v, want one read into at least the whole %d-byte buffer", calls, sizes, size)
 		}
 	})
 }
