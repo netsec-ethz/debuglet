@@ -45,6 +45,10 @@ __pycache__
 *.pyc
 .venv
 
+# Local assistant and tool-runtime state.
+/.claude/
+/deploy/.mise/
+
 .data
 
 # Real Ansible inventory identifies private infrastructure (dispatcher
