@@ -211,11 +211,11 @@ func (f *FallbackConn) writeDatagram(b []byte) (int, error) {
 // bucket is in debt, such as the debt an earlier datagram left. After the
 // read, the datagram is charged whole and Read returns once the charge is
 // paid; a datagram of zero bytes costs nothing. The datagram is the caller's
-// once it is off the socket, so a wait that Close or the read deadline cuts
-// short keeps the charge, which the next reservation on the buckets waits
-// for, and still returns the datagram; the next call reports the closure or
-// the deadline. A charge that is refused, because the connection was closed
-// or a rate revoked during the socket read, drops the datagram and returns
+// once charged, so a wait interrupted by Close, the read deadline or a rate
+// revoked after charging keeps the charge and still returns the datagram.
+// Later reservations wait for that debt; the next call also checks the current
+// closure, deadline and rates. A charge refused because the connection was
+// closed or a rate revoked during the socket read drops the datagram and returns
 // the refusal: nothing is delivered uncharged. The limiter never truncates a
 // datagram: one longer than b is truncated by the socket as usual.
 func (f *FallbackConn) readDatagram(b []byte) (int, error) {
