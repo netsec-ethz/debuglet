@@ -104,7 +104,7 @@ A guest is a WASI command module. `Debuglet.registerHostFunctions` registers the
 
 ## Debugging entry points
 
-Both daemons log through zap at `logging.log_level`, with `json_logs` for machine reading. `dbl --output json` makes every command's result parseable, `dbl logs --follow ID` streams stored output, and `dbl status ID` reports state without implying workload success. `dbl dispatcher up`/`dbl executor up` keep the roles in separate terminals so their logs stay apart, and the readiness record plus `/connection` give the actual bound addresses when ports were chosen by the operating system. Installed checks keep evidence and structured test output under `.cache/ci/`.
+Both daemons log through zap at `logging.log_level`, with `json_logs` for machine reading. A failed run's full diagnostic is in the executor's log, as `Debuglet handler failed` with the run ID in `debugletID`; the API reports only its classified result. `dbl --output json` makes every command's result parseable, `dbl logs --follow ID` streams stored output, and `dbl status ID` reports state without implying workload success. `dbl dispatcher up`/`dbl executor up` keep the roles in separate terminals so their logs stay apart, and the readiness record plus `/connection` give the actual bound addresses when ports were chosen by the operating system. Installed checks keep evidence and structured test output under `.cache/ci/`.
 
 ## What the code establishes
 

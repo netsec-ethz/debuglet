@@ -127,6 +127,10 @@ Request limits:
 - `GET /executors/by-ip`: `ip` is required; `n` defaults to 10 and must be positive when present. It is clamped to 100 candidates before ownership is applied, but the executor registry retains at most 20 recent identifiers per executor, so at most 20 can ever be returned and usually fewer, since only the caller's own are listed. An account owning none of them receives an empty array, never null.
 - Every request body is limited to 33554432 bytes (32 MiB) by the dispatcher. A declared `Content-Length` above the limit is answered 413 `payload_too_large` before any handler acts and without reading the body. A body of unknown length is cut at the limit: a handler never receives a byte beyond it, a decode that needs more fails with the same 413, and a value complete within the limit is handled as it arrived, after which the connection is closed. The SDK measures the exact encoded envelope of `PUT /payment/intent` and `PUT /debuglet` against the same bound before sending and always declares the length, so nothing it sends is refused for size.
 
+Run errors:
+
+The `error` field of `GET /debuglet/{id}/state` and `GET /debuglet/{id}/logs` is the run's recorded result for its owner. It is one line: at most 512 bytes of text, followed by `...` when longer text was cut. A failed run records the guest's exit code (`debuglet exited with code 7`), the policy timeout (`timeout of 30s exceeded`), a cancellation (`cancelled via API`, `debuglet cancelled`), a refused destination (`destination refused: ...`), a module that does not compile (`module does not compile: ...`), or `debuglet failed; the executor log has the details` when the cause is the executor's own; a guest trap, such as `unreachable`, is reported the same way. The executor daemon's log holds the full diagnostic under the run ID. Results recorded before this bound are returned as stored. The field remains free text, so this changes no contract version: no field or status is added.
+
 ## Authentication
 
 Requests are authenticated with a server-issued session. Nothing else is a credential: a user identifier, a debuglet identifier and a payment auth key authenticate nobody.

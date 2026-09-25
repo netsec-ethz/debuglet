@@ -236,6 +236,13 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 	return nil
 }
 
+// CompileError is a module that wazero did not compile. Err is wazero's
+// description of the failure, which can quote names from the module itself.
+type CompileError struct{ Err error }
+
+func (e *CompileError) Error() string { return "compile: " + e.Err.Error() }
+func (e *CompileError) Unwrap() error { return e.Err }
+
 // createWASMInstance compiles the given WASM bytecode and instantiates a
 // wazero module with WASI and all host functions registered.
 func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) error {
@@ -259,7 +266,7 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 	d.mu.Unlock()
 	compiled, err := rt.CompileModule(ctx, wasmBytes)
 	if err != nil {
-		return fmt.Errorf("createWASMInstance: compile: %w", err)
+		return fmt.Errorf("createWASMInstance: %w", &CompileError{Err: err})
 	}
 	if err := d.publishCompiled(ctx, compiled); err != nil {
 		return err
