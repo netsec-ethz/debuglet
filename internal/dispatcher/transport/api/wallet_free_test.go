@@ -321,9 +321,11 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transaction row: %v", err)
 	}
-	// CreateDummyIntent records method, hash, status and expiry only; the
-	// price lives on the order rows. That is the retained TEST semantics.
-	if tx.Method != "TEST" || tx.Status != int64(models.Paid) || tx.AuthKey != "" || !strings.EqualFold(tx.Hash, wantHash) {
+	// CreateDummyIntent records the batch total as the price and TEST as the
+	// currency; the order rows carry the per-order prices. With one order the
+	// total is that order's price.
+	if tx.Method != "TEST" || tx.Status != int64(models.Paid) || tx.AuthKey != "" || !strings.EqualFold(tx.Hash, wantHash) ||
+		tx.Price != wfOrderPrice || tx.Currency != "TEST" {
 		t.Fatalf("unexpected transaction row: %+v (want hash %s)", tx, wantHash)
 	}
 	orders, err := queries.GetTransactionOrders(ctx, txID)

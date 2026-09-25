@@ -28,7 +28,8 @@ const (
 	CodeInvalidRequest = "invalid_request"
 	// CodeInvalidPolicy is a request whose debuglet policy cannot be priced or
 	// scheduled: a timeout outside 1..maxTimeoutMS milliseconds, a negative
-	// floor, a ceiling below the floor, or a batch whose total price overflows.
+	// floor, a ceiling below the floor, a repeated order_id, or an order or a
+	// batch whose price overflows.
 	CodeInvalidPolicy = "invalid_policy"
 	// CodeUnknownExecutor names an executor that is not registered.
 	CodeUnknownExecutor = "unknown_executor"

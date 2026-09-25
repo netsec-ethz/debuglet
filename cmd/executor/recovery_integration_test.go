@@ -446,7 +446,8 @@ func (f *commandRecovery) submit(wasm []byte, target *commandGuestTarget, start 
 		f.t.Fatalf("actual TEST submission: %v", err)
 	}
 	transaction, err := ddb.New(f.dispatcherDB).GetTransactionByID(f.ctx, submission.TransactionID)
-	if err != nil || transaction.Method != "TEST" || transaction.Status != int64(models.Paid) || transaction.Price != 0 || transaction.Currency != "" {
+	// The one order costs PricePerBwS 1 × FloorBW 64000 × 30 s = 1_920_000.
+	if err != nil || transaction.Method != "TEST" || transaction.Status != int64(models.Paid) || transaction.Price != 1_920_000 || transaction.Currency != "TEST" {
 		f.t.Fatalf("actual TEST transaction bookkeeping: %v", err)
 	}
 	return submission
