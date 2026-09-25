@@ -1570,7 +1570,7 @@ components:
       properties:
         state:
           type: string
-          description: "Opaque run state. RunStateExited is terminal."
+          description: "Opaque run state. RunStateExited is terminal. RunStateUnreconciled means the dispatcher failed the submission the run belongs to and its executor refused the cancellation; the run may still execute, its outcome is recorded when the executor reports it, and nothing is replayed."
         error:
           type: string
           description: "Recorded workload error. Empty when the run has not failed."
