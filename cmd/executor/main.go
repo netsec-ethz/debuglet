@@ -36,7 +36,8 @@ func main() {
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to load executor config: %v", err))
+		fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+		os.Exit(1)
 	}
 
 	// A database is upgraded only when its operator asks for it, never at

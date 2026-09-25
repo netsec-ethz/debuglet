@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -264,6 +265,36 @@ func TestCounterLoadFailureDoesNotRepeatLibraryCleanup(t *testing.T) {
 	}
 }
 
+func TestCounterLoadRefusalIsPlainError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		refused bool
+	}{
+		{"eperm", syscall.EPERM, true},
+		{"eacces", syscall.EACCES, true},
+		{"einval", syscall.EINVAL, true},
+		{"other_errno", syscall.ENOMEM, false},
+		{"no_errno", errors.New("malformed object"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attached bool
+			count, err := newBPFCount(&net.Interface{Index: 1}, counterDependencies{
+				load: func() (countObjects, []counterResource, error) {
+					return countObjects{}, nil, fmt.Errorf("map create: %w", tc.cause)
+				},
+				attach: func(link.TCXOptions) (io.Closer, error) { attached = true; return nil, nil },
+			})
+			if count != nil || !errors.Is(err, tc.cause) || attached {
+				t.Fatalf("load failure=%v/%v attached=%t", count, err, attached)
+			}
+			if errors.Is(err, cleanup.ErrCleanupFailed) || errors.Is(err, cleanup.ErrCleanupUnconfirmed) == tc.refused {
+				t.Fatalf("refused=%t classified as %v", tc.refused, err)
+			}
+		})
+	}
+}
+
 func TestCounterNilInterfaceDoesNotAcquireResources(t *testing.T) {
 	var loaded bool
 	count, err := newBPFCount(nil, counterDependencies{
@@ -287,8 +318,13 @@ func TestBPFCounterLinuxLoad(t *testing.T) {
 	}
 	count, err := NewBPFCount(iface)
 	if err != nil {
-		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
-			t.Skipf("counter load requires kernel capabilities: %v", err)
+		// An unprivileged load is refused with EPERM, EACCES or EINVAL,
+		// depending on the kernel. The kernel lane runs with the capabilities
+		// and refuses any skip, so a privileged EINVAL still fails there.
+		for _, errno := range []syscall.Errno{syscall.EPERM, syscall.EACCES, syscall.EINVAL} {
+			if errors.Is(err, errno) {
+				t.Skipf("counter load requires kernel capabilities (%s): %v", errno, err)
+			}
 		}
 		t.Fatal(err)
 	}
