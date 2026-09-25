@@ -294,8 +294,18 @@ func (h *Handler) DeleteDebuglet(c echo.Context) error {
 		if errors.Is(err, dispatcher.ErrCancellationNotRecorded) {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "cancellation acknowledged but its result was not recorded", err)
 		}
-		if status.Code(err) == codes.Internal {
+		// The executor answered with a refusal, whatever its code: nothing
+		// was cancelled.
+		if errors.Is(err, dispatcher.ErrAbortRefused) {
+			return apiErrorFrom(http.StatusBadRequest, CodeCancelRefused, "cancellation refused", err)
+		}
+		switch status.Code(err) {
+		case codes.Internal:
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to process cancellation", err)
+		// The Abort may or may not have reached the executor, so the
+		// cancellation is neither refused nor confirmed.
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "cancellation not confirmed", err)
 		}
 		// The dispatcher's own diagnostic carries transport and session
 		// internals; the caller learns that the cancellation was refused.

@@ -102,6 +102,11 @@ func (p *cpPeer) Abort(ctx context.Context, req *pb.AbortRequest) (*pb.AbortResp
 	p.mu.Unlock()
 	if hook != nil {
 		if err := hook(ctx, req); err != nil {
+			// A hook that answers with a status keeps its code; any other
+			// error is a refusal.
+			if _, ok := status.FromError(err); ok {
+				return nil, err
+			}
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 	}

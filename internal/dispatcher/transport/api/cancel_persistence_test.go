@@ -13,6 +13,8 @@ import (
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // While it exists, cancelTrigger makes SQLite refuse every state write on
@@ -56,6 +58,32 @@ func TestUnrecordedCancellationIsNotAcknowledged(t *testing.T) {
 	}
 	oaCheckResponse(t, contract, http.MethodDelete, "/debuglet", status, body)
 	assertRun("refused cancellation", models.RunStateUploaded, "")
+
+	// An executor refusal carrying the Internal code is still a refusal, and
+	// an Abort that may not have arrived is neither refused nor confirmed.
+	for _, tc := range []struct {
+		name     string
+		abortErr error
+		status   int
+		envelope ErrorResponse
+	}{
+		{"refusal with the Internal code", grpcstatus.Error(codes.Internal, "executor refused"),
+			http.StatusBadRequest, ErrorResponse{Code: CodeCancelRefused, Message: "cancellation refused"}},
+		{"unreachable executor", grpcstatus.Error(codes.Unavailable, "connection lost"),
+			http.StatusInternalServerError, ErrorResponse{Code: CodeInternal, Message: "cancellation not confirmed"}},
+		{"expired abort", grpcstatus.Error(codes.DeadlineExceeded, "deadline"),
+			http.StatusInternalServerError, ErrorResponse{Code: CodeInternal, Message: "cancellation not confirmed"}},
+	} {
+		abortErr := tc.abortErr
+		f.peer.setAbortHook(func(context.Context, *pb.AbortRequest) error { return abortErr })
+		status, body := raw.do(http.MethodDelete, "/debuglet", cancel)
+		wfExpect(t, tc.name, status, tc.status, body)
+		if envelope := envelopeOf(t, tc.name, body); envelope.Code != tc.envelope.Code || envelope.Message != tc.envelope.Message {
+			t.Fatalf("%s answered %+v, want %+v", tc.name, envelope, tc.envelope)
+		}
+		oaCheckResponse(t, contract, http.MethodDelete, "/debuglet", status, body)
+		assertRun(tc.name, models.RunStateUploaded, "")
+	}
 
 	// The executor acknowledges the Abort, and only then does the database
 	// start refusing writes.
