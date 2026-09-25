@@ -1523,7 +1523,7 @@ components:
       properties:
         debuglets:
           type: array
-          description: "The identical debuglets array the payment intent was created for."
+          description: "The identical debuglets array the payment intent was created for. It must contain at least one debuglet; an empty array is answered 400 invalid_request."
           items:
             $ref: "#/components/schemas/DebugletRequest"
         transaction_id:
@@ -1773,6 +1773,7 @@ components:
       properties:
         debuglets:
           type: array
+          description: "The debuglets the intent pays for. It must contain at least one debuglet; an empty array is answered 400 invalid_request."
           items:
             $ref: "#/components/schemas/DebugletRequest"
         payment_method:

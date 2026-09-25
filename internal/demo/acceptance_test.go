@@ -390,7 +390,7 @@ func (h *installedHarness) inspectObservation(ctx context.Context, o observation
 	if err != nil {
 		return nil, err
 	}
-	if tx.Method != "TEST" || tx.Status != int64(models.Paid) || tx.Price != 0 || tx.Currency != "" {
+	if tx.Method != "TEST" || tx.Status != int64(models.Paid) || tx.Price != 960_000 || tx.Currency != "TEST" {
 		return nil, fmt.Errorf("unexpected TEST transaction: method=%s status=%d price=%d currency=%q", tx.Method, tx.Status, tx.Price, tx.Currency)
 	}
 	orders, err := q.GetTransactionOrders(ctx, tx.ID)
