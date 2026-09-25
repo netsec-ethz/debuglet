@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/connections"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -104,6 +105,61 @@ func TestRoleIndependentLifecycle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRoleStateIdentityKey(t *testing.T) {
+	manifest := Manifest{Version: "v1", SourceSHA: strings.Repeat("a", 40)}
+	identity := func(state RoleState) string { return state.Identity }
+	dir := t.TempDir()
+	first, err := readRoleState(dir, DispatcherSchema, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "role-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := stored["executor_id"]; ok || stored["identity"] != identity(first) || !canonicalUUID(identity(first)) {
+		t.Fatalf("state file keys: %s", data)
+	}
+	again, err := readRoleState(dir, DispatcherSchema, manifest)
+	if err != nil || identity(again) != identity(first) {
+		t.Fatalf("second read: %q %v, want %q", identity(again), err, identity(first))
+	}
+	const earlier, current = "0b7c4d1e-2f3a-4b5c-8d6e-7f8091a2b3c4", "1c8d5e2f-3a4b-4c6d-9e7f-8091a2b3c4d5"
+	write := func(role SchemaRole, keys string) string {
+		dir := t.TempDir()
+		content := `{"schema_version":1,"version":"v1","source_sha":"` + manifest.SourceSHA + `","role":"` + string(role) + `",` + keys + `}`
+		if err := os.WriteFile(filepath.Join(dir, "role-state.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	for _, role := range []SchemaRole{DispatcherSchema, ExecutorSchema} {
+		state, err := readRoleState(write(role, `"executor_id":"`+earlier+`"`), role, manifest)
+		if err != nil || identity(state) != earlier {
+			t.Fatalf("%s earlier state: %q %v", role, identity(state), err)
+		}
+		state, err = readRoleState(write(role, `"executor_id":"`+earlier+`","identity":"`+current+`"`), role, manifest)
+		if err != nil || identity(state) != current {
+			t.Fatalf("%s state with both keys: %q %v", role, identity(state), err)
+		}
+		if _, err := readRoleState(write(role, `"executor_id":"not-a-uuid"`), role, manifest); err == nil {
+			t.Fatalf("%s accepted an invalid earlier identity", role)
+		}
+		if _, err := readRoleState(write(role, `"executor_id":"`+earlier+`","identity":"not-a-uuid"`), role, manifest); err == nil {
+			t.Fatalf("%s fell back from an invalid identity to the earlier key", role)
+		}
+	}
+}
+
+func canonicalUUID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id != uuid.Nil && id.String() == value
 }
 
 func TestRoleRejectsUnmanagedOrRemoteState(t *testing.T) {
