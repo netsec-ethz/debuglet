@@ -13,6 +13,9 @@
   run_once: true
   become: false
 
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
   tasks:
     - name: Inspect the provisioned known-hosts file
       ansible.builtin.stat:

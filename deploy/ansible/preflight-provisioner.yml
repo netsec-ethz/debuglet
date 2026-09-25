@@ -20,6 +20,7 @@
   any_errors_fatal: true
 
   vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     provisioner_pins_file: "{{ playbook_dir }}/../provisioner.env"
     provisioner_record_file: /etc/debuglet/provisioner.json
     provisioner_requirements_file: "{{ playbook_dir }}/requirements.txt"
