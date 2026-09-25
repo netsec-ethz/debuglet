@@ -32,6 +32,11 @@ func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 		return apiError(http.StatusBadRequest, CodeInvalidPolicy,
 			fmt.Sprintf("invalid policy: limit must be between 0 and %d bits per second", maxBandwidthBPS))
 	}
-	h.dispatcher.SetDestinationLimit(req.Destination, resource.Bitrate(req.Limit))
+	// The limit is recorded either way; 204 says every executor holding an
+	// allocation on the destination also received the recomputed share.
+	if err := h.dispatcher.SetDestinationLimit(req.Destination, resource.Bitrate(req.Limit)); err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
+			"destination limit recorded but not delivered to every executor", err)
+	}
 	return c.NoContent(http.StatusNoContent)
 }

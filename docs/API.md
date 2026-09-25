@@ -115,7 +115,7 @@ Units are stated per field in the contract document. The recurring ones:
 - `timeout_ms` is milliseconds and must be between 1 and 9223372036854; above that the run budget would no longer fit a Go duration, and below it no run could be given the budget. Both the payment intent and the submission reject anything else with `invalid_policy`.
 - `start_time` is Unix seconds and must be between 0 and 9223372036 (2262-04-11). A `start_time` already in the past starts the run as soon as the schedule allows, as does an absent one.
 - The documented maxima bound each field, not a submission. The window a run reserves is `start_time` plus `timeout_ms` plus ten seconds for the executor's processing delay, and that window must end no later than 2262-04-11. A submission whose window does not fit is answered 400 with `invalid_policy` naming the fields, rather than reserved against a wrapped instant, even though every field is within its own range: `timeout_ms` at its maximum never fits, and a `start_time` near its maximum is admissible only with a budget that ends before 2262-04-11.
-- `limit` on `PATCH /destination` must be between 0 and 1000000000000000 (1 Pbit/s); it becomes the capacity the runs of that destination are shared out of. Anything else is rejected with `invalid_policy`.
+- `limit` on `PATCH /destination` must be between 0 and 1000000000000000 (1 Pbit/s); it becomes the capacity the runs of that destination are shared out of. Anything else is rejected with `invalid_policy`. The new limit applies to admission at once, and the share it gives each run is pushed to every executor holding an allocation on the destination before the route answers. 204 means every one of them acknowledged it. 500 with `internal_error` means the limit is recorded but at least one delivery failed; the request may be repeated, which records the same limit and pushes it again.
 - The same bandwidth and timeout ranges are enforced again on the executor control protocol, on the policy an Upload carries and on the destination limits an allocation answers with. Neither side relies on the other, or on the SDK, having checked the numbers.
 - `tesla_delay_sec`, `delay_sec` and `expires_at_s` are seconds; `tesla_anchor_timestamp_ns` and `anchor_timestamp_ns` are Unix nanoseconds; `start_time`, `end_time` and `last_seen` are Unix seconds. Log entry `timestamp` is a UTC string formatted `2006-01-02T15:04:05Z`.
 - `wasm`, `output`, `tesla_anchor_key`, `anchor_key` and `disclosed_key` are base64.
@@ -162,7 +162,7 @@ A session expires 12 hours after it was issued and is not extended by use; a cli
 | Read run state and output, cancel | `GET /debuglet/{id}/state`, `/logs`, `DELETE /debuglet` | The account that owns the run |
 | List the caller's runs | `GET /list-debuglets` | Any authenticated account, about its own runs |
 | Find the executor serving an address | `GET /executors/by-ip` | Any authenticated account. The returned run identifiers are the caller's own |
-| Change a destination limit | `PATCH /destination` | An operator account |
+| Change a destination limit | `PATCH /destination` | An operator account. The change reaches admission and the executors holding the destination, as described under units and limits |
 | Enumerate accounts | `GET /user-ids` | An operator account |
 
 No route grants the operator role. It is given to an existing account on the dispatcher host, against the configured database and with the same schema checks the daemon applies before serving:

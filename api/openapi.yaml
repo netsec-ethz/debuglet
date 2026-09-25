@@ -888,7 +888,7 @@ paths:
     patch:
       operationId: "setDestinationLimit"
       summary: "Set the bandwidth limit of one destination."
-      description: "This route is unauthenticated in the alpha and is not part of the researcher-facing flow."
+      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination before answering. Repeating the request records the same limit and pushes it again."
       requestBody:
         required: true
         content:
@@ -904,7 +904,7 @@ paths:
             type: string
       responses:
         "204":
-          description: "The limit was applied."
+          description: "The limit was recorded and every executor holding an allocation on the destination acknowledged the recomputed share."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -934,6 +934,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: "The authenticated account is not an operator (forbidden), or a cookie-authenticated state change did not repeat its CSRF token."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The limit was recorded but at least one executor holding an allocation on the destination did not acknowledge the recomputed share (internal_error). The request may be repeated."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
