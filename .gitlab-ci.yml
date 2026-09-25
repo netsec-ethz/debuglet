@@ -1,9 +1,10 @@
 # GitLab is the private deployment plane for the public Debuglet repository.
-# The tagged private runner can reach the managed hosts; inventories, pinned
-# host identities and SSH keys remain in GitLab Secure Files / protected
-# file-type variables and are never committed or retained as artifacts.
+# Images and release artifacts are built on its shared Kubernetes runners.
+# Inventories, host identities, and SSH keys remain GitLab Secure Files or
+# protected file-type variables and are never committed or retained as artifacts.
 
 stages:
+  - images
   - build
   - deploy
 
@@ -14,62 +15,142 @@ workflow:
     - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_TAG'
     - when: never
 
-# This is deliberately dependency-free: it verifies what the shared runner
-# provides before the build and deployment jobs rely on those tools.
-runner_preflight:
-  stage: build
+# Rootless BuildKit needs neither a Docker socket nor a privileged runner.
+# Image tags are immutable commit SHAs; jobs never consume a mutable tag.
+.buildkit:
+  stage: images
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  before_script:
+    - mkdir -p ~/.docker
+    - >-
+      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}\n'
+      "$CI_REGISTRY" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" > ~/.docker/config.json
+
+build_ci_tools:
+  extends: .buildkit
   script:
-    - id
-    - uname -a
-    - command -v make || true
-    - command -v docker || true
-    - command -v glab || true
-    - command -v ssh-agent || true
-    - command -v python3 || true
-    - command -v docker >/dev/null && docker version || true
-  allow_failure: true
+    - >-
+      buildctl-daemonless.sh build
+      --frontend dockerfile.v0
+      --local context=deploy/ci
+      --local dockerfile=deploy/ci
+      --opt build-arg:TOOLS_IMAGE="$CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA"
+      --output type=image,name="$CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA",push=true
+
+build_provisioner:
+  extends: .buildkit
+  script:
+    - set -a; . deploy/provisioner.env; set +a
+    - >-
+      buildctl-daemonless.sh build
+      --frontend dockerfile.v0
+      --local context=.
+      --local dockerfile=deploy/docker
+      --opt filename=provisioner.Dockerfile
+      --opt build-arg:BASE_IMAGE="$DEBUGLET_PROVISIONER_BASE_IMAGE"
+      --opt build-arg:BASE_DIGEST="$DEBUGLET_PROVISIONER_BASE_DIGEST"
+      --opt build-arg:ANSIBLE_CORE_VERSION="$DEBUGLET_ANSIBLE_CORE_VERSION"
+      --opt build-arg:COLLECTION_COMMUNITY_GENERAL_VERSION="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_VERSION"
+      --opt build-arg:COLLECTION_COMMUNITY_GENERAL_SHA256="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_SHA256"
+      --opt build-arg:COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION="$DEBUGLET_COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION"
+      --opt build-arg:COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256="$DEBUGLET_COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256"
+      --opt build-arg:REQUIREMENTS_SHA256="$DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256"
+      --opt build-arg:COLLECTIONS_SHA256="$DEBUGLET_PROVISIONER_COLLECTIONS_SHA256"
+      --opt build-arg:GOOSE_VERSION="$DEBUGLET_GOOSE_VERSION"
+      --opt build-arg:GOOSE_SHA256="$DEBUGLET_GOOSE_SHA256"
+      --output type=image,name="$CI_REGISTRY_IMAGE/provisioner:$CI_COMMIT_SHA",push=true
 
 build_release:
   stage: build
+  needs: [build_ci_tools]
+  image:
+    name: $CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA
+    entrypoint: [""]
   script:
-    - make deploy-build
-    - make deploy-seed-db
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - go run -mod=readonly ./internal/packaging build -dist .cache/ci/dist
+    - bash scripts/ci-package.sh
+    - mkdir -p deploy/dist
+    - cp .cache/ci/packages/debuglet-v*-linux-amd64.tar.gz .cache/ci/packages/SHA256SUMS .cache/ci/packages/install.sh deploy/dist/
+    - archive=$(basename .cache/ci/packages/debuglet-v*-linux-amd64.tar.gz)
+    - tar -xOzf "deploy/dist/$archive" --wildcards '*/share/debuglet/manifest.json' > deploy/dist/manifest.json
+    - |
+      python3 - "$archive" <<'PY'
+      import hashlib, json, pathlib, sys
+      dist = pathlib.Path("deploy/dist")
+      manifest = json.loads((dist / "manifest.json").read_text())
+      archive = sys.argv[1]
+      def sha256(name):
+          return hashlib.sha256((dist / name).read_bytes()).hexdigest()
+      version = archive.removeprefix("debuglet-").removesuffix("-linux-amd64.tar.gz")
+      (dist / "release.json").write_text(json.dumps({
+          "schema_version": 1,
+          "version": version,
+          "source_sha": manifest["source_sha"],
+          "go_version": manifest["go_version"],
+          "archive": archive,
+          "archive_sha256": sha256(archive),
+          "installer_sha256": sha256("install.sh"),
+      }, indent=2) + "\n")
+      PY
+    - (cd deploy/dist && sha256sum --check SHA256SUMS)
   artifacts:
     expire_in: 7 days
-    paths:
-      - deploy/dist/
+    paths: [deploy/dist/]
+
+build_seed_databases:
+  stage: build
+  needs: [build_release, build_provisioner]
+  image:
+    name: $CI_REGISTRY_IMAGE/provisioner:$CI_COMMIT_SHA
+    entrypoint: [""]
+  script:
+    - goose -dir internal/executor/database/migrations sqlite3 deploy/dist/executor-seed.db up
+    - goose -dir internal/dispatcher/database/migrations sqlite3 deploy/dist/dispatcher-seed.db up
+  artifacts:
+    expire_in: 7 days
+    paths: [deploy/dist/]
 
 .deploy:
   stage: deploy
-  variables:
-    # Keep glab's short-lived job-token configuration inside the checkout so
-    # a shell runner never retains it in the runner account's home directory.
-    GLAB_CONFIG_DIR: $CI_PROJECT_DIR/.glab-cli
   needs:
-    - job: build_release
+    - job: build_seed_databases
       artifacts: true
+  image:
+    name: $CI_REGISTRY_IMAGE/provisioner:$CI_COMMIT_SHA
+    entrypoint: [""]
   before_script:
     - test -n "$INVENTORY"
     - test -n "$KNOWN_HOSTS"
     - test -n "$DEPLOY_ENV"
     - test -n "$DEPLOY_SSH_KEY"
+    - test -f "$DEPLOY_SSH_KEY"
     - mkdir -p .secure_files deploy/ansible
-    - >-
-      glab auth login
-      --job-token "$CI_JOB_TOKEN"
-      --hostname "$CI_SERVER_FQDN"
-      --api-protocol "$CI_SERVER_PROTOCOL"
-    - >-
-      glab -R "$CI_PROJECT_PATH" securefile download
-      --all
-      --output-dir .secure_files
+    - |
+      python3 - "$CI_API_V4_URL" "$CI_PROJECT_ID" "$CI_JOB_TOKEN" "$INVENTORY" "$KNOWN_HOSTS" <<'PY'
+      import json, pathlib, sys, urllib.request
+      api, project, token, *wanted = sys.argv[1:]
+      headers = {"JOB-TOKEN": token}
+      def get(url):
+          return urllib.request.urlopen(urllib.request.Request(url, headers=headers)).read()
+      files = json.loads(get(f"{api}/projects/{project}/secure_files"))
+      by_name = {item["name"]: item["id"] for item in files}
+      missing = [name for name in wanted if name not in by_name]
+      if missing:
+          raise SystemExit(f"missing GitLab Secure File(s): {', '.join(missing)}")
+      target = pathlib.Path(".secure_files")
+      for name in wanted:
+          (target / name).write_bytes(get(f"{api}/projects/{project}/secure_files/{by_name[name]}/download"))
+      PY
     - install -m 0600 ".secure_files/$INVENTORY" "deploy/ansible/$INVENTORY"
     - install -m 0600 ".secure_files/$KNOWN_HOSTS" "deploy/ansible/$KNOWN_HOSTS"
-    - eval "$(ssh-agent -s)"
-    - ssh-add "$DEPLOY_SSH_KEY"
+    - cd deploy/ansible
   after_script:
-    - ssh-agent -k >/dev/null 2>&1 || true
-    - rm -rf .glab-cli
+    - cd "$CI_PROJECT_DIR"
     - rm -rf .secure_files
     - rm -f "deploy/ansible/${INVENTORY:-}" "deploy/ansible/${KNOWN_HOSTS:-}"
   interruptible: false
@@ -94,7 +175,7 @@ deploy_dev_dispatcher:
   extends: .deploy_dev
   script:
     - >-
-      deploy/scripts/provisioner.sh ansible-playbook
+      ansible-playbook --private-key "$DEPLOY_SSH_KEY"
       -i "$INVENTORY"
       -e "@vars/$DEPLOY_ENV.yml"
       -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS"
@@ -115,7 +196,7 @@ deploy_dev_executors:
       if [ -n "${DEV_EXECUTOR_LIMIT:-}" ]; then
         limit_args=(--limit "$DEV_EXECUTOR_LIMIT")
       fi
-      deploy/scripts/provisioner.sh ansible-playbook \
+      ansible-playbook --private-key "$DEPLOY_SSH_KEY" \
         -i "$INVENTORY" \
         -e "@vars/$DEPLOY_ENV.yml" \
         -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS" \
@@ -136,7 +217,7 @@ deploy_prod_dispatcher:
   script:
     - export DEPLOY_VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
     - >-
-      deploy/scripts/provisioner.sh ansible-playbook
+      ansible-playbook --private-key "$DEPLOY_SSH_KEY"
       -i "$INVENTORY"
       -e "@vars/$DEPLOY_ENV.yml"
       -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS"
@@ -160,7 +241,7 @@ deploy_prod_executors:
         limit_args=(--limit "$PROD_EXECUTOR_LIMIT")
       fi
       DEPLOY_VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
-      deploy/scripts/provisioner.sh ansible-playbook \
+      ansible-playbook --private-key "$DEPLOY_SSH_KEY" \
         -i "$INVENTORY" \
         -e "@vars/$DEPLOY_ENV.yml" \
         -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS" \
