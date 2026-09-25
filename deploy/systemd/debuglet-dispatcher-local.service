@@ -1,6 +1,6 @@
 [Unit]
 Description=Debuglet dispatcher local (0.0.0-reference)
-Documentation=https://github.com/netsec-ethz/debuglet/blob/hardening/docs/environments.md
+Documentation=https://github.com/netsec-ethz/debuglet/blob/main/docs/environments.md
 After=network-online.target
 Wants=network-online.target
 
