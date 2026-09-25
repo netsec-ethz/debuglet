@@ -12,6 +12,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
+	"github.com/netsec-ethz/debuglet/internal/readiness"
 )
 
 // recordingManager is the command's view of a service manager: enough to check
@@ -21,6 +22,8 @@ import (
 type recordingManager struct {
 	calls   []string
 	enabled map[string]bool
+	// mainPID, when nonzero, is the process every unit reports running.
+	mainPID int
 }
 
 func newRecordingManager() *recordingManager {
@@ -56,6 +59,9 @@ func (m *recordingManager) Stop(_ context.Context, unit string) error {
 
 func (m *recordingManager) State(_ context.Context, unit string) (service.UnitState, error) {
 	m.calls = append(m.calls, "state "+unit)
+	if m.mainPID != 0 {
+		return service.UnitState{Loaded: true, Active: "active", Sub: "running", Enabled: m.enabled[unit], MainPID: m.mainPID}, nil
+	}
 	return service.UnitState{Loaded: true, Active: "inactive", Sub: "dead", Enabled: m.enabled[unit]}, nil
 }
 
@@ -152,12 +158,14 @@ func TestServiceInstallReportsTheInstalledContract(t *testing.T) {
 		}
 	}
 
-	// status of the same instance reads the installed record back.
+	// status of the same instance reads the installed record back. A
+	// stopped instance is not ready: the report is printed and the exit code
+	// says so.
 	stdout.Reset()
 	code = serviceCommandWith(context.Background(), []string{"status", "--role", "dispatcher"},
 		globalOptions{Output: outputJSON}, &stdout, &stderr, deps)
-	if code != exitOK {
-		t.Fatalf("status exit %d: %s", code, stderr.String())
+	if code != exitNotReady {
+		t.Fatalf("status exit %d, want %d: %s", code, exitNotReady, stderr.String())
 	}
 	var status service.Report
 	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
@@ -165,6 +173,42 @@ func TestServiceInstallReportsTheInstalledContract(t *testing.T) {
 	}
 	if status.State != "stopped" || status.Unit != report.Unit || !status.Enabled {
 		t.Fatalf("status report: %+v", status)
+	}
+
+	// Running without a readiness record is started, not ready.
+	manager.mainPID = 4242
+	stdout.Reset()
+	code = serviceCommandWith(context.Background(), []string{"status", "--role", "dispatcher"},
+		globalOptions{Output: outputJSON}, &stdout, &stderr, deps)
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if code != exitNotReady || status.State != "started" || status.Ready {
+		t.Fatalf("status exit %d, report %+v", code, status)
+	}
+
+	// Once the running process has published its readiness record, status
+	// reports it ready and exits 0.
+	paths, err := service.DerivePaths(root, demo.DispatcherSchema, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.ReadyFile), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := readiness.Write(paths.ReadyFile, readiness.Record{SchemaVersion: 1, PID: 4242,
+		HTTPAddr: "127.0.0.1:9000", GRPCAddr: "127.0.0.1:9001"}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	code = serviceCommandWith(context.Background(), []string{"status", "--role", "dispatcher"},
+		globalOptions{Output: outputJSON}, &stdout, &stderr, deps)
+	status = service.Report{}
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if code != exitOK || status.State != "ready" || !status.Ready {
+		t.Fatalf("status exit %d, report %+v: %s", code, status, stderr.String())
 	}
 }
 

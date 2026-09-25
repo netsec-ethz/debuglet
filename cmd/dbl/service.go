@@ -143,6 +143,9 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 	if err != nil {
 		return reportFailure(ctx, name, stderr, err)
 	}
+	if subcommand == "status" && !report.Ready {
+		return exitNotReady
+	}
 	return exitOK
 }
 
