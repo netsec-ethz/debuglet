@@ -12,6 +12,8 @@
 .ci
 .data
 .venv
+.claude
+deploy/.mise
 .DS_Store
 deploy/certs
 deploy/dist
