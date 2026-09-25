@@ -40,8 +40,8 @@ type scriptedConn struct {
 	maxReads int
 	// write is invoked for every Write; nil accepts the complete slice.
 	write func(b []byte) (int, error)
-	// network is the network of the local address, tcp when empty. Attach
-	// decides from it whether the connection carries datagrams.
+	// network is the network of the local address: udp, ip, or tcp when
+	// empty. Attach decides from it whether the connection carries datagrams.
 	network string
 	// blocked is closed the first time a nil-read Read starts blocking.
 	blocked     chan struct{}
@@ -164,8 +164,11 @@ func (s *scriptedConn) Close() error {
 }
 
 func (s *scriptedConn) LocalAddr() net.Addr {
-	if s.network == "udp" {
+	switch s.network {
+	case "udp":
 		return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
+	case "ip":
+		return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)}
 	}
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
 }
@@ -1716,6 +1719,48 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 		}
 		if writes := raw.written(); len(writes) != 0 {
 			t.Fatalf("underlying writes = %d, want none", len(writes))
+		}
+	})
+}
+
+// An IP socket, such as the ip4:icmp socket of a ping, carries datagrams as
+// a UDP socket does: a message larger than one second of the rate is one
+// socket write after the wait its size implies, and a read hands the socket
+// the whole buffer, so the limiter neither splits nor truncates a message.
+func TestIPConnectionCarriesDatagrams(t *testing.T) {
+	const (
+		destBytes = 1000
+		execBytes = 1 << 20
+		size      = 1020 // 20 bytes beyond the full bucket
+	)
+
+	t.Run("write", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		raw.network = "ip"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		data := bytes.Repeat([]byte{'d'}, size)
+		wait := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+		start := time.Now()
+		if n, err := fc.Write(data); n != size || err != nil {
+			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
+		}
+		if elapsed := time.Since(start); elapsed < wait {
+			t.Errorf("Write returned after %v, want at least the %v the deficit takes", elapsed, wait)
+		}
+		if writes := raw.written(); len(writes) != 1 || !bytes.Equal(writes[0], data) {
+			t.Fatalf("underlying writes = %d, want one write of the whole %d-byte message", len(writes), size)
+		}
+	})
+
+	t.Run("read", func(t *testing.T) {
+		raw := oneRead(64, nil)
+		raw.network = "ip"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Read(make([]byte, size)); n != 64 || err != nil {
+			t.Fatalf("Read = (%d, %v), want (64, nil)", n, err)
+		}
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] != size {
+			t.Fatalf("underlying reads = %d of sizes %v, want one read into the whole %d-byte buffer", calls, sizes, size)
 		}
 	})
 }

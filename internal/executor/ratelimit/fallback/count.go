@@ -117,8 +117,13 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 		return nil, fmt.Errorf("invalid address: %w", err)
 	}
 	ipv6 := netutil.ToIPv6(remoteIP)
-	local := conn.LocalAddr()
-	datagram := local != nil && strings.HasPrefix(local.Network(), "udp")
+	// A packet-oriented socket, UDP or IP such as ICMP, carries datagrams; a
+	// TCP or unix socket, and one without a local address, carries a stream.
+	datagram := false
+	if local := conn.LocalAddr(); local != nil {
+		network := local.Network()
+		datagram = strings.HasPrefix(network, "udp") || strings.HasPrefix(network, "ip")
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
