@@ -37,6 +37,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
+	"go.uber.org/zap"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
@@ -64,6 +65,7 @@ func akFromKey(ak []byte) akEntry {
 // KeyManager for periodic key updates.
 type BPFTagger struct {
 	objs        taggerObjects
+	logger      *zap.Logger
 	qdisc       link.Link
 	iface       *net.Interface
 	schedule    *tesla.KeySchedule
@@ -74,6 +76,11 @@ type BPFTagger struct {
 	closeErr    error
 	// Immutable owned resources; Close attempts every release even after errors.
 	closers []io.Closer
+
+	// refreshMu guards the last refresh failure and the last successful install.
+	refreshMu   sync.Mutex
+	refreshErr  error
+	lastInstall time.Time
 }
 
 // NewBPFTagger loads the compiled eBPF object, attaches the TC egress program
@@ -81,7 +88,7 @@ type BPFTagger struct {
 //
 // The caller must call Close() when done to detach the program and release BPF
 // resources.
-func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurementID []byte) (*BPFTagger, error) {
+func NewBPFTagger(logger *zap.Logger, iface *net.Interface, schedule *tesla.KeySchedule, measurementID []byte) (*BPFTagger, error) {
 	// Remove memlock limits (required for eBPF map allocation on older kernels).
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("ebpf: remove memlock: %w", err)
@@ -112,8 +119,12 @@ func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurement
 	mid := make([]byte, len(measurementID))
 	copy(mid, measurementID)
 
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	bt := &BPFTagger{
 		objs:      objs,
+		logger:    logger,
 		qdisc:     l,
 		iface:     iface,
 		schedule:  schedule,
@@ -160,22 +171,39 @@ func akEntryAt(schedule *tesla.KeySchedule, measurementID []byte, t time.Time) (
 	return akFromKey(ak), true, nil
 }
 
+// errStaleKey marks a failed slot removal after which the previous epoch's key
+// may remain installed and the kernel keeps tagging with it.
+var errStaleKey = errors.New("stale key remains installed")
+
 // updateKey writes the current ak to the BPF map at the slot identified by the
-// measurement ID hash. Without a usable key it removes the slot, so the TC
-// program passes packets untagged instead of tagging with a public key.
+// measurement ID hash.
 func (bt *BPFTagger) updateKey() error {
-	entry, install, err := akEntryAt(bt.schedule, bt.measureID, time.Now())
-	if err != nil {
-		return err
-	}
 	key := bt.MapKey()
-	if !install {
-		if err := bt.objs.AkMap.Delete(&key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			return err
+	return bt.applyKeyAt(time.Now(),
+		func(entry akEntry) error { return bt.objs.AkMap.Put(&key, &entry) },
+		func() error { return bt.objs.AkMap.Delete(&key) })
+}
+
+// applyKeyAt installs the entry for time now through install. Without a usable
+// key, or when the install fails, it removes the slot so the TC program passes
+// packets untagged instead of tagging with a public or previous epoch's key.
+func (bt *BPFTagger) applyKeyAt(now time.Time, install func(akEntry) error, remove func() error) error {
+	entry, ok, err := akEntryAt(bt.schedule, bt.measureID, now)
+	if err == nil && ok {
+		if err = install(entry); err == nil {
+			bt.refreshMu.Lock()
+			bt.lastInstall = now
+			bt.refreshMu.Unlock()
+			return nil
 		}
-		return nil
 	}
-	return bt.objs.AkMap.Put(&key, &entry)
+	if rmErr := remove(); rmErr != nil && !errors.Is(rmErr, ebpf.ErrKeyNotExist) {
+		if err == nil {
+			return fmt.Errorf("%w: %w", errStaleKey, rmErr)
+		}
+		return fmt.Errorf("%w; %w: %w", err, errStaleKey, rmErr)
+	}
+	return err
 }
 
 func (bt *BPFTagger) MapKey() uint32 {
@@ -209,8 +237,23 @@ func (bt *BPFTagger) keyRefreshLoop(update func() error, ticks <-chan time.Time,
 		case <-bt.stopCh:
 			return
 		case <-ticks:
-			_ = update() // refresh failures remain best-effort
+			bt.noteRefresh(update())
 		}
+	}
+}
+
+// noteRefresh retains the outcome of one refresh and logs a failure when it
+// first occurs or its text changes, and the next success after a failure.
+func (bt *BPFTagger) noteRefresh(err error) {
+	bt.refreshMu.Lock()
+	prev, last := bt.refreshErr, bt.lastInstall
+	bt.refreshErr = err
+	bt.refreshMu.Unlock()
+	switch {
+	case err != nil && (prev == nil || prev.Error() != err.Error()):
+		bt.logger.Warn("eBPF key refresh failed", zap.Error(err), zap.Time("last_install", last))
+	case err == nil && prev != nil:
+		bt.logger.Info("eBPF key refresh succeeded", zap.Time("last_install", last))
 	}
 }
 
@@ -246,6 +289,6 @@ func (bt *BPFTagger) SetSocketMark(fd int) error {
 	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_MARK, int(mark)); err != nil {
 		return fmt.Errorf("setsockopt SO_MARK: %w", err)
 	}
-	fmt.Printf("ebpf: set socket mark to %x\n", mark)
+	bt.logger.Debug("eBPF socket mark set", zap.String("mark", fmt.Sprintf("%x", mark)))
 	return nil
 }

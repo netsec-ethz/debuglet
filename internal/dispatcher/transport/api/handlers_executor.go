@@ -140,7 +140,7 @@ func (h *Handler) GetExecutorTesla(c echo.Context) error {
 	}
 
 	// Attach the latest disclosed key if one exists.
-	if epoch, key, ok := h.dispatcher.GetKeyStore().LatestDisclosed(id); ok {
+	if epoch, key, ok := h.dispatcher.GetKeyStore().LatestDisclosed(id, exec.TeslaAnchorKey); ok {
 		resp.DisclosedEpoch = epoch
 		resp.DisclosedKey = base64.StdEncoding.EncodeToString(key)
 	}

@@ -54,6 +54,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -277,6 +278,34 @@ func (e *Executor) announceResourcesWith(ctx context.Context, announce, wait fun
 	panic("unreachable")
 }
 
+// chainReport decides what the heartbeat loop logs about the end of the key
+// chain. Each condition is reported on the first tick that observes it and
+// never again while it holds, so a short epoch does not repeat the line.
+type chainReport struct {
+	nearly, exhausted bool
+}
+
+// observe returns the line to log at now; msg is empty when there is nothing
+// new to report.
+func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level zapcore.Level, msg string, fields []zap.Field) {
+	expiry := schedule.Expiry()
+	switch {
+	case schedule.Exhausted(now):
+		if !r.exhausted {
+			r.exhausted = true
+			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; restart the executor or raise tesla.chain_length",
+				[]zap.Field{zap.Time("expired_at", expiry)}
+		}
+	case expiry.Sub(now) < time.Hour:
+		if !r.nearly {
+			r.nearly = true
+			return zapcore.WarnLevel, "TESLA key chain nearly exhausted",
+				[]zap.Field{zap.Duration("remaining", expiry.Sub(now)), zap.Time("expires_at", expiry)}
+		}
+	}
+	return zapcore.InfoLevel, "", nil
+}
+
 func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsession.Binding) {
 	interval := 30 * time.Second
 	if disclosureInterval := e.teslaSchedule.Config().Delay / 2; disclosureInterval < interval {
@@ -285,19 +314,15 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 	e.logger.Info("Starting heartbeat loop", zap.Duration("interval", interval))
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var report chainReport
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			now := time.Now()
-			if e.teslaSchedule.Exhausted(now) {
-				e.logger.Error("TESLA key chain exhausted: outgoing packets can no longer be verified; restart the executor or raise tesla.chain_length",
-					zap.Time("expired_at", e.teslaSchedule.Expiry()))
-			} else if remaining := time.Until(e.teslaSchedule.Expiry()); remaining < time.Hour {
-				e.logger.Warn("TESLA key chain nearly exhausted",
-					zap.Duration("remaining", remaining),
-					zap.Time("expires_at", e.teslaSchedule.Expiry()))
+			if level, msg, fields := report.observe(e.teslaSchedule, now); msg != "" {
+				e.logger.Log(level, msg, fields...)
 			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
 			req := &protocol.HeartbeatRequest{
