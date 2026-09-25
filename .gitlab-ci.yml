@@ -15,54 +15,50 @@ workflow:
     - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_TAG'
     - when: never
 
-# Rootless BuildKit needs neither a Docker socket nor a privileged runner.
+# Kaniko is a temporary bridge for shared runners that prohibit rootless
+# BuildKit's user namespaces. It needs neither a Docker socket nor privilege.
 # Image tags are immutable commit SHAs; jobs never consume a mutable tag.
-.buildkit:
+.kaniko:
   stage: images
   image:
-    name: moby/buildkit:rootless
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug@sha256:c3109d5926a997b100c4343944e06c6b30a6804b2f9abe0994d3de6ef92b028e
     entrypoint: [""]
-  variables:
-    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
   before_script:
-    - mkdir -p ~/.docker
+    - mkdir -p /kaniko/.docker
     - >-
       printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}\n'
-      "$CI_REGISTRY" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" > ~/.docker/config.json
+      "$CI_REGISTRY" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" > /kaniko/.docker/config.json
 
 build_ci_tools:
-  extends: .buildkit
+  extends: .kaniko
   script:
     - >-
-      buildctl-daemonless.sh build
-      --frontend dockerfile.v0
-      --local context=deploy/ci
-      --local dockerfile=deploy/ci
-      --opt build-arg:TOOLS_IMAGE="$CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA"
-      --output type=image,name="$CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA",push=true
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR/deploy/ci"
+      --dockerfile "$CI_PROJECT_DIR/deploy/ci/Dockerfile"
+      --build-arg TOOLS_IMAGE="$CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA"
+      --destination "$CI_REGISTRY_IMAGE/ci-tools:$CI_COMMIT_SHA"
 
 build_provisioner:
-  extends: .buildkit
+  extends: .kaniko
   script:
     - set -a; . deploy/provisioner.env; set +a
     - >-
-      buildctl-daemonless.sh build
-      --frontend dockerfile.v0
-      --local context=.
-      --local dockerfile=deploy/docker
-      --opt filename=provisioner.Dockerfile
-      --opt build-arg:BASE_IMAGE="$DEBUGLET_PROVISIONER_BASE_IMAGE"
-      --opt build-arg:BASE_DIGEST="$DEBUGLET_PROVISIONER_BASE_DIGEST"
-      --opt build-arg:ANSIBLE_CORE_VERSION="$DEBUGLET_ANSIBLE_CORE_VERSION"
-      --opt build-arg:COLLECTION_COMMUNITY_GENERAL_VERSION="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_VERSION"
-      --opt build-arg:COLLECTION_COMMUNITY_GENERAL_SHA256="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_SHA256"
-      --opt build-arg:COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION="$DEBUGLET_COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION"
-      --opt build-arg:COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256="$DEBUGLET_COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256"
-      --opt build-arg:REQUIREMENTS_SHA256="$DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256"
-      --opt build-arg:COLLECTIONS_SHA256="$DEBUGLET_PROVISIONER_COLLECTIONS_SHA256"
-      --opt build-arg:GOOSE_VERSION="$DEBUGLET_GOOSE_VERSION"
-      --opt build-arg:GOOSE_SHA256="$DEBUGLET_GOOSE_SHA256"
-      --output type=image,name="$CI_REGISTRY_IMAGE/provisioner:$CI_COMMIT_SHA",push=true
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/deploy/docker/provisioner.Dockerfile"
+      --build-arg BASE_IMAGE="$DEBUGLET_PROVISIONER_BASE_IMAGE"
+      --build-arg BASE_DIGEST="$DEBUGLET_PROVISIONER_BASE_DIGEST"
+      --build-arg ANSIBLE_CORE_VERSION="$DEBUGLET_ANSIBLE_CORE_VERSION"
+      --build-arg COLLECTION_COMMUNITY_GENERAL_VERSION="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_VERSION"
+      --build-arg COLLECTION_COMMUNITY_GENERAL_SHA256="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_SHA256"
+      --build-arg COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION="$DEBUGLET_COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION"
+      --build-arg COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256="$DEBUGLET_COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256"
+      --build-arg REQUIREMENTS_SHA256="$DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256"
+      --build-arg COLLECTIONS_SHA256="$DEBUGLET_PROVISIONER_COLLECTIONS_SHA256"
+      --build-arg GOOSE_VERSION="$DEBUGLET_GOOSE_VERSION"
+      --build-arg GOOSE_SHA256="$DEBUGLET_GOOSE_SHA256"
+      --destination "$CI_REGISTRY_IMAGE/provisioner:$CI_COMMIT_SHA"
 
 build_release:
   stage: build
