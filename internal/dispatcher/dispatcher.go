@@ -193,15 +193,16 @@ func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
 
 // SetDestinationLimit records the limit of destination and sends the share it
 // recomputes to every executor holding an allocation there, waiting up to
-// five seconds, on a context of its own, for those deliveries. The limit
-// governs admission at once and stays recorded whether or not every executor
-// acknowledged; the error joins the failed deliveries.
+// five seconds, on a context of its own, for those deliveries. A limit below
+// the floors already charged there is refused with resource.ErrCapacityFull
+// before anything is recorded or sent. Otherwise the limit governs admission
+// at once and stays recorded whether or not every executor acknowledged; the
+// error joins the failed deliveries.
 func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	work, err := d.captureFairshareAfter(ctx, nil, []string{destination}, func() error {
-		d.destinations.SetLimit(destination, limit)
-		return nil
+		return d.destinations.SetLimit(destination, limit)
 	})
 	if err != nil {
 		return err

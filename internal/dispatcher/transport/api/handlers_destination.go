@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -32,9 +33,14 @@ func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 		return apiError(http.StatusBadRequest, CodeInvalidPolicy,
 			fmt.Sprintf("invalid policy: limit must be between 0 and %d bits per second", maxBandwidthBPS))
 	}
-	// The limit is recorded either way; 204 says every executor holding an
-	// allocation on the destination also received the recomputed share.
+	// A refused limit changes nothing. Otherwise the limit is recorded, and 204
+	// says every executor holding an allocation on the destination also
+	// received the recomputed share.
 	if err := h.dispatcher.SetDestinationLimit(req.Destination, resource.Bitrate(req.Limit)); err != nil {
+		if errors.Is(err, resource.ErrCapacityFull) {
+			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted,
+				"limit is below the floors already admitted on the destination", err)
+		}
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
 			"destination limit recorded but not delivered to every executor", err)
 	}

@@ -140,3 +140,30 @@ func TestDestinationLimitWithoutAllocationsSendsNothing(t *testing.T) {
 		t.Fatalf("an unheld destination sent %v", requests)
 	}
 }
+
+// TestDestinationLimitBelowTheFloorsIsRefused states that a limit below the
+// floors already charged on a destination is refused before anything is
+// recorded or sent, and that a limit equal to those floors is applied.
+func TestDestinationLimitBelowTheFloorsIsRefused(t *testing.T) {
+	peer := &tgPeer{}
+	f := newTGFixture(t, peer)
+	const destination = "192.0.2.95"
+	dlHold(t, f, destination)
+	before := len(dlBandwidth(peer))
+	if err := f.d.SetDestinationLimit(destination, tgFloorA-1); !errors.Is(err, resource.ErrCapacityFull) {
+		t.Fatalf("limit below the floors returned %v, want %v", err, resource.ErrCapacityFull)
+	}
+	if got := dlCap(f.d, destination); got != 10*tgFloorA {
+		t.Fatalf("refused limit left the limit at %s, want %s", got, 10*tgFloorA)
+	}
+	if pushed := dlBandwidth(peer)[before:]; len(pushed) != 0 {
+		t.Fatalf("a refused limit sent %v", pushed)
+	}
+	if err := f.d.SetDestinationLimit(destination, tgFloorA); err != nil {
+		t.Fatalf("limit equal to the floors: %v", err)
+	}
+	pushed := dlBandwidth(peer)[before:]
+	if len(pushed) != 1 || len(pushed[0].GetLimits()) != 1 || pushed[0].GetLimits()[0].GetBitsLimit() != int64(tgFloorA) {
+		t.Fatalf("limit equal to the floors sent %v, want one update at %s", pushed, tgFloorA)
+	}
+}

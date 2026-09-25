@@ -943,6 +943,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "409":
+          description: "The limit is below the floors already admitted on the destination (capacity_exhausted). Nothing was recorded or pushed; the runs keep their floors, and the limit can be lowered once they end."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           description: "The limit was recorded but at least one executor holding an allocation on the destination did not acknowledge the recomputed share (internal_error). The request may be repeated."
           headers:

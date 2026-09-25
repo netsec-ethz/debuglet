@@ -58,7 +58,8 @@ const (
 	// CodeNotFound is a debuglet, user or executor that does not exist.
 	CodeNotFound = "not_found"
 	// CodeCapacityExhausted is a batch the scheduler cannot admit within the
-	// executor's remaining capacity.
+	// executor's remaining capacity, or a destination limit below the floors
+	// already admitted on that destination.
 	CodeCapacityExhausted = "capacity_exhausted"
 	// CodeCancelRefused is a cancellation the dispatcher did not accept.
 	CodeCancelRefused = "cancel_refused"

@@ -81,7 +81,7 @@ Every failure answers with one envelope, whatever the route and whichever layer 
 | `forbidden` | 403 | The authenticated account may not perform that operation, or a cookie-authenticated state change carried no CSRF token. |
 | `not_found` | 404 | No such debuglet, transaction, user, executor or route — or one that belongs to another account. |
 | `method_not_allowed` | 405 | The route does not serve that method. |
-| `capacity_exhausted` | 409 | The scheduler cannot admit the batch. |
+| `capacity_exhausted` | 409 | The scheduler cannot admit the batch, or a destination limit lies below the floors already admitted on that destination. |
 | `payload_too_large` | 413 | The body exceeds what the route accepts. |
 | `unsupported_media_type` | 415 | The route does not read that representation. |
 | `internal_error` | 500 | A failure inside the dispatcher. |
@@ -117,6 +117,7 @@ Units are stated per field in the contract document. The recurring ones:
 - The documented maxima bound each field, not a submission. The window a run reserves is `start_time` plus `timeout_ms` plus ten seconds for the executor's processing delay, and that window must end no later than 2262-04-11. A submission whose window does not fit is answered 400 with `invalid_policy` naming the fields, rather than reserved against a wrapped instant, even though every field is within its own range: `timeout_ms` at its maximum never fits, and a `start_time` near its maximum is admissible only with a budget that ends before 2262-04-11.
 - `limit` on `PATCH /destination` must be between 0 and 1000000000000000 (1 Pbit/s); it becomes the capacity the runs of that destination are shared out of. Anything else is rejected with `invalid_policy`. The new limit applies to admission at once, and the share it gives each run is pushed to every executor holding an allocation on the destination before the route answers. 204 means every one of them acknowledged it. 500 with `internal_error` means the limit is recorded but at least one delivery failed; the request may be repeated, which records the same limit and pushes it again.
 - The same bandwidth and timeout ranges are enforced again on the executor control protocol, on the policy an Upload carries and on the destination limits an allocation answers with. Neither side relies on the other, or on the SDK, having checked the numbers.
+- A `limit` on `PATCH /destination` below the floors already admitted on the destination is refused with 409 and `capacity_exhausted`, and nothing is recorded or pushed. The runs holding those floors keep them; lower the limit once they end. A limit equal to those floors is accepted.
 - `tesla_delay_sec`, `delay_sec` and `expires_at_s` are seconds; `tesla_anchor_timestamp_ns` and `anchor_timestamp_ns` are Unix nanoseconds; `start_time`, `end_time` and `last_seen` are Unix seconds. Log entry `timestamp` is a UTC string formatted `2006-01-02T15:04:05Z`.
 - `wasm`, `output`, `tesla_anchor_key`, `anchor_key` and `disclosed_key` are base64.
 
