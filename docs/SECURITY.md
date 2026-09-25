@@ -89,6 +89,17 @@ A dispatcher that listens on an address other than loopback keeps the authentica
 
 **Outside observer.** In the supported profile, traffic never leaves the loopback interface. Off loopback with TLS disabled, an on-path party reads the HTTP API in full, including intents, auth keys and stored output, and reads the control plane including session tokens. With TLS enabled on both listeners and verified by the executor, that party is left with connection timing and volume, and with the tagged probe packets B6 describes, which none of this protects.
 
+## Abuse reports and destination opt-out
+
+The repository publishes no abuse mailbox. A report about traffic from a Debuglet executor, or a request that an address or prefix not be measured, is filed as an [issue](https://github.com/netsec-ethz/debuglet/issues/new) naming the destination and the time window. Issues are public, so a report carries no packet captures and no private data; a reporter who already has a maintainer contact uses the private channel [SECURITY.md](../SECURITY.md) describes instead.
+
+The operator of the dispatcher handles a report in two steps:
+
+1. Set the destination's limit to zero with `PATCH /destination` and the body `{"destination": "ADDR", "limit": 0}`, sent with an operator account's session; the `dbl` CLI has no command for it. [API.md](API.md) gives the limit's range and the operator role the route requires, and the contract, `api/openapi.yaml`, gives its answers. Every admission after the change is checked against the new limit. The limit is kept for the destination string exactly as runs declare it: the dispatcher resolves nothing and matches no prefix, so each address or name a report covers needs its own request. A zero limit refuses every new run whose `floor_bw` is above zero on the destination, but a run that asks for no floor can still be admitted. Runs admitted before the change keep the floor they were admitted with until they end: the executor stops a run at its `timeout_ms`, the window the dispatcher reserves for it is ten seconds longer, and the dispatcher releases both that reservation and the run's allocation when the executor's exit report arrives. The limit is held in the dispatcher's memory and returns to the default when the dispatcher restarts, so the operator sets it again after every restart. The operator of an executor can also add the destination, or a CIDR range around it, to `denied_destinations` in that executor's `[network.policy]`; the executor reads the list when it starts and then refuses the destination on every connection, as [environment checks](environments.md) describes.
+2. Answer the reporter on the issue or the private channel with the destination and the time the limit was set, and keep the report and the action in the deployment's own records, because the product records no limit change.
+
+This procedure has not been rehearsed against a controlled destination.
+
 ## Authorization and enforcement responsibilities
 
 | Capability | Surface | Who may exercise it today | What enforces it |
