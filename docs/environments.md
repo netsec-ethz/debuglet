@@ -335,6 +335,32 @@ every transport but SCION.
 
 ## Stored state
 
+A dispatcher keeps what it records in its database until the operator deletes
+the state directory that holds it: run records with their declared
+destinations, stored guest output, accounts and their credentials, and payment
+rows. The one exception is a session, which is deleted the next time any
+session is issued once it has been expired for longer than its 12-hour
+lifetime. An executor keeps a run's module bytes, arguments and policy only
+while the run is outstanding and deletes them when it ends; a terminal result
+stays until the dispatcher acknowledges it, a result the dispatcher refused for
+good stays as evidence, and the rows of interrupted work stay until the
+directory is deleted, as
+[Draining a managed role](#draining-a-managed-role) describes. The state
+directory of `dbl up` is `$XDG_STATE_HOME/debuglet` when that variable holds an
+absolute path and `~/.local/state/debuglet` otherwise, and the role commands use
+`dispatchers/NAME` and `executors/NAME` below it unless `--state-dir` names
+another ([CLI.md](CLI.md)). A managed service keeps
+`/var/lib/debuglet/<role>s/<name>`, which `dbl service uninstall --purge`
+deletes and a plain `uninstall` keeps. The Ansible deployment keeps
+`/var/lib/debuglet/dispatcher/dispatcher.db` and
+`/var/lib/debuglet/executor-<env>/executor.db` under its default `state_dir`
+([deploy/README.md](../deploy/README.md)), and a daemon installed by hand keeps
+the database its configuration names in `database.path`. `dbl demo` removes its
+temporary state after successful cleanup. If a child cannot finish cleanup, it
+retains the directory and reports its path. The product has no retention period,
+no export and no route or command that deletes a run, its output or an account; automated
+retention is deferred until a deployment with a policy owner exists.
+
 Each daemon serves one SQLite database. This build states which schema versions
 it supports and checks the supplied database against them before it serves
 requests or restores queued work. A database is refused when it does not exist,
