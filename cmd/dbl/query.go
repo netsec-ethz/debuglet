@@ -31,7 +31,8 @@ dispatcher answered, including for a debuglet that failed.
 
 Looks up the debuglet's executor, then asks the dispatcher to abort it. A
 success is an acknowledgement only, not proof that execution stopped. A
-server failure leaves the cancellation unconfirmed; check dbl status ID.
+server or transport failure leaves the cancellation unconfirmed; check
+dbl status ID.
 `
 	versionUsage = `Usage:
   dbl version [--server]
@@ -139,12 +140,14 @@ func cancelCommand(ctx context.Context, args []string, options globalOptions, st
 		func(w io.Writer) error { _, err := fmt.Fprintln(w, "Cancellation acknowledged"); return err })
 }
 
-// cancelFailureName names a failed cancellation: a server failure (5xx) leaves
-// open whether the executor acknowledged it and whether its result was
-// recorded, so it is unconfirmed; any other failure is a rejection.
+// cancelFailureName names a failed cancellation: a server failure (5xx) or a
+// transport failure, including the command's deadline, leaves open whether the
+// dispatcher received it, whether the executor acknowledged it and whether its
+// result was recorded, so it is unconfirmed; a refusal by the server and any
+// other failure is a rejection.
 func cancelFailureName(err error) string {
 	var httpErr *client.HTTPError
-	if errors.As(err, &httpErr) && httpErr.StatusCode >= http.StatusInternalServerError {
+	if client.IsTransportError(err) || errors.As(err, &httpErr) && httpErr.StatusCode >= http.StatusInternalServerError {
 		return "dbl cancel: cancellation not confirmed"
 	}
 	return "dbl cancel: cancellation rejected"
