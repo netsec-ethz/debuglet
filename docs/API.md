@@ -57,6 +57,10 @@ A client must therefore ignore unknown response fields, ignore unknown values of
 
 A route or field that is to be removed is first marked deprecated in `api/openapi.yaml` and in this document, in a minor version, while it keeps working. It is removed only in a following major version, whose contract is published as a new `api/openapi.yaml` before the removal takes effect. The alpha has no published release tags, so "published" means the tracked document of a commit; pin a commit as described in [the SDK guide](SDK.md).
 
+## Supported revisions
+
+Until the alpha has a tagged release, only the current commit of the `hardening` integration branch is supported. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
+
 ## Errors
 
 Every failure answers with one envelope, whatever the route and whichever layer rejected the request:
