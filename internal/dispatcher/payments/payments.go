@@ -263,8 +263,8 @@ func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, c
 	if err := p.requireChain(current.Currency, "credit order"); err != nil {
 		return err
 	}
-	// Only an outstanding order is credited. A credited order has already
-	// been paid to the executor and a refunded one never will be.
+	// Only an outstanding order is credited. A credited order is already
+	// included in the executor's earnings; a refunded order is not credited.
 	switch models.TransactionState(current.State) {
 	case models.Outstanding:
 	case models.Credited, models.Refunded:

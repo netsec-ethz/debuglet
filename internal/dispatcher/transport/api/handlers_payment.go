@@ -27,7 +27,7 @@ const paymentsDisabledMessage = "blockchain payments are disabled"
 // chain method never reaches the executor lookup or any order write, even when
 // this function is called directly rather than via PutPaymentIntent.
 // The whole batch is validated and priced before the first order row is
-// written, so a rejected batch leaves no rows behind.
+// written, so validation or pricing refusals leave no rows behind.
 // Every failure it reports is already a documented API error, so a caller can
 // return it unchanged.
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, refundAddress string, ctx context.Context) (int64, error) {
