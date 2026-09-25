@@ -30,9 +30,10 @@
       - (dispatcher_databases.results[0].stat.size | default(0) | int == 0) or (dispatcher_databases.results[1].stat.size | default(0) | int > 0)
     fail_msg: >-
       Existing dispatcher state at {{ config_dir }}/dispatcher/dispatcher.db
-      has been preserved. This alpha does not upgrade old database schemas.
-      Back up and establish compatibility before placing the upgraded database
-      in {{ state_dir }}/dispatcher; no seed or configuration change has been applied.
+      has been preserved; no seed or configuration change has been applied.
+      The deployment does not upgrade a database. Back the database up, place
+      it at {{ state_dir }}/dispatcher/dispatcher.db, deploy again, then run
+      upgrade-database.yml.
     quiet: true
 
 - name: Provision dispatcher database (schema only, preserved on redeploy)

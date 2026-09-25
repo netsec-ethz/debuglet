@@ -378,8 +378,38 @@ refused state can still be inspected or restored. A symbolic link is followed,
 as SQLite follows it too, and reading a database in WAL mode can still create
 the usual `-wal` and `-shm` companions next to it.
 
-Startup never migrates a database. Automatic upgrades are not supported: keep
-using the version that created a database, or start from a new state directory.
+Startup never migrates a database. An outdated database is upgraded only by an
+explicit step, with its daemon stopped and the file and its `-wal` and `-shm`
+companions backed up first: `debuglet-dispatcher -config FILE -upgrade-database`
+or `debuglet-executor -config FILE -upgrade-database` applies the packaged
+migrations to the configured `database.path`, checks the result as a start
+does, prints the schema version it now records and exits. It takes no backup
+itself, and it refuses without writing a database that does not exist, cannot be
+read, is not a Debuglet database, belongs to the other daemon or records a newer
+schema. A deployment runs `deploy/ansible/upgrade-database.yml`, which also takes
+the backup; see [deployment setup](../deploy/README.md#upgrading-a-database).
+Each migration commits on its own, so a failed one leaves the database at the
+last version that completed; a start refuses it as outdated, and running the
+upgrade again continues from there. A dispatcher database below schema version
+3 and an executor database at version 1 lose their runs and logs when upgraded,
+because the third dispatcher migration and the second executor migration
+recreate those tables. A dispatcher database at version 1 that holds
+transactions cannot be upgraded, because its second migration adds required
+columns without a default; the upgrade then stops at version 1. The alternative
+to an upgrade is to keep using the version that created a database, or to start
+from a new state directory.
+
+The supported upgrade path is wallet-free TEST use. Schema migration 4 preserves
+existing earnings balances but gives those rows an empty payout wallet. Executor
+re-registration does not fill it in, and both existing and later earnings in the
+same row remain unpayable. A successful schema check does not establish that
+financial state is usable. For a database with paid activity, preserve the
+database and its backup with chain payments disabled. Before enabling payments,
+the operator must reconcile the balances, orders and transactions against their
+records and verify ownership of each payout wallet; the product supplies no
+automatic recovery for this state. Do not replace paid state with an empty
+database or infer a historical payout address from a new registration.
+
 Local services create their database on first start and keep it across restarts.
 
 ## Managed services
@@ -558,7 +588,7 @@ A deployment installs the same verified package an operator installs by hand, an
 
 Select deployment targets explicitly: for example, `make deploy INVENTORY=hosts.dev.yml DEPLOY_ENV=dev` uses the development inventory and variables. The default is `hosts.yml` with `DEPLOY_ENV=prod`. The environments use separate package prefixes (`/opt/debuglet/dev` and `/opt/debuglet/prod`), staging directories, deployment records and executor users, configurations, state and systemd units. This separation includes executable links, so updating one environment does not activate its binaries in the other. See [deployment setup](../deploy/README.md) before using any command that changes hosts.
 
-Existing nonempty legacy databases are preserved. Discovering legacy state while a new environment-specific database is absent stops deployment; an operator must establish schema compatibility and prepare the intended state before proceeding. Moving a database is not a schema upgrade, and the playbooks do not perform one.
+Existing nonempty legacy databases are preserved. Discovering legacy state while a new environment-specific database is absent stops deployment; an operator backs the database up and places it at the selected state path before deploying again. Moving a database is not a schema upgrade, and the deployment playbooks do not perform one. An outdated database is upgraded by the operator-invoked `deploy/ansible/upgrade-database.yml` (`make deploy-upgrade-db`), which no deployment playbook imports; see [upgrading a database](../deploy/README.md#upgrading-a-database).
 
 `deploy/test/ansible-render.sh` applies the deployment roles to a temporary directory tree over the local connection. It checks that the preflight refuses a missing dispatcher address, a missing API origin, a wildcard credentialed origin, colliding listener ports and a non-UUID executor identity; that the rendered configurations name the configured listener addresses and keep each database in the writable state directory rather than the read-only configuration directory; that the installed daemons accept both rendered configurations through their own validator; and that repeating the same variables changes nothing. Nothing is deployed anywhere.
 

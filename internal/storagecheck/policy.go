@@ -1,7 +1,9 @@
 // Package storagecheck states which database schemas a build can operate on
 // and verifies a supplied SQLite file against that policy before a daemon
-// serves requests or restores work. It never migrates or repairs a database:
-// an incompatible file is refused with the action its operator has to take.
+// serves requests or restores work. The check never migrates or repairs a
+// database: an incompatible file is refused with the action its operator has
+// to take. Upgrade applies the packaged migrations only when an operator runs
+// it explicitly.
 package storagecheck
 
 import (
@@ -41,7 +43,7 @@ type Policy struct {
 	// beyond it was written by a newer Debuglet.
 	Current int64
 	// Identity lists tables, with columns, that only this role's database
-	// has and that it has carried since its early migrations. They are
+	// has and that it has carried since its first migration. They are
 	// checked before the version, so a path pointing at the other role's
 	// database is reported as the wrong file rather than as a wrong version.
 	Identity map[string][]string
@@ -60,8 +62,8 @@ func PolicyFor(role Role) (Policy, error) {
 			return Policy{}, err
 		}
 		return Policy{Role: role, Minimum: MinimumDispatcherVersion, Current: current, Identity: map[string][]string{
-			"debuglet_order": nil,
-			"users":          nil,
+			"transaction_states": nil,
+			"transactions":       nil,
 		}, Tables: map[string][]string{
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output"},

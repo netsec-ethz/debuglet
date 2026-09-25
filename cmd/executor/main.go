@@ -31,11 +31,24 @@ import (
 func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")
+	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load executor config: %v", err))
+	}
+
+	// A database is upgraded only when its operator asks for it, never at
+	// start: a normal start refuses an outdated schema instead.
+	if *upgrade {
+		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Executor, cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("database %s now records executor schema version %d\n", cfg.Database.Path, version)
+		return
 	}
 
 	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)

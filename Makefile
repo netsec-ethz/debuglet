@@ -95,7 +95,7 @@ CARGO       ?= cargo
 JAVY        ?= javy
 RUST_TARGET ?= wasm32-wasip1
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config bootstrap-sudo generate-sql
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config deploy-upgrade-db bootstrap-sudo generate-sql
 
 all: deps build
 
@@ -359,6 +359,13 @@ DEPLOY_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 deploy-update-config:
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml \
 		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
+
+# Back up and upgrade the deployed databases with the installed release's
+# migrations, stopping each service meanwhile (or pass LIMIT=hostname).
+# Deploys never do this. Example: make deploy-upgrade-db
+deploy-upgrade-db:
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) upgrade-database.yml \
+		$(if $(LIMIT),--limit $(LIMIT),)
 
 # --------------------------------------------------------------------
 # Clean local build artifacts

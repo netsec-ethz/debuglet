@@ -106,7 +106,8 @@ nothing and report nothing changed. A running daemon is never restarted as a
 side effect; when a reinstall changes the unit or the configuration, the report
 says a restart is required and leaves the decision to the operator. Installing a
 different package version over an existing state directory is refused, because
-this build never upgrades a database in place. A service is reported ready only
+local services do not upgrade a state directory; the explicit upgrade step does.
+A service is reported ready only
 after its daemon published its own readiness record and that record names the
 unit's main process; `started` alone is process creation and never counts as
 ready. `uninstall` stops and removes the unit and keeps every byte of state;
