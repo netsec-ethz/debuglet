@@ -79,9 +79,9 @@ func markSocket(e *WasmEnv, conn syscall.Conn) error {
 
 // Listener publication competes with terminal closure. References remain
 // immutable after successful publication; late resources are consumed/closed.
-// A listener is marked before it is published, and never after closure, so
-// everything it sends, including its handshake replies, is attributed to this
-// run; one that cannot be marked is closed.
+// A listener is marked before it is published, and never after closure; one
+// that cannot be marked is closed. Handshake replies sent between listen and
+// marking can still escape attribution.
 func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error {
 	e.mu.Lock()
 	var markErr error
