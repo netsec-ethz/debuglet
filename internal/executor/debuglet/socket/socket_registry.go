@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"syscall"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
@@ -128,6 +127,9 @@ func (r *SocketRegistry) All() []Socket {
 	return result
 }
 
+// unmarkedSCION reports once that SCION sockets are left unmarked.
+var unmarkedSCION sync.Once
+
 // SCIONConn wraps a SCION/UDP connection and its associated PathSelector.
 // It replaces the former ScionDialWrapper.
 type SCIONConn struct {
@@ -242,22 +244,14 @@ func dialSCION(ctx context.Context, addr string, sugar *zap.SugaredLogger, pktTa
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial SCION address %q: %w", addr, err)
 	}
-	// pan opens the socket inside DialUDP, so a connection that offers its
-	// socket is marked here, after the dial and before the first write, which
-	// is the first packet it sends.
+	// pan opens the socket inside DialUDP and exposes neither it nor a hook
+	// to set socket options on it, so a SCION socket cannot be marked: its
+	// packets are not attributed to the run by the eBPF tagger. The gap is
+	// reported once per process rather than skipped silently.
 	if pktTagger != nil {
-		if sc, ok := conn.(interface {
-			SyscallConn() (syscall.RawConn, error)
-		}); ok {
-			var markErr error
-			raw, err := sc.SyscallConn()
-			if err == nil {
-				err = raw.Control(func(fd uintptr) { markErr = pktTagger.SetSocketMark(int(fd)) })
-			}
-			if err = errors.Join(err, markErr); err != nil {
-				return nil, errors.Join(fmt.Errorf("failed to mark SCION socket for %q: %w", addr, err), conn.Close())
-			}
-		}
+		unmarkedSCION.Do(func() {
+			sugar.Warnw("SCION sockets cannot be marked; their packets are not attributed to the run", "udpAddr", udpAddr)
+		})
 	}
 	return &SCIONConn{Conn: &conn, Selector: selector}, nil
 }
