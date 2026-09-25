@@ -29,6 +29,9 @@ type domainKey struct {
 type bucketState struct {
 	tokens app.Bitrate
 	last   time.Time
+	// Fractions are billionths of a bit. Tokens are capped; cumulative
+	// refill keeps all credit so refunds cannot delay an existing charge.
+	tokenFraction, refillFraction int64
 	// refilled only grows, by every credit refill grants, including the part
 	// the cap keeps out of tokens. A waiting charge is paid once refilled
 	// reaches the level it recorded when it was charged.
@@ -38,10 +41,27 @@ type bucketState struct {
 // refill credits b for the time since it was last updated at rate, up to one
 // second of rate, and moves it to now.
 func (b *bucketState) refill(now time.Time, rate app.Bitrate) {
-	credit := app.Bitrate(now.Sub(b.last).Seconds() * float64(rate))
-	b.tokens = min(rate, b.tokens+credit)
-	b.refilled += credit
+	elapsed := now.Sub(b.last)
+	seconds, nanos := elapsed/time.Second, elapsed%time.Second
+	// Split before multiplying to retain sub-bit credit without multiplying
+	// the entire rate by a nanosecond duration.
+	partial := int64(nanos) * int64(rate%app.Bitrate(time.Second))
+	credit := app.Bitrate(seconds)*rate + app.Bitrate(nanos)*(rate/app.Bitrate(time.Second)) + app.Bitrate(partial/int64(time.Second))
+	fraction := partial % int64(time.Second)
+	b.tokenFraction += fraction
+	b.tokens += credit + app.Bitrate(b.tokenFraction/int64(time.Second))
+	b.tokenFraction %= int64(time.Second)
+	b.cap(rate)
+	b.refillFraction += fraction
+	b.refilled += credit + app.Bitrate(b.refillFraction/int64(time.Second))
+	b.refillFraction %= int64(time.Second)
 	b.last = now
+}
+
+func (b *bucketState) cap(rate app.Bitrate) {
+	if b.tokens >= rate {
+		b.tokens, b.tokenFraction = rate, 0
+	}
 }
 
 // bucketLocked returns the bucket under key refilled up to now at rate. A

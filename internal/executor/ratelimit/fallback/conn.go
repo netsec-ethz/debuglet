@@ -178,13 +178,10 @@ func (f *FallbackConn) Write(b []byte) (int, error) {
 // writeDatagram sends b as exactly one datagram with one underlying write.
 // The whole payload is reserved at once, even when it is larger than one
 // second of the rate, in which case the write waits for the deficit. An empty
-// datagram needs no bandwidth and is still sent. The limiter never splits or
+// datagram costs no bytes but still needs permission. The limiter never splits or
 // truncates a datagram: one the socket cannot send, such as one larger than
 // the largest datagram, fails with the socket's own error.
 func (f *FallbackConn) writeDatagram(b []byte) (int, error) {
-	if len(b) == 0 {
-		return f.conn.Write(b)
-	}
 	r, err := f.admit(len(b), true)
 	if err != nil {
 		return 0, err
@@ -407,7 +404,8 @@ func (r *reservation) chargeLocked(rate, execRate app.Bitrate) {
 type charge struct {
 	bucket *bucketState
 	// need is the refill level of bucket at which the charge is paid.
-	need app.Bitrate
+	need         app.Bitrate
+	needFraction int64
 }
 
 // owed charges b with reserved unless c already holds a charge on it, and
@@ -415,10 +413,30 @@ type charge struct {
 // charge's own deficit only, never what later charges on b owe.
 func (c *charge) owed(b *bucketState, reserved, rate app.Bitrate) time.Duration {
 	if c.bucket != b {
-		c.bucket, c.need = b, b.refilled+max(0, reserved-b.tokens)
+		c.bucket, c.need, c.needFraction = b, b.refilled, b.refillFraction
+		if reserved > b.tokens {
+			c.need += reserved - b.tokens
+			c.needFraction -= b.tokenFraction
+			if c.needFraction < 0 {
+				c.need--
+				c.needFraction += int64(time.Second)
+			}
+		}
 		b.tokens -= reserved
 	}
-	return tokenWait(c.need-b.refilled, rate)
+	bits, fraction := c.need-b.refilled, c.needFraction-b.refillFraction
+	if fraction < 0 {
+		bits--
+		fraction += int64(time.Second)
+	}
+	if bits < 0 {
+		return 0
+	}
+	wait := tokenWait(bits, rate)
+	if fraction > 0 {
+		wait += time.Duration((fraction-1)/int64(rate) + 1)
+	}
+	return wait
 }
 
 // reevaluate recomputes the remaining wait of r after a rate change. The
@@ -469,12 +487,14 @@ func (r *reservation) refundLocked(unused int) {
 	key := debugletKey{id: r.conn.id, dest: r.conn.ipv6}
 	if b, ok := count.packetSize[key]; ok {
 		if rate, ok := count.rates[key]; ok {
-			b.tokens = min(rate, b.tokens+app.FromBytes(unused))
+			b.tokens += app.FromBytes(unused)
+			b.cap(rate)
 		}
 	}
 	if eb, ok := count.execPacketSize[r.conn.id]; ok {
 		if execRate, ok := count.execRates[r.conn.id]; ok {
-			eb.tokens = min(execRate, eb.tokens+app.FromBytes(unused))
+			eb.tokens += app.FromBytes(unused)
+			eb.cap(execRate)
 		}
 	}
 }

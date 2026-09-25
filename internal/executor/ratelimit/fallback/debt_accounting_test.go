@@ -20,8 +20,7 @@ const debtRate = app.Bitrate(8)
 
 // seedBuckets installs an exact balance on both accounting levels and stamps
 // them with the current instant. At debtRate the refill between the stamp and
-// the reservation stays far below a single bit, so the reservation is decided
-// by the seeded balance alone.
+// the reservation stays below a whole bit, though it can shorten the wait.
 func seedBuckets(t *testing.T, fc *FallbackConn, dest, exec app.Bitrate) {
 	t.Helper()
 	now := time.Now()
@@ -49,6 +48,7 @@ func TestReservationWaitsForTheBalanceItFinds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fc := newTestConn(t, newScriptedConn(nil), debtRate, debtRate)
 			seedBuckets(t, fc, tc.tokens, tc.tokens)
+			seeded := fc.count.packetSize[debugletKey{id: fc.id, dest: fc.ipv6}].last
 
 			reservation, err := fc.reserve(1)
 			if err != nil {
@@ -57,9 +57,10 @@ func TestReservationWaitsForTheBalanceItFinds(t *testing.T) {
 			if reservation.allocated != 1 {
 				t.Fatalf("allocated %d bytes, want 1", reservation.allocated)
 			}
-			if reservation.waitFor != tc.waitFor {
-				t.Fatalf("wait = %s, want %s: the bucket holds %d bits and the reservation takes 8",
-					reservation.waitFor, tc.waitFor, int64(tc.tokens))
+			least := max(0, tc.waitFor-time.Since(seeded))
+			if reservation.waitFor < least || reservation.waitFor > tc.waitFor+time.Nanosecond {
+				t.Fatalf("wait = %s, want between %s and %s after refill from %d bits",
+					reservation.waitFor, least, tc.waitFor, int64(tc.tokens))
 			}
 			// The reservation is charged in full, whatever the balance was.
 			assertTokens(t, fc, tc.tokens-8, tc.tokens-8)
@@ -106,12 +107,13 @@ func TestReservationNeverGrantsABorrowedByteEarly(t *testing.T) {
 func TestExecutorDebtDecidesTheWaitToo(t *testing.T) {
 	fc := newTestConn(t, newScriptedConn(nil), debtRate, debtRate)
 	seedBuckets(t, fc, 8, -8)
+	seeded := fc.count.execPacketSize[fc.id].last
 	reservation, err := fc.reserve(1)
 	if err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
-	if reservation.waitFor != 2*time.Second {
-		t.Fatalf("wait = %s, want the executor debt of 2s", reservation.waitFor)
+	if least := max(0, 2*time.Second-time.Since(seeded)); reservation.waitFor < least || reservation.waitFor > 2*time.Second+time.Nanosecond {
+		t.Fatalf("wait = %s, want the executor debt between %s and 2s after refill", reservation.waitFor, least)
 	}
 	assertTokens(t, fc, 0, -16)
 }
@@ -143,5 +145,87 @@ func TestTokenWaitNeverRoundsADeficitDownToNothing(t *testing.T) {
 					int64(tc.deficit), int64(tc.rate), got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBucketRefillPreservesFractionalCredit(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after app.Bitrate
+		wantCredit    app.Bitrate
+		wantWait      time.Duration
+	}{
+		{"unchanged rate", 8, 8, 8, 0},
+		{"changed rate", 3, 5, 4, 800 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Unix(1, 0)
+			b := &bucketState{last: start}
+			var c charge
+			c.owed(b, app.FromBytes(1), tc.before)
+			for i := 1; i <= 100; i++ {
+				rate := tc.before
+				if i > 50 {
+					rate = tc.after
+				}
+				b.refill(start.Add(time.Duration(i)*10*time.Millisecond), rate)
+				c.owed(b, app.FromBytes(1), rate)
+			}
+			if got := c.owed(b, app.FromBytes(1), tc.after); got != tc.wantWait {
+				t.Fatalf("wait after 100 refills = %v, want %v", got, tc.wantWait)
+			}
+			if b.refilled != tc.wantCredit || b.tokens != tc.wantCredit-app.FromBytes(1) {
+				t.Fatalf("refilled = %d, tokens = %d; want %d credited bits against the 8-bit charge",
+					b.refilled, b.tokens, tc.wantCredit)
+			}
+		})
+	}
+}
+
+func TestFullBucketDiscardsIdleFractionForNewCharge(t *testing.T) {
+	start := time.Unix(1, 0)
+	b := &bucketState{last: start, tokens: debtRate}
+	b.refill(start.Add(100*time.Millisecond), debtRate)
+	var c charge
+	if got := c.owed(b, app.FromBytes(2), debtRate); got != time.Second {
+		t.Fatalf("initial wait = %v, want 1s", got)
+	}
+	// The earlier idle 0.8 bits cannot contribute to the new eight-bit debt.
+	b.refill(start.Add(time.Second), debtRate)
+	if got := c.owed(b, app.FromBytes(2), debtRate); got != 100*time.Millisecond {
+		t.Fatalf("wait after 900ms = %v, want 100ms", got)
+	}
+	b.refill(start.Add(1100*time.Millisecond), debtRate)
+	if got := c.owed(b, app.FromBytes(2), debtRate); got != 0 {
+		t.Fatalf("wait after 1s = %v, want 0", got)
+	}
+}
+
+func TestRefundedFullBucketKeepsOlderChargeProgress(t *testing.T) {
+	start := time.Unix(1, 0)
+	b := &bucketState{last: start, tokens: debtRate}
+	var first, waiting charge
+	first.owed(b, app.FromBytes(2), debtRate)
+	waiting.owed(b, app.FromBytes(1), debtRate)
+	// Refunding the first charge fills the bucket before the second charge's
+	// recorded threshold is reached. Capping tokens must not erase its progress.
+	b.tokens += app.FromBytes(2)
+	b.cap(debtRate)
+	b.refill(start.Add(time.Second), debtRate)
+	if got := waiting.owed(b, app.FromBytes(1), debtRate); got != time.Second {
+		t.Fatalf("older charge's wait = %v, want 1s", got)
+	}
+	for i := 1; i <= 100; i++ {
+		b.refill(start.Add(time.Second+time.Duration(i)*10*time.Millisecond), debtRate)
+		var later charge
+		if got := later.owed(b, app.FromBytes(1), debtRate); got != 0 {
+			t.Fatalf("charge from a full bucket waited %v", got)
+		}
+		b.tokens += app.FromBytes(1)
+		b.cap(debtRate)
+		want := time.Second - time.Duration(i)*10*time.Millisecond
+		if got := waiting.owed(b, app.FromBytes(1), debtRate); got != want {
+			t.Fatalf("older charge after refill %d waits %v, want %v", i, got, want)
+		}
 	}
 }

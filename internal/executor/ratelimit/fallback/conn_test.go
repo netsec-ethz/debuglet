@@ -1322,7 +1322,7 @@ func observePaidWrites(fc *FallbackConn, raw *scriptedConn) <-chan paidWrite {
 		fc.count.mu.Lock()
 		if bucket, ok := fc.count.packetSize[key]; ok {
 			w.rate = fc.count.rates[key]
-			w.credit = float64(bucket.tokens) + w.at.Sub(bucket.last).Seconds()*float64(w.rate)
+			w.credit = float64(bucket.tokens) + float64(bucket.tokenFraction)/float64(time.Second) + w.at.Sub(bucket.last).Seconds()*float64(w.rate)
 		}
 		fc.count.mu.Unlock()
 		seen <- w
@@ -1698,16 +1698,14 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 	t.Run("empty write", func(t *testing.T) {
 		raw := newScriptedConn(nil)
 		raw.network = "udp"
-		fc := newTestConn(t, raw, 0, 0) // an empty datagram needs no limits
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
 		if n, err := fc.Write(nil); n != 0 || err != nil {
 			t.Fatalf("Write(nil) = (%d, %v), want (0, nil)", n, err)
 		}
 		if writes := raw.written(); len(writes) != 1 || len(writes[0]) != 0 {
 			t.Fatalf("underlying writes = %q, want one empty datagram", writes)
 		}
-		if _, destOK, _, execOK := bucketTokens(fc); destOK || execOK {
-			t.Fatal("empty datagram created accounting state")
-		}
+		assertTokens(t, fc, app.FromBytes(destBytes), app.FromBytes(execBytes))
 	})
 
 	t.Run("empty write on a stream", func(t *testing.T) {
@@ -1722,6 +1720,45 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 	})
 }
 
+func TestUnrelatedRateChangesDoNotStarveWrite(t *testing.T) {
+	fc := newTestConn(t, newScriptedConn(nil), debtRate, debtRate)
+	seedBuckets(t, fc, 0, 0)
+	otherID := uuid.New()
+	if err := fc.count.SetExecLimit(otherID, debtRate); err != nil {
+		t.Fatal(err)
+	}
+	if err := fc.SetWriteDeadline(time.Now().Add(time.Second + wakeSlack)); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	var writeErr error
+	done := startIO(t, fc, func() { n, writeErr = fc.Write([]byte("x")) })
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fc)
+		return dest < 0
+	}, "one-byte reservation")
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	updates := 0
+	for {
+		select {
+		case <-done:
+			if updates < 10 {
+				t.Fatalf("only %d unrelated rate changes occurred during the wait", updates)
+			}
+			if n != 1 || writeErr != nil {
+				t.Fatalf("Write = (%d, %v) after %d unrelated rate changes, want (1, nil)", n, writeErr, updates)
+			}
+			return
+		case <-ticker.C:
+			updates++
+			if err := fc.count.SetExecLimit(otherID, app.FromBytes(1+updates%2)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 // A rate of zero admits nothing. A datagram, although reserved whole beyond
 // one second of the rate, is refused with the error a stream gets at a zero
 // rate, before any I/O and without charging a bucket.
@@ -1731,6 +1768,7 @@ func TestZeroRateRefusesDatagram(t *testing.T) {
 		run  func(*FallbackConn) (int, error)
 	}{
 		{"write", func(fc *FallbackConn) (int, error) { return fc.Write([]byte("datagram")) }},
+		{"empty write", func(fc *FallbackConn) (int, error) { return fc.Write(nil) }},
 		{"read", func(fc *FallbackConn) (int, error) { return fc.Read(make([]byte, 64)) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

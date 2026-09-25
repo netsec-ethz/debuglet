@@ -375,6 +375,32 @@ func TestUDPCanceledDatagramWaitLeavesNoTrace(t *testing.T) {
 	}
 }
 
+func TestUDPEmptyDatagramRequiresPermission(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		revoke func(*FallbackConn) error
+	}{
+		{"zero destination", func(f *FallbackConn) error { return f.count.SetLimit(testAddr, f.id, 0) }},
+		{"zero executor", func(f *FallbackConn) error { return f.count.SetExecLimit(f.id, 0) }},
+		{"deleted destination", func(f *FallbackConn) error { return f.count.DeleteLimit(f.ipv6, f.id) }},
+		{"deleted executor", func(f *FallbackConn) error { return f.count.DeleteExecLimit(f.id) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fc, peer := udpPair(t, app.FromBytes(datagramRate))
+			if err := tc.revoke(fc); err != nil {
+				t.Fatal(err)
+			}
+			if err := fc.SetWriteDeadline(time.Now().Add(boundedWait)); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := fc.Write(nil); n != 0 || err == nil {
+				t.Errorf("Write(nil) after revocation = (%d, %v), want (0, an error)", n, err)
+			}
+			expectNothingAtPeer(t, peer)
+		})
+	}
+}
+
 // A rate change reaches a datagram that already waits for its reservation.
 // Lowered, the datagram waits for what the new rate still owes; raised, it
 // leaves as soon as the new rate allows; revoked, it is not sent at all. Each
