@@ -251,6 +251,23 @@ func connectProfile(name string, options globalOptions, allowRemoteTEST bool, st
 	return c, profile, exitOK, true
 }
 
+// connectProfileWithoutCredential builds a client for credential-establishing
+// operations. Login must work when a profile has moved to another endpoint, so
+// it deliberately does not read or present the session issued by the old one.
+func connectProfileWithoutCredential(name string, options globalOptions, stderr io.Writer) (*client.Client, connections.Profile, int, bool) {
+	profile, err := selectedProfile(options)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
+		return nil, profile, exitFailure, false
+	}
+	c, err := newClient(profile.Endpoint, client.Options{RequestTimeout: options.Timeout})
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: --endpoint: %v\n", name, err)
+		return nil, profile, exitUsage, false
+	}
+	return c, profile, exitOK, true
+}
+
 // Selection is lazy: local commands and explicit endpoints never read the
 // user's configuration. A profile without a name is an endpoint the operator
 // named directly, which belongs to no saved connection.

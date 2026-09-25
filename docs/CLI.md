@@ -107,7 +107,10 @@ nothing and report nothing changed. A running daemon is never restarted as a
 side effect; when a reinstall changes the unit or the configuration, the report
 says a restart is required and leaves the decision to the operator. Installing a
 different package version over an existing state directory is refused, because
-local services do not upgrade a state directory; the explicit upgrade step does.
+local services do not migrate version-pinned role or service metadata. The
+[explicit database upgrade](environments.md#stored-state) changes SQLite schemas
+only; it does not make a local or managed state directory reusable by a different
+package version.
 A service is reported ready only
 after its daemon published its own readiness record and that record names the
 unit's main process; `started` alone is process creation and never counts as
@@ -170,23 +173,25 @@ dbl --dispatcher local logout
   it does not appear in this machine's process list. With neither, a dispatcher
   serving the local development profile issues a credential for its own local
   account, which is how the wallet-free local flow gets one without a browser.
-- `login --register NAME` first creates an account on the selected dispatcher. Its
-  two credentials are written, **never printed**, to owner-only files that must not
-  exist yet: the account key to `--account-key-file FILE` (default
+- `login --register NAME` reserves both credential files before creating an
+  account on the selected dispatcher. Its credentials are written, **never
+  printed**, to owner-only files that must not exist yet: the account key to `--account-key-file FILE` (default
   `account-key-PROFILE.txt` beside the connections file) and the recovery code to
   `--recovery-file FILE` (default `recovery-PROFILE.txt`). Keep both; the dispatcher
   cannot show either again. The account key logs in later, the recovery code
   replaces both if it is lost, and both belong in a password manager.
-- `logout` revokes the session at the dispatcher and forgets it locally. It forgets
-  the local copy even when the dispatcher could not be reached, so a session that
-  cannot be revoked remotely does not stay on this machine.
+- `logout` attempts to revoke the session at its dispatcher and forgets it
+  locally even if that request fails. If the saved profile now names a different
+  endpoint, it removes the old credential locally without sending it to the new
+  endpoint; the old session remains valid until revoked or expired.
 
 No credential is ever printed. `login`, `logout`, `run`, `status`, `logs`, `cancel`,
 `dispatcher list` and every exported receipt carry endpoints and identifiers only.
 A stored credential is presented only to the endpoint it was issued for: selecting
 another profile sends that profile's credential or none, and changing a saved
 profile's endpoint makes `dbl` refuse the stored credential instead of forwarding it
-to the new origin.
+to the new origin. `login` can replace that mismatched credential with a session
+from the new endpoint, and `logout` can discard it locally.
 
 A credential belongs to a saved connection and to nothing else. An explicit
 `--endpoint URL` selects no saved connection, so it presents no credential and reads
@@ -196,9 +201,13 @@ no configuration directory to locate at all. Use `--dispatcher NAME`, or the sav
 current connection, to send a credential. `login` and `logout` both act on a saved
 connection and say so when none is selected.
 
-A session expires after 12 hours and can be revoked at any time. A command that then
-needs one fails with exit code 1, the dispatcher's `unauthorized` diagnostic and the
-action to take: run `dbl login` again.
+A session expires after 12 hours and can be revoked at any time. Log in again
+with the account-key file created during registration, for example
+`dbl --dispatcher PROFILE login --account-key-file ~/.config/debuglet/account-key-PROFILE.txt`.
+The CLI does not discover that long-lived credential implicitly. If it is lost,
+use the recovery code with `POST /auth/recover` or `pkg/client.Recover`; the CLI
+does not yet expose account recovery. A command with an expired session exits 1
+and prints the dispatcher's `unauthorized` diagnostic.
 
 ## Commands
 

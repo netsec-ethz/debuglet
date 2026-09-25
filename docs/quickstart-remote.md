@@ -130,13 +130,11 @@ Hello from Debuglet!
 dbl logs: state=RunStateExited after=1 entries=1 has_more=false
 ```
 
-**macOS.** There is no native package, so a Mac runs the Linux amd64 `dbl` client in a `linux/amd64` container that carries the authority in its own trust store. The image includes the daemon binaries, but this walkthrough starts only the client, talking to the remote dispatcher over the network, under emulation on Apple Silicon. The container needs no privileged mode. It runs as root, so the connections file, `credentials.json`, the account key and the recovery code all live in `/root/.config/debuglet`, and the named volume `debuglet-client` is mounted there:
-
-```sh
-docker run --rm -it --platform linux/amd64 -v debuglet-client:/root/.config/debuglet IMAGE
-```
-
-The shell it opens takes the five commands above unchanged and without `SSL_CERT_FILE`; NAME in the two file names is the connection name given to `dbl connect --name NAME`, which those commands also use for the account. `--rm` discards the container, not the named volume, so the next `docker run` with the same `-v` finds the saved connection, the session and both credential files again. On later runs `dbl nodes`, `run` and `logs` work directly with the stored session. `dbl login --register NAME` is not repeated: it first creates a second account with that name and then refuses to overwrite the existing `account-key-NAME.txt`, so the new account's key is never stored. Once the 12-hour session has expired, `dbl login --account-key-file /root/.config/debuglet/account-key-NAME.txt` obtains a new one. The volume lives inside Docker's Linux file system, so the files keep the `0600` mode the client requires of `credentials.json`. The owner reads the two credentials out of it with `docker run --rm --platform linux/amd64 -v debuglet-client:/root/.config/debuglet IMAGE cat /root/.config/debuglet/account-key-NAME.txt /root/.config/debuglet/recovery-NAME.txt`, which prints them to that terminal. `dbl logout` first revokes the stored session at the dispatcher, which otherwise keeps it valid for the rest of its 12 hours; `docker volume rm debuglet-client` then forgets the account on this Mac. The account itself stays on the dispatcher, and once the volume is gone its key cannot be recovered unless the two credentials were read out first.
+**macOS.** There is no native package, so a Mac runs the Linux amd64 `dbl`
+client in a `linux/amd64` container that carries the authority in its own trust
+store. The image includes the daemon binaries, but this walkthrough starts only
+the client, talking to the remote dispatcher, under emulation on Apple Silicon.
+The container needs no privileged mode. Build the image below:
 
 ```dockerfile
 FROM --platform=linux/amd64 debian:bookworm-slim
@@ -146,6 +144,41 @@ COPY install.sh SHA256SUMS debuglet-VERSION-linux-amd64.tar.gz /pkg/
 RUN update-ca-certificates && sh /pkg/install.sh --archive /pkg/debuglet-VERSION-linux-amd64.tar.gz --checksums /pkg/SHA256SUMS --version VERSION --prefix /opt/debuglet
 ENV PATH=/opt/debuglet/bin:$PATH
 ```
+
+The client runs as root in the container, so mount the named volume
+`debuglet-client` at `/root/.config/debuglet` to retain the saved connection,
+`credentials.json`, account key and recovery code:
+
+```sh
+docker build --platform linux/amd64 -t debuglet-client .
+docker run --rm -it --platform linux/amd64 \
+  -v debuglet-client:/root/.config/debuglet debuglet-client
+```
+
+The shell takes the five commands above unchanged and without `SSL_CERT_FILE`.
+`--rm` discards the container, not the named volume. The next invocation finds
+the saved connection and credentials, so `nodes`, `run` and `logs` work with the
+stored session. Do not repeat `login --register`: existing credential files
+cause registration to be refused before an account is created. Once the 12-hour
+session expires, use
+`dbl login --account-key-file /root/.config/debuglet/account-key-NAME.txt`.
+Here NAME is the connection name supplied to `dbl connect --name NAME`.
+
+The volume lives inside Docker's Linux file system, preserving the `0600` mode
+required for `credentials.json`. Protect and back it up like any credential
+directory. To read the account key and recovery code into a private terminal:
+
+```sh
+docker run --rm --platform linux/amd64 \
+  -v debuglet-client:/root/.config/debuglet debuglet-client \
+  cat /root/.config/debuglet/account-key-NAME.txt /root/.config/debuglet/recovery-NAME.txt
+```
+
+Before removing the volume, run `dbl logout` in the client container to revoke
+its session; otherwise the dispatcher keeps it valid until it expires.
+`docker volume rm debuglet-client` then removes the saved credentials from this
+Mac. The account remains on the dispatcher. Keep the account key or recovery
+code elsewhere if you need to regain access.
 
 **The Go SDK.** The [client example](../examples/client/main.go) takes the same three remote options: `--register NAME` creates an account and logs in for the rest of the run, `--allow-remote-test` sets `Options.AllowRemoteTEST`, and `--allow HOST[,HOST]` fills the request's address allowlist, which narrows the executor's own policy — public addresses admitted, loopback, private and reserved ranges denied — and never widens it. The account id is printed; the account key and the session token are not.
 
@@ -188,5 +221,5 @@ ERROR	rpc/bidi.go:321	failed to register executor	{"error": "rpc error: code = F
 - **An account name is a label, not an identity.** Registering the same name twice succeeds and makes two separate accounts with different ids, each with its own key and its own runs.
 - **Runs are private to the account that submitted them.** `status ID` and `logs ID` from another account answer `not_found`, the same as an ID that does not exist.
 - **The certificate is issued for the address dialled.** Reaching the same dispatcher by another name needs `tls.server_name` in the executor configuration, or a new certificate.
-- **Neither daemon creates its database schema.** Both are given one made by a local `dbl` role, and nothing upgrades one in place: another package version means another database.
+- **Neither daemon initializes or upgrades its database automatically.** This walkthrough uses databases created by local `dbl` roles. Recognized older schemas can be upgraded explicitly with the daemon stopped; see [stored state](environments.md#stored-state) for the supported TEST profile, backups and migration limits. Local role metadata remains pinned to its package version.
 - **No attribution tags without the eBPF counter.** With `packet_counter = "fallback"` each job logs that outgoing packets carry no attribution tags; nothing else changes.
