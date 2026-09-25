@@ -177,7 +177,15 @@ func TestRequestBodyLimit(t *testing.T) {
 				method, path, _ := strings.Cut(route, " ")
 				status, header, body := blSend(t, f, root, method, f.root.URL+values.Replace(path), intentOver, false)
 				blAssertTooLarge(t, status, header, body)
+				oaCheckResponse(t, spec, method, values.Replace(path), status, body)
 			})
 		}
+	})
+
+	t.Run("optional connection route", func(t *testing.T) {
+		// The global limit applies even when this optional route is absent.
+		status, header, body := blSend(t, f, root, http.MethodGet, f.root.URL+"/connection", intentOver, false)
+		blAssertTooLarge(t, status, header, body)
+		oaCheckResponse(t, spec, http.MethodGet, "/connection", status, body)
 	})
 }
