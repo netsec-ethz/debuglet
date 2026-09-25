@@ -204,8 +204,8 @@ func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
 	want := udpDatagram("oversized read", oversizedDatagram)
 	sendToLimited(t, peer, fc, want)
 
-	// Drained buckets: the read charges the whole buffer it is given and
-	// refunds the part the datagram leaves unused only afterwards.
+	// Drained buckets: the read charges the datagram it took off the socket
+	// and returns once that charge is paid, whatever the size of the buffer.
 	start := time.Now()
 	seedBuckets(t, fc, 0, 0)
 	buf := make([]byte, oversizedDatagram+datagramRate/2)
@@ -214,7 +214,7 @@ func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
 	if n != len(want) || err != nil || !bytes.Equal(buf[:n], want) {
 		t.Errorf("Read = (%d, %v), want (%d, nil) with the datagram intact", n, err, len(want))
 	}
-	earliest := transferTime(len(buf), datagramRate)
+	earliest := transferTime(len(want), datagramRate)
 	checkElapsed(t, "Read", elapsed, earliest, earliest+wakeSlack)
 
 	next := udpDatagram("next read", 32)
@@ -223,6 +223,29 @@ func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
 	if n != len(next) || err != nil || !bytes.Equal(buf[:n], next) {
 		t.Errorf("next Read = (%d, %v), want (%d, nil) with the next datagram intact", n, err, len(next))
 	}
+}
+
+// A small datagram received into a large buffer from drained buckets waits
+// for its own size only: a buffer larger than the datagram costs nothing.
+func TestUDPReadChargesTheDatagramNotTheBuffer(t *testing.T) {
+	fc, peer := udpPair(t, app.FromBytes(datagramRate))
+	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	want := udpDatagram("small", 32)
+	sendToLimited(t, peer, fc, want)
+
+	start := time.Now()
+	seedBuckets(t, fc, 0, 0)
+	buf := make([]byte, oversizedDatagram+datagramRate/2)
+	n, err := fc.Read(buf)
+	elapsed := time.Since(start)
+	if n != len(want) || err != nil || !bytes.Equal(buf[:n], want) {
+		t.Errorf("Read = (%d, %v), want (%d, nil) with the datagram intact", n, err, len(want))
+	}
+	// Half the time the buffer would take leaves more than a second for
+	// scheduling and still rules out a charge for the buffer.
+	checkElapsed(t, "Read", elapsed, transferTime(len(want), datagramRate), transferTime(len(buf), datagramRate)/2)
 }
 
 // One Write sends one datagram, whatever its size: smaller than a rate-second,
@@ -289,88 +312,124 @@ func TestUDPReadIntoSmallerBufferTruncatesAsTheSocketDoes(t *testing.T) {
 	}
 }
 
-// Canceling a datagram's wait, by a deadline or by Close, returns the usual
-// error and leaves no trace: nothing reaches the peer, nothing is taken off the
-// socket, and the whole reservation is returned. The read starts from drained
-// buckets, so it must wait before it may take the datagram off the socket. The
-// write starts from full buckets: one rate-second is available at once, and a
-// limiter that sends that much as a datagram of its own leaves the fragment at
-// the peer when the rest is canceled.
+// Canceling a datagram write's wait, by a deadline or by Close, returns the
+// usual error and leaves no trace: nothing reaches the peer and the whole
+// reservation is returned. The write starts from full buckets: one rate-second
+// is available at once, and a limiter that sends that much as a datagram of
+// its own leaves the fragment at the peer when the rest is canceled. A read
+// has no such wait to cancel: it takes the datagram off the socket before it
+// waits, see TestUDPCutShortReadKeepsTheCharge.
 func TestUDPCanceledDatagramWaitLeavesNoTrace(t *testing.T) {
 	full := app.FromBytes(datagramRate)
 	for _, tc := range []struct {
 		name    string
-		write   bool
 		close   bool
-		seed    app.Bitrate
 		wantErr error
 	}{
-		{"read deadline", false, false, 0, os.ErrDeadlineExceeded},
-		{"read close", false, true, 0, net.ErrClosed},
-		{"write deadline", true, false, full, os.ErrDeadlineExceeded},
-		{"write close", true, true, full, net.ErrClosed},
+		{"write deadline", false, os.ErrDeadlineExceeded},
+		{"write close", true, net.ErrClosed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fc, peer := udpPair(t, full)
 			payload := udpDatagram(tc.name, oversizedDatagram)
-			if !tc.write {
-				sendToLimited(t, peer, fc, payload)
-			}
 			if err := fc.SetDeadline(time.Now().Add(boundedWait)); err != nil {
 				t.Fatalf("SetDeadline: %v", err)
 			}
-			seedBuckets(t, fc, tc.seed, tc.seed)
+			seedBuckets(t, fc, full, full)
 
-			op := "Read"
-			if tc.write {
-				op = "Write"
-			}
 			var n int
 			var err error
-			done := startIO(t, fc, func() {
-				if tc.write {
-					n, err = fc.Write(payload)
-				} else {
-					n, err = fc.Read(make([]byte, oversizedDatagram+datagramRate/2))
-				}
-			})
+			done := startIO(t, fc, func() { n, err = fc.Write(payload) })
 			waitForReservation(t, fc, 0)
 			var cancelErr error
-			switch {
-			case tc.close:
+			if tc.close {
 				cancelErr = fc.Close()
-			case tc.write:
+			} else {
 				cancelErr = fc.SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
-			default:
-				cancelErr = fc.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 			}
 			if cancelErr != nil {
-				t.Fatalf("cancel the waiting %s: %v", op, cancelErr)
+				t.Fatalf("cancel the waiting Write: %v", cancelErr)
 			}
-			waitBounded(t, done, op+" with its wait canceled", func() { _ = fc.Close() })
+			waitBounded(t, done, "Write with its wait canceled", func() { _ = fc.Close() })
 			if n != 0 || !errors.Is(err, tc.wantErr) {
-				t.Errorf("%s = (%d, %v), want (0, %v)", op, n, err, tc.wantErr)
+				t.Errorf("Write = (%d, %v), want (0, %v)", n, err, tc.wantErr)
 			}
-			expectRefunded(t, fc, tc.seed)
-			if tc.write {
-				expectNothingAtPeer(t, peer)
-			}
-			if tc.write || tc.close {
-				return
-			}
+			expectRefunded(t, fc, full)
+			expectNothingAtPeer(t, peer)
+		})
+	}
+}
 
-			// The datagram is still queued: once the limits allow it, the
-			// next Read returns it intact.
-			setRates(t, fc, app.FromBytes(1<<20))
+// A read takes the datagram off the socket before it waits for the charge, so
+// the datagram is the caller's from then on. A wait that the read deadline or
+// Close cuts short returns the datagram intact and keeps its charge: the next
+// call reports the deadline or the closure, and the next datagram is admitted
+// only once the debt the first one left is paid.
+func TestUDPCutShortReadKeepsTheCharge(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		close   bool
+		wantErr error
+	}{
+		{"read deadline", false, os.ErrDeadlineExceeded},
+		{"read close", true, net.ErrClosed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fc, peer := udpPair(t, app.FromBytes(datagramRate))
+			payload := udpDatagram(tc.name, oversizedDatagram)
+			sendToLimited(t, peer, fc, payload)
 			if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
 				t.Fatalf("SetReadDeadline: %v", err)
 			}
+			start := time.Now()
+			seedBuckets(t, fc, 0, 0)
+
 			buf := make([]byte, oversizedDatagram+datagramRate/2)
-			n, err = fc.Read(buf)
-			if n != len(payload) || err != nil || !bytes.Equal(buf[:n], payload) {
-				t.Errorf("Read after the canceled one = (%d, %v), want (%d, nil) with the datagram intact",
-					n, err, len(payload))
+			var n int
+			var err error
+			done := startIO(t, fc, func() { n, err = fc.Read(buf) })
+			waitForReservation(t, fc, 0)
+			var cancelErr error
+			if tc.close {
+				cancelErr = fc.Close()
+			} else {
+				cancelErr = fc.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 			}
+			if cancelErr != nil {
+				t.Fatalf("cancel the waiting Read: %v", cancelErr)
+			}
+			waitBounded(t, done, "Read with its wait cut short", func() { _ = fc.Close() })
+			elapsed := time.Since(start)
+			if n != len(payload) || err != nil || !bytes.Equal(buf[:n], payload) {
+				t.Fatalf("Read = (%d, %v), want (%d, nil) with the datagram intact", n, err, len(payload))
+			}
+			if paid := transferTime(len(payload), datagramRate); elapsed >= paid {
+				t.Fatalf("Read returned after %v, not before the %v its charge takes: the wait was not cut short", elapsed, paid)
+			}
+			if n, err := fc.Read(buf); n != 0 || !errors.Is(err, tc.wantErr) {
+				t.Errorf("next Read = (%d, %v), want (0, %v)", n, err, tc.wantErr)
+			}
+			if tc.close {
+				return
+			}
+
+			// The charge was kept: the buckets owe what the time since the
+			// seed has not yet paid of the datagram.
+			if dest, _, exec, _ := bucketTokens(fc); dest >= 0 || exec >= 0 {
+				t.Errorf("buckets = %d and %d bits, want the debt of the returned datagram", dest, exec)
+			}
+			// The next datagram is admitted only once the first one is paid.
+			if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
+				t.Fatalf("SetReadDeadline: %v", err)
+			}
+			next := udpDatagram("after the debt", 32)
+			sendToLimited(t, peer, fc, next)
+			n, err = fc.Read(buf)
+			if n != len(next) || err != nil || !bytes.Equal(buf[:n], next) {
+				t.Errorf("next Read = (%d, %v), want (%d, nil) with the next datagram intact", n, err, len(next))
+			}
+			earliest := transferTime(len(payload)+len(next), datagramRate)
+			checkElapsed(t, "Both reads", time.Since(start), earliest, earliest+wakeSlack)
 		})
 	}
 }

@@ -1649,9 +1649,10 @@ func TestRaisedRateReleasesWaitingDatagramWhole(t *testing.T) {
 }
 
 // A datagram connection hands each datagram to the socket whole, even when it
-// is larger than one second of the rate: one write of the whole payload and
-// one read into the whole buffer, after waiting for the part the bucket does
-// not hold. On a stream the same sizes are split at the rate, see
+// is larger than one second of the rate: one write of the whole payload, after
+// waiting for the part the bucket does not hold, and one read into the whole
+// buffer, which is charged and waits only for the datagram it returns. On a
+// stream the same sizes are split at the rate, see
 // TestWriteCompletesMultiChunkInOrder and TestReadReturnsSingleUnderlyingResult.
 func TestDatagramIsAdmittedWhole(t *testing.T) {
 	const (
@@ -1681,18 +1682,22 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 	})
 
 	t.Run("read", func(t *testing.T) {
+		// A buffer of three rate-seconds would owe two of them if it were
+		// charged; the five-byte datagram fits the full bucket.
+		const bufSize = 3 * destBytes
+		bufferWait := tokenWait(app.FromBytes(bufSize-destBytes), app.FromBytes(destBytes))
 		raw := oneRead(5, nil)
 		raw.network = "udp"
 		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
 		start := time.Now()
-		if n, err := fc.Read(make([]byte, size)); n != 5 || err != nil {
+		if n, err := fc.Read(make([]byte, bufSize)); n != 5 || err != nil {
 			t.Fatalf("Read = (%d, %v), want (5, nil)", n, err)
 		}
-		if elapsed := time.Since(start); elapsed < wait {
-			t.Errorf("Read returned after %v, want at least the %v the deficit takes", elapsed, wait)
+		if elapsed := time.Since(start); elapsed >= bufferWait {
+			t.Errorf("Read returned after %v, want less than the %v a charge for the buffer takes", elapsed, bufferWait)
 		}
-		if calls, sizes := raw.reads(); calls != 1 || sizes[0] != size {
-			t.Fatalf("underlying reads = %d of sizes %v, want one read into the whole %d-byte buffer", calls, sizes, size)
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] != bufSize {
+			t.Fatalf("underlying reads = %d of sizes %v, want one read into the whole %d-byte buffer", calls, sizes, bufSize)
 		}
 		// Only the datagram that arrived is charged.
 		assertTokens(t, fc, app.FromBytes(destBytes-5), app.FromBytes(execBytes-5))
@@ -1834,6 +1839,53 @@ func TestZeroRateRefusesDatagram(t *testing.T) {
 			}
 			if _, destOK, _, execOK := bucketTokens(fc); destOK || execOK {
 				t.Fatal("refused datagram created accounting state")
+			}
+		})
+	}
+}
+
+// A charge that is refused after the socket read, because the rate was
+// revoked or the connection closed while the datagram was read, drops the
+// datagram and returns the refusal: nothing is delivered uncharged, and the
+// buckets keep what they held.
+func TestRefusedDatagramChargeDropsDatagram(t *testing.T) {
+	const (
+		destBytes = 1000
+		execBytes = 1 << 20
+	)
+	for _, tc := range []struct {
+		name    string
+		refuse  func(*FallbackConn) error
+		wantErr func(error) bool
+		// destKept is false when the refusal removes the destination bucket.
+		destKept bool
+	}{
+		{"rate revoked", func(fc *FallbackConn) error { return fc.count.SetLimit(testAddr, fc.id, 0) },
+			func(err error) bool { return strings.Contains(err.Error(), "no dest rate") }, true},
+		{"closed", func(fc *FallbackConn) error { return fc.Close() },
+			func(err error) bool { return errors.Is(err, net.ErrClosed) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fc *FallbackConn
+			raw := newScriptedConn(func(b []byte) (int, error) {
+				if err := tc.refuse(fc); err != nil {
+					t.Errorf("refuse the charge: %v", err)
+				}
+				return copy(b, "datagram"), nil
+			})
+			raw.maxReads = 1
+			raw.network = "udp"
+			fc = newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			n, err := fc.Read(make([]byte, 64))
+			if n != 0 || err == nil || !strings.Contains(err.Error(), "failed to reserve") || !tc.wantErr(err) {
+				t.Fatalf("Read = (%d, %v), want (0, the refused charge)", n, err)
+			}
+			dest, destOK, exec, execOK := bucketTokens(fc)
+			if destOK != tc.destKept || (destOK && dest != app.FromBytes(destBytes)) {
+				t.Errorf("destination bucket = %d bits (present=%v), want %d bits (present=%v)", dest, destOK, app.FromBytes(destBytes), tc.destKept)
+			}
+			if !execOK || exec != app.FromBytes(execBytes) {
+				t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes))
 			}
 		})
 	}
