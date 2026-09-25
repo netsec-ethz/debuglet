@@ -20,6 +20,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // PUT /debuglet
@@ -287,6 +289,9 @@ func (h *Handler) DeleteDebuglet(c echo.Context) error {
 		// refusal nor the 204 acknowledgement; the cause stays in the log.
 		if errors.Is(err, dispatcher.ErrCancellationNotRecorded) {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "cancellation acknowledged but its result was not recorded", err)
+		}
+		if status.Code(err) == codes.Internal {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to process cancellation", err)
 		}
 		// The dispatcher's own diagnostic carries transport and session
 		// internals; the caller learns that the cancellation was refused.

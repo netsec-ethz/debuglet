@@ -360,36 +360,7 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 		return &pb.DebugletExitResponse{}, nil
 	}
 
-	// Effects run exactly once, for the winner, using the returned row. The
-	// payment decision stays exit-code based (also for zero exit with an
-	// error); effect failures are logged and never retried by duplicates.
-	switch exitCode {
-	case 0:
-		//credit executor
-		d.logger.Debug("Debuglet Completed. Credit executor")
-		if err := d.Payment.SetDebugletOrderComplete(&deb, ctx); err != nil {
-			d.logger.Error(err.Error())
-		}
-	default:
-		//refund
-		d.logger.Debug("Debuglet Aborted. Refund Buyer")
-		if err := d.Payment.RefundDebugletOrder(&deb, "", ctx); err != nil {
-			d.logger.Error(err.Error())
-		}
-	}
-
-	floor := resource.Bitrate(deb.Usage)
-
-	d.mu.Lock()
-	for _, dest := range deb.Addresses {
-		// The release subtracts the recorded allocation of this run, so a
-		// destination that was never allocated or already released is a no-op.
-		d.destinations.Remove(id, dest)
-	}
-
-	d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
-
-	d.mu.Unlock()
+	d.settleTerminal(ctx, &deb, exitCode)
 	// Reserve the origin continuation and every exact recipient before this
 	// callback returns; the detached deadline releases no mutation of its own.
 	notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -671,4 +642,38 @@ func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.
 		Use:         use,
 	}
 	d.scheduler.Remove(r)
+}
+
+// settleTerminal runs the effects of a won terminal write, exactly once, for
+// the winner, using the returned row. The payment decision stays exit-code
+// based (also for zero exit with an error); effect failures are logged and
+// never retried by duplicates.
+func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet, exitCode int32) {
+	switch exitCode {
+	case 0:
+		//credit executor
+		d.logger.Debug("Debuglet Completed. Credit executor")
+		if err := d.Payment.SetDebugletOrderComplete(deb, ctx); err != nil {
+			d.logger.Warn("Failed to credit executor for debuglet", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
+		}
+	default:
+		//refund
+		d.logger.Debug("Debuglet Aborted. Refund Buyer")
+		if err := d.Payment.RefundDebugletOrder(deb, "", ctx); err != nil {
+			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
+		}
+	}
+
+	floor := resource.Bitrate(deb.Usage)
+
+	d.mu.Lock()
+	for _, dest := range deb.Addresses {
+		// The release subtracts the recorded allocation of this run, so a
+		// destination that was never allocated or already released is a no-op.
+		d.destinations.Remove(deb.Uuid, dest)
+	}
+
+	d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
+
+	d.mu.Unlock()
 }

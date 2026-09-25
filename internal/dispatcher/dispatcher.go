@@ -127,6 +127,12 @@ func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming
 // nothing; every other run, pending or of uncertain outcome, keeps its
 // reservation until its window ends.
 //
+// A restored run bound to a previous dispatcher lifetime is logged as a
+// warning with its ID: its control session ended with that lifetime, so it
+// will not execute, and its reservation lasts until the run is cancelled or its
+// window ends. A run without a complete stored binding cannot be cancelled;
+// its reservation lasts until its window ends.
+//
 // Reservations are restored once per dispatcher lifetime: after a restore has
 // succeeded, a further call reserves nothing and returns an error, so no run is
 // counted twice. A call that fails has reserved nothing and may be repeated.
@@ -149,6 +155,13 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 			continue
 		}
 		d.logger.Info("Restoring debuglet schedule", zap.String("executor", deb.ExecutorID), zap.Strings("addresses", deb.Addresses), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time), zap.Int64("usage", deb.Usage))
+		if deb.DispatcherIncarnation == "" || deb.SessionID == "" {
+			d.logger.Warn("Restored debuglet has no complete control binding; cancellation is unavailable and its reservation lasts until its window ends",
+				zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time))
+		} else if deb.DispatcherIncarnation != d.incarnation {
+			d.logger.Warn("Restored debuglet belongs to a previous dispatcher lifetime; its control session has ended and it will not execute; cancelling it releases its reservation",
+				zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time))
+		}
 		d.scheduler.Submit(schedule.Request{
 			Executor:    deb.ExecutorID,
 			From:        deb.StartTime.Time,

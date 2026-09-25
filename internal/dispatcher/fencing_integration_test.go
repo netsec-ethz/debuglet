@@ -271,7 +271,7 @@ func TestControlCurrentSessionCannotClaimRetainedRun(t *testing.T) {
 	_, err = client.DebugletExit(ctx, &pb.DebugletExitRequest{DebugletId: row.Uuid.String(), ExitCode: 0})
 	assertStatus("replacement terminal result", err, codes.PermissionDenied)
 	err = f.d.AbortDebuglet(ctx, "same", row.Uuid, "must not retarget")
-	assertStatus("operator cancellation of old run", err, codes.PermissionDenied)
+	assertStatus("operator cancellation of old run", err, codes.OK)
 	stream, err := client.DebugletStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -283,6 +283,10 @@ func TestControlCurrentSessionCannotClaimRetainedRun(t *testing.T) {
 	_, err = stream.Recv()
 	assertStatus("replacement output identity", err, codes.PermissionDenied)
 	queries := database.New(f.d.db)
+	// The cancellation of a run whose session has ended is recorded under
+	// the run's original binding; nothing else about the row changes.
+	row.State = models.RunStateExited
+	row.Error = sql.NullString{String: "must not retarget; the control session had ended and the executor's outcome was not observed", Valid: true}
 	stored, err := queries.GetDebugletByUUID(ctx, row.Uuid)
 	if err != nil || !reflect.DeepEqual(stored, row) {
 		t.Fatalf("rejected calls changed original run: err=%v", err)
