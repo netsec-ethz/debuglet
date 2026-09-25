@@ -61,7 +61,7 @@ A route or field that is to be removed is first marked deprecated in `api/openap
 
 ## Supported revisions
 
-Until the alpha has a tagged release, only the current commit of the `hardening` integration branch is supported. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
+Only the latest release candidate (currently `v0.2.0-rc.1`, published from `main`) and the current commit of the `dev` integration branch are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
 
 ## Errors
 
