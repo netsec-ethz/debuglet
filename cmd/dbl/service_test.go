@@ -212,6 +212,22 @@ func TestServiceInstallReportsTheInstalledContract(t *testing.T) {
 	}
 }
 
+func TestServiceInstallRefusalPrintsOnlyTheError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := serviceCommandWith(context.Background(),
+		[]string{"install", "--role", "dispatcher", "--start=false", "--user", "nobody", "--port", "9000", "--grpc-port", "9000"},
+		globalOptions{Output: outputHuman}, &stdout, &stderr, serviceTestDependencies(t, newRecordingManager(), t.TempDir()))
+	if code != exitFailure {
+		t.Fatalf("exit %d, want %d", code, exitFailure)
+	}
+	if strings.Contains(stdout.String(), "(not ready)") {
+		t.Fatalf("a refused request printed a summary line: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "ports must be different") {
+		t.Fatalf("diagnostic: %q", stderr.String())
+	}
+}
+
 func TestServiceStatusOfAnUninstalledInstanceFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := serviceCommandWith(context.Background(),
