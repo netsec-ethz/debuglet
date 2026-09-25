@@ -370,11 +370,27 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 // wrapping ErrCancellationNotRecorded means the executor acknowledged the
 // cancellation but its result is not recorded; any other error is a refusal
 // before or at the executor.
+//
+// A run whose control session has ended, because the dispatcher restarted or
+// the executor registered again in a new session, has no executor to ask: its
+// cancellation is recorded locally, see cancelUnbound.
 func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debugletID uuid.UUID, reason string) error {
-	// Reserve the registry's current owner before the read. The persisted
-	// binding then rejects a same-ID replacement or another executor's run.
+	identity, err := database.New(d.db).GetDebugletIdentityByUUID(ctx, debugletID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return status.Error(codes.NotFound, "debuglet does not exist")
+		}
+		return status.Error(codes.Internal, "failed to classify debuglet ownership")
+	}
+	// Reserve the registry's current owner before the owned read. The
+	// persisted binding then rejects a same-ID replacement or another
+	// executor's run.
 	d.mu.RLock()
 	entry := d.executors[executorID]
+	if !d.closed && identity.ExecutorID == executorID && !bindingLive(entry, identity) {
+		d.mu.RUnlock()
+		return d.cancelUnbound(ctx, identity, debugletID, reason)
+	}
 	if d.closed || entry == nil {
 		d.mu.RUnlock()
 		return status.Error(codes.FailedPrecondition, "abort session is unavailable")
@@ -393,6 +409,73 @@ func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debug
 		return status.Error(codes.FailedPrecondition, "abort session is unavailable")
 	}
 	return d.abortCaptured(mutation.Context(), mutation, client, debugletID, reason)
+}
+
+// unobservedCancellation extends the caller's reason in the stored error of a
+// run cancelled after its control session had ended.
+const unobservedCancellation = "; the control session had ended and the executor's outcome was not observed"
+
+// bindingLive reports whether the stored binding of a run is the one the
+// registered owner of its executor holds. Called with d.mu held.
+func bindingLive(entry *executorEntry, identity database.GetDebugletIdentityByUUIDRow) bool {
+	if entry == nil {
+		return false
+	}
+	binding := entry.owner.Binding()
+	return binding.Incarnation == identity.DispatcherIncarnation && binding.SessionID == identity.SessionID
+}
+
+// cancelUnbound records the cancellation of a run whose stored binding is not
+// the registered owner's. A binding names one session lifetime and a session
+// never resumes once its owner retired: the executor's reconnection is a new
+// session and a restarted dispatcher is a new incarnation. No Abort is sent,
+// since no session can deliver it, and the executor quarantines the run
+// instead of starting it.
+//
+// The terminal write is guarded by the stored binding, as every terminal write
+// of the run is. A retired session admits no new work; work it admitted before
+// retiring and other cancellations of the same run write through the same
+// guard, so exactly one writer wins and only the winner runs the effects.
+// They are those of a nonzero exit, except the fairshare update, which needs a
+// live mutation of the run's session; other executors keep their allocations
+// on the run's destinations until the next update.
+func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
+	// A row stored before bindings were recorded has none, and the guard
+	// admits no terminal write without one.
+	if identity.DispatcherIncarnation == "" || identity.SessionID == "" {
+		return status.Error(codes.FailedPrecondition, "run has no control binding to cancel under")
+	}
+	msg := reason + unobservedCancellation
+	queries := database.New(d.db)
+	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
+		ExitedState:           models.RunStateExited,
+		Error:                 terminalError(-1, &msg),
+		Uuid:                  id,
+		ExecutorID:            identity.ExecutorID,
+		DispatcherIncarnation: identity.DispatcherIncarnation,
+		SessionID:             identity.SessionID,
+	})
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("failed to record cancellation: %w", err)
+		}
+		// The guard rejected the write: the row is terminal or missing.
+		// Classify with a read; never retry the write.
+		existing, err := queries.GetDebugletByUUID(ctx, id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return status.Error(codes.NotFound, "debuglet does not exist")
+			}
+			return fmt.Errorf("failed to classify rejected cancellation: %w", err)
+		}
+		if existing.State != models.RunStateExited {
+			return fmt.Errorf("cancellation of debuglet '%s' was rejected although it is in state %s", id.String(), existing.State.String())
+		}
+		return nil
+	}
+	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", zap.String("debugletID", id.String()), zap.String("executor", identity.ExecutorID))
+	d.settleTerminal(ctx, &deb, -1)
+	return nil
 }
 
 func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, client rpc.BoundExecutorClient, id uuid.UUID, reason string) error {
