@@ -97,6 +97,13 @@ func restoreSpec(index int) scheduler.Spec {
 	return spec
 }
 
+// restoreProgressTimeout bounds each wait for the next restored callback or
+// finalizer, never the whole run, so it decides only whether the scheduler has
+// stopped completing them. Each due row costs synchronous SQLite writes through
+// the pool's one connection: with every fsync slowed by 11ms a thousand rows
+// took over two minutes, yet consecutive completions stayed under 1.5s apart.
+const restoreProgressTimeout = 90 * time.Second
+
 // Restore runs before its consumer, as required by serialized startup. The
 // failure cleanup also releases the original blocking-send implementation:
 // callbacks cannot delete rows until paged restoration has finished.
@@ -104,7 +111,9 @@ func checkRestoredQueue(t *testing.T, rows []restoreRow) {
 	t.Helper()
 	db := newSchedulerTestDB(t)
 	// The 1,000-row case retains SQLite's normal synchronous writes for each
-	// started/deleted row. Bound restore itself separately from that disk work.
+	// started/deleted row. Bound restore itself separately from that disk work;
+	// ctx covers setup and restore, and the waits for the disk work are bounded
+	// by progress instead.
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	tx, err := db.BeginTx(ctx, nil)
@@ -272,7 +281,7 @@ func checkRestoredQueue(t *testing.T, rows []restoreRow) {
 				t.Fatal("unknown or repeated restored callback:", id)
 			}
 			seen[id] = true
-		case <-ctx.Done():
+		case <-time.After(restoreProgressTimeout):
 			t.Fatal("restored callbacks did not all complete:", len(seen), "of", due)
 		}
 	}
@@ -303,9 +312,9 @@ func checkRestoredQueue(t *testing.T, rows []restoreRow) {
 			t.Fatal("completion had no corresponding start/failure observation")
 		}
 	}
-	// SQL finalization now follows callback completion. Preserve the fixture's
-	// aggregate durability budget while observing every real successful DELETE
-	// before asking Shutdown to join the final bookkeeping and release of Conn.
+	// SQL finalization now follows callback completion. Observe every real
+	// successful DELETE, again bounded by progress, before asking Shutdown to
+	// join the final bookkeeping and release of Conn.
 	deletedIDs := make(map[uuid.UUID]bool, due)
 	for range due {
 		select {
@@ -314,7 +323,7 @@ func checkRestoredQueue(t *testing.T, rows []restoreRow) {
 				t.Fatalf("unexpected/failed real finalizer: %+v", result)
 			}
 			deletedIDs[result.id] = true
-		case <-ctx.Done():
+		case <-time.After(restoreProgressTimeout):
 			t.Fatalf("actual finalizers completed%d of%d", len(deletedIDs), due)
 		}
 	}
@@ -325,7 +334,10 @@ func checkRestoredQueue(t *testing.T, rows []restoreRow) {
 	if overflow.Load() || len(completed) != 0 || len(observations) != 0 || len(deleted) != 0 {
 		t.Fatal("unexpected additional callback")
 	}
-	remaining, err := database.New(db).ListDebuglets(ctx, database.ListDebugletsParams{Limit: int64(len(rows) + 1)})
+	// The waits above may outlast ctx, so this single read has its own bound.
+	readCtx, readCancel := context.WithTimeout(context.Background(), scheduler.CleanupTimeout)
+	remaining, err := database.New(db).ListDebuglets(readCtx, database.ListDebugletsParams{Limit: int64(len(rows) + 1)})
+	readCancel()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,9 @@ SDK, and sample measurements.
 
 The local alpha runs on **Linux amd64**. The complete package needs no Go compiler,
 wallet, SCION service, root privileges, or hand-written daemon configuration.
+The `dbl` client for a remote dispatcher runs on Linux amd64 and, in a container, on
+macOS; Windows, WSL and Linux arm64 clients are not supported
+([cross-host guide](docs/quickstart-remote.md#clients)).
 
 ## Install
 
@@ -190,9 +193,11 @@ system, including both control paths and where a given change belongs.
   destinations. Keep the alpha in a trusted local environment.
 - SCION and remote testbed operation are outside this walkthrough. ETH testbed
   compatibility and deployment are unconfirmed.
-- Checksums are not release signatures. This release candidate has no supported
-  upgrade path: a state directory stays with the package
-  version that created it, and moving to another version means a new state directory.
+- Checksums are not release signatures. A local state directory stays with the
+  package version that created it, and moving to another version means a new
+  state directory. A deployed daemon's database is upgraded to another package
+  version only by the explicit step described in
+  [Stored state](docs/environments.md#stored-state), never automatically.
 
 The [threat model](docs/SECURITY.md) states which actors and trust boundaries the
 supported profile assumes, what it promises and what it does not, and why a

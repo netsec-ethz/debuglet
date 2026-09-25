@@ -103,7 +103,7 @@ currency = "TEST"
 
 The two dispatcher addresses are not interchangeable. With both set to the HTTP port the reverse stream comes up and the dispatcher answers on it, but the direct gRPC call has nowhere to land: the dispatcher reports a failed executor registration and an unavailable control session, and the executor reconnects forever without announcing resources.
 
-`packet_counter = "fallback"` counts in userspace and needs no privilege; `"auto"` loads the eBPF counter and tagger, which needs root and `interface = "NAME"`, and a root run leaves root-owned `-wal` and `-shm` files beside whatever database it opens, so give it one of its own. Start the daemon in the foreground. Four lines and then silence is the whole story: resources announced, heartbeat running. Give it 15–30 seconds before the first client, which otherwise sees the executor listed with `READY false`.
+`packet_counter = "fallback"` counts in userspace and needs no privilege; `"auto"` with `interface = "NAME"` loads the eBPF counter and tagger when it has the privileges for them (root or the eBPF capabilities) and otherwise falls back to userspace counting with a warning, and a root run leaves root-owned `-wal` and `-shm` files beside whatever database it opens, so give it one of its own. Start the daemon in the foreground. Four lines and then silence is the whole story: resources announced, heartbeat running. Give it 15–30 seconds before the first client, which otherwise sees the executor listed with `READY false`.
 
 ```
 $ "PREFIX/lib/debuglet/VERSION/bin/debuglet-executor" -config DIR/executor.toml
@@ -114,6 +114,8 @@ INFO	executor/executor.go:292	Starting heartbeat loop	{"interval": "15s"}
 ```
 
 ## Clients
+
+The client runs natively on Linux amd64 and on macOS in a Linux amd64 container. Windows, WSL and Linux arm64 clients are not validated in this alpha and are not supported.
 
 **Linux, natively.** `pkg/client` verifies the chain against the host's trust store; on Linux `SSL_CERT_FILE` replaces that store for one process, which needs no root and installs nothing. `login --register` writes the account key and the recovery code to owner-only files beside the connections file and prints neither; keep both, as the [CLI guide](CLI.md#credentials) describes. `--allow-remote-test` is required on every submission to an endpoint that is not a literal loopback address.
 
@@ -128,9 +130,11 @@ Hello from Debuglet!
 dbl logs: state=RunStateExited after=1 entries=1 has_more=false
 ```
 
-**macOS.** There is no native package, so a Mac runs the Linux client in a
-`linux/amd64` container that carries the authority in its own trust store. Build
-the image below, then keep the client configuration in a private host directory:
+**macOS.** There is no native package, so a Mac runs the Linux amd64 `dbl`
+client in a `linux/amd64` container that carries the authority in its own trust
+store. The image includes the daemon binaries, but this walkthrough starts only
+the client, talking to the remote dispatcher, under emulation on Apple Silicon.
+The container needs no privileged mode. Build the image below:
 
 ```dockerfile
 FROM --platform=linux/amd64 debian:bookworm-slim
@@ -141,18 +145,40 @@ RUN update-ca-certificates && sh /pkg/install.sh --archive /pkg/debuglet-VERSION
 ENV PATH=/opt/debuglet/bin:$PATH
 ```
 
+The client runs as root in the container, so mount the named volume
+`debuglet-client` at `/root/.config/debuglet` to retain the saved connection,
+`credentials.json`, account key and recovery code:
+
 ```sh
-mkdir -p "$PWD/debuglet-client" && chmod 700 "$PWD/debuglet-client"
 docker build --platform linux/amd64 -t debuglet-client .
 docker run --rm -it --platform linux/amd64 \
-  -v "$PWD/debuglet-client:/root/.config/debuglet" \
-  debuglet-client
+  -v debuglet-client:/root/.config/debuglet debuglet-client
 ```
 
-The five Linux client commands above then work without `SSL_CERT_FILE`. The
-mounted directory retains the account key, recovery code and session after the
-container exits; protect and back it up like any other credential directory.
-On Apple Silicon the image runs under emulation.
+The shell takes the five commands above unchanged and without `SSL_CERT_FILE`.
+`--rm` discards the container, not the named volume. The next invocation finds
+the saved connection and credentials, so `nodes`, `run` and `logs` work with the
+stored session. Do not repeat `login --register`: existing credential files
+cause registration to be refused before an account is created. Once the 12-hour
+session expires, use
+`dbl login --account-key-file /root/.config/debuglet/account-key-NAME.txt`.
+Here NAME is the connection name supplied to `dbl connect --name NAME`.
+
+The volume lives inside Docker's Linux file system, preserving the `0600` mode
+required for `credentials.json`. Protect and back it up like any credential
+directory. To read the account key and recovery code into a private terminal:
+
+```sh
+docker run --rm --platform linux/amd64 \
+  -v debuglet-client:/root/.config/debuglet debuglet-client \
+  cat /root/.config/debuglet/account-key-NAME.txt /root/.config/debuglet/recovery-NAME.txt
+```
+
+Before removing the volume, run `dbl logout` in the client container to revoke
+its session; otherwise the dispatcher keeps it valid until it expires.
+`docker volume rm debuglet-client` then removes the saved credentials from this
+Mac. The account remains on the dispatcher. Keep the account key or recovery
+code elsewhere if you need to regain access.
 
 **The Go SDK.** The [client example](../examples/client/main.go) takes the same three remote options: `--register NAME` creates an account and logs in for the rest of the run, `--allow-remote-test` sets `Options.AllowRemoteTEST`, and `--allow HOST[,HOST]` fills the request's address allowlist, which narrows the executor's own policy — public addresses admitted, loopback, private and reserved ranges denied — and never widens it. The account id is printed; the account key and the session token are not.
 
@@ -175,12 +201,12 @@ summary samples=3 min_ms=4.438 avg_ms=4.808 max_ms=5.196
 
 | Step | Lines |
 | --- | --- |
-| Executor connected | one `Earnings` line per 15 s heartbeat; that line is the liveness signal |
+| Executor connected | nothing per heartbeat; `dbl nodes` shows the executor with `READY true` and `LAST_SEEN` advancing, and `GET /health` counts it under `executors.eligible`. The `Earnings` line appears once per heartbeat only at debug level |
 | `dbl connect` | `GET /version 200`, `GET /connection 404` — a remote profile serves no local-test metadata and `connect` succeeds anyway |
 | `login --register`, `nodes` | `PUT /user 200`, `POST /auth/login 200`, `GET /executors 200` |
 | A submission | `intent`, `created intent`, `PUT /payment/intent 200`, `transaction_id`, `PUT /debuglet 200` |
 | `run --wait`, `logs` | one `GET /debuglet/ID/state 200` per poll, then `GET /debuglet/ID/logs?after=N&limit=100 200` |
-| Executor stopped | the heartbeats stop; after `scheduler.executor_timeout` the next `nodes` lists no rows |
+| Executor stopped | `Executor control session ended` with `executor_id`, `session_id` and a `reason`: `transport closed` when the control stream ends, `lease expired` when the `scheduler.executor_timeout` lease runs out; after either, the next `nodes` lists no rows. An executor that registers again in a new session ends its old one with `replaced` |
 
 Every API line carries the client's source address. One pair below is worth recognising, because it says nothing about the executor, which keeps running: its cause is a client that does not trust the authority. The HTTP API and the control stream share `HTTP_PORT`, so the rejected handshake reaches the control side first, and that client itself sees `tls: failed to verify certificate: x509: certificate signed by unknown authority`.
 
@@ -195,5 +221,5 @@ ERROR	rpc/bidi.go:321	failed to register executor	{"error": "rpc error: code = F
 - **An account name is a label, not an identity.** Registering the same name twice succeeds and makes two separate accounts with different ids, each with its own key and its own runs.
 - **Runs are private to the account that submitted them.** `status ID` and `logs ID` from another account answer `not_found`, the same as an ID that does not exist.
 - **The certificate is issued for the address dialled.** Reaching the same dispatcher by another name needs `tls.server_name` in the executor configuration, or a new certificate.
-- **Neither daemon creates its database schema.** Both are given one made by a local `dbl` role, and nothing upgrades one in place: another package version means another database.
+- **Neither daemon initializes or upgrades its database automatically.** This walkthrough uses databases created by local `dbl` roles. Recognized older schemas can be upgraded explicitly with the daemon stopped; see [stored state](environments.md#stored-state) for the supported TEST profile, backups and migration limits. Local role metadata remains pinned to its package version.
 - **No attribution tags without the eBPF counter.** With `packet_counter = "fallback"` each job logs that outgoing packets carry no attribution tags; nothing else changes.

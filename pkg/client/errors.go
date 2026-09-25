@@ -84,7 +84,9 @@ const (
 // accepted by the server although no valid response was observed (transport
 // or read failure after sending, malformed success, an unexpected submission
 // 2xx, or a server 5xx); it is uncertainty, not proof of acceptance. A validated
-// pre-send failure or a 4xx response is a rejection with OutcomeUnknown false.
+// pre-send failure or a 4xx response is a rejection with OutcomeUnknown false,
+// and so is a 503 that carries service_unavailable or payments_disabled at the
+// intent stage: nothing was priced or written.
 type SubmissionError struct {
 	Stage          string
 	TransactionID  string
@@ -115,4 +117,16 @@ func (e *SubmissionError) Code() string {
 		return httpErr.Code
 	}
 	return ""
+}
+
+// IsTransportError reports whether err is a transport failure of the client:
+// a request that was started could not be sent, or no complete response was
+// read, for example after a connection reset or the request deadline. The
+// server may or may not have processed such a request; the predicate does not
+// say whether it reached the server. An *HTTPError, a protocol error, a local
+// validation failure and a context that was already done before the request
+// was started are not transport failures.
+func IsTransportError(err error) bool {
+	var transportErr *transportError
+	return errors.As(err, &transportErr)
 }

@@ -19,7 +19,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"syscall"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
@@ -73,9 +72,9 @@ func guestBuffer(mod api.Module, ptr, length uint32) ([]byte, error) {
 	return make([]byte, min(length, MAX_SLICE_LENGTH)), nil
 }
 
-// attachSocket puts an admitted connection under this run's packet
-// attribution and bandwidth accounting and registers it, returning its guest
-// handle. It consumes conn: every failure path releases it.
+// attachSocket puts an admitted, already marked connection under this run's
+// bandwidth accounting and registers it, returning its guest handle. It
+// consumes conn: every failure path releases it.
 func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, socketType socket.SocketType) (handle int32, err error) {
 	ownsRaw := true
 	defer func() {
@@ -83,14 +82,6 @@ func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, 
 			env.RecordCleanupError(conn.Close())
 		}
 	}()
-	if env.Tagger != nil {
-		if sc, ok := conn.(syscall.Conn); ok {
-			if rawConn, err := sc.SyscallConn(); err == nil {
-				_ = rawConn.Control(func(fd uintptr) { env.Tagger.SetSocketMark(int(fd)) })
-			}
-		}
-	}
-
 	limit, err := env.Limiter.GetLimit(env.DebugletID, key)
 	if err != nil {
 		return -1, fmt.Errorf("failed to get limit for %s: %w", key, err)
@@ -169,8 +160,9 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 
 		// The dialer consults the same admitted destination again, in the
 		// control hook the operating system calls between creating the socket
-		// and connecting it.
-		dialer, err := hostconn.NewDialer(destination)
+		// and connecting it, and marks the socket there for this run's packet
+		// attribution.
+		dialer, err := hostconn.NewDialer(destination, env.Tagger)
 		if err != nil {
 			env.Logger.Warnw("hostConnect: failed to create dialer", "err", err)
 			panic(fmt.Errorf("connect: %w", err))
@@ -389,6 +381,13 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 				continue
 			}
 
+			// Linux copies the listener's mark to the connections it accepts;
+			// marking again does not rely on that.
+			if err := markSocket(env, conn); err != nil {
+				env.Logger.Warnw("hostAcceptTCP: failed to mark connection", "peer", peer.String(), "err", err)
+				env.RecordCleanupError(conn.Close())
+				panic(fmt.Errorf("accept_tcp: %w", err))
+			}
 			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP)
 			if err != nil {
 				env.Logger.Warnw("hostAcceptTCP: failed to admit connection", "peer", peer.String(), "err", err)

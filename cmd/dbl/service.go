@@ -143,6 +143,9 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 	if err != nil {
 		return reportFailure(ctx, name, stderr, err)
 	}
+	if subcommand == "status" && !report.Ready {
+		return exitNotReady
+	}
 	return exitOK
 }
 
@@ -275,8 +278,12 @@ func writeServiceReport(stdout io.Writer, report service.Report) error {
 	if report.Ready {
 		readiness = "ready"
 	}
-	if _, err := fmt.Fprintf(stdout, "%s %s %s: %s (%s)\n", report.Operation, report.Role, report.Name, report.State, readiness); err != nil {
-		return err
+	// A report that names no role and no state was refused before any
+	// instance was identified; the error alone describes it.
+	if report.Role != "" || report.State != "" {
+		if _, err := fmt.Fprintf(stdout, "%s %s %s: %s (%s)\n", report.Operation, report.Role, report.Name, report.State, readiness); err != nil {
+			return err
+		}
 	}
 	for _, line := range []struct{ label, value string }{
 		{"unit", report.Unit}, {"version", report.Version}, {"state directory", report.StateDir},

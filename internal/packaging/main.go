@@ -189,10 +189,13 @@ func build(ctx context.Context, dist, sha string) error {
 	ldflags := "-X github.com/netsec-ethz/debuglet/internal/buildinfo.Version=" + version + " -X github.com/netsec-ethz/debuglet/internal/buildinfo.Revision=" + sha + " -X github.com/netsec-ethz/debuglet/internal/buildinfo.GuestABI=" + artifact.GuestABI
 	for _, name := range orderedKeys(targets) {
 		targetOS, targetArch := "linux", "amd64"
+		stamp := []string{"-ldflags", ldflags}
 		if strings.HasSuffix(name, ".wasm") {
-			targetOS, targetArch = "wasip1", "wasm"
+			// Guest samples carry no candidate identity, so their bytes depend only on the guest source and toolchain.
+			targetOS, targetArch, stamp = "wasip1", "wasm", []string{"-buildvcs=false"}
 		}
-		c := exec.CommandContext(ctx, goCommand, "build", "-mod=readonly", "-trimpath", "-ldflags", ldflags, "-o", filepath.Join(dist, name), targets[name])
+		args := append([]string{"build", "-mod=readonly", "-trimpath"}, stamp...)
+		c := exec.CommandContext(ctx, goCommand, append(args, "-o", filepath.Join(dist, name), targets[name])...)
 		c.WaitDelay = 2 * time.Second
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr

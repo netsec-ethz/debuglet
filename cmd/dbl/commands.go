@@ -16,6 +16,7 @@ const (
 	exitFailure        = 1   // transport, API, protocol or local I/O failure
 	exitUsage          = 2   // usage or validation error
 	exitWorkloadFailed = 3   // run --wait observed a terminal workload failure
+	exitNotReady       = 4   // service status observed a role that is not ready
 	exitDeadline       = 124 // client deadline exceeded
 	exitInterrupted    = 130 // user interruption
 )

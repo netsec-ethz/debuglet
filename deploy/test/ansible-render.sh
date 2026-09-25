@@ -660,7 +660,7 @@ rm -f "$host/var/lib/debuglet/executor-dev/executor.db"
 if run "$work/legacy.log" deploy-executors.yml --limit executors \
 	-e @vars/dev.yml -e "executor_id=$fixture_dev_executor"; then
 	check 'legacy state blocks a fresh seed until schema compatibility is established' fail
-elif grep -q 'This alpha does not upgrade old database schemas' "$work/legacy.log" &&
+elif grep -q 'The deployment does not upgrade a database' "$work/legacy.log" &&
 	[ ! -f "$host/var/lib/debuglet/executor-dev/executor.db" ]; then
 	check 'legacy state blocks a fresh seed until schema compatibility is established' pass
 else
@@ -676,7 +676,7 @@ printf 'legacy dispatcher accounts and runs\n' >"$host/etc/debuglet/dispatcher/d
 rm -f "$host/var/lib/debuglet/dispatcher/dispatcher.db"
 if run "$work/legacy-dispatcher.log" deploy-dispatcher.yml --limit dispatcher; then
 	check 'legacy dispatcher state blocks a fresh seed' fail
-elif grep -q 'This alpha does not upgrade old database schemas' "$work/legacy-dispatcher.log" &&
+elif grep -q 'The deployment does not upgrade a database' "$work/legacy-dispatcher.log" &&
 	[ ! -f "$host/var/lib/debuglet/dispatcher/dispatcher.db" ]; then
 	check 'legacy dispatcher state blocks a fresh seed' pass
 else

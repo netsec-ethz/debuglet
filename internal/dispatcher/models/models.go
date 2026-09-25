@@ -45,6 +45,10 @@ const (
 	RunStateUploading
 	RunStateUploaded
 	RunStateExited
+	// RunStateUnreconciled marks a run of a failed submission whose executor
+	// refused its cancellation. The run may still execute; a later state or
+	// exit report from the executor supersedes it.
+	RunStateUnreconciled
 )
 
 func GrpcToRunState(r pb.RunState) (DebugletRunState, bool) {
@@ -68,12 +72,14 @@ func (d DebugletRunState) SemanticRank() DebugletRunState {
 		return 1
 	case RunStateUploaded:
 		return 2
-	case RunStateInitializing:
+	case RunStateUnreconciled:
 		return 3
-	case RunStateStarted:
+	case RunStateInitializing:
 		return 4
-	case RunStateExited:
+	case RunStateStarted:
 		return 5
+	case RunStateExited:
+		return 6
 	default:
 		return -1
 	}
@@ -93,6 +99,8 @@ func (d DebugletRunState) String() string {
 		return "RunStateUploaded"
 	case RunStateExited:
 		return "RunStateExited"
+	case RunStateUnreconciled:
+		return "RunStateUnreconciled"
 	default:
 		panic("invalid DebugletRunState")
 	}

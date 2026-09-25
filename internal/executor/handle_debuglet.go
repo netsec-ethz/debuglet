@@ -71,7 +71,7 @@ func (e *Executor) debugletHandler(op *debugletOperation, spec scheduler.Spec) (
 	if err != nil {
 		return pump, fmt.Errorf("failed to open stream for debuglet output: %w", err)
 	}
-	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, fmt.Errorf("timeout of %s exceeded", spec.Policy.Timeout))
+	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, policyTimeout{budget: spec.Policy.Timeout})
 	defer cancel()
 	// Forward the execution deadline into the same resource closer. Stop joins
 	// this forwarding callback when natural completion wins the race.

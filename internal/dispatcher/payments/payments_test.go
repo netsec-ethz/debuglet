@@ -38,7 +38,7 @@ const waitBound = 2 * time.Second
 // GetDebugletOrder statement.
 var (
 	transactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
-	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address"}
+	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	earningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 
 	createTransactionQuery = regexp.QuoteMeta(
@@ -51,13 +51,13 @@ var (
 		"UPDATE transactions\nSET status = ?\nWHERE id = ?",
 	)
 	getDebugletOrderQuery = regexp.QuoteMeta(
-		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order\nWHERE transaction_id = ? AND order_id = ?",
+		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order\nWHERE transaction_id = ? AND order_id = ?",
 	)
 	getTransactionOrdersQuery = regexp.QuoteMeta(
-		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order\nWHERE transaction_id = ?",
+		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order\nWHERE transaction_id = ?",
 	) + `\s*$`
 	updateDebugletOrderStateQuery = regexp.QuoteMeta(
-		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address",
+		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
 	)
 	getEarningsInQuery = regexp.QuoteMeta(
 		"SELECT executor_id, currency, total_income, current_balance, sui_wallet_address FROM earnings\nWHERE executor_id = ? AND currency = ?",
@@ -328,7 +328,7 @@ func transactionRow(method string, status models.TransactionState) *sqlmock.Rows
 
 func orderRow(currency string, state models.TransactionState) *sqlmock.Rows {
 	return sqlmock.NewRows(orderColumns).AddRow(
-		testTxID, testOrderID, testExecutor, testPrice, currency, int64(state), testRefund,
+		testTxID, testOrderID, testExecutor, testPrice, currency, int64(state), testRefund, nil,
 	)
 }
 
@@ -347,7 +347,7 @@ func expectTransactionRead(mock sqlmock.Sqlmock, method string, status models.Tr
 func expectTransactionOrdersRead(mock sqlmock.Sqlmock, currency string, n int) {
 	rows := sqlmock.NewRows(orderColumns)
 	for i := 1; i <= n; i++ {
-		rows.AddRow(testTxID, int64(i), testExecutor, testPrice, currency, int64(models.Paid), testRefund)
+		rows.AddRow(testTxID, int64(i), testExecutor, testPrice, currency, int64(models.Paid), testRefund, nil)
 	}
 	mock.ExpectQuery(getTransactionOrdersQuery).WithArgs(testTxID).WillReturnRows(rows)
 }
@@ -616,12 +616,12 @@ func TestEnabledCreatePaymentIntentForwardsToBackend(t *testing.T) {
 
 func expectDummyIntentInsert(mock sqlmock.Sqlmock) {
 	// CreateDummyIntent stores Method "TEST", Status Paid, an empty auth key,
-	// the request hash and a five-minute expiry. Price/currency are passed
-	// through as the zero values the current implementation supplies.
+	// the locked price in the TEST currency, the request hash and a
+	// five-minute expiry.
 	mock.ExpectQuery(createTransactionQuery).
-		WithArgs(testTxID, "", sqlmock.AnyArg(), sqlmock.AnyArg(), "TEST", expiresWithin{5 * time.Minute, 30 * time.Second}, int64(models.Paid), testHash).
+		WithArgs(testTxID, "", testPrice, "TEST", "TEST", expiresWithin{5 * time.Minute, 30 * time.Second}, int64(models.Paid), testHash).
 		WillReturnRows(sqlmock.NewRows(transactionColumns).AddRow(
-			testTxID, "", int64(0), "TEST", time.Now().Add(5*time.Minute), testHash, "", int64(models.Paid),
+			testTxID, "", testPrice, "TEST", time.Now().Add(5*time.Minute), testHash, "TEST", int64(models.Paid),
 		))
 }
 
@@ -775,7 +775,7 @@ func TestDisabledTESTPaths(t *testing.T) {
 		h, rec := newDisabledHandler(t, db, true, true)
 
 		mock.ExpectBegin()
-		expectOrderRead(mock, "TEST", models.Paid)
+		expectOrderRead(mock, "TEST", models.Outstanding)
 		mock.ExpectQuery(updateDebugletOrderStateQuery).
 			WithArgs(int64(models.Credited), testTxID, testOrderID).
 			WillReturnRows(orderRow("TEST", models.Credited))
@@ -1253,5 +1253,132 @@ func TestRefundTransactionSpendsTheTransactionItself(t *testing.T) {
 	// Refunding it again finds nothing to refund: it is not Paid any more.
 	if err := h.RefundTransaction(id, ctx); err == nil {
 		t.Fatal("a refunded transaction was refunded a second time")
+	}
+}
+
+// seedTESTOrder stores a TEST transaction with one order in the given state,
+// as the wallet-free flow leaves it before completion.
+func seedTESTOrder(t *testing.T, db *sql.DB, state models.TransactionState) {
+	t.Helper()
+	ctx := t.Context()
+	queries := database.New(db)
+	if _, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{
+		ID: testTxID, Price: testPrice, Currency: "TEST", Method: "TEST",
+		ExpiresAt: models.NewUTCTime(time.Now().Add(time.Hour)), Status: int64(models.Paid), Hash: testHash,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
+		TransactionID: testTxID, OrderID: testOrderID, ExecutorID: testExecutor, Price: testPrice,
+		Currency: "TEST", RefundAddress: testRefund, State: int64(state),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func orderState(t *testing.T, db *sql.DB) models.TransactionState {
+	t.Helper()
+	order, err := database.New(db).GetDebugletOrder(t.Context(), database.GetDebugletOrderParams{
+		TransactionID: testTxID, OrderID: testOrderID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return models.TransactionState(order.State)
+}
+
+// totalIncome is the executor's recorded TEST income; a missing row counts as 0.
+func totalIncome(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	earning, err := database.New(db).GetEarningsIn(t.Context(), database.GetEarningsInParams{
+		ExecutorID: testExecutor, Currency: "TEST",
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return earning.TotalIncome
+}
+
+// Completing the same order twice credits the executor once: the second call
+// finds the order already Credited and writes nothing.
+func TestSetDebugletOrderCompleteCreditsOnce(t *testing.T) {
+	db := newRefundDatabase(t)
+	h, rec := newDisabledHandler(t, db, true, true)
+	seedTESTOrder(t, db, models.Outstanding)
+
+	for i := range 2 {
+		if err := h.SetDebugletOrderComplete(testDebuglet(), t.Context()); err != nil {
+			t.Fatalf("completion %d: %v", i+1, err)
+		}
+	}
+	if got := orderState(t, db); got != models.Credited {
+		t.Fatalf("order state %v, want %v", got, models.Credited)
+	}
+	if got := totalIncome(t, db); got != testPrice {
+		t.Fatalf("total income %d after two completions, want the order price %d once", got, testPrice)
+	}
+	if calls := rec.chain.Calls(); len(calls) != 0 {
+		t.Fatalf("TEST completion reached the chain backend: %v", calls)
+	}
+}
+
+// A failed earnings write leaves the order Outstanding and reports the error:
+// the credit and the earnings commit together or not at all.
+func TestSetDebugletOrderCompleteRollsBackFailedEarnings(t *testing.T) {
+	db := newRefundDatabase(t)
+	h, _ := newDisabledHandler(t, db, true, true)
+	seedTESTOrder(t, db, models.Outstanding)
+	if _, err := db.ExecContext(t.Context(), `CREATE TRIGGER refuse_earnings BEFORE UPDATE ON earnings
+BEGIN SELECT RAISE(ABORT, 'earnings update refused'); END;`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := h.SetDebugletOrderComplete(testDebuglet(), t.Context())
+	if err == nil || !strings.Contains(err.Error(), "earnings update refused") {
+		t.Fatalf("SetDebugletOrderComplete = %v, want the refused earnings write", err)
+	}
+	if got := orderState(t, db); got != models.Outstanding {
+		t.Fatalf("order state %v after a failed earnings write, want %v", got, models.Outstanding)
+	}
+	if got := totalIncome(t, db); got != 0 {
+		t.Fatalf("total income %d after a failed earnings write", got)
+	}
+}
+
+// A refunded order is never credited.
+func TestSetDebugletOrderCompleteLeavesRefundedOrder(t *testing.T) {
+	db := newRefundDatabase(t)
+	h, _ := newDisabledHandler(t, db, true, true)
+	seedTESTOrder(t, db, models.Refunded)
+
+	if err := h.SetDebugletOrderComplete(testDebuglet(), t.Context()); err != nil {
+		t.Fatalf("SetDebugletOrderComplete(refunded): %v", err)
+	}
+	if got := orderState(t, db); got != models.Refunded {
+		t.Fatalf("order state %v, want %v", got, models.Refunded)
+	}
+	if got := totalIncome(t, db); got != 0 {
+		t.Fatalf("a refunded order earned %d", got)
+	}
+}
+
+// A TEST intent records what was locked: its price and the TEST currency.
+func TestCreatePaymentIntentTESTStoresPriceAndCurrency(t *testing.T) {
+	db := newRefundDatabase(t)
+	h, _ := newDisabledHandler(t, db, true, true)
+
+	if _, err := h.CreatePaymentIntent(testTxID, testPrice, "TEST", testHash, t.Context()); err != nil {
+		t.Fatalf("CreatePaymentIntent(TEST): %v", err)
+	}
+	stored, err := database.New(db).GetTransactionByID(t.Context(), testTxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Price != testPrice || stored.Currency != "TEST" || stored.Method != "TEST" {
+		t.Fatalf("stored TEST transaction price=%d currency=%q method=%q, want %d %q %q",
+			stored.Price, stored.Currency, stored.Method, testPrice, "TEST", "TEST")
 	}
 }

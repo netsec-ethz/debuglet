@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf/link"
+	"go.uber.org/zap"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
@@ -34,7 +35,7 @@ func TestBPFLinuxLoad(t *testing.T) {
 		t.Fatalf("InterfaceByName failed: %v", err)
 	}
 
-	bt, err := NewBPFTagger(iface, ks, []byte("test-measurement"))
+	bt, err := NewBPFTagger(zap.NewNop(), iface, ks, []byte("test-measurement"))
 	if err != nil {
 		if strings.Contains(err.Error(), "operation not permitted") {
 			t.Skipf("skipping test: insufficient privileges for eBPF: %v", err)

@@ -11,7 +11,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
-	"math"
 	"math/big"
 	"net/http"
 
@@ -27,15 +26,21 @@ const paymentsDisabledMessage = "blockchain payments are disabled"
 // the total price. The payment-mode preflight runs first so that a disabled
 // chain method never reaches the executor lookup or any order write, even when
 // this function is called directly rather than via PutPaymentIntent.
+// The whole batch is validated and priced before the first order row is
+// written, so validation or pricing refusals leave no rows behind.
 // Every failure it reports is already a documented API error, so a caller can
 // return it unchanged.
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, refundAddress string, ctx context.Context) (int64, error) {
 	if err := h.dispatcher.Payment.CheckPaymentMethod(request.PaymentMethod); err != nil {
 		return 0, paymentMethodError(request.PaymentMethod, err)
 	}
-	queries := database.New(h.db)
-	price := new(big.Int).SetInt64(0)
-	for _, req := range request.Debuglets {
+	if len(request.Debuglets) == 0 {
+		return 0, apiError(http.StatusBadRequest, CodeInvalidRequest, "no debuglets provided")
+	}
+	price := new(big.Int)
+	prices := make([]int64, len(request.Debuglets))
+	seen := make(map[int64]struct{}, len(request.Debuglets))
+	for i, req := range request.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
 		if !exists {
 			return 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
@@ -44,17 +49,41 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 		if err := validatePolicy(req.OrderID, req.Policy); err != nil {
 			return 0, err
 		}
+		if _, repeated := seen[req.OrderID]; repeated {
+			return 0, policyError(req.OrderID, "order_id is repeated in the batch")
+		}
+		seen[req.OrderID] = struct{}{}
 
-		ppb := new(big.Int).SetInt64(executor.PricePerBwS)
-		floorBW := new(big.Int).SetInt64(req.Policy.FloorBW)
-		timeout := new(big.Int).SetInt64(req.Policy.TimeoutMS / 1000)
-		debugletPrice := new(big.Int).Mul(new(big.Int).Mul(ppb, floorBW), timeout)
+		// The price is price_per_bw_s × floor_bw × timeout_ms / 1000, exact
+		// and rounded up to the next whole unit, so that a run shorter than a
+		// second is not free.
+		debugletPrice := new(big.Int).SetInt64(executor.PricePerBwS)
+		debugletPrice.Mul(debugletPrice, big.NewInt(req.Policy.FloorBW))
+		debugletPrice.Mul(debugletPrice, big.NewInt(req.Policy.TimeoutMS))
+		var rem big.Int
+		debugletPrice.QuoRem(debugletPrice, big.NewInt(1000), &rem)
+		if rem.Sign() > 0 {
+			debugletPrice.Add(debugletPrice, big.NewInt(1))
+		}
+		if !debugletPrice.IsInt64() {
+			return 0, policyError(req.OrderID, "the price of the order overflows")
+		}
+		prices[i] = debugletPrice.Int64()
+		price.Add(price, debugletPrice)
+		if !price.IsInt64() {
+			return 0, apiError(http.StatusBadRequest, CodeInvalidPolicy,
+				"invalid policy: the total price of the batch overflows")
+		}
+	}
+	//TODO? Add margin on price
+	queries := database.New(h.db)
+	for i, req := range request.Debuglets {
 		h.logger.Debug("Create order", zap.String("txid", transactionId), zap.Int64("orderID", req.OrderID))
 		_, err := queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
 			TransactionID: transactionId,
 			OrderID:       req.OrderID,
 			ExecutorID:    req.ExecutorID,
-			Price:         debugletPrice.Int64(),
+			Price:         prices[i],
 			Currency:      request.PaymentMethod,
 			RefundAddress: refundAddress,
 			State:         int64(models.Outstanding),
@@ -62,13 +91,6 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 		if err != nil {
 			return 0, apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the order", err)
 		}
-
-		price.Add(price, debugletPrice)
-	}
-	//TODO? Add margin on price
-	if price.Cmp(new(big.Int).SetInt64(math.MaxInt64)) == 1 {
-		return 0, apiError(http.StatusBadRequest, CodeInvalidPolicy,
-			"invalid policy: the total price of the batch overflows")
 	}
 	return price.Int64(), nil
 }

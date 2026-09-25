@@ -63,7 +63,7 @@ func TestDebugletConstructorFallbackCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 			d := newWithBPFTagger(zap.NewNop(), id, "transaction", scheduler.Policy{}, operator, schedule, nil, nil, iface, nil,
-				func(gotIface *net.Interface, gotSchedule *tesla.KeySchedule, measurement []byte) (*ebpf.BPFTagger, error) {
+				func(_ *zap.Logger, gotIface *net.Interface, gotSchedule *tesla.KeySchedule, measurement []byte) (*ebpf.BPFTagger, error) {
 					constructors.Add(1)
 					if gotIface != iface || gotSchedule != schedule || string(measurement) != id.String() {
 						t.Error("BPF constructor inputs changed")

@@ -95,7 +95,8 @@ production instance, and a unit's runtime directory is the real `/run` whatever
 a staged unit says. A staged tree therefore drives no service manager at all,
 and `start`, `stop`, `uninstall`, `drain` and `--start`/`--enable` are refused
 together with `--root` rather than pointed at the production instance of that
-name.
+name. A staged instance is always reported `stopped`, so `service status --root`
+exits 4.
 
 The unit, the paths, the permissions and the shutdown budget are documented in
 [environments](environments.md#managed-services) and mirrored in
@@ -106,7 +107,11 @@ nothing and report nothing changed. A running daemon is never restarted as a
 side effect; when a reinstall changes the unit or the configuration, the report
 says a restart is required and leaves the decision to the operator. Installing a
 different package version over an existing state directory is refused, because
-this build never upgrades a database in place. A service is reported ready only
+local services do not migrate version-pinned role or service metadata. The
+[explicit database upgrade](environments.md#stored-state) changes SQLite schemas
+only; it does not make a local or managed state directory reusable by a different
+package version.
+A service is reported ready only
 after its daemon published its own readiness record and that record names the
 unit's main process; `started` alone is process creation and never counts as
 ready. `uninstall` stops and removes the unit and keeps every byte of state;
@@ -168,23 +173,25 @@ dbl --dispatcher local logout
   it does not appear in this machine's process list. With neither, a dispatcher
   serving the local development profile issues a credential for its own local
   account, which is how the wallet-free local flow gets one without a browser.
-- `login --register NAME` first creates an account on the selected dispatcher. Its
-  two credentials are written, **never printed**, to owner-only files that must not
-  exist yet: the account key to `--account-key-file FILE` (default
+- `login --register NAME` reserves both credential files before creating an
+  account on the selected dispatcher. Its credentials are written, **never
+  printed**, to owner-only files that must not exist yet: the account key to `--account-key-file FILE` (default
   `account-key-PROFILE.txt` beside the connections file) and the recovery code to
   `--recovery-file FILE` (default `recovery-PROFILE.txt`). Keep both; the dispatcher
   cannot show either again. The account key logs in later, the recovery code
   replaces both if it is lost, and both belong in a password manager.
-- `logout` revokes the session at the dispatcher and forgets it locally. It forgets
-  the local copy even when the dispatcher could not be reached, so a session that
-  cannot be revoked remotely does not stay on this machine.
+- `logout` attempts to revoke the session at its dispatcher and forgets it
+  locally even if that request fails. If the saved profile now names a different
+  endpoint, it removes the old credential locally without sending it to the new
+  endpoint; the old session remains valid until revoked or expired.
 
 No credential is ever printed. `login`, `logout`, `run`, `status`, `logs`, `cancel`,
 `dispatcher list` and every exported receipt carry endpoints and identifiers only.
 A stored credential is presented only to the endpoint it was issued for: selecting
 another profile sends that profile's credential or none, and changing a saved
 profile's endpoint makes `dbl` refuse the stored credential instead of forwarding it
-to the new origin.
+to the new origin. `login` can replace that mismatched credential with a session
+from the new endpoint, and `logout` can discard it locally.
 
 A credential belongs to a saved connection and to nothing else. An explicit
 `--endpoint URL` selects no saved connection, so it presents no credential and reads
@@ -206,7 +213,7 @@ and prints the dispatcher's `unauthorized` diagnostic.
 
 - `demo` uses the verified installed Linux amd64 payload to start its own wallet-free loopback dispatcher/executor, execute the bundled WASM/TCP measurement, verify the nonce/output/terminal result and clean up. See the [installation guide](../README-install.md). A CLI installed alone through `go install` has no bundled daemon/guest assets and cannot run this command.
 - `up` starts an installed local dispatcher and executor and stays in the foreground until Ctrl-C or SIGTERM. It creates configuration and SQLite databases automatically, disables wallet/SCION integration, and listens only on loopback. Default HTTP port is 9000. State defaults to `$XDG_STATE_HOME/debuglet` or `$HOME/.local/state/debuglet`; `--state-dir` selects another directory. Completed results and stored output survive stopping and restarting with the same package. A different package version requires a new state directory. Duplicate use of an active state directory is rejected. JSON mode emits one ready record with `state`, `endpoint`, `executor_id`, and `state_dir`; the same record is written to `environment.json` while running. Ctrl-C stops both child processes and retains the databases. This command does not install a background service or resume interrupted work.
-- `service` installs, starts, stops, inspects and removes one managed role instance, as described above. Its JSON report has `operation`, `role`, `name`, `unit`, `version`, `state` (`installed`, `ready`, `started`, `stopped`, `uninstalled`, `not-installed` or `incomplete`), `ready`, `enabled`, `active`, `main_pid`, `state_dir`, `unit_path`, `changed`, and, where they apply, `joined`, `executor_id`, `endpoint`, `restart_required` and `note`. After a stop or an uninstall, `joined` reports a daemon that completed its own shutdown, which is the only thing that permits deleting its state. The report is printed even when the operation failed, because the host's state has to be readable either way.
+- `service` installs, starts, stops, inspects and removes one managed role instance, as described above. Its JSON report has `operation`, `role`, `name`, `unit`, `version`, `state` (`installed`, `ready`, `started`, `stopped`, `uninstalled`, `not-installed` or `incomplete`), `ready`, `enabled`, `active`, `main_pid`, `state_dir`, `unit_path`, `changed`, and, where they apply, `joined`, `executor_id`, `endpoint`, `restart_required` and `note`. After a stop or an uninstall, `joined` reports a daemon that completed its own shutdown, which is the only thing that permits deleting its state. The report is printed even when the operation failed, because the host's state has to be readable either way. `service status` exits 0 only when the role is ready and 4 when it completed its report of a role that is not ready (`started` without a readiness record, or `stopped`); an instance that is not installed is a failure (1).
 - `drain` takes one managed role out of service and `--resume` puts it back, as described above. Its JSON report has `operation`, `role`, `name`, `unit`, `outcome` (`drained`, `paused`, `resumed`, `started` or `incomplete`), `joined`, `enabled`, `active`, `state_dir`, `changed`, `note` and, after a joined executor drain, a `disposition` object counting `retained`, `queued`, `started`, `quarantined`, `bindings`, `retained_terminal`, `unsent_terminal` and `rejected_terminal`, plus `truncated` when the retained rows come from more control sessions than were counted, which makes `bindings` alone a lower bound. Only `joined` may be used to decide that state can be deleted, upgraded or rebuilt.
 - `nodes` lists executors. JSON is always an array.
 - `validate` checks a workload without contacting a dispatcher. It reads the same bundled `hello` sample or regular WASM file accepted by `run`, bounds the read at 24 MiB, parses the module with the executor's WASM parser, and applies the SDK `Prepare` resource and envelope rules. Allowlist entries must be bare, unscoped IP addresses or syntactically valid DNS names; absolute DNS names with one trailing dot are accepted. Ports belong in guest arguments. Validation checks syntax only and performs no DNS lookup. A successful result reports the resolved local inputs and sizes, but does not claim that the module will execute, uses a particular ABI, or is supported by a selected executor. Invalid human output names the field on stderr. JSON output emits one object with `valid` and a `diagnostics` array containing stable `field` and `message` values. Validation creates no intent and sends no request.
@@ -214,7 +221,7 @@ and prints the dispatcher's `unauthorized` diagnostic.
 - `run --wait` polls the state every 250 ms until `RunStateExited`. An empty error is success (exit 0); a nonempty error is a workload failure (exit 3). Unknown states keep polling. A deadline or Ctrl-C ends the local requests, preserves the known IDs and never sends a cancellation.
 - `status ID` prints the reported state; exit 0 also when the state describes a failed job.
 - `logs ID` prints one page. Human output writes the exact decoded guest bytes to stdout and cursor/state information to stderr. `--follow` drains pages while more are reported, polls while the job is not terminal, and stops after an observed terminal page has been drained; it covers output visible at that time, not delivery. Cursors must strictly advance; corrupt output or a non-advancing cursor is an explicit failure. JSON follow emits one page per line.
-- `cancel ID` retrieves the job's executor and sends the cancellation. Success means the dispatcher acknowledged it; this does not certify remote termination or durable terminal reporting. The current server also acknowledges cancellation of a job that has already finished and never rewrites a recorded terminal result, so `status` afterwards shows the server-reported error (`cancelled via API`, or the earlier exit error) unchanged; `dbl` prints only the acknowledgement and never claims the job stopped. Not-found, refused and other server-reported cancellation errors are failures with exit code 1.
+- `cancel ID` retrieves the job's executor and sends the cancellation. Success means the dispatcher acknowledged it and recorded it as the job's result, or that the job already had one; this does not certify remote termination. While the job's control session is live, the current server also acknowledges cancellation of a job that has already finished, as long as the job's executor still acknowledges it; once the executor no longer holds the job, the cancellation is refused. A cancellation of a job whose control session has ended, because the dispatcher restarted or the executor connected again in a new session, is recorded by the dispatcher without contacting an executor, and the recorded error says that the control session had ended and the executor's outcome was not observed. The server never rewrites a recorded terminal result, so `status` afterwards shows the server-reported error (`cancelled via API`, `cancelled via API; the control session had ended and the executor's outcome was not observed`, or the earlier exit error) unchanged; `dbl` prints only the acknowledgement and never claims the job stopped. A failed status lookup is reported as `dbl cancel: status lookup: ...` with that failure's own exit code and names no cancellation outcome. Once the executor is known, sending the cancellation ends in one of three outcomes. An acknowledgement prints `Cancellation acknowledged` and exits 0. A refusal by the server (an HTTP 4xx such as not found or `cancel_refused`, or any other unexpected response below 500) is reported as `cancellation rejected` with exit code 1. A server failure (HTTP 5xx), a transport failure (the request could not be sent, or no response was read, for example after a connection reset) or the command's deadline after the request was sent is reported as `cancellation not confirmed`: `dbl` cannot tell whether the request reached the dispatcher, which may have received the cancellation and recorded it, so check `status` and repeat `cancel`. It exits 1, or 124 when the command's deadline expired, in which case the message also says `command timed out` (130 and `interrupted` after Ctrl-C). A server error saying the cancellation was acknowledged but its result was not recorded means the dispatcher could not record that result, or could not confirm that it did: the executor may be stopping the job even if `status` does not show the cancellation, so check `status` and repeat `cancel` to record it.
 - `login` and `logout` manage the credential of the selected saved connection, as described above. They accept no positional arguments. JSON mode emits `{"dispatcher","endpoint","account","role","expires_at"}` for `login` and `{"dispatcher","endpoint","logged_out"}` for `logout`; neither document carries a credential.
 - `version` prints the local build metadata (`module`, `version`, `revision`, `modified`); `--server` adds a `server` object with the dispatcher's separate identities: its configured `version`, the HTTP contract it serves (`api_version`, `api_versions`), the build it came from (`binary_version`, `binary_revision`) and the executor control protocol it speaks (`protocol_version`). A dispatcher written before the contract was versioned fills in `version` only. See the [HTTP API guide](API.md).
 
@@ -242,6 +249,7 @@ a saved profile without a stored credential reaches only the public routes.
 | 1 | Transport, API, protocol or local I/O failure |
 | 2 | Usage or validation error |
 | 3 | `run --wait` observed a terminal workload failure |
+| 4 | `service status` observed a role that is not ready |
 | 124 | The client deadline expired |
 | 130 | Interrupted by the user |
 

@@ -29,6 +29,7 @@ package dispatcher
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -57,6 +58,7 @@ type Dispatcher struct {
 	db          *sql.DB
 
 	closed             bool
+	restored           bool // set under mu once a RestoreScheduler call has succeeded
 	closeOnce          sync.Once
 	registrations      map[*registrationOperation]struct{}
 	registrationWG     sync.WaitGroup
@@ -118,7 +120,29 @@ func (d *Dispatcher) ControlIncarnation() string { return d.incarnation }
 // with the incarnation by any such replacement.
 func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming.Duration }
 
+// RestoreScheduler reserves again, when the dispatcher starts, the floors of
+// the stored runs whose window has not ended, or ended less than a minute ago,
+// so that admission counts them as the previous dispatcher did. A run whose
+// stored state is exited released its floor when it finished and reserves
+// nothing; every other run, pending or of uncertain outcome, keeps its
+// reservation until its window ends.
+//
+// A restored run bound to a previous dispatcher lifetime is logged as a
+// warning with its ID: its control session ended with that lifetime, so it
+// will not execute, and its reservation lasts until the run is cancelled or its
+// window ends. A run without a complete stored binding cannot be cancelled;
+// its reservation lasts until its window ends.
+//
+// Reservations are restored once per dispatcher lifetime: after a restore has
+// succeeded, a further call reserves nothing and returns an error, so no run is
+// counted twice. A call that fails has reserved nothing and may be repeated.
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
+	// mu is held from the check to the mark, so two calls cannot both restore.
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.restored {
+		return errors.New("debuglet schedule was already restored in this dispatcher lifetime")
+	}
 	queries := database.New(d.db)
 	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(time.Now().Add(-1*time.Minute)))
 	if err != nil {
@@ -126,7 +150,18 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	}
 	d.logger.Info("Restoring debuglet schedule from database", zap.Int("count", len(debuglets)))
 	for _, deb := range debuglets {
+		if deb.State == models.RunStateExited {
+			d.logger.Debug("Skipping finished debuglet", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))
+			continue
+		}
 		d.logger.Info("Restoring debuglet schedule", zap.String("executor", deb.ExecutorID), zap.Strings("addresses", deb.Addresses), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time), zap.Int64("usage", deb.Usage))
+		if deb.DispatcherIncarnation == "" || deb.SessionID == "" {
+			d.logger.Warn("Restored debuglet has no complete control binding; cancellation is unavailable and its reservation lasts until its window ends",
+				zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time))
+		} else if deb.DispatcherIncarnation != d.incarnation {
+			d.logger.Warn("Restored debuglet belongs to a previous dispatcher lifetime; its control session has ended and it will not execute; cancelling it releases its reservation",
+				zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time))
+		}
 		d.scheduler.Submit(schedule.Request{
 			Executor:    deb.ExecutorID,
 			From:        deb.StartTime.Time,
@@ -135,6 +170,7 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 			Use:         resource.Bitrate(deb.Usage),
 		})
 	}
+	d.restored = true
 	return nil
 }
 
@@ -168,9 +204,21 @@ func (d *Dispatcher) Close() {
 func (d *Dispatcher) GetVersion() string         { return d.version }
 func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
 
-func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.destinations.SetLimit(destination, limit)
-	// TODO: Notify executors of the new limit if needed
+// SetDestinationLimit records the limit of destination and sends the share it
+// recomputes to every executor holding an allocation there, waiting up to
+// five seconds, on a context of its own, for those deliveries. A limit below
+// the floors already charged there is refused with resource.ErrCapacityFull
+// before anything is recorded or sent. Otherwise the limit governs admission
+// at once and stays recorded whether or not every executor acknowledged; the
+// error joins the failed deliveries.
+func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	work, err := d.captureFairshareAfter(ctx, nil, []string{destination}, func() error {
+		return d.destinations.SetLimit(destination, limit)
+	})
+	if err != nil {
+		return err
+	}
+	return work.send(ctx)
 }

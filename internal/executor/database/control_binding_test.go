@@ -65,7 +65,7 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := provider.GetDBVersion(ctx); err != nil || version != 4 {
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != 5 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)

@@ -95,7 +95,7 @@ CARGO       ?= cargo
 JAVY        ?= javy
 RUST_TARGET ?= wasm32-wasip1
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config bootstrap-sudo generate-sql
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config deploy-upgrade-db bootstrap-sudo generate-sql
 
 all: deps build
 
@@ -347,6 +347,16 @@ DEPLOY_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 deploy-update-config: require-deploy-env
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml \
 		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
+
+# Back up and upgrade the deployed databases with the installed release's
+# migrations, stopping each service meanwhile (or pass LIMIT=hostname).
+# Deploys never do this. It pins the selected environment's SSH host
+# identities as deploy/debuglet-deploy does. Example: make deploy-upgrade-db DEPLOY_ENV=dev
+KNOWN_HOSTS = $(if $(filter dev,$(DEPLOY_ENV)),known_hosts.dev,known_hosts)
+deploy-upgrade-db: require-deploy-env
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) \
+		-e "known_hosts_file={{ playbook_dir }}/$(KNOWN_HOSTS)" upgrade-database.yml \
+		$(if $(LIMIT),--limit $(LIMIT),)
 
 # --------------------------------------------------------------------
 # Clean local build artifacts

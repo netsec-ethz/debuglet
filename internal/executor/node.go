@@ -12,6 +12,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
+	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
@@ -44,16 +45,18 @@ type Node struct {
 	closeErr    error
 }
 
-func NewNode(cfg *config.ExecutorConfig, logger *zap.Logger) (*Node, error) {
-	return newNode(cfg, logger, ratelimit.New)
+// NewNode records the TESLA chain this start uses in db before it acquires the
+// packet counter, so every chain the executor started is on record.
+func NewNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB) (*Node, error) {
+	return newNode(cfg, logger, db, ratelimit.New)
 }
 
 // newNode takes the packet-counter factory per construction, so the release
 // boundaries can be exercised without a global replacement and without
 // pretending an unprivileged process loaded BPF.
-func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, counter func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error)) (*Node, error) {
-	if cfg == nil || logger == nil {
-		return nil, sessionEnd(controlsession.LocalFailure, errors.New("executor configuration and logger are required"))
+func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error)) (*Node, error) {
+	if cfg == nil || logger == nil || db == nil {
+		return nil, sessionEnd(controlsession.LocalFailure, errors.New("executor configuration, logger and database are required"))
 	}
 	// Check the network configuration with the validator that owns it, before
 	// this construction acquires any host resource.
@@ -81,9 +84,9 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, counter func(*net.I
 			return nil, sessionEnd(controlsession.LocalFailure, fmt.Errorf("load client credentials: %w", err))
 		}
 	}
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte(cfg.Tesla.Seed), Delay: time.Duration(cfg.Tesla.Delay) * time.Second, ChainLength: cfg.Tesla.ChainLength})
+	schedule, err := startChain(context.Background(), db, cfg.Tesla)
 	if err != nil {
-		return nil, sessionEnd(controlsession.LocalFailure, fmt.Errorf("create TESLA schedule: %w", err))
+		return nil, sessionEnd(controlsession.LocalFailure, err)
 	}
 	pc, err := counter(iface, logger)
 	if err != nil {
@@ -99,6 +102,36 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, counter func(*net.I
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()))
 	return n, nil
+}
+
+// startChain builds the TESLA chain of this start and records it before any of
+// its keys is used. A configured seed derives a new tail for every generation;
+// without one the tail is random. The anchor is unique in the record, so a
+// chain whose keys an earlier start disclosed is refused.
+func startChain(ctx context.Context, db *sql.DB, cfg config.TeslaConfig) (*tesla.KeySchedule, error) {
+	queries := executordb.New(db)
+	generation, err := queries.NextTeslaChainGeneration(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read next TESLA chain generation: %w", err)
+	}
+	var seed []byte
+	if cfg.Seed != "" {
+		if seed, err = tesla.ChainSeed([]byte(cfg.Seed), generation); err != nil {
+			return nil, fmt.Errorf("derive TESLA chain %d: %w", generation, err)
+		}
+	}
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, Delay: time.Duration(cfg.Delay) * time.Second, ChainLength: cfg.ChainLength})
+	if err != nil {
+		return nil, fmt.Errorf("create TESLA schedule: %w", err)
+	}
+	chain := schedule.Config()
+	if err := queries.CreateTeslaChain(ctx, executordb.CreateTeslaChainParams{
+		Generation: generation, Anchor: schedule.Anchor(), EpochBase: chain.Epoch.UTC(),
+		DelayNs: int64(chain.Delay), ChainLength: chain.ChainLength, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		return nil, fmt.Errorf("record TESLA chain %d (a recorded anchor would reuse disclosed keys): %w", generation, err)
+	}
+	return schedule, nil
 }
 
 // Close permanently closes new node admission. A busy result consumes nothing:

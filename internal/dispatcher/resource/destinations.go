@@ -238,10 +238,10 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitr
 	tree, cap := d.getTreeCap(destination)
 	usage := d.usedCapacities[destination]
 
-	// Only what is left after the charged floors is shared. A limit that was
-	// lowered below what is already charged leaves nothing to share rather
-	// than a negative share, which would take bandwidth away from the floors
-	// the allocations were admitted with.
+	// Only what is left after the charged floors is shared. SetLimit refuses a
+	// limit below what is already charged; were the capacity below it anyway,
+	// nothing is shared rather than a negative share, which would take
+	// bandwidth away from the floors the allocations were admitted with.
 	shareable := cap - usage
 	if shareable < 0 {
 		shareable = 0
@@ -259,6 +259,13 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitr
 	}
 }
 
-func (d *DestinationsUsage) SetLimit(destination string, limit Bitrate) {
+// SetLimit records the total capacity of a destination. A limit below the
+// floors already charged there is refused and nothing is recorded: those
+// floors were admitted and stay, so the limit can be lowered once they end.
+func (d *DestinationsUsage) SetLimit(destination string, limit Bitrate) error {
+	if used := d.usedCapacities[destination]; limit < used {
+		return fmt.Errorf("%s destination limit below its charged floors (want %s, charged %s): %w", destination, limit, used, ErrCapacityFull)
+	}
 	d.capacities[destination] = limit
+	return nil
 }

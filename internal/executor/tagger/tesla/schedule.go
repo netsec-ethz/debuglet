@@ -12,9 +12,12 @@
 //	k_0 = H^L(k_L)          (public anchor, published at setup)
 //	k_i = H(k_{i+1})        (each key is the hash of the next one)
 //
-// The executor uses key k_i during epoch i and discloses it after a
-// configurable disclosure delay d has elapsed. A verifier who has buffered
-// packets from epoch i can verify them once k_i is published by checking:
+// The executor uses key k_i during epoch i (1 ≤ i < L) and discloses it after a
+// configurable disclosure delay d has elapsed. Because k_0 is public, epoch 0
+// has no signing key: nothing is tagged before epoch 1 starts. Because k_L is
+// never disclosed, nothing is tagged from epoch L on either. A verifier who
+// has buffered packets from epoch i can verify them once k_i is published by
+// checking:
 //
 //	H^i(k_i) == k_0
 //
@@ -76,9 +79,9 @@ type Config struct {
 	//
 	// If zero, it is derived from Delay so that the chain covers
 	// DefaultChainHorizon of uptime. Sizing this from a wall-clock horizon
-	// matters: once epoch L is reached the schedule stops advancing, keeps
-	// tagging with the never-disclosed k_L, and every packet from then on
-	// becomes unverifiable.
+	// matters: k_L is never disclosed, so the last signing epoch is L-1 and
+	// from the start of epoch L (Expiry) the schedule has no signing key and
+	// nothing is tagged.
 	ChainLength int64
 
 	// Delay is the interval duration I (one epoch). A key disclosed after
@@ -100,6 +103,10 @@ type Config struct {
 // The chain direction is backward: k_0 is the public anchor and k_L is the
 // private seed tail. Key k_t is used during epoch t and disclosed after the
 // disclosure delay d has elapsed (i.e., once epoch t+d has started).
+//
+// k_0 is public from setup, so it never signs: epoch 0, and any instant before
+// Epoch, has no usable signing key. The first usable key is k_1 at Epoch+Delay
+// and the last is k_{L-1}; from Expiry, the start of epoch L, no key signs.
 type KeySchedule struct {
 	cfg Config
 
@@ -183,9 +190,9 @@ func (ks *KeySchedule) Anchor() []byte {
 // ChainLength returns L, the highest epoch this schedule can serve.
 func (ks *KeySchedule) ChainLength() int64 { return ks.cfg.ChainLength }
 
-// Exhausted reports whether time t falls at or past the end of the chain. Once
-// exhausted the schedule keeps returning k_L, which is never disclosed, so
-// packets tagged from then on can no longer be verified.
+// Exhausted reports whether time t falls at or past the end of the chain, the
+// start of epoch L. k_L is never disclosed, so an exhausted schedule has no
+// signing key and CurrentKey returns nil from then on.
 func (ks *KeySchedule) Exhausted(t time.Time) bool {
 	return ks.epochOf(t) >= ks.cfg.ChainLength
 }
@@ -218,9 +225,28 @@ func (ks *KeySchedule) keyForEpoch(epoch int64) []byte {
 	return ks.keys[epoch*keySize : (epoch+1)*keySize]
 }
 
-// CurrentKey returns the chain key k_t for the epoch that contains time t.
+// CurrentKey returns the chain key k_t for the epoch that contains time t, or
+// nil while no key is usable: epochOf maps epoch 0 and any instant before
+// Epoch to 0, whose key is the public anchor (see KeySchedule), and every
+// instant from the start of epoch L to L, whose key k_L is never disclosed.
+// Every signing path reads the key here, so this is the one place the rule is
+// decided.
 func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
-	return ks.keyForEpoch(ks.epochOf(t))
+	epoch := ks.epochOf(t)
+	if epoch < 1 || epoch >= ks.cfg.ChainLength {
+		return nil
+	}
+	return ks.keyForEpoch(epoch)
+}
+
+// currentAK derives the per-measurement key at time t, failing while no chain
+// key is usable so no tag is ever derived from the public anchor.
+func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, error) {
+	k := ks.CurrentKey(t)
+	if k == nil {
+		return nil, fmt.Errorf("tesla: no signing key before epoch 1 or from the chain's last epoch on")
+	}
+	return DeriveAK(k, measurementID)
 }
 
 // DisclosedKey returns the epoch index and key that should be disclosed at
@@ -228,7 +254,9 @@ func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
 // elapsed after τ. With d=1, the key for epoch (current−1) is disclosed when
 // epoch current starts.
 //
-// If t is still within epoch 0 (no key is disclosable yet), ok is false.
+// If t is still within epoch 0 (no key is disclosable yet), ok is false. From
+// epoch L on the disclosed key stays k_{L-1}, the last signing key; k_L is
+// never disclosed.
 func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bool) {
 	current := ks.epochOf(t)
 	if current < 1 {
@@ -302,6 +330,21 @@ func DeriveAK(k []byte, measurementID []byte) ([]byte, error) {
 	return ak, nil
 }
 
+// ChainSeed derives the tail k_L of one chain from a configured seed:
+//
+//	k_L = HKDF-SHA256(secret=seed, info="debuglet tesla chain <generation>", length=32)
+//
+// Each generation of the same seed yields a different chain, so a restart
+// with an unchanged seed does not reuse keys an earlier chain disclosed.
+func ChainSeed(seed []byte, generation int64) ([]byte, error) {
+	r := hkdf.New(sha256.New, seed, nil, []byte(fmt.Sprintf("debuglet tesla chain %d", generation)))
+	tail := make([]byte, keySize)
+	if _, err := io.ReadFull(r, tail); err != nil {
+		return nil, fmt.Errorf("tesla: HKDF failed: %w", err)
+	}
+	return tail, nil
+}
+
 // ComputeTag computes the 16-bit authentication tag for a packet payload:
 //
 //	tag = HMAC-SHA256(ak, payload)[0:2]
@@ -316,10 +359,10 @@ func ComputeTag(ak, payload []byte) (uint16, error) {
 }
 
 // ComputeTagForPacket is a convenience wrapper that derives ak from the chain
-// key at time t and then computes the tag over payload.
+// key at time t and then computes the tag over payload. It fails while no
+// chain key is usable.
 func (ks *KeySchedule) ComputeTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
-	k := ks.CurrentKey(t)
-	ak, err := DeriveAK(k, measurementID)
+	ak, err := ks.currentAK(t, measurementID)
 	if err != nil {
 		return 0, err
 	}
@@ -452,10 +495,10 @@ func ComputeBPFTag(ak, payload []byte) (uint16, error) {
 }
 
 // ComputeBPFTagForPacket derives ak from the chain key at time t and then
-// computes the BPF SipHash-2-4 tag over payload.
+// computes the BPF SipHash-2-4 tag over payload. It fails while no chain key
+// is usable.
 func (ks *KeySchedule) ComputeBPFTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
-	k := ks.CurrentKey(t)
-	ak, err := DeriveAK(k, measurementID)
+	ak, err := ks.currentAK(t, measurementID)
 	if err != nil {
 		return 0, err
 	}

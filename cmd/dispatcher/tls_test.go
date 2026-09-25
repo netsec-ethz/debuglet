@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,9 +32,34 @@ type combinedFixture struct {
 	ca     *testtls.Authority
 	client *testtls.Identity
 	addr   string
+	lis    net.Listener
+	bidi   *rpc.BidiServer
+	done   <-chan error
 }
 
 func newCombinedFixture(t *testing.T, requireClientIdentity bool) *combinedFixture {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	f := startCombinedFixture(t, ctx, requireClientIdentity)
+	t.Cleanup(func() {
+		cancel()
+		f.bidi.Close()
+		f.lis.Close()
+		select {
+		case err := <-f.done:
+			if err != nil {
+				t.Errorf("combined listener: %v", err)
+			}
+		case <-time.After(combinedTestWait):
+			t.Error("combined listener did not join")
+		}
+	})
+	return f
+}
+
+// startCombinedFixture serves under ctx and leaves stopping the listener, and
+// its result, to the caller.
+func startCombinedFixture(t *testing.T, ctx context.Context, requireClientIdentity bool) *combinedFixture {
 	t.Helper()
 	dir := t.TempDir()
 	ca, err := testtls.NewAuthority(dir, "authority")
@@ -63,25 +90,11 @@ func newCombinedFixture(t *testing.T, requireClientIdentity bool) *combinedFixtu
 		lis.Close()
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
 		done <- serveCombined(ctx, lis, &dispatcher.Dispatcher{Bidi: bidi}, cfg, security, nil, zap.NewNop())
 	}()
-	t.Cleanup(func() {
-		cancel()
-		bidi.Close()
-		lis.Close()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("combined listener: %v", err)
-			}
-		case <-time.After(combinedTestWait):
-			t.Error("combined listener did not join")
-		}
-	})
-	return &combinedFixture{ca: ca, client: client, addr: lis.Addr().String()}
+	return &combinedFixture{ca: ca, client: client, addr: lis.Addr().String(), lis: lis, bidi: bidi, done: done}
 }
 
 // httpStatus performs one HTTPS request with the given verification profile.
@@ -179,6 +192,154 @@ func TestCombinedListenerRequiresControlIdentity(t *testing.T) {
 	cfg := f.ca.ClientConfig(unenrolled, "")
 	if err := f.controlPing(t, cfg); err == nil {
 		t.Fatal("control stream admitted a certificate from another authority")
+	}
+}
+
+// TestCombinedListenerStopsWhenCancelled keeps a requested stop apart from a
+// failure however late the cancellation reaches the accept loops. A context
+// derived from the caller's can learn of the cancellation after the caller's
+// own reports it, and a loop can see the closed listener first. Once the
+// caller has cancelled, that closure is the end of service; the same closure
+// while the caller's context is live is still reported.
+func TestCombinedListenerStopsWhenCancelled(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cancelled bool
+	}{
+		{name: "listener closed after cancellation", cancelled: true},
+		{name: "listener closed while serving"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newLateCancel()
+			f := startCombinedFixture(t, ctx, false)
+			done := f.done
+			t.Cleanup(func() {
+				ctx.propagate()
+				f.bidi.Close()
+				f.lis.Close()
+				if done != nil {
+					<-done
+				}
+			})
+			// Both protocols are served before the listener closes.
+			status, err := f.httpStatus(t, f.ca.ClientConfig(nil, ""))
+			if err != nil || status != http.StatusNotFound {
+				t.Fatalf("HTTP API over TLS: status=%d %v", status, err)
+			}
+			if err := f.controlPing(t, f.ca.ClientConfig(f.client, "")); err != nil {
+				t.Fatalf("control stream over TLS: %v", err)
+			}
+			if tc.cancelled {
+				ctx.cancel()
+			}
+			f.lis.Close()
+			select {
+			case err := <-done:
+				done = nil
+				if tc.cancelled && err != nil {
+					t.Fatalf("closed after cancellation: %v", err)
+				}
+				if !tc.cancelled && err == nil {
+					t.Fatal("closed while serving and reported a clean stop")
+				}
+			case <-time.After(combinedTestWait):
+				t.Fatal("combined listener did not return")
+			}
+		})
+	}
+}
+
+// TestCombinedListenerReportsControlServerClosure closes the control server
+// while the caller's context is live. The combined listener ends and reports
+// that closure, not the multiplexer's or the socket's closure it causes.
+func TestCombinedListenerReportsControlServerClosure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := startCombinedFixture(t, ctx, false)
+	done := f.done
+	defer func() {
+		cancel()
+		f.bidi.Close()
+		f.lis.Close()
+		if done != nil {
+			<-done
+		}
+	}()
+	status, err := f.httpStatus(t, f.ca.ClientConfig(nil, ""))
+	if err != nil || status != http.StatusNotFound {
+		t.Fatalf("HTTP API over TLS: status=%d %v", status, err)
+	}
+	if err := f.controlPing(t, f.ca.ClientConfig(f.client, "")); err != nil {
+		t.Fatalf("control stream over TLS: %v", err)
+	}
+	f.bidi.Close()
+	select {
+	case err := <-done:
+		done = nil
+		if !errors.Is(err, errControlServerClosed) {
+			t.Fatalf("control server closed while serving: got %v, want %v", err, errControlServerClosed)
+		}
+		if msg := err.Error(); strings.Contains(msg, "mux: server closed") || strings.Contains(msg, "use of closed network connection") {
+			t.Fatalf("control server closure reported as a knock-on error: %v", err)
+		}
+	case <-time.After(combinedTestWait):
+		t.Fatal("combined listener did not return")
+	}
+}
+
+// lateCancel is a caller's context that reports its cancellation at once but
+// passes it on to the contexts derived from it only when propagate is called.
+// It relies on the context package learning of the cancellation of a parent it
+// does not implement through that parent's AfterFunc method, as it does now.
+// If the package stops doing so, the derived contexts learn of the
+// cancellation from Done as soon as cancel closes it, the test runs the
+// ordinary shutdown order instead, and it still passes rather than failing.
+type lateCancel struct {
+	context.Context
+	done    chan struct{}
+	mu      sync.Mutex
+	err     error
+	pending []func()
+}
+
+func newLateCancel() *lateCancel {
+	return &lateCancel{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (c *lateCancel) Done() <-chan struct{} { return c.done }
+
+func (c *lateCancel) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+
+// AfterFunc holds f until propagate.
+func (c *lateCancel) AfterFunc(f func()) func() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pending = append(c.pending, f)
+	return func() bool { return false }
+}
+
+func (c *lateCancel) cancel() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err == nil {
+		c.err = context.Canceled
+		close(c.done)
+	}
+}
+
+// propagate cancels c if it is still live and passes the cancellation on to
+// the contexts derived from it.
+func (c *lateCancel) propagate() {
+	c.cancel()
+	c.mu.Lock()
+	pending := c.pending
+	c.pending = nil
+	c.mu.Unlock()
+	for _, f := range pending {
+		f()
 	}
 }
 

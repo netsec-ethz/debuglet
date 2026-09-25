@@ -140,6 +140,11 @@ func TestRestoreSchedulerAdmission(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			d, mock := newRestoredDispatcher(t, tc.restored)
+			// The transaction has no admitted runs, so the submission goes on
+			// to admission.
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT o.order_id, d.uuid FROM debuglet_order o")).
+				WithArgs("tx").
+				WillReturnRows(sqlmock.NewRows([]string{"order_id", "uuid"}))
 
 			if tc.admitted {
 				// Admission passed: the dispatcher opens a transaction and
@@ -185,8 +190,9 @@ func TestRestoreSchedulerAdmission(t *testing.T) {
 			}
 
 			// Rejections must not touch the database beyond the fixture issued
-			// during setup (restore SELECT, earnings lookup and insert);
-			// admissions must have performed exactly Begin/INSERT/Rollback.
+			// during setup (restore SELECT, earnings lookup and insert) and the
+			// lookup of the admitted runs; admissions must have performed
+			// exactly Begin/INSERT/Rollback after it.
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatalf("unmet sqlmock expectations: %v", err)
 			}

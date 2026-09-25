@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,6 +49,7 @@ func main() {
 	revoke := flag.String("revoke-operator", "", "Return the account with this UUID to the ordinary role in the configured database, then exit")
 	enroll := flag.String("enroll-executor", "", "Create a single-use enrollment token for this executor ID in the configured database, print it once, then exit")
 	unenroll := flag.String("revoke-executor", "", "Delete the node credential enrolled for this executor ID in the configured database, then exit")
+	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*cfgPath)
@@ -55,6 +57,21 @@ func main() {
 		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
 	}
 
+	// A database is upgraded only when its operator asks for it, never at
+	// start: a normal start refuses an outdated schema instead.
+	if *upgrade {
+		if *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "" {
+			fmt.Fprintln(os.Stderr, "dispatcher: -upgrade-database cannot be combined with another administration flag")
+			os.Exit(1)
+		}
+		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Dispatcher, cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("database %s now records dispatcher schema version %d\n", cfg.Database.Path, version)
+		return
+	}
 	// Role administration is deliberately not an HTTP operation: the operator
 	// role is granted on the dispatcher host, by whoever already controls the
 	// database, and never by anything reachable over the network.
@@ -86,16 +103,27 @@ func main() {
 	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
+	logCfg.DisableStacktrace = true
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runDispatcher(ctx, cfg, *readyFile, logger); err != nil {
+	requested := make(chan struct{})
+	stopNotice := context.AfterFunc(ctx, func() {
+		defer close(requested)
+		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", "dispatcher"))
+	})
+	err = runDispatcher(ctx, cfg, *readyFile, logger)
+	if !stopNotice() {
+		<-requested
+	}
+	if err != nil {
 		logger.Error("dispatcher exited with error", zap.Error(err))
 		logger.Sync()
 		os.Exit(1)
 	}
+	logger.Info("Dispatcher stopped", zap.String("role", "dispatcher"), zap.Bool("joined", true))
 }
 
 func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile string, logger *zap.Logger) error {
@@ -198,8 +226,10 @@ func serveCombined(ctx context.Context, lis net.Listener, d *dispatcher.Dispatch
 	return serveCombinedWithMetadata(ctx, lis, d, cfg, security, db, logger, nil)
 }
 
-func serveCombinedWithMetadata(ctx context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
-	g, ctx := errgroup.WithContext(ctx)
+func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
+	stopCtx, stop := context.WithCancelCause(parent)
+	defer stop(nil)
+	g, ctx := errgroup.WithContext(stopCtx)
 	// cmux.Close does not interrupt a connection still sniffing its protocol.
 	// Keep ownership until HTTP/yamux closes it or this listener shuts down.
 	owned := &connectionListener{Listener: lis, conns: make(map[*ownedConn]struct{})}
@@ -212,7 +242,7 @@ func serveCombinedWithMetadata(ctx context.Context, lis net.Listener, d *dispatc
 	}
 	m := cmux.New(muxed)
 	httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
-	var yamuxL net.Listener = m.Match(cmux.Any())
+	var yamuxL net.Listener = &memberListener{Listener: m.Match(cmux.Any()), stop: stop}
 	if security != nil && security.RequireClientIdentity {
 		yamuxL = rpc.VerifiedClientListener(yamuxL, logger)
 	}
@@ -223,18 +253,58 @@ func serveCombinedWithMetadata(ctx context.Context, lis net.Listener, d *dispatc
 		m.Close()
 		owned.Close()
 	}()
-	g.Go(func() error {
-		err := m.Serve()
-		if ctx.Err() != nil {
+	// Service ends by closing the multiplexer and the listener, and an accept
+	// loop can see that closure before its own context reports the cancellation
+	// behind it. Only the caller's context tells a requested stop from a
+	// failure: it reports the stop first, and the group's is cancelled by either.
+	// The control server's closure under a live context is told apart by its cause, below.
+	failure := func(err error) error {
+		if parent.Err() != nil && (errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, cmux.ErrListenerClosed) || errors.Is(err, net.ErrClosed)) {
 			return nil
 		}
 		return err
-	})
-	g.Go(func() error { return startHTTPServer(ctx, httpL, d, cfg, db, logger, connection) })
-	g.Go(func() error { return d.Bidi.ServeYamux(ctx, yamuxL) })
+	}
+	g.Go(func() error { return failure(m.Serve()) })
+	g.Go(func() error { return failure(startHTTPServer(ctx, httpL, d, cfg, db, logger, connection)) })
+	g.Go(func() error { return failure(d.Bidi.ServeYamux(ctx, yamuxL)) })
 	err := g.Wait()
 	<-joined // Wait cancels the errgroup context, including successful exits.
+	// The group's context keeps the first cause: a member's own failure, or the
+	// control server's closure passed down from stopCtx before the multiplexer
+	// was closed. A nil err is a stop the caller requested, whatever the cause.
+	if err != nil && errors.Is(context.Cause(ctx), errControlServerClosed) {
+		return errControlServerClosed
+	}
 	return err
+}
+
+// errControlServerClosed is returned when the control server is closed while
+// the caller's context is live.
+var errControlServerClosed = errors.New("control server closed while the combined listener was serving")
+
+// memberListener is the control server's share of the multiplexer. Closing it
+// leaves the shared listener open and ends the combined listener deliberately,
+// with the control server's closure as the cause, unless an accept has already
+// failed: the member is then ending with the multiplexer and asks for nothing.
+type memberListener struct {
+	net.Listener
+	stop  context.CancelCauseFunc
+	ended atomic.Bool
+}
+
+func (l *memberListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		l.ended.Store(true)
+	}
+	return conn, err
+}
+
+func (l *memberListener) Close() error {
+	if !l.ended.Load() {
+		l.stop(errControlServerClosed)
+	}
+	return nil
 }
 
 type connectionListener struct {

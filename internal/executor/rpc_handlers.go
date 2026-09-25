@@ -128,6 +128,11 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 			ListenSCION: policy.GetListenScion(),
 		},
 	}
+	// Nothing a new run sends could be tagged, so it is not admitted. Runs
+	// admitted earlier continue untagged.
+	if e.teslaSchedule.Exhausted(time.Now()) {
+		return nil, status.Error(codes.FailedPrecondition, "TESLA key chain exhausted: this executor admits no new runs until it is restarted")
+	}
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
 		return nil, err
 	}
@@ -149,7 +154,7 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 
 	cause := error(context.Canceled)
 	if req.Reason != "" {
-		cause = errors.New(req.Reason)
+		cause = abortReason{reason: req.Reason}
 	}
 	existed, err := e.scheduler.CancelBound(ctx, id, binding, cause)
 	if err != nil {

@@ -99,9 +99,9 @@ The implementation steps are:
 3. `SubmitDebuglets` validates each spec against executor and destination capacity (`validateDebugletSpec` and `internal/dispatcher/resource/schedule`), admits a mutation on the target executor's session, inserts the rows in one transaction with the owning binding, and uploads to the executor over the reverse stream.
 4. `Executor.OnUpload` re-checks the binding and inserts the spec into the scheduler, which persists it (`scheduler/sqlite`) and starts it at its time.
 5. `debugletHandler` (`internal/executor/handle_debuglet.go`) allocates on the dispatcher (`DebugletAllocate`), applies the returned bandwidth limits, registers the run, reports `INITIALIZING`, compiles and instantiates the module, opens the output stream, reports `STARTED`, and runs the guest under the policy timeout.
-6. Guest stdout and stderr reach the dispatcher through `DebugletStream`: the first frame identifies the run, later frames are appended to `debuglet_logs` after `ownedDebuglet` confirms the run belongs to the streaming session.
+6. Guest stdout and stderr reach the dispatcher through `DebugletStream`: the first frame identifies the run, later frames are appended to `debuglet_logs` after `ownedDebuglet` confirms the run belongs to the streaming session. A stream failure changes no run state and is returned as the stream's error; the stream itself never ends the run.
 7. `reportDebugletExit` sends one bounded `DebugletExit`. The dispatcher writes the terminal row; `UpdateDebugletState` never lets an ordinary state overwrite a terminal one.
-8. `DELETE /debuglet` reaches `Dispatcher.AbortDebuglet`, which admits a mutation, confirms ownership, calls `Abort` over the reverse stream, and records one local terminal attempt. `Executor.OnAbort` cancels through `scheduler.CancelBound`, which rejects a run bound to another session.
+8. `DELETE /debuglet` reaches `Dispatcher.AbortDebuglet`, which admits a mutation, confirms ownership, calls `Abort` over the reverse stream, and records one local terminal attempt. When that attempt fails, or its outcome cannot be confirmed, after the executor acknowledged the `Abort`, the route answers 500 `internal_error` instead of 204, so a client never takes an unrecorded cancellation for a recorded one. `Executor.OnAbort` cancels through `scheduler.CancelBound`, which rejects a run bound to another session.
 
 ## Configuration and state
 
@@ -135,7 +135,7 @@ A guest is a WASI command module. `Debuglet.registerHostFunctions` registers the
 
 ## Debugging entry points
 
-Both daemons log through zap at `logging.log_level`, with `json_logs` for machine reading. `dbl --output json` makes every command's result parseable, `dbl logs --follow ID` streams stored output, and `dbl status ID` reports state without implying workload success. `dbl dispatcher up`/`dbl executor up` keep the roles in separate terminals so their logs stay apart, and the readiness record plus `/connection` give the actual bound addresses when ports were chosen by the operating system. Installed checks keep evidence and structured test output under `.cache/ci/`.
+Both daemons log through zap at `logging.log_level`, with `json_logs` for machine reading. A failed run's full diagnostic is in the executor's log, as `Debuglet handler failed` with the run ID in `debugletID`; the API reports only its classified result. `dbl --output json` makes every command's result parseable, `dbl logs --follow ID` streams stored output, and `dbl status ID` reports state without implying workload success. `dbl dispatcher up`/`dbl executor up` keep the roles in separate terminals so their logs stay apart, and the readiness record plus `/connection` give the actual bound addresses when ports were chosen by the operating system. Installed checks keep evidence and structured test output under `.cache/ci/`.
 
 ## What the code establishes
 

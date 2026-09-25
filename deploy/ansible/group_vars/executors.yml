@@ -57,9 +57,10 @@ tesla_delay: 10
 # uptime between restarts.
 tesla_chain_length: 0
 
-# TESLA seed. Empty auto-generates one at startup; set it per host only when
-# the key schedule has to be reproducible. The rendered file carries it, which
-# is why the role keeps that file out of task output and diffs.
+# TESLA seed. Empty auto-generates one at startup. A configured seed yields a
+# different chain at every start, derived from the seed and the start's
+# generation, and a chain already recorded is refused. The rendered file
+# carries it, which is why the role keeps that file out of task output and diffs.
 executor_tesla_seed: ""
 
 # Egress interface the eBPF TC tagger attaches to. Auto-detected from the

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -38,6 +40,9 @@ type scriptedConn struct {
 	maxReads int
 	// write is invoked for every Write; nil accepts the complete slice.
 	write func(b []byte) (int, error)
+	// network is the network of the local address: udp, ip, or tcp when
+	// empty. Attach decides from it whether the connection carries datagrams.
+	network string
 	// blocked is closed the first time a nil-read Read starts blocking.
 	blocked     chan struct{}
 	blockedOnce sync.Once
@@ -159,6 +164,12 @@ func (s *scriptedConn) Close() error {
 }
 
 func (s *scriptedConn) LocalAddr() net.Addr {
+	switch s.network {
+	case "udp":
+		return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
+	case "ip":
+		return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)}
+	}
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
 }
 
@@ -800,7 +811,7 @@ func TestLimiterTimerWakeRechecksCurrentDeadlineBeforeWrite(t *testing.T) {
 	}
 	waitEntered := make(chan struct{})
 	releaseTimer := make(chan struct{})
-	fc.waitForLimiter = func(time.Duration, <-chan struct{}, <-chan struct{}) limiterWaitResult {
+	fc.waitForLimiter = func(time.Duration, <-chan struct{}, <-chan struct{}, <-chan struct{}) limiterWaitResult {
 		close(waitEntered)
 		<-releaseTimer
 		return limiterReady
@@ -1289,5 +1300,819 @@ func TestClosedConnWithExpiredDeadlineReportsClosed(t *testing.T) {
 	}
 	if _, err := fc.Read(make([]byte, 1)); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("Read after Close = %v, want %v", err, net.ErrClosed)
+	}
+}
+
+// paidWrite describes the destination accounting at the moment a write
+// reached the socket.
+type paidWrite struct {
+	at   time.Time
+	rate app.Bitrate
+	// credit is the destination balance at that moment, in bits: the stored
+	// tokens refilled at rate since the bucket was last updated. A write that
+	// is released only once its reservation is paid for never finds it below
+	// zero.
+	credit float64
+}
+
+// observePaidWrites makes every underlying write on raw report the
+// destination accounting it found.
+func observePaidWrites(fc *FallbackConn, raw *scriptedConn) <-chan paidWrite {
+	seen := make(chan paidWrite, 16)
+	raw.write = func(b []byte) (int, error) {
+		w := paidWrite{at: time.Now()}
+		key := debugletKey{id: fc.id, dest: fc.ipv6}
+		fc.count.mu.Lock()
+		if bucket, ok := fc.count.packetSize[key]; ok {
+			w.rate = fc.count.rates[key]
+			w.credit = float64(bucket.tokens) + float64(bucket.tokenFraction)/float64(time.Second) + w.at.Sub(bucket.last).Seconds()*float64(w.rate)
+		}
+		fc.count.mu.Unlock()
+		seen <- w
+		return len(b), nil
+	}
+	return seen
+}
+
+// onlyPaidWrite returns the single write reported by observePaidWrites.
+func onlyPaidWrite(t *testing.T, raw *scriptedConn, seen <-chan paidWrite) paidWrite {
+	t.Helper()
+	if writes := raw.written(); len(writes) != 1 {
+		t.Fatalf("underlying writes = %d, want 1", len(writes))
+	}
+	return <-seen
+}
+
+// Regression: a rate lowered while a write waited for its reservation left
+// the wait computed under the old rate in force, and the write reached the
+// socket before the lowered rate had paid for it.
+func TestLoweredRateDelaysWaitingWrite(t *testing.T) {
+	const (
+		oldBytes  = 40 // per second: the empty bucket pays the payload in 0.5s
+		newBytes  = 20 // per second: in 1s
+		payload   = 20
+		execBytes = 1 << 20
+	)
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(oldBytes), app.FromBytes(execBytes))
+	seen := observePaidWrites(fc, raw)
+	seeded := time.Now()
+	seedBuckets(t, fc, 0, app.FromBytes(execBytes))
+
+	var (
+		n    int
+		err  error
+		done = make(chan struct{})
+	)
+	go func() {
+		defer close(done)
+		n, err = fc.Write(make([]byte, payload))
+	}()
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fc)
+		return dest < 0
+	}, "reservation by the waiting Write")
+	if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetLimit: %v", err)
+	}
+	lowered := time.Now()
+	waitBounded(t, done, "Write after the rate was lowered", func() { _ = fc.Close() })
+
+	if n != payload || err != nil {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
+	}
+	w := onlyPaidWrite(t, raw, seen)
+	if w.rate != app.FromBytes(newBytes) {
+		t.Fatalf("write released at %d bits/s: the rate was not lowered while it waited", int64(w.rate))
+	}
+	if w.credit < 0 {
+		t.Errorf("write released with %.1f bits of destination credit at the lowered rate, want none owed", w.credit)
+	}
+	// Until the change the empty bucket gained at most the old rate; the rest
+	// of the payload can only have accrued at the new rate after it.
+	gained := lowered.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
+	owed := (float64(app.FromBytes(payload)) - gained) / float64(app.FromBytes(newBytes))
+	if earliest := time.Duration(owed * float64(time.Second)); w.at.Sub(lowered) < earliest {
+		t.Errorf("write released %v after the rate was lowered, want at least %v", w.at.Sub(lowered), earliest)
+	}
+}
+
+// Regression: a rate raised while a write waited had no effect until the wait
+// computed under the old rate ran out. The write now observes the new
+// permission without any other event: its wait is recomputed, and it waits
+// for what the bucket still owes at the new rate.
+func TestRaisedRateShortensWaitingWrite(t *testing.T) {
+	const (
+		oldBytes  = 1   // per second: the write below waits 30s
+		newBytes  = 100 // per second: 0.3s
+		debtBytes = 29  // owed before the one-byte write
+		execBytes = 1 << 20
+	)
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(oldBytes), app.FromBytes(execBytes))
+	seen := observePaidWrites(fc, raw)
+	seeded := time.Now()
+	seedBuckets(t, fc, -app.FromBytes(debtBytes), app.FromBytes(execBytes))
+	owed := app.FromBytes(debtBytes + 1)
+
+	var (
+		n    int
+		err  error
+		done = make(chan struct{})
+	)
+	start := time.Now()
+	go func() {
+		defer close(done)
+		n, err = fc.Write([]byte("x"))
+	}()
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fc)
+		return dest < -app.FromBytes(debtBytes)
+	}, "reservation by the waiting Write")
+	if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetLimit: %v", err)
+	}
+	raised := time.Now()
+	waitBounded(t, done, "Write after the rate was raised", func() { _ = fc.Close() })
+
+	if n != 1 || err != nil {
+		t.Fatalf("Write = (%d, %v), want (1, nil)", n, err)
+	}
+	w := onlyPaidWrite(t, raw, seen)
+	if w.rate != app.FromBytes(newBytes) {
+		t.Fatalf("write released at %d bits/s, want the raised rate", int64(w.rate))
+	}
+	if w.credit < 0 {
+		t.Errorf("write released with %.1f bits of destination credit at the raised rate, want none owed", w.credit)
+	}
+	elapsed := w.at.Sub(start)
+	if old := tokenWait(owed, app.FromBytes(oldBytes)); elapsed >= old {
+		t.Errorf("write released after %v, not earlier than the %v the old rate needed", elapsed, old)
+	}
+	// The debt still counts: before the change the old rate paid a negligible
+	// part of it, and the rest takes its time at the new rate.
+	gained := raised.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
+	if least := time.Duration((float64(owed) - gained) / float64(app.FromBytes(newBytes)) * float64(time.Second)); elapsed < least {
+		t.Errorf("write released after %v, want at least the %v the debt takes at the raised rate", elapsed, least)
+	}
+}
+
+// Regression: deleting a rate, or setting it to zero, while a write waited
+// left the old permission in force, so the write reached the socket once the
+// old wait ran out. The waiting reservation is now given back and the write
+// fails with the error a new reservation gets, before any I/O.
+func TestRevokedRateFailsWaitingWrite(t *testing.T) {
+	const debtBytes = 29 // at one byte per second the write below waits 30s
+	balance := -app.FromBytes(debtBytes)
+	for _, tc := range []struct {
+		name               string
+		revoke             func(*FallbackConn) error
+		wantErr            func(error) bool
+		destLeft, execLeft bool
+	}{
+		{
+			name:     "destination deleted",
+			revoke:   func(fc *FallbackConn) error { return fc.count.DeleteLimit(fc.ipv6, fc.id) },
+			wantErr:  func(err error) bool { return err != nil && strings.Contains(err.Error(), "no dest rate") },
+			execLeft: true,
+		},
+		{
+			name:     "executor deleted",
+			revoke:   func(fc *FallbackConn) error { return fc.count.DeleteExecLimit(fc.id) },
+			wantErr:  func(err error) bool { return err != nil && strings.Contains(err.Error(), "no exec rate") },
+			destLeft: true,
+		},
+		{
+			name:     "destination zero",
+			revoke:   func(fc *FallbackConn) error { return fc.count.SetLimit(testAddr, fc.id, 0) },
+			wantErr:  func(err error) bool { return err != nil && strings.Contains(err.Error(), "no dest rate") },
+			destLeft: true,
+			execLeft: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := newScriptedConn(nil)
+			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			seedBuckets(t, fc, balance, balance)
+
+			var (
+				n    int
+				err  error
+				done = make(chan struct{})
+			)
+			go func() {
+				defer close(done)
+				n, err = fc.Write([]byte("x"))
+			}()
+			waitUntil(t, func() bool {
+				dest, _, _, _ := bucketTokens(fc)
+				return dest < balance
+			}, "reservation by the waiting Write")
+			if err := tc.revoke(fc); err != nil {
+				t.Fatalf("revoke: %v", err)
+			}
+			waitBounded(t, done, "waiting Write after the rate was revoked", func() { _ = fc.Close() })
+
+			if n != 0 || !tc.wantErr(err) {
+				t.Fatalf("Write = (%d, %v), want (0, the error a new reservation gets)", n, err)
+			}
+			if writes := raw.written(); len(writes) != 0 {
+				t.Fatalf("underlying writes = %d, want 0", len(writes))
+			}
+			// Every bucket that is left got the reservation back: at one byte
+			// per second a missing 8-bit refund cannot hide behind refill.
+			dest, destOK, exec, execOK := bucketTokens(fc)
+			if destOK != tc.destLeft || execOK != tc.execLeft {
+				t.Fatalf("buckets left: destination=%v executor=%v, want %v and %v", destOK, execOK, tc.destLeft, tc.execLeft)
+			}
+			if destOK && dest < balance {
+				t.Errorf("destination bucket = %d bits, want at least %d after the refund", int64(dest), int64(balance))
+			}
+			if execOK && exec < balance {
+				t.Errorf("executor bucket = %d bits, want at least %d after the refund", int64(exec), int64(balance))
+			}
+		})
+	}
+}
+
+// Rate updates racing the cancellation of a waiting write: the write still
+// ends with the cancellation error and nothing written, and every reservation
+// taken along the way was given back, so each bucket that is left holds what
+// it held before plus refill, never less and never more.
+func TestRateUpdatesDuringCanceledWaitConserveAccounting(t *testing.T) {
+	const (
+		debtBytes = 29 // the write below waits 15s or more at either rate
+		updates   = 200
+	)
+	balance := -app.FromBytes(debtBytes)
+	for _, tc := range []struct {
+		name    string
+		cancel  func(*FallbackConn) error
+		wantErr error
+	}{
+		{"close", (*FallbackConn).Close, net.ErrClosed},
+		{"deadline", func(fc *FallbackConn) error { return fc.SetWriteDeadline(time.Now()) }, os.ErrDeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := newScriptedConn(nil)
+			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			seeded := time.Now()
+			seedBuckets(t, fc, balance, balance)
+
+			var (
+				n    int
+				err  error
+				done = make(chan struct{})
+			)
+			go func() {
+				defer close(done)
+				n, err = fc.Write([]byte("x"))
+			}()
+			waitUntil(t, func() bool {
+				dest, _, _, _ := bucketTokens(fc)
+				return dest < balance
+			}, "reservation by the waiting Write")
+			updated := make(chan struct{})
+			go func() {
+				defer close(updated)
+				for i := range updates {
+					rate := app.FromBytes(1 + i%2)
+					_ = fc.count.SetLimit(testAddr, fc.id, rate)
+					_ = fc.count.SetExecLimit(fc.id, rate)
+				}
+			}()
+			if err := tc.cancel(fc); err != nil {
+				t.Fatalf("cancel: %v", err)
+			}
+			<-updated
+			waitBounded(t, done, "canceled Write during rate updates", func() { _ = fc.Close() })
+
+			if n != 0 || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Write = (%d, %v), want (0, %v)", n, err, tc.wantErr)
+			}
+			if writes := raw.written(); len(writes) != 0 {
+				t.Fatalf("underlying writes = %d, want 0", len(writes))
+			}
+			most := balance + app.Bitrate(math.Ceil(time.Since(seeded).Seconds()*float64(app.FromBytes(2))))
+			dest, destOK, exec, execOK := bucketTokens(fc)
+			if !execOK || exec < balance || exec > most {
+				t.Errorf("executor bucket = %d bits (present=%v), want between %d and %d", int64(exec), execOK, int64(balance), int64(most))
+			}
+			if destOK && (dest < balance || dest > most) {
+				t.Errorf("destination bucket = %d bits, want between %d and %d", int64(dest), int64(balance), int64(most))
+			}
+		})
+	}
+}
+
+// A datagram waiting for its reservation keeps it whole when the rate moves:
+// once the rate is raised it leaves as one write, well before the old rate
+// would have allowed it.
+func TestRaisedRateReleasesWaitingDatagramWhole(t *testing.T) {
+	const (
+		oldBytes = 10 // per second: the full bucket holds a third of the datagram
+		newBytes = 1000
+		size     = 30
+	)
+	raw := newScriptedConn(nil)
+	raw.network = "udp"
+	fc := newTestConn(t, raw, app.FromBytes(oldBytes), app.FromBytes(1<<20))
+
+	var (
+		n    int
+		err  error
+		done = make(chan struct{})
+	)
+	start := time.Now()
+	go func() {
+		defer close(done)
+		n, err = fc.Write(bytes.Repeat([]byte{'d'}, size))
+	}()
+	waitUntil(t, func() bool {
+		dest, ok, _, _ := bucketTokens(fc)
+		return ok && dest < 0
+	}, "reservation by the waiting datagram")
+	if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetLimit: %v", err)
+	}
+	waitBounded(t, done, "datagram after the rate was raised", func() { _ = fc.Close() })
+
+	if n != size || err != nil {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
+	}
+	if writes := raw.written(); len(writes) != 1 || len(writes[0]) != size {
+		t.Fatalf("underlying writes = %d, want one write of the whole %d-byte datagram", len(writes), size)
+	}
+	if elapsed, old := time.Since(start), tokenWait(app.FromBytes(size-oldBytes), app.FromBytes(oldBytes)); elapsed >= old {
+		t.Errorf("datagram released after %v, not earlier than the %v the old rate needed", elapsed, old)
+	}
+}
+
+// A datagram connection hands each datagram to the socket whole, even when it
+// is larger than one second of the rate: one write of the whole payload, after
+// waiting for the part the bucket does not hold, and one read into the whole
+// buffer, which is charged and waits only for the datagram it returns. On a
+// stream the same sizes are split at the rate, see
+// TestWriteCompletesMultiChunkInOrder and TestReadReturnsSingleUnderlyingResult.
+func TestDatagramIsAdmittedWhole(t *testing.T) {
+	const (
+		destBytes = 1000
+		execBytes = 1 << 20
+		size      = 1020 // 20 bytes beyond the full bucket
+	)
+	wait := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+
+	t.Run("write", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		raw.network = "udp"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		data := bytes.Repeat([]byte{'d'}, size)
+		start := time.Now()
+		if n, err := fc.Write(data); n != size || err != nil {
+			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
+		}
+		if elapsed := time.Since(start); elapsed < wait {
+			t.Errorf("Write returned after %v, want at least the %v the deficit takes", elapsed, wait)
+		}
+		if writes := raw.written(); len(writes) != 1 || !bytes.Equal(writes[0], data) {
+			t.Fatalf("underlying writes = %d, want one write of the whole %d-byte datagram", len(writes), size)
+		}
+		// The part beyond the bucket is charged too, as debt.
+		assertTokens(t, fc, app.FromBytes(destBytes-size), app.FromBytes(execBytes-size))
+	})
+
+	t.Run("read", func(t *testing.T) {
+		// A buffer of three rate-seconds would owe two of them if it were
+		// charged; the five-byte datagram fits the full bucket.
+		const bufSize = 3 * destBytes
+		bufferWait := tokenWait(app.FromBytes(bufSize-destBytes), app.FromBytes(destBytes))
+		raw := oneRead(5, nil)
+		raw.network = "udp"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		start := time.Now()
+		if n, err := fc.Read(make([]byte, bufSize)); n != 5 || err != nil {
+			t.Fatalf("Read = (%d, %v), want (5, nil)", n, err)
+		}
+		if elapsed := time.Since(start); elapsed >= bufferWait {
+			t.Errorf("Read returned after %v, want less than the %v a charge for the buffer takes", elapsed, bufferWait)
+		}
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] < bufSize {
+			t.Fatalf("underlying reads = %d of sizes %v, want one read into at least the whole %d-byte buffer", calls, sizes, bufSize)
+		}
+		// Only the datagram that arrived is charged.
+		assertTokens(t, fc, app.FromBytes(destBytes-5), app.FromBytes(execBytes-5))
+	})
+
+	t.Run("empty write", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		raw.network = "udp"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Write(nil); n != 0 || err != nil {
+			t.Fatalf("Write(nil) = (%d, %v), want (0, nil)", n, err)
+		}
+		if writes := raw.written(); len(writes) != 1 || len(writes[0]) != 0 {
+			t.Fatalf("underlying writes = %q, want one empty datagram", writes)
+		}
+		assertTokens(t, fc, app.FromBytes(destBytes), app.FromBytes(execBytes))
+	})
+
+	t.Run("empty write on a stream", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		fc := newTestConn(t, raw, 0, 0)
+		if n, err := fc.Write(nil); n != 0 || err != nil {
+			t.Fatalf("Write(nil) = (%d, %v), want (0, nil)", n, err)
+		}
+		if writes := raw.written(); len(writes) != 0 {
+			t.Fatalf("underlying writes = %d, want none", len(writes))
+		}
+	})
+}
+
+// An IP socket, such as the ip4:icmp socket of a ping, carries datagrams as
+// a UDP socket does: a message larger than one second of the rate is one
+// socket write after the wait its size implies, and a read hands the socket
+// at least the whole buffer, so the limiter neither splits nor truncates a
+// message.
+func TestIPConnectionCarriesDatagrams(t *testing.T) {
+	const (
+		destBytes = 1000
+		execBytes = 1 << 20
+		size      = 1020 // 20 bytes beyond the full bucket
+	)
+
+	t.Run("write", func(t *testing.T) {
+		raw := newScriptedConn(nil)
+		raw.network = "ip"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		data := bytes.Repeat([]byte{'d'}, size)
+		wait := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+		start := time.Now()
+		if n, err := fc.Write(data); n != size || err != nil {
+			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
+		}
+		if elapsed := time.Since(start); elapsed < wait {
+			t.Errorf("Write returned after %v, want at least the %v the deficit takes", elapsed, wait)
+		}
+		if writes := raw.written(); len(writes) != 1 || !bytes.Equal(writes[0], data) {
+			t.Fatalf("underlying writes = %d, want one write of the whole %d-byte message", len(writes), size)
+		}
+	})
+
+	t.Run("read", func(t *testing.T) {
+		raw := oneRead(64, nil)
+		raw.network = "ip"
+		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		if n, err := fc.Read(make([]byte, size)); n != 64 || err != nil {
+			t.Fatalf("Read = (%d, %v), want (64, nil)", n, err)
+		}
+		if calls, sizes := raw.reads(); calls != 1 || sizes[0] < size {
+			t.Fatalf("underlying reads = %d of sizes %v, want one read into at least the whole %d-byte buffer", calls, sizes, size)
+		}
+	})
+}
+
+func TestUnrelatedRateChangesDoNotStarveWrite(t *testing.T) {
+	fc := newTestConn(t, newScriptedConn(nil), debtRate, debtRate)
+	seedBuckets(t, fc, 0, 0)
+	otherID := uuid.New()
+	if err := fc.count.SetExecLimit(otherID, debtRate); err != nil {
+		t.Fatal(err)
+	}
+	if err := fc.SetWriteDeadline(time.Now().Add(time.Second + wakeSlack)); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	var writeErr error
+	done := startIO(t, fc, func() { n, writeErr = fc.Write([]byte("x")) })
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fc)
+		return dest < 0
+	}, "one-byte reservation")
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	updates := 0
+	for {
+		select {
+		case <-done:
+			if updates < 10 {
+				t.Fatalf("only %d unrelated rate changes occurred during the wait", updates)
+			}
+			if n != 1 || writeErr != nil {
+				t.Fatalf("Write = (%d, %v) after %d unrelated rate changes, want (1, nil)", n, writeErr, updates)
+			}
+			return
+		case <-ticker.C:
+			updates++
+			if err := fc.count.SetExecLimit(otherID, app.FromBytes(1+updates%2)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// A rate of zero admits nothing. A datagram, although reserved whole beyond
+// one second of the rate, is refused with the error a stream gets at a zero
+// rate, before any I/O and without charging a bucket.
+func TestZeroRateRefusesDatagram(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*FallbackConn) (int, error)
+	}{
+		{"write", func(fc *FallbackConn) (int, error) { return fc.Write([]byte("datagram")) }},
+		{"empty write", func(fc *FallbackConn) (int, error) { return fc.Write(nil) }},
+		{"read", func(fc *FallbackConn) (int, error) { return fc.Read(make([]byte, 64)) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := oneRead(8, nil)
+			raw.network = "udp"
+			fc := newTestConn(t, raw, 0, app.FromBytes(1024))
+			if err := fc.count.SetLimit(testAddr, fc.id, 0); err != nil {
+				t.Fatalf("SetLimit: %v", err)
+			}
+			if n, err := tc.run(fc); n != 0 || err == nil || !strings.Contains(err.Error(), "no dest rate") {
+				t.Fatalf("%s = (%d, %v), want (0, the no dest rate error)", tc.name, n, err)
+			}
+			if reads, _ := raw.reads(); reads != 0 {
+				t.Fatalf("underlying reads = %d, want 0", reads)
+			}
+			if writes := raw.written(); len(writes) != 0 {
+				t.Fatalf("underlying writes = %d, want 0", len(writes))
+			}
+			if _, destOK, _, execOK := bucketTokens(fc); destOK || execOK {
+				t.Fatal("refused datagram created accounting state")
+			}
+		})
+	}
+}
+
+// A charge that is refused after the socket read, because the rate was
+// revoked or the connection closed while the datagram was read, drops the
+// datagram and returns the refusal: nothing is delivered uncharged, and the
+// buckets keep what they held.
+func TestRefusedDatagramChargeDropsDatagram(t *testing.T) {
+	const (
+		destBytes = 1000
+		execBytes = 1 << 20
+	)
+	for _, tc := range []struct {
+		name    string
+		refuse  func(*FallbackConn) error
+		wantErr func(error) bool
+		// destKept is false when the refusal removes the destination bucket.
+		destKept bool
+	}{
+		{"rate revoked", func(fc *FallbackConn) error { return fc.count.SetLimit(testAddr, fc.id, 0) },
+			func(err error) bool { return strings.Contains(err.Error(), "no dest rate") }, true},
+		{"closed", func(fc *FallbackConn) error { return fc.Close() },
+			func(err error) bool { return errors.Is(err, net.ErrClosed) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fc *FallbackConn
+			raw := newScriptedConn(func(b []byte) (int, error) {
+				if err := tc.refuse(fc); err != nil {
+					t.Errorf("refuse the charge: %v", err)
+				}
+				return copy(b, "datagram"), nil
+			})
+			raw.maxReads = 1
+			raw.network = "udp"
+			fc = newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			n, err := fc.Read(make([]byte, 64))
+			if n != 0 || err == nil || !strings.Contains(err.Error(), "failed to reserve") || !tc.wantErr(err) {
+				t.Fatalf("Read = (%d, %v), want (0, the refused charge)", n, err)
+			}
+			dest, destOK, exec, execOK := bucketTokens(fc)
+			if destOK != tc.destKept || (destOK && dest != app.FromBytes(destBytes)) {
+				t.Errorf("destination bucket = %d bits (present=%v), want %d bits (present=%v)", dest, destOK, app.FromBytes(destBytes), tc.destKept)
+			}
+			if !execOK || exec != app.FromBytes(execBytes) {
+				t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes))
+			}
+		})
+	}
+}
+
+// The socket's answer to a datagram is final. Its error is passed through
+// unchanged, and a datagram it took only part of is reported as a short write
+// instead of being completed by a second datagram. Only what was sent is
+// charged, and a count outside the datagram keeps the reservation, as on a
+// stream.
+func TestDatagramWriteResult(t *testing.T) {
+	const (
+		destBytes = 200
+		execBytes = 400
+		payload   = 100
+	)
+	sentinel := errors.New("sentinel write error")
+	for _, tc := range []struct {
+		name    string
+		n       int
+		err     error
+		wantErr error
+		charged int
+	}{
+		{"socket error", 0, sentinel, sentinel, 0},
+		{"partial with error", 30, sentinel, sentinel, 30},
+		{"short", 30, nil, io.ErrShortWrite, 30},
+		{"nothing sent", 0, nil, io.ErrShortWrite, 0},
+		{"invalid count -1", -1, nil, nil, payload},
+		{"invalid count beyond the datagram", payload + 1, nil, nil, payload},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := newScriptedConn(nil)
+			raw.network = "udp"
+			raw.write = func([]byte) (int, error) { return tc.n, tc.err }
+			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			n, err := fc.Write(make([]byte, payload))
+			switch {
+			case tc.wantErr == nil && (n != 0 || err == nil):
+				t.Fatalf("Write = (%d, %v), want (0, invalid-count error)", n, err)
+			case tc.wantErr != nil && (n != tc.n || !errors.Is(err, tc.wantErr)):
+				t.Fatalf("Write = (%d, %v), want (%d, %v)", n, err, tc.n, tc.wantErr)
+			}
+			if writes := raw.written(); len(writes) != 1 || len(writes[0]) != payload {
+				t.Fatalf("underlying writes = %d, want one write of the whole datagram", len(writes))
+			}
+			assertTokens(t, fc, app.FromBytes(destBytes-tc.charged), app.FromBytes(execBytes-tc.charged))
+		})
+	}
+}
+
+// Regression: a rate change woke a datagram waiting for a reservation beyond
+// one second of the rate, and the reservation was given back and taken again.
+// The refund is capped at one second of the rate, so the wait already served
+// was lost and the datagram waited for the whole deficit once more. A change
+// that does not shorten what it owes now leaves its release where it was.
+func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
+	const (
+		destBytes = 10 // per second: the full bucket holds a third of the datagram
+		size      = 30
+		execBytes = 1 << 20
+		wakeAfter = time.Second
+		margin    = time.Second
+	)
+	raw := newScriptedConn(nil)
+	raw.network = "udp"
+	fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+	owed := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+
+	var (
+		n    int
+		err  error
+		done = make(chan struct{})
+	)
+	start := time.Now()
+	go func() {
+		defer close(done)
+		n, err = fc.Write(bytes.Repeat([]byte{'d'}, size))
+	}()
+	waitUntil(t, func() bool {
+		dest, ok, _, _ := bucketTokens(fc)
+		return ok && dest < 0
+	}, "reservation by the waiting datagram")
+	time.Sleep(time.Until(start.Add(wakeAfter)))
+	if err := fc.count.SetExecLimit(fc.id, app.FromBytes(execBytes/2)); err != nil {
+		t.Fatalf("SetExecLimit: %v", err)
+	}
+	if moved := time.Since(start); moved >= owed {
+		t.Fatalf("executor rate moved %v after the start, not within the %v wait", moved, owed)
+	}
+	waitBounded(t, done, "datagram after the executor rate moved", func() { _ = fc.Close() })
+	elapsed := time.Since(start)
+
+	if n != size || err != nil {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
+	}
+	if writes := raw.written(); len(writes) != 1 || len(writes[0]) != size {
+		t.Fatalf("underlying writes = %d, want one write of the whole %d-byte datagram", len(writes), size)
+	}
+	if elapsed < owed {
+		t.Errorf("datagram released after %v, want at least the %v the deficit takes", elapsed, owed)
+	}
+	if elapsed > owed+margin {
+		t.Errorf("datagram released after %v, want at most %v: the wait served before the rate change was lost", elapsed, owed+margin)
+	}
+}
+
+// Regression: a rate change made a waiting reservation wait for the whole
+// balance of the shared buckets, including what reservations charged after it
+// owe, instead of what it still owes itself. Two connections of one run to one
+// destination share both buckets: the first keeps its place ahead of the
+// second, and once the rates are raised it waits only for its own deficit at
+// the new rate.
+func TestRateChangeKeepsOwnDeficitOfWaitingReservation(t *testing.T) {
+	const (
+		oldBytes = 10 // per second, both levels: from empty buckets A waits 1s, B 5s
+		newBytes = 20
+		sizeA    = 10
+		sizeB    = 40
+		raiseAt  = 500 * time.Millisecond
+		margin   = time.Second
+		labelA   = "A"
+		labelB   = "B"
+	)
+	type release struct {
+		label string
+		at    time.Time
+	}
+	released := make(chan release, 2)
+	record := func(label string) func([]byte) (int, error) {
+		return func(b []byte) (int, error) {
+			released <- release{label: label, at: time.Now()}
+			return len(b), nil
+		}
+	}
+	rawA := newScriptedConn(nil)
+	rawA.network = "udp"
+	rawA.write = record(labelA)
+	fcA := newTestConn(t, rawA, app.FromBytes(oldBytes), app.FromBytes(oldBytes))
+	rawB := newScriptedConn(nil)
+	rawB.network = "udp"
+	rawB.write = record(labelB)
+	connB, err := fcA.count.Attach(rawB, fcA.id, testAddr)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	fcB := connB.(*FallbackConn)
+	t.Cleanup(func() { _ = fcB.Close() })
+	seeded := time.Now()
+	seedBuckets(t, fcA, 0, 0)
+
+	var (
+		errA, errB   error
+		nA, nB       int
+		doneA, doneB = make(chan struct{}), make(chan struct{})
+	)
+	go func() {
+		defer close(doneA)
+		nA, errA = fcA.Write(bytes.Repeat([]byte{'a'}, sizeA))
+	}()
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fcA)
+		return dest < 0
+	}, "reservation by A")
+	go func() {
+		defer close(doneB)
+		nB, errB = fcB.Write(bytes.Repeat([]byte{'b'}, sizeB))
+	}()
+	waitUntil(t, func() bool {
+		dest, _, _, _ := bucketTokens(fcA)
+		return dest < -app.FromBytes(sizeA)
+	}, "reservation by B behind A")
+	time.Sleep(time.Until(seeded.Add(raiseAt)))
+	if err := fcA.count.SetLimit(testAddr, fcA.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetLimit: %v", err)
+	}
+	if err := fcA.count.SetExecLimit(fcA.id, app.FromBytes(newBytes)); err != nil {
+		t.Fatalf("SetExecLimit: %v", err)
+	}
+	raised := time.Now()
+	if ownWait := tokenWait(app.FromBytes(sizeA), app.FromBytes(oldBytes)); raised.Sub(seeded) >= ownWait {
+		t.Fatalf("rates raised %v after the seed, not within A's %v wait", raised.Sub(seeded), ownWait)
+	}
+	waitBounded(t, doneA, "A after the rates were raised", func() { _ = fcA.Close() })
+	waitBounded(t, doneB, "B after the rates were raised", func() { _ = fcB.Close() })
+
+	if nA != sizeA || errA != nil || nB != sizeB || errB != nil {
+		t.Fatalf("Writes = A (%d, %v), B (%d, %v), want (%d, nil) and (%d, nil)", nA, errA, nB, errB, sizeA, sizeB)
+	}
+	if writesA, writesB := rawA.written(), rawB.written(); len(writesA) != 1 || len(writesB) != 1 {
+		t.Fatalf("underlying writes = A %d, B %d, want one each", len(writesA), len(writesB))
+	}
+	first, second := <-released, <-released
+	if first.label != labelA || second.label != labelB || !first.at.Before(second.at) {
+		t.Fatalf("released %s then %s, want A before B", first.label, second.label)
+	}
+	// Until the raise the empty buckets gained at most the old rate; the rest
+	// of A's own charge accrues at the new rate after it.
+	gained := raised.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
+	owed := (float64(app.FromBytes(sizeA)) - gained) / float64(app.FromBytes(newBytes))
+	if least := time.Duration(owed * float64(time.Second)); first.at.Sub(raised) < least {
+		t.Errorf("A released %v after the raise, want at least %v", first.at.Sub(raised), least)
+	}
+	if most := raised.Sub(seeded) + tokenWait(app.FromBytes(sizeA), app.FromBytes(newBytes)) + margin; first.at.Sub(seeded) > most {
+		t.Errorf("A released %v after the seed, want at most %v: it waited for the deficit of B charged after it", first.at.Sub(seeded), most)
+	}
+}
+
+// Regression: a rate revoked just as the limiter timer fired could let the
+// timer win the select, and the write was admitted under the revoked rate. The
+// timer wake now checks for a rate change before admitting anything.
+func TestRateRevokedAsTimerFiresFailsWrite(t *testing.T) {
+	raw := newScriptedConn(nil)
+	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	forceReservationWait(t, fc)
+	fc.waitForLimiter = func(time.Duration, <-chan struct{}, <-chan struct{}, <-chan struct{}) limiterWaitResult {
+		// Both the timer and the rate change are ready; the timer is chosen.
+		if err := fc.count.DeleteLimit(fc.ipv6, fc.id); err != nil {
+			t.Errorf("DeleteLimit: %v", err)
+		}
+		return limiterReady
+	}
+	if n, err := fc.Write([]byte("x")); n != 0 || err == nil || !strings.Contains(err.Error(), "no dest rate") {
+		t.Fatalf("Write = (%d, %v), want (0, the no dest rate error)", n, err)
+	}
+	if writes := raw.written(); len(writes) != 0 {
+		t.Fatalf("underlying writes = %d, want 0", len(writes))
 	}
 }

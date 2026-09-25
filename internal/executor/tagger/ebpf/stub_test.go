@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
@@ -25,7 +27,7 @@ func TestNewBPFTaggerUnavailable(t *testing.T) {
 	}
 
 	iface, err := net.InterfaceByName("lo")
-	_, err = NewBPFTagger(iface, ks, []byte("test-measurement"))
+	_, err = NewBPFTagger(zap.NewNop(), iface, ks, []byte("test-measurement"))
 	if err == nil {
 		t.Error("expected error from NewBPFTagger on non-Linux, got nil")
 	}

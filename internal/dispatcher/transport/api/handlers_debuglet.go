@@ -20,6 +20,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // PUT /debuglet
@@ -109,9 +111,13 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs, userID); err != nil {
-		err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context())
-		if err2 != nil {
-			h.logger.Error("Failed to refund transaction", zap.String("ID", transactionId), zap.String("error", err2.Error()))
+		// A refusal over orders that already carry runs keeps the payment:
+		// those runs may be executing or credited, and refunding would pay
+		// for the same work twice.
+		if !errors.Is(err, dispatcher.ErrPaymentInUse) {
+			if err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context()); err2 != nil {
+				h.logger.Warn("Failed to refund transaction", zap.String("ID", transactionId), zap.Error(err2))
+			}
 		}
 		if errors.Is(err, dispatcher.ErrMaintenanceMode) {
 			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, err.Error(), err)
@@ -158,7 +164,7 @@ func (h *Handler) refuseForMaintenance(c echo.Context, established *caller, req 
 		message += "; this payment order was refunded and cannot be spent again"
 	case tx.Status == int64(models.Paid):
 		if refundErr := h.dispatcher.Payment.RefundTransaction(req.TransactionId, ctx); refundErr != nil {
-			h.logger.Error("Failed to refund transaction", zap.String("ID", req.TransactionId), zap.String("error", refundErr.Error()))
+			h.logger.Warn("Failed to refund transaction", zap.String("ID", req.TransactionId), zap.Error(refundErr))
 			message += "; this payment order is paid and was not refunded, so it stays paid and the same batch can be submitted again once admission resumes"
 		} else {
 			message += "; this payment order was paid and has been refunded, so it cannot be spent again"
@@ -282,6 +288,25 @@ func (h *Handler) DeleteDebuglet(c echo.Context) error {
 	}
 
 	if err := h.dispatcher.AbortDebuglet(c.Request().Context(), req.ExecutorID, req.DebugletID, "cancelled via API"); err != nil {
+		// The executor acknowledged the cancellation, but its result was not
+		// recorded and the run's state does not show it. That is neither a
+		// refusal nor the 204 acknowledgement; the cause stays in the log.
+		if errors.Is(err, dispatcher.ErrCancellationNotRecorded) {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "cancellation acknowledged but its result was not recorded", err)
+		}
+		// The executor answered with a refusal, whatever its code: nothing
+		// was cancelled.
+		if errors.Is(err, dispatcher.ErrAbortRefused) {
+			return apiErrorFrom(http.StatusBadRequest, CodeCancelRefused, "cancellation refused", err)
+		}
+		switch status.Code(err) {
+		case codes.Internal:
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to process cancellation", err)
+		// The Abort may or may not have reached the executor, so the
+		// cancellation is neither refused nor confirmed.
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "cancellation not confirmed", err)
+		}
 		// The dispatcher's own diagnostic carries transport and session
 		// internals; the caller learns that the cancellation was refused.
 		return apiErrorFrom(http.StatusBadRequest, CodeCancelRefused, "cancellation refused", err)
