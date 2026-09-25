@@ -48,6 +48,7 @@ func main() {
 	revoke := flag.String("revoke-operator", "", "Return the account with this UUID to the ordinary role in the configured database, then exit")
 	enroll := flag.String("enroll-executor", "", "Create a single-use enrollment token for this executor ID in the configured database, print it once, then exit")
 	unenroll := flag.String("revoke-executor", "", "Delete the node credential enrolled for this executor ID in the configured database, then exit")
+	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*cfgPath)
@@ -55,6 +56,21 @@ func main() {
 		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
 	}
 
+	// A database is upgraded only when its operator asks for it, never at
+	// start: a normal start refuses an outdated schema instead.
+	if *upgrade {
+		if *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "" {
+			fmt.Fprintln(os.Stderr, "dispatcher: -upgrade-database cannot be combined with another administration flag")
+			os.Exit(1)
+		}
+		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Dispatcher, cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("database %s now records dispatcher schema version %d\n", cfg.Database.Path, version)
+		return
+	}
 	// Role administration is deliberately not an HTTP operation: the operator
 	// role is granted on the dispatcher host, by whoever already controls the
 	// database, and never by anything reachable over the network.

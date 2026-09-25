@@ -42,26 +42,9 @@ func Check(ctx context.Context, role Role, path string) error {
 
 // Check verifies one database against this policy.
 func (p Policy) Check(ctx context.Context, path string) error {
-	if path == "" {
-		return fmt.Errorf("%w: no %s database path is configured", ErrAbsent, p.Role)
-	}
-	absolute, err := filepath.Abs(path)
+	absolute, err := p.locate(path)
 	if err != nil {
-		return fmt.Errorf("resolve %s database path: %w", p.Role, err)
-	}
-	// Stat, not Lstat: SQLite follows a symlinked database path, so a link to
-	// a regular database file is served like the file itself.
-	info, err := os.Stat(absolute)
-	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w: %s database %q does not exist; apply the packaged migrations to it first "+
-			"(make upgrade) or start a local service, which creates its own state directory",
-			ErrAbsent, p.Role, absolute)
-	}
-	if err != nil {
-		return fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, absolute, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w: %s database %q is not a regular file", ErrUnknown, p.Role, absolute)
+		return err
 	}
 	db, err := openReadOnly(absolute)
 	if err != nil {
@@ -69,6 +52,32 @@ func (p Policy) Check(ctx context.Context, path string) error {
 	}
 	defer db.Close()
 	return p.verify(ctx, db, absolute)
+}
+
+// locate resolves the configured path of an existing regular database file.
+func (p Policy) locate(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("%w: no %s database path is configured", ErrAbsent, p.Role)
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s database path: %w", p.Role, err)
+	}
+	// Stat, not Lstat: SQLite follows a symlinked database path, so a link to
+	// a regular database file is served like the file itself.
+	info, err := os.Stat(absolute)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("%w: %s database %q does not exist; apply the packaged migrations to it first "+
+			"(make upgrade) or start a local service, which creates its own state directory",
+			ErrAbsent, p.Role, absolute)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, absolute, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: %s database %q is not a regular file", ErrUnknown, p.Role, absolute)
+	}
+	return absolute, nil
 }
 
 // openReadOnly opens an existing database without creating, upgrading or
@@ -89,37 +98,49 @@ func openReadOnly(path string) (*sql.DB, error) {
 }
 
 func (p Policy) verify(ctx context.Context, db *sql.DB, path string) error {
+	version, tables, err := p.recognize(ctx, db, path)
+	if err != nil {
+		return err
+	}
+	if version < p.Minimum {
+		return fmt.Errorf("%w: %q uses %s schema version %d; this build supports %s. "+
+			"Stop the daemon, back the file up and run debuglet-%s -config FILE -upgrade-database "+
+			"(a deployment runs deploy/ansible/upgrade-database.yml), or start from a new state directory",
+			ErrOutdated, path, p.Role, version, p.supported(), p.Role)
+	}
+	return p.verifyTables(ctx, db, path, version, tables)
+}
+
+// recognize reports the schema version of a database that this role's
+// migrations created and that is not newer than this build. Anything else is
+// refused, so an upgrade never writes to a file that is not this role's.
+func (p Policy) recognize(ctx context.Context, db *sql.DB, path string) (int64, map[string]struct{}, error) {
 	tables, err := tableNames(ctx, db)
 	if err != nil {
-		return fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
+		return 0, nil, fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
 	}
 	if _, ok := tables[versionTable]; !ok {
-		return fmt.Errorf("%w: %q has no %s table and was not created by Debuglet; "+
+		return 0, nil, fmt.Errorf("%w: %q has no %s table and was not created by Debuglet; "+
 			"point database.path in the %s configuration at a Debuglet database", ErrUnknown, path, versionTable, p.Role)
 	}
 	version, err := schemaVersion(ctx, db)
 	if err != nil {
-		return fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
+		return 0, nil, fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
 	}
 	if version == 0 {
-		return fmt.Errorf("%w: %q records no applied migration; the %s schema was never created. "+
+		return 0, nil, fmt.Errorf("%w: %q records no applied migration; the %s schema was never created. "+
 			"Restore a backup or start from a new state directory", ErrIncomplete, path, p.Role)
 	}
 	// Which role a database belongs to is decided before its version, so a
 	// path pointing at the other database reports the path, not an upgrade.
 	if err := p.identify(ctx, db, path, tables); err != nil {
-		return err
+		return 0, nil, err
 	}
 	if version > p.Current {
-		return fmt.Errorf("%w: %q uses %s schema version %d, newer than the version %d this build supports; "+
+		return 0, nil, fmt.Errorf("%w: %q uses %s schema version %d, newer than the version %d this build supports; "+
 			"install a Debuglet release that supports it", ErrNewer, path, p.Role, version, p.Current)
 	}
-	if version < p.Minimum {
-		return fmt.Errorf("%w: %q uses %s schema version %d; this build supports %s. "+
-			"Automatic upgrades are not supported: keep using the version that created it, or start from a new state directory",
-			ErrOutdated, path, p.Role, version, p.supported())
-	}
-	return p.verifyTables(ctx, db, path, version, tables)
+	return version, tables, nil
 }
 
 // identify reports a readable Debuglet database that belongs to the other

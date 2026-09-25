@@ -27,6 +27,14 @@ var packagedMigrations = map[Role]fs.FS{Dispatcher: dispatcherdb.MigrationFS(), 
 func fixture(t *testing.T, role Role, version int64) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), string(role)+".sqlite")
+	migrate(t, role, path, version)
+	return path
+}
+
+// migrate applies the packaged migrations of a role to the database at path,
+// up to version when it is nonzero, and closes it again.
+func migrate(t *testing.T, role Role, path string, version int64) {
+	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("create fixture: %v", err)
@@ -51,7 +59,6 @@ func fixture(t *testing.T, role Role, version int64) string {
 	if err != nil {
 		t.Fatalf("apply fixture migrations: %v", err)
 	}
-	return path
 }
 
 // modify runs statements against a fixture with a separate connection that is
@@ -377,5 +384,293 @@ func TestSymlinkedDatabaseIsFollowed(t *testing.T) {
 	}
 	if err := Check(context.Background(), Executor, link); !errors.Is(err, ErrAbsent) {
 		t.Fatalf("dangling link: %v", err)
+	}
+}
+
+// count runs a query returning one number against a closed fixture.
+func count(t *testing.T, path, query string) int64 {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer db.Close()
+	var n int64
+	if err := db.QueryRow(query).Scan(&n); err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+	return n
+}
+
+// populatedDatabase is a schema version just before a migration that changes
+// existing tables, one row for every table of that version, and what the rows
+// look like once the remaining migrations have been applied.
+type populatedDatabase struct {
+	name    string
+	role    Role
+	version int64
+	rows    []string
+	after   map[string]int64
+}
+
+var populated = []populatedDatabase{
+	{
+		name:    "dispatcher version 3",
+		role:    Dispatcher,
+		version: 3,
+		rows: []string{
+			"INSERT INTO transactions (id, auth_key, price, method, expires_at, hash, currency, status) " +
+				"VALUES ('tx1', 'key', 10, 'free', '2026-01-01 00:00:00', 'hash', 'SUI', 0)",
+			"INSERT INTO transaction_states (key, value) VALUES ('checkpoint', '1')",
+			"INSERT INTO earnings (executor_id, currency, total_income, current_balance) VALUES ('node1', 'SUI', 5, 5)",
+			"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency) " +
+				"VALUES ('tx1', 1, 'node1', 10, 'SUI')",
+			"INSERT INTO users (uuid, name) VALUES (x'00000000000000000000000000000001', 'alice')",
+			"INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state) " +
+				"VALUES (x'00000000000000000000000000000002', '2026-01-01 00:00:00', '2026-01-01 00:01:00', 1, 1, 'node1', '', 0)",
+			"INSERT INTO debuglet_logs (debuglet_id, timestamp, output) VALUES (1, '2026-01-01 00:00:30', x'6869')",
+			"INSERT INTO debuglet_users (debuglet_id, user_id) VALUES (1, 1)",
+		},
+		after: map[string]int64{
+			"SELECT COUNT(*) FROM debuglets WHERE transaction_id = '' AND order_id = 0 AND session_id = ''": 1,
+			"SELECT COUNT(*) FROM debuglet_logs":                                          1,
+			"SELECT COUNT(*) FROM debuglet_users":                                         1,
+			"SELECT COUNT(*) FROM debuglet_order WHERE state = 0 AND refund_address = ''": 1,
+			"SELECT COUNT(*) FROM earnings WHERE sui_wallet_address = ''":                 1,
+			"SELECT COUNT(*) FROM users WHERE role = 'user'":                              1,
+			"SELECT COUNT(*) FROM transactions":                                           1,
+			"SELECT COUNT(*) FROM transaction_states":                                     1,
+		},
+	},
+	{
+		name:    "dispatcher version 2",
+		role:    Dispatcher,
+		version: 2,
+		rows: []string{
+			"INSERT INTO transactions (id, auth_key, price, method, expires_at, hash, currency, status) " +
+				"VALUES ('tx1', 'key', 10, 'free', '2026-01-01 00:00:00', 'hash', 'SUI', 0)",
+			"INSERT INTO transaction_states (key, value) VALUES ('checkpoint', '1')",
+			"INSERT INTO earnings (executor_id, currency, total_income, current_balance) VALUES ('node1', 'SUI', 5, 5)",
+			"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency) " +
+				"VALUES ('tx1', 1, 'node1', 10, 'SUI')",
+			"INSERT INTO debuglets (id, start_time, end_time, usage, executor_id, addresses, state) " +
+				"VALUES ('run1', '2026-01-01 00:00:00', '2026-01-01 00:01:00', 1, 'node1', '', 0)",
+			"INSERT INTO debuglet_logs (debuglet_id, timestamp, output) VALUES ('run1', '2026-01-01 00:00:30', x'6869')",
+		},
+		// The third dispatcher migration recreates the run tables, so the
+		// runs a version 2 database recorded do not survive an upgrade.
+		after: map[string]int64{
+			"SELECT COUNT(*) FROM debuglets":                                              0,
+			"SELECT COUNT(*) FROM debuglet_logs":                                          0,
+			"SELECT COUNT(*) FROM debuglet_order WHERE state = 0 AND refund_address = ''": 1,
+			"SELECT COUNT(*) FROM earnings WHERE sui_wallet_address = ''":                 1,
+			"SELECT COUNT(*) FROM transactions":                                           1,
+			"SELECT COUNT(*) FROM transaction_states":                                     1,
+		},
+	},
+	{
+		name:    "executor version 1",
+		role:    Executor,
+		version: 1,
+		rows: []string{
+			"INSERT INTO debuglets (id, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, require_icmp, " +
+				"listen_udp, listen_tcp, listen_icmp, listen_scion) VALUES ('run1', x'00', 'tx1', 1, 1, 1000, 0, 0, 0, 0, 0)",
+			"INSERT INTO debuglet_logs (debuglet_id, timestamp, output) VALUES ('run1', '2026-01-01 00:00:30', x'6869')",
+		},
+		// The second executor migration recreates both tables, so the runs
+		// a version 1 database recorded do not survive an upgrade.
+		after: map[string]int64{
+			"SELECT COUNT(*) FROM debuglets":     0,
+			"SELECT COUNT(*) FROM debuglet_logs": 0,
+		},
+	},
+}
+
+// fixture returns the database at its version, with one row in every table.
+// Its daemon refuses it as outdated rather than as another file.
+func (d populatedDatabase) fixture(t *testing.T) string {
+	t.Helper()
+	path := fixture(t, d.role, d.version)
+	modify(t, path, d.rows...)
+	if err := Check(context.Background(), d.role, path); !errors.Is(err, ErrOutdated) {
+		t.Fatalf("%s refused as %v, want %v", d.name, err, ErrOutdated)
+	}
+	return path
+}
+
+func (d populatedDatabase) checkRows(t *testing.T, path string) {
+	t.Helper()
+	for query, want := range d.after {
+		if got := count(t, path, query); got != want {
+			t.Errorf("%s: %d, want %d", query, got, want)
+		}
+	}
+}
+
+// TestPackagedMigrationsApplyToPopulatedTables applies the packaged migrations
+// to a database that already holds rows, which is the database an upgrade is
+// for, and not only to the empty one a new state directory starts with.
+func TestPackagedMigrationsApplyToPopulatedTables(t *testing.T) {
+	for _, database := range populated {
+		t.Run(database.name, func(t *testing.T) {
+			policy, err := PolicyFor(database.role)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := database.fixture(t)
+			migrate(t, database.role, path, 0)
+			if err := Check(context.Background(), database.role, path); err != nil {
+				t.Fatalf("upgraded database refused: %v", err)
+			}
+			if got := schemaVersionOf(t, path); got != policy.Current {
+				t.Fatalf("upgraded schema version %d, want %d", got, policy.Current)
+			}
+			database.checkRows(t, path)
+		})
+	}
+}
+
+// TestOutdatedSchemaNamesTheUpgradeStep keeps the refusal of an older database
+// pointing at the step that upgrades it.
+func TestOutdatedSchemaNamesTheUpgradeStep(t *testing.T) {
+	for _, role := range []Role{Dispatcher, Executor} {
+		t.Run(string(role), func(t *testing.T) {
+			policy, err := PolicyFor(role)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := fixture(t, role, policy.Minimum-1)
+			before := digest(t, path)
+			err = Check(context.Background(), role, path)
+			if !errors.Is(err, ErrOutdated) {
+				t.Fatalf("outdated schema: %v", err)
+			}
+			for _, want := range []string{path, "debuglet-" + string(role) + " -config", "-upgrade-database", "upgrade-database.yml"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal does not name %q: %v", want, err)
+				}
+			}
+			unchanged(t, path, before)
+		})
+	}
+}
+
+// TestUpgradeBringsAnOlderDatabaseToTheCurrentVersion keeps the rows of an
+// older database while the upgrade adds the columns later versions carry, and
+// applies the migrations with foreign keys enforced.
+func TestUpgradeBringsAnOlderDatabaseToTheCurrentVersion(t *testing.T) {
+	for _, database := range populated {
+		t.Run(database.name, func(t *testing.T) {
+			policy, err := PolicyFor(database.role)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := database.fixture(t)
+			version, err := Upgrade(context.Background(), database.role, path)
+			if err != nil {
+				t.Fatalf("upgrade: %v", err)
+			}
+			if version != policy.Current || schemaVersionOf(t, path) != policy.Current {
+				t.Fatalf("upgraded to %d, recorded %d, want %d", version, schemaVersionOf(t, path), policy.Current)
+			}
+			if err := Check(context.Background(), database.role, path); err != nil {
+				t.Fatalf("upgraded database refused: %v", err)
+			}
+			database.checkRows(t, path)
+		})
+	}
+}
+
+// TestFailedUpgradeKeepsTheLastCompletedVersion covers a migration that cannot
+// apply: the second dispatcher migration adds required columns without a
+// default, so a version 1 database holding transactions stays at version 1.
+func TestFailedUpgradeKeepsTheLastCompletedVersion(t *testing.T) {
+	path := fixture(t, Dispatcher, 1)
+	modify(t, path, "INSERT INTO transactions (id, auth_key, price, method, expires_at, paid, hash) "+
+		"VALUES ('tx1', 'key', 10, 'free', '2026-01-01 00:00:00', 0, 'hash')")
+	if err := Check(context.Background(), Dispatcher, path); !errors.Is(err, ErrOutdated) {
+		t.Fatalf("version 1 database: %v", err)
+	}
+	_, err := Upgrade(context.Background(), Dispatcher, path)
+	if err == nil {
+		t.Fatal("upgrade of a version 1 database with transactions succeeded")
+	}
+	for _, want := range []string{"version:2", "records version 1", "run the upgrade again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("upgrade error does not name %q: %v", want, err)
+		}
+	}
+	if got := schemaVersionOf(t, path); got != 1 {
+		t.Fatalf("failed upgrade left version %d, want 1", got)
+	}
+	if err := Check(context.Background(), Dispatcher, path); !errors.Is(err, ErrOutdated) {
+		t.Fatalf("database after a failed upgrade: %v", err)
+	}
+}
+
+// TestUpgradeIsANoOpOnACurrentDatabase leaves a current database as it is.
+func TestUpgradeIsANoOpOnACurrentDatabase(t *testing.T) {
+	for _, role := range []Role{Dispatcher, Executor} {
+		t.Run(string(role), func(t *testing.T) {
+			policy, err := PolicyFor(role)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := fixture(t, role, 0)
+			before := digest(t, path)
+			version, err := Upgrade(context.Background(), role, path)
+			if err != nil || version != policy.Current {
+				t.Fatalf("upgrade of a current database: version %d, %v", version, err)
+			}
+			if got := schemaVersionOf(t, path); got != policy.Current {
+				t.Fatalf("schema version %d, want %d", got, policy.Current)
+			}
+			unchangedBytes(t, path, before)
+		})
+	}
+}
+
+// TestUpgradeRefusesWhatCheckRefuses never migrates a file that is not this
+// role's Debuglet database or that a newer build wrote.
+func TestUpgradeRefusesWhatCheckRefuses(t *testing.T) {
+	policy, err := PolicyFor(Dispatcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent := filepath.Join(t.TempDir(), "dispatcher.sqlite")
+	if _, err := Upgrade(context.Background(), Dispatcher, absent); !errors.Is(err, ErrAbsent) {
+		t.Fatalf("absent database: %v", err)
+	}
+	if _, err := os.Stat(absent); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("upgrade created the absent database: %v", err)
+	}
+
+	unrelated := filepath.Join(t.TempDir(), "other.sqlite")
+	modify(t, unrelated, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
+	text := filepath.Join(t.TempDir(), "dispatcher.sqlite")
+	if err := os.WriteFile(text, []byte("not a database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	newer := fixture(t, Dispatcher, 0)
+	modify(t, newer, "INSERT INTO goose_db_version (version_id, is_applied) VALUES ("+
+		strconv.FormatInt(policy.Current+1, 10)+", 1)")
+	for _, tc := range []struct {
+		name string
+		path string
+		want error
+	}{
+		{name: "unrelated database", path: unrelated, want: ErrUnknown},
+		{name: "file that is not a database", path: text, want: ErrUnreadable},
+		{name: "executor database", path: fixture(t, Executor, 0), want: ErrUnknown},
+		{name: "older executor database", path: fixture(t, Executor, 1), want: ErrUnknown},
+		{name: "newer schema", path: newer, want: ErrNewer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := digest(t, tc.path)
+			if _, err := Upgrade(context.Background(), Dispatcher, tc.path); !errors.Is(err, tc.want) {
+				t.Fatalf("error %v, want %v", err, tc.want)
+			}
+			unchanged(t, tc.path, before)
+		})
 	}
 }

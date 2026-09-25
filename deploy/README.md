@@ -355,19 +355,56 @@ Executors on a shared host use separate `debuglet-prod`/`debuglet-dev` users,
 `debuglet-executor-<env>.service` units. Package staging and deployment records
 are also separate. Prod and dev dispatchers remain on separate hosts.
 
-The roles never overwrite a nonempty database with a seed. A zero-byte executor
-database can be replaced with the seed. If a previous installation has nonempty
-state and the selected environment has no database yet, deployment stops and
-preserves that state and its legacy unit. Establish schema compatibility and
-back up or upgrade the database explicitly before placing it in the selected
-state directory. This alpha does not implement an in-place schema upgrade.
-The same refusal protects a dispatcher database previously kept under
+The roles never overwrite a nonempty database with a seed, and they never
+upgrade one. A zero-byte executor database can be replaced with the seed. If a
+previous installation has nonempty state and the selected environment has no
+database yet, deployment stops and preserves that state and its legacy unit.
+Back the database up, place it in the selected state directory, deploy again
+and then upgrade it as described below. The same refusal protects a dispatcher database previously kept under
 `config_dir/dispatcher`. An unsuffixed executor unit may belong to another
 environment, so retirement requires an explicit
 `executor_retire_legacy_install=true` after checking ownership and state. The
 role then stops and disables it, retaining its unit file. Issue
 new credentials for the selected environment instead of copying an old
 executor's identity.
+
+### Upgrading a database
+
+A deployed daemon refuses a database whose schema is older than its release
+supports and keeps refusing it until the database is upgraded. After deploying
+such a release, run:
+
+```bash
+make deploy-upgrade-db INVENTORY=hosts.yml DEPLOY_ENV=prod
+# or one executor
+make deploy-upgrade-db INVENTORY=hosts.yml DEPLOY_ENV=prod LIMIT=executor.example.com
+# or directly
+cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml
+```
+
+`upgrade-database.yml` runs the same preflight as a deployment, then handles
+the dispatcher and then the executors, one executor at a time. On each host it:
+
+1. stops when the database (`state_dir/dispatcher/dispatcher.db` or
+   `state_dir/executor-<env>/executor.db`) does not exist, as a deployment
+   seeds a new one;
+2. stops the service;
+3. copies the database and, when present, its `-wal` and `-shm` files into a
+   new `backup-<UTC timestamp>` directory next to it, owned by the service user
+   with mode 0700 and the files 0600;
+4. runs the installed daemon with `-upgrade-database` as the service user
+   through `runuser`, so the database keeps its owner; the daemon applies the
+   release's migrations to the configured database and checks the result as a
+   start does;
+5. starts the service again.
+
+When step 4 fails the play stops on that host: the service stays stopped, the
+backup stays in place, the remaining executors are left untouched, and the
+database is at the last migration that completed. Running the playbook again
+continues from there; restoring the backup files returns to the previous state.
+[Stored state](../docs/environments.md#stored-state) lists the versions whose
+upgrade loses recorded runs. No deployment playbook and no role imports
+`upgrade-database.yml`, and `site.yml` never runs it.
 
 ### Transport security
 
