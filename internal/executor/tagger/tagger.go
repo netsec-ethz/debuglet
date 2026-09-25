@@ -27,7 +27,7 @@ import (
 	"net"
 	"time"
 
-	"debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
 // TaggerInterface is the abstraction used by both the pure-Go tagger and the

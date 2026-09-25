@@ -14,7 +14,13 @@ option go_package = "/protocol";
 
 // ================ DISPATCHER -> EXECUTOR =====================
 
-message HelloRequest {}
+message HelloRequest {
+  uint32 control_version = 1;
+  string dispatcher_incarnation = 2;
+  string session_id = 3;
+  bytes session_token = 4; // Private offer token; never persist or log.
+  int64 lease_duration_ms = 5; // Strict v3 control lease; receiver clocks only.
+}
 message HelloResponse {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
@@ -27,6 +33,13 @@ message HelloResponse {
   string currency = 9;
   optional string public_host = 10; // Optional: public host for the executor at which debuglet listeners can be contacted
   optional string sui_wallet = 11;
+  uint32 control_version = 12; // Selected control protocol version
+  string dispatcher_incarnation = 13; // Echoed dispatcher identity
+  string session_id = 14; // Echoed session identity
+  int64 lease_duration_ms = 15; // Exact echo of the offered duration.
+  // Single-use enrollment credential, presented only until this node's
+  // certificate is bound to its executor ID. Never persist or log it.
+  optional string enrollment_token = 16;
 }
 
 message DebugletPolicy {
@@ -48,6 +61,7 @@ message UploadRequest {
 
   DebugletPolicy policy = 5;
   string transaction_id = 6;
+  ControlBinding control_binding = 7;
 }
 message UploadResponse {}
 
@@ -139,6 +153,68 @@ message DebugletStreamRequest {
 
 message DebugletStreamResponse {}
 
+// Nonsecret immutable run ownership. The bearer token stays in transport state.
+message ControlBinding {
+  string dispatcher_incarnation = 1;
+  string session_id = 2;
+}
+
+// Confirmation uses binding metadata on the separate direct channel.
+message BindSessionRequest {
+  string executor_id = 1;
+}
+message BindSessionResponse {
+  int64 lease_duration_ms = 1; // Original initial lease; repeats never rearm it.
+}
+
+// Binding metadata selects the executor/session. Zero is reserved for Bind;
+// ordinary renewal sequences strictly increase within that session.
+message RenewLeaseRequest {
+  uint64 sequence = 1;
+}
+message RenewLeaseResponse {
+  uint64 sequence = 1;
+  int64 lease_duration_ms = 2;
+}
+message ProbeSessionRequest {
+  uint64 sequence = 1;
+}
+message ProbeSessionResponse {
+  uint64 sequence = 1;
+}
+
+// =============== RETAINED RUN INSPECTION ====================
+
+// Why a retained-run lookup produced no metadata. A filtered miss means the
+// executor holds a row it deliberately excluded; it is not proof that the
+// requested work never existed.
+enum RetainedRunStatus {
+  RETAINED_RUN_STATUS_UNSPECIFIED = 0;
+  RETAINED_RUN_STATUS_FOUND = 1;
+  RETAINED_RUN_STATUS_FILTERED = 2;
+  RETAINED_RUN_STATUS_ABSENT = 3;
+}
+
+// Identity, original ownership and start marker of one stored run. Inspection
+// never reads the stored program or its arguments.
+message RetainedRun {
+  string debuglet_id = 1;
+  ControlBinding original_binding = 2; // Empty fields for rows stored before run bindings existed.
+  string transaction_id = 3;
+  bool started = 4;
+  optional google.protobuf.Timestamp started_at = 5;
+  optional google.protobuf.Timestamp start_time = 6;
+}
+
+message InspectRetainedRunRequest {
+  string debuglet_id = 1;
+  ControlBinding control_binding = 2; // The caller's own current session.
+}
+message InspectRetainedRunResponse {
+  RetainedRunStatus status = 1;
+  optional RetainedRun run = 2; // Present exactly when status is FOUND.
+}
+
 // ============================================================
 // ====================== SERVICE DEFS ========================
 // ============================================================
@@ -152,6 +228,8 @@ service DispatcherService {
   rpc DebugletAllocate(DebugletAllocateRequest) returns (DebugletAllocateResponse);
   rpc DebugletExit(DebugletExitRequest) returns (DebugletExitResponse);
   rpc DebugletStream(stream DebugletStreamRequest) returns (stream DebugletStreamResponse);
+  rpc BindSession(BindSessionRequest) returns (BindSessionResponse);
+  rpc RenewLease(RenewLeaseRequest) returns (RenewLeaseResponse);
 }
 
 service ExecutorService {
@@ -159,4 +237,9 @@ service ExecutorService {
   rpc Upload(UploadRequest) returns (UploadResponse);
   rpc Abort(AbortRequest) returns (AbortResponse);
   rpc Bandwidth(BandwidthRequest) returns (BandwidthResponse);
+  rpc ProbeSession(ProbeSessionRequest) returns (ProbeSessionResponse);
+  // Optional. Reads one retained run without scheduling, starting, finalizing
+  // or deleting it. An executor without inspection answers UNIMPLEMENTED,
+  // which is never a missing-row answer.
+  rpc InspectRetainedRun(InspectRetainedRunRequest) returns (InspectRetainedRunResponse);
 }

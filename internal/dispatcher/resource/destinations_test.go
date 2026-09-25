@@ -4,9 +4,9 @@
 package resource_test
 
 import (
-	"debuglet/internal/dispatcher/resource"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"maps"
 	"testing"
 
@@ -24,12 +24,13 @@ var (
 )
 
 func TestMultiDest(t *testing.T) {
-	debugletID := testDebugletID
 	d := resource.NewDestinations(100)
 	dests := []string{"128.0.0.0", "128.0.0.1"}
-	d.Insert(debugletID, dests[0], "e1", 1, 100)
-	d.Insert(debugletID, dests[0], "e2", 1, 100)
-	d.Insert(debugletID, dests[1], "e2", 1, 100)
+	// Every debuglet runs on one executor, and the second one uses both
+	// destinations.
+	d.Insert(testDebugletID, dests[0], "e1", 1, 100)
+	d.Insert(testDebugletID2, dests[0], "e2", 1, 100)
+	d.Insert(testDebugletID2, dests[1], "e2", 1, 100)
 
 	jobCaps := maps.Collect(d.Fairshare(dests[0]))
 	if len(jobCaps) != 2 || jobCaps["e1"] != 50 || jobCaps["e2"] != 50 {
@@ -105,7 +106,7 @@ func TestRemove(t *testing.T) {
 	dest := "128.0.0.0"
 	d.Insert(testDebugletID, dest, "e1", 10, 10)
 	d.Insert(testDebugletID2, dest, "e2", 20, 100)
-	d.Remove(testDebugletID, dest, "e1", 10, 10)
+	d.Remove(testDebugletID, dest)
 	if x := d.Len(); x != 1 {
 		t.Fatalf("Expected Len()=1, got %d", x)
 	}
@@ -175,7 +176,7 @@ func benchmarkInsertDestinations(b *testing.B, initial int) {
 		b.StopTimer()
 
 		for j := 0; j < batch; j++ {
-			d.Remove(benchIDs[i+j], benchDests[i+j], "bench-job", 1, 100)
+			d.Remove(benchIDs[i+j], benchDests[i+j])
 		}
 		i += batch
 	}

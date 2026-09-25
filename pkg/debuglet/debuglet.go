@@ -18,13 +18,32 @@
 //	conn, err := debuglet.ConnectTCP("example.com:80")
 //	if err != nil { ... }
 //	defer conn.Close()
-//	conn.Send([]byte("GET / HTTP/1.0\r\n\r\n"))
-//	buf := make([]byte, 4096)
-//	n, _ := conn.Receive(buf)
-//	fmt.Println(string(buf[:n]))
+//	if err := conn.Write([]byte("GET / HTTP/1.0\r\n\r\n")); err != nil { ... }
+//	body, err := io.ReadAll(conn) // Read returns io.EOF when the peer closes
+//	if err != nil { ... }
+//	fmt.Println(string(body))
 //
-// The package compiles to a no-op on non-wasip1 platforms so that the rest of
-// the module still builds and tests on the host; the real implementation is in
+// Conn.Read follows the io.Reader contract: short reads are normal, and a TCP
+// or TLS stream (including connections from AcceptTCP) reports the peer's
+// clean close as (0, io.EOF). UDP and ICMP reads return (0, nil) for an empty
+// datagram, never io.EOF. Reads of an empty buffer return (0, nil) without a
+// host call. Conn.Write keeps its Write([]byte) error signature; it is not an
+// io.Writer.
+//
+// One host call transfers at most MaxIOBytes bytes. Read therefore fills a
+// larger buffer only up to that bound, which is an ordinary short read. Write
+// splits a longer stream payload into consecutive calls, and rejects a longer
+// datagram rather than sending a truncated one.
+//
+// Only a clean TCP/TLS end of stream surfaces as a Go error. Other host-side
+// failures reach the caller as neither a value nor an error: a refused or
+// policy-denied destination, a socket error other than EOF, an invalid handle
+// and an invalid buffer all abort the guest as WASM traps, so the job ends
+// with whatever the guest printed before the call.
+//
+// On non-wasip1 platforms the package compiles against panic stubs
+// (debuglet_stub.go) so the rest of the module builds and tests on the host;
+// every SDK call panics off-target. The real implementation is in
 // debuglet_wasip1.go.
 package debuglet
 
@@ -32,8 +51,20 @@ import (
 	"errors"
 )
 
-// ErrConnect is returned when the host fails to establish a connection.
+// MaxIOBytes is the number of bytes one host call transfers. It belongs to the
+// guest ABI rather than to this package: the host reads or writes at most this
+// many bytes of the buffer it is given, whatever the buffer's length is.
+const MaxIOBytes = 8192
+
+// ErrConnect reports a connection the SDK or the host rejected as a value: an
+// empty address, or a negative handle. A destination that is refused, outside
+// the job's policy, or otherwise unreachable aborts the guest inside the host
+// call instead of returning this error.
 var ErrConnect = errors.New("debuglet: connect failed")
+
+// ErrTooLarge reports a datagram longer than MaxIOBytes. Splitting it would
+// change one datagram into several, so Write rejects it instead.
+var ErrTooLarge = errors.New("debuglet: payload exceeds the host transfer bound")
 
 // transport identifies which family of host functions a Conn dispatches to.
 type transport int
@@ -44,9 +75,10 @@ const (
 	transportICMP4
 )
 
-// Conn is a connection handle returned by the Connect* helpers. It wraps the
-// integer socket handle owned by the host and routes Send/Receive/Close to the
-// correct host functions for its transport.
+// Conn is a connection handle returned by the Connect* and AcceptTCP helpers.
+// It wraps the integer socket handle owned by the host and routes
+// Write/Read/Close to the correct host functions for its transport. TLS and
+// accepted TCP connections are plain TCP streams to the SDK.
 type Conn struct {
 	handle int32
 	tr     transport

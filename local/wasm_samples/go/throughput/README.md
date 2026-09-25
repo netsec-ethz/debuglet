@@ -1,98 +1,36 @@
-# Testing Throughput
+# TCP throughput sample
 
-Connects to `-addr` and sends fixed-size chunks for `-secs` seconds, then reports the achieved throughput. Pair it with any TCP sink (e.g. an iperf server, or `nc -l -k <port> >/dev/null`).
+The guest connects to `-addr`, writes fixed-size chunks for `-secs` seconds, and prints the bytes sent and elapsed time. It needs a raw TCP sink that accepts bytes until the guest closes. It is not an iperf protocol client.
 
 ## Build
+
+From the repository root:
 
 ```sh
 make wasm SAMPLE_DIR=local/wasm_samples/go/throughput
 ```
 
-## Test Locally
+## Local example
 
-To use the sample locally, it is important to take note of HOW the executor is running. If the executor has root permissions and EBPF enabled, it will
-indicate so in the logs:
-
-```sh
-Initialized packet counter	{"type": "ebpf"}
-```
-
-Having the EBPF implementation work correctly locally extra steps are required. Head to [EBPF Setup](#ebpf-setup) for instructions on how to setup the local system so that packets are routed correctly and ratelimited accordingly.
-
-If it was disabled or there was a failure, the executor won't use EBPF and fallback to a Go implementation:
+Use an already configured local dispatcher and executor. For the simplest setup, configure the executor to use the `fallback` packet counter. In a separate terminal, run a loopback sink with `socat`:
 
 ```sh
-Initialized packet counter	{"type": "fallback"}
+socat -u TCP-LISTEN:8080,bind=127.0.0.1,reuseaddr,fork OPEN:/dev/null
 ```
 
-## EBPF Setup
-
-The local loopback (`lo`) network interface behaves differently for EBPF and does not correctly handle all packets. Instead, create a virtual network interface which can be used to bypass any of the issues:
+Then submit to an ID from `dbl nodes`:
 
 ```sh
-# Create a new network namespace and a virtual ethernet pair
-sudo ip netns add ebpf-test
-sudo ip link add veth-host type veth peer name veth-ns
-sudo ip link set veth-ns netns ebpf-test
-sudo ip addr add 192.168.100.1/24 dev veth-host
-sudo ip netns exec ebpf-test ip addr add 192.168.100.2/24 dev veth-ns
-sudo ip link set veth-host up
-sudo ip netns exec ebpf-test ip link set veth-ns up
-sudo ip netns exec ebpf-test ip link set lo up
-
-# Clean up and delete the namespace and interfaces afterwards
-sudo ip link delete veth-host
-sudo ip netns del ebpf-test
+dbl --timeout 30s run \
+  --wasm local/wasm_samples/go/throughput/debuglet.wasm \
+  --executor EXECUTOR_ID --allow 127.0.0.1 \
+  --floor-bps 20000 --ceil-bps 100000 --duration 25s --wait \
+  -- -addr 127.0.0.1:8080 -secs 20 -chunk 128
 ```
 
-This also means the executor has to be configured to attach any EBPF hooks on the `veth-host` interface. Add the following to the `executor.toml` config:
+Replace `EXECUTOR_ID`; add `--endpoint` before the command if needed. Stop the sink when finished. Choose a guest duration shorter than the job budget and a client timeout long enough to observe completion.
 
-```toml
-# executor.toml
-[network]
-interface = "veth-host"
-```
+A chunk larger than 8192 bytes is split across host calls, so `-chunk` changes
+how many calls the guest makes rather than how much reaches the sink.
 
-**IMPORTANT:** Launch the executor using `make e EBPF=1` .
-
-### Listener
-
-We start a very simple listener which will listen on `192.168.100.2` and report the throughput it receives.
-
-```sh
-sudo ip netns exec ebpf-test sh -c "socat -u TCP-LISTEN:8080,bind=192.168.100.2,reuseaddr,fork - | pv -i 1 -f -F '%t %r %b\n' > /dev/null"
-```
-
-### Start debuglet
-
-```sh
-go run ./cmd/user \
-    -wasm local/wasm_samples/go/throughput/debuglet.wasm \
-    -addr 192.168.100.2 \
-    -floor 20000 \
-    -ceil 100000 \
-    -- -addr 192.168.100.2:8080 -secs 20 -chunk 128
-```
-
-## Non-EBPF Fallback
-
-The fallback does not directly interact with the network interface, so it is not necessary to create a virtual network interface. The executor can be launched without root privileges using `make e`.
-
-### Listener
-
-The listener can be started on the loopback interface:
-
-```sh
-sudo sh -c "socat -u TCP-LISTEN:8080,reuseaddr,fork - | pv -i 1 -f -F '%t %r %b\n' > /dev/null"
-```
-
-### Start debuglet
-
-```sh
-go run ./cmd/user \
-    -wasm local/wasm_samples/go/throughput/debuglet.wasm \
-    -addr 127.0.0.1 \
-    -floor 20000 \
-    -ceil 100000 \
-    -- -addr 127.0.0.1:8080 -secs 20 -chunk 128
-```
+The output is application-level throughput for this setup. It does not establish eBPF packet enforcement or link capacity. Kernel measurements require an isolated test network, suitable privileges, and separate packet-level verification.

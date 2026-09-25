@@ -1,0 +1,38 @@
+# Provisioner Python dependencies, pinned by version and digest.
+#
+# This is the complete resolved set for ansible-core, not a top-level request:
+# pip installs exactly these files or fails, so two builds of the provisioner
+# image from one revision of this file install the same bytes. The wheels are
+# the ones the pinned provisioner base image resolves — CPython 3.13 on Linux
+# x86_64 — which is why the image digest in deploy/provisioner.env and this
+# file belong to each other and move together.
+#
+# Install with hash checking, which --require-hashes makes mandatory for every
+# entry:
+#
+#   pip install --require-hashes -r deploy/ansible/requirements.txt
+#
+# Update process: resolve the new set inside the pinned base image with
+#   pip install --dry-run --report report.json ansible-core==<version>
+# rewrite every entry from the report's archive digests, update
+# DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256 in deploy/provisioner.env, and
+# rebuild the image.
+
+ansible-core==2.21.4 \
+    --hash=sha256:ebe74d9c8fadcb41ad2151e031bf1e785e3098aaa015019b4e19a0a96f0dcc4f
+cffi==2.1.1 \
+    --hash=sha256:a931079504ecc49efed7744c476a5c343a92fabf66dec2db95edb1b2fdc770e2
+cryptography==50.0.1 \
+    --hash=sha256:51afcfceb15597cf2635068e4ac9a56b2abde622edde17f37d85fd7b5306497a
+Jinja2==3.1.6 \
+    --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+MarkupSafe==3.0.3 \
+    --hash=sha256:ccfcd093f13f0f0b7fdd0f198b90053bf7b2f02a3927a30e63f3ccc9df56b676
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+pycparser==3.0 \
+    --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+PyYAML==6.0.3 \
+    --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6
+resolvelib==1.2.1 \
+    --hash=sha256:fb06b66c8da04172d9e72a21d7d06186d8919e32ae5ab5cdf5b9d920be805ac2

@@ -1,0 +1,1977 @@
+openapi: "3.0.3"
+info:
+  title: "Debuglet dispatcher HTTP API"
+  version: "1.2"
+  description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/API.md for the access matrix and the compatibility and deprecation policy."
+servers:
+  - url: "/"
+    description: "Dispatcher served at the root of its origin."
+  - url: "/api"
+    description: "Dispatcher served behind an explicit /api path prefix. Every route below is relative to the selected server URL."
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+paths:
+  /openapi.yaml:
+    get:
+      operationId: "getOpenAPI"
+      summary: "This contract, as served by the dispatcher."
+      description: "Returns the OpenAPI description of the API version the dispatcher implements. The response is the tracked api/openapi.yaml of the running build, byte for byte."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The OpenAPI description."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /version:
+    get:
+      operationId: "getVersion"
+      summary: "Version identities of the dispatcher."
+      description: "Reports the HTTP API contract version, the dispatcher binary identity and the executor control protocol version. This route never negotiates: it answers regardless of the Debuglet-API-Version request header so that an incompatible client can discover what the server speaks."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "Version identities."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+  /healthz:
+    get:
+      operationId: "getLiveness"
+      summary: "Liveness of the dispatcher process."
+      description: "Answers 200 whenever this process serves requests. It states nothing about readiness: a live dispatcher may be paused for maintenance, or unable to reach its database or its executors. Needs no credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The process serves requests."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResponse"
+  /readyz:
+    get:
+      operationId: "getReadiness"
+      summary: "Admission readiness of the dispatcher."
+      description: "Answers 200 while this dispatcher would admit new work: admission is open, its database answers one bounded read and its control listener accepts executor sessions. Otherwise it answers 503 naming the failed checks. Every observation is made while the request is served, never read from a record written at startup. Needs no credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The dispatcher admits new work."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResponse"
+        "503":
+          description: "At least one admission check failed, and reasons names them."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResponse"
+  /health:
+    get:
+      operationId: "getHealth"
+      summary: "Liveness, readiness and dependency observations."
+      description: "Always answers 200 with the observations behind the readiness decision, so that a degraded dependency can be told from a paused dispatcher or a lost control channel. Needs no credential and carries no operator note, identifier or path."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The health report of this dispatcher."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /auth/login:
+    post:
+      operationId: "login"
+      summary: "Exchange an account key for a session."
+      description: "Verifies the account key of one account and issues a session for it. The returned token is the bearer credential a native client repeats in the Authorization header; the same token is also set in the session_token cookie, together with the session's CSRF token in session_csrf, for a browser client. A session expires 12 hours after it was issued and is not extended by use: a client logs in again. Nothing else is a login credential: a user identifier, a debuglet identifier and a payment auth key are all refused here. An empty account_key is the local development bootstrap and is served only by a dispatcher explicitly configured for local development."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The issued session."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          description: "Malformed body, or a contract version this dispatcher does not serve."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The account key is unknown, or it is empty on a dispatcher that does not serve the local development profile. The two are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The session could not be issued."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/logout:
+    post:
+      operationId: "logout"
+      summary: "Revoke the session the request authenticated with."
+      description: "Revokes the presented session before its expiry and clears the browser cookies. The token is refused from then on. A request that authenticated with no session revokes nothing."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "204":
+          description: "The session was revoked."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+        "400":
+          description: "Malformed body, or a contract version this dispatcher does not serve."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or already revoked (unauthorized)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The session could not be revoked."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/recover:
+    post:
+      operationId: "recoverAccount"
+      summary: "Replace the credentials of one account with a recovery code."
+      description: "Consumes a recovery code and returns a new account key and a new recovery code for the one account that code belongs to. Every session of that account is revoked first, so a credential the previous holder kept stops working. A recovery code names its own account and cannot be pointed at another one, so recovering never grants ownership of somebody else's account."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoverRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The account and its replacement credentials."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountResponse"
+        "400":
+          description: "Malformed body, or a contract version this dispatcher does not serve."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The recovery code is unknown or has already been replaced (unauthorized)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The credentials could not be replaced."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /debuglet:
+    put:
+      operationId: "submitDebuglets"
+      summary: "Submit a paid batch of debuglets."
+      description: "Admits the debuglets of one completed transaction. The server hashes the decoded debuglets array and rejects any batch that differs from the one the payment intent was created for. The encoded request body must not exceed 33554432 bytes."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitDebugletsRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The debuglet IDs, in the order of the submitted batch."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugletIDList"
+        "400":
+          description: "Malformed body (invalid_request), a batch that does not match the intent (intent_mismatch), an unpaid transaction (payment_incomplete), an unsupported payment method (unsupported_payment_method), an invalid debuglet (invalid_request) or a policy the dispatcher does not admit, including a reserved window that does not fit (invalid_policy)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Unknown transaction, wrong auth key, a transaction that belongs to another account, or a missing, expired or revoked credential (unauthorized). The four are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "The scheduler cannot admit the batch within the executor's remaining capacity (capacity_exhausted)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The batch was rejected by the dispatcher after admission (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The transaction is backed by a chain payment method while blockchain payments are disabled (payments_disabled), or an operator has stopped the admission of new submissions on this dispatcher (service_unavailable). Nothing is admitted or scheduled either way; a payment order that was already paid is refunded, which spends it, so the same batch is refused from then on. When the refund could not be performed the message says the order is still paid and the batch can be submitted again once admission resumes."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: "cancelDebuglet"
+      summary: "Ask the dispatcher to abort a debuglet."
+      description: "A 204 acknowledges the cancellation request. It does not certify remote termination and does not rewrite an already recorded terminal result."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DebugletDeleteRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "204":
+          description: "Cancellation acknowledged."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+        "400":
+          description: "Malformed body (invalid_request), or the dispatcher refused the cancellation (cancel_refused)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable; neither is cancelled."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /debuglet/{id}/state:
+    get:
+      operationId: "getDebugletState"
+      summary: "Report the recorded state of one debuglet."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          description: "Canonical 36-character debuglet UUID."
+          schema:
+            type: string
+            format: uuid
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The recorded state."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugletStateResponse"
+        "400":
+          description: "The path segment is not a canonical UUID."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The state could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /debuglet/{id}/logs:
+    get:
+      operationId: "getDebugletLogs"
+      summary: "Read one page of a debuglet's stored output."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          description: "Canonical 36-character debuglet UUID."
+          schema:
+            type: string
+            format: uuid
+        - name: "after"
+          in: "query"
+          required: false
+          description: "Cursor: return entries with an ID strictly above this value. Defaults to 0. A present but malformed or negative value is rejected."
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: "limit"
+          in: "query"
+          required: false
+          description: "Maximum number of entries. Defaults to 100. A present but malformed or non-positive value is rejected; a larger value is clamped to 1000."
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 1000
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "One page of stored output."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugletLogsResponse"
+        "400":
+          description: "The path segment is not a canonical UUID, or a pagination parameter is invalid."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The logs could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /list-debuglets:
+    get:
+      operationId: "listUserDebuglets"
+      summary: "List the debuglets of the calling user."
+      description: "Requires the session_token cookie of an existing user."
+      parameters:
+        - name: "limit"
+          in: "query"
+          required: false
+          description: "Maximum number of rows. Defaults to 100; a larger value is clamped to 100."
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: "offset"
+          in: "query"
+          required: false
+          description: "Number of rows to skip. Defaults to 0."
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The user's debuglets, newest first."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugletList"
+        "400":
+          description: "An invalid limit or offset."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request did not authenticate as an account (unauthorized). This route reports one account's own runs, so the local development profile does not serve it without a credential either."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The rows could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /executors:
+    get:
+      operationId: "listExecutors"
+      summary: "List the registered executors."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The registered executors. The body is null when no executor is registered."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorList"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /executors/by-ip:
+    get:
+      operationId: "getExecutorByIP"
+      summary: "Identify the executor registered for a source IP."
+      parameters:
+        - name: "ip"
+          in: "query"
+          required: true
+          description: "Source IP of the executor."
+          schema:
+            type: string
+        - name: "n"
+          in: "query"
+          required: false
+          description: "Maximum number of recent debuglet IDs. Defaults to 10; must be a positive integer when present."
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The executor serving that address, and the requesting account's own recent debuglet IDs on it. Runs of other accounts are never listed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorByIPResponse"
+        "400":
+          description: "The ip parameter is missing, or n is not a positive integer."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No executor is registered for that IP."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /executors/{id}/tesla:
+    get:
+      operationId: "getExecutorTesla"
+      summary: "Read an executor's TESLA key schedule parameters."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          description: "Executor ID."
+          schema:
+            type: string
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The parameters an external verifier needs to reconstruct chain keys."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorTeslaResponse"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No executor with that ID is registered."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /destination:
+    patch:
+      operationId: "setDestinationLimit"
+      summary: "Set the bandwidth limit of one destination."
+      description: "This route is unauthenticated in the alpha and is not part of the researcher-facing flow."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DestinationLimitRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "204":
+          description: "The limit was applied."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+        "400":
+          description: "Malformed body (invalid_request) or a limit outside its documented range (invalid_policy)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The authenticated account is not an operator (forbidden), or a cookie-authenticated state change did not repeat its CSRF token."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /payment/intent:
+    put:
+      operationId: "createPaymentIntent"
+      summary: "Create a payment intent for a batch of debuglets."
+      description: "Prices the batch, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits the methods TEST and USDC; TEST is the local alpha's bookkeeping-only method. The encoded request body must not exceed 33554432 bytes."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentIntentRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The created intent."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntentResponse"
+        "400":
+          description: "Malformed body (invalid_request), an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor) or an invalid policy (invalid_policy)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The intent could not be created."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "A chain payment method was requested while blockchain payments are disabled (payments_disabled), or an operator has stopped the admission of new submissions on this dispatcher (service_unavailable). No intent is created and nothing is priced in either case."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /payment/{transaction_id}/status:
+    get:
+      operationId: "getPaymentStatus"
+      summary: "Report whether a transaction is paid."
+      parameters:
+        - name: "transaction_id"
+          in: "path"
+          required: true
+          description: "Transaction ID returned by the payment intent."
+          schema:
+            type: string
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "True when the transaction is recorded as paid."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: boolean
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No such transaction, or it belongs to another account. The two are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The payment status could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me:
+    get:
+      operationId: "getMe"
+      summary: "Report the account the request authenticated as."
+      description: "Requires a session, presented either as an Authorization bearer token or in the session_token cookie."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The selected user."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request did not authenticate as an account (unauthorized). This route reports the caller's own account, so the local development profile does not serve it without a credential either."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "The selected user no longer exists."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The user could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /user:
+    put:
+      operationId: "createUser"
+      summary: "Register an account and issue its first credentials."
+      description: "Creates an account and returns its account key and recovery code. Both are shown exactly once, by this response: the dispatcher stores only their digests and cannot produce them again. The account key is exchanged for a session at /auth/login; the recovery code replaces both credentials at /auth/recover. A self-registered account always has the ordinary role; no route grants the operator role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The created account and its credentials."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountResponse"
+        "400":
+          description: "Malformed body or a blank name."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The user could not be created."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /user-ids:
+    get:
+      operationId: "listUserIDs"
+      summary: "List the account identifiers of this dispatcher."
+      description: "An operator operation. An account identifier is not a credential and names no authority, but enumerating the accounts of a dispatcher is not something an ordinary account has any reason to do."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The user UUIDs."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserIDList"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The authenticated account is not an operator (forbidden), or a cookie-authenticated state change did not repeat its CSRF token."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The UUIDs could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /connection:
+    get:
+      operationId: "getConnection"
+      summary: "Read the local control listeners announced by the dispatcher."
+      description: "Optional route. It exists only when the dispatcher was started with local connection metadata; other deployments answer 404. It is not a dispatcher directory and grants no access."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The announced local listeners."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionInfo"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "The dispatcher announces no local connection metadata."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      description: "A session token from /auth/login, presented as \"Authorization: Bearer <token>\". This is what a native client uses; it is not ambient authority, so it needs no CSRF token."
+    cookieAuth:
+      type: "apiKey"
+      in: "cookie"
+      name: "session_token"
+      description: "The same session token in a cookie, for a browser client. A state-changing request authenticated this way must repeat the session's CSRF token, returned as csrf_token and set in the session_csrf cookie, in the X-Debuglet-CSRF header."
+  schemas:
+    Error:
+      type: object
+      description: "Error envelope of every failure. Branch on code; message is a bounded diagnostic for a human and must not be parsed. A minor version may add codes, so treat an unknown code as a plain failure of the status it arrived with."
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: "Stable machine-readable failure code."
+          enum:
+            - "invalid_request"
+            - "invalid_policy"
+            - "unknown_executor"
+            - "intent_mismatch"
+            - "payment_incomplete"
+            - "unsupported_payment_method"
+            - "payments_disabled"
+            - "unsupported_api_version"
+            - "unauthorized"
+            - "forbidden"
+            - "not_found"
+            - "capacity_exhausted"
+            - "cancel_refused"
+            - "method_not_allowed"
+            - "unsupported_media_type"
+            - "payload_too_large"
+            - "internal_error"
+            - "service_unavailable"
+        message:
+          type: string
+          description: "Bounded human-readable diagnostic. Never carries a credential, a stack trace or internal database or transport detail."
+    VersionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - api_version
+        - api_versions
+        - binary_version
+        - protocol_version
+      properties:
+        version:
+          type: string
+          description: "The dispatcher's configured version string. Retained for clients written before the API contract was versioned; equal to binary_version unless the build sets a distribution version."
+        api_version:
+          type: string
+          description: "Version of this HTTP contract, as major.minor."
+        api_versions:
+          type: array
+          description: "Major contract versions this dispatcher serves."
+          items:
+            type: string
+        binary_version:
+          type: string
+          description: "Distribution version of the dispatcher binary."
+        binary_revision:
+          type: string
+          description: "Source revision of the dispatcher binary. Absent when the build did not record one."
+        protocol_version:
+          type: string
+          description: "Executor control protocol version spoken by this dispatcher. It is not part of the HTTP contract."
+    ProbeResponse:
+      type: object
+      additionalProperties: false
+      description: "Answer of the liveness and readiness probes. status is ok when the probe passes and unready when it does not. reasons lists the failed checks with fixed identifiers, admission_paused, storage_unavailable and control_unavailable, and is present only on a refusal; a minor version may add identifiers."
+      required:
+        - status
+      properties:
+        status:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      description: "Health observations of one dispatcher. live is true in every served answer, because reaching the route is the liveness check. ready is the decision GET /readyz answers with and reasons its failed checks, empty while ready, with the identifiers of ProbeResponse. storage is ok or degraded, control is ok or unavailable. executors.registered counts the executor registry and executors.eligible the subset whose control session lease is valid now. Nothing here is read from a readiness file or from executor heartbeat telemetry."
+      required:
+        - live
+        - ready
+        - reasons
+        - storage
+        - control
+        - executors
+      properties:
+        live:
+          type: boolean
+        ready:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        storage:
+          type: string
+        control:
+          type: string
+        executors:
+          type: object
+          additionalProperties: false
+          required:
+            - eligible
+            - registered
+          properties:
+            eligible:
+              type: integer
+            registered:
+              type: integer
+    DebugletPolicyRequest:
+      type: object
+      description: "Requested network policy. Bandwidth is bits per second."
+      additionalProperties: false
+      required:
+        - floor_bw
+        - ceil_bw
+        - timeout_ms
+      properties:
+        floor_bw:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000000000
+          description: "Reserved bandwidth in bits per second, at most 1000000000000000 (1 Pbit/s)."
+        ceil_bw:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000000000
+          description: "Maximum bandwidth in bits per second, at most 1000000000000000 (1 Pbit/s). Must be at least floor_bw."
+        timeout_ms:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854
+          description: "Run budget in milliseconds. Must be positive and at most 9223372036854. The window the run reserves is the start time plus this budget plus ten seconds for the executor's processing delay, and that window must end no later than 2262-04-11. The maximum admits a budget, not a submission: a request whose window does not fit is answered 400 with code invalid_policy even when every field is within its own bounds."
+        addresses:
+          type: array
+          nullable: true
+          description: "Destination hosts the debuglet may address. An accidental port is stripped."
+          items:
+            type: string
+        require_icmp:
+          type: boolean
+        listen_udp:
+          type: boolean
+        listen_tcp:
+          type: boolean
+        listen_scion:
+          type: boolean
+    DebugletRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - order_id
+        - executor_id
+        - wasm
+        - policy
+      properties:
+        order_id:
+          type: integer
+          format: int64
+          description: "Unique within one batch."
+        start_time:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 0
+          maximum: 9223372036
+          description: "Optional start time as Unix seconds, at most 9223372036 (2262-04-11). Absent or null starts the run as soon as the schedule allows, and so does a start time already in the past. The maximum admits a start time, not a submission: the reserved window of start time, timeout_ms and ten seconds must still end no later than 2262-04-11, so a start time near the maximum is admissible only with a budget that fits before it."
+        executor_id:
+          type: string
+          description: "ID of a registered executor."
+        args:
+          type: array
+          description: "Guest arguments. Absent when empty."
+          items:
+            type: string
+        wasm:
+          type: string
+          format: byte
+          description: "Base64-encoded guest module."
+        policy:
+          $ref: "#/components/schemas/DebugletPolicyRequest"
+    SubmitDebugletsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - debuglets
+        - transaction_id
+        - auth_key
+      properties:
+        debuglets:
+          type: array
+          description: "The identical debuglets array the payment intent was created for."
+          items:
+            $ref: "#/components/schemas/DebugletRequest"
+        transaction_id:
+          type: string
+        auth_key:
+          type: string
+          description: "Auth key of the transaction. Empty for TEST transactions."
+    DebugletIDList:
+      type: array
+      description: "Debuglet IDs in the order of the submitted batch."
+      items:
+        type: string
+        format: uuid
+    DebugletDeleteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - debuglet_id
+        - executor_id
+      properties:
+        debuglet_id:
+          type: string
+          format: uuid
+        executor_id:
+          type: string
+    DebugletStateResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - error
+        - executor_id
+      properties:
+        state:
+          type: string
+          description: "Opaque run state. RunStateExited is terminal."
+        error:
+          type: string
+          description: "Recorded workload error. Empty when the run has not failed."
+        executor_id:
+          type: string
+    DebugletLogsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - after
+        - logs
+        - has_more
+      properties:
+        state:
+          type: string
+          description: "Opaque run state at the time of the query."
+        error:
+          type: string
+          description: "Recorded workload error. Absent when empty."
+        after:
+          type: integer
+          format: int64
+          description: "Cursor for the next page: the ID of the last returned entry, or the requested cursor for an empty page."
+        logs:
+          type: array
+          nullable: true
+          description: "Stored output entries with strictly increasing IDs. Null when the page is empty."
+          items:
+            $ref: "#/components/schemas/DebugletLogEntry"
+        has_more:
+          type: boolean
+          description: "True when the page was filled to the limit. A full page may report true although no later entry exists."
+    DebugletLogEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - timestamp
+        - output
+      properties:
+        id:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          description: "Server timestamp in UTC, formatted as 2006-01-02T15:04:05Z."
+        output:
+          type: string
+          format: byte
+          description: "Base64-encoded guest output bytes."
+    DebugletResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - start_time
+        - end_time
+        - usage
+        - executor_id
+        - addresses
+        - state
+      properties:
+        id:
+          type: string
+          format: uuid
+        start_time:
+          type: integer
+          format: int64
+          description: "Scheduled start as Unix seconds."
+        end_time:
+          type: integer
+          format: int64
+          description: "Scheduled end as Unix seconds."
+        usage:
+          type: integer
+          format: int64
+          description: "Bandwidth reserved for the run, in bits per second. It is the floor_bw the debuglet was admitted with, not a measured consumption."
+        executor_id:
+          type: string
+        addresses:
+          type: array
+          nullable: true
+          items:
+            type: string
+        state:
+          type: string
+    DebugletList:
+      type: array
+      items:
+        $ref: "#/components/schemas/DebugletResponse"
+    ExecutorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - ready
+        - last_seen
+        - version
+        - tesla_delay_sec
+        - tesla_anchor_timestamp_ns
+        - tesla_anchor_key
+        - price_per_bw
+        - currency
+      properties:
+        id:
+          type: string
+        ready:
+          type: boolean
+        last_seen:
+          type: integer
+          format: int64
+          description: "Unix seconds of the last observed contact."
+        version:
+          type: string
+          description: "Version string announced by the executor."
+        tesla_delay_sec:
+          type: integer
+          format: int64
+          description: "TESLA epoch duration in seconds."
+        tesla_anchor_timestamp_ns:
+          type: integer
+          format: int64
+          description: "Unix nanoseconds of TESLA epoch 0."
+        tesla_anchor_key:
+          type: string
+          format: byte
+          nullable: true
+          description: "Base64-encoded public chain anchor k_0. Null when the executor announced none."
+        price_per_bw:
+          type: integer
+          format: int64
+          description: "Price per bit per second and second of run time, in the executor's currency."
+        currency:
+          type: string
+    ExecutorList:
+      type: array
+      nullable: true
+      description: "Null when no executor is registered."
+      items:
+        $ref: "#/components/schemas/ExecutorResponse"
+    ExecutorByIPResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - executor_id
+        - debuglet_ids
+      properties:
+        executor_id:
+          type: string
+        debuglet_ids:
+          type: array
+          description: "Most recent debuglet IDs, newest first. An executor with no dispatch history reports an empty array."
+          items:
+            type: string
+            format: uuid
+    ExecutorTeslaResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - executor_id
+        - anchor_key
+        - anchor_timestamp_ns
+        - delay_sec
+        - disclosed_epoch
+        - disclosed_key
+      properties:
+        executor_id:
+          type: string
+        anchor_key:
+          type: string
+          format: byte
+          description: "Base64-encoded k_0. Empty when the executor announced none."
+        anchor_timestamp_ns:
+          type: integer
+          format: int64
+          description: "Unix nanoseconds of epoch 0."
+        delay_sec:
+          type: integer
+          format: int64
+          description: "Epoch duration in seconds."
+        disclosed_epoch:
+          type: integer
+          format: int64
+          description: "Index of the latest disclosed key, 0 when none was disclosed."
+        disclosed_key:
+          type: string
+          format: byte
+          description: "Base64-encoded latest disclosed key. Empty when none was disclosed."
+    DestinationLimitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - destination
+        - limit
+      properties:
+        destination:
+          type: string
+        limit:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000000000
+          description: "Bandwidth limit in bits per second, at most 1000000000000000 (1 Pbit/s). It becomes the capacity the runs of the destination are shared out of, so it is held to the same range as the bandwidth of a policy."
+    PaymentIntentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - debuglets
+        - payment_method
+      properties:
+        debuglets:
+          type: array
+          items:
+            $ref: "#/components/schemas/DebugletRequest"
+        payment_method:
+          type: string
+          description: "TEST for the local alpha's bookkeeping-only method, or USDC."
+        refund_address:
+          type: string
+          description: "Chain address for refunds. Empty for TEST."
+    IntentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - method
+        - intent
+      properties:
+        method:
+          type: string
+          description: "The payment method the intent was created for."
+        intent:
+          description: "Method-specific intent."
+          oneOf:
+            - $ref: "#/components/schemas/DummyIntent"
+            - $ref: "#/components/schemas/SuiIntent"
+    DummyIntent:
+      type: object
+      description: "Intent of the TEST method. It records bookkeeping only and moves no funds."
+      additionalProperties: false
+      required:
+        - transaction_id
+        - auth_key
+      properties:
+        transaction_id:
+          type: string
+          description: "16 random bytes, hex-encoded."
+        auth_key:
+          type: string
+          description: "Empty for TEST transactions."
+    SuiIntent:
+      type: object
+      additionalProperties: false
+      required:
+        - transaction_id
+        - auth_key
+        - price
+        - coin_type
+        - expires_at_s
+        - registry_address
+        - receiver_address
+      properties:
+        transaction_id:
+          type: string
+        auth_key:
+          type: string
+          description: "Secret that authorizes the following submission. Never log or echo it."
+        price:
+          type: integer
+          format: int64
+        coin_type:
+          type: string
+        expires_at_s:
+          type: integer
+          format: int64
+          description: "Expiry as Unix seconds."
+        registry_address:
+          type: string
+        receiver_address:
+          type: string
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - role
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        role:
+          type: string
+          description: "What the account may do. An ordinary account reaches its own runs; an operator additionally reaches the dispatcher-wide operations. The value is a report, not a credential, and a minor version may add roles."
+          enum:
+            - "user"
+            - "operator"
+    AccountResponse:
+      type: object
+      description: "An account together with the credentials just issued for it. Both credentials are returned exactly once, by the operation that minted them. Store them where only their owner can read them; the dispatcher keeps only their digests."
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - role
+        - account_key
+        - recovery_code
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+            - "user"
+            - "operator"
+        account_key:
+          type: string
+          description: "The long-lived credential of this account, exchanged for a session at /auth/login. It is not a session and is never presented on an ordinary request."
+        recovery_code:
+          type: string
+          description: "The credential that replaces both credentials of this account at /auth/recover. It names this account and can name no other."
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - account_key
+      properties:
+        account_key:
+          type: string
+          description: "The account key to exchange for a session. An empty value asks a dispatcher serving the local development profile for a credential for its own local account; every other dispatcher answers 401."
+    RecoverRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - recovery_code
+      properties:
+        recovery_code:
+          type: string
+          description: "The recovery code of the account whose credentials are to be replaced."
+    EmptyRequest:
+      type: object
+      description: "A body with no fields. The route reads nothing from it."
+      additionalProperties: false
+    SessionResponse:
+      type: object
+      description: "An issued session. It expires at expires_at and is not extended by use."
+      additionalProperties: false
+      required:
+        - token
+        - csrf_token
+        - expires_at
+        - id
+        - name
+        - role
+      properties:
+        token:
+          type: string
+          description: "The session credential. A native client repeats it as an Authorization bearer token; the same value is also set in the session_token cookie."
+        csrf_token:
+          type: string
+          description: "The token a cookie-authenticated client repeats in the X-Debuglet-CSRF header of every state-changing request. It authenticates nothing on its own, and a bearer client does not need it."
+        expires_at:
+          type: integer
+          format: int64
+          description: "Unix seconds at which this session stops being accepted."
+        id:
+          type: string
+          format: uuid
+          description: "Identifier of the account this session acts as."
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+            - "user"
+            - "operator"
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+    UserIDList:
+      type: array
+      items:
+        type: string
+        format: uuid
+    ConnectionInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - mode
+        - grpc_address
+        - yamux_address
+      properties:
+        schema_version:
+          type: integer
+          description: "Currently 1."
+        mode:
+          type: string
+          description: "Currently local-test."
+        grpc_address:
+          type: string
+          description: "Loopback host:port of the control gRPC listener."
+        yamux_address:
+          type: string
+          description: "Loopback host:port of the multiplexed control listener."

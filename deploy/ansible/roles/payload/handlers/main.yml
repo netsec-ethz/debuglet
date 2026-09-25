@@ -1,0 +1,7 @@
+---
+- name: Restart debuglet services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop: "{{ debuglet_services }}"
+  when: debuglet_manage_services | bool

@@ -10,15 +10,18 @@ local/configs/*/key
 # binaries
 debuglet-executor*
 debuglet-dispatcher*
+# The reference service units under deploy/systemd are source files whose
+# names start with the daemon names above; keep them out of that rule.
+!/deploy/systemd/debuglet-dispatcher-*.service
+!/deploy/systemd/debuglet-executor-*.service
 tagger.o
 /dispatcher
 /executor
 __debug*
 
-# mise's project-local install/cache dir (see deploy/bin/mise) and the
-# project-relative Go module/build caches CI caches between runs.
-/deploy/.mise
+# The project-relative Go module/build caches CI caches between runs.
 /.cache
+/.ci
 
 # Python env
 .venv
@@ -42,15 +45,17 @@ __pycache__
 *.pyc
 .venv
 
-# Code agents
-.claude
+# Local assistant and tool-runtime state.
+/.claude/
+/deploy/.mise/
 
 .data
 
 # Real Ansible inventory identifies private infrastructure (dispatcher
 # address, executor hostnames, SSH usernames). Copy hosts.yml.example to
 # hosts.yml (prod) / hosts.dev.yml.example to hosts.dev.yml (dev) locally;
-# in CI both are injected as Secure Files / protected variables. See
+# keep real inventory and SSH credentials outside repository history. See
 # deploy/ansible/hosts.yml.example and hosts.dev.yml.example.
 /deploy/ansible/hosts.yml
 /deploy/ansible/hosts.dev.yml
+/deploy/ansible/inventory/

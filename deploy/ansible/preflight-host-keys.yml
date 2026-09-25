@@ -1,0 +1,36 @@
+---
+# Every deployment playbook imports this first. It refuses to let a deployment
+# start unless the pinned host identities exist, so a missing known-hosts file
+# is a clear error rather than a connection that falls back to trusting
+# whatever key the host offers.
+#
+# It runs locally, connects to nothing and changes nothing.
+
+- name: Check pinned SSH host identities
+  hosts: all
+  connection: local
+  gather_facts: false
+  run_once: true
+  become: false
+
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+  tasks:
+    - name: Inspect the provisioned known-hosts file
+      ansible.builtin.stat:
+        path: "{{ known_hosts_file }}"
+      register: pinned_host_keys
+
+    - name: Require provisioned host identities
+      ansible.builtin.assert:
+        that:
+          - pinned_host_keys.stat.exists
+          - pinned_host_keys.stat.isreg is defined and pinned_host_keys.stat.isreg
+          - pinned_host_keys.stat.size | int > 0
+        fail_msg: >-
+          No pinned SSH host identities at {{ known_hosts_file }}. Provision
+          the file from the managed hosts' own public host keys before
+          deploying, and never from a key scanned over the network. See
+          deploy/README.md and deploy/ansible/known_hosts.example.
+        success_msg: "Pinned SSH host identities: {{ known_hosts_file }}"

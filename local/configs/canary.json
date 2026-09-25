@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "environment": "local",
+  "operator": "local-fixture",
+  "executor_id": "84b8f75e-a779-465a-8ce3-54b04ac15ef2",
+  "api_base_url": "",
+  "control": {
+    "grpc_addr": "",
+    "yamux_addr": "",
+    "protection": "owned-loopback"
+  },
+  "target": { "host": "127.0.0.1" },
+  "limits": {
+    "execution_ms": 10000,
+    "ceiling_bps": 1000000,
+    "attempt_ms": 180000
+  },
+  "deployment_record": ""
+}

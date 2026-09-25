@@ -5,11 +5,10 @@ package app
 
 import (
 	"context"
-	"debuglet/internal/executor/ratelimit/app/avl"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/avl"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -17,6 +16,9 @@ import (
 
 const (
 	defaultDestinationCapacity = Gigabit
+	// executorDimension keys the executor-wide cache; every other key is a
+	// destination address. Both share one namespace of invalidation counters.
+	executorDimension = ""
 )
 
 var (
@@ -34,11 +36,13 @@ type storeValue struct {
 	minimum Bitrate
 	maximum Bitrate
 
-	lastExecLimit Bitrate
-	lastAddrLimit map[string]Bitrate
-	tracker       *UsageTracker
-
-	lastUpdate time.Time
+	// Each cached value records the dimension version it was computed from, so
+	// recomputing one dimension never consumes another's pending invalidation.
+	lastExecLimit   Bitrate
+	lastExecVersion uint64
+	lastAddrLimit   map[string]Bitrate
+	lastAddrVersion map[string]uint64
+	tracker         *UsageTracker
 
 	mu sync.Mutex
 }
@@ -52,6 +56,14 @@ type Limiter struct {
 	// max capacity for a destination address
 	addrCapacity map[string]Bitrate
 
+	// execUsed and addrUsed are the floors admitted on each dimension. A
+	// floor is bandwidth its run already holds, so only what is left after
+	// them is shared: sharing the whole capacity and then adding each floor
+	// back hands out the reserved part of the capacity a second time, once
+	// per run.
+	execUsed Bitrate
+	addrUsed map[string]Bitrate
+
 	// tree for fairsharing the executors bandwidth
 	execT *avl.AVL[uuid.UUID]
 	// tree for fairsharing a destinations bandwidth
@@ -62,30 +74,56 @@ type Limiter struct {
 	mu     sync.RWMutex
 	logger *zap.Logger
 
-	// dirty keeps track of when destinations (and the executor with a key of "")
-	// have last been modified. This enables [Limiter.GetLimit] to be cached by not
-	// having to recompute the fairshare value every time it's called, but instead only
-	// if either a new debuglet has been added to the executor (requiring the executor
-	// fairshare to be recomputed) or a debuglet has an overlap of destination addresses
-	// with another, requiring those destination fairshares to be updated.
-	dirty map[string]time.Time
+	// version counts the invalidations of one cached dimension: the executor
+	// share under executorDimension and every destination share under its own
+	// address. This enables [Limiter.GetLimit] to be cached by not having to
+	// recompute a fairshare value on every call, while still recomputing it
+	// after anything that can move it. A dimension is invalidated when its
+	// capacity changes and when its competitors change, which happens when a
+	// debuglet is added to the executor or when a debuglet with an overlapping
+	// destination address is added or removed. Counters are per dimension, so a
+	// cached read of one dimension can never make another dimension's
+	// outstanding invalidation look consumed.
+	version map[string]uint64
 }
 
 func NewLimiter(l *zap.Logger) *Limiter {
 	return &Limiter{
 		addrCapacity: make(map[string]Bitrate),
+		addrUsed:     make(map[string]Bitrate),
 		execT:        &avl.AVL[uuid.UUID]{},
 		addrT:        make(map[string]*avl.AVL[uuid.UUID]),
 		stores:       make(map[uuid.UUID]*storeValue),
-		dirty:        make(map[string]time.Time),
+		version:      make(map[string]uint64),
 		logger:       l,
 	}
+}
+
+// invalidateLocked marks one dimension as needing recomputation. Callers hold
+// the write lock, so the counter cannot be observed between its two states.
+func (l *Limiter) invalidateLocked(dimension string) {
+	l.version[dimension]++
+}
+
+// shareableCapacity is the part of a dimension's capacity that is still free to
+// be shared: what is left once the floors it already owes are subtracted. It
+// never goes below zero, so a capacity that no longer covers its floors shares
+// nothing out rather than taking bandwidth away from them.
+func shareableCapacity(capacity, used Bitrate) Bitrate {
+	if used >= capacity {
+		return 0
+	}
+	return capacity - used
 }
 
 func (l *Limiter) SetExecutorCapacity(c Bitrate) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.execCapacity == c {
+		return
+	}
 	l.execCapacity = c
+	l.invalidateLocked(executorDimension)
 }
 func (l *Limiter) ExecutorCapacity() Bitrate {
 	l.mu.RLock()
@@ -95,12 +133,19 @@ func (l *Limiter) ExecutorCapacity() Bitrate {
 func (l *Limiter) SetAddrCapacity(addr string, c Bitrate) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if previous, ok := l.addrCapacity[addr]; ok && previous == c {
+		return
+	}
 	l.addrCapacity[addr] = c
+	l.invalidateLocked(addr)
 }
 
 func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum Bitrate, addrs []string) error {
 	if minimum > maximum {
 		return fmt.Errorf("invalid input (Got minimum (%s) > maximum (%s), Want maximum >= minimum)", minimum, maximum)
+	}
+	if minimum < 0 {
+		return fmt.Errorf("invalid input (Got minimum (%s), Want minimum >= 0)", minimum)
 	}
 
 	l.mu.Lock()
@@ -108,23 +153,30 @@ func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum Bitrate, addrs [
 
 	residual := int64(maximum - minimum)
 	l.execT.Insert(ID, residual)
+	l.execUsed += minimum
 
 	addrLimit := make(map[string]Bitrate)
+	addrVersion := make(map[string]uint64)
 	l.stores[ID] = &storeValue{
-		minimum:       minimum,
-		maximum:       maximum,
-		lastAddrLimit: addrLimit,
-		lastExecLimit: -1,
-		tracker:       NewUsageTracker(l.logger),
+		minimum:         minimum,
+		maximum:         maximum,
+		lastAddrLimit:   addrLimit,
+		lastAddrVersion: addrVersion,
+		lastExecLimit:   -1,
+		tracker:         NewUsageTracker(l.logger),
 	}
-	l.dirty[""] = time.Now()
+	l.invalidateLocked(executorDimension)
 	for _, a := range addrs {
+		if _, duplicate := addrLimit[a]; duplicate {
+			continue // A repeated policy address is one membership, not two.
+		}
 		addrLimit[a] = -1
 		if _, ok := l.addrT[a]; !ok {
 			l.addrT[a] = &avl.AVL[uuid.UUID]{}
 		}
 		l.addrT[a].Insert(ID, residual)
-		l.dirty[a] = time.Now()
+		l.addrUsed[a] += minimum
+		l.invalidateLocked(a)
 	}
 	return nil
 }
@@ -133,20 +185,29 @@ func (l *Limiter) RemoveDebuglet(ID uuid.UUID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	store, ok := l.stores[ID]
+	if !ok {
+		return // Removal is idempotent and never invalidates a live dimension.
+	}
 	l.execT.Delete(ID)
-	l.dirty[""] = time.Now()
+	l.execUsed -= store.minimum
+	l.invalidateLocked(executorDimension)
 
-	if store, ok := l.stores[ID]; ok {
-		for a, _ := range store.lastAddrLimit {
-			if aTree, exists := l.addrT[a]; exists {
-				aTree.Delete(ID)
-				if aTree.Len() == 0 {
-					delete(l.addrT, a)
-					delete(l.dirty, a)
-				} else {
-					l.dirty[a] = time.Now()
-				}
-			}
+	for a := range store.lastAddrLimit {
+		aTree, exists := l.addrT[a]
+		if !exists {
+			continue
+		}
+		aTree.Delete(ID)
+		l.addrUsed[a] -= store.minimum
+		if aTree.Len() == 0 {
+			// The removed debuglet was the last member, so no cached value can
+			// still refer to this dimension and its counter can start over.
+			delete(l.addrT, a)
+			delete(l.addrUsed, a)
+			delete(l.version, a)
+		} else {
+			l.invalidateLocked(a)
 		}
 	}
 	delete(l.stores, ID)
@@ -160,25 +221,22 @@ func (l *Limiter) GetExecLimit(ID uuid.UUID) (Bitrate, bool, error) {
 	if !ok {
 		return 0, false, ErrNotRegistered
 	}
+	version := l.version[executorDimension]
+	shareable := shareableCapacity(l.execCapacity, l.execUsed)
 
-	updated := false
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	execLimit := store.lastExecLimit
-
-	if execLimit == -1 || l.dirty[""].After(store.lastUpdate) {
-		maxExecFairshare := Bitrate(l.execT.Fairshare(int64(l.execCapacity)))
+	if execLimit == -1 || store.lastExecVersion != version {
+		maxExecFairshare := Bitrate(l.execT.Fairshare(int64(shareable)))
 		execLimit = min(store.maximum, store.minimum+maxExecFairshare)
-		updated = true
-	}
-
-	if updated {
-		store.lastUpdate = time.Now()
+		store.lastExecVersion = version
 		store.lastExecLimit = execLimit
+		return execLimit, true, nil
 	}
 
-	return execLimit, updated, nil
+	return execLimit, false, nil
 }
 
 func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (Bitrate, bool, error) {
@@ -190,32 +248,35 @@ func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (Bitrate, bool, error)
 		return 0, false, ErrNotRegistered
 	}
 
-	if _, ok := l.addrT[addr]; !ok {
+	tree, ok := l.addrT[addr]
+	if !ok {
+		return 0, false, ErrNotInPolicy
+	}
+	// A destination another debuglet declared is still not this one's policy,
+	// and its cached value must not survive that destination being retired.
+	if tree.Get(ID) == nil {
 		return 0, false, ErrNotInPolicy
 	}
 	addrCap, ok := l.addrCapacity[addr]
 	if !ok {
 		addrCap = defaultDestinationCapacity
 	}
+	version := l.version[addr]
+	shareable := shareableCapacity(addrCap, l.addrUsed[addr])
 
-	updated := false
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	addrLimit := store.lastAddrLimit[addr]
-
-	if addrLimit == -1 || l.dirty[addr].After(store.lastUpdate) {
-		maxAddrFairshare := Bitrate(l.addrT[addr].Fairshare(int64(addrCap)))
+	addrLimit, cached := store.lastAddrLimit[addr]
+	if !cached || addrLimit == -1 || store.lastAddrVersion[addr] != version {
+		maxAddrFairshare := Bitrate(tree.Fairshare(int64(shareable)))
 		addrLimit = min(store.maximum, store.minimum+maxAddrFairshare)
-		updated = true
-	}
-
-	if updated {
-		store.lastUpdate = time.Now()
+		store.lastAddrVersion[addr] = version
 		store.lastAddrLimit[addr] = addrLimit
+		return addrLimit, true, nil
 	}
 
-	return addrLimit, updated, nil
+	return addrLimit, false, nil
 }
 
 func (l *Limiter) GetLimit(ID uuid.UUID, addr string) (Limit, error) {
@@ -249,15 +310,14 @@ func (l *Limiter) Wait(ctx context.Context, direction TransferDirection, ID uuid
 		return fmt.Errorf("failed to wait: %w", err)
 	}
 
-	if limit.Updated {
-		limits := UsageLimits{
-			ExecutorRatelimit:    limit.Executor,
-			ExecutorBurst:        limit.Executor,
-			DestinationRatelimit: limit.Address,
-			DestinationBurst:     limit.Address,
-		}
-		tracker.Upsert(addr, limits)
-	}
+	// Cache freshness is shared with packet-counter publication; accounting
+	// must receive the current limits even when another reader computed them.
+	tracker.Upsert(addr, UsageLimits{
+		ExecutorRatelimit:    limit.Executor,
+		ExecutorBurst:        limit.Executor,
+		DestinationRatelimit: limit.Address,
+		DestinationBurst:     limit.Address,
+	})
 
 	return tracker.Wait(ctx, direction, addr, size)
 }

@@ -1,0 +1,185 @@
+---
+# Every deployment playbook imports this first. It checks the machine that is
+# about to run the deployment — the provisioner — against the pinned inputs in
+# deploy/provisioner.env, so a provisioner built from other dependencies, or a
+# dependency manifest edited after that image was built, stops the deployment
+# before any task changes a managed host.
+#
+# It runs locally, connects to nothing and changes nothing.
+#
+# deploy/docker/provisioner.Dockerfile builds the provisioner and stamps its
+# inputs into the record this reads; deploy/test/provisioner-check.sh builds
+# it and runs the playbooks inside it.
+
+- name: Check the pinned provisioner
+  hosts: all
+  connection: local
+  gather_facts: false
+  run_once: true
+  become: false
+  any_errors_fatal: true
+
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    provisioner_pins_file: "{{ playbook_dir }}/../provisioner.env"
+    provisioner_record_file: /etc/debuglet/provisioner.json
+    provisioner_requirements_file: "{{ playbook_dir }}/requirements.txt"
+    provisioner_collections_file: "{{ playbook_dir }}/requirements.yml"
+
+  tasks:
+    - name: Read the pinned provisioner inputs
+      ansible.builtin.set_fact:
+        provisioner_pins: "{{ lookup('ansible.builtin.file', provisioner_pins_file) }}"
+
+    - name: Extract the pinned values
+      ansible.builtin.set_fact:
+        pinned_ansible_core: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_ANSIBLE_CORE_VERSION=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_base_digest: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_BASE_DIGEST=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_debian_snapshot: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_DEBIAN_SNAPSHOT=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_openssh_client_version: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_OPENSSH_CLIENT_VERSION=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_requirements_sha256: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_collections_sha256: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_COLLECTIONS_SHA256=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_goose_version: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_GOOSE_VERSION=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_goose_sha256: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_GOOSE_SHA256=(.+)$', '\1') | first | default('')) | trim }}
+
+    - name: Require a complete set of pinned values
+      ansible.builtin.assert:
+        that:
+          - pinned_ansible_core | length > 0
+          - pinned_base_digest is match('^sha256:[0-9a-f]{64}$')
+          - pinned_debian_snapshot is match('^[0-9]{8}T[0-9]{6}Z$')
+          - pinned_openssh_client_version | length > 0
+          - pinned_requirements_sha256 is match('^[0-9a-f]{64}$')
+          - pinned_collections_sha256 is match('^[0-9a-f]{64}$')
+          - pinned_goose_version | length > 0
+          - pinned_goose_sha256 is match('^[0-9a-f]{64}$')
+        fail_msg: >-
+          {{ provisioner_pins_file }} does not pin the provisioner completely.
+          It must name the Ansible version, the base image digest, the digest
+          of each dependency manifest, and the migration tool with its digest.
+        quiet: true
+
+    # A manifest changed after the provisioner was built describes
+    # dependencies that nobody installed.
+    - name: Inspect the dependency manifests
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+      register: provisioner_manifests
+      loop:
+        - "{{ provisioner_requirements_file }}"
+        - "{{ provisioner_collections_file }}"
+
+    - name: Require the pinned dependency manifests
+      ansible.builtin.assert:
+        that:
+          - item.0.stat.exists
+          - item.0.stat.checksum == item.1
+        fail_msg: >-
+          {{ item.0.item }} does not match the digest pinned in
+          {{ provisioner_pins_file }} ({{ item.1 }}). Rebuild the provisioner
+          image from the current manifests and update the pinned digests
+          together, with deploy/test/provisioner-check.sh.
+        quiet: true
+      loop: "{{ provisioner_manifests.results | zip([pinned_requirements_sha256, pinned_collections_sha256]) | list }}"
+      loop_control:
+        label: "{{ item.0.item }}"
+
+    - name: Require the pinned Ansible version
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full == pinned_ansible_core
+        fail_msg: >-
+          This deployment runs Ansible {{ ansible_version.full }}, and
+          {{ provisioner_pins_file }} pins {{ pinned_ansible_core }}. Run the
+          playbooks in the pinned provisioner image; see deploy/README.md.
+        quiet: true
+
+    - name: Inspect the provisioner record
+      ansible.builtin.stat:
+        path: "{{ provisioner_record_file }}"
+      register: provisioner_record_stat
+
+    - name: Require a provisioner built from the pinned inputs
+      ansible.builtin.assert:
+        that:
+          - provisioner_record_stat.stat.exists
+          - provisioner_record_stat.stat.isreg is defined and provisioner_record_stat.stat.isreg
+        fail_msg: >-
+          No provisioner record at {{ provisioner_record_file }}. Deployment
+          runs in the provisioner image that
+          deploy/docker/provisioner.Dockerfile builds from the pinned inputs,
+          which stamps that record; deploy/test/provisioner-check.sh builds it
+          and runs the playbooks inside it.
+        quiet: true
+
+    - name: Read the provisioner record
+      ansible.builtin.set_fact:
+        provisioner_record: "{{ lookup('ansible.builtin.file', provisioner_record_file) | from_json }}"
+
+    - name: Require the provisioner to match the pinned inputs
+      ansible.builtin.assert:
+        that:
+          - provisioner_record.schema_version | int == 1
+          - provisioner_record.base_digest == pinned_base_digest
+          - provisioner_record.debian_snapshot | default('') == pinned_debian_snapshot
+          - provisioner_record.openssh_client_version | default('') == pinned_openssh_client_version
+          - provisioner_record.ansible_core_version == pinned_ansible_core
+          - provisioner_record.requirements_sha256 == pinned_requirements_sha256
+          - provisioner_record.collections_sha256 == pinned_collections_sha256
+          - provisioner_record.goose_version | default('') == pinned_goose_version
+          - provisioner_record.goose_sha256 | default('') == pinned_goose_sha256
+        fail_msg: >-
+          The running provisioner was built from different inputs than
+          {{ provisioner_pins_file }} pins. Rebuild it with
+          deploy/test/provisioner-check.sh, or restore the pinned values it
+          was built from, before deploying.
+        quiet: true
+
+    # Reading the installed collections changes nothing, so it runs in check
+    # mode too: a deployment dry run has to make the same refusals.
+    - name: List the installed collections
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection list --format json
+      register: provisioner_collections
+      changed_when: false
+      check_mode: false
+
+    - name: Collect the installed collection versions
+      ansible.builtin.set_fact:
+        installed_collections: >-
+          {{ installed_collections | default({}) | combine(item) }}
+      loop: "{{ provisioner_collections.stdout | from_json | dict2items | map(attribute='value') | list }}"
+      loop_control:
+        label: "{{ item.keys() | list }}"
+
+    - name: Require every pinned collection
+      ansible.builtin.assert:
+        that:
+          - installed_collections[item.name] is defined
+          - installed_collections[item.name].version == item.version
+        fail_msg: >-
+          {{ item.name }} {{ item.version }} is pinned in
+          {{ provisioner_collections_file }} but the provisioner has
+          {{ installed_collections[item.name].version | default('none') }}.
+          Rebuild the provisioner image.
+        success_msg: "{{ item.name }} {{ item.version }}"
+        quiet: true
+      loop: "{{ (lookup('ansible.builtin.file', provisioner_collections_file) | from_yaml).collections }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Report the provisioner identity
+      ansible.builtin.debug:
+        msg: >-
+          Provisioner: ansible-core {{ provisioner_record.ansible_core_version }}
+          on {{ provisioner_record.base_image }}@{{ provisioner_record.base_digest }},
+          dependencies {{ provisioner_record.requirements_sha256[:12] }}/{{ provisioner_record.collections_sha256[:12] }}.

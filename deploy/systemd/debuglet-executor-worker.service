@@ -1,0 +1,35 @@
+[Unit]
+Description=Debuglet executor worker (0.0.0-reference)
+Documentation=https://github.com/netsec-ethz/debuglet/blob/hardening/docs/environments.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=debuglet
+Group=debuglet
+ExecStart=/usr/local/lib/debuglet/0.0.0-reference/bin/debuglet-executor -config /var/lib/debuglet/executors/worker/service.toml -ready-file /run/debuglet/executors/worker/ready.json
+WorkingDirectory=/var/lib/debuglet/executors/worker
+Environment=LANG=C LC_ALL=C TZ=UTC
+RuntimeDirectory=debuglet/executors/worker
+RuntimeDirectoryMode=0700
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=45
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ReadWritePaths=/var/lib/debuglet/executors/worker
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=debuglet-executor
+
+[Install]
+WantedBy=multi-user.target

@@ -5,10 +5,10 @@ package user
 
 import (
 	"bytes"
-	"debuglet/internal/dispatcher/transport/api"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
 	"io"
 	"net/http"
 	"os"

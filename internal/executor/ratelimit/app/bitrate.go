@@ -5,6 +5,7 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,7 +34,7 @@ const (
 var sizeRegex = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)\s*([a-z]*)$`)
 
 func (b Bitrate) String() string {
-	bytes := b.Bytes()
+	bytes := b.SignedBytes()
 	switch {
 	case bytes >= 1<<30:
 		return fmt.Sprintf("%.1fGiB", float64(bytes)/float64(1<<30))
@@ -42,17 +43,58 @@ func (b Bitrate) String() string {
 	case bytes >= 1<<10:
 		return fmt.Sprintf("%.1fKiB", float64(bytes)/float64(1<<10))
 	default:
-		return fmt.Sprintf("%dB", uint64(bytes))
+		return fmt.Sprintf("%dB", bytes)
 	}
 }
 
+// bitsPerByte is the conversion factor between the two units this type is
+// read in: a bitrate is bits, and every buffer and token accounting around it
+// is bytes.
+const bitsPerByte = 8
+
+// MaxByteCount is the largest byte count that has an exact bit count.
+const MaxByteCount = math.MaxInt64 / bitsPerByte
+
+// Bytes is the buffer size that holds b bits, rounded up to a whole byte. It
+// is a size, so it is defined for a non-negative bitrate: a negative one is a
+// debt, has no buffer size and reports zero. Use [Bitrate.SignedBytes] to
+// convert a signed token balance.
 func (b Bitrate) Bytes() int {
-	// round up
-	return int(b+7) / 8
+	if b <= 0 {
+		return 0
+	}
+	whole := int64(b) / bitsPerByte
+	if int64(b)%bitsPerByte != 0 {
+		whole++
+	}
+	return int(whole)
 }
 
+// SignedBytes converts a signed bit count into whole bytes, rounding towards
+// negative infinity. Applied to a token balance it reports only bytes that are
+// fully covered and never erases part of a debt: -8 bits is one byte owed and
+// -1 bit is still one byte owed, where rounding towards zero reports none of
+// either and grants the next reservation early. It is exact for every int64.
+func (b Bitrate) SignedBytes() int {
+	whole := int64(b) / bitsPerByte
+	if int64(b)%bitsPerByte != 0 && b < 0 {
+		whole--
+	}
+	return int(whole)
+}
+
+// FromBytes converts a byte count into bits. A count beyond MaxByteCount in
+// either direction has no exact bit count and saturates, rather than wrapping
+// into a bitrate of the opposite sign.
 func FromBytes(b int) Bitrate {
-	return Bitrate(b * 8)
+	bytes := int64(b)
+	switch {
+	case bytes > MaxByteCount:
+		return Bitrate(math.MaxInt64)
+	case bytes < -MaxByteCount:
+		return Bitrate(math.MinInt64)
+	}
+	return Bitrate(bytes * bitsPerByte)
 }
 
 func Parse(s string) (Bitrate, error) {

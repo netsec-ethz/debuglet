@@ -3,4 +3,4 @@
 
 package debugletgo
 
-//go:generate sqlc generate
+//go:generate bash scripts/ci-generate.sh write-sql

@@ -1,326 +1,207 @@
-# Debuglet Software
+# Debuglet
 
-## Prerequisite
+Debuglet runs small WebAssembly programs for network measurements. A dispatcher
+accepts jobs and stores results; executors run the programs with time and bandwidth
+budgets. This repository includes the `dbl` CLI, a native Go client SDK, a WASI guest
+SDK, and sample measurements.
 
-- Go (for local standalone development and compiling WASM)
-- SCION endhost stack (optional, for using SCION-specific functionality)
-- Docker & Docker Compose (optional)
-- OpenSSL (optional, for generating new test certificates locally)
+The local alpha runs on **Linux amd64**. The complete package needs no Go compiler,
+wallet, SCION service, root privileges, or hand-written daemon configuration.
 
-## Local Development
+## Install
 
-[mise](https://mise.jdx.dev/) is given as a helpful tool for managing the correct language versions for local development.
+Build the release candidate from the `main` branch on Linux amd64 with **Go 1.25.11**,
+Git, Make, Bash, GNU tar and coreutils (`sha256sum`). Use a clean checkout; the
+package records its exact source revision and uses committed eBPF objects, so
+building it needs no kernel privileges or eBPF compiler.
 
-The `Makefile` includes helper-targets to run certain _longer_ commands:
-
-### Start the dispatcher
-
-```bash
-make dispatcher # or make d
+```sh
+git clone --branch main https://github.com/netsec-ethz/debuglet.git
+cd debuglet
+make ci-build
+make ci-package
+(
+  set -eu
+  cd .cache/ci/packages
+  sha256sum --check SHA256SUMS
+  set -- debuglet-v*-linux-amd64.tar.gz
+  [ "$#" -eq 1 ]
+  [ -f "$1" ]
+  version=${1#debuglet-}; version=${version%-linux-amd64.tar.gz}
+  sh ./install.sh --archive "$1" --checksums ./SHA256SUMS \
+    --version "$version" --prefix "$HOME/.local"
+)
 ```
 
-### Start a executor
+The CLI is installed under `$HOME/.local/bin`, with its package under
+`$HOME/.local/lib/debuglet`. Copying the three package files to another Linux
+amd64 machine supports installation there without Go or a source checkout.
+The [installation guide](README-install.md) covers offline installation and
+version-pinned release downloads. The `v0.2.0-rc.1` package is the first release
+candidate for this workflow; `v0.1.0` predates it.
 
-**NOTE:** Requires elevated permissions for handling packets at the kernel level (using ebpf).
-
-```bash
-make executor # or make e
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+dbl demo
 ```
 
-### Generate a WASM binary
+`demo` starts a temporary local dispatcher and executor, runs a real WASM/TCP
+measurement, checks the result, and cleans up. No existing service is required.
+Successful human output begins with `Debuglet VERSION completed locally:` and
+ends with `Cleanup: complete`; JSON output also records `RunStateExited`.
 
-Debuglets can be written in Go, Rust, or C (and a stdout-only "hello world" in
-JavaScript). `make wasm` detects the language from `SAMPLE_DIR` and writes
-`debuglet.wasm` into it:
+## Start roles independently
 
-```bash
-make wasm SAMPLE_DIR=local/wasm_samples/go/helloworld
-make wasm SAMPLE_DIR=local/wasm_samples/go/throughput
-make wasm SAMPLE_DIR=local/wasm_samples/rust/ping
-make wasm SAMPLE_DIR=local/wasm_samples/c/ping WASI_SDK=/opt/wasi-sdk
+Start a dispatcher in one terminal:
+
+```sh
+dbl dispatcher up
 ```
 
-See [local/wasm_samples/README.md](local/wasm_samples/README.md) for the
-debuglet execution model, the host API, the per-language client libraries
-(Go `pkg/debuglet`, the Rust `debuglet` crate, the C header), and the toolchains
-each language needs.
+It creates its configuration and database and prints a dispatcher URL. In a
+second terminal, start an executor using that URL:
 
-### Build new proto files
-
-```bash
-make proto
+```sh
+dbl executor up --dispatcher http://127.0.0.1:9000
 ```
 
-### Database
+The executor discovers the connection details, registers, and reports when it is
+ready. In a third terminal, connect the client and send a job:
 
-Both the dispatcher and executor have their own database, which is a SQLite database by default, but can be changed out to postgres at a later time.
-
-[sqlc](https://docs.sqlc.dev/en/stable/index.html) is used to generate typed Go-bindings from a predefined set of SQL queries defined in `internal/[dispatcher|executor]/db/query.sql`.
-
-**Any changes to these requires re-generating the Go-bindings with `go generate ./...`.**
-
-[goose](https://github.com/pressly/goose) is used to handle database migrations. It will automatically upgrade the database when the dispatcher or executor starts up.
-
-### Submitting measurements
-
-Use the debuglet-dashboard to submit measurements.
-
-Or run the local go user client:
-
-```bash
-# send TCP GET req
-go run cmd/user/main.go -wasm local/wasm_samples/go/send_tcp/debuglet.wasm -debuglets 1 -addr google.com -- -addr google.com:80 -iter 5
-# send ping req
-go run cmd/user/main.go -wasm local/wasm_samples/go/ping/debuglet.wasm -debuglets 1 -addr 1.1.1.1 -- -addr 1.1.1.1 -iter 10
+```sh
+dbl connect http://127.0.0.1:9000 --name local
+dbl dispatcher list
+dbl executor list
+dbl run --sample hello --wait
+dbl logs <id-from-the-run-receipt>
 ```
 
-The local user client allows for args to be passed through to the WASM by adding the flags after `--` at the end.
+The client saves the connection. `--sample hello` needs no compiler or wallet.
+When exactly one executor is ready, `run` selects it; with several, use
+`--executor ID`. Press Ctrl-C to stop a foreground role. Same-package restarts
+retain its identity, completed results and output, but do not resume interrupted
+measurements.
 
-### Packet accountability (attribution tags)
+See the [CLI guide](docs/CLI.md) for multiple roles, state paths, validation,
+services and drain operations. The [architecture guide](docs/ARCHITECTURE.md#run-flow)
+shows how submission, execution, output and completion travel through the system.
 
-Every outgoing IPv4 probe carries a 16-bit authentication tag in the IP
-Identification field, keyed by a TESLA hash chain the executor discloses one
-epoch late. Tagging is done by the eBPF TC egress program in
-`internal/executor/tagger/ebpf`, which needs **both** of:
+## Credentials
 
-- `network.interface` set in the executor config — the egress interface the TC
-  program attaches to. With it empty the tagger is never created and probes go
-  out untagged (the executor logs a warning saying so).
-- `cap_net_admin,cap_bpf` on the binary (`make setcaps`, or
-  `executor_enable_bpf: true` for the Ansible deploy).
+No login is needed for the local roles above. The configuration they generate sets
+`server.local_development`, the documented profile in which a dispatcher whose
+listeners are on loopback, with TLS and payments disabled, serves a request that
+presents no credential at all as its own local operator. Every other
+configuration — a managed service, and every deployment example — authenticates
+each request that is not public and authorizes it against the account that owns
+the object. There, register once and obtain a session:
 
-Note that TCX programs on the same hook form a chain: a program returning
-`TCX_PASS` ends it, so anything attached after it never runs. Both eBPF
-programs here (the tagger and the rate limiter in
-`internal/executor/ratelimit/ebpf`) therefore return `TCX_NEXT` on accept and
-reserve terminal verdicts for drops. Keep it that way if you add another
-program to these hooks.
-
-To verify a capture against the dispatcher's published keys:
-
-```bash
-python3 local/scripts/verify_pcap.py --pcap capture.pcap \
-    --server https://debuglet.netsec.ethz.ch/api
+```sh
+dbl connect http://127.0.0.1:9000 --name managed
+dbl --dispatcher managed login --register researcher
 ```
 
-It needs nothing but the standard library, and is the reference implementation
-of the verification the website performs in-browser
-(`debuglet-website/src/lib/verify.ts`). The two, and the tagger itself, have to
-stay in sync.
+The command writes the account key and recovery code to owner-only files beside
+the client configuration. A session lasts 12 hours. Log in again with the path
+printed during registration, for example:
 
-The hash chain is finite: `tesla.chain_length` epochs (0 = derive from
-`tesla.delay` to cover 7 days). When it runs out the executor keeps tagging
-with a key it never discloses, and those packets can no longer be verified —
-it logs an error when that happens, and a warning in the hour before.
-
-### Optional Requirements
-
-The executor lazily loads a few things and will only complain about missing things once it actually needs them. SCION or ICMP, for example, require a special setup.
-
-### SCION
-
-SCION is a soft-dependency for measurements. If a measurement doesn't try to call any SCION-specific functions, you can simply let the executor time-out when it tries to establish a SCION connection.
-
----
-
-## Deployment
-
-The Debuglet ecosystem (Dispatcher and Executor) is containerized via Docker for easy setup and operation.
-
-1. **Bootstrap Certificates and Configurations**  
-   Run the following command to generate the required `configs/` structure mapped as Docker volumes, along with the necessary TLS certificates.
-
-   ```bash
-   make generate-certs
-   ```
-
-   _You can freely modify the configuration templates in `configs/executor/executor.toml` and `configs/dispatcher/dispatcher.toml` before starting the services._
-
-2. **Start the Services**  
-   You can choose to start both components at once or just one selectively:
-
-   To start both:
-
-   ```bash
-   make docker-up-all
-   ```
-
-   To start only the executor or dispatcher:
-
-   ```bash
-   make docker-up-executor
-   # or
-   make docker-up-dispatcher
-   ```
-
-3. **Check Logs**  
-   To view the logs from both the dispatcher and the executor, run:
-
-   ```bash
-   docker compose logs -f
-   ```
-
-4. **Tear down**  
-   To stop and remove the containers, run:
-   ```bash
-   make docker-down
-   ```
-
-## Ansible Deployment
-
-### Bootstrap a new system
-
-Create the `debuglet` service user and grant passwordless sudo to your SSH user on the target host:
-
-```bash
-cd deploy/ansible && ansible-playbook bootstrap-sudo.yml -K --limit <hostname>
+```sh
+dbl --dispatcher managed login \
+  --account-key-file ~/.config/debuglet/account-key-managed.txt
 ```
 
-The `-K` flag prompts for the current sudo password once. After bootstrapping, all subsequent deploys run without interaction.
+`dbl logout` revokes the session. If the account key is lost, the recovery code
+can replace both credentials through `POST /auth/recover` or `pkg/client.Recover`;
+the CLI does not yet expose recovery. The [CLI guide](docs/CLI.md#credentials)
+covers credential locations and the [HTTP API guide](docs/API.md)
+covers recovery and authorization.
 
-### Deploy
+## Write a measurement or application
 
-```bash
-make deploy-build                        # cross-compile Linux binaries
-make deploy-certs EXECUTOR_IDS="..."     # generate TLS certificates
-make deploy                              # full deploy (dispatcher + executors)
-# or individual:
-make deploy-dispatcher
-make deploy-executors
+To build a Go measurement, install Go **1.25.11**, clone this repository and run:
+
+```sh
+make wasm SAMPLE_DIR=local/wasm_samples/go/hello-local
+dbl run --wasm local/wasm_samples/go/hello-local/debuglet.wasm --wait
 ```
 
-## Flows
+Replace the sample with your own guest. Go guests compile for
+`GOOS=wasip1 GOARCH=wasm` and import `github.com/netsec-ethz/debuglet/pkg/debuglet`
+when they need Debuglet's network operations. See the [WASM samples](local/wasm_samples/README.md).
 
-### Submit Debuglet
+For an application that submits measurements and reads results, use the native
+[`pkg/client` SDK](docs/SDK.md). With a dispatcher and executor still running, this complete example
+submits the guest you just built and prints its output:
 
-The dispatcher checks each debuglet's floor bandwidth against per-destination and per-executor capacity over the requested time window `[start, start+timeout]`. If accepted, the debuglet is forwarded to the executor for storage and eventual execution.
-
-The `ExecutorScheduler` stores the full specification of the debuglet and will trigger `OnStart` when the start time is right.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Dispatcher
-    participant Executor
-    participant ExecutorScheduler
-
-    Client->>Dispatcher: PUT /debuglet
-    Dispatcher->>Executor: SubmitDebuglet(spec)
-    Executor->>ExecutorScheduler: Insert(spec)
-
-    ExecutorScheduler->>Executor: opt err
-    Executor->>Dispatcher: opt err
-    Dispatcher->>Client: opt err
+```sh
+go run -mod=readonly ./examples/client --wasm local/wasm_samples/go/hello-local/debuglet.wasm
 ```
 
-### OnStart Debuglet
+The [CLI guide](docs/CLI.md) covers submission, results, logs, and cancellation.
 
-The start of a debuglet is triggered by the executor scheduler. On initialization, the dispatcher allocates space for the output logs and can additionally check if any destinations need to be ratelimitted.
+For a client in another language, the dispatcher publishes its HTTP wire contract as
+an OpenAPI document at [`api/openapi.yaml`](api/openapi.yaml), and serves the one it
+was built from at `GET /openapi.yaml`. `GET /version` reports the three identities of
+a running dispatcher separately: the HTTP contract version it serves, the binary it
+was built from, and the executor control protocol it speaks. The
+[HTTP API guide](docs/API.md) states how a client selects a contract version and what
+may change without a new major version.
 
-The client may connect to the debuglet endpoint with a given ID to get server-side-events for dynamic output from the debuglet.
+## Development
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Dispatcher
-    participant Executor
-    participant ExecutorScheduler
+On Linux amd64 with Go **1.25.11**, Git, Make, Bash, GNU tar and coreutils
+(plus Python 3 for the test and installed-check targets):
 
-    ExecutorScheduler->>Executor: OnStart(spec)
-    Executor->>Dispatcher: SetState(Initializing)
-    Executor->>Dispatcher: SetState(Started)
-    Executor->>Executor: run debuglet
-    Executor->>Dispatcher: Output(debugletID)
-
-    Client-->>Dispatcher: GET /debuglet/:id
-    Dispatcher-->>Client: SSE: Output(debugletID)
-
-    Executor->>Dispatcher: Exit(opt error)
+```sh
+make ci-test
+make ci-vet
+make ci-build
+make ci-package
+make ci-local
 ```
 
-### Legacy Full Flow
+Package builds require a clean, committed checkout and use the committed generated
+eBPF objects. Output is under `.cache/ci/packages/`. The CI workflow defines checks
+for tests, build, packaging, the installed demo, combined and separate local roles,
+SDK use, compatibility, and kernel loading. GitHub Actions runs them on fresh
+GitHub-hosted Ubuntu 24.04 VMs; see [CI setup](docs/ci.md).
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant SuiBlockchain
-    participant Dispatcher
-    participant Executor
-    participant SCION
+See [CONTRIBUTING.md](CONTRIBUTING.md) for code generation and development details.
+The [architecture guide](docs/ARCHITECTURE.md) maps the packages to the running
+system, including both control paths and where a given change belongs.
 
-    Executor->>Dispatcher: [ControlMessage] Hello
-    rect rgba(255, 255, 0, 0.3)
-    Executor->>Dispatcher: [ControlMessage] Resources (set bw capacity)
-    end
-    Executor->>Dispatcher: [ControlMessage] Heartbeat (repeats /60s)
+## Current limits
 
-    rect rgba(255,0,0,0.3)
-    Client->>Dispatcher: createUser <br/> (POST https /api/users)
-    Dispatcher->>Client: UserId, AuthKey
+- This alpha uses trusted local Linux processes and TEST payment bookkeeping.
+  Wallet and monetary operation are not validated.
+- The persistent environment retains stored results; it does not establish durable
+  result delivery or recover unknown/interrupted execution outcomes.
+- Cancellation acknowledges a request; it does not certify remote termination.
+- The HTTP API authenticates a session and authorizes every operation that is not
+  public against the owning account or the operator role. What is still open:
+  nothing rate-limits account registration or login attempts, registration is
+  open to anyone who can reach the port, the operator role can be granted only on
+  the dispatcher host, and an executor's identity is bound to an enrolled
+  certificate only where `tls.require_client_cert` is set.
+- A guest is not isolated from the executor process: it runs under the wazero
+  interpreter with no memory ceiling beyond the module's own, no CPU accounting
+  and no namespace confinement. A destination that did not ask to be measured is
+  protected only by the operator's denial list and the run's declared
+  destinations. Keep the alpha in a trusted local environment.
+- SCION and remote testbed operation are outside this walkthrough. ETH testbed
+  compatibility and deployment are unconfirmed.
+- Checksums are not release signatures. This release candidate has no supported
+  upgrade path: a state directory stays with the package
+  version that created it, and moving to another version means a new state directory.
 
-    Client->>SuiBlockchain: buyTokens(UserID,Amount)
-    SuiBlockchain->>Dispatcher: notifyPayment(UserID, Amount)
-    Dispatcher->>Dispatcher: updateBalance
-    end
+The [threat model](docs/SECURITY.md) states which actors and trust boundaries the
+supported profile assumes, what it promises and what it does not, and why a
+session token, a packet tag, a live control lease or completed local cleanup is
+not proof of identity, remote completion or non-repudiation.
 
-    Client->>Dispatcher: createMeasurement <br/> (POST http /api/measurements)
-    activate Dispatcher
+[SECURITY.md](SECURITY.md) states the supported versions and how to arrange private
+vulnerability reporting.
 
-    Dispatcher->>Executor: DispatchTask() <br/> [ControlMessage]: Assignment
-    activate Executor
-    Dispatcher->>Client: measurementId
-    deactivate Dispatcher
-    Client->>Dispatcher: connectWebsocket <br/> (ws /ws-api/measurements/${measurementId}/start)
+## License
 
-    Executor->>Executor: create debuglet <br/> (initialize new wasmer instance)
-    Executor->>Executor: Init() -> startServers()
-    Executor->>SCION: Connect()
-    SCION->>Executor: IA, IP
-    Executor->>Dispatcher: [SessionMessage] DebugletReady
-    deactivate Executor
-
-
-    Client->>Dispatcher: ws:start
-    activate Dispatcher
-
-    rect rgba(255, 255, 0, 0.3)
-    Dispatcher->>Dispatcher: CheckPolicy() & RegisterPolicy()
-
-    Dispatcher->>Executor: Update1(Assignment, Destination)
-    Dispatcher-->>Executor: Update2(Assignment, Destination)
-    Dispatcher-->>Executor: Update3(Assignment, Destination)
-    Executor->>Dispatcher: ack1
-    Executor-->>Dispatcher: ack2
-    Executor-->>Dispatcher: ack3
-    end
-
-    Dispatcher->>Dispatcher: measurement.Start()
-
-    Dispatcher->>Executor: DebugletSession1.Start() <br/> [SessionMessage]: START_EXECUTION
-    activate Executor
-    Dispatcher-->>Executor: DebugletSession2.Start() <br/> [SessionMessage]: START_EXECUTION
-    Dispatcher-->>Executor: DebugletSession3.Start() <br/> [SessionMessage]: START_EXECUTION
-
-    rect rgba(255, 255, 0, 0.3)
-    Executor->>Executor: RegisterAssignment1()
-    Executor->>Executor: runDebuglet1()
-    Executor->>Executor: RemoveAssignment1()
-
-    Executor-->>Executor: Register, Run, Remove 2()
-    Executor-->>Executor: Register, Run, Remove 3()
-    end
-
-    Executor-->>Dispatcher: [SessionMessage] Stdout1(Stdout)
-    Executor-->>Dispatcher: [SessionMessage] Stdout2(Stdout)
-    Executor-->>Dispatcher: [SessionMessage] Stdout3(Stdout)
-
-    Executor->>Dispatcher: [SessionMessage] DebugletExit(exitCode, result)
-    deactivate Executor
-
-    rect rgba(255, 255, 0, 0.3)
-    Dispatcher->>Dispatcher: cleanup debuglet/assignment
-    end
-
-    Dispatcher->>Client: result
-    deactivate Dispatcher
-```
+[Apache License 2.0](LICENSE). Existing copyright notices are retained.

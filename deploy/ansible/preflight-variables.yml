@@ -1,0 +1,437 @@
+---
+# Every deployment playbook imports this. It checks the variables a deployment
+# needs before anything connects to a managed host, so a missing or malformed
+# value is a named local error instead of a half-configured service.
+#
+# It runs locally, connects to nothing and changes nothing.
+
+- name: Check deployment variables for every host
+  hosts: all
+  connection: local
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+  tasks:
+    - name: Require a known deployment environment
+      ansible.builtin.assert:
+        that:
+          - debuglet_env in ['prod', 'dev']
+        fail_msg: "debuglet_env must be prod or dev; select the matching vars file and inventory."
+        quiet: true
+
+    - name: Require usable listener ports
+      ansible.builtin.assert:
+        that:
+          - dispatcher_http_port | int > 0
+          - dispatcher_http_port | int <= 65535
+          - dispatcher_grpc_port | int > 0
+          - dispatcher_grpc_port | int <= 65535
+          - dispatcher_http_port | int != dispatcher_grpc_port | int
+        fail_msg: >-
+          dispatcher_http_port and dispatcher_grpc_port must each be between 1
+          and 65535 and must differ. Got {{ dispatcher_http_port }} and
+          {{ dispatcher_grpc_port }}.
+        quiet: true
+
+    - name: Require absolute installation paths
+      ansible.builtin.assert:
+        that:
+          - item.value is string
+          - item.value is match('^/')
+          - item.value != '/'
+        fail_msg: "{{ item.key }} must be an absolute path, got {{ item.value }}."
+        quiet: true
+      loop:
+        - { key: payload_prefix, value: "{{ payload_prefix }}" }
+        - { key: payload_staging_dir, value: "{{ payload_staging_dir }}" }
+        - { key: config_dir, value: "{{ config_dir }}" }
+        - { key: state_dir, value: "{{ state_dir }}" }
+        - { key: log_dir, value: "{{ log_dir }}" }
+        - { key: systemd_unit_dir, value: "{{ systemd_unit_dir }}" }
+      loop_control:
+        label: "{{ item.key }}"
+
+    # The daemons write their databases into state_dir and read everything
+    # else read-only, so the two must not be the same tree.
+    - name: Require a state directory outside the configuration directory
+      ansible.builtin.assert:
+        that:
+          - not (state_dir ~ '/') is match('^' ~ (config_dir | regex_escape) ~ '/')
+          - not (config_dir ~ '/') is match('^' ~ (state_dir | regex_escape) ~ '/')
+          - state_dir != config_dir
+        fail_msg: >-
+          state_dir ({{ state_dir }}) holds the writable databases and
+          config_dir ({{ config_dir }}) holds read-only configuration; neither
+          may contain the other.
+        quiet: true
+
+- name: Check dispatcher variables
+  hosts: dispatcher
+  connection: local
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    ipv4_literal: '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+    # A client matches an IP-literal host against IP entries only and a name
+    # against DNS entries, so the address decides which kind to ask for.
+    san_request: "{{ (dispatcher_addr is match(ipv4_literal)) | ternary('IP', 'DNS') }}"
+
+  tasks:
+    - name: Require the public API origin
+      ansible.builtin.assert:
+        that:
+          - dispatcher_base_url is defined
+          - dispatcher_base_url is string
+          - dispatcher_base_url | length > 0
+          - dispatcher_base_url is match('^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$')
+        fail_msg: >-
+          dispatcher_base_url is required and has no default. Set it to the
+          bare domain the API is served from, for example
+          -e dispatcher_base_url=debuglet.example.com. See
+          deploy/ansible/group_vars/dispatcher.yml.
+        quiet: true
+
+    # The daemon refuses a wildcard origin: it cannot carry cookie
+    # credentials. An empty list is the credential-free wildcard.
+    - name: Require credentialed origins to name a scheme and host
+      ansible.builtin.assert:
+        that:
+          - item != '*'
+          - item is match('^https?://[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:[0-9]{1,5})?$')
+        fail_msg: >-
+          dispatcher_cors_allowed_origins entries must be written as
+          scheme://host[:port] with no path, and a wildcard is refused. Got
+          {{ item }}.
+        quiet: true
+      loop: "{{ dispatcher_cors_allowed_origins | default([]) }}"
+
+    - name: Require TLS when client certificates are required
+      ansible.builtin.assert:
+        that:
+          - not (dispatcher_disable_tls | bool)
+        fail_msg: >-
+          dispatcher_require_client_cert is on but dispatcher_disable_tls is
+          true. A cleartext listener has no client certificate to check; serve
+          TLS or turn the requirement off.
+        quiet: true
+      when: dispatcher_require_client_cert | bool
+
+    - name: Require an authority for client certificates
+      ansible.builtin.assert:
+        that:
+          - dispatcher_tls_ca_file is defined
+          - dispatcher_tls_ca_file | length > 0
+        fail_msg: >-
+          dispatcher_require_client_cert is on, so dispatcher_tls_ca_file must
+          name the authority the dispatcher checks executor certificates
+          against. deploy-certs.yml installs it.
+        quiet: true
+      when: dispatcher_require_client_cert | bool
+
+    # dispatcher.toml.j2 renders these paths whenever the dispatcher serves
+    # TLS, and the daemon refuses to start without them. A deployment can
+    # serve TLS with no TLS executor in its inventory, so the dispatcher's own
+    # material is checked on the dispatcher rather than by the executors.
+    - name: Inspect the dispatcher certificate material
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      register: dispatcher_material
+      loop:
+        - "{{ certs_dir }}/ca.crt"
+        - "{{ certs_dir }}/dispatcher/server.crt"
+        - "{{ certs_dir }}/dispatcher/server.key"
+      when: not (dispatcher_disable_tls | bool)
+
+    - name: Require the dispatcher certificate material
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg is defined and item.stat.isreg
+        fail_msg: >-
+          {{ item.item }} is missing. The dispatcher serves TLS on its own
+          listeners, so the material has to exist before a deployment renders
+          paths to it: run
+          `make deploy-certs DISPATCHER_SANS="{{ san_request }}:{{ dispatcher_addr }}"`,
+          or deploy/scripts/generate-certs.sh followed by
+          ansible/deploy-certs.yml.
+        quiet: true
+      loop: "{{ dispatcher_material.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('') }}"
+      when: not (dispatcher_disable_tls | bool)
+
+    # Both daemons refuse an authority whose root has expired, and an executor
+    # verifies TLS only where the dispatcher serves it, so the root is checked
+    # once, here.
+    - name: Require an unexpired deployment authority
+      ansible.builtin.command:
+        cmd: "openssl x509 -in {{ certs_dir }}/ca.crt -checkend 0 -noout"
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      check_mode: false
+      register: deployment_ca
+      failed_when: deployment_ca.rc != 0
+      when: not (dispatcher_disable_tls | bool)
+
+    - name: Require a complete and usable server certificate
+      ansible.builtin.command:
+        cmd: >-
+          openssl verify -CAfile {{ certs_dir }}/ca.crt
+          -untrusted {{ certs_dir }}/dispatcher/server.crt
+          -purpose sslserver {{ certs_dir }}/dispatcher/server.crt
+      delegate_to: localhost
+      changed_when: false
+      check_mode: false
+      register: dispatcher_chain
+      failed_when: dispatcher_chain.rc != 0
+      when: not (dispatcher_disable_tls | bool)
+
+- name: Check executor variables
+  hosts: executors
+  connection: local
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    ipv4_literal: '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+    # The name the executor verifies the dispatcher against: the template
+    # renders executor_tls_server_name when it is set and the dialled address
+    # otherwise.
+    verified_name: "{{ executor_tls_server_name | default('', true) or dispatcher_addr }}"
+    verified_ip: "{{ verified_name is match(ipv4_literal) }}"
+    # A client matches an IP-literal host against IP entries only, a name
+    # against DNS entries, and a wildcard only in the leftmost label of a name
+    # that has a parent.
+    san_entry: "{{ (verified_ip | bool) | ternary('IP Address', 'DNS') }}"
+    san_request: "{{ (verified_ip | bool) | ternary('IP', 'DNS') }}"
+    san_pattern: >-
+      {{ san_entry }}:{{ verified_name | regex_escape }}(,|$)
+      {%- set parent = (verified_ip | bool) | ternary('', verified_name.split('.')[1:] | join('.')) %}
+      {%- if parent %}|DNS:\*\.{{ parent | regex_escape }}(,|$){% endif %}
+
+  tasks:
+    - name: Require absolute executor paths
+      ansible.builtin.assert:
+        that:
+          - item is string
+          - item is match('^/')
+          - item != '/'
+        fail_msg: "Executor configuration, state and binary paths must be absolute."
+        quiet: true
+      loop:
+        - "{{ executor_config_dir }}"
+        - "{{ executor_state_dir }}"
+        - "{{ executor_binary }}"
+
+    - name: Require executor state outside configuration
+      ansible.builtin.assert:
+        that:
+          - not (executor_state_dir ~ '/') is match('^' ~ (config_dir | regex_escape) ~ '/')
+          - not (executor_state_dir ~ '/') is match('^' ~ (executor_config_dir | regex_escape) ~ '/')
+          - not (executor_config_dir ~ '/') is match('^' ~ (executor_state_dir | regex_escape) ~ '/')
+        fail_msg: "executor_state_dir and configuration must be separate directory trees."
+        quiet: true
+
+    - name: Require the dispatcher address
+      ansible.builtin.assert:
+        that:
+          - dispatcher_addr is defined
+          - dispatcher_addr is string
+          - dispatcher_addr | length > 0
+        fail_msg: >-
+          dispatcher_addr is required and has no default. Set it per
+          environment, for example
+          -e dispatcher_addr=dispatcher.example.com. See
+          deploy/ansible/group_vars/all.yml.
+        quiet: true
+
+    - name: Require the dispatcher address to be a bare host
+      ansible.builtin.assert:
+        that:
+          - dispatcher_addr is match('^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$')
+        fail_msg: >-
+          dispatcher_addr must be a bare host name or IP address without a
+          scheme, port or path; the ports come from dispatcher_grpc_port and
+          dispatcher_http_port. Got {{ dispatcher_addr }}.
+        quiet: true
+
+    - name: Require a UUID executor identity
+      ansible.builtin.assert:
+        that:
+          - executor_id is defined
+          - executor_id is string
+          - executor_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+          - executor_id != '00000000-0000-0000-0000-000000000000'
+        fail_msg: >-
+          executor_id is required per host and must be a lowercase UUID, the
+          identity form the CLI generates and the dispatcher records. Set it
+          in the inventory for {{ inventory_hostname }}. See
+          deploy/ansible/group_vars/executors.yml.
+        quiet: true
+
+    - name: Require usable executor resources
+      ansible.builtin.assert:
+        that:
+          - executor_capacity | int > 0
+          - executor_max_debuglets | int > 0
+          - tesla_delay | int > 0
+          - tesla_chain_length | int >= 0
+          - executor_packet_counter in ['auto', 'fallback']
+          - (executor_packet_counter == 'fallback') or (executor_enable_bpf | bool)
+        fail_msg: >-
+          executor_capacity, executor_max_debuglets and tesla_delay must be
+          positive; tesla_chain_length must not be negative; and the packet
+          counter must be auto with BPF enabled or explicit fallback.
+        quiet: true
+
+    - name: Require client credentials when the control channel uses TLS
+      ansible.builtin.assert:
+        that:
+          - certs_dir is defined
+          - certs_dir | length > 0
+        fail_msg: >-
+          executor_disable_tls is false, so the executor reads the CA, the
+          client certificate and the key deploy-certs.yml installs from
+          certs_dir. Issue them with deploy/scripts/generate-certs.sh, giving
+          DISPATCHER_SANS every name an executor dials.
+        quiet: true
+      when: not (executor_disable_tls | bool)
+
+    # The executor verifies the name it dialled, so a certificate can only be
+    # issued for a dispatcher that is named. A cleartext control channel is
+    # supported for a dispatcher on the same machine and nowhere else.
+    - name: Require a loopback dispatcher for a cleartext control channel
+      ansible.builtin.assert:
+        that:
+          - dispatcher_addr is match('^127\\.[0-9.]+$')
+        fail_msg: >-
+          executor_disable_tls is true but dispatcher_addr is
+          {{ dispatcher_addr }}. Cleartext is supported only for a dispatcher
+          the executor reaches at a literal loopback address such as
+          127.0.0.1; a name is not accepted, not even localhost. For anything
+          else serve TLS and let the executor verify it.
+        quiet: true
+      when: executor_disable_tls | bool
+
+    - name: Require the dispatcher to serve what the executor verifies
+      ansible.builtin.assert:
+        that:
+          - not (dispatcher_disable_tls | bool)
+        fail_msg: >-
+          executor_disable_tls is false but dispatcher_disable_tls is true, so
+          the executor would verify a certificate nothing presents. Nothing
+          proxies the executor path: the dispatcher serves its own listeners.
+        quiet: true
+      when: not (executor_disable_tls | bool)
+
+    # A deployment renders certificate paths whether or not the material
+    # exists, and both daemons refuse to start without it, so the material is
+    # checked here rather than discovered as a crash loop. site.yml does not
+    # install certificates: issue and install them first, with
+    # `make deploy-certs DISPATCHER_SANS=...`.
+    - name: Inspect the certificate material
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      register: deployment_material
+      loop:
+        - "{{ certs_dir }}/ca.crt"
+        - "{{ certs_dir }}/executors/{{ executor_id }}/client.crt"
+        - "{{ certs_dir }}/executors/{{ executor_id }}/client.key"
+      when: not (executor_disable_tls | bool)
+
+    - name: Require the certificate material
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg is defined and item.stat.isreg
+        fail_msg: >-
+          {{ item.item }} is missing. The dispatcher serves TLS and every
+          executor verifies it, so the material has to exist before a
+          deployment renders paths to it: run
+          `make deploy-certs DISPATCHER_SANS="{{ san_request }}:{{ verified_name }}"`,
+          or deploy/scripts/generate-certs.sh followed by
+          ansible/deploy-certs.yml.
+        quiet: true
+      loop: "{{ deployment_material.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('') }}"
+      when: not (executor_disable_tls | bool)
+
+    # The executor refuses a leaf whose chain to the configured root is
+    # incomplete and a client certificate without the client-authentication
+    # extended key usage, so both are checked on the material that is about to
+    # be installed; the root itself is checked in the dispatcher play above.
+    # -untrusted offers the leaf file's own contents as intermediates, without
+    # which openssl refuses a leaf that carries the chain up to the root — the
+    # form deploy/README.md prescribes for material from another authority and
+    # the form the daemons accept.
+    - name: Require a complete and usable certificate chain
+      ansible.builtin.command:
+        cmd: >-
+          openssl verify -CAfile {{ certs_dir }}/ca.crt
+          -untrusted {{ item.leaf }}
+          -purpose {{ item.purpose }} {{ item.leaf }}
+      delegate_to: localhost
+      changed_when: false
+      check_mode: false
+      register: deployment_chain
+      failed_when: deployment_chain.rc != 0
+      loop:
+        - purpose: sslclient
+          leaf: "{{ certs_dir }}/executors/{{ executor_id }}/client.crt"
+      loop_control:
+        label: "{{ item.leaf }}"
+      when: not (executor_disable_tls | bool)
+
+    # The executor verifies the name it dialled against the certificate's
+    # subjectAltName, so a certificate that does not carry it ends every
+    # connection at the handshake. The name is executor_tls_server_name when
+    # it is set and dispatcher_addr otherwise, which is what the template
+    # renders.
+    - name: Read the dispatcher certificate's subject alternative names
+      ansible.builtin.command:
+        cmd: >-
+          openssl x509 -in {{ certs_dir }}/dispatcher/server.crt
+          -noout -ext subjectAltName
+      delegate_to: localhost
+      changed_when: false
+      check_mode: false
+      register: deployment_sans
+      when: not (executor_disable_tls | bool)
+
+    - name: Require the dispatcher certificate to name the verified host
+      ansible.builtin.assert:
+        that:
+          - deployment_sans.stdout is search(san_pattern)
+        fail_msg: >-
+          {{ certs_dir }}/dispatcher/server.crt carries no {{ san_entry }}
+          entry for {{ verified_name }}, so this executor's connection would
+          end at the handshake. Reissue it with
+          `make deploy-certs DISPATCHER_SANS="{{ san_request }}:{{ verified_name }}"`.
+        quiet: true
+      when: not (executor_disable_tls | bool)
+
+    - name: Require a usable name to verify the dispatcher against
+      ansible.builtin.assert:
+        that:
+          - executor_tls_server_name is match('^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$')
+          - not (executor_disable_tls | bool)
+        fail_msg: >-
+          executor_tls_server_name names the certificate to verify, so it
+          needs a verifying channel and a bare name with no scheme or port.
+          Got {{ executor_tls_server_name }} with executor_disable_tls
+          {{ executor_disable_tls }}.
+        quiet: true
+      when: executor_tls_server_name | default('') | length > 0

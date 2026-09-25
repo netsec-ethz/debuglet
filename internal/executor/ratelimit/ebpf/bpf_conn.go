@@ -6,7 +6,7 @@
 package ebpf
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"net"
 	"time"
 

@@ -4,7 +4,7 @@
 package socket
 
 import (
-	"debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"io"
 	"net"
 )

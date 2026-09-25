@@ -1,67 +1,47 @@
-# Rust debuglets
+# Rust measurements
 
-Write a debuglet in Rust as a normal binary crate with `fn main()`, build it for
-`wasm32-wasip1`, and the executor streams your stdout back to the user. See the
-[shared model](../README.md) for the execution contract.
+**Experimental. Not a supported quickstart.** Nothing in this repository builds,
+executes or checks these crates, and no Rust toolchain is part of the pinned
+build. Their bindings are not covered by the guest ABI compatibility suite, so a
+successful build establishes nothing about how they behave on an executor. Use
+the [Go samples](../go/README.md) for supported measurements.
 
-## Layout
+The Rust examples are ordinary binary crates built for `wasm32-wasip1`. The
+executor records stdout/stderr, and guest arguments arrive without a
+program-name element. See the [shared guide](../README.md) and the
+[guest guide](../../../docs/GUESTS.md) for the imports they call.
 
-| Directory      | What it is |
-|----------------|------------|
-| `debuglet/`    | the SDK crate (library) |
-| `helloworld/`  | prints a greeting (no SDK needed) |
-| `ping/`        | ICMPv4 echo-request latency probe |
-| `throughput/`  | TCP throughput sender, reports Mbps |
+## Samples
 
-Each sample's binary target is named `debuglet`, so the build output is
-`target/wasm32-wasip1/release/debuglet.wasm` (copied to the sample directory by
-`make wasm`).
+- `helloworld`: output only.
+- `ping`: ICMPv4 echo latency.
+- `throughput`: TCP sender.
+- `debuglet`: a local SDK crate wrapping the executor's custom host imports.
 
-## The Rust SDK (`debuglet` crate)
+Each example names its binary `debuglet`; `make wasm` copies the resulting module into the sample directory.
 
-Add a path dependency and use the safe wrapper instead of writing
-`extern "C"` blocks against the `env` module:
+## SDK
+
+Add the local crate to a sample's `Cargo.toml`:
 
 ```toml
-# Cargo.toml
 [dependencies]
 debuglet = { path = "../debuglet" }
 ```
 
-```rust
-fn main() {
-    let conn = debuglet::connect_tcp("example.com:80").unwrap();
-    conn.send(b"GET / HTTP/1.0\r\n\r\n");
-    let mut buf = [0u8; 4096];
-    let n = conn.receive(&mut buf);
-    print!("{}", String::from_utf8_lossy(&buf[..n]));
-    // conn closes on drop
-}
-```
+The SDK provides `connect_tcp`, `connect_tls`, `connect_icmp4`, and `accept_tcp`, returning `Result<Conn, ConnectError>`. Use `Conn::send` and `Conn::receive` for data; dropping the connection closes its host socket. Listener and ICMP operations need the corresponding executor configuration.
 
-API surface:
+One host call transfers at most 8192 bytes, so `Conn::send` of a larger buffer sends only the first 8192 and `Conn::receive` fills a larger buffer only that far. A refused or disallowed destination ends the job inside the host call instead of returning an error.
 
-- `connect_tcp(addr)`, `connect_tls(addr)`, `connect_icmp4(addr)`, `accept_tcp()`
-  → `Result<Conn, ConnectError>`
-- `Conn::send(&self, &[u8])`
-- `Conn::receive(&self, &mut [u8]) -> usize`
-- the host socket is closed automatically when the `Conn` is dropped
+Parse user arguments directly from `std::env::args()`; its first item is the first supplied guest argument.
 
-## Reading arguments
-
-WASI argv has no program name, so the user's flags come straight out of
-`std::env::args()` (index 0 is the first real argument). The samples include a
-tiny `flag_str` helper rather than pulling in a CLI crate.
-
-## Prerequisites
+## Build and submit
 
 ```sh
 rustup target add wasm32-wasip1
+make wasm SAMPLE_DIR=local/wasm_samples/rust/helloworld
+dbl run --wasm local/wasm_samples/rust/helloworld/debuglet.wasm \
+  --executor EXECUTOR_ID --wait
 ```
 
-## Build & run
-
-```sh
-make wasm SAMPLE_DIR=local/wasm_samples/rust/ping
-go run ./cmd/user -wasm local/wasm_samples/rust/ping/debuglet.wasm -- -addr 1.1.1.1 -iter 5
-```
+Run the build from the repository root and replace `EXECUTOR_ID` with a node from `dbl nodes`. A successful build does not verify runtime compatibility; the installed demo uses the Go guest path.

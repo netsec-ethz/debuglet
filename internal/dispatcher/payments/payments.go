@@ -7,24 +7,67 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"debuglet/internal/dispatcher/config"
-	"debuglet/internal/dispatcher/database"
-	"debuglet/internal/dispatcher/models"
-	"debuglet/internal/dispatcher/payments/sui"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
 	"time"
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
+var (
+	// ErrPaymentsDisabled is returned (possibly wrapped) by every chain payment
+	// action while cfg.Sui.Disabled is set. TEST payments are unaffected.
+	ErrPaymentsDisabled = errors.New("blockchain payments are disabled")
+	// ErrUnsupportedPaymentMethod is wrapped by CheckPaymentMethod for methods
+	// other than TEST, USDC and SUI.
+	ErrUnsupportedPaymentMethod = errors.New("unsupported payment method")
+)
+
+// chainBackend is the subset of *sui.SuiPaymentHandler that PaymentHandler
+// uses. It exists so construction tests can script the chain side without a
+// network or key file; *sui.SuiPaymentHandler satisfies it unchanged.
+type chainBackend interface {
+	Start(ctx context.Context) error
+	CreatePaymentIntent(transactionId string, price int64, currency string, hash string, ctx context.Context) (sui.SuiPaymentIntent, error)
+	RefundDebuglet(debugletOrder *database.DebugletOrder, refundAddress string, ctx context.Context) error
+	TransferCoins(amount uint64, cointype string, refundAddress string, ctx context.Context) error
+}
+
+// payoutLoop is the subset of *PayoutTicker that PaymentHandler uses.
+type payoutLoop interface {
+	StartPayoutLoop(ctx context.Context) error
+}
+
+// paymentDeps carries the constructors of the two chain-mode services. The
+// production set is defined by productionDeps; tests substitute scripted ones.
+type paymentDeps struct {
+	newChain  func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) chainBackend
+	newPayout func(db *sql.DB, h Handler, logger *zap.Logger) payoutLoop
+}
+
+func productionDeps() paymentDeps {
+	return paymentDeps{
+		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) chainBackend {
+			return sui.NewSuiPaymentHandler(cfg, db, logger, tf)
+		},
+		newPayout: func(db *sql.DB, h Handler, logger *zap.Logger) payoutLoop {
+			return NewPayoutTicker(db, h, logger)
+		},
+	}
+}
+
 type PaymentHandler struct {
 	db     *sql.DB
-	sui    *sui.SuiPaymentHandler
+	sui    chainBackend // nil while cfg.Sui.Disabled
 	logger *zap.Logger
 	cfg    *config.DispatcherConfig
-	pt     *PayoutTicker
+	pt     payoutLoop // nil while cfg.Sui.Disabled
 }
 
 type PaymentIntent struct {
@@ -38,13 +81,72 @@ type DummyIntent struct {
 }
 
 func NewPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
+	return newPaymentHandler(db, cfg, logger, productionDeps())
+}
+
+// newPaymentHandler is the single construction path. In disabled mode neither
+// factory is invoked, so no chain client, event listener, keystore read or
+// payout ticker exists; the handler then serves database-backed TEST payments
+// only. In enabled mode both factories are invoked exactly once.
+func newPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger, deps paymentDeps) *PaymentHandler {
 	handler := &PaymentHandler{db: db, logger: logger, cfg: cfg}
-	handler.sui = sui.NewSuiPaymentHandler(cfg, db, logger, handler)
-	handler.pt = NewPayoutTicker(db, handler, logger)
+	if cfg.Sui.Disabled {
+		logger.Info("blockchain payments are disabled; only TEST payments are available")
+		return handler
+	}
+	handler.sui = deps.newChain(cfg, db, logger, handler)
+	handler.pt = deps.newPayout(db, handler, logger)
 	return handler
 }
 
+// chainDisabled reports whether chain payment actions are switched off. It is
+// decided by configuration only, never inferred from other fields.
+func (p *PaymentHandler) chainDisabled() bool {
+	return p.cfg.Sui.Disabled
+}
+
+// isChainCurrency reports whether a payment method/order currency is settled
+// on chain. Only the literal strings "USDC" and "SUI" are chain currencies.
+func isChainCurrency(currency string) bool {
+	return currency == "USDC" || currency == "SUI"
+}
+
+// requireChain returns an error wrapping ErrPaymentsDisabled when the given
+// action would need the chain backend but blockchain payments are disabled.
+// Every path that reaches p.sui must pass this check first, so a disabled
+// handler returns the sentinel instead of dereferencing a nil backend.
+func (p *PaymentHandler) requireChain(currency string, action string) error {
+	if isChainCurrency(currency) && p.chainDisabled() {
+		return fmt.Errorf("%s (%s): %w", action, currency, ErrPaymentsDisabled)
+	}
+	return nil
+}
+
+// CheckPaymentMethod is the mode preflight for a payment method. TEST is
+// accepted in both modes; USDC and SUI return ErrPaymentsDisabled while
+// blockchain payments are disabled; any other method returns an error wrapping
+// ErrUnsupportedPaymentMethod.
+func (p *PaymentHandler) CheckPaymentMethod(method string) error {
+	switch method {
+	case "TEST":
+		return nil
+	case "USDC", "SUI":
+		if p.chainDisabled() {
+			return ErrPaymentsDisabled
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: %s", ErrUnsupportedPaymentMethod, method)
+	}
+}
+
+// Start runs the chain listener and the payout loop until ctx is cancelled or
+// the listener fails. Disabled mode returns nil immediately without spawning
+// anything; repeated calls remain no-ops.
 func (p *PaymentHandler) Start(ctx context.Context) error {
+	if p.chainDisabled() {
+		return nil
+	}
 	g, subCtx := errgroup.WithContext(ctx)
 	g.Go(func() error { return p.pt.StartPayoutLoop(subCtx) })
 	g.Go(func() error { return p.sui.Start(subCtx) })
@@ -56,6 +158,9 @@ func (p *PaymentHandler) CreatePaymentIntent(transactionId string, price int64, 
 	case "USDC":
 		fallthrough
 	case "SUI":
+		if err := p.requireChain(method, "create payment intent"); err != nil {
+			return PaymentIntent{}, err
+		}
 		suiIntent, err := p.sui.CreatePaymentIntent(transactionId, price, method, hash, ctx)
 		if err != nil {
 			return PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
@@ -111,13 +216,28 @@ func (p *PaymentHandler) CreateDummyIntent(transactionId string, price int64, ha
 	}
 }
 
+// CompleteTransaction marks a transaction as paid. It is the
+// sui.TransactionFulfiller callback of the chain listener, so it keeps its
+// void signature: a failed lookup, or a chain transaction while blockchain
+// payments are disabled, is logged and leaves the row untouched.
 func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.Context) {
-	p.logger.Info("settling transaction", zap.String("id", transactionId))
 	queries := database.New(p.db)
-	queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
+	transaction, err := queries.GetTransactionByID(ctx, transactionId)
+	if err != nil {
+		p.logger.Error("failed to look up transaction to settle", zap.String("id", transactionId), zap.Error(err))
+		return
+	}
+	if err := p.requireChain(transaction.Method, "settle transaction"); err != nil {
+		p.logger.Warn("not settling transaction", zap.String("id", transactionId), zap.String("method", transaction.Method), zap.Error(err))
+		return
+	}
+	p.logger.Info("settling transaction", zap.String("id", transactionId))
+	if err := queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
 		Status: int64(models.Paid),
 		ID:     transactionId,
-	})
+	}); err != nil {
+		p.logger.Error("failed to settle transaction", zap.String("id", transactionId), zap.Error(err))
+	}
 }
 
 func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, ctx context.Context) error {
@@ -129,6 +249,18 @@ func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, c
 
 	queries := database.New(p.db).WithTx(tx)
 	p.logger.Debug("Update", zap.String("transactionId", debuglet.TransactionID), zap.Int64("orderId", debuglet.OrderID))
+	// Read the order first: its currency decides whether crediting is allowed
+	// before any state is changed.
+	current, err := queries.GetDebugletOrder(ctx, database.GetDebugletOrderParams{
+		TransactionID: debuglet.TransactionID,
+		OrderID:       debuglet.OrderID,
+	})
+	if err != nil {
+		return fmt.Errorf("Failed to find debuglet order of %s: %w", debuglet.Uuid.String(), err)
+	}
+	if err := p.requireChain(current.Currency, "credit order"); err != nil {
+		return err
+	}
 	order, err := queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
 		State:         int64(models.Credited),
 		TransactionID: debuglet.TransactionID,
@@ -160,10 +292,13 @@ func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refund
 		OrderID:       debuglet.OrderID,
 	})
 	if err != nil {
-		return fmt.Errorf("Failed to find debuglet order")
+		return fmt.Errorf("Failed to find debuglet order: %w", err)
 	}
 	if order.State == int64(models.Refunded) {
 		return fmt.Errorf("Debuglet has already been refunded")
+	}
+	if err := p.requireChain(order.Currency, "refund order"); err != nil {
+		return err
 	}
 
 	order, err = queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
@@ -205,8 +340,17 @@ func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Con
 	if err != nil {
 		return err
 	}
+	// The currency and the refund address live on the order rows, so a paid
+	// transaction that has none says nothing about where the money would go.
+	// It is reported rather than indexed into.
+	if len(orders) == 0 {
+		return fmt.Errorf("Transaction %s has no orders to refund", transactionId)
+	}
 	currency := orders[0].Currency
 	refundAddress := orders[0].RefundAddress
+	if err := p.requireChain(currency, "refund transaction"); err != nil {
+		return err
+	}
 	totalRefundValue := int64(0)
 	for _, order := range orders {
 		if order.Currency != currency || order.RefundAddress != refundAddress {
@@ -218,11 +362,22 @@ func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Con
 			continue
 		}
 		totalRefundValue += order.Price
-		queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
+		if _, err := queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
 			State:         int64(models.Refunded),
 			TransactionID: transactionId,
 			OrderID:       order.OrderID,
-		})
+		}); err != nil {
+			return err
+		}
+	}
+	// The transaction is refunded, not only its order rows. A submission is
+	// admitted on the transaction's status, so a transaction left Paid after
+	// its money went back would admit the same batch again and have the work
+	// done a second time for a payment that no longer exists.
+	if err := queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
+		Status: int64(models.Refunded), ID: transactionId,
+	}); err != nil {
+		return err
 	}
 
 	switch currency {
@@ -254,10 +409,17 @@ func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency strin
 }
 
 func (p *PaymentHandler) TransferUSDC(amount uint64, receiver string, ctx context.Context) error {
+	if err := p.requireChain("USDC", "transfer USDC"); err != nil {
+		return err
+	}
+	// This backend's signature takes ctx last, unlike the rest of this package.
 	return p.sui.TransferCoins(amount, receiver, sui.GetCoinType("USDC", p.cfg.Sui.Network), ctx)
 }
 
 func (p *PaymentHandler) PayoutExecutor(earning database.Earning, ctx context.Context) error {
+	if err := p.requireChain(earning.Currency, "pay out earnings"); err != nil {
+		return err
+	}
 	switch earning.Currency {
 	case "USDC":
 		return p.sui.TransferCoins(uint64(earning.CurrentBalance), sui.GetCoinType("USDC", p.cfg.Sui.Network), earning.SuiWalletAddress, ctx)

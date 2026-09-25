@@ -1,0 +1,37 @@
+# Example pinned SSH host identities for the Debuglet deployment.
+#
+# The real known_hosts is NOT committed to this repo (it names private
+# infrastructure, same as hosts.yml). Copy this file and fill it with the
+# public host keys of the machines in your inventory:
+#
+#   cp deploy/ansible/known_hosts.example deploy/ansible/known_hosts
+#
+# Every deployment command reads this file and only this file. A host whose
+# key is missing from it, or whose key no longer matches, is refused before
+# any task runs.
+#
+# Obtain each key from the host itself over a channel you already trust — the
+# provider console, the provisioning record, or an existing session on the
+# machine — by reading /etc/ssh/ssh_host_ed25519_key.pub there. Do NOT fill
+# this file with ssh-keyscan output: a scan records whatever answered on the
+# network, which is exactly the identity this file exists to pin.
+#
+# One line per host key, in the standard OpenSSH known_hosts format. Use the
+# inventory name for the host field, and [name]:port when the host is not on
+# port 22. Add every key type the host offers that ssh may negotiate.
+#
+# dispatcher.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAM
+# executor1.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAM
+# [executor2.example.com]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMP
+#
+# Deployment commands read known_hosts. The dev inventory has its own hosts,
+# so give it its own file and select it on the command line:
+#
+#   ansible-playbook -i hosts.dev.yml site.yml \
+#       -e known_hosts_file="{{ playbook_dir }}/known_hosts.dev"
+#
+# To replace a key after a host is rebuilt or its key is rotated, follow the
+# procedure in deploy/README.md: compare the new fingerprint against the
+# record for that host, replace only that host's line, and keep the change
+# reviewable. Removing a line makes the host unreachable for deployment,
+# which is the intended failure.

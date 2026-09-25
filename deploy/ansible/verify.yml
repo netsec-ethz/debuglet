@@ -1,0 +1,50 @@
+---
+# Read-only post-deployment checks. This verifies the active systemd unit and
+# the application version recorded by the payload role on each selected host.
+
+- import_playbook: preflight.yml
+
+- name: Verify Debuglet Dispatcher
+  hosts: dispatcher
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Check dispatcher service
+      ansible.builtin.command: systemctl is-active debuglet-dispatcher
+      register: dispatcher_active
+      changed_when: false
+
+    - name: Read dispatcher deployment record
+      ansible.builtin.slurp:
+        src: "{{ config_dir }}/deployment-{{ debuglet_env }}.json"
+      register: dispatcher_record
+
+    - name: Require the expected dispatcher version
+      ansible.builtin.assert:
+        that:
+          - dispatcher_active.stdout == 'active'
+          - (dispatcher_record.content | b64decode | from_json).application.version == expected_deploy_version
+        quiet: true
+
+- name: Verify Debuglet Executors
+  hosts: executors
+  gather_facts: false
+  serial: 1
+  become: true
+  tasks:
+    - name: Check executor service
+      ansible.builtin.command: "systemctl is-active {{ executor_service }}"
+      register: executor_active
+      changed_when: false
+
+    - name: Read executor deployment record
+      ansible.builtin.slurp:
+        src: "{{ config_dir }}/deployment-{{ debuglet_env }}.json"
+      register: executor_record
+
+    - name: Require the expected executor version
+      ansible.builtin.assert:
+        that:
+          - executor_active.stdout == 'active'
+          - (executor_record.content | b64decode | from_json).application.version == expected_deploy_version
+        quiet: true

@@ -5,12 +5,14 @@ package api
 
 import (
 	"database/sql"
-	"debuglet/internal/dispatcher/database"
-	"debuglet/internal/dispatcher/models"
-	"debuglet/internal/dispatcher/resource"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,45 +24,88 @@ import (
 
 // PUT /debuglet
 func (h *Handler) PutDebuglets(c echo.Context) error {
+	// A submission acts on the caller's own payment order, so the caller is
+	// established before the body is read: an unauthenticated request costs no
+	// megabytes of parsing. Ownership of the transaction is decided next; the
+	// auth key authorizes one batch, it does not identify who may spend the
+	// order.
+	established, err := requireCaller(c)
+	if err != nil {
+		return err
+	}
+
 	var req SubmitDebugletsRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
+		return bindError(err)
 	}
 
 	var reqs = req.Debuglets
 	if len(reqs) == 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "no debuglets provided")
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "no debuglets provided")
+	}
+	// Maintenance is checked before anything is admitted, scheduled or
+	// inserted: a dispatcher that will not accept work must not consume a
+	// payment intent first. The refusal accounts for an order that was
+	// already paid before admission stopped, so a submitter is never left
+	// with neither the work nor the money.
+	if err := dispatcher.AdmissionPaused(); err != nil {
+		return h.refuseForMaintenance(c, established, req, err)
 	}
 	transactionId := req.TransactionId
 	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
 	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Int64("status", tx.Status))
-	// TODO we could replace this by a user authentication
 	if err != nil || tx.AuthKey != req.AuthKey {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid auth key")
+		return apiErrorFrom(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key", err)
+	}
+	// Another account's transaction, and one recorded before orders had an
+	// owner, are refused exactly like an unknown one.
+	if err := h.authorizeTransactionOwner(c, established, transactionId,
+		apiError(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key")); err != nil {
+		return err
 	}
 	if !strings.EqualFold(tx.Hash, hashDebugletRequest(req.Debuglets)) {
 		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", hashDebugletRequest(req.Debuglets)))
-		return echo.NewHTTPError(http.StatusBadRequest, "Request does not match the intent")
+		return apiError(http.StatusBadRequest, CodeIntentMismatch, "Request does not match the intent")
+	}
+	// A refunded order is spent: the money went back, so the batch it paid
+	// for is not admitted again however often it is submitted.
+	if tx.Status == int64(models.Refunded) {
+		return apiError(http.StatusBadRequest, CodePaymentIncomplete,
+			fmt.Sprintf("Transaction %s was refunded and cannot be spent again", echoed(req.TransactionId)))
 	}
 	if tx.Status != int64(models.Paid) {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Transaction %s has not yed been compeleted", req.TransactionId))
+		return apiError(http.StatusBadRequest, CodePaymentIncomplete,
+			fmt.Sprintf("Transaction %s has not yet been completed", echoed(req.TransactionId)))
+	}
+	// Payment-mode preflight on the persisted method: a paid chain transaction
+	// (stored Method "SUI", currency USDC or SUI) is rejected with 503 while
+	// blockchain payments are disabled, before any scheduler admission, debuglet
+	// insert or refund attempt. TEST transactions pass in both modes.
+	if err := h.dispatcher.Payment.CheckPaymentMethod(tx.Method); err != nil {
+		if errors.Is(err, payments.ErrPaymentsDisabled) {
+			return apiError(http.StatusServiceUnavailable, CodePaymentsDisabled, paymentsDisabledMessage)
+		}
+		return apiErrorFrom(http.StatusBadRequest, CodeUnsupportedPaymentMethod,
+			"unsupported payment method: "+echoed(tx.Method), err)
 	}
 
 	var specs []models.DebugletSpec
 	for i, req := range reqs {
+		if err := validatePolicy(req.OrderID, req.Policy); err != nil {
+			return err
+		}
 		spec, err := APIToSpec(req)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
 		spec.TransactionID = transactionId
 		spec.OrderID = req.OrderID
 		specs = append(specs, spec)
 	}
 
-	user, ok := GetUser(c)
 	var userID *uuid.UUID
-	if ok {
-		userID = &user.Uuid
+	if owner, ok := established.owner(); ok {
+		userID = &owner
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs, userID); err != nil {
@@ -68,26 +113,79 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		if err2 != nil {
 			h.logger.Error("Failed to refund transaction", zap.String("ID", transactionId), zap.String("error", err2.Error()))
 		}
-		if errors.Is(err, resource.ErrCapacityFull) {
-			return echo.NewHTTPError(http.StatusConflict, "capacity exceeded: "+err.Error())
+		if errors.Is(err, dispatcher.ErrMaintenanceMode) {
+			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, err.Error(), err)
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize debuglets: "+err.Error())
+		if errors.Is(err, resource.ErrCapacityFull) {
+			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted, "capacity exceeded", err)
+		}
+		// A policy admission refuses on its numbers is a rejected request, not
+		// a failure of the server. Its message names the field and carries no
+		// caller-supplied text, so it is reported as it is.
+		if errors.Is(err, dispatcher.ErrInvalidPolicy) {
+			return apiErrorFrom(http.StatusBadRequest, CodeInvalidPolicy, err.Error(), err)
+		}
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to initialize debuglets", err)
 	} else {
 		return c.JSON(http.StatusOK, IDs)
 	}
+}
+
+// refuseForMaintenance answers a submission a dispatcher in maintenance will
+// not admit. Nothing is admitted, scheduled or inserted whatever this finds;
+// what it decides is what happens to a payment order that was already paid
+// when admission stopped. Such an order is refunded here, because the batch it
+// paid for is not being accepted, and a refunded order is spent: the same
+// batch is refused on the transaction's status from then on. A refund that
+// cannot be performed is not silently dropped either: the refusal then says
+// the order is still paid, so the same batch can be submitted again once
+// admission resumes.
+//
+// The order is read only to answer that question, and only an order the caller
+// has proved it may spend is reported on at all. An unknown transaction,
+// another account's, and a wrong auth key are answered with the bare refusal,
+// so nothing here tells a caller about an order it could not already read.
+func (h *Handler) refuseForMaintenance(c echo.Context, established *caller, req SubmitDebugletsRequest, cause error) error {
+	message := cause.Error()
+	ctx := c.Request().Context()
+	tx, err := h.dispatcher.Payment.GetTransaction(ctx, req.TransactionId)
+	spendable := err == nil && tx.AuthKey == req.AuthKey &&
+		h.authorizeTransactionOwner(c, established, req.TransactionId,
+			apiError(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key")) == nil
+	switch {
+	case !spendable:
+	case tx.Status == int64(models.Refunded):
+		message += "; this payment order was refunded and cannot be spent again"
+	case tx.Status == int64(models.Paid):
+		if refundErr := h.dispatcher.Payment.RefundTransaction(req.TransactionId, ctx); refundErr != nil {
+			h.logger.Error("Failed to refund transaction", zap.String("ID", req.TransactionId), zap.String("error", refundErr.Error()))
+			message += "; this payment order is paid and was not refunded, so it stays paid and the same batch can be submitted again once admission resumes"
+		} else {
+			message += "; this payment order was paid and has been refunded, so it cannot be spent again"
+		}
+	}
+	return apiError(http.StatusServiceUnavailable, CodeUnavailable, message)
 }
 
 // GET /debuglet/:id/logs
 func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	debugletID := c.Param("id")
 
-	after, err := strconv.ParseInt(c.QueryParam("after"), 10, 64)
-	if err != nil {
-		after = 0
+	after := int64(0)
+	if _, present := c.QueryParams()["after"]; present {
+		parsed, err := strconv.ParseInt(c.QueryParam("after"), 10, 64)
+		if err != nil || parsed < 0 {
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid after parameter: must be a non-negative integer")
+		}
+		after = parsed
 	}
-	limit, err := strconv.ParseInt(c.QueryParam("limit"), 10, 64)
-	if err != nil || limit <= 0 {
-		limit = 100
+	limit := int64(100)
+	if _, present := c.QueryParams()["limit"]; present {
+		parsed, err := strconv.ParseInt(c.QueryParam("limit"), 10, 64)
+		if err != nil || parsed <= 0 {
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid limit parameter: must be a positive integer")
+		}
+		limit = parsed
 	}
 	if limit > 1000 {
 		limit = 1000
@@ -95,7 +193,10 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 
 	id, err := uuid.Parse(debugletID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet id: "+err.Error())
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid debuglet id: "+echoed(err.Error()))
+	}
+	if err := h.authorizeDebuglet(c, id); err != nil {
+		return err
 	}
 
 	ctx := c.Request().Context()
@@ -107,15 +208,15 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 		Limit: limit,
 	})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query logs: "+err.Error())
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query logs", err)
 	}
 
 	deb, err := queries.GetDebugletByUUID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "debuglet not found")
+			return apiError(http.StatusNotFound, CodeNotFound, "debuglet not found")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query debuglet: "+err.Error())
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query debuglet", err)
 	}
 
 	var entries []DebugletLogEntry
@@ -144,16 +245,19 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 
 	id, err := uuid.Parse(debugletID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid debuglet id: "+err.Error())
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid debuglet id: "+echoed(err.Error()))
+	}
+	if err := h.authorizeDebuglet(c, id); err != nil {
+		return err
 	}
 
 	queries := database.New(h.db)
 	deb, err := queries.GetDebugletByUUID(c.Request().Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "debuglet not found")
+			return apiError(http.StatusNotFound, CodeNotFound, "debuglet not found")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query debuglet: "+err.Error())
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query debuglet", err)
 	}
 
 	return c.JSON(http.StatusOK, DebugletStateResponse{
@@ -167,20 +271,29 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 func (h *Handler) DeleteDebuglet(c echo.Context) error {
 	var req DebugletDeleteRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body: "+err.Error())
+		return bindError(err)
+	}
+
+	// Ownership is decided before the cancellation is attempted, so a run the
+	// caller may not see is neither cancelled nor reported as existing. The
+	// acknowledgement semantics of a permitted cancellation are unchanged.
+	if err := h.authorizeDebuglet(c, req.DebugletID); err != nil {
+		return err
 	}
 
 	if err := h.dispatcher.AbortDebuglet(c.Request().Context(), req.ExecutorID, req.DebugletID, "cancelled via API"); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err)
+		// The dispatcher's own diagnostic carries transport and session
+		// internals; the caller learns that the cancellation was refused.
+		return apiErrorFrom(http.StatusBadRequest, CodeCancelRefused, "cancellation refused", err)
 	}
 	return c.NoContent(http.StatusNoContent)
 }
 
 // GET /list-debuglets
 func (h *Handler) ListUserDebuglets(c echo.Context) error {
-	user, ok := GetUser(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing user")
+	established, err := requireAccount(c)
+	if err != nil {
+		return err
 	}
 
 	limitStr := c.QueryParam("limit")
@@ -188,7 +301,7 @@ func (h *Handler) ListUserDebuglets(c echo.Context) error {
 	if strings.TrimSpace(limitStr) != "" {
 		l, err := strconv.Atoi(limitStr)
 		if err != nil || l <= 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid limit parameter")
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid limit parameter")
 		}
 		limit = min(int64(l), 100)
 	}
@@ -198,20 +311,19 @@ func (h *Handler) ListUserDebuglets(c echo.Context) error {
 	if strings.TrimSpace(offsetStr) != "" {
 		o, err := strconv.Atoi(offsetStr)
 		if err != nil || o < 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid offset parameter")
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid offset parameter")
 		}
 		offset = int64(o)
 	}
 
 	queries := database.New(h.db)
 	debuglets, err := queries.ListDebugletsByUserUUID(c.Request().Context(), database.ListDebugletsByUserUUIDParams{
-		Uuid:   user.Uuid,
+		Uuid:   established.UserUUID,
 		Limit:  limit,
 		Offset: offset,
 	})
 	if err != nil {
-		h.logger.Warn("Failed to fetch debuglets for user", zap.String("uuid", user.Uuid.String()), zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retrieve debuglets for user")
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to retrieve debuglets for user", err)
 	}
 
 	resp := make([]DebugletResponse, len(debuglets))

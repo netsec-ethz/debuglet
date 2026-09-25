@@ -75,8 +75,12 @@ func (u *UsageTracker) upsert(dir TransferDirection, destination string, limits 
 			rate.Limit(limits.DestinationRatelimit), int(limits.DestinationBurst),
 		)
 	} else {
-		destinationUsage.SetLimit(rate.Limit(limits.DestinationRatelimit))
-		destinationUsage.SetBurst(int(limits.DestinationBurst))
+		if destinationUsage.Limit() != rate.Limit(limits.DestinationRatelimit) {
+			destinationUsage.SetLimit(rate.Limit(limits.DestinationRatelimit))
+		}
+		if destinationUsage.Burst() != int(limits.DestinationBurst) {
+			destinationUsage.SetBurst(int(limits.DestinationBurst))
+		}
 	}
 
 	if !eExists {
@@ -84,13 +88,20 @@ func (u *UsageTracker) upsert(dir TransferDirection, destination string, limits 
 			rate.Limit(limits.ExecutorRatelimit), int(limits.ExecutorBurst),
 		)
 	} else {
-		executorUsage.SetLimit(rate.Limit(limits.ExecutorRatelimit))
-		executorUsage.SetBurst(int(limits.ExecutorBurst))
+		if executorUsage.Limit() != rate.Limit(limits.ExecutorRatelimit) {
+			executorUsage.SetLimit(rate.Limit(limits.ExecutorRatelimit))
+		}
+		if executorUsage.Burst() != int(limits.ExecutorBurst) {
+			executorUsage.SetBurst(int(limits.ExecutorBurst))
+		}
 	}
 }
 
 // Wait uses a token bucket to sleep until either the context finishes or a packet of a given size has enough space
 func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destination string, size Bitrate) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	waitFor, reservations, err := func() (time.Duration, []*rate.Reservation, error) {
 		u.mu.Lock()
 		defer u.mu.Unlock()
@@ -111,50 +122,33 @@ func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destinat
 			return 0, nil, errors.New("cannot track executor usage, not registered")
 		}
 
-		var revs []*rate.Reservation
-
-		// NOTE: [rate.Limiter] only permits a max reservation of the burst size. To support ratelimiting greater
-		// sizes multiple reservations are added if required.
-		failedToReserve := false
-		var totalDestDelay time.Duration
-		remDestSize := int(size)
-		for remDestSize > 0 {
-			resFor := min(remDestSize, limiterDestination.Burst())
-			res := limiterDestination.ReserveN(time.Now(), resFor)
-			if !res.OK() {
-				failedToReserve = true
-				return 0, nil, fmt.Errorf("cannot reserve destination, size is greater than burst (Got %d, Want %d)", int(size), limiterDestination.Burst())
-			}
-			revs = append(revs, res)
-			totalDestDelay += res.Delay()
-			remDestSize -= resFor
-			defer func() {
-				if failedToReserve {
-					res.Cancel()
-				}
-			}()
+		if size <= 0 {
+			return 0, nil, nil
+		}
+		if limiterDestination.Burst() <= 0 || limiterExecutor.Burst() <= 0 {
+			return 0, nil, errors.New("cannot account traffic with zero bandwidth")
 		}
 
-		var totalExecDelay time.Duration
-		remExecSize := int(size)
-		for remExecSize > 0 {
-			resFor := min(remExecSize, limiterExecutor.Burst())
-			res := limiterExecutor.ReserveN(time.Now(), resFor)
-			if !res.OK() {
-				failedToReserve = true
-				return 0, nil, fmt.Errorf("cannot reserve executor, size is greater than burst (Got %d, Want %d)", int(size), limiterExecutor.Burst())
-			}
-			revs = append(revs, res)
-			totalExecDelay += res.Delay()
-			remExecSize -= resFor
-			defer func() {
-				if failedToReserve {
-					res.Cancel()
+		var reservations []*rate.Reservation
+		var waitFor time.Duration
+		now := time.Now()
+		for _, limiter := range []*rate.Limiter{limiterDestination, limiterExecutor} {
+			// Reserve the whole packet once. Raising the burst at the same
+			// timestamp preserves the balance; restoring it retains the debt.
+			burst := limiter.Burst()
+			limiter.SetBurstAt(now, max(burst, int(size)))
+			reservation := limiter.ReserveN(now, int(size))
+			limiter.SetBurstAt(now, burst)
+			if !reservation.OK() {
+				for _, prior := range reservations {
+					prior.CancelAt(now)
 				}
-			}()
+				return 0, nil, fmt.Errorf("cannot reserve bandwidth for %d bits", size)
+			}
+			reservations = append(reservations, reservation)
+			waitFor = max(waitFor, reservation.DelayFrom(now))
 		}
-
-		return max(totalDestDelay, totalExecDelay), revs, nil
+		return waitFor, reservations, nil
 	}()
 
 	if err != nil {
@@ -166,10 +160,12 @@ func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destinat
 	select {
 	case <-time.After(waitFor):
 	case <-ctx.Done():
-		for _, r := range reservations {
-			r.Cancel()
+		u.mu.Lock()
+		for _, reservation := range reservations {
+			reservation.Cancel()
 		}
-		return errors.New("context closed")
+		u.mu.Unlock()
+		return ctx.Err()
 	}
 
 	return nil

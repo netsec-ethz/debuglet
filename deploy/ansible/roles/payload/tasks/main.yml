@@ -1,0 +1,164 @@
+---
+# Install the verified release package on a managed host.
+#
+# The package is the same one the release payload produces and the package
+# installer installs: deploy/scripts/build-linux.sh copies the archive, its
+# SHA256SUMS and its own installer out of the payload stage and records their
+# digests in release.json. This role copies those three files to the host,
+# checks the archive against the recorded digest before the installer runs,
+# and lets the candidate's own installer place the payload. Nothing is
+# compiled, downloaded or bootstrapped on the managed host.
+
+- name: Require the provisioner identity
+  ansible.builtin.assert:
+    that:
+      - provisioner_record is defined
+      - provisioner_record.ansible_core_version is defined
+      - provisioner_record.requirements_sha256 is defined
+    fail_msg: >-
+      The provisioner did not identify itself. deploy/ansible/preflight.yml
+      reads that record before any host is touched; run the playbooks in the
+      pinned provisioner image.
+    quiet: true
+  run_once: true
+
+- name: Read the release record
+  ansible.builtin.stat:
+    path: "{{ dist_dir }}/release.json"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: debuglet_release_stat
+
+- name: Require a built release
+  ansible.builtin.assert:
+    that:
+      - debuglet_release_stat.stat.exists
+    fail_msg: >-
+      No release record at {{ dist_dir }}/release.json. Build the release
+      package first with ./deploy/scripts/build-linux.sh; a managed host
+      installs a prebuilt verified package and never builds one.
+    quiet: true
+  run_once: true
+
+- name: Load the release record
+  ansible.builtin.set_fact:
+    debuglet_release: "{{ lookup('ansible.builtin.file', dist_dir ~ '/release.json') | from_json }}"
+  run_once: true
+
+- name: Require a complete release record
+  ansible.builtin.assert:
+    that:
+      - debuglet_release.schema_version | int == 1
+      - debuglet_release.version | length > 0
+      - debuglet_release.source_sha is match('^[0-9a-f]{40}$')
+      - debuglet_release.archive_sha256 is match('^[0-9a-f]{64}$')
+      - debuglet_release.installer_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      {{ dist_dir }}/release.json does not identify the release completely.
+      Rebuild it with ./deploy/scripts/build-linux.sh.
+    quiet: true
+  run_once: true
+
+- name: Create the payload staging directory
+  ansible.builtin.file:
+    path: "{{ payload_staging_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Copy the release package
+  ansible.builtin.copy:
+    src: "{{ dist_dir }}/{{ item }}"
+    dest: "{{ payload_staging_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - "{{ debuglet_release.archive }}"
+    - SHA256SUMS
+    - install.sh
+
+# The installer checks the archive against SHA256SUMS, and this checks both
+# against the digests recorded when the package was built. A file that changed
+# on the way here stops the deployment before the installer runs.
+- name: Inspect the copied package
+  ansible.builtin.stat:
+    path: "{{ payload_staging_dir }}/{{ item }}"
+    checksum_algorithm: sha256
+  register: debuglet_payload_files
+  loop:
+    - "{{ debuglet_release.archive }}"
+    - install.sh
+
+- name: Require the recorded package digests
+  ansible.builtin.assert:
+    that:
+      - item.0.stat.exists
+      - item.0.stat.checksum == item.1
+    fail_msg: >-
+      {{ item.0.item }} on this host does not match the digest recorded in
+      {{ dist_dir }}/release.json ({{ item.1 }}). Nothing was installed.
+    quiet: true
+  loop: >-
+    {{ debuglet_payload_files.results
+       | zip([debuglet_release.archive_sha256, debuglet_release.installer_sha256])
+       | list }}
+  loop_control:
+    label: "{{ item.0.item }}"
+
+# The installer publishes the version directory and the managed bin/dbl link.
+# It refuses an archive, an installer or an installed tree that does not match
+# the candidate, and it is safely rerunnable; `creates` keeps a redeployment
+# of the same version from running it again at all.
+- name: Install the release package
+  ansible.builtin.command:
+    cmd: >-
+      sh {{ payload_staging_dir }}/install.sh
+      --archive {{ payload_staging_dir }}/{{ debuglet_release.archive }}
+      --checksums {{ payload_staging_dir }}/SHA256SUMS
+      --version {{ debuglet_release.version }}
+      --prefix {{ payload_prefix }}
+    creates: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/share/debuglet/manifest.json"
+  notify: Restart debuglet services
+
+# The installer links the CLI; the daemons get stable names next to it, so a
+# systemd unit does not carry a version in its ExecStart.
+- name: Link the daemon commands
+  ansible.builtin.file:
+    src: "../lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-{{ item }}"
+    dest: "{{ payload_prefix }}/bin/debuglet-{{ item }}"
+    state: link
+    owner: root
+    group: root
+    follow: false
+  loop:
+    - dispatcher
+    - executor
+  notify: Restart debuglet services
+
+# What this host is running, and what put it there. The two identities are
+# recorded separately: the application comes from the release payload, the
+# provisioner from the image that ran this playbook. No timestamp is
+# recorded, so an unchanged deployment rewrites nothing.
+- name: Record the deployment
+  ansible.builtin.copy:
+    content: |
+      {{ {
+        'schema_version': 1,
+        'application': {
+          'version': debuglet_release.version,
+          'source_sha': debuglet_release.source_sha,
+          'go_version': debuglet_release.go_version,
+          'archive': debuglet_release.archive,
+          'archive_sha256': debuglet_release.archive_sha256,
+          'installer_sha256': debuglet_release.installer_sha256,
+          'prefix': payload_prefix,
+        },
+        'provisioner': provisioner_record | default({}),
+      } | to_nice_json }}
+    dest: "{{ config_dir }}/deployment-{{ debuglet_env }}.json"
+    owner: root
+    group: "{{ debuglet_group }}"
+    mode: "0640"

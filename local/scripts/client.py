@@ -13,156 +13,184 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""client.py — submit one TEST debuglet and follow its stored output.
+
+Talks to the dispatcher HTTP API as implemented in
+internal/dispatcher/transport/api (routes.go / handlers_debuglet.go):
+
+  GET  {base}/executors          -> [ {id, ready, last_seen, ...} ]
+  PUT  {base}/payment/intent     <- payment request
+  PUT  {base}/debuglet           <- authenticated submission
+  GET  {base}/debuglet/<id>/logs -> paginated output and run state
+
+Note: in the current `dev` checkout the routes are registered at the root
+(routes.go), so the executor list is at /executors. If your branch mounts the
+API under a group (e.g. /api), pass --base-path /api.
+
+The local dispatcher runs with disable_tls=true (plain HTTP on :9000), so TLS
+is OFF by default; pass --tls to use https.
+
+To drive a two-debuglet test (e.g. latency_tcp_server + latency_tcp), run this
+script twice: once for the server, once for the client with
+--arg -addr --arg <server_ip:port>.
+"""
+
 import argparse
 import base64
-import json
 import os
 import sys
-import requests
-import websocket
-import urllib3
-import ssl
+import time
 
-# Suppress insecure request warnings for development
+import requests
+import urllib3
+
+# Suppress insecure request warnings for development (self-signed TLS).
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Debuglet Client - Interact with Dispatcher API")
-    parser.add_argument("--dispatcher", default="localhost:9000", help="Dispatcher HTTP address (e.g., localhost:9000)")
-    parser.add_argument("--wasm", required=True, help="Path to compiled WASM code (.wasm)")
-    parser.add_argument("--executor", help="Target Executor ID (picks first available if not set)")
-    parser.add_argument("--addr", action="append", help="Address to pass to debuglet (can be specified multiple times)")
+    parser = argparse.ArgumentParser(description="Debuglet client — submit a debuglet and stream its output")
+    parser.add_argument("--dispatcher", default="localhost:9000",
+                        help="Dispatcher HTTP host:port (default: localhost:9000)")
+    parser.add_argument("--tls", action="store_true",
+                        help="Use https/TLS (default off; local dispatcher runs with disable_tls=true)")
+    parser.add_argument("--base-path", default="",
+                        help="Path prefix the API is mounted under (default: '' — routes are at root)")
+    parser.add_argument("--wasm", required=True, help="Path to the compiled debuglet (.wasm)")
+    parser.add_argument("--executor", help="Target executor ID (defaults to the first available)")
+    parser.add_argument("--arg", action="append", default=[],
+                        help="Argument passed through to the debuglet as WASI argv (repeatable). "
+                             "E.g. --arg -addr --arg 127.0.0.1:5201")
+    parser.add_argument("--address", action="append", default=[],
+                        help="Policy address for rate-limiting/accounting (repeatable)")
+    parser.add_argument("--floor-bw", type=int, default=0, help="Policy floor bandwidth (bits/s)")
+    parser.add_argument("--ceil-bw", type=int, default=1_000_000_000, help="Policy ceil bandwidth (bits/s)")
+    parser.add_argument("--timeout-ms", type=int, default=300_000, help="Debuglet timeout (ms)")
+    parser.add_argument("--start-in", type=int, help="Start the debuglet N seconds from now (optional)")
     args = parser.parse_args()
 
-    # Use HTTPS as dispatcher starts with StartTLS
-    dispatcher_url = f"https://{args.dispatcher}"
-    
-    # 1. Fetch available executors
-    print(f"[*] Fetching executors from {dispatcher_url}/executors...")
+    scheme = "https" if args.tls else "http"
+    base = f"{scheme}://{args.dispatcher}{args.base_path}"
+    verify = False  # development deployments may use self-signed certificates
+    headers = {"Debuglet-API-Version": "1.2"}
+
+    # 1. Fetch available executors.
+    print(f"[*] Fetching executors from {base}/executors ...")
     try:
-        r = requests.get(f"{dispatcher_url}/executors", verify=False, timeout=5)
+        r = requests.get(f"{base}/executors", headers=headers, verify=verify, timeout=5)
         r.raise_for_status()
-        executors = r.json()
+        executors = r.json() or []
     except Exception as e:
         print(f"[-] Failed to fetch executors: {e}")
         sys.exit(1)
 
     if not executors:
-        print("[-] No executors connected to dispatcher.")
+        print("[-] No executors connected to the dispatcher.")
         sys.exit(1)
 
-    # Resolve Executor ID
     executor_id = args.executor
     if not executor_id:
-        # Sort by capacity or just pick first
         executor_id = executors[0]["id"]
         print(f"[*] Picking first available executor: {executor_id}")
-    else:
-        # Validate existence
-        if not any(e["id"] == executor_id for e in executors):
-            print(f"[-] Executor '{executor_id}' not found in dispatcher list.")
-            print(f"[*] Available: {[e['id'] for e in executors]}")
-            sys.exit(1)
+    elif not any(e["id"] == executor_id for e in executors):
+        print(f"[-] Executor '{executor_id}' not found. Available: {[e['id'] for e in executors]}")
+        sys.exit(1)
 
-    # 2. Read and encode WASM file
-    print(f"[*] Reading WASM file: {args.wasm}")
+    # 2. Read and base64-encode the wasm (StdEncoding, matching APIToSpec).
     if not os.path.exists(args.wasm):
-        print(f"[-] File not found: {args.wasm}")
+        print(f"[-] WASM file not found: {args.wasm}")
         sys.exit(1)
-        
-    try:
-        with open(args.wasm, "rb") as f:
-            wasm_bytes = f.read()
-            wasm_b64 = base64.b64encode(wasm_bytes).decode("utf-8")
-    except Exception as e:
-        print(f"[-] Failed to read/encode WASM: {e}")
-        sys.exit(1)
+    with open(args.wasm, "rb") as f:
+        wasm_b64 = base64.b64encode(f.read()).decode("ascii")
 
-    # 3. Submit measurement request
-    print(f"[*] Submitting measurement to executor {executor_id}...")
-    payload = {
-        "debuglets": [
-            {
-                "executor_id": executor_id,
-                "code": wasm_b64,
-                "addresses": args.addr or [],
-                "policy": {
-                    "floor_bw": 0,
-                    "ceil_bw": 1000000000, # 1Gbps default
-                    "timeout_ms": 300000,   # 5m default
-                    "destinations": []
-                }
-            }
-        ]
+    # 3. Submit the debuglet. PUT /debuglet takes a JSON ARRAY of DebugletRequest.
+    req = {
+        "order_id": 0,
+        "executor_id": executor_id,
+        "wasm": wasm_b64,
+        "args": args.arg,
+        "policy": {
+            "floor_bw": args.floor_bw,
+            "ceil_bw": args.ceil_bw,
+            "timeout_ms": args.timeout_ms,
+            "addresses": args.address,
+        },
     }
-    
+    if args.start_in is not None:
+        req["start_time"] = int(time.time()) + args.start_in
+
+    print(f"[*] Creating TEST payment intent for executor {executor_id} ...")
     try:
-        r = requests.post(f"{dispatcher_url}/measurements", json=payload, verify=False, timeout=10)
+        r = requests.put(
+            f"{base}/payment/intent",
+            json={"debuglets": [req], "payment_method": "TEST", "refund_address": ""},
+            headers=headers,
+            verify=verify,
+            timeout=15,
+        )
         r.raise_for_status()
-        measurement_id = r.json()
-        print(f"[+] Measurement created successfully. ID: {measurement_id}")
+        intent = r.json()["intent"]
+        submission = {
+            "debuglets": [req],
+            "transaction_id": intent["transaction_id"],
+            "auth_key": intent["auth_key"],
+        }
+        print(f"[*] Submitting debuglet (args={args.arg}) ...")
+        r = requests.put(
+            f"{base}/debuglet", json=submission, headers=headers, verify=verify, timeout=15
+        )
+        r.raise_for_status()
+        ids = r.json()
     except Exception as e:
-        print(f"[-] Failed to create measurement: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"[-] Response: {e.response.text}")
+        body = getattr(getattr(e, "response", None), "text", "")
+        print(f"[-] Failed to submit debuglet: {e}\n[-] Response: {body}")
         sys.exit(1)
 
-    # 4. Connect to WebSocket for streaming logs and triggering start
-    ws_url = f"wss://{args.dispatcher}/measurements/{measurement_id}/start"
-    print(f"[*] Connecting to measurement stream: {ws_url}")
+    if not ids:
+        print("[-] Dispatcher returned no debuglet IDs.")
+        sys.exit(1)
+    debuglet_id = ids[0]
+    print(f"[+] Debuglet created: {debuglet_id}")
 
-    def on_message(ws, message):
-        try:
-            ev = json.loads(message)
-            event_type = ev.get("event")
-            
-            if event_type == "ready":
-                print(f"[*] Executor {ev.get('executor_id')} is READY (Session: {ev.get('session_id')[:8]})")
-                print(f"[*] SCION Address: {ev.get('scion_addr')}")
-                print("[*] Sending 'start' command...")
-                ws.send("start")
-                
-            elif event_type == "stdout":
-                # Stream stdout directly
-                print(ev.get("stdout"), end="", flush=True)
-                
-            elif event_type == "error":
-                print(f"\n[-] Dispatcher error: {ev.get('message')}")
-                
-            else:
-                # Other events (e.g. key disclosure info if implemented in JSON)
-                pass
-                
-        except json.JSONDecodeError:
-            # Fallback for non-JSON messages
-            if message.startswith("error:"):
-                print(f"\n[-] {message}")
-            else:
-                print(f"\n[*] Message: {message}")
+    # 4. Poll the paginated log endpoint until the run exits.
+    follow_logs(base, debuglet_id, headers, verify)
 
-    def on_error(ws, error):
-        print(f"[-] WebSocket Error: {error}")
 
-    def on_close(ws, close_status_code, close_msg):
-        print(f"\n[*] Connection closed ({close_status_code}): {close_msg or 'Normal closure'}")
-
-    def on_open(ws):
-        print("[+] WebSocket connected. Waiting for executor setup...")
-
-    # Configure WebSocket to skip TLS verification
-    ws = websocket.WebSocketApp(
-        ws_url,
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close
-    )
-
+def follow_logs(base, debuglet_id, headers, verify):
+    """Print new log records until the dispatcher reports RunStateExited."""
+    url = f"{base}/debuglet/{debuglet_id}/logs"
+    print(f"[*] Following output from {url} ...\n")
+    after = 0
     try:
-        ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+        while True:
+            response = requests.get(
+                url,
+                params={"after": after, "limit": 100},
+                headers=headers,
+                verify=verify,
+                timeout=15,
+            )
+            response.raise_for_status()
+            page = response.json()
+            for entry in page.get("logs") or []:
+                output = base64.b64decode(entry["output"])
+                sys.stdout.buffer.write(output)
+                sys.stdout.buffer.flush()
+            after = page.get("after", after)
+            if page.get("state") == "RunStateExited" and not page.get("has_more"):
+                if page.get("error"):
+                    print(f"\n[-] {page['error']}")
+                break
+            if not page.get("has_more"):
+                time.sleep(0.25)
     except KeyboardInterrupt:
-        print("\n[*] Interrupted by user. Closing...")
-        ws.close()
+        print("\n[*] Interrupted; stopping log polling.")
+    except Exception as e:
+        body = getattr(getattr(e, "response", None), "text", "")
+        print(f"\n[-] Failed to follow debuglet logs: {e}\n[-] Response: {body}")
+        sys.exit(1)
+    print("\n[*] Run finished.")
+
 
 if __name__ == "__main__":
     main()

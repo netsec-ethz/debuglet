@@ -29,3 +29,8 @@ VALUES (
     (SELECT id FROM debuglets WHERE debuglets.uuid=:deb_uuid),
     (SELECT id FROM users WHERE users.uuid=:user_uuid)
 );
+
+-- name: CreateUserWithRole :one
+INSERT INTO users (uuid, name, role)
+VALUES (?, ?, ?)
+RETURNING *;
