@@ -128,7 +128,9 @@ Hello from Debuglet!
 dbl logs: state=RunStateExited after=1 entries=1 has_more=false
 ```
 
-**macOS.** There is no native package, so a Mac runs the Linux client in a `linux/amd64` container that carries the authority in its own trust store. `docker run --rm -it --platform linux/amd64 IMAGE` then takes the five commands above unchanged and without `SSL_CERT_FILE`; on Apple Silicon the image runs under emulation, and `--rm` discards the account key, the recovery code and the session with the container.
+**macOS.** There is no native package, so a Mac runs the Linux client in a
+`linux/amd64` container that carries the authority in its own trust store. Build
+the image below, then keep the client configuration in a private host directory:
 
 ```dockerfile
 FROM --platform=linux/amd64 debian:bookworm-slim
@@ -138,6 +140,19 @@ COPY install.sh SHA256SUMS debuglet-VERSION-linux-amd64.tar.gz /pkg/
 RUN update-ca-certificates && sh /pkg/install.sh --archive /pkg/debuglet-VERSION-linux-amd64.tar.gz --checksums /pkg/SHA256SUMS --version VERSION --prefix /opt/debuglet
 ENV PATH=/opt/debuglet/bin:$PATH
 ```
+
+```sh
+mkdir -p "$PWD/debuglet-client" && chmod 700 "$PWD/debuglet-client"
+docker build --platform linux/amd64 -t debuglet-client .
+docker run --rm -it --platform linux/amd64 \
+  -v "$PWD/debuglet-client:/root/.config/debuglet" \
+  debuglet-client
+```
+
+The five Linux client commands above then work without `SSL_CERT_FILE`. The
+mounted directory retains the account key, recovery code and session after the
+container exits; protect and back it up like any other credential directory.
+On Apple Silicon the image runs under emulation.
 
 **The Go SDK.** The [client example](../examples/client/main.go) takes the same three remote options: `--register NAME` creates an account and logs in for the rest of the run, `--allow-remote-test` sets `Options.AllowRemoteTEST`, and `--allow HOST[,HOST]` fills the request's address allowlist, which narrows the executor's own policy — public addresses admitted, loopback, private and reserved ranges denied — and never widens it. The account id is printed; the account key and the session token are not.
 

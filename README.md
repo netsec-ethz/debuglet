@@ -47,6 +47,8 @@ dbl demo
 
 `demo` starts a temporary local dispatcher and executor, runs a real WASM/TCP
 measurement, checks the result, and cleans up. No existing service is required.
+Successful human output begins with `Debuglet VERSION completed locally:` and
+ends with `Cleanup: complete`; JSON output also records `RunStateExited`.
 
 ## Start roles independently
 
@@ -74,47 +76,15 @@ dbl run --sample hello --wait
 dbl logs <id-from-the-run-receipt>
 ```
 
-The client saves the selected connection, so subsequent commands need no URL.
-`dispatcher list` shows your saved connections, while `executor list` queries the
-selected dispatcher for registered executor IDs. These are local profiles, not a
-global service directory. `--sample hello` uses a bundled guest, so no compiler or
-wallet is needed; `dbl validate --sample hello`, or `--wasm FILE` for your own
-module, checks a guest and the default resource request entirely locally, and
-`dbl logs --follow ID` follows stored output.
+The client saves the connection. `--sample hello` needs no compiler or wallet.
+When exactly one executor is ready, `run` selects it; with several, use
+`--executor ID`. Press Ctrl-C to stop a foreground role. Same-package restarts
+retain its identity, completed results and output, but do not resume interrupted
+measurements.
 
-When exactly one executor is ready, `run` selects it automatically. With several,
-choose one with `--executor ID`; Debuglet does not silently pick a machine for you.
-`dbl executor up --name worker-2 --dispatcher local` starts another with its own
-name and state. `dbl --dispatcher NAME ...` selects a saved connection for one
-command and `dbl --endpoint URL ...` uses a URL directly, with no saved profile
-needed; `--config FILE` selects an independent client configuration, including for
-an executor started from a separate shell.
-
-Press Ctrl-C in a role's terminal to stop just that role. Its database and executor
-identity are retained; restarting with the same package and state directory keeps
-completed results and stored output. State defaults to
-`$XDG_STATE_HOME/debuglet` or `$HOME/.local/state/debuglet`, with separate
-`dispatchers/NAME` and `executors/NAME` directories; `--state-dir DIR` overrides the
-role's directory. `dispatcher up --port 9002 --grpc-port 9003` selects different
-ports and `0` asks the operating system to choose one, so use the printed URL.
-
-For a dispatcher and executor together in one terminal, `dbl up` remains available
-on HTTP port 9000, and `dbl demo` runs a temporary measurement and cleans up
-without retaining state.
-
-These are foreground local development processes. They do not resume interrupted
-measurements, and they install nothing on the host. Reusing state with a different
-package version is rejected; a retained database is checked against the schema this
-package serves and an unsupported or incomplete one is reported and left unchanged
-rather than upgraded.
-
-To supervise the same verified roles instead of keeping terminals open,
-`dbl service install --role dispatcher|executor` installs one unit and one state
-directory per instance, and `dbl drain --role ROLE` takes one out of service;
-both need administrator privileges and an existing unprivileged `debuglet`
-account. The [CLI guide](docs/CLI.md) and [local environments](docs/environments.md)
-describe those units, their paths and drain semantics, and every configuration key
-a daemon checks before it opens a database or binds a listener.
+See the [CLI guide](docs/CLI.md) for multiple roles, state paths, validation,
+services and drain operations. The [architecture guide](docs/ARCHITECTURE.md#run-flow)
+shows how submission, execution, output and completion travel through the system.
 
 ## Credentials
 
@@ -131,12 +101,20 @@ dbl connect http://127.0.0.1:9000 --name managed
 dbl --dispatcher managed login --register researcher
 ```
 
-The account key and the recovery code are written to owner-only files instead of
-being printed, only the session is stored, and a session lasts 12 hours before
-`dbl login` is needed again; `dbl logout` revokes it. The [CLI guide](docs/CLI.md)
-covers `--account-key-file`, the `DEBUGLET_ACCOUNT_KEY` variable and where
-credentials are kept; the [HTTP API guide](docs/API.md) publishes which account
-may perform which operation.
+The command writes the account key and recovery code to owner-only files beside
+the client configuration. A session lasts 12 hours. Log in again with the path
+printed during registration, for example:
+
+```sh
+dbl --dispatcher managed login \
+  --account-key-file ~/.config/debuglet/account-key-managed.txt
+```
+
+`dbl logout` revokes the session. If the account key is lost, the recovery code
+can replace both credentials through `POST /auth/recover` or `pkg/client.Recover`;
+the CLI does not yet expose recovery. The [CLI guide](docs/CLI.md#credentials)
+covers credential locations and the [HTTP API guide](docs/API.md)
+covers recovery and authorization.
 
 ## Write a measurement or application
 
@@ -185,8 +163,8 @@ make ci-local
 Package builds require a clean, committed checkout and use the committed generated
 eBPF objects. Output is under `.cache/ci/packages/`. The CI workflow defines checks
 for tests, build, packaging, the installed demo, combined and separate local roles,
-SDK use, compatibility, and kernel loading. Running them on GitHub requires a configured trusted Linux runner;
-see [CI setup](docs/ci.md).
+SDK use, compatibility, and kernel loading. GitHub Actions runs them on fresh
+GitHub-hosted Ubuntu 24.04 VMs; see [CI setup](docs/ci.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for code generation and development details.
 The [architecture guide](docs/ARCHITECTURE.md) maps the packages to the running

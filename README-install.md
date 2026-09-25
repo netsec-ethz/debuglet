@@ -1,8 +1,11 @@
 # Install Debuglet
 
-Package version: @VERSION@
+Package version: `@VERSION@`
 
-Source revision: @SOURCE_SHA@
+Source revision: `@SOURCE_SHA@`
+
+The markers above are replaced in the copy inside a built package. In a source
+checkout, this file is the package documentation template.
 
 This package supports Linux amd64. Installation requires a POSIX shell, GNU tar, coreutils, and `sha256sum`. The installed demo requires no Go compiler, source checkout, wallet, SCION service, root privileges, or existing Debuglet configuration.
 
@@ -68,7 +71,12 @@ sh ./install.sh --archive ./debuglet-@VERSION@-linux-amd64.tar.gz \
 
 The demo starts a loopback dispatcher and executor, creates fresh private SQLite databases, and runs the bundled WASM guest against a TCP target. It checks the reply, output, and terminal result, then removes its processes and temporary state. It uses userspace traffic accounting.
 
-The CLI link is `$HOME/.local/bin/dbl`; package files live in `$HOME/.local/lib/debuglet/@VERSION@`. Add `$HOME/.local/bin` to `PATH` to use `dbl` directly. Run `dbl --help` for client commands. The repository contains the [CLI guide](https://github.com/netsec-ethz/debuglet/blob/@SOURCE_SHA@/docs/CLI.md) and [Go client guide](https://github.com/netsec-ethz/debuglet/blob/@SOURCE_SHA@/docs/SDK.md); those guides are not additional files in this archive.
+The CLI link is `$HOME/.local/bin/dbl`; package files live below
+`$HOME/.local/lib/debuglet`. Add `$HOME/.local/bin` to `PATH` to use `dbl`
+directly. Run `dbl --help` for client commands. The repository contains the
+[CLI guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/CLI.md)
+and [Go client guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/SDK.md);
+those guides are not additional files in this archive.
 
 ## Start a dispatcher, executor and client
 
@@ -106,7 +114,7 @@ obtains both control addresses from that URL and accepts only a local loopback
 setup.
 Running the dispatcher and executors on separate hosts, with TLS against a
 private authority and authentication on, is a different setup: see the
-[cross-host quickstart](https://github.com/netsec-ethz/debuglet/blob/@SOURCE_SHA@/docs/quickstart-remote.md).
+[cross-host quickstart](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/quickstart-remote.md).
 
 Use `executor up --name worker-2 --dispatcher local` for another executor. When
 more than one is ready, select one with `run --executor ID`. `dispatcher list`
@@ -127,25 +135,34 @@ it explicitly. `dbl demo` instead runs a temporary measurement and cleans up.
 
 ## Run the roles as services
 
-`dbl service install --role dispatcher` and `dbl service install --role executor`
-install the same verified roles as services the host's service manager
-supervises, instead of keeping a terminal open. They need administrator
-privileges and an existing unprivileged `debuglet` account, they install one unit
-and one state directory per instance, and they report a role ready only after its
-daemon published its own readiness record:
+Managed services cannot execute a package below a home directory because their
+systemd units use `ProtectHome=yes`. Install the same verified package under a
+system prefix, create the unprivileged service account, and stop any foreground
+roles using ports 9000 and 9001 before installing the units:
 
 ```sh
-sudo dbl service install --role dispatcher
-sudo dbl service install --role executor --dispatcher 127.0.0.1:9001
-sudo dbl service status --role executor
+sudo sh ./install.sh --archive ./debuglet-@VERSION@-linux-amd64.tar.gz \
+  --checksums ./SHA256SUMS --version @VERSION@ --prefix /usr/local
+id -u debuglet >/dev/null 2>&1 || \
+  sudo useradd --system --home-dir /var/lib/debuglet \
+    --shell /usr/sbin/nologin debuglet
+sudo /usr/local/bin/dbl service install --role dispatcher
+sudo /usr/local/bin/dbl service install --role executor \
+  --dispatcher 127.0.0.1:9001
+sudo /usr/local/bin/dbl service status --role executor
 ```
+
+Use the host's equivalent account-management command if it does not provide
+`useradd` or `/usr/sbin/nologin`. Each command reports readiness only after the
+daemon publishes its own readiness record. Choose other dispatcher ports if an
+existing service must keep 9000 or 9001.
 
 `sudo dbl drain --role executor` takes one executor out of service and reports
 what it still holds; `sudo dbl drain --role dispatcher` stops the admission of
 new submissions without stopping the dispatcher. `sudo dbl drain --resume`
 reverses either. The complete profile, paths, permissions, shutdown budget and
-drain semantics are in the [environments guide](https://github.com/netsec-ethz/debuglet/blob/@SOURCE_SHA@/docs/environments.md)
-and the [CLI guide](https://github.com/netsec-ethz/debuglet/blob/@SOURCE_SHA@/docs/CLI.md).
+drain semantics are in the [environments guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/environments.md)
+and the [CLI guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/CLI.md).
 
 A managed dispatcher is a boot-time service every account on its host can reach,
 so its generated configuration leaves `server.local_development` off. It
@@ -159,7 +176,16 @@ dbl --dispatcher managed login --register researcher
 
 `login --register` writes the new account's key and recovery code to owner-only
 files instead of printing them, and stores only the session, which lasts 12 hours.
-`dbl logout` revokes it.
+After expiry, pass the account-key path printed during registration:
+
+```sh
+dbl --dispatcher managed login \
+  --account-key-file ~/.config/debuglet/account-key-managed.txt
+```
+
+`dbl logout` revokes the session. Account recovery is available through
+`POST /auth/recover` and the Go SDK's `Client.Recover`; the CLI does not yet
+provide a recovery command.
 
 ## Installer behavior
 

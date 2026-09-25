@@ -10,6 +10,11 @@ import (
 	"path/filepath"
 )
 
+// ErrCredentialEndpointMismatch means a saved session belongs to a different
+// endpoint than the profile now selects. Callers may forget it locally, but
+// must never present it to the newly selected endpoint.
+var ErrCredentialEndpointMismatch = errors.New("stored credential belongs to another dispatcher endpoint")
+
 // Credentials are kept apart from the endpoint metadata in config.json: a
 // profile listing, a receipt and a diagnostic may repeat an endpoint, and none
 // of them may repeat a secret.
@@ -184,7 +189,7 @@ func CredentialFor(path, name, endpoint string) (Credential, error) {
 		return Credential{}, nil
 	}
 	if credential.Endpoint != endpoint {
-		return Credential{}, fmt.Errorf("the stored credential for %q was issued for another dispatcher endpoint; run dbl login", name)
+		return Credential{}, fmt.Errorf("%w: the stored credential for %q was issued for another dispatcher endpoint; run dbl login", ErrCredentialEndpointMismatch, name)
 	}
 	return credential, nil
 }

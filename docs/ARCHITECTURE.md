@@ -61,7 +61,38 @@ dispatcher :9000 (cmux → yamux)                    executor
 
 Both directions share one identity. `registerExecutor` mints a `controlsession.Binding` (dispatcher incarnation plus session ID) and a 32-byte token, sends them in `Hello` over the reverse stream, and adopts the executor ID the peer returns. The executor stores those credentials and confirms them with `BindSession` on the direct path; the dispatcher activates the session only after that confirmation. Afterwards every call in either direction carries the same four metadata keys, checked by `controlrpc.Read` and `controlrpc.Credentials.Matches` in `internal/controlrpc`, which both transport packages use. `RenewLease` on the direct path makes the dispatcher issue a `ProbeSession` on the reverse path before extending the lease, so a lease is only renewed while both directions work. `Mutation` tickets (`internal/dispatcher/transport/rpc/mutation.go`) keep an admitted callback alive across session replacement, and `SessionOwner` retirement fences a stale incarnation.
 
-## Life of a run
+## Run flow
+
+The current client-to-executor lifecycle is:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Dispatcher
+    participant Executor
+    participant Scheduler as Executor scheduler
+
+    Client->>Dispatcher: PUT /payment/intent
+    Dispatcher-->>Client: transaction ID and auth key
+    Client->>Dispatcher: PUT /debuglet
+    Dispatcher->>Executor: Upload(spec) over reverse yamux
+    Executor->>Scheduler: persist and schedule(spec)
+    Scheduler->>Executor: start due run
+    Executor->>Dispatcher: DebugletAllocate
+    Executor->>Dispatcher: INITIALIZING, STARTED
+    Executor->>Dispatcher: DebugletStream(output)
+    Client->>Dispatcher: GET /debuglet/:id/logs
+    Dispatcher-->>Client: stored output page
+    Executor->>Dispatcher: DebugletExit(result)
+    Client->>Dispatcher: GET /debuglet/:id/state
+    Dispatcher-->>Client: RunStateExited
+```
+
+This updates and preserves the useful submission and execution flows from the
+original README. It reflects the current polling, stored-log and TEST-intent
+interfaces; the old SSE and websocket routes are no longer current behavior.
+
+The implementation steps are:
 
 1. `dbl run` or `pkg/client` prepares a batch, calls `PUT /payment/intent` for a transaction ID and auth key, then `PUT /debuglet` with the batch and that key (`pkg/client/prepare.go`, `pkg/client/submit.go`).
 2. `Handler.PutDebuglets` validates the transaction, converts each request to a `models.DebugletSpec` and calls `Dispatcher.SubmitDebuglets`.

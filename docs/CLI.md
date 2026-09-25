@@ -194,9 +194,13 @@ no configuration directory to locate at all. Use `--dispatcher NAME`, or the sav
 current connection, to send a credential. `login` and `logout` both act on a saved
 connection and say so when none is selected.
 
-A session expires after 12 hours and can be revoked at any time. A command that then
-needs one fails with exit code 1, the dispatcher's `unauthorized` diagnostic and the
-action to take: run `dbl login` again.
+A session expires after 12 hours and can be revoked at any time. Log in again
+with the account-key file created during registration, for example
+`dbl --dispatcher PROFILE login --account-key-file ~/.config/debuglet/account-key-PROFILE.txt`.
+The CLI does not discover that long-lived credential implicitly. If it is lost,
+use the recovery code with `POST /auth/recover` or `pkg/client.Recover`; the CLI
+does not yet expose account recovery. A command with an expired session exits 1
+and prints the dispatcher's `unauthorized` diagnostic.
 
 ## Commands
 

@@ -57,7 +57,7 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 		return usageError("dbl login", loginUsage, stderr, "--recovery-file only applies to --register")
 	}
 
-	c, profile, code, ok := connectProfile("dbl login", options, false, stderr)
+	c, profile, code, ok := connectProfileWithoutCredential("dbl login", options, stderr)
 	if !ok {
 		return code
 	}
@@ -65,24 +65,43 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 		return usageError("dbl login", loginUsage, stderr,
 			"login stores a credential for a saved connection; run dbl connect URL first, or select one with --dispatcher NAME")
 	}
+	// Validate the store before issuing a new session. Endpoint mismatch does
+	// not matter here, but invalid JSON or unsafe permissions must not turn a
+	// successful remote login into an avoidable local persistence failure.
+	if _, err := connections.LoadCredentials(options.ConfigPath); err != nil {
+		return reportFailure(ctx, "dbl login: read credential store", stderr, err)
+	}
 
 	accountKey := ""
 	switch {
 	case *register != "":
+		keyDestination, err := reserveIssuedCredential(options.ConfigPath, "account-key-"+profile.Name+".txt", *keyFile)
+		if err != nil {
+			return reportFailure(ctx, "dbl login: reserve account key", stderr, err)
+		}
+		recoveryDestination, err := reserveIssuedCredential(options.ConfigPath, "recovery-"+profile.Name+".txt", *recoveryFile)
+		if err != nil {
+			keyDestination.discard()
+			return reportFailure(ctx, "dbl login: reserve recovery code", stderr, err)
+		}
 		account, err := c.CreateAccount(ctx, *register)
 		if err != nil {
+			keyDestination.discard()
+			recoveryDestination.discard()
 			return reportFailure(ctx, "dbl login: create account", stderr, err)
 		}
 		// Both issued credentials go to owner-only files the command names.
 		// Neither is printed, and neither is kept in the credential store: a
 		// copy of that store must not be permanent access to the account.
-		keyPath, err := writeIssuedCredential(options.ConfigPath, "account-key-"+profile.Name+".txt", *keyFile, account.AccountKey)
+		keyPath, err := keyDestination.write(account.AccountKey)
 		if err != nil {
+			recoveryDestination.discard()
 			return reportFailure(ctx, "dbl login: store account key", stderr, err)
 		}
-		recoveryPath, err := writeIssuedCredential(options.ConfigPath, "recovery-"+profile.Name+".txt", *recoveryFile, account.RecoveryCode)
+		recoveryPath, err := recoveryDestination.write(account.RecoveryCode)
 		if err != nil {
-			return reportFailure(ctx, "dbl login: store recovery code", stderr, err)
+			return reportFailure(ctx, "dbl login: store recovery code", stderr,
+				fmt.Errorf("account was created and its account key is available at %s, but the recovery code could not be stored: %w", keyPath, err))
 		}
 		accountKey = account.AccountKey
 		notice := stdout
@@ -136,17 +155,29 @@ func logoutCommand(ctx context.Context, args []string, options globalOptions, st
 	if fs.NArg() != 0 {
 		return usageError("dbl logout", loginUsage, stderr, "logout takes no arguments")
 	}
-	c, profile, code, ok := connectProfile("dbl logout", options, false, stderr)
-	if !ok {
-		return code
+	profile, err := selectedProfile(options)
+	if err != nil {
+		return reportFailure(ctx, "dbl logout", stderr, err)
 	}
 	if profile.Name == "" {
 		return usageError("dbl logout", loginUsage, stderr,
 			"logout ends the session of a saved connection; select one with --dispatcher NAME")
 	}
+	credential, err := connections.CredentialFor(options.ConfigPath, profile.Name, profile.Endpoint)
+	mismatched := errors.Is(err, connections.ErrCredentialEndpointMismatch)
+	if err != nil && !mismatched {
+		return reportFailure(ctx, "dbl logout", stderr, err)
+	}
+	c, err := newClient(profile.Endpoint, client.Options{RequestTimeout: options.Timeout, Credential: credential.Token})
+	if err != nil {
+		return usageError("dbl logout", loginUsage, stderr, "%v", err)
+	}
 	// The local credential is forgotten whatever the dispatcher answers: a
 	// session that cannot be revoked remotely must not stay on this machine.
-	revokeErr := c.Logout(ctx)
+	var revokeErr error
+	if !mismatched && credential.Token != "" {
+		revokeErr = c.Logout(ctx)
+	}
 	if err := connections.RemoveCredential(options.ConfigPath, profile.Name); err != nil {
 		return reportFailure(ctx, "dbl logout: forget credential", stderr, err)
 	}
@@ -212,31 +243,70 @@ func readAccountKey(path string) (string, error) {
 // can read it, rather than printing it into a terminal, a shell history or a CI
 // log. Exclusive creation with owner-only permissions keeps it from being world
 // readable for an instant, or from overwriting credentials still in use.
-func writeIssuedCredential(configPath, defaultName, chosen, secret string) (string, error) {
+type issuedCredentialDestination struct {
+	path string
+	file *os.File
+}
+
+func reserveIssuedCredential(configPath, defaultName, chosen string) (*issuedCredentialDestination, error) {
 	path := chosen
 	if path == "" {
 		connectionsFile := configPath
 		if connectionsFile == "" {
 			resolved, err := connections.DefaultPath()
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			connectionsFile = resolved
 		}
 		path = filepath.Join(filepath.Dir(connectionsFile), defaultName)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return "", err
+		return nil, err
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, connections.CredentialFileMode)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return "", fmt.Errorf("%s already exists; name another file or move the credentials it holds", path)
+			return nil, fmt.Errorf("%s already exists; name another file or move the credentials it holds", path)
 		}
+		return nil, err
+	}
+	return &issuedCredentialDestination{path: path, file: file}, nil
+}
+
+func (d *issuedCredentialDestination) write(secret string) (string, error) {
+	if d == nil || d.file == nil {
+		return "", errors.New("credential destination is not reserved")
+	}
+	file := d.file
+	d.file = nil
+	_, writeErr := file.WriteString(secret + "\n")
+	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
+		_ = os.Remove(d.path)
 		return "", err
 	}
-	_, writeErr := file.WriteString(secret + "\n")
-	if err := errors.Join(writeErr, file.Close()); err != nil {
+	return d.path, nil
+}
+
+func (d *issuedCredentialDestination) discard() {
+	if d == nil {
+		return
+	}
+	if d.file != nil {
+		_ = d.file.Close()
+		d.file = nil
+	}
+	_ = os.Remove(d.path)
+}
+
+func writeIssuedCredential(configPath, defaultName, chosen, secret string) (string, error) {
+	destination, err := reserveIssuedCredential(configPath, defaultName, chosen)
+	if err != nil {
+		return "", err
+	}
+	path, err := destination.write(secret)
+	if err != nil {
+		destination.discard()
 		return "", err
 	}
 	return path, nil
