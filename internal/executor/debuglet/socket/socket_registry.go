@@ -242,12 +242,20 @@ func dialSCION(ctx context.Context, addr string, sugar *zap.SugaredLogger, pktTa
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial SCION address %q: %w", addr, err)
 	}
+	// pan opens the socket inside DialUDP, so a connection that offers its
+	// socket is marked here, after the dial and before the first write, which
+	// is the first packet it sends.
 	if pktTagger != nil {
 		if sc, ok := conn.(interface {
 			SyscallConn() (syscall.RawConn, error)
 		}); ok {
-			if raw, err := sc.SyscallConn(); err == nil {
-				_ = raw.Control(func(fd uintptr) { pktTagger.SetSocketMark(int(fd)) })
+			var markErr error
+			raw, err := sc.SyscallConn()
+			if err == nil {
+				err = raw.Control(func(fd uintptr) { markErr = pktTagger.SetSocketMark(int(fd)) })
+			}
+			if err = errors.Join(err, markErr); err != nil {
+				return nil, errors.Join(fmt.Errorf("failed to mark SCION socket for %q: %w", addr, err), conn.Close())
 			}
 		}
 	}

@@ -63,7 +63,7 @@ func TestRefusedDestinationIsNeverContacted(t *testing.T) {
 	}()
 
 	guard := &refusingGuard{}
-	dialer, err := NewDialer(guard)
+	dialer, err := NewDialer(guard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestAdmittedDestinationConnects(t *testing.T) {
 	}()
 
 	guard := &admittingGuard{}
-	dialer, err := NewDialer(guard)
+	dialer, err := NewDialer(guard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestAdmittedDestinationConnects(t *testing.T) {
 }
 
 func TestDialerRequiresAGuard(t *testing.T) {
-	if _, err := NewDialer(nil); err == nil {
+	if _, err := NewDialer(nil, nil); err == nil {
 		t.Fatal("a dialer without a policy guard was created")
 	}
 }
