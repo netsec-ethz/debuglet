@@ -310,7 +310,7 @@ func soleReadyExecutor(nodes []client.Node) (string, error) {
 		id = node.ID
 	}
 	if id == "" {
-		return "", errors.New("no executor is ready; start dbl up or check dbl nodes")
+		return "", errors.New("no executor is ready; start one with dbl up or sudo dbl service start --role executor --name NAME, then check dbl nodes (a newly started executor needs a few seconds)")
 	}
 	return id, nil
 }
