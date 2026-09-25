@@ -297,6 +297,11 @@ def check_packets(pcap_path: str, tesla: dict, by_ip: dict, src_ip: str):
         print(f"    raw IP (first 20B): {raw_ip[:20].hex()}")
         print(f"    canonical (4-5,10-11 zeroed): {canonical[:20].hex()}")
 
+        if pkt_epoch < 1:
+            print("    ✗ No signing key in epoch 0: packets sent during the executor's first epoch carry no attribution tag.")
+            print()
+            continue
+
         if pkt_epoch > tau:
             print(f"    ✗ Packet epoch {pkt_epoch} > disclosed epoch {tau} — key not yet disclosed.")
             print()

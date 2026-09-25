@@ -33,7 +33,8 @@ Workflow
 4. For each IPv4 packet:
    a. Compute the epoch t from the packet timestamp. Epoch 0 has no signing
       key: k_0 is the public anchor, so the executor never tags with it and
-      a packet from epoch 0 is reported as carrying no attribution tag.
+      epoch 0 is never a candidate; a packet from epoch 0 that matches no
+      later epoch is reported as carrying no attribution tag.
    b. Derive k_t = H^(tau-t)(k_tau)   [hash forward in the backward chain].
    c. Verify chain consistency: H^t(k_t) == k_0.
    d. For each candidate debuglet ID derive the per-measurement key:
@@ -464,9 +465,6 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
         return [], "the disclosed key does not hash back to the published anchor"
 
     pkt_epoch = epoch_of(pkt.ts_ns, anchor_ns, delay_ns)
-    if pkt_epoch < 1:
-        return [], ("no signing key in epoch 0: packets sent during the "
-                    "executor's first epoch carry no attribution tag")
     if pkt_epoch > disclosed_epoch:
         gap = pkt_epoch - disclosed_epoch
         if gap <= 2:
@@ -501,6 +499,9 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
                 matched.append((mid, epoch, "go/hmac"))
                 seen.add(mid)
     if not matched:
+        if pkt_epoch < 1:
+            return [], ("no signing key in epoch 0: packets sent during the "
+                        "executor's first epoch carry no attribution tag")
         return [], "no recent debuglet on this executor produces this tag"
     return matched, ""
 
