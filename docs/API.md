@@ -55,13 +55,25 @@ The run state `RunStateUnreconciled` means that the dispatcher failed the submis
 - Changing which status code a documented failure returns.
 - Narrowing what a request may contain.
 
+### Release candidates
+
+The rules above bind from the final `v0.2.0` on. Until then, a release candidate may fix the contract in ways the list above reserves for a major version while keeping the version number, and its release notes name each such change. `v0.2.0-rc.2` keeps contract version **1.2** and, compared with `v0.2.0-rc.1`:
+
+- answers a body above 33554432 bytes on every route with 413 `payload_too_large`;
+- answers `DELETE /debuglet` with 500 `internal_error` when the executor acknowledged the cancellation but its result was not recorded, or when the Abort may not have reached the executor, and with 400 `cancel_refused` when the executor refused it, whatever the executor's gRPC code;
+- answers `PATCH /destination` with 409 `capacity_exhausted` for a limit below the floors of active allocations, and with 500 `internal_error` when an executor did not acknowledge the recomputed share;
+- refuses an empty batch (`invalid_request`) and a repeated `order_id` (`invalid_policy`) on `PUT /payment/intent`, and prices an order by `timeout_ms` exactly, rounded up to the next whole unit, instead of by whole seconds;
+- answers an identical resubmission on `PUT /debuglet` with 200 and the runs already recorded for the batch, without admitting it again.
+
+A client written against `v0.2.0-rc.1` that treats an unknown status as a plain failure of its class keeps working, except that it must not compute prices itself with the old formula.
+
 ## Deprecation
 
 A route or field that is to be removed is first marked deprecated in `api/openapi.yaml` and in this document, in a minor version, while it keeps working. It is removed only in a following major version, whose contract is published as a new `api/openapi.yaml` before the removal takes effect. Release candidates may still change before the final `v0.2.0`; pin the exact tag as described in [the SDK guide](SDK.md).
 
 ## Supported revisions
 
-Only the latest release candidate (currently `v0.2.0-rc.1`, published from `main`) and the current commit of the `dev` integration branch are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
+Only the latest release candidate (currently `v0.2.0-rc.2`, published from `main`) and the current commit of the `dev` integration branch are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
 
 ## Errors
 

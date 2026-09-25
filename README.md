@@ -40,7 +40,7 @@ The CLI is installed under `$HOME/.local/bin`, with its package under
 `$HOME/.local/lib/debuglet`. Copying the three package files to another Linux
 amd64 machine supports installation there without Go or a source checkout.
 The [installation guide](README-install.md) covers offline installation and
-version-pinned release downloads. The `v0.2.0-rc.1` package is the first release
+version-pinned release downloads. The `v0.2.0-rc.2` package is the current release
 candidate for this workflow; `v0.1.0` predates it.
 
 ```sh
