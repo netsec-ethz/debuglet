@@ -77,12 +77,12 @@ func New(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy 
 
 // The constructor dependency is per call; production and fixtures execute the
 // same fallback/environment path without a mutable package-wide factory.
-func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, newBPF func(*net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error)) *Debuglet {
+func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, newBPF func(*zap.Logger, *net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error)) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	var constructorCleanup error
 	if iface != nil && runtime.GOOS == "linux" {
-		if bt, err := newBPF(iface, schedule, []byte(debugletID.String())); err == nil {
+		if bt, err := newBPF(logger, iface, schedule, []byte(debugletID.String())); err == nil {
 			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name))
 			pktTagger = bt
 		} else {
