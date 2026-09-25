@@ -84,7 +84,9 @@ const (
 // accepted by the server although no valid response was observed (transport
 // or read failure after sending, malformed success, an unexpected submission
 // 2xx, or a server 5xx); it is uncertainty, not proof of acceptance. A validated
-// pre-send failure or a 4xx response is a rejection with OutcomeUnknown false.
+// pre-send failure or a 4xx response is a rejection with OutcomeUnknown false,
+// and so is a 503 that carries service_unavailable or payments_disabled at the
+// intent stage: nothing was priced or written.
 type SubmissionError struct {
 	Stage          string
 	TransactionID  string

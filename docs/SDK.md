@@ -81,13 +81,13 @@ Both complete request bodies have a 32 MiB limit. The actual submission body is 
 | Situation | Stage | TransactionID | OutcomeUnknown |
 | --- | --- | --- | --- |
 | Validation or remote-TEST guard before sending | `intent` | empty | false |
-| Intent rejected (4xx) or a transport/connection failure while requesting the intent | `intent` | empty | false |
-| Intent answered with a malformed or inconsistent success body, or a 5xx | `intent` | empty | true |
+| Intent rejected (4xx, or a 503 that carries `service_unavailable` or `payments_disabled`) or a transport/connection failure while requesting the intent | `intent` | empty | false |
+| Intent answered with a malformed or inconsistent success body, or any other 5xx | `intent` | empty | true |
 | Submission validation/size or canceled context detected before sending | `submit` | known | false |
 | Submission rejected (4xx) | `submit` | known | false |
 | Transport or read failure after attempting submission, malformed or inconsistent success body, unexpected 2xx, 5xx | `submit` | known | true |
 
-`OutcomeUnknown` means the server may have accepted the request although no valid response was observed. It is uncertainty, not acceptance; inspect available transaction/job state before considering resubmission. A transport failure while requesting the intent sets this flag to false because no submission was attempted; an intent 5xx or malformed intent response is reported as unknown because the intent's server bookkeeping may exist. An unexpected submission 201/202 is still an HTTP protocol error, but cannot establish rejection. Neither case triggers an automatic retry.
+`OutcomeUnknown` means the server may have accepted the request although no valid response was observed. It is uncertainty, not acceptance; inspect available transaction/job state before considering resubmission. A transport failure while requesting the intent sets this flag to false because no submission was attempted; an intent 5xx or malformed intent response is reported as unknown because the intent's server bookkeeping may exist. A 503 that carries `service_unavailable` or `payments_disabled` at the intent stage is a rejection: nothing was priced or written. An unexpected submission 201/202 is still an HTTP protocol error, but cannot establish rejection. Neither case triggers an automatic retry.
 
 ## Reading results
 

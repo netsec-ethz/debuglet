@@ -91,19 +91,6 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		if err := validateRoleEndpoint(options.Dispatcher.Endpoint); err != nil {
 			return err
 		}
-		// Always refresh the metadata: cached profile ports are conveniences,
-		// not authority to connect to an old or different control service.
-		profile, err := connections.Discover(startupCtx, options.Dispatcher.Endpoint)
-		if err != nil {
-			return fmt.Errorf("dispatcher connection metadata unavailable; use a running local dispatcher with /connection support: %w", err)
-		}
-		if err := validateAddress(profile.GRPCAddress); err != nil {
-			return fmt.Errorf("dispatcher gRPC metadata: %w", err)
-		}
-		if err := validateAddress(profile.YamuxAddress); err != nil {
-			return fmt.Errorf("dispatcher yamux metadata: %w", err)
-		}
-		options.Dispatcher = profile
 	}
 	assets, err = deps.resolveAssets(assets.CLI)
 	if err != nil {
@@ -125,6 +112,23 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 	state, err := readRoleState(dir, role, assets.Manifest)
 	if err != nil {
 		return err
+	}
+	// The dispatcher is contacted only after the local state is known to be
+	// usable, so a local refusal does not depend on a dispatcher answering.
+	if role == ExecutorSchema {
+		// Always refresh the metadata: cached profile ports are conveniences,
+		// not authority to connect to an old or different control service.
+		profile, err := connections.Discover(startupCtx, options.Dispatcher.Endpoint)
+		if err != nil {
+			return fmt.Errorf("dispatcher connection metadata unavailable; use a running local dispatcher with /connection support: %w", err)
+		}
+		if err := validateAddress(profile.GRPCAddress); err != nil {
+			return fmt.Errorf("dispatcher gRPC metadata: %w", err)
+		}
+		if err := validateAddress(profile.YamuxAddress); err != nil {
+			return fmt.Errorf("dispatcher yamux metadata: %w", err)
+		}
+		options.Dispatcher = profile
 	}
 	watchCtx, cancelWatch := context.WithCancel(workCtx)
 	var watcher sync.WaitGroup
