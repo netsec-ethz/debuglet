@@ -103,7 +103,7 @@ currency = "TEST"
 
 The two dispatcher addresses are not interchangeable. With both set to the HTTP port the reverse stream comes up and the dispatcher answers on it, but the direct gRPC call has nowhere to land: the dispatcher reports a failed executor registration and an unavailable control session, and the executor reconnects forever without announcing resources.
 
-`packet_counter = "fallback"` counts in userspace and needs no privilege; `"auto"` loads the eBPF counter and tagger, which needs root and `interface = "NAME"`, and a root run leaves root-owned `-wal` and `-shm` files beside whatever database it opens, so give it one of its own. Start the daemon in the foreground. Four lines and then silence is the whole story: resources announced, heartbeat running. Give it 15–30 seconds before the first client, which otherwise sees the executor listed with `READY false`.
+`packet_counter = "fallback"` counts in userspace and needs no privilege; `"auto"` with `interface = "NAME"` loads the eBPF counter and tagger when it has the privileges for them (root or the eBPF capabilities) and otherwise falls back to userspace counting with a warning, and a root run leaves root-owned `-wal` and `-shm` files beside whatever database it opens, so give it one of its own. Start the daemon in the foreground. Four lines and then silence is the whole story: resources announced, heartbeat running. Give it 15–30 seconds before the first client, which otherwise sees the executor listed with `READY false`.
 
 ```
 $ "PREFIX/lib/debuglet/VERSION/bin/debuglet-executor" -config DIR/executor.toml

@@ -35,7 +35,8 @@ func main() {
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to load executor config: %v", err))
+		fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+		os.Exit(1)
 	}
 
 	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)
