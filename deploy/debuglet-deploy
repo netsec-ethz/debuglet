@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Build, deploy and verify one explicitly selected Debuglet environment.
+
+set -euo pipefail
+
+usage() {
+	cat >&2 <<'EOF'
+usage: deploy/debuglet-deploy ENV [all|dispatcher|executors|certs|preflight] [--limit HOST]
+
+ENV must be dev or prod. The command selects that environment's inventory,
+known_hosts file and variables, and reads dispatcher_addr and executor IDs
+from the inventory.
+EOF
+	exit 2
+}
+
+[ "$#" -ge 1 ] || usage
+environment=$1
+action=${2:-all}
+shift
+[ "$#" -eq 0 ] || shift
+
+case $environment in
+	dev) inventory=hosts.dev.yml; known_hosts=known_hosts.dev ;;
+	prod) inventory=hosts.yml; known_hosts=known_hosts ;;
+	*) usage ;;
+esac
+case $action in
+	all|dispatcher|executors|certs|preflight) ;;
+	*) usage ;;
+esac
+
+limit=()
+while [ "$#" -gt 0 ]; do
+	case $1 in
+		--limit)
+			[ "$#" -ge 2 ] || usage
+			limit=(--limit "$2")
+			shift 2
+			;;
+		*) usage ;;
+	esac
+done
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ansible_dir=$root/deploy/ansible
+inventory_path=$ansible_dir/$inventory
+known_hosts_path=$ansible_dir/$known_hosts
+vars_file=vars/$environment.yml
+provisioner=$root/deploy/scripts/provisioner.sh
+
+[ -f "$inventory_path" ] || { echo "missing $inventory_path" >&2; exit 2; }
+[ -s "$known_hosts_path" ] || { echo "missing or empty $known_hosts_path" >&2; exit 2; }
+
+inventory_json=$(cd "$ansible_dir" && "$provisioner" ansible-inventory \
+	-i "$inventory" -e "@$vars_file" --list)
+dispatcher_addr=$(printf '%s\n' "$inventory_json" |
+	python3 "$root/deploy/scripts/executor-ids.py" --dispatcher-addr)
+executor_ids=$(printf '%s\n' "$inventory_json" |
+	python3 "$root/deploy/scripts/executor-ids.py")
+
+extra=(
+	-e "@$vars_file"
+	-e "known_hosts_file={{ playbook_dir }}/$known_hosts"
+)
+
+run_playbook() {
+	(cd "$ansible_dir" && "$provisioner" ansible-playbook -i "$inventory" \
+		"${extra[@]}" "$@")
+}
+
+if [ "$action" = preflight ]; then
+	run_playbook preflight.yml "${limit[@]}"
+	exit
+fi
+
+sans_prefix=DNS
+case $dispatcher_addr in
+	[0-9]*.[0-9]*.[0-9]*.[0-9]*) sans_prefix=IP ;;
+esac
+DISPATCHER_SANS="$sans_prefix:$dispatcher_addr" \
+	"$root/deploy/scripts/generate-certs.sh" $executor_ids
+
+if [ "$action" = certs ]; then
+	run_playbook deploy-certs.yml "${limit[@]}"
+	exit
+fi
+
+make -C "$root" deploy-build deploy-seed-db
+deploy_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+	"$root/deploy/dist/release.json")
+extra+=(-e "deploy_version=$deploy_version")
+
+case $action in
+	all) playbook=site.yml ;;
+	dispatcher) playbook=deploy-dispatcher.yml ;;
+	executors) playbook=deploy-executors.yml ;;
+esac
+
+# Install or rotate certificates first, then deploy the selected services.
+run_playbook deploy-certs.yml "${limit[@]}"
+run_playbook "$playbook" "${limit[@]}"
+run_playbook verify.yml -e "expected_deploy_version=$deploy_version" "${limit[@]}"

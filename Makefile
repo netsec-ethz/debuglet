@@ -268,11 +268,15 @@ generate-certs:
 ANSIBLE_PLAYBOOK ?= ../scripts/provisioner.sh ansible-playbook
 ANSIBLE_INVENTORY ?= ../scripts/provisioner.sh ansible-inventory
 
-# Select the matching inventory and environment. Each environment owns its
-# executor accounts, service units, configuration, state and installed binaries.
-INVENTORY ?= hosts.yml
-DEPLOY_ENV ?= prod
+# The public deployment entry point requires dev or prod explicitly and
+# selects the matching inventory, variables and known-hosts file itself.
+DEPLOY_ENV ?=
+INVENTORY ?= $(if $(filter dev,$(DEPLOY_ENV)),hosts.dev.yml,$(if $(filter prod,$(DEPLOY_ENV)),hosts.yml,))
 ENV_VARS = -e @vars/$(DEPLOY_ENV).yml
+
+.PHONY: require-deploy-env
+require-deploy-env:
+	@case "$(DEPLOY_ENV)" in dev|prod) ;; *) echo "DEPLOY_ENV must be dev or prod" >&2; exit 2;; esac
 
 # Build Linux x86_64 binaries via Docker → deploy/dist/
 deploy-build:
@@ -308,46 +312,30 @@ deploy-seed-db:
 #   make deploy-certs DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10"
 #   make deploy-certs DISPATCHER_SANS=... EXECUTOR_IDS="uuid1 uuid2"
 deploy-certs:
-	chmod +x deploy/scripts/generate-certs.sh
-	@if [ -z "$(DISPATCHER_SANS)" ]; then \
-		echo "make deploy-certs requires DISPATCHER_SANS, for example" >&2; \
-		echo "  make deploy-certs DISPATCHER_SANS=\"DNS:dispatcher.example.com\"" >&2; \
-		exit 2; \
-	fi
-	@if [ -z "$(EXECUTOR_IDS)" ]; then \
-		inventory=$$(cd deploy/ansible && $(ANSIBLE_INVENTORY) -i "$(INVENTORY)" $(ENV_VARS) --list) || \
-			{ echo "Could not read Ansible inventory" >&2; exit 1; }; \
-		EXECUTOR_IDS=$$(printf '%s\n' "$$inventory" | python3 deploy/scripts/executor-ids.py) || exit 1; \
-		echo "Auto-extracted executor IDs: $$EXECUTOR_IDS"; \
-		DISPATCHER_SANS="$(DISPATCHER_SANS)" deploy/scripts/generate-certs.sh $$EXECUTOR_IDS; \
-	else \
-		DISPATCHER_SANS="$(DISPATCHER_SANS)" deploy/scripts/generate-certs.sh $(EXECUTOR_IDS); \
-	fi
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) deploy-certs.yml
+	deploy/debuglet-deploy "$(DEPLOY_ENV)" certs $(if $(LIMIT),--limit "$(LIMIT)",)
 
 # Full deploy: build → dispatcher → all executors
-deploy: deploy-build deploy-seed-db
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) site.yml
+deploy:
+	deploy/debuglet-deploy "$(DEPLOY_ENV)" all $(if $(LIMIT),--limit "$(LIMIT)",)
 
 # Deploy only the dispatcher
-deploy-dispatcher: deploy-build deploy-seed-db
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) deploy-dispatcher.yml
+deploy-dispatcher:
+	deploy/debuglet-deploy "$(DEPLOY_ENV)" dispatcher $(if $(LIMIT),--limit "$(LIMIT)",)
 
 # One-time bootstrap: grant passwordless sudo on dispatcher/executor nodes.
 # Run this first on any host whose user requires a sudo password.
 # Example: make bootstrap-sudo LIMIT=executor.example.com
-bootstrap-sudo:
+bootstrap-sudo: require-deploy-env
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) bootstrap-sudo.yml -K \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # Deploy only the executors (or pass LIMIT=hostname to target one)
-deploy-executors: deploy-build deploy-seed-db
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) deploy-executors.yml \
-		$(if $(LIMIT),--limit $(LIMIT),)
+deploy-executors:
+	deploy/debuglet-deploy "$(DEPLOY_ENV)" executors $(if $(LIMIT),--limit "$(LIMIT)",)
 
 # Push a new dispatcher address to all running executors (no binary redeploy)
 # Example: make deploy-update-addr DISPATCHER_ADDR=new-host.example.com:9001
-deploy-update-addr:
+deploy-update-addr: require-deploy-env
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-dispatcher-addr.yml \
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
@@ -358,7 +346,7 @@ deploy-update-addr:
 # Example: make deploy-update-config
 #          make deploy-update-config DEPLOY_VERSION=v1.2.3
 DEPLOY_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
-deploy-update-config:
+deploy-update-config: require-deploy-env
 	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml \
 		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
 
