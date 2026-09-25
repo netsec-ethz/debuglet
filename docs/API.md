@@ -46,6 +46,8 @@ Within a major version the dispatcher may:
 
 A client must therefore ignore unknown response fields, ignore unknown values of open string fields, and never depend on the absence of a field. The SDK does this.
 
+The run state `RunStateUnreconciled` means that the dispatcher failed the submission the run belongs to and the run's executor refused its cancellation: the run may still execute, its outcome is recorded when the executor reports it, and nothing is replayed.
+
 ## What requires a major version
 
 - Removing or renaming a route, request field, response field or query parameter.

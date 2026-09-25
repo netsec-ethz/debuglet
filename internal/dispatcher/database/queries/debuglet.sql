@@ -52,9 +52,10 @@ WHERE uuid = sqlc.arg(uuid) AND state <> sqlc.arg(exited_state)
     WHEN 0 THEN 0
     WHEN 3 THEN 1
     WHEN 4 THEN 2
-    WHEN 1 THEN 3
-    WHEN 2 THEN 4
-    WHEN 5 THEN 5
+    WHEN 6 THEN 3
+    WHEN 1 THEN 4
+    WHEN 2 THEN 5
+    WHEN 5 THEN 6
     ELSE 999
   END < sqlc.arg(state_rank)
   AND executor_id = sqlc.arg(executor_id)
