@@ -115,6 +115,8 @@ INFO	executor/executor.go:292	Starting heartbeat loop	{"interval": "15s"}
 
 ## Clients
 
+The client runs natively on Linux amd64 and on macOS in a Linux amd64 container. Windows, WSL and Linux arm64 clients are not validated in this alpha and are not supported.
+
 **Linux, natively.** `pkg/client` verifies the chain against the host's trust store; on Linux `SSL_CERT_FILE` replaces that store for one process, which needs no root and installs nothing. `login --register` writes the account key and the recovery code to owner-only files beside the connections file and prints neither; keep both, as the [CLI guide](CLI.md#credentials) describes. `--allow-remote-test` is required on every submission to an endpoint that is not a literal loopback address.
 
 ```
@@ -128,7 +130,13 @@ Hello from Debuglet!
 dbl logs: state=RunStateExited after=1 entries=1 has_more=false
 ```
 
-**macOS.** There is no native package, so a Mac runs the Linux client in a `linux/amd64` container that carries the authority in its own trust store. `docker run --rm -it --platform linux/amd64 IMAGE` then takes the five commands above unchanged and without `SSL_CERT_FILE`; on Apple Silicon the image runs under emulation, and `--rm` discards the account key, the recovery code and the session with the container.
+**macOS.** There is no native package, so a Mac runs the Linux amd64 `dbl` client in a `linux/amd64` container that carries the authority in its own trust store. The image includes the daemon binaries, but this walkthrough starts only the client, talking to the remote dispatcher over the network, under emulation on Apple Silicon. The container needs no privileged mode. It runs as root, so the connections file, `credentials.json`, the account key and the recovery code all live in `/root/.config/debuglet`, and the named volume `debuglet-client` is mounted there:
+
+```sh
+docker run --rm -it --platform linux/amd64 -v debuglet-client:/root/.config/debuglet IMAGE
+```
+
+The shell it opens takes the five commands above unchanged and without `SSL_CERT_FILE`; NAME in the two file names is the connection name given to `dbl connect --name NAME`, which those commands also use for the account. `--rm` discards the container, not the named volume, so the next `docker run` with the same `-v` finds the saved connection, the session and both credential files again. On later runs `dbl nodes`, `run` and `logs` work directly with the stored session. `dbl login --register NAME` is not repeated: it first creates a second account with that name and then refuses to overwrite the existing `account-key-NAME.txt`, so the new account's key is never stored. Once the 12-hour session has expired, `dbl login --account-key-file /root/.config/debuglet/account-key-NAME.txt` obtains a new one. The volume lives inside Docker's Linux file system, so the files keep the `0600` mode the client requires of `credentials.json`. The owner reads the two credentials out of it with `docker run --rm --platform linux/amd64 -v debuglet-client:/root/.config/debuglet IMAGE cat /root/.config/debuglet/account-key-NAME.txt /root/.config/debuglet/recovery-NAME.txt`, which prints them to that terminal. `dbl logout` first revokes the stored session at the dispatcher, which otherwise keeps it valid for the rest of its 12 hours; `docker volume rm debuglet-client` then forgets the account on this Mac. The account itself stays on the dispatcher, and once the volume is gone its key cannot be recovered unless the two credentials were read out first.
 
 ```dockerfile
 FROM --platform=linux/amd64 debian:bookworm-slim

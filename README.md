@@ -7,6 +7,9 @@ SDK, and sample measurements.
 
 The local alpha runs on **Linux amd64**. The complete package needs no Go compiler,
 wallet, SCION service, root privileges, or hand-written daemon configuration.
+The `dbl` client for a remote dispatcher runs on Linux amd64 and, in a container, on
+macOS; Windows, WSL and Linux arm64 clients are not supported
+([cross-host guide](docs/quickstart-remote.md#clients)).
 
 ## Install
 
