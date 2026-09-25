@@ -82,7 +82,7 @@ Every failure answers with one envelope, whatever the route and whichever layer 
 | `not_found` | 404 | No such debuglet, transaction, user, executor or route — or one that belongs to another account. |
 | `method_not_allowed` | 405 | The route does not serve that method. |
 | `capacity_exhausted` | 409 | The scheduler cannot admit the batch. |
-| `payload_too_large` | 413 | The body exceeds what the route accepts. |
+| `payload_too_large` | 413 | The body exceeds the 33554432-byte (32 MiB) limit: a declared length above it is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this code. No handler sees a byte beyond the limit. |
 | `unsupported_media_type` | 415 | The route does not read that representation. |
 | `internal_error` | 500 | A failure inside the dispatcher. |
 | `payments_disabled` | 503 | A chain payment method while blockchain payments are disabled. |
@@ -125,7 +125,7 @@ Request limits:
 - `GET /debuglet/{id}/logs`: `after` must be a non-negative integer and `limit` a positive integer when present; both are rejected with 400 otherwise. `limit` defaults to 100 and is clamped to 1000.
 - `GET /list-debuglets`: `limit` defaults to 100 and is clamped to 100; `offset` defaults to 0. Neither may be negative and `limit` may not be zero.
 - `GET /executors/by-ip`: `ip` is required; `n` defaults to 10 and must be positive when present. It is clamped to 100 candidates before ownership is applied, but the executor registry retains at most 20 recent identifiers per executor, so at most 20 can ever be returned and usually fewer, since only the caller's own are listed. An account owning none of them receives an empty array, never null.
-- `PUT /payment/intent` and `PUT /debuglet` bodies are limited to 33554432 bytes (32 MiB) by the SDK, which measures the exact encoded envelope of each of the two requests.
+- Every request body is limited to 33554432 bytes (32 MiB) by the dispatcher. A declared `Content-Length` above the limit is answered 413 `payload_too_large` before any handler acts and without reading the body. A body of unknown length is cut at the limit: a handler never receives a byte beyond it, a decode that needs more fails with the same 413, and a value complete within the limit is handled as it arrived, after which the connection is closed. The SDK measures the exact encoded envelope of `PUT /payment/intent` and `PUT /debuglet` against the same bound before sending and always declares the length, so nothing it sends is refused for size.
 
 ## Authentication
 
