@@ -32,7 +32,7 @@ func TestRoleUpReportsLocalRefusalBeforeDiscovery(t *testing.T) {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		data, err := json.Marshal(RoleState{SchemaVersion: 1, Version: "other-version", ExecutorID: "0b6e2f4c-3f65-4c52-9a53-6d0f4f7f3c11", Role: role})
+		data, err := json.Marshal(RoleState{SchemaVersion: 1, Version: "other-version", Identity: "0b6e2f4c-3f65-4c52-9a53-6d0f4f7f3c11", Role: role})
 		if err != nil {
 			t.Fatal(err)
 		}

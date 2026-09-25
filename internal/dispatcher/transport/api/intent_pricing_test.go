@@ -57,7 +57,7 @@ func TestIpIntentPriceIsExact(t *testing.T) {
 			f.mock.ExpectQuery(modeCreateOrderQuery).
 				WithArgs(modeChainTxID, modeOrderID, modeExecutorID, tc.want, "TEST", modeRefundAddr, int64(models.Outstanding)).
 				WillReturnRows(sqlmock.NewRows(modeOrderColumns).AddRow(
-					modeChainTxID, modeOrderID, modeExecutorID, tc.want, "TEST", int64(models.Outstanding), modeRefundAddr))
+					modeChainTxID, modeOrderID, modeExecutorID, tc.want, "TEST", int64(models.Outstanding), modeRefundAddr, nil))
 
 			price, err := f.h.LockPrice(ipIntentBody(ipDebuglet(modeOrderID, tc.floorBW, tc.timeoutMS)),
 				modeChainTxID, modeRefundAddr, t.Context())
