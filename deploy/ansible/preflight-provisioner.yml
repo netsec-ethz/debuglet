@@ -20,6 +20,7 @@
   any_errors_fatal: true
 
   vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     provisioner_pins_file: "{{ playbook_dir }}/../provisioner.env"
     provisioner_record_file: /etc/debuglet/provisioner.json
     provisioner_requirements_file: "{{ playbook_dir }}/requirements.txt"
@@ -36,6 +37,10 @@
           {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_ANSIBLE_CORE_VERSION=(.+)$', '\1') | first | default('')) | trim }}
         pinned_base_digest: >-
           {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_BASE_DIGEST=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_debian_snapshot: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_DEBIAN_SNAPSHOT=(.+)$', '\1') | first | default('')) | trim }}
+        pinned_openssh_client_version: >-
+          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_OPENSSH_CLIENT_VERSION=(.+)$', '\1') | first | default('')) | trim }}
         pinned_requirements_sha256: >-
           {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256=(.+)$', '\1') | first | default('')) | trim }}
         pinned_collections_sha256: >-
@@ -50,6 +55,8 @@
         that:
           - pinned_ansible_core | length > 0
           - pinned_base_digest is match('^sha256:[0-9a-f]{64}$')
+          - pinned_debian_snapshot is match('^[0-9]{8}T[0-9]{6}Z$')
+          - pinned_openssh_client_version | length > 0
           - pinned_requirements_sha256 is match('^[0-9a-f]{64}$')
           - pinned_collections_sha256 is match('^[0-9a-f]{64}$')
           - pinned_goose_version | length > 0
@@ -123,6 +130,8 @@
         that:
           - provisioner_record.schema_version | int == 1
           - provisioner_record.base_digest == pinned_base_digest
+          - provisioner_record.debian_snapshot | default('') == pinned_debian_snapshot
+          - provisioner_record.openssh_client_version | default('') == pinned_openssh_client_version
           - provisioner_record.ansible_core_version == pinned_ansible_core
           - provisioner_record.requirements_sha256 == pinned_requirements_sha256
           - provisioner_record.collections_sha256 == pinned_collections_sha256

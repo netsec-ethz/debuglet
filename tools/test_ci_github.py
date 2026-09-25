@@ -17,7 +17,7 @@ SPEC.loader.exec_module(ISOLATION)
 SHA = 'a' * 40
 METADATA = {
     'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'netsec-ethz/debuglet',
-    'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/hardening',
+    'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/dev',
     'GITHUB_REF_PROTECTED': 'false', 'GITHUB_SHA': SHA,
     'RUNNER_ENVIRONMENT': 'github-hosted', 'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'X64',
     'RUNNER_NAME': 'GitHub Actions 1',

@@ -15,7 +15,8 @@
 #
 # Usage:
 #   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml
-#   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml upgrade-database.yml
+#   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml \
+#     -e known_hosts_file="{{ playbook_dir }}/known_hosts.dev" upgrade-database.yml
 #
 #   Limit to some hosts:
 #     ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml --limit executor.example.com

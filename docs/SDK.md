@@ -5,14 +5,13 @@
 
 ## Add the dependency
 
-From your application's Go module, choose a reviewed commit from the public `hardening` branch (or `dev` after integration):
+From your application's Go module, select the release candidate:
 
 ```sh
-DEBUGLET_REVISION='<commit-sha>'
-go get "github.com/netsec-ethz/debuglet/pkg/client@$DEBUGLET_REVISION"
+go get github.com/netsec-ethz/debuglet/pkg/client@v0.2.0-rc.1
 ```
 
-Import `github.com/netsec-ethz/debuglet/pkg/client`. Public fetching needs no credentials or `GOPRIVATE` setting. The existing `v0.1.0` tag predates this client; use an alpha commit rather than assuming that tag contains it.
+Import `github.com/netsec-ethz/debuglet/pkg/client`. Public fetching needs no credentials or `GOPRIVATE` setting. The `v0.2.0-rc.1` tag is the first release candidate that contains this client; `v0.1.0` predates it.
 
 ## Surface
 

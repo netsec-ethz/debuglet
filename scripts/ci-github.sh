@@ -15,7 +15,7 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
         echo 'CI requires the official repository and a GitHub-hosted Linux X64 VM.' >&2; exit 1;
     }
     case "${GITHUB_EVENT_NAME:-}:${GITHUB_REF:-}" in
-        push:refs/heads/main|push:refs/heads/dev|push:refs/heads/hardening|\
+        push:refs/heads/main|push:refs/heads/dev|\
         workflow_dispatch:refs/heads/*) ;;
         pull_request:refs/pull/*/merge)
             [[ ${GITHUB_REF:-} =~ ^refs/pull/[0-9]+/merge$ &&

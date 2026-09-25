@@ -65,6 +65,8 @@ if docker build --platform linux/amd64 \
 	-f "$root/deploy/docker/provisioner.Dockerfile" \
 	--build-arg BASE_IMAGE="$DEBUGLET_PROVISIONER_BASE_IMAGE" \
 	--build-arg BASE_DIGEST="$DEBUGLET_PROVISIONER_BASE_DIGEST" \
+	--build-arg DEBIAN_SNAPSHOT="$DEBUGLET_PROVISIONER_DEBIAN_SNAPSHOT" \
+	--build-arg OPENSSH_CLIENT_VERSION="$DEBUGLET_PROVISIONER_OPENSSH_CLIENT_VERSION" \
 	--build-arg ANSIBLE_CORE_VERSION="$DEBUGLET_ANSIBLE_CORE_VERSION" \
 	--build-arg COLLECTION_COMMUNITY_GENERAL_VERSION="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_VERSION" \
 	--build-arg COLLECTION_COMMUNITY_GENERAL_SHA256="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_SHA256" \
@@ -86,7 +88,7 @@ fi
 # Every command below runs in a throwaway container with the repository
 # mounted read-only and no network.
 provision() {
-	docker run --rm --network none \
+	docker run --rm --platform linux/amd64 --network none \
 		--volume "$root:/repository:ro" --workdir /repository \
 		"$@"
 }
@@ -97,6 +99,13 @@ case $version in
 	*"core $DEBUGLET_ANSIBLE_CORE_VERSION"*) check 'it carries the pinned ansible-core' pass ;;
 	*) check 'it carries the pinned ansible-core' fail; printf '     %s\n' "$version" >&2 ;;
 esac
+
+if provision "$DEBUGLET_PROVISIONER_IMAGE" ssh -V >"$work/ssh-version.log" 2>&1; then
+	check 'it carries the OpenSSH client Ansible uses' pass
+else
+	check 'it carries the OpenSSH client Ansible uses' fail
+	cat "$work/ssh-version.log" >&2
+fi
 
 collections=$(provision "$DEBUGLET_PROVISIONER_IMAGE" ansible-galaxy collection list 2>/dev/null)
 for pinned in \
@@ -113,7 +122,8 @@ for pinned in \
 done
 
 record=$(provision "$DEBUGLET_PROVISIONER_IMAGE" cat /etc/debuglet/provisioner.json)
-for pinned in "$DEBUGLET_PROVISIONER_BASE_DIGEST" "$DEBUGLET_ANSIBLE_CORE_VERSION" \
+for pinned in "$DEBUGLET_PROVISIONER_BASE_DIGEST" "$DEBUGLET_PROVISIONER_DEBIAN_SNAPSHOT" \
+	"$DEBUGLET_PROVISIONER_OPENSSH_CLIENT_VERSION" "$DEBUGLET_ANSIBLE_CORE_VERSION" \
 	"$DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256" "$DEBUGLET_PROVISIONER_COLLECTIONS_SHA256" \
 	"$DEBUGLET_GOOSE_VERSION" "$DEBUGLET_GOOSE_SHA256"; do
 	case $record in

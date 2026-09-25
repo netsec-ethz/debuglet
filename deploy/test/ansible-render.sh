@@ -213,8 +213,10 @@ done
 # ---------------------------------------------------------------- parsing ---
 for playbook in "$playbooks"/*.yml; do
 	name=$(basename "$playbook")
-	# The collection manifest lives next to the playbooks and is not one.
-	[ "$name" != requirements.yml ] || continue
+	# Dependency manifests and ignored operator inventories live next to the
+	# playbooks but are not playbooks. Real inventories may also contain
+	# private values that deliberately differ from the fixtures used here.
+	case $name in requirements.yml|hosts.yml|hosts.*.yml) continue ;; esac
 	if (cd "$playbooks" && ANSIBLE_CONFIG=ansible.cfg ansible-playbook \
 		-i "$work/inventory.yml" -e @vars/prod.yml -e "@$work/fixture.yml" \
 		--syntax-check "$name" >"$work/syntax.log" 2>&1); then

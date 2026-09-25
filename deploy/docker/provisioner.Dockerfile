@@ -28,6 +28,8 @@
 
 ARG BASE_IMAGE=python:3.13-slim
 ARG BASE_DIGEST=sha256:b04b5d7233d2ad9c379e22ea8927cd1378cd15c60d4ef876c065b25ea8fb3bf3
+ARG DEBIAN_SNAPSHOT=20260623T000000Z
+ARG OPENSSH_CLIENT_VERSION=1:10.0p1-7+deb13u4
 
 FROM ${BASE_IMAGE}@${BASE_DIGEST} AS provisioner
 
@@ -35,6 +37,8 @@ FROM ${BASE_IMAGE}@${BASE_DIGEST} AS provisioner
 # it name the same values as deploy/provisioner.env.
 ARG BASE_IMAGE
 ARG BASE_DIGEST
+ARG DEBIAN_SNAPSHOT
+ARG OPENSSH_CLIENT_VERSION
 ARG ANSIBLE_CORE_VERSION
 ARG COLLECTION_COMMUNITY_GENERAL_VERSION
 ARG COLLECTION_COMMUNITY_GENERAL_SHA256
@@ -51,6 +55,17 @@ ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
 
 WORKDIR /provisioner
 COPY deploy/ansible/requirements.txt deploy/ansible/requirements.yml ./
+
+# Ansible's default connection plugin calls the OpenSSH client. Use a dated
+# Debian snapshot and an exact package version to keep this dependency as
+# reproducible as the Python and Ansible inputs below.
+RUN set -eu; \
+	rm -f /etc/apt/sources.list.d/debian.sources; \
+	printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "$DEBIAN_SNAPSHOT" >/etc/apt/sources.list; \
+	printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "$DEBIAN_SNAPSHOT" >>/etc/apt/sources.list; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends "openssh-client=$OPENSSH_CLIENT_VERSION"; \
+	rm -rf /var/lib/apt/lists/*
 
 # The manifests are checked against the recorded digests before they are used,
 # so an image can never be built from a manifest that the repository's pinned
@@ -98,6 +113,8 @@ RUN set -eu; \
 	printf '  "schema_version": 1,\n' >>/etc/debuglet/provisioner.json; \
 	printf '  "base_image": "%s",\n' "$BASE_IMAGE" >>/etc/debuglet/provisioner.json; \
 	printf '  "base_digest": "%s",\n' "$BASE_DIGEST" >>/etc/debuglet/provisioner.json; \
+	printf '  "debian_snapshot": "%s",\n' "$DEBIAN_SNAPSHOT" >>/etc/debuglet/provisioner.json; \
+	printf '  "openssh_client_version": "%s",\n' "$OPENSSH_CLIENT_VERSION" >>/etc/debuglet/provisioner.json; \
 	printf '  "ansible_core_version": "%s",\n' "$ANSIBLE_CORE_VERSION" >>/etc/debuglet/provisioner.json; \
 	printf '  "requirements_sha256": "%s",\n' "$REQUIREMENTS_SHA256" >>/etc/debuglet/provisioner.json; \
 	printf '  "collections_sha256": "%s",\n' "$COLLECTIONS_SHA256" >>/etc/debuglet/provisioner.json; \

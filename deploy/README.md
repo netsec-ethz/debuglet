@@ -291,11 +291,10 @@ deploy/test/provisioner-check.sh
 
 ## Deployment variables
 
-Select the environment and its inventory together. Make defaults to
-`DEPLOY_ENV=prod INVENTORY=hosts.yml`; development uses
-`DEPLOY_ENV=dev INVENTORY=hosts.dev.yml`. Every deployment target, including
-certificate inventory inspection, passes the matching `vars/<env>.yml`.
-Direct Ansible invocations must pass that file explicitly. CI deploys nowhere.
+Select the environment explicitly. The deployment command maps `dev` to
+`hosts.dev.yml`, `known_hosts.dev` and `vars/dev.yml`, and maps `prod` to the
+corresponding unsuffixed inventory and host-key file plus `vars/prod.yml`.
+There is no production default. CI deploys nowhere.
 
 The selected vars file supplies the official public API origin. Set these
 inputs for any other deployment:
@@ -311,18 +310,17 @@ inputs for any other deployment:
   name, so a rebuilt machine keeps its identity, and the secure profile uses
   it as the certificate common name.
 
-Deployment also has an order. `site.yml` installs no certificates, and the
-dispatcher serves TLS by default, so the material has to exist before a
-deployment renders paths to it:
+Put `dispatcher_addr` under `all.vars` in the selected inventory and assign a
+UUID `executor_id` to every executor. Then build, issue or reuse certificates,
+deploy, and verify the active services with one command:
 
 ```sh
-make deploy-certs DEPLOY_ENV=dev INVENTORY=hosts.dev.yml \
-    DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10"
-make deploy DEPLOY_ENV=dev INVENTORY=hosts.dev.yml
+./deploy/debuglet-deploy dev
 ```
 
-The preflight names any certificate file that is missing rather than letting
-both daemons crash-loop against paths nothing created.
+Use `dispatcher` or `executors` as the second argument for a partial deploy,
+and `--limit HOST` to select one inventory host. `preflight` performs only the
+local safety checks. The equivalent Make target is `make deploy DEPLOY_ENV=dev`.
 
 Set dispatcher_addr and each executor_id in the inventory. Override the
 selected origin on the command line for a different deployment:
@@ -383,12 +381,17 @@ deployments until that reconciliation is complete.
 After deploying a release to a TEST deployment, run:
 
 ```bash
-make deploy-upgrade-db INVENTORY=hosts.yml DEPLOY_ENV=prod
+make deploy-upgrade-db DEPLOY_ENV=prod
 # or one executor
-make deploy-upgrade-db INVENTORY=hosts.yml DEPLOY_ENV=prod LIMIT=executor.example.com
+make deploy-upgrade-db DEPLOY_ENV=prod LIMIT=executor.example.com
 # or directly
 cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml
 ```
+
+`DEPLOY_ENV` selects the inventory, variables and pinned SSH host identities
+(`known_hosts` or `known_hosts.dev`) as `deploy/debuglet-deploy` does. Run
+directly, a dev upgrade also needs
+`-e known_hosts_file="{{ playbook_dir }}/known_hosts.dev"`.
 
 `upgrade-database.yml` runs the same preflight as a deployment, then handles
 the dispatcher and then the executors, one executor at a time. On each host it:
@@ -533,8 +536,8 @@ private infrastructure. Provision it the same way, by copying it into place on
 the machine that runs the deployment. See
 [`ansible/known_hosts.example`](ansible/known_hosts.example) for the format.
 
-`known_hosts_file` defaults to `known_hosts` next to the playbooks. The dev
-inventory has its own hosts, so give it its own file and select it explicitly:
+`debuglet-deploy` selects `known_hosts.dev` for development and `known_hosts`
+for production. Direct Ansible invocations must select it explicitly:
 
 ```sh
 cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml site.yml \

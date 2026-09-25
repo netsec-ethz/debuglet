@@ -44,6 +44,8 @@ if ! docker image inspect "$DEBUGLET_PROVISIONER_IMAGE" >/dev/null 2>&1; then
 		-f "$root/deploy/docker/provisioner.Dockerfile" \
 		--build-arg BASE_IMAGE="$DEBUGLET_PROVISIONER_BASE_IMAGE" \
 		--build-arg BASE_DIGEST="$DEBUGLET_PROVISIONER_BASE_DIGEST" \
+		--build-arg DEBIAN_SNAPSHOT="$DEBUGLET_PROVISIONER_DEBIAN_SNAPSHOT" \
+		--build-arg OPENSSH_CLIENT_VERSION="$DEBUGLET_PROVISIONER_OPENSSH_CLIENT_VERSION" \
 		--build-arg ANSIBLE_CORE_VERSION="$DEBUGLET_ANSIBLE_CORE_VERSION" \
 		--build-arg COLLECTION_COMMUNITY_GENERAL_VERSION="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_VERSION" \
 		--build-arg COLLECTION_COMMUNITY_GENERAL_SHA256="$DEBUGLET_COLLECTION_COMMUNITY_GENERAL_SHA256" \
@@ -84,6 +86,6 @@ if [ -d "${HOME:-}/.ssh" ]; then
 	mounts+=(--volume "$HOME/.ssh:/root/.ssh:ro")
 fi
 
-exec docker run --rm --interactive --tty="$([ -t 0 ] && echo true || echo false)" \
+exec docker run --rm --platform linux/amd64 --interactive --tty="$([ -t 0 ] && echo true || echo false)" \
 	"${mounts[@]}" --workdir /repository/deploy/ansible \
 	"$DEBUGLET_PROVISIONER_IMAGE" "$@"

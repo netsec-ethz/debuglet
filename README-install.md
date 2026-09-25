@@ -11,11 +11,11 @@ This package supports Linux amd64. Installation requires a POSIX shell, GNU tar,
 
 ## Build a package from source
 
-The alpha is on the `hardening` branch. On Linux amd64, install Go **1.25.11**,
+The release candidate is on the `main` branch. On Linux amd64, install Go **1.25.11**,
 Git, Make, Bash, GNU tar and coreutils, then use a clean checkout:
 
 ```sh
-git clone --branch hardening https://github.com/netsec-ethz/debuglet.git
+git clone --branch main https://github.com/netsec-ethz/debuglet.git
 cd debuglet
 make ci-build
 make ci-package
@@ -23,15 +23,15 @@ make ci-package
 
 The output in `.cache/ci/packages/` contains the three files listed below.
 Package creation also verifies an installation of those exact bytes. The
-[repository quickstart](https://github.com/netsec-ethz/debuglet/blob/hardening/README.md#install)
+[repository quickstart](https://github.com/netsec-ethz/debuglet/blob/main/README.md#install)
 shows how to install the result and run the demo. Native builds use committed
 eBPF objects and need no privileged kernel access.
 
 ## Download a published package
 
-No release package for this alpha is published yet. The existing `v0.1.0` tag
-predates it and is not an installation target for these instructions. Use the
-source build above until a version with all three assets is available on the
+`v0.2.0-rc.1` is the first release candidate published with all three assets.
+The existing `v0.1.0` tag predates this package format and is not an installation
+target for these instructions. Published packages are listed on the
 [releases page](https://github.com/netsec-ethz/debuglet/releases).
 
 For a published version, run this from a source checkout, replacing the placeholder
@@ -74,8 +74,8 @@ The demo starts a loopback dispatcher and executor, creates fresh private SQLite
 The CLI link is `$HOME/.local/bin/dbl`; package files live below
 `$HOME/.local/lib/debuglet`. Add `$HOME/.local/bin` to `PATH` to use `dbl`
 directly. Run `dbl --help` for client commands. The repository contains the
-[CLI guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/CLI.md)
-and [Go client guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/SDK.md);
+[CLI guide](https://github.com/netsec-ethz/debuglet/blob/main/docs/CLI.md)
+and [Go client guide](https://github.com/netsec-ethz/debuglet/blob/main/docs/SDK.md);
 those guides are not additional files in this archive.
 
 ## Start a dispatcher, executor and client
@@ -114,7 +114,7 @@ obtains both control addresses from that URL and accepts only a local loopback
 setup.
 Running the dispatcher and executors on separate hosts, with TLS against a
 private authority and authentication on, is a different setup: see the
-[cross-host quickstart](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/quickstart-remote.md).
+[cross-host quickstart](https://github.com/netsec-ethz/debuglet/blob/main/docs/quickstart-remote.md).
 
 Use `executor up --name worker-2 --dispatcher local` for another executor. When
 more than one is ready, select one with `run --executor ID`. `dispatcher list`
@@ -161,8 +161,8 @@ existing service must keep 9000 or 9001.
 what it still holds; `sudo dbl drain --role dispatcher` stops the admission of
 new submissions without stopping the dispatcher. `sudo dbl drain --resume`
 reverses either. The complete profile, paths, permissions, shutdown budget and
-drain semantics are in the [environments guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/environments.md)
-and the [CLI guide](https://github.com/netsec-ethz/debuglet/blob/hardening/docs/CLI.md).
+drain semantics are in the [environments guide](https://github.com/netsec-ethz/debuglet/blob/main/docs/environments.md)
+and the [CLI guide](https://github.com/netsec-ethz/debuglet/blob/main/docs/CLI.md).
 
 A managed dispatcher is a boot-time service every account on its host can reach,
 so its generated configuration leaves `server.local_development` off. It
