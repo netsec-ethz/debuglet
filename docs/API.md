@@ -94,6 +94,8 @@ A minor contract version may add codes, so treat an unknown code as a plain fail
 - The few failures that answered with a bare JSON string now answer with the envelope.
 - One status changed: a failure to store the orders of a payment intent answered 400 with the database error text and now answers 500 `internal_error`. It is a server failure, not a bad request, and the Go SDK consequently reports it as `OutcomeUnknown` at the intent stage rather than as a definite rejection.
 
+For `DELETE /debuglet`, an internal failure while reading or recording a cancellation answers 500 `internal_error`. This does not confirm a stored result or remote termination: the executor may have acknowledged cancellation, or the dispatcher may have failed to record it after the control session ended. Read the run's state before deciding whether to repeat the request.
+
 ## Health
 
 Three public routes report health separately, so a deployment can act on the right one:

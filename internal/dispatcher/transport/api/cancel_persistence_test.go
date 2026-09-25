@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -93,4 +94,56 @@ func TestUnrecordedCancellationIsNotAcknowledged(t *testing.T) {
 	status, body = raw.do(http.MethodDelete, "/debuglet", cancel)
 	wfExpect(t, "repeated cancellation", status, http.StatusNoContent, body)
 	assertRun("repeated cancellation", models.RunStateExited, "cancelled via API")
+}
+
+func TestLocalCancellationDatabaseFailureIsInternal(t *testing.T) {
+	for _, failure := range []string{"terminal write", "terminal classification"} {
+		t.Run(failure, func(t *testing.T) {
+			f := ccNewFixture(t)
+			contract := oaContract(t)
+			raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+			f.peer.setUploadHook(nil)
+			id := uuid.MustParse(f.submit(f.client(f.root.URL, false), nil).IDs[0])
+			// A previous binding takes the local path even while a successor
+			// executor session is connected.
+			if _, err := f.db.Exec("UPDATE debuglets SET session_id = ? WHERE uuid = ?", uuid.NewString(), id); err != nil {
+				t.Fatal(err)
+			}
+			wantState, wantError := models.RunStateUploaded, ""
+			switch failure {
+			case "terminal write":
+				if _, err := f.db.Exec(fmt.Sprintf("CREATE TRIGGER %s BEFORE UPDATE OF state ON debuglets BEGIN SELECT RAISE(ABORT, '%s'); END", cancelTrigger, cancelSentinel)); err != nil {
+					t.Fatal(err)
+				}
+			case "terminal classification":
+				// The terminal guard rejects the write, then the timestamp
+				// makes the full-row classification read fail to scan.
+				wantState, wantError = models.RunStateExited, "earlier outcome"
+				if _, err := f.db.Exec("UPDATE debuglets SET state = ?, error = ?, start_time = ? WHERE uuid = ?", wantState, wantError, cancelSentinel, id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			aborts := f.peer.abortCount()
+			status, body := raw.do(http.MethodDelete, "/debuglet", DebugletDeleteRequest{DebugletID: id, ExecutorID: ccExecutorID})
+			wfExpect(t, failure, status, http.StatusInternalServerError, body)
+			if envelope := envelopeOf(t, failure, body); envelope.Code != CodeInternal || envelope.Message != "failed to process cancellation" {
+				t.Fatalf("local cancellation failure answered %+v", envelope)
+			}
+			oaCheckResponse(t, contract, http.MethodDelete, "/debuglet", status, body)
+			if strings.Contains(string(body), cancelSentinel) || strings.Contains(string(body), "acknowledged") {
+				t.Fatalf("local failure disclosed database text or claimed executor acknowledgement: %s", body)
+			}
+			if f.peer.abortCount() != aborts {
+				t.Fatal("local cancellation contacted the successor executor")
+			}
+			var state models.DebugletRunState
+			var errText sql.NullString
+			if err := f.db.QueryRow("SELECT state, error FROM debuglets WHERE uuid = ?", id).Scan(&state, &errText); err != nil {
+				t.Fatal(err)
+			}
+			if state != wantState || errText.String != wantError {
+				t.Fatalf("failed cancellation changed result to %s / %q, want %s / %q", state, errText.String, wantState, wantError)
+			}
+		})
+	}
 }

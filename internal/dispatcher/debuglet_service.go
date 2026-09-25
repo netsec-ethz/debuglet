@@ -368,8 +368,8 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 // cancellation as the run's terminal result. A nil error means that result is
 // recorded, or that the run was already terminal and keeps its own. An error
 // wrapping ErrCancellationNotRecorded means the executor acknowledged the
-// cancellation but its result is not recorded; any other error is a refusal
-// before or at the executor.
+// cancellation but its result is not recorded. Other errors do not confirm
+// that the cancellation was recorded.
 //
 // A run whose control session has ended, because the dispatcher restarted or
 // the executor registered again in a new session, has no executor to ask: its
@@ -457,7 +457,7 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 	})
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("failed to record cancellation: %w", err)
+			return status.Errorf(codes.Internal, "failed to record cancellation: %v", err)
 		}
 		// The guard rejected the write: the row is terminal or missing.
 		// Classify with a read; never retry the write.
@@ -466,7 +466,7 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 			if errors.Is(err, sql.ErrNoRows) {
 				return status.Error(codes.NotFound, "debuglet does not exist")
 			}
-			return fmt.Errorf("failed to classify rejected cancellation: %w", err)
+			return status.Errorf(codes.Internal, "failed to classify rejected cancellation: %v", err)
 		}
 		if existing.State != models.RunStateExited {
 			return fmt.Errorf("cancellation of debuglet '%s' was rejected although it is in state %s", id.String(), existing.State.String())

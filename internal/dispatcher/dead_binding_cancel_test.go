@@ -4,6 +4,8 @@
 package dispatcher
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,15 @@ func TestCancelAfterDispatcherRestartRecordsTheCancellation(t *testing.T) {
 	}
 	tgAssertReserved(t, g, run, tgFloorA)
 	tgAssertOrder(t, g, run, models.Outstanding)
+
+	before := g.snapshot(t)
+	drop := g.installTrigger(t)
+	if err := g.abort(t, run.id, "cancelled via API"); status.Code(err) != codes.Internal || errors.Is(err, ErrCancellationNotRecorded) {
+		t.Fatalf("failed local cancellation: got %v, want Internal without executor acknowledgement", err)
+	}
+	tgAssertSnapshot(t, g, before, "failed local cancellation")
+	tgAssertReserved(t, g, run, tgFloorA)
+	drop()
 
 	if err := g.abort(t, run.id, "cancelled via API"); err != nil {
 		t.Fatalf("cancellation after restart: %v", err)
@@ -164,6 +175,9 @@ func TestRestoreSchedulerNamesRunsOfAPreviousLifetime(t *testing.T) {
 	if fields["debugletID"] != previous.id.String() || fields["executor"] != tgExecutorID {
 		t.Fatalf("warning names %v, want run %s on %s", fields, previous.id, tgExecutorID)
 	}
+	if !strings.Contains(warned[0].Message, "cancelling it releases its reservation") {
+		t.Fatalf("warning omits cancellation recovery for a complete binding: %q", warned[0].Message)
+	}
 	for _, key := range []string{"from", "to"} {
 		if _, ok := fields[key]; !ok {
 			t.Fatalf("warning has no %q field: %v", key, fields)
@@ -171,6 +185,32 @@ func TestRestoreSchedulerNamesRunsOfAPreviousLifetime(t *testing.T) {
 	}
 	if got := d.scheduler.QueryMaxExec(tgExecutorID, previous.row.StartTime.Time, previous.row.EndTime.Time); got != tgFloorA+tgFloorB {
 		t.Fatalf("restored reservation is %s, want %s", got, tgFloorA+tgFloorB)
+	}
+}
+
+func TestRestoreSchedulerWarnsCancellationUnavailableWithoutBinding(t *testing.T) {
+	for _, field := range []string{"dispatcher_incarnation", "session_id"} {
+		t.Run(field, func(t *testing.T) {
+			f := newTGFixture(t, nil)
+			run := f.seedDirect(t, tgFloorA)
+			if _, err := f.db.ExecContext(f.ctx, "UPDATE debuglets SET "+field+" = '' WHERE uuid = ?", run.id); err != nil {
+				t.Fatal(err)
+			}
+			g := restartTG(t, f)
+			core, logs := observer.New(zapcore.WarnLevel)
+			g.d.logger = zap.New(core)
+			if err := g.d.RestoreScheduler(g.ctx); err != nil {
+				t.Fatal(err)
+			}
+			warned := logs.All()
+			if len(warned) != 1 || !strings.Contains(warned[0].Message, "cancellation is unavailable") || strings.Contains(warned[0].Message, "cancelling it releases") {
+				t.Fatalf("restore warning promises unavailable recovery: %+v", warned)
+			}
+			if warned[0].ContextMap()["debugletID"] != run.id.String() {
+				t.Fatalf("restore warning does not identify run %s: %+v", run.id, warned[0])
+			}
+			tgAssertReserved(t, g, run, tgFloorA)
+		})
 	}
 }
 
