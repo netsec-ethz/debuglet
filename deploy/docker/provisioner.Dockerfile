@@ -28,8 +28,6 @@
 
 ARG BASE_IMAGE=python:3.13-slim
 ARG BASE_DIGEST=sha256:b04b5d7233d2ad9c379e22ea8927cd1378cd15c60d4ef876c065b25ea8fb3bf3
-ARG DEBIAN_SNAPSHOT=20260623T000000Z
-ARG OPENSSH_CLIENT_VERSION=1:10.0p1-7+deb13u4
 
 FROM ${BASE_IMAGE}@${BASE_DIGEST} AS provisioner
 
@@ -46,8 +44,6 @@ ARG REQUIREMENTS_SHA256
 ARG COLLECTIONS_SHA256
 ARG GOOSE_VERSION
 ARG GOOSE_SHA256
-ARG DEBIAN_SNAPSHOT
-ARG OPENSSH_CLIENT_VERSION
 
 ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -55,17 +51,6 @@ ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
 
 WORKDIR /provisioner
 COPY deploy/ansible/requirements.txt deploy/ansible/requirements.yml ./
-
-# CI runs this image directly, rather than mounting it through a Docker daemon.
-# Pin the SSH client to a dated Debian snapshot so a rebuild does not pick up
-# an arbitrary OS package revision. The provisioner base is Debian trixie.
-RUN set -eu; \
-	rm -f /etc/apt/sources.list.d/debian.sources; \
-	printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list; \
-	printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "$DEBIAN_SNAPSHOT" >> /etc/apt/sources.list; \
-	apt-get update; \
-	apt-get install -y --no-install-recommends "openssh-client=$OPENSSH_CLIENT_VERSION"; \
-	rm -rf /var/lib/apt/lists/*
 
 # The manifests are checked against the recorded digests before they are used,
 # so an image can never be built from a manifest that the repository's pinned

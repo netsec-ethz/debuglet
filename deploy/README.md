@@ -250,11 +250,6 @@ deploy/scripts/provisioner.sh ansible-playbook -i hosts.yml -e @vars/prod.yml si
 
 The `make deploy*` targets go through the same wrapper.
 
-GitLab CI currently builds this same image with Kaniko, stores it under the
-commit SHA in the private registry, and runs Ansible directly in it. It does
-not require a Docker daemon on the shared runner. Move to rootless BuildKit
-when the runner enables unprivileged user namespaces.
-
 [`ansible/preflight-provisioner.yml`](ansible/preflight-provisioner.yml) runs
 before every deployment. It compares the running provisioner with the pinned
 values — the Ansible version, the installed collections, the digest of each
