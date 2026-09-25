@@ -39,7 +39,7 @@ func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 	if err := h.dispatcher.SetDestinationLimit(req.Destination, resource.Bitrate(req.Limit)); err != nil {
 		if errors.Is(err, resource.ErrCapacityFull) {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted,
-				"limit is below the floors already admitted on the destination", err)
+				"limit is below the floors charged to active allocations on the destination", err)
 		}
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
 			"destination limit recorded but not delivered to every executor", err)

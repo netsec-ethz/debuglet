@@ -86,9 +86,8 @@ func TestDestinationLimitAnswersWhetherItWasDelivered(t *testing.T) {
 }
 
 // TestDestinationLimitBelowTheFloorsAnswersConflict states that PATCH
-// /destination refuses a limit below the floors already admitted on the
-// destination with 409 capacity_exhausted and sends nothing, and applies a
-// limit equal to them.
+// /destination refuses a limit below the active allocation floors with 409
+// capacity_exhausted and sends nothing, and applies a limit equal to them.
 func TestDestinationLimitBelowTheFloorsAnswersConflict(t *testing.T) {
 	f := ccNewFixture(t)
 	contract := oaContract(t)
@@ -106,7 +105,7 @@ func TestDestinationLimitBelowTheFloorsAnswersConflict(t *testing.T) {
 
 	before := len(dlBandwidths(f.peer))
 	body := patch("limit below the floors", ccFloorBW-1, http.StatusConflict)
-	if envelope := envelopeOf(t, "limit below the floors", body); envelope.Code != CodeCapacityExhausted || envelope.Message != "limit is below the floors already admitted on the destination" {
+	if envelope := envelopeOf(t, "limit below the floors", body); envelope.Code != CodeCapacityExhausted || envelope.Message != "limit is below the floors charged to active allocations on the destination" {
 		t.Fatalf("limit below the floors answered %+v", envelope)
 	}
 	if pushed := dlBandwidths(f.peer)[before:]; len(pushed) != 0 {

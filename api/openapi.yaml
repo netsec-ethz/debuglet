@@ -888,7 +888,7 @@ paths:
     patch:
       operationId: "setDestinationLimit"
       summary: "Set the bandwidth limit of one destination."
-      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination before answering. Repeating the request records the same limit and pushes it again."
+      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Pushes are unversioned: concurrent updates can arrive out of order, so an older share can overwrite a newer, lower one at an executor. This route does not guarantee revocation."
       requestBody:
         required: true
         content:
@@ -944,7 +944,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: "The limit is below the floors already admitted on the destination (capacity_exhausted). Nothing was recorded or pushed; the runs keep their floors, and the limit can be lowered once they end."
+          description: "The limit is below the floors charged to active allocations on the destination (capacity_exhausted). These floors do not include future scheduler reservations whose runs have not allocated bandwidth yet. Nothing was recorded or pushed; the runs keep their floors, and the limit can be lowered once they release them."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
