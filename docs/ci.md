@@ -2,7 +2,7 @@
 
 [The GitHub workflow](../.github/workflows/ci.yml) runs eleven lanes on fresh
 GitHub-hosted `ubuntu-24.04` full VMs. It handles pull requests to `main` and
-`dev`, pushes to `main`, `dev` and `hardening`, and manual branch dispatches.
+`dev`, pushes to `main` and `dev`, and manual branch dispatches.
 Each lane reuses the local command below, the pinned Go toolchain from
 [mise.toml](../mise.toml), and container images described in [CI images](ci-images.md).
 Results are retained under `.cache/ci/`. The aggregate `required` check passes

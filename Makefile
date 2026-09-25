@@ -306,11 +306,9 @@ deploy-seed-db:
 		sqlite3 /output/dispatcher-seed.db up
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/, then install
-# them. Extracts executor IDs from the selected inventory and environment.
-# DISPATCHER_SANS is required: an executor verifies the dispatcher against the
-# name it dialled, so the certificate has to carry it.
-#   make deploy-certs DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10"
-#   make deploy-certs DISPATCHER_SANS=... EXECUTOR_IDS="uuid1 uuid2"
+# them. The deployment controller reads the dispatcher address, any additional
+# TLS names and executor IDs from the selected private inventory.
+#   make deploy-certs DEPLOY_ENV=dev
 deploy-certs:
 	deploy/debuglet-deploy "$(DEPLOY_ENV)" certs $(if $(LIMIT),--limit "$(LIMIT)",)
 

@@ -55,7 +55,7 @@ A client must therefore ignore unknown response fields, ignore unknown values of
 
 ## Deprecation
 
-A route or field that is to be removed is first marked deprecated in `api/openapi.yaml` and in this document, in a minor version, while it keeps working. It is removed only in a following major version, whose contract is published as a new `api/openapi.yaml` before the removal takes effect. The alpha has no published release tags, so "published" means the tracked document of a commit; pin a commit as described in [the SDK guide](SDK.md).
+A route or field that is to be removed is first marked deprecated in `api/openapi.yaml` and in this document, in a minor version, while it keeps working. It is removed only in a following major version, whose contract is published as a new `api/openapi.yaml` before the removal takes effect. Release candidates may still change before the final `v0.2.0`; pin the exact tag as described in [the SDK guide](SDK.md).
 
 ## Errors
 

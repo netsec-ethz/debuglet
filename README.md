@@ -10,13 +10,13 @@ wallet, SCION service, root privileges, or hand-written daemon configuration.
 
 ## Install
 
-Build the alpha from the `hardening` branch on Linux amd64 with **Go 1.25.11**,
+Build the release candidate from the `main` branch on Linux amd64 with **Go 1.25.11**,
 Git, Make, Bash, GNU tar and coreutils (`sha256sum`). Use a clean checkout; the
 package records its exact source revision and uses committed eBPF objects, so
 building it needs no kernel privileges or eBPF compiler.
 
 ```sh
-git clone --branch hardening https://github.com/netsec-ethz/debuglet.git
+git clone --branch main https://github.com/netsec-ethz/debuglet.git
 cd debuglet
 make ci-build
 make ci-package
@@ -37,8 +37,8 @@ The CLI is installed under `$HOME/.local/bin`, with its package under
 `$HOME/.local/lib/debuglet`. Copying the three package files to another Linux
 amd64 machine supports installation there without Go or a source checkout.
 The [installation guide](README-install.md) covers offline installation and
-version-pinned downloads when release assets are published. This alpha has no
-published release package yet; the existing `v0.1.0` tag predates it.
+version-pinned release downloads. The `v0.2.0-rc.1` package is the first release
+candidate for this workflow; `v0.1.0` predates it.
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -190,8 +190,8 @@ system, including both control paths and where a given change belongs.
   destinations. Keep the alpha in a trusted local environment.
 - SCION and remote testbed operation are outside this walkthrough. ETH testbed
   compatibility and deployment are unconfirmed.
-- Checksums are not release signatures. This alpha has no published release
-  package and no supported upgrade path: a state directory stays with the package
+- Checksums are not release signatures. This release candidate has no supported
+  upgrade path: a state directory stays with the package
   version that created it, and moving to another version means a new state directory.
 
 The [threat model](docs/SECURITY.md) states which actors and trust boundaries the

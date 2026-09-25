@@ -1,11 +1,11 @@
 # `dbl` command-line client
 
-`dbl` starts local dispatcher/executor roles, saves dispatcher connections, lists executors, submits TEST-funded WASM, and reads results through the dispatcher's HTTP API. It is built from `cmd/dbl` on top of [`pkg/client`](SDK.md) and is intended for a trusted local environment. No release package for this alpha is published yet; the existing `v0.1.0` tag predates it.
+`dbl` starts local dispatcher/executor roles, saves dispatcher connections, lists executors, submits TEST-funded WASM, and reads results through the dispatcher's HTTP API. It is built from `cmd/dbl` on top of [`pkg/client`](SDK.md) and is intended for a trusted local environment. `v0.2.0-rc.1` is the first release candidate that includes it; `v0.1.0` predates this client.
 
 
 ## Build or install
 
-From a source checkout, build the standalone client with `go build -mod=readonly -o dbl ./cmd/dbl`. It can use an existing dispatcher. The complete Linux amd64 package also includes the assets for `dbl demo`; see the [installation guide](../README-install.md). No release-download URL or published version is assumed.
+From a source checkout, build the standalone client with `go build -mod=readonly -o dbl ./cmd/dbl`. It can use an existing dispatcher. The complete Linux amd64 package also includes the assets for `dbl demo`; see the [installation guide](../README-install.md).
 
 ## Usage
 

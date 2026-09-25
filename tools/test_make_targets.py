@@ -20,7 +20,8 @@ class MakeTargetsTest(unittest.TestCase):
         (self.root / 'deploy/scripts').mkdir()
         for name in ('Makefile', 'deploy/scripts/executor-ids.py'):
             shutil.copyfile(REPOSITORY / name, self.root / name)
-        self.script('deploy/scripts/generate-certs.sh', 'printf "%s\\n" "$@" > cert-ids')
+        self.controller = self.script(
+            'deploy/debuglet-deploy', 'printf "%s\\n" "$@" > deploy-called')
         self.inventory = self.script('inventory', 'printf "%s\\n" "$@" > ../../inventory-args; cat "$(dirname "$0")/inventory.json"')
         self.playbook = self.script('playbook', 'printf "%s\\n" "$@" > ../../playbook-called')
 
@@ -77,69 +78,64 @@ printf new > target/wasm32-wasip1/release/debuglet.wasm''')
         self.assertNotIn('wrote ', result.stdout)
         self.assertEqual((sample / 'debuglet.wasm').read_text(), 'old')
 
-    def certificates(self, inventory, **variables):
-        (self.root / 'inventory.json').write_text(inventory)
-        return self.make('deploy-certs', DISPATCHER_SANS='DNS:dispatcher.example.com',
-                         ANSIBLE_INVENTORY=self.inventory, ANSIBLE_PLAYBOOK=self.playbook,
-                         **variables)
-
-    def assert_no_deployment(self, result):
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.root / 'cert-ids').exists())
-        self.assertFalse((self.root / 'playbook-called').exists())
-
     def test_inventory_direct_nested_and_shared_hosts(self):
-        result = self.certificates(json.dumps({
+        inventory = json.dumps({
             'executors': {'hosts': ['direct'], 'children': ['first', 'second']},
             'first': {'hosts': ['direct', 'nested'], 'children': ['leaf']},
             'second': {'children': ['leaf']},
             'leaf': {'hosts': ['fallback']},
-            'dispatcher': {'hosts': ['unrelated']},
+            'dispatcher': {'hosts': ['dispatcher']},
             '_meta': {'hostvars': {'direct': {'executor_id': 'id-1'},
-                                   'nested': {'executor_id': 'id-2'}}},
-        }))
+                                   'nested': {'executor_id': 'id-2'},
+                                   'dispatcher': {'dispatcher_addr': 'dispatcher.example.com',
+                                                  'dispatcher_tls_sans': ['DNS:proxy.internal']}}},
+        })
+        result = subprocess.run(
+            ['python3', 'deploy/scripts/executor-ids.py'], cwd=self.root,
+            input=inventory, text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.root / 'cert-ids').read_text(), 'id-1\nid-2\nfallback\n')
-        self.assertTrue((self.root / 'playbook-called').exists())
-
-    def test_inventory_failure_even_with_valid_stdout(self):
-        self.inventory = self.script('inventory', 'echo \'{"executors": {}}\'; exit 7')
-        result = self.certificates('')
-        self.assert_no_deployment(result)
-        self.assertIn('Could not read Ansible inventory', result.stderr)
+        self.assertEqual(result.stdout, 'id-1 id-2 fallback\n')
+        for option, expected in (('--dispatcher-addr', 'dispatcher.example.com\n'),
+                                 ('--dispatcher-tls-sans', 'DNS:proxy.internal\n')):
+            selected = subprocess.run(
+                ['python3', 'deploy/scripts/executor-ids.py', option], cwd=self.root,
+                input=inventory, text=True, capture_output=True, timeout=10)
+            self.assertEqual(selected.returncode, 0, selected.stderr)
+            self.assertEqual(selected.stdout, expected)
 
     def test_invalid_inventory(self):
         for inventory in ('not JSON', '{}', '{"executors":{"children":["missing"]}}',
                           '{"executors":{"hosts":"not a list"}}'):
             with self.subTest(inventory=inventory):
-                result = self.certificates(inventory)
-                self.assert_no_deployment(result)
+                result = subprocess.run(
+                    ['python3', 'deploy/scripts/executor-ids.py'], cwd=self.root,
+                    input=inventory, text=True, capture_output=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
                 self.assertIn('Cannot extract executor IDs', result.stderr)
 
-    def test_explicit_ids_bypass_inventory(self):
-        self.inventory = str(self.root / 'missing-command')
-        result = self.certificates('', EXECUTOR_IDS='explicit-1 explicit-2')
+    def test_deployment_controller_receives_selected_environment_and_action(self):
+        result = self.make('deploy-certs', DEPLOY_ENV='dev')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.root / 'cert-ids').read_text(), 'explicit-1\nexplicit-2\n')
-        self.assertTrue((self.root / 'playbook-called').exists())
-
-    def test_certificate_inventory_and_install_use_selected_environment(self):
-        result = self.certificates('{"executors":{"hosts":["selected"]}}',
-                                   INVENTORY='hosts.dev.yml', DEPLOY_ENV='dev')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        for output in ('inventory-args', 'playbook-called'):
-            self.assertEqual((self.root / output).read_text().splitlines()[:4],
-                             ['-i', 'hosts.dev.yml', '-e', '@vars/dev.yml'])
+        self.assertEqual((self.root / 'deploy-called').read_text().splitlines(),
+                         ['dev', 'certs'])
 
     def test_deployment_commands_use_selected_environment(self):
-        for target in ('deploy', 'deploy-dispatcher', 'deploy-executors',
-                       'bootstrap-sudo', 'deploy-update-addr', 'deploy-update-config'):
-            with self.subTest(target=target):
+        for target, action in (('deploy', 'all'), ('deploy-dispatcher', 'dispatcher'),
+                               ('deploy-executors', 'executors')):
+            with self.subTest(target=target, action=action):
                 result = subprocess.run(
                     ['make', '--no-print-directory', '-s', '-o', 'deploy-build',
-                     '-o', 'deploy-seed-db', target, 'INVENTORY=hosts.dev.yml',
-                     'DEPLOY_ENV=dev', f'ANSIBLE_PLAYBOOK={self.playbook}'],
+                     '-o', 'deploy-seed-db', target, 'DEPLOY_ENV=dev'],
                     cwd=self.root, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.root / 'deploy-called').read_text().splitlines(),
+                                 ['dev', action])
+
+    def test_playbook_maintenance_commands_use_selected_environment(self):
+        for target in ('bootstrap-sudo', 'deploy-update-addr', 'deploy-update-config'):
+            with self.subTest(target=target):
+                result = self.make(target, INVENTORY='hosts.dev.yml', DEPLOY_ENV='dev',
+                                   ANSIBLE_PLAYBOOK=self.playbook)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((self.root / 'playbook-called').read_text().splitlines()[:4],
                                  ['-i', 'hosts.dev.yml', '-e', '@vars/dev.yml'])
