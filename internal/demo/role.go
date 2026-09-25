@@ -45,8 +45,11 @@ type RoleState struct {
 	SchemaVersion int        `json:"schema_version"`
 	Version       string     `json:"version"`
 	SourceSHA     string     `json:"source_sha"`
-	ExecutorID    string     `json:"executor_id"`
+	Identity      string     `json:"identity"`
 	Role          SchemaRole `json:"role"`
+	// EarlierIdentity is the key earlier builds wrote the identity under. It
+	// is read when the file carries no identity value and is never written.
+	EarlierIdentity string `json:"executor_id,omitempty"`
 }
 
 func DispatcherUp(ctx context.Context, assets Assets, options RoleOptions) error {
@@ -169,7 +172,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		config["server"].(map[string]any)["grpc_port"] = options.GRPCPort
 	} else {
 		executable = assets.Executor
-		config = executorConfiguration(assets.Manifest.Version, state.ExecutorID, dbPath, readiness.Record{
+		config = executorConfiguration(assets.Manifest.Version, state.Identity, dbPath, readiness.Record{
 			GRPCAddr: options.Dispatcher.GRPCAddress, HTTPAddr: options.Dispatcher.YamuxAddress,
 		})
 		config["tesla"].(map[string]any)["chain_length"] = 0
@@ -192,7 +195,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 	watchChild(watchCtx, &watcher, string(role), child, cancelWork)
 	id := ""
 	if role == ExecutorSchema {
-		id = state.ExecutorID
+		id = state.Identity
 	}
 	record, err := awaitReady(startupCtx, filepath.Join(dir, "child-ready.json"), child.PID(), id)
 	if err != nil {
@@ -203,7 +206,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		ready.Endpoint = "http://" + record.HTTPAddr
 		ready.GRPCAddress, ready.YamuxAddress = record.GRPCAddr, record.HTTPAddr
 	} else {
-		ready.ExecutorID = state.ExecutorID
+		ready.ExecutorID = state.Identity
 	}
 	c, err := client.New(ready.Endpoint, client.Options{})
 	if err != nil {
@@ -255,8 +258,12 @@ func readRoleState(dir string, role SchemaRole, manifest Manifest) (RoleState, e
 		if err := json.Unmarshal(data, &state); err != nil {
 			return state, fmt.Errorf("invalid service state; use another state directory or service name: %w", err)
 		}
-		id, parseErr := uuid.Parse(state.ExecutorID)
-		if state.SchemaVersion != 1 || state.Role != role || parseErr != nil || id == uuid.Nil || id.String() != state.ExecutorID {
+		if state.Identity == "" {
+			state.Identity = state.EarlierIdentity
+		}
+		state.EarlierIdentity = ""
+		id, parseErr := uuid.Parse(state.Identity)
+		if state.SchemaVersion != 1 || state.Role != role || parseErr != nil || id == uuid.Nil || id.String() != state.Identity {
 			return state, errors.New("state belongs to another role or has invalid identity; use another state directory or service name")
 		}
 		if state.Version != manifest.Version || state.SourceSHA != manifest.SourceSHA {
@@ -276,6 +283,6 @@ func readRoleState(dir string, role SchemaRole, manifest Manifest) (RoleState, e
 	if err != nil {
 		return RoleState{}, err
 	}
-	state := RoleState{SchemaVersion: 1, Version: manifest.Version, SourceSHA: manifest.SourceSHA, ExecutorID: id, Role: role}
+	state := RoleState{SchemaVersion: 1, Version: manifest.Version, SourceSHA: manifest.SourceSHA, Identity: id, Role: role}
 	return state, writeLocalJSON(path, state)
 }

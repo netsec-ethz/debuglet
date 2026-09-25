@@ -303,7 +303,7 @@ func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report
 		report.Changed = append(report.Changed, "database")
 	}
 	if p.Role == demo.ExecutorSchema {
-		p.ExecutorID = state.ExecutorID
+		p.ExecutorID = state.Identity
 	}
 	changed, err := i.writeConfiguration(*p)
 	if err != nil {

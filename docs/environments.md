@@ -415,7 +415,11 @@ so a managed executor accepts only a literal-loopback dispatcher address on the
 same host.
 
 A restart keeps the directory, so it keeps the databases, the stored results and
-a managed executor's identity. Installing is repeatable and changes nothing the
+a managed executor's identity. A copy of the state directory carries the identity
+with it: an executor started from the copy presents the original's identity, and
+running the original and the copy at the same time presents one executor from two
+processes, each connection replacing the other's control session.
+Installing is repeatable and changes nothing the
 second time; installing a different package version over an existing state
 directory is refused, because startup never migrates a database. A reinstall
 never restarts a running daemon: it reports that a restart is required and leaves
