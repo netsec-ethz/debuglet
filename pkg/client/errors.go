@@ -116,3 +116,15 @@ func (e *SubmissionError) Code() string {
 	}
 	return ""
 }
+
+// IsTransportError reports whether err is a transport failure of the client:
+// a request that was started could not be sent, or no complete response was
+// read, for example after a connection reset or the request deadline. The
+// server may or may not have processed such a request; the predicate does not
+// say whether it reached the server. An *HTTPError, a protocol error, a local
+// validation failure and a context that was already done before the request
+// was started are not transport failures.
+func IsTransportError(err error) bool {
+	var transportErr *transportError
+	return errors.As(err, &transportErr)
+}
