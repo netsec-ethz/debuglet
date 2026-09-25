@@ -247,12 +247,12 @@ restarted.
 
 The control session uses the yamux defaults at both ends, a keepalive every 30
 seconds with a 10-second write deadline, and a session that fails its keepalive
-ends. A partitioned executor therefore leaves eligibility at the next keepalive
-plus its deadline, at most about 40 seconds after the partition begins, before
-its lease (`scheduler.executor_timeout`, 60 seconds by default) would expire. It
-rejoins on a new control session at its first reconnection attempt after the
-partition heals; the backoff starts each attempt at most 30 seconds after the
-previous one ended.
+ends. These defaults normally detect a partition in roughly 40 seconds; that
+is not a strict upper bound. An executor can lose eligibility earlier when its
+current lease expires (`scheduler.executor_timeout`, 60 seconds by default,
+measured from its last renewal). It rejoins on a new control session at its
+first reconnection attempt after the partition heals; the backoff starts each
+attempt at most 30 seconds after the previous one ended.
 
 Renew before expiry. A dispatcher whose certificate has expired refuses to start
 and reports the validity window; an executor whose dispatcher serves an expired
@@ -525,9 +525,10 @@ and survives a restart, so maintenance is not undone by the restart it was
 declared for; it is read for each submission, so `--resume` takes effect at once
 without a restart. It stops exactly one thing: accepted debuglets keep their
 persistence and schedule, executors keep their control sessions, and results and
-queries are unaffected. `GET /readyz` follows the switch within a second, because
-the probes share one observation per second, while submissions are refused or
-admitted at once. A switch file that exists but cannot be read or
+queries are unaffected. `GET /readyz` follows the switch on its next evaluation;
+probes reuse a completed report for one second, and evaluation time adds to
+that delay. Submissions read the switch directly and are refused or admitted
+at once. A switch file that exists but cannot be read or
 understood also stops admission; an operator removes the file to serve again.
 
 ## CI
