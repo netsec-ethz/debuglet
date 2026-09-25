@@ -66,15 +66,18 @@ func New(schedule *tesla.KeySchedule, measurementID []byte) *Tagger {
 // input without knowing the original checksum or IPID values.
 //
 // If pkt does not begin with a valid IPv4 header (version 4, IHL ≥ 5) the
-// packet is returned unmodified without error.
+// packet is returned unmodified without error. While the schedule has no
+// usable signing key (epoch 0, whose key is the public anchor) the packet is
+// likewise returned unmodified and untagged, as on the eBPF path.
 func (t *Tagger) TagPacket(pkt []byte) ([]byte, error) {
-	if !isIPv4(pkt) {
+	now := time.Now()
+	if !isIPv4(pkt) || t.schedule.CurrentKey(now) == nil {
 		return pkt, nil
 	}
 	// Canonical form: zero mutable fields before hashing.
 	binary.BigEndian.PutUint16(pkt[4:6], 0)   // IPID
 	binary.BigEndian.PutUint16(pkt[10:12], 0) // IPv4 checksum
-	tag, err := t.schedule.ComputeTagForPacket(time.Now(), t.measurementID, pkt)
+	tag, err := t.schedule.ComputeTagForPacket(now, t.measurementID, pkt)
 	if err != nil {
 		return nil, fmt.Errorf("tagger: ComputeTagForPacket: %w", err)
 	}

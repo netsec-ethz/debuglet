@@ -25,6 +25,7 @@ package ebpf
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -145,17 +146,35 @@ func attachWithRollback(attach func() (link.Link, error), owned ...io.Closer) (l
 	return nil, withCleanupError(err, closeResources(owned...))
 }
 
-// updateKey derives the current ak and writes it to the BPF map at the slot
-// identified by the measurement ID hash.
-func (bt *BPFTagger) updateKey() error {
-	k := bt.schedule.CurrentKey(time.Now())
-	ak, err := tesla.DeriveAK(k, bt.measureID)
-	if err != nil {
-		return fmt.Errorf("DeriveAK: %w", err)
+// akEntryAt returns the map entry for measurementID at time t, and false when
+// the schedule has no usable signing key and the slot must stay empty.
+func akEntryAt(schedule *tesla.KeySchedule, measurementID []byte, t time.Time) (akEntry, bool, error) {
+	k := schedule.CurrentKey(t)
+	if k == nil {
+		return akEntry{}, false, nil
 	}
-	// fmt.Printf("ebpf: key: 0x%x, derived AK: 0x%x for measure ID: 0x%x\n", k, ak, bt.measureID)
-	entry := akFromKey(ak)
+	ak, err := tesla.DeriveAK(k, measurementID)
+	if err != nil {
+		return akEntry{}, false, fmt.Errorf("DeriveAK: %w", err)
+	}
+	return akFromKey(ak), true, nil
+}
+
+// updateKey writes the current ak to the BPF map at the slot identified by the
+// measurement ID hash. Without a usable key it removes the slot, so the TC
+// program passes packets untagged instead of tagging with a public key.
+func (bt *BPFTagger) updateKey() error {
+	entry, install, err := akEntryAt(bt.schedule, bt.measureID, time.Now())
+	if err != nil {
+		return err
+	}
 	key := bt.MapKey()
+	if !install {
+		if err := bt.objs.AkMap.Delete(&key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			return err
+		}
+		return nil
+	}
 	return bt.objs.AkMap.Put(&key, &entry)
 }
 
