@@ -525,7 +525,9 @@ and survives a restart, so maintenance is not undone by the restart it was
 declared for; it is read for each submission, so `--resume` takes effect at once
 without a restart. It stops exactly one thing: accepted debuglets keep their
 persistence and schedule, executors keep their control sessions, and results and
-queries are unaffected. A switch file that exists but cannot be read or
+queries are unaffected. `GET /readyz` follows the switch within a second, because
+the probes share one observation per second, while submissions are refused or
+admitted at once. A switch file that exists but cannot be read or
 understood also stops admission; an operator removes the file to serve again.
 
 ## CI
