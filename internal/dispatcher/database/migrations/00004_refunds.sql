@@ -1,4 +1,9 @@
 -- +goose up
+-- The DEFAULT clauses were added after v0.1.0 shipped this migration, so that
+-- a database holding rows can be upgraded past it: SQLite refuses to add a
+-- NOT NULL column without a default to a non-empty table. A database migrated
+-- by v0.1.0 keeps these columns without defaults. Every INSERT names them, so
+-- the difference is not observable.
 
 ALTER TABLE debuglets ADD transaction_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE debuglets ADD order_id INTEGER NOT NULL DEFAULT 0;
