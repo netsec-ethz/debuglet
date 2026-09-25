@@ -339,7 +339,7 @@ paths:
     put:
       operationId: "submitDebuglets"
       summary: "Submit a paid batch of debuglets."
-      description: "Admits the debuglets of one completed transaction. The server hashes the decoded debuglets array and rejects any batch that differs from the one the payment intent was created for. The encoded request body must not exceed 33554432 bytes."
+      description: "Admits the debuglets of one completed transaction. The server hashes the decoded debuglets array and rejects any batch that differs from the one the payment intent was created for. An identical resubmission of a batch this dispatcher already admitted answers 200 with the run IDs it recorded and admits nothing again. The encoded request body must not exceed 33554432 bytes."
       requestBody:
         required: true
         content:

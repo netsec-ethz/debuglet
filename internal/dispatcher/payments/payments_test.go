@@ -38,7 +38,7 @@ const waitBound = 2 * time.Second
 // GetDebugletOrder statement.
 var (
 	transactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
-	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address"}
+	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	earningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 
 	createTransactionQuery = regexp.QuoteMeta(
@@ -51,13 +51,13 @@ var (
 		"UPDATE transactions\nSET status = ?\nWHERE id = ?",
 	)
 	getDebugletOrderQuery = regexp.QuoteMeta(
-		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order\nWHERE transaction_id = ? AND order_id = ?",
+		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order\nWHERE transaction_id = ? AND order_id = ?",
 	)
 	getTransactionOrdersQuery = regexp.QuoteMeta(
-		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order\nWHERE transaction_id = ?",
+		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order\nWHERE transaction_id = ?",
 	) + `\s*$`
 	updateDebugletOrderStateQuery = regexp.QuoteMeta(
-		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address",
+		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
 	)
 	getEarningsInQuery = regexp.QuoteMeta(
 		"SELECT executor_id, currency, total_income, current_balance, sui_wallet_address FROM earnings\nWHERE executor_id = ? AND currency = ?",
@@ -328,7 +328,7 @@ func transactionRow(method string, status models.TransactionState) *sqlmock.Rows
 
 func orderRow(currency string, state models.TransactionState) *sqlmock.Rows {
 	return sqlmock.NewRows(orderColumns).AddRow(
-		testTxID, testOrderID, testExecutor, testPrice, currency, int64(state), testRefund,
+		testTxID, testOrderID, testExecutor, testPrice, currency, int64(state), testRefund, nil,
 	)
 }
 
@@ -347,7 +347,7 @@ func expectTransactionRead(mock sqlmock.Sqlmock, method string, status models.Tr
 func expectTransactionOrdersRead(mock sqlmock.Sqlmock, currency string, n int) {
 	rows := sqlmock.NewRows(orderColumns)
 	for i := 1; i <= n; i++ {
-		rows.AddRow(testTxID, int64(i), testExecutor, testPrice, currency, int64(models.Paid), testRefund)
+		rows.AddRow(testTxID, int64(i), testExecutor, testPrice, currency, int64(models.Paid), testRefund, nil)
 	}
 	mock.ExpectQuery(getTransactionOrdersQuery).WithArgs(testTxID).WillReturnRows(rows)
 }

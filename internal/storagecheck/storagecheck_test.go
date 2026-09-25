@@ -415,6 +415,58 @@ type populatedDatabase struct {
 
 var populated = []populatedDatabase{
 	{
+		name:    "dispatcher version 7",
+		role:    Dispatcher,
+		version: 7,
+		rows: []string{
+			"INSERT INTO transactions (id, auth_key, price, method, expires_at, hash, currency, status) " +
+				"VALUES ('tx1', 'key', 10, 'TEST', '2026-01-01 00:00:00', 'hash', 'TEST', 1)",
+			"INSERT INTO transaction_states (key, value) VALUES ('checkpoint', '1')",
+			"INSERT INTO earnings (executor_id, currency, total_income, current_balance, sui_wallet_address) " +
+				"VALUES ('node1', 'TEST', 5, 5, '')",
+			"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, state, refund_address) " +
+				"VALUES ('tx1', 1, 'node1', 5, 'TEST', 1, '')",
+			"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, state, refund_address) " +
+				"VALUES ('tx1', 2, 'node1', 5, 'TEST', 0, '')",
+			"INSERT INTO users (uuid, name, role) VALUES (x'00000000000000000000000000000001', 'alice', 'user')",
+			"INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, " +
+				"transaction_id, order_id, dispatcher_incarnation, session_id) VALUES (x'00000000000000000000000000000002', " +
+				"'2026-01-01 00:00:00', '2026-01-01 00:01:00', 1, 1, 'node1', '', 5, 'tx1', 1, 'inc', 'session')",
+			"INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, " +
+				"transaction_id, order_id, dispatcher_incarnation, session_id) VALUES (x'00000000000000000000000000000003', " +
+				"'2026-01-01 00:00:00', '2026-01-01 00:01:00', 1, 1, 'node1', '', 0, 'tx1', 1, 'inc', 'session')",
+			"INSERT INTO debuglet_logs (debuglet_id, timestamp, output) VALUES (1, '2026-01-01 00:00:30', x'6869')",
+			"INSERT INTO debuglet_users (debuglet_id, user_id) VALUES (1, 1)",
+			"INSERT INTO user_credentials (user_id, kind, selector, secret_hash, created_at) " +
+				"VALUES (1, 'api', 'sel1', x'00', '2026-01-01 00:00:00')",
+			"INSERT INTO sessions (selector, verifier_hash, csrf_hash, user_id, created_at, expires_at) " +
+				"VALUES ('sel2', x'00', x'00', 1, '2026-01-01 00:00:00', '2026-01-02 00:00:00')",
+			"INSERT INTO transaction_users (transaction_id, user_id) VALUES ('tx1', 1)",
+			"INSERT INTO executor_enrollments (executor_id, fingerprint, enrolled_at) VALUES ('node1', 'fp', '2026-01-01 00:00:00')",
+			"INSERT INTO executor_enrollment_tokens (selector, executor_id, secret_hash, created_at, expires_at) " +
+				"VALUES ('sel3', 'node2', x'00', '2026-01-01 00:00:00', '2026-01-02 00:00:00')",
+		},
+		// An order that already has runs records the earliest one, and the
+		// runs themselves are not changed.
+		after: map[string]int64{
+			"SELECT COUNT(*) FROM debuglet_order WHERE order_id = 1 AND debuglet_id = 1":                   1,
+			"SELECT COUNT(*) FROM debuglet_order WHERE order_id = 2 AND debuglet_id IS NULL":               1,
+			"SELECT COUNT(*) FROM debuglets WHERE transaction_id = 'tx1' AND order_id = 1":                 2,
+			"SELECT COUNT(*) FROM debuglets WHERE id = 1 AND state = 5 AND session_id = 'session'":         1,
+			"SELECT COUNT(*) FROM debuglets WHERE id = 2 AND state = 0 AND dispatcher_incarnation = 'inc'": 1,
+			"SELECT COUNT(*) FROM debuglet_logs":                                                           1,
+			"SELECT COUNT(*) FROM debuglet_users":                                                          1,
+			"SELECT COUNT(*) FROM user_credentials":                                                        1,
+			"SELECT COUNT(*) FROM sessions":                                                                1,
+			"SELECT COUNT(*) FROM transaction_users":                                                       1,
+			"SELECT COUNT(*) FROM executor_enrollments":                                                    1,
+			"SELECT COUNT(*) FROM executor_enrollment_tokens":                                              1,
+			"SELECT COUNT(*) FROM earnings":                                                                1,
+			"SELECT COUNT(*) FROM transactions":                                                            1,
+			"SELECT COUNT(*) FROM transaction_states":                                                      1,
+		},
+	},
+	{
 		name:    "dispatcher version 3",
 		role:    Dispatcher,
 		version: 3,

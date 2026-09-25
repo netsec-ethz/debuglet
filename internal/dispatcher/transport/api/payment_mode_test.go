@@ -66,7 +66,7 @@ var (
 		"INSERT INTO earnings (executor_id, currency, sui_wallet_address, total_income, current_balance) VALUES (?,?,?,0,0) RETURNING executor_id, currency, total_income, current_balance, sui_wallet_address",
 	)
 	modeCreateOrderQuery = regexp.QuoteMeta(
-		"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, refund_address, state ) VALUES (?,?,?,?,?,?,?) RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address",
+		"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, refund_address, state ) VALUES (?,?,?,?,?,?,?) RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
 	)
 	modeCreateTransactionQuery = regexp.QuoteMeta(
 		"INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, status, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, auth_key, price, method, expires_at, hash, currency, status",
@@ -75,17 +75,20 @@ var (
 		"SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions WHERE id = ?",
 	)
 	modeGetTransactionOrdersQuery = regexp.QuoteMeta(
-		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order WHERE transaction_id = ?",
+		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order WHERE transaction_id = ?",
 	)
 	modeUpdateOrderStateQuery = regexp.QuoteMeta(
-		"UPDATE debuglet_order SET state = ? WHERE transaction_id = ? AND order_id = ? RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address",
+		"UPDATE debuglet_order SET state = ? WHERE transaction_id = ? AND order_id = ? RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
+	)
+	modeGetAdmittedRunsQuery = regexp.QuoteMeta(
+		"SELECT o.order_id, d.uuid FROM debuglet_order o JOIN debuglets d ON d.id = o.debuglet_id WHERE o.transaction_id = ?",
 	)
 	modeInsertDebugletQuery = regexp.QuoteMeta(
 		"INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, transaction_id, order_id, dispatcher_incarnation, session_id)",
 	)
 
 	modeEarningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
-	modeOrderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address"}
+	modeOrderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	modeTransactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
 )
 
@@ -276,8 +279,16 @@ func modeTransactionRows(id, authKey, method, currency, hash string, status mode
 
 func modeOrderRows(transactionID, currency string, state models.TransactionState) *sqlmock.Rows {
 	return sqlmock.NewRows(modeOrderColumns).AddRow(
-		transactionID, modeOrderID, modeExecutorID, modeOrderPrice, currency, int64(state), modeRefundAddr,
+		transactionID, modeOrderID, modeExecutorID, modeOrderPrice, currency, int64(state), modeRefundAddr, nil,
 	)
+}
+
+// modeExpectNoAdmittedRuns answers the submission's lookup of the runs
+// already admitted for the transaction: there are none.
+func modeExpectNoAdmittedRuns(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(modeGetAdmittedRunsQuery).
+		WithArgs(modeChainTxID).
+		WillReturnRows(sqlmock.NewRows([]string{"order_id", "uuid"}))
 }
 
 func modeAssertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
@@ -540,6 +551,7 @@ func TestModeDisabledTestSubmissionReachesAdmission(t *testing.T) {
 
 	// SubmitDebuglets: admission passed, the insert fails with the sentinel and
 	// the deferred rollback follows.
+	modeExpectNoAdmittedRuns(f.mock)
 	f.mock.ExpectBegin()
 	f.mock.ExpectQuery(modeInsertDebugletQuery).WillReturnError(modeErrSentinelInsert)
 	f.mock.ExpectRollback()

@@ -45,7 +45,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"transactions":               "id auth_key price method expires_at hash currency status",
 					"transaction_states":         "key value",
 					"earnings":                   "executor_id currency total_income current_balance sui_wallet_address",
-					"debuglet_order":             "transaction_id order_id executor_id price currency state refund_address",
+					"debuglet_order":             "transaction_id order_id executor_id price currency state refund_address debuglet_id",
 					"users":                      "id uuid name role",
 					"debuglet_users":             "debuglet_id user_id",
 					"user_credentials":           "user_id kind selector secret_hash created_at",
@@ -53,7 +53,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"transaction_users":          "transaction_id user_id",
 					"executor_enrollments":       "executor_id fingerprint enrolled_at",
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
-				}, []string{"debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7})
+				}, []string{"debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

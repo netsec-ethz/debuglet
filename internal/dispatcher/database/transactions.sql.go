@@ -7,7 +7,9 @@ package database
 
 import (
 	"context"
+	"database/sql"
 
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
@@ -29,10 +31,30 @@ func (q *Queries) AddEarnings(ctx context.Context, arg AddEarningsParams) error 
 	return err
 }
 
+const claimDebugletOrder = `-- name: ClaimDebugletOrder :execrows
+UPDATE debuglet_order
+SET debuglet_id = ?
+WHERE transaction_id = ? AND order_id = ? AND debuglet_id IS NULL
+`
+
+type ClaimDebugletOrderParams struct {
+	DebugletID    sql.NullInt64
+	TransactionID string
+	OrderID       int64
+}
+
+func (q *Queries) ClaimDebugletOrder(ctx context.Context, arg ClaimDebugletOrderParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimDebugletOrder, arg.DebugletID, arg.TransactionID, arg.OrderID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createDebugletOrder = `-- name: CreateDebugletOrder :one
 INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, refund_address, state )
 VALUES (?,?,?,?,?,?,?)
-RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address
+RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id
 `
 
 type CreateDebugletOrderParams struct {
@@ -64,6 +86,7 @@ func (q *Queries) CreateDebugletOrder(ctx context.Context, arg CreateDebugletOrd
 		&i.Currency,
 		&i.State,
 		&i.RefundAddress,
+		&i.DebugletID,
 	)
 	return i, err
 }
@@ -135,6 +158,41 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	return i, err
 }
 
+const getAdmittedRuns = `-- name: GetAdmittedRuns :many
+SELECT o.order_id, d.uuid FROM debuglet_order o
+JOIN debuglets d ON d.id = o.debuglet_id
+WHERE o.transaction_id = ?
+ORDER BY o.order_id
+`
+
+type GetAdmittedRunsRow struct {
+	OrderID int64
+	Uuid    uuid.UUID
+}
+
+func (q *Queries) GetAdmittedRuns(ctx context.Context, transactionID string) ([]GetAdmittedRunsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAdmittedRuns, transactionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAdmittedRunsRow
+	for rows.Next() {
+		var i GetAdmittedRunsRow
+		if err := rows.Scan(&i.OrderID, &i.Uuid); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDebugletOrder = `-- name: GetDebugletOrder :one
 /*
 
@@ -142,7 +200,7 @@ DEBUGLET_ORDER
 
 */
 
-SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order
+SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order
 WHERE transaction_id = ? AND order_id = ?
 `
 
@@ -162,6 +220,7 @@ func (q *Queries) GetDebugletOrder(ctx context.Context, arg GetDebugletOrderPara
 		&i.Currency,
 		&i.State,
 		&i.RefundAddress,
+		&i.DebugletID,
 	)
 	return i, err
 }
@@ -284,7 +343,7 @@ func (q *Queries) GetTransactionByID(ctx context.Context, id string) (Transactio
 }
 
 const getTransactionOrders = `-- name: GetTransactionOrders :many
-SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address FROM debuglet_order
+SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order
 WHERE transaction_id = ?
 `
 
@@ -305,6 +364,7 @@ func (q *Queries) GetTransactionOrders(ctx context.Context, transactionID string
 			&i.Currency,
 			&i.State,
 			&i.RefundAddress,
+			&i.DebugletID,
 		); err != nil {
 			return nil, err
 		}
@@ -368,7 +428,7 @@ const updateDebugletOrderState = `-- name: UpdateDebugletOrderState :one
 UPDATE debuglet_order
 SET state = ? 
 WHERE transaction_id = ? AND order_id = ?
-RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address
+RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id
 `
 
 type UpdateDebugletOrderStateParams struct {
@@ -388,6 +448,7 @@ func (q *Queries) UpdateDebugletOrderState(ctx context.Context, arg UpdateDebugl
 		&i.Currency,
 		&i.State,
 		&i.RefundAddress,
+		&i.DebugletID,
 	)
 	return i, err
 }

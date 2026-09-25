@@ -49,6 +49,17 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 		return nil, ErrDispatcherClosed
 	}
 
+	// A batch this dispatcher already admitted is answered with the runs it
+	// recorded, before anything is validated, scheduled or inserted, so a
+	// repeated submission neither admits nor uploads the work again.
+	if len(specs) > 0 {
+		recorded, err := d.admittedRuns(ctx, specs)
+		if err != nil || recorded != nil {
+			d.mu.Unlock()
+			return recorded, err
+		}
+	}
+
 	var sreqs []schedule.Request
 	rollbackReservations := func() {
 		for i := len(sreqs) - 1; i >= 0; i-- {
@@ -91,7 +102,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 
 	qtx := database.New(d.db).WithTx(tx)
 	for i := range sreqs {
-		if _, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
+		row, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
 			Uuid:                  debugletIDS[i],
 			StartTime:             models.NewUTCTime(sreqs[i].From),
 			EndTime:               models.NewUTCTime(sreqs[i].To),
@@ -104,9 +115,25 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			OrderID:               specs[i].OrderID,
 			DispatcherIncarnation: selected[i].owner.Binding().Incarnation,
 			SessionID:             selected[i].owner.Binding().SessionID,
-		}); err != nil {
+		})
+		if err != nil {
 			failLocked()
 			return nil, fmt.Errorf("failed to create debuglet in database: %w", err)
+		}
+		// The order records its run. An order that already records one, or
+		// that has no row, refuses the whole batch.
+		claimed, err := qtx.ClaimDebugletOrder(ctx, database.ClaimDebugletOrderParams{
+			DebugletID:    sql.NullInt64{Int64: row.ID, Valid: true},
+			TransactionID: specs[i].TransactionID,
+			OrderID:       specs[i].OrderID,
+		})
+		if err != nil {
+			failLocked()
+			return nil, fmt.Errorf("failed to record the run of order %d in database: %w", specs[i].OrderID, err)
+		}
+		if claimed != 1 {
+			failLocked()
+			return nil, fmt.Errorf("order %d of transaction %s is not admissible", specs[i].OrderID, specs[i].TransactionID)
 		}
 
 		if userID != nil {
@@ -150,6 +177,33 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 
 	return debugletIDS, nil
+}
+
+// admittedRuns returns the runs recorded for the orders of a batch, in the
+// order of its specs, or nil when none of them has a run yet. A batch of which
+// only some orders have runs is refused rather than partly answered.
+func (d *Dispatcher) admittedRuns(ctx context.Context, specs []models.DebugletSpec) (uuid.UUIDs, error) {
+	transactionID := specs[0].TransactionID
+	rows, err := database.New(d.db).GetAdmittedRuns(ctx, transactionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up the runs of transaction %s: %w", transactionID, err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	runs := make(map[int64]uuid.UUID, len(rows))
+	for _, row := range rows {
+		runs[row.OrderID] = row.Uuid
+	}
+	ids := make(uuid.UUIDs, len(specs))
+	for i := range specs {
+		id, ok := runs[specs[i].OrderID]
+		if !ok || specs[i].TransactionID != transactionID {
+			return nil, fmt.Errorf("order %d of transaction %s is not admissible", specs[i].OrderID, specs[i].TransactionID)
+		}
+		ids[i] = id
+	}
+	return ids, nil
 }
 
 // schedulingGrace is added to every reserved window to absorb delays in the
