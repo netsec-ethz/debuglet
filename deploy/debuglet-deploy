@@ -56,6 +56,8 @@ inventory_json=$(cd "$ansible_dir" && "$provisioner" ansible-inventory \
 	-i "$inventory" -e "@$vars_file" --list)
 dispatcher_addr=$(printf '%s\n' "$inventory_json" |
 	python3 "$root/deploy/scripts/executor-ids.py" --dispatcher-addr)
+dispatcher_tls_sans=$(printf '%s\n' "$inventory_json" |
+	python3 "$root/deploy/scripts/executor-ids.py" --dispatcher-tls-sans)
 executor_ids=$(printf '%s\n' "$inventory_json" |
 	python3 "$root/deploy/scripts/executor-ids.py")
 
@@ -78,7 +80,11 @@ sans_prefix=DNS
 case $dispatcher_addr in
 	[0-9]*.[0-9]*.[0-9]*.[0-9]*) sans_prefix=IP ;;
 esac
-DISPATCHER_SANS="$sans_prefix:$dispatcher_addr" \
+dispatcher_sans="$sans_prefix:$dispatcher_addr"
+for san in $dispatcher_tls_sans; do
+	dispatcher_sans+=",$san"
+done
+DISPATCHER_SANS="$dispatcher_sans" \
 	"$root/deploy/scripts/generate-certs.sh" $executor_ids
 
 if [ "$action" = certs ]; then

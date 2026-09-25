@@ -29,6 +29,10 @@
 all:
   vars:
     dispatcher_addr: dispatcher-dev.example.com
+    # Additional verified TLS names for infrastructure that connects by IP.
+    # dispatcher_addr is always included automatically.
+    dispatcher_tls_sans:
+      - DNS:debuglet-dispatcher-dev
 
   children:
     # ------------------------------------------------------------------
