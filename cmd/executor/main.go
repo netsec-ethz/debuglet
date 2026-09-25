@@ -54,11 +54,21 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runExecutor(ctx, cfg, *readyFile, logger); err != nil {
+	requested := make(chan struct{})
+	stopNotice := context.AfterFunc(ctx, func() {
+		defer close(requested)
+		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", "executor"))
+	})
+	err = runExecutor(ctx, cfg, *readyFile, logger)
+	if !stopNotice() {
+		<-requested
+	}
+	if err != nil {
 		logger.Error("executor exited with error", zap.Error(err))
 		logger.Sync()
 		os.Exit(1)
 	}
+	logger.Info("Executor stopped", zap.String("role", "executor"), zap.Bool("joined", true))
 }
 
 // configureSCIONEnvironment loads the SCION daemon address unless the operator
