@@ -106,7 +106,7 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 		return fmt.Errorf("open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	node, err := executor.NewNode(cfg, logger)
+	node, err := executor.NewNode(cfg, logger, db)
 	if err != nil {
 		return errors.Join(err, db.Close())
 	}

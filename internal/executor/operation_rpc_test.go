@@ -75,7 +75,7 @@ func newFixtureExecutor(t *testing.T, cfg *config.ExecutorConfig, counter rateli
 	if counter != nil {
 		acquire = func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error) { return counter, nil }
 	}
-	node, err := newNode(cfg, zap.NewNop(), acquire)
+	node, err := newNode(cfg, zap.NewNop(), newFixtureDatabase(t), acquire)
 	if err != nil {
 		t.Fatal(err)
 	}

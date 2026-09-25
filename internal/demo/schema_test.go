@@ -60,7 +60,8 @@ func TestBootstrapFresh(t *testing.T) {
 					"debuglets":      "id uuid start_time args wasm transaction_id floor_bw ceil_bw timeout_ms addresses require_icmp listen_udp listen_tcp listen_scion started_at dispatcher_incarnation session_id",
 					"debuglet_logs":  "id debuglet_id timestamp output",
 					"debuglet_exits": "debuglet_id dispatcher_incarnation session_id exit_code error_message recorded_at attempts last_attempt_at last_error rejected",
-				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4})
+					"tesla_chains":   "generation anchor epoch_base delay_ns chain_length created_at",
+				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5})
 				executorSchemaRoundTrip(t, db)
 			}
 			if err := db.Close(); err != nil {

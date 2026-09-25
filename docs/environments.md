@@ -374,6 +374,13 @@ to an upgrade is to keep using the version that created a database, or to start
 from a new state directory.
 Local services create their database on first start and keep it across restarts.
 
+The executor database also records every TESLA chain the executor started: its
+generation, anchor, epoch base, epoch length and chain length. The chain is
+recorded before the node starts, and a start whose anchor is already recorded
+is refused. A configured `tesla.seed` yields a new chain for every start, derived
+from the seed and the generation. An upgrade from executor schema 4 keeps its
+rows and creates the chain table empty; the next start records its first chain.
+
 ## Managed services
 
 `dbl service install --role dispatcher|executor` installs one verified role as a

@@ -536,6 +536,27 @@ var populated = []populatedDatabase{
 			"SELECT COUNT(*) FROM debuglet_logs": 0,
 		},
 	},
+	{
+		name:    "executor version 4",
+		role:    Executor,
+		version: 4,
+		rows: []string{
+			"INSERT INTO debuglets (uuid, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, require_icmp, " +
+				"listen_udp, listen_tcp, listen_scion, dispatcher_incarnation, session_id) " +
+				"VALUES (x'00000000000000000000000000000001', x'00', 'tx1', 1, 1, 1000, 0, 0, 0, 0, 'incarnation', 'session')",
+			"INSERT INTO debuglet_logs (debuglet_id, timestamp, output) VALUES (1, '2026-01-01 00:00:30', x'6869')",
+			"INSERT INTO debuglet_exits (debuglet_id, dispatcher_incarnation, session_id, exit_code, recorded_at) " +
+				"VALUES ('run1', 'incarnation', 'session', 0, '2026-01-01 00:01:00')",
+		},
+		// The fifth executor migration only adds the chain record, so the
+		// rows of a version 4 database survive and no chain is recorded yet.
+		after: map[string]int64{
+			"SELECT COUNT(*) FROM debuglets WHERE session_id = 'session'": 1,
+			"SELECT COUNT(*) FROM debuglet_logs":                          1,
+			"SELECT COUNT(*) FROM debuglet_exits":                         1,
+			"SELECT COUNT(*) FROM tesla_chains":                           0,
+		},
+	},
 }
 
 // fixture returns the database at its version, with one row in every table.
