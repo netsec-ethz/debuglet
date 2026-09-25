@@ -102,16 +102,27 @@ func main() {
 	}
 	logCfg.Level = logLevel
 	logCfg.OutputPaths = []string{"stdout"}
+	logCfg.DisableStacktrace = true
 	logger, _ := logCfg.Build()
 	defer logger.Sync()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runDispatcher(ctx, cfg, *readyFile, logger); err != nil {
+	requested := make(chan struct{})
+	stopNotice := context.AfterFunc(ctx, func() {
+		defer close(requested)
+		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", "dispatcher"))
+	})
+	err = runDispatcher(ctx, cfg, *readyFile, logger)
+	if !stopNotice() {
+		<-requested
+	}
+	if err != nil {
 		logger.Error("dispatcher exited with error", zap.Error(err))
 		logger.Sync()
 		os.Exit(1)
 	}
+	logger.Info("Dispatcher stopped", zap.String("role", "dispatcher"), zap.Bool("joined", true))
 }
 
 func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile string, logger *zap.Logger) error {
