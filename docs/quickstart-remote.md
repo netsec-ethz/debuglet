@@ -130,7 +130,7 @@ Hello from Debuglet!
 dbl logs: state=RunStateExited after=1 entries=1 has_more=false
 ```
 
-**macOS.** There is no native package, so a Mac runs the Linux amd64 `dbl` client in a `linux/amd64` container that carries the authority in its own trust store. The container holds the client and nothing else: no daemon and no privilege on the Mac, only `dbl` talking to the remote dispatcher over the network, under emulation on Apple Silicon. It runs as root, so the connections file, `credentials.json`, the account key and the recovery code all live in `/root/.config/debuglet`, and the named volume `debuglet-client` is mounted there:
+**macOS.** There is no native package, so a Mac runs the Linux amd64 `dbl` client in a `linux/amd64` container that carries the authority in its own trust store. The image includes the daemon binaries, but this walkthrough starts only the client, talking to the remote dispatcher over the network, under emulation on Apple Silicon. The container needs no privileged mode. It runs as root, so the connections file, `credentials.json`, the account key and the recovery code all live in `/root/.config/debuglet`, and the named volume `debuglet-client` is mounted there:
 
 ```sh
 docker run --rm -it --platform linux/amd64 -v debuglet-client:/root/.config/debuglet IMAGE
