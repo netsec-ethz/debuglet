@@ -165,7 +165,7 @@ summary samples=3 min_ms=4.438 avg_ms=4.808 max_ms=5.196
 | `login --register`, `nodes` | `PUT /user 200`, `POST /auth/login 200`, `GET /executors 200` |
 | A submission | `intent`, `created intent`, `PUT /payment/intent 200`, `transaction_id`, `PUT /debuglet 200` |
 | `run --wait`, `logs` | one `GET /debuglet/ID/state 200` per poll, then `GET /debuglet/ID/logs?after=N&limit=100 200` |
-| Executor stopped | the heartbeats stop; after `scheduler.executor_timeout` the next `nodes` lists no rows |
+| Executor stopped | `Executor control session ended` with `executor_id`, `session_id` and a `reason`: `transport closed` when the control stream ends, `lease expired` when the `scheduler.executor_timeout` lease runs out; after either, the next `nodes` lists no rows. An executor that registers again in a new session ends its old one with `replaced` |
 
 Every API line carries the client's source address. One pair below is worth recognising, because it says nothing about the executor, which keeps running: its cause is a client that does not trust the authority. The HTTP API and the control stream share `HTTP_PORT`, so the rejected handshake reaches the control side first, and that client itself sees `tls: failed to verify certificate: x509: certificate signed by unknown authority`.
 

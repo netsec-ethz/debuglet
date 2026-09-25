@@ -100,10 +100,15 @@ func (d *Dispatcher) OnExecutorDisconnected(owner *rpc.SessionOwner) {
 		return
 	}
 	d.mu.Lock()
-	if entry := d.executors[owner.ExecutorID()]; entry != nil && entry.owner == owner {
+	entry := d.executors[owner.ExecutorID()]
+	removed := entry != nil && entry.owner == owner
+	if removed {
 		delete(d.executors, owner.ExecutorID())
 	}
 	d.mu.Unlock()
+	if removed {
+		d.logger.Info("Executor control session ended", zap.String("executor_id", owner.ExecutorID()), zap.String("session_id", owner.Binding().SessionID), zap.String("reason", "transport closed"))
+	}
 }
 
 // ============================================================

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type debugletHistory struct {
@@ -185,7 +186,8 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		d.mu.Unlock()
 		return ErrDispatcherClosed
 	}
-	if old := d.executors[record.ID]; old != nil {
+	old := d.executors[record.ID]
+	if old != nil {
 		record.history = cloneHistory(old.history)
 	}
 	var commitErr error
@@ -207,6 +209,9 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	}
 	if commitErr != nil {
 		return commitErr
+	}
+	if old != nil && old.owner != owner {
+		d.logger.Info("Executor control session ended", zap.String("executor_id", record.ID), zap.String("session_id", old.owner.Binding().SessionID), zap.String("reason", "replaced"))
 	}
 	if startExpiry != nil {
 		go d.runExpiry(startExpiry)
@@ -358,6 +363,7 @@ func (d *Dispatcher) expireOwner(owner *rpc.SessionOwner) bool {
 	}
 	delete(d.executors, owner.ExecutorID())
 	d.mu.Unlock()
+	d.logger.Info("Executor control session ended", zap.String("executor_id", owner.ExecutorID()), zap.String("session_id", owner.Binding().SessionID), zap.String("reason", "lease expired"))
 	d.Bidi.RemoveClient(owner)
 	return true
 }
