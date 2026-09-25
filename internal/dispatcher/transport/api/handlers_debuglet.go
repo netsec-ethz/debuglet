@@ -111,7 +111,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs, userID); err != nil {
 		err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context())
 		if err2 != nil {
-			h.logger.Error("Failed to refund transaction", zap.String("ID", transactionId), zap.String("error", err2.Error()))
+			h.logger.Warn("Failed to refund transaction", zap.String("ID", transactionId), zap.Error(err2))
 		}
 		if errors.Is(err, dispatcher.ErrMaintenanceMode) {
 			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, err.Error(), err)
@@ -158,7 +158,7 @@ func (h *Handler) refuseForMaintenance(c echo.Context, established *caller, req 
 		message += "; this payment order was refunded and cannot be spent again"
 	case tx.Status == int64(models.Paid):
 		if refundErr := h.dispatcher.Payment.RefundTransaction(req.TransactionId, ctx); refundErr != nil {
-			h.logger.Error("Failed to refund transaction", zap.String("ID", req.TransactionId), zap.String("error", refundErr.Error()))
+			h.logger.Warn("Failed to refund transaction", zap.String("ID", req.TransactionId), zap.Error(refundErr))
 			message += "; this payment order is paid and was not refunded, so it stays paid and the same batch can be submitted again once admission resumes"
 		} else {
 			message += "; this payment order was paid and has been refunded, so it cannot be spent again"
