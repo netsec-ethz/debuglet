@@ -1,0 +1,162 @@
+# GitLab is the private deployment plane for the public Debuglet repository.
+# The tagged private runner can reach the managed hosts; inventories, pinned
+# host identities and SSH keys remain in GitLab Secure Files / protected
+# file-type variables and are never committed or retained as artifacts.
+
+stages:
+  - build
+  - deploy
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == "dev"'
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_TAG'
+    - when: never
+
+build_release:
+  stage: build
+  script:
+    - make deploy-build
+    - make deploy-seed-db
+  artifacts:
+    expire_in: 7 days
+    paths:
+      - deploy/dist/
+
+.deploy:
+  stage: deploy
+  variables:
+    # Keep glab's short-lived job-token configuration inside the checkout so
+    # a shell runner never retains it in the runner account's home directory.
+    GLAB_CONFIG_DIR: $CI_PROJECT_DIR/.glab-cli
+  needs:
+    - job: build_release
+      artifacts: true
+  before_script:
+    - test -n "$INVENTORY"
+    - test -n "$KNOWN_HOSTS"
+    - test -n "$DEPLOY_ENV"
+    - test -n "$DEPLOY_SSH_KEY"
+    - mkdir -p .secure_files deploy/ansible
+    - >-
+      glab auth login
+      --job-token "$CI_JOB_TOKEN"
+      --hostname "$CI_SERVER_FQDN"
+      --api-protocol "$CI_SERVER_PROTOCOL"
+    - >-
+      glab -R "$CI_PROJECT_PATH" securefile download
+      --all
+      --output-dir .secure_files
+    - install -m 0600 ".secure_files/$INVENTORY" "deploy/ansible/$INVENTORY"
+    - install -m 0600 ".secure_files/$KNOWN_HOSTS" "deploy/ansible/$KNOWN_HOSTS"
+    - eval "$(ssh-agent -s)"
+    - ssh-add "$DEPLOY_SSH_KEY"
+  after_script:
+    - ssh-agent -k >/dev/null 2>&1 || true
+    - rm -rf .glab-cli
+    - rm -rf .secure_files
+    - rm -f "deploy/ansible/${INVENTORY:-}" "deploy/ansible/${KNOWN_HOSTS:-}"
+  interruptible: false
+
+.deploy_dev:
+  extends: .deploy
+  variables:
+    DEPLOY_ENV: dev
+    INVENTORY: hosts.dev.yml
+    KNOWN_HOSTS: known_hosts.dev
+    DEPLOY_SSH_KEY: $DEPLOY_SSH_KEY_DEV
+
+.deploy_prod:
+  extends: .deploy
+  variables:
+    DEPLOY_ENV: prod
+    INVENTORY: hosts.yml
+    KNOWN_HOSTS: known_hosts
+    DEPLOY_SSH_KEY: $DEPLOY_SSH_KEY_PROD
+
+deploy_dev_dispatcher:
+  extends: .deploy_dev
+  script:
+    - >-
+      deploy/scripts/provisioner.sh ansible-playbook
+      -i "$INVENTORY"
+      -e "@vars/$DEPLOY_ENV.yml"
+      -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS"
+      -e "deploy_version=$CI_COMMIT_SHORT_SHA"
+      deploy-dispatcher.yml
+  environment:
+    name: development/dispatcher
+    deployment_tier: development
+  resource_group: development-dispatcher
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == "dev"'
+
+deploy_dev_executors:
+  extends: .deploy_dev
+  script:
+    - |
+      limit_args=()
+      if [ -n "${DEV_EXECUTOR_LIMIT:-}" ]; then
+        limit_args=(--limit "$DEV_EXECUTOR_LIMIT")
+      fi
+      deploy/scripts/provisioner.sh ansible-playbook \
+        -i "$INVENTORY" \
+        -e "@vars/$DEPLOY_ENV.yml" \
+        -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS" \
+        -e "deploy_version=$CI_COMMIT_SHORT_SHA" \
+        deploy-executors.yml \
+        "${limit_args[@]}"
+  environment:
+    name: development/executors
+    deployment_tier: development
+  resource_group: development-executors
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == "dev"'
+      when: manual
+  allow_failure: true
+
+deploy_prod_dispatcher:
+  extends: .deploy_prod
+  script:
+    - export DEPLOY_VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+    - >-
+      deploy/scripts/provisioner.sh ansible-playbook
+      -i "$INVENTORY"
+      -e "@vars/$DEPLOY_ENV.yml"
+      -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS"
+      -e "deploy_version=$DEPLOY_VERSION"
+      deploy-dispatcher.yml
+  environment:
+    name: production/dispatcher
+    deployment_tier: production
+  resource_group: production-dispatcher
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG)'
+      when: manual
+  allow_failure: true
+
+deploy_prod_executors:
+  extends: .deploy_prod
+  script:
+    - |
+      limit_args=()
+      if [ -n "${PROD_EXECUTOR_LIMIT:-}" ]; then
+        limit_args=(--limit "$PROD_EXECUTOR_LIMIT")
+      fi
+      DEPLOY_VERSION="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+      deploy/scripts/provisioner.sh ansible-playbook \
+        -i "$INVENTORY" \
+        -e "@vars/$DEPLOY_ENV.yml" \
+        -e "known_hosts_file={{ playbook_dir }}/$KNOWN_HOSTS" \
+        -e "deploy_version=$DEPLOY_VERSION" \
+        deploy-executors.yml \
+        "${limit_args[@]}"
+  environment:
+    name: production/executors
+    deployment_tier: production
+  resource_group: production-executors
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && ($CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG)'
+      when: manual
+  allow_failure: true
