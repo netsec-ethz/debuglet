@@ -100,7 +100,7 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 	return serveNode(ctx, readyFile, cfg.Identity.ExecutorID, nodeServices{
 		newSession: func() (executorSession, error) { return executor.NewSession(node, db) },
 		closeNode:  node.Close, closeStorage: db.Close,
-		wait: waitReconnect,
+		wait: waitReconnect, logger: logger,
 	})
 }
 
@@ -117,6 +117,7 @@ type nodeServices struct {
 	newSession              func() (executorSession, error)
 	closeNode, closeStorage func() error
 	wait                    func(context.Context, time.Duration) error
+	logger                  *zap.Logger // nil logs nothing
 }
 
 func waitReconnect(ctx context.Context, maximum time.Duration) error {
@@ -133,6 +134,10 @@ func waitReconnect(ctx context.Context, maximum time.Duration) error {
 }
 
 func serveNode(ctx context.Context, readyFile, executorID string, services nodeServices) (result error) {
+	logger := services.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	clean := true
 	defer func() {
 		if !clean {
@@ -175,6 +180,8 @@ func serveNode(ctx context.Context, readyFile, executorID string, services nodeS
 		if healthy >= 30*time.Second {
 			backoff = 250 * time.Millisecond
 		}
+		logger.Warn("Control session lost; reconnecting", zap.String("executor_id", executorID),
+			zap.Error(end), zap.Duration("max_delay", backoff))
 		if err := services.wait(ctx, backoff); err != nil {
 			if ctx.Err() != nil {
 				return nil
