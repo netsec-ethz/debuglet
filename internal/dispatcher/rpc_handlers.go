@@ -55,12 +55,13 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 	}
 	d.mu.Unlock()
 
-	queries := database.New(d.db)
-	earnings, _ := queries.GetEarningsIn(ctx, database.GetEarningsInParams{
-		ExecutorID: execID,
-		Currency:   "USDC",
-	})
-	d.logger.Info("Earnings", zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
+	if entry := d.logger.Check(zap.DebugLevel, "Earnings"); entry != nil {
+		earnings, _ := database.New(d.db).GetEarningsIn(ctx, database.GetEarningsInParams{
+			ExecutorID: execID,
+			Currency:   "USDC",
+		})
+		entry.Write(zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
+	}
 	err = d.keystore.Store(execID, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
 	if err != nil {
 		return nil, fmt.Errorf("failed to store Tesla key: %w", err)

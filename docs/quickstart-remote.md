@@ -160,7 +160,7 @@ summary samples=3 min_ms=4.438 avg_ms=4.808 max_ms=5.196
 
 | Step | Lines |
 | --- | --- |
-| Executor connected | one `Earnings` line per 15 s heartbeat; that line is the liveness signal |
+| Executor connected | nothing per heartbeat; `dbl nodes` shows the executor with `READY true` and `LAST_SEEN` advancing, and `GET /health` counts it under `executors.eligible`. The `Earnings` line appears once per heartbeat only at debug level |
 | `dbl connect` | `GET /version 200`, `GET /connection 404` — a remote profile serves no local-test metadata and `connect` succeeds anyway |
 | `login --register`, `nodes` | `PUT /user 200`, `POST /auth/login 200`, `GET /executors 200` |
 | A submission | `intent`, `created intent`, `PUT /payment/intent 200`, `transaction_id`, `PUT /debuglet 200` |
