@@ -110,7 +110,9 @@ func (c *Client) validateSubmittedIDs(ids []string, count int) error {
 }
 
 // outcomeUnknown classifies a request failure conservatively. A server 5xx
-// means the request may have been processed at either stage. A protocol
+// means the request may have been processed at either stage, except a 503
+// that carries service_unavailable or payments_disabled at the intent stage:
+// the dispatcher answers those before anything is priced or written. A protocol
 // error (malformed success, oversized body) is uncertainty at either stage.
 // A transport or read failure counts as unknown only once the submission
 // request itself has been handed to the transport. Unexpected submission 2xx
@@ -118,6 +120,10 @@ func (c *Client) validateSubmittedIDs(ids []string, count int) error {
 func outcomeUnknown(stage string, err error) bool {
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
+		if stage == stageIntent && httpErr.StatusCode == http.StatusServiceUnavailable &&
+			(httpErr.Code == CodeUnavailable || httpErr.Code == CodePaymentsDisabled) {
+			return false
+		}
 		return httpErr.StatusCode >= 500 ||
 			(stage == stageSubmit && httpErr.StatusCode >= 200 && httpErr.StatusCode < 300)
 	}
