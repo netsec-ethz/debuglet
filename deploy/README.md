@@ -371,8 +371,16 @@ executor's identity.
 ### Upgrading a database
 
 A deployed daemon refuses a database whose schema is older than its release
-supports and keeps refusing it until the database is upgraded. After deploying
-such a release, run:
+supports and keeps refusing it until the database is upgraded. This procedure is
+supported for wallet-free TEST deployments. It does not restore usable paid
+state: migration 4 leaves existing earnings with an empty payout wallet that
+executor re-registration does not repair. Keep chain payments disabled and
+preserve paid databases and their backups for verified operator reconciliation
+before enabling payments, as [Stored state](../docs/environments.md#stored-state)
+describes. Keep payments disabled when restarting upgraded paid-state
+deployments until that reconciliation is complete.
+
+After deploying a release to a TEST deployment, run:
 
 ```bash
 make deploy-upgrade-db INVENTORY=hosts.yml DEPLOY_ENV=prod

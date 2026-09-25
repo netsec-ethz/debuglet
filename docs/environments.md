@@ -372,6 +372,18 @@ transactions cannot be upgraded, because its second migration adds required
 columns without a default; the upgrade then stops at version 1. The alternative
 to an upgrade is to keep using the version that created a database, or to start
 from a new state directory.
+
+The supported upgrade path is wallet-free TEST use. Schema migration 4 preserves
+existing earnings balances but gives those rows an empty payout wallet. Executor
+re-registration does not fill it in, and both existing and later earnings in the
+same row remain unpayable. A successful schema check does not establish that
+financial state is usable. For a database with paid activity, preserve the
+database and its backup with chain payments disabled. Before enabling payments,
+the operator must reconcile the balances, orders and transactions against their
+records and verify ownership of each payout wallet; the product supplies no
+automatic recovery for this state. Do not replace paid state with an empty
+database or infer a historical payout address from a new registration.
+
 Local services create their database on first start and keep it across restarts.
 
 ## Managed services
