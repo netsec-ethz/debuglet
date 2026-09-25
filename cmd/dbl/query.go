@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"runtime/debug"
 	"text/tabwriter"
 	"time"
@@ -28,7 +30,8 @@ dispatcher answered, including for a debuglet that failed.
   dbl cancel ID
 
 Looks up the debuglet's executor, then asks the dispatcher to abort it. A
-success is an acknowledgement only, not proof that execution stopped.
+success is an acknowledgement only, not proof that execution stopped. A
+server failure leaves the cancellation unconfirmed; check dbl status ID.
 `
 	versionUsage = `Usage:
   dbl version [--server]
@@ -130,10 +133,21 @@ func cancelCommand(ctx context.Context, args []string, options globalOptions, st
 		return reportFailure(ctx, "dbl cancel: status lookup", stderr, err)
 	}
 	if err := c.Cancel(ctx, id, st.ExecutorID); err != nil {
-		return reportFailure(ctx, "dbl cancel: cancellation rejected", stderr, err)
+		return reportFailure(ctx, cancelFailureName(err), stderr, err)
 	}
 	return emit("dbl cancel", options.Output, stdout, stderr, cancelAcknowledgement{ID: id, Acknowledged: true},
 		func(w io.Writer) error { _, err := fmt.Fprintln(w, "Cancellation acknowledged"); return err })
+}
+
+// cancelFailureName names a failed cancellation: a server failure (5xx) leaves
+// open whether the executor acknowledged it and whether its result was
+// recorded, so it is unconfirmed; any other failure is a rejection.
+func cancelFailureName(err error) string {
+	var httpErr *client.HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode >= http.StatusInternalServerError {
+		return "dbl cancel: cancellation not confirmed"
+	}
+	return "dbl cancel: cancellation rejected"
 }
 
 // versionInfo is `version`'s JSON. Unavailable strings are empty; Server is

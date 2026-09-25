@@ -423,7 +423,7 @@ paths:
     delete:
       operationId: "cancelDebuglet"
       summary: "Ask the dispatcher to abort a debuglet."
-      description: "A 204 acknowledges the cancellation request. It does not certify remote termination and does not rewrite an already recorded terminal result."
+      description: "A 204 acknowledges the cancellation request and says that its result is recorded, or that the debuglet already had a terminal result, which is kept. It does not certify remote termination."
       requestBody:
         required: true
         content:
@@ -439,7 +439,7 @@ paths:
             type: string
       responses:
         "204":
-          description: "Cancellation acknowledged."
+          description: "Cancellation acknowledged and its result recorded, or the debuglet was already terminal and keeps its recorded result."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -469,6 +469,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable; neither is cancelled."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The executor acknowledged the cancellation but the dispatcher could not record its result, or could not confirm that it did (internal_error). The debuglet may be stopping even if its recorded state does not show the cancellation; read its state before deciding, and repeat the cancellation to record it."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."

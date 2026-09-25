@@ -426,10 +426,44 @@ func TestCLIReceipts(t *testing.T) {
 				if !strings.Contains(stderr, tc.wantStderrHas) {
 					t.Errorf("%s/%s: stderr lacks %q: %q", tc.name, output, tc.wantStderrHas, stderr)
 				}
+				if tc.wantDeletes > 0 && !strings.Contains(stderr, "cancellation rejected") {
+					t.Errorf("%s/%s: refusal not reported as a rejection: %q", tc.name, output, stderr)
+				}
 			}
 			if n := fx.count("DELETE", "/debuglet"); n != tc.wantDeletes*2 {
 				t.Errorf("%s: %d cancellation requests, want %d", tc.name, n, tc.wantDeletes*2)
 			}
+		}
+	})
+
+	t.Run("cancel not confirmed on a server failure", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /debuglet/{id}/state", stateScript(state("RunStateStarted", "")))
+		mux.HandleFunc("DELETE /debuglet", func(w http.ResponseWriter, r *http.Request) {
+			writeJSONResponse(w, http.StatusInternalServerError, map[string]string{
+				"code": "internal_error", "message": "cancellation acknowledged but its result was not recorded",
+			})
+		})
+		fx := newFixture(t, mux)
+		for _, output := range []string{"json", "human"} {
+			code, stdout, stderr := runCLI(bg, "--endpoint", fx.endpoint(), "--output", output, "cancel", fixJobID)
+			assertCode(t, code, exitFailure, stdout, stderr)
+			if stdout != "" {
+				t.Errorf("%s: stdout must stay empty: %q", output, stdout)
+			}
+			for _, want := range []string{"cancellation not confirmed", "500", "internal_error"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("%s: stderr lacks %q: %q", output, want, stderr)
+				}
+			}
+			// The server's own message says "cancellation acknowledged", so the
+			// success line is matched with its capital letter.
+			if lower := strings.ToLower(stderr); strings.Contains(lower, "rejected") || strings.Contains(lower, "stopped") || strings.Contains(stderr, "Cancellation acknowledged") {
+				t.Errorf("%s: server failure presented as a rejection, a success or a stop: %q", output, stderr)
+			}
+		}
+		if n := fx.count("DELETE", "/debuglet"); n != 2 {
+			t.Errorf("%d cancellation requests, want one per invocation", n)
 		}
 	})
 
