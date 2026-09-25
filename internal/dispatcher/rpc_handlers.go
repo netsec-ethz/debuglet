@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -41,6 +42,9 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 	execID := owner.ExecutorID()
 	d.logger.Debug("Heartbeat received", zap.String("executor_id", execID))
 	seen := d.now()
+	// The anchor names the chain the disclosed key belongs to; a re-registered
+	// executor announces a new one.
+	var anchor []byte
 	d.mu.Lock()
 	if exec, exists := d.executors[execID]; !d.closed && exists && exec.owner == owner {
 		// Concurrent requests may acquire the lock out of receipt order. A later
@@ -49,6 +53,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.LastSeen = seen
 		}
 		exec.Ready = true
+		anchor = bytes.Clone(exec.TeslaAnchorKey)
 	} else {
 		d.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "executor session is unavailable")
@@ -61,7 +66,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		Currency:   "USDC",
 	})
 	d.logger.Info("Earnings", zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
-	err = d.keystore.Store(execID, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	err = d.keystore.Store(execID, anchor, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
 	if err != nil {
 		return nil, fmt.Errorf("failed to store Tesla key: %w", err)
 	}

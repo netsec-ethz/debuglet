@@ -537,7 +537,7 @@ func executorConfiguration(version, id, db string, record readiness.Record) map[
 		"dispatcher": map[string]any{"addr": record.GRPCAddr, "yamux_addr": record.HTTPAddr},
 		"tls":        map[string]any{"disable": true},
 		"resources":  map[string]any{"capacity": int64(1_000_000_000), "max_debuglets": 4},
-		"tesla":      map[string]any{"seed": "", "delay": 1, "chain_length": 3600},
+		"tesla":      map[string]any{"seed": "", "delay": 1, "chain_length": 0},
 		"network": map[string]any{"interface": "", "packet_counter": "fallback", "disable_scion_environment": true, "public_host": "", "public_ports": "",
 			// The local environment measures against a target on this machine,
 			// so it says so; an executor that does not write this reaches no

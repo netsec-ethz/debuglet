@@ -12,9 +12,10 @@
 //	k_0 = H^L(k_L)          (public anchor, published at setup)
 //	k_i = H(k_{i+1})        (each key is the hash of the next one)
 //
-// The executor uses key k_i during epoch i (i ≥ 1) and discloses it after a
+// The executor uses key k_i during epoch i (1 ≤ i < L) and discloses it after a
 // configurable disclosure delay d has elapsed. Because k_0 is public, epoch 0
-// has no signing key: nothing is tagged before epoch 1 starts. A verifier who
+// has no signing key: nothing is tagged before epoch 1 starts. Because k_L is
+// never disclosed, nothing is tagged from epoch L on either. A verifier who
 // has buffered packets from epoch i can verify them once k_i is published by
 // checking:
 //
@@ -78,9 +79,9 @@ type Config struct {
 	//
 	// If zero, it is derived from Delay so that the chain covers
 	// DefaultChainHorizon of uptime. Sizing this from a wall-clock horizon
-	// matters: once epoch L is reached the schedule stops advancing, keeps
-	// tagging with the never-disclosed k_L, and every packet from then on
-	// becomes unverifiable.
+	// matters: k_L is never disclosed, so the last signing epoch is L-1 and
+	// from the start of epoch L (Expiry) the schedule has no signing key and
+	// nothing is tagged.
 	ChainLength int64
 
 	// Delay is the interval duration I (one epoch). A key disclosed after
@@ -104,7 +105,8 @@ type Config struct {
 // disclosure delay d has elapsed (i.e., once epoch t+d has started).
 //
 // k_0 is public from setup, so it never signs: epoch 0, and any instant before
-// Epoch, has no usable signing key. The first usable key is k_1 at Epoch+Delay.
+// Epoch, has no usable signing key. The first usable key is k_1 at Epoch+Delay
+// and the last is k_{L-1}; from Expiry, the start of epoch L, no key signs.
 type KeySchedule struct {
 	cfg Config
 
@@ -188,9 +190,9 @@ func (ks *KeySchedule) Anchor() []byte {
 // ChainLength returns L, the highest epoch this schedule can serve.
 func (ks *KeySchedule) ChainLength() int64 { return ks.cfg.ChainLength }
 
-// Exhausted reports whether time t falls at or past the end of the chain. Once
-// exhausted the schedule keeps returning k_L, which is never disclosed, so
-// packets tagged from then on can no longer be verified.
+// Exhausted reports whether time t falls at or past the end of the chain, the
+// start of epoch L. k_L is never disclosed, so an exhausted schedule has no
+// signing key and CurrentKey returns nil from then on.
 func (ks *KeySchedule) Exhausted(t time.Time) bool {
 	return ks.epochOf(t) >= ks.cfg.ChainLength
 }
@@ -225,11 +227,13 @@ func (ks *KeySchedule) keyForEpoch(epoch int64) []byte {
 
 // CurrentKey returns the chain key k_t for the epoch that contains time t, or
 // nil while no key is usable: epochOf maps epoch 0 and any instant before
-// Epoch to 0, whose key is the public anchor (see KeySchedule). Every signing
-// path reads the key here, so this is the one place the rule is decided.
+// Epoch to 0, whose key is the public anchor (see KeySchedule), and every
+// instant from the start of epoch L to L, whose key k_L is never disclosed.
+// Every signing path reads the key here, so this is the one place the rule is
+// decided.
 func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
 	epoch := ks.epochOf(t)
-	if epoch < 1 {
+	if epoch < 1 || epoch >= ks.cfg.ChainLength {
 		return nil
 	}
 	return ks.keyForEpoch(epoch)
@@ -240,7 +244,7 @@ func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
 func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, error) {
 	k := ks.CurrentKey(t)
 	if k == nil {
-		return nil, fmt.Errorf("tesla: no signing key before epoch 1 (k_0 is the public anchor)")
+		return nil, fmt.Errorf("tesla: no signing key before epoch 1 or from the chain's last epoch on")
 	}
 	return DeriveAK(k, measurementID)
 }
@@ -250,7 +254,9 @@ func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, err
 // elapsed after τ. With d=1, the key for epoch (current−1) is disclosed when
 // epoch current starts.
 //
-// If t is still within epoch 0 (no key is disclosable yet), ok is false.
+// If t is still within epoch 0 (no key is disclosable yet), ok is false. From
+// epoch L on the disclosed key stays k_{L-1}, the last signing key; k_L is
+// never disclosed.
 func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bool) {
 	current := ks.epochOf(t)
 	if current < 1 {
