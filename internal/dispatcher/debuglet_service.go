@@ -44,20 +44,22 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}()
 
 	d.mu.Lock()
-	if d.closed {
-		d.mu.Unlock()
-		return nil, ErrDispatcherClosed
-	}
-
 	// A batch this dispatcher already admitted is answered with the runs it
 	// recorded, before anything is validated, scheduled or inserted, so a
-	// repeated submission neither admits nor uploads the work again.
+	// repeated submission neither admits nor uploads the work again. This
+	// comes before the closed check: a retry during shutdown is still an
+	// admitted batch, and answering it with a failure would have its payment
+	// refunded while its runs execute.
 	if len(specs) > 0 {
 		recorded, err := d.admittedRuns(ctx, specs)
 		if err != nil || recorded != nil {
 			d.mu.Unlock()
 			return recorded, err
 		}
+	}
+	if d.closed {
+		d.mu.Unlock()
+		return nil, ErrDispatcherClosed
 	}
 
 	var sreqs []schedule.Request
@@ -133,7 +135,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 		}
 		if claimed != 1 {
 			failLocked()
-			return nil, fmt.Errorf("order %d of transaction %s is not admissible", specs[i].OrderID, specs[i].TransactionID)
+			return nil, fmt.Errorf("order %d of transaction %s is not admissible: %w", specs[i].OrderID, specs[i].TransactionID, ErrPaymentInUse)
 		}
 
 		if userID != nil {
@@ -206,7 +208,7 @@ func (d *Dispatcher) admittedRuns(ctx context.Context, specs []models.DebugletSp
 	transactionID := specs[0].TransactionID
 	rows, err := database.New(d.db).GetAdmittedRuns(ctx, transactionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to look up the runs of transaction %s: %w", transactionID, err)
+		return nil, fmt.Errorf("failed to look up the runs of transaction %s: %w", transactionID, errors.Join(ErrPaymentInUse, err))
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -219,7 +221,7 @@ func (d *Dispatcher) admittedRuns(ctx context.Context, specs []models.DebugletSp
 	for i := range specs {
 		id, ok := runs[specs[i].OrderID]
 		if !ok || specs[i].TransactionID != transactionID {
-			return nil, fmt.Errorf("order %d of transaction %s is not admissible", specs[i].OrderID, specs[i].TransactionID)
+			return nil, fmt.Errorf("order %d of transaction %s is not admissible: %w", specs[i].OrderID, specs[i].TransactionID, ErrPaymentInUse)
 		}
 		ids[i] = id
 	}
@@ -243,6 +245,12 @@ var (
 // the HTTP boundary reports it as an invalid policy and not as a failure of
 // the server.
 var ErrInvalidPolicy = errors.New("invalid policy")
+
+// ErrPaymentInUse marks a submission refused where the transaction's orders
+// already carry runs, or where the dispatcher could not tell whether they do.
+// Those runs may be executing or already credited to their executor, so the
+// caller must not refund the transaction on such a refusal.
+var ErrPaymentInUse = errors.New("payment order already has admitted runs")
 
 // ErrCancellationNotRecorded marks a cancellation its executor acknowledged
 // but whose terminal result the dispatcher failed to record. It is no

@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -143,6 +144,9 @@ func TestSubmissionOfAClaimedOrderIsRefused(t *testing.T) {
 			if err == nil || ids != nil || !strings.Contains(err.Error(), "is not admissible") {
 				t.Fatalf("submission = (%v, %v), want a refusal", ids, err)
 			}
+			if !errors.Is(err, ErrPaymentInUse) {
+				t.Fatalf("refusal %v does not keep the payment", err)
+			}
 			if got := batchRows(t, f); got != rows {
 				t.Fatalf("%d debuglets rows after the refusal, want %d", got, rows)
 			}
@@ -151,5 +155,30 @@ func TestSubmissionOfAClaimedOrderIsRefused(t *testing.T) {
 			}
 			tgAssertReserved(t, f, window, tgFloorA)
 		})
+	}
+}
+
+// A retry of an admitted batch after the dispatcher closed is still answered
+// with its runs: a refusal there would have the caller refund a payment whose
+// runs execute.
+func TestRepeatedSubmissionAfterCloseReturnsTheAdmittedRuns(t *testing.T) {
+	peer := &tgPeer{}
+	f := newTGFixture(t, peer)
+	specs := f.batch(t, tgFloorA)
+	first, err := f.submitBatch(specs)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first submission = (%v, %v), want one run", first, err)
+	}
+
+	f.d.mu.Lock()
+	f.d.closed = true
+	f.d.mu.Unlock()
+
+	second, err := f.submitBatch(specs)
+	if err != nil || len(second) != 1 || second[0] != first[0] {
+		t.Fatalf("repeated submission after close = (%v, %v), want %v", second, err, first)
+	}
+	if _, err := f.submitBatch(f.batch(t, tgFloorA)); !errors.Is(err, ErrDispatcherClosed) {
+		t.Fatalf("new submission after close = %v, want %v", err, ErrDispatcherClosed)
 	}
 }

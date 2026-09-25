@@ -111,9 +111,13 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs, userID); err != nil {
-		err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context())
-		if err2 != nil {
-			h.logger.Warn("Failed to refund transaction", zap.String("ID", transactionId), zap.Error(err2))
+		// A refusal over orders that already carry runs keeps the payment:
+		// those runs may be executing or credited, and refunding would pay
+		// for the same work twice.
+		if !errors.Is(err, dispatcher.ErrPaymentInUse) {
+			if err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context()); err2 != nil {
+				h.logger.Warn("Failed to refund transaction", zap.String("ID", transactionId), zap.Error(err2))
+			}
 		}
 		if errors.Is(err, dispatcher.ErrMaintenanceMode) {
 			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, err.Error(), err)
