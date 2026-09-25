@@ -235,10 +235,24 @@ under [Deployment](#deployment), issue it.
 
 Both daemons read their certificate files once, at startup. Replacing a file on
 disk changes nothing until the process restarts, so a renewal is: write the new
-pair, put it in place, restart the daemon. An executor reconnects on its own
-after the dispatcher restarts, with the backoff it already applies to a lost
-control session, so a dispatcher renewal shows up as a reconnect rather than as
-an outage that needs a fleet action.
+pair, put it in place, restart the daemon. An executor retries the dispatcher
+addresses it was started with, `dispatcher.addr` and `dispatcher.yamux_addr` of
+its configuration (the generated `service.toml` for `dbl executor up` and a
+managed executor), with a jittered backoff that doubles up to 30 seconds. A
+dispatcher renewed on the same addresses is therefore rejoined without any
+action and shows up as a reconnect. A dispatcher that comes back on other
+addresses is not: the executor has to be brought up again with `dbl executor up
+--dispatcher` against the new endpoint, or installed again against it and
+restarted.
+
+The control session uses the yamux defaults at both ends, a keepalive every 30
+seconds with a 10-second write deadline, and a session that fails its keepalive
+ends. These defaults normally detect a partition in roughly 40 seconds; that
+is not a strict upper bound. An executor can lose eligibility earlier when its
+current lease expires (`scheduler.executor_timeout`, 60 seconds by default,
+measured from its last renewal). It rejoins on a new control session at its
+first reconnection attempt after the partition heals; the backoff starts each
+attempt at most 30 seconds after the previous one ended.
 
 Renew before expiry. A dispatcher whose certificate has expired refuses to start
 and reports the validity window; an executor whose dispatcher serves an expired
@@ -574,7 +588,10 @@ and survives a restart, so maintenance is not undone by the restart it was
 declared for; it is read for each submission, so `--resume` takes effect at once
 without a restart. It stops exactly one thing: accepted debuglets keep their
 persistence and schedule, executors keep their control sessions, and results and
-queries are unaffected. A switch file that exists but cannot be read or
+queries are unaffected. `GET /readyz` follows the switch on its next evaluation;
+probes reuse a completed report for one second, and evaluation time adds to
+that delay. Submissions read the switch directly and are refused or admitted
+at once. A switch file that exists but cannot be read or
 understood also stops admission; an operator removes the file to serve again.
 
 ## CI
