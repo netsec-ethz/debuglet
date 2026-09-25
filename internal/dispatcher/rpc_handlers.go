@@ -547,19 +547,38 @@ type fairshareWork struct {
 }
 
 func (d *Dispatcher) captureFairshare(ctx context.Context, origin *rpc.Mutation, dests []string) (*fairshareWork, error) {
-	owner, err := requireMutation(origin, "")
-	if err != nil {
-		return nil, err
+	return d.captureFairshareAfter(ctx, origin, dests, nil)
+}
+
+// captureFairshareAfter runs change, when given, under the lock the share is
+// then read with; a refused change captures nothing. A nil origin captures a
+// change no executor made: there is no continuation and every recipient is
+// admitted on its own session.
+func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Mutation, dests []string, change func() error) (*fairshareWork, error) {
+	work := &fairshareWork{d: d}
+	var owner *rpc.SessionOwner
+	if origin != nil {
+		var err error
+		if owner, err = requireMutation(origin, ""); err != nil {
+			return nil, err
+		}
+		if work.origin, err = origin.Fork(ctx); err != nil {
+			return nil, err
+		}
 	}
-	continuation, err := origin.Fork(ctx)
-	if err != nil {
-		return nil, err
-	}
-	work := &fairshareWork{d: d, origin: continuation}
 	perExec := make(map[string][]*pb.DestinationLimit)
 	// Fairshare reads the destination state as its iterator is consumed, so both
 	// happen under one lock; updates are copied and recipients reserved first.
 	d.mu.Lock()
+	if change != nil {
+		if err := change(); err != nil {
+			d.mu.Unlock()
+			if work.origin != nil {
+				work.origin.Finish()
+			}
+			return nil, err
+		}
+	}
 	for _, dest := range dests {
 		for id, limit := range d.destinations.Fairshare(dest) {
 			perExec[id] = append(perExec[id], &pb.DestinationLimit{Address: dest, BitsLimit: int64(limit)})
@@ -569,9 +588,9 @@ func (d *Dispatcher) captureFairshare(ctx context.Context, origin *rpc.Mutation,
 		var recipient *rpc.SessionOwner
 		var ticket *rpc.Mutation
 		var admitErr error
-		if id == owner.ExecutorID() {
+		if owner != nil && id == owner.ExecutorID() {
 			recipient = owner
-			ticket, admitErr = continuation.Fork(ctx)
+			ticket, admitErr = work.origin.Fork(ctx)
 		} else if entry := d.executors[id]; entry != nil && !d.closed {
 			recipient = entry.owner
 			ticket, admitErr = recipient.AdmitMutation(ctx)
@@ -600,7 +619,9 @@ func (d *Dispatcher) captureFairshare(ctx context.Context, origin *rpc.Mutation,
 }
 
 func (work *fairshareWork) send(ctx context.Context) error {
-	defer work.origin.Finish()
+	if work.origin != nil {
+		defer work.origin.Finish()
+	}
 	for _, r := range work.recipients {
 		defer r.mutation.Finish()
 	}

@@ -1064,7 +1064,7 @@ paths:
     patch:
       operationId: "setDestinationLimit"
       summary: "Set the bandwidth limit of one destination."
-      description: "This route is unauthenticated in the alpha and is not part of the researcher-facing flow."
+      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Pushes are unversioned: concurrent updates can arrive out of order, so an older share can overwrite a newer, lower one at an executor. This route does not guarantee revocation."
       requestBody:
         required: true
         content:
@@ -1080,7 +1080,7 @@ paths:
             type: string
       responses:
         "204":
-          description: "The limit was applied."
+          description: "The limit was recorded and every executor holding an allocation on the destination acknowledged the recomputed share."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -1121,6 +1121,28 @@ paths:
                 $ref: "#/components/schemas/Error"
         "413":
           description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "The limit is below the floors charged to active allocations on the destination (capacity_exhausted). These floors do not include future scheduler reservations whose runs have not allocated bandwidth yet. Nothing was recorded or pushed; the runs keep their floors, and the limit can be lowered once they release them."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The limit was recorded but at least one executor holding an allocation on the destination did not acknowledge the recomputed share (internal_error). The request may be repeated."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
