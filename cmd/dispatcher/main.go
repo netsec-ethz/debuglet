@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -199,7 +200,9 @@ func serveCombined(ctx context.Context, lis net.Listener, d *dispatcher.Dispatch
 }
 
 func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
-	g, ctx := errgroup.WithContext(parent)
+	stopCtx, stop := context.WithCancelCause(parent)
+	defer stop(nil)
+	g, ctx := errgroup.WithContext(stopCtx)
 	// cmux.Close does not interrupt a connection still sniffing its protocol.
 	// Keep ownership until HTTP/yamux closes it or this listener shuts down.
 	owned := &connectionListener{Listener: lis, conns: make(map[*ownedConn]struct{})}
@@ -212,7 +215,7 @@ func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *disp
 	}
 	m := cmux.New(muxed)
 	httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
-	var yamuxL net.Listener = m.Match(cmux.Any())
+	var yamuxL net.Listener = &memberListener{Listener: m.Match(cmux.Any()), stop: stop}
 	if security != nil && security.RequireClientIdentity {
 		yamuxL = rpc.VerifiedClientListener(yamuxL, logger)
 	}
@@ -227,6 +230,7 @@ func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *disp
 	// loop can see that closure before its own context reports the cancellation
 	// behind it. Only the caller's context tells a requested stop from a
 	// failure: it reports the stop first, and the group's is cancelled by either.
+	// The control server's closure under a live context is told apart by its cause, below.
 	failure := func(err error) error {
 		if parent.Err() != nil && (errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, cmux.ErrListenerClosed) || errors.Is(err, net.ErrClosed)) {
 			return nil
@@ -238,7 +242,42 @@ func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *disp
 	g.Go(func() error { return failure(d.Bidi.ServeYamux(ctx, yamuxL)) })
 	err := g.Wait()
 	<-joined // Wait cancels the errgroup context, including successful exits.
+	// The group's context keeps the first cause: a member's own failure, or the
+	// control server's closure passed down from stopCtx before the multiplexer
+	// was closed. A nil err is a stop the caller requested, whatever the cause.
+	if err != nil && errors.Is(context.Cause(ctx), errControlServerClosed) {
+		return errControlServerClosed
+	}
 	return err
+}
+
+// errControlServerClosed is returned when the control server is closed while
+// the caller's context is live.
+var errControlServerClosed = errors.New("control server closed while the combined listener was serving")
+
+// memberListener is the control server's share of the multiplexer. Closing it
+// leaves the shared listener open and ends the combined listener deliberately,
+// with the control server's closure as the cause, unless an accept has already
+// failed: the member is then ending with the multiplexer and asks for nothing.
+type memberListener struct {
+	net.Listener
+	stop  context.CancelCauseFunc
+	ended atomic.Bool
+}
+
+func (l *memberListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		l.ended.Store(true)
+	}
+	return conn, err
+}
+
+func (l *memberListener) Close() error {
+	if !l.ended.Load() {
+		l.stop(errControlServerClosed)
+	}
+	return nil
 }
 
 type connectionListener struct {
