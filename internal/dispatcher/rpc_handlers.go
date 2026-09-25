@@ -595,13 +595,13 @@ func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet,
 		//credit executor
 		d.logger.Debug("Debuglet Completed. Credit executor")
 		if err := d.Payment.SetDebugletOrderComplete(deb, ctx); err != nil {
-			d.logger.Error(err.Error())
+			d.logger.Warn("Failed to credit executor for debuglet", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
 		}
 	default:
 		//refund
 		d.logger.Debug("Debuglet Aborted. Refund Buyer")
 		if err := d.Payment.RefundDebugletOrder(deb, "", ctx); err != nil {
-			d.logger.Error(err.Error())
+			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
 		}
 	}
 
