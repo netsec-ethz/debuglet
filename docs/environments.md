@@ -355,9 +355,10 @@ deletes and a plain `uninstall` keeps. The Ansible deployment keeps
 `/var/lib/debuglet/dispatcher/dispatcher.db` and
 `/var/lib/debuglet/executor-<env>/executor.db` under its default `state_dir`
 ([deploy/README.md](../deploy/README.md)), and a daemon installed by hand keeps
-the database its configuration names in `database.path`. `dbl demo` keeps
-nothing once it ends. The product has no retention period, no export and no
-route or command that deletes a run, its output or an account; automated
+the database its configuration names in `database.path`. `dbl demo` removes its
+temporary state after successful cleanup. If a child cannot finish cleanup, it
+retains the directory and reports its path. The product has no retention period,
+no export and no route or command that deletes a run, its output or an account; automated
 retention is deferred until a deployment with a policy owner exists.
 
 Each daemon serves one SQLite database. This build states which schema versions
