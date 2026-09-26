@@ -14,6 +14,8 @@ integration branch is supported.
 
 ## [Unreleased]
 
+## [0.2.0-rc.2] - 2026-09-25
+
 ### Added
 - Add browser login with GitHub OAuth, including PKCE, short-lived login state,
   and deployment-specific credentials stored outside version control. This adds
@@ -27,6 +29,15 @@ integration branch is supported.
   require a new directory per package version.
 
 ### Changed
+- The HTTP contract stays at version `1.2` while it changes in ways that its
+  rules otherwise reserve for a major version. Release candidates may do so
+  before the final `v0.2.0`; from then on the rules bind without exception.
+  [docs/API.md](docs/API.md#release-candidates) lists every such change of this
+  candidate, including the ones below.
+- Every route answers a body above 32 MiB with 413 `payload_too_large`.
+- An identical resubmission on `PUT /debuglet` answers 200 with the runs already
+  recorded for the batch instead of admitting it again. `PUT /payment/intent`
+  refuses an empty batch and a repeated `order_id`.
 - `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
   instead of whole seconds truncated. Sub-second runs are no longer free, and a
   client that computes prices itself must use the new formula.
@@ -51,6 +62,10 @@ integration branch is supported.
 ### Known limitations
 - SCION sockets cannot be marked, so their packets are not attributed to the
   run by the eBPF tagger. The executor logs a warning once when it dials SCION.
+- The limitations of `v0.2.0-rc.1` still apply, except that a deployed database
+  can now be upgraded: the web dashboard is not compatible, only Linux amd64
+  packages are published, a local state directory stays with its package version
+  and interrupted runs are not recovered.
 
 ## [0.2.0-rc.1] - 2026-09-25
 
@@ -109,6 +124,7 @@ integration branch is supported.
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
 [0.1.0]: https://github.com/netsec-ethz/debuglet/releases/tag/v0.1.0

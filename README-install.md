@@ -29,9 +29,9 @@ eBPF objects and need no privileged kernel access.
 
 ## Download a published package
 
-`v0.2.0-rc.1` is the first release candidate published with all three assets.
-The existing `v0.1.0` tag predates this package format and is not an installation
-target for these instructions. Published packages are listed on the
+`v0.2.0-rc.2` is the current release candidate published with all three assets;
+`v0.2.0-rc.1` was the first. The existing `v0.1.0` tag predates this package format
+and is not an installation target for these instructions. Published packages are listed on the
 [releases page](https://github.com/netsec-ethz/debuglet/releases).
 
 For a published version, run this from a source checkout, replacing the placeholder
