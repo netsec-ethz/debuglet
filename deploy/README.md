@@ -395,13 +395,15 @@ before enabling payments, as [Stored state](../docs/environments.md#stored-state
 describes. Keep payments disabled when restarting upgraded paid-state
 deployments until that reconciliation is complete.
 
-After deploying a release to a TEST deployment, run:
+Before fully deploying a release to a TEST deployment, build and install its
+candidate payload and upgrade the databases with:
 
 ```bash
 make deploy-upgrade-db DEPLOY_ENV=prod
 # or one executor
 make deploy-upgrade-db DEPLOY_ENV=prod LIMIT=executor.example.com
 # or directly
+make deploy-build
 cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml
 ```
 
@@ -410,7 +412,8 @@ cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-dat
 directly, a dev upgrade also needs
 `-e known_hosts_file="{{ playbook_dir }}/known_hosts.dev"`.
 
-`upgrade-database.yml` runs the same preflight as a deployment, then handles
+The Make target builds the candidate package first. `upgrade-database.yml`
+runs the same preflight as a deployment, then handles
 the dispatcher and then the executors, one executor at a time. On each host it:
 
 1. stops when the database (`state_dir/dispatcher/dispatcher.db` or
@@ -420,13 +423,15 @@ the dispatcher and then the executors, one executor at a time. On each host it:
 3. copies the database and, when present, its `-wal` and `-shm` files into a
    new `backup-<UTC timestamp>` directory next to it, owned by the service user
    with mode 0700 and the files 0600;
-4. runs the installed daemon with `-upgrade-database` as the service user
+4. installs the verified candidate payload without restarting the service;
+5. runs the candidate daemon with `-upgrade-database` as the service user
    through `runuser`, so the database keeps its owner; the daemon applies the
    release's migrations to the configured database and checks the result as a
    start does;
-5. starts the service again.
+6. starts the service again. Run the normal deployment command afterward to
+   install the candidate configuration and verify the complete deployment.
 
-When step 4 fails the play stops on that host: the service stays stopped, the
+When step 5 fails the play stops on that host: the service stays stopped, the
 backup stays in place, the remaining executors are left untouched, and the
 database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.

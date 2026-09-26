@@ -4,4 +4,6 @@
     name: "{{ item }}"
     state: restarted
   loop: "{{ debuglet_services }}"
-  when: debuglet_manage_services | bool
+  when:
+    - debuglet_manage_services | bool
+    - payload_restart_services | default(true) | bool

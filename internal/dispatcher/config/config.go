@@ -213,6 +213,9 @@ func (cfg *DispatcherConfig) Validate() error {
 		}
 	}
 	if cfg.GitHubOAuth.Enabled {
+		if cfg.TLS.Disable && !cfg.Server.BehindTLSTerminator {
+			return errors.New("github_oauth.enabled requires dispatcher TLS or server.behind_tls_terminator so browser credentials use Secure cookies")
+		}
 		for field, value := range map[string]string{"github_oauth.callback_url": cfg.GitHubOAuth.CallbackURL, "github_oauth.success_url": cfg.GitHubOAuth.SuccessURL} {
 			parsed, err := url.Parse(value)
 			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {

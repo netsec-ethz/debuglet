@@ -212,7 +212,7 @@ paths:
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
-          required: true
+          required: false
           schema:
             type: string
       responses:
@@ -265,7 +265,7 @@ paths:
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
-          required: true
+          required: false
           schema:
             type: string
         - name: "code"
