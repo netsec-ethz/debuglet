@@ -12,6 +12,32 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
+const createOAuthIdentity = `-- name: CreateOAuthIdentity :exec
+INSERT INTO oauth_identities (provider, subject, user_id, login, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type CreateOAuthIdentityParams struct {
+	Provider  string
+	Subject   string
+	UserID    int64
+	Login     string
+	CreatedAt models.UTCTime
+	UpdatedAt models.UTCTime
+}
+
+func (q *Queries) CreateOAuthIdentity(ctx context.Context, arg CreateOAuthIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, createOAuthIdentity,
+		arg.Provider,
+		arg.Subject,
+		arg.UserID,
+		arg.Login,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const createSession = `-- name: CreateSession :exec
 /*
 
@@ -66,6 +92,29 @@ func (q *Queries) GetDebugletOwnerUUID(ctx context.Context, argUuid uuid.UUID) (
 	var uuid_2 uuid.UUID
 	err := row.Scan(&uuid_2)
 	return uuid_2, err
+}
+
+const getOAuthIdentity = `-- name: GetOAuthIdentity :one
+/*
+
+OAUTH IDENTITIES
+
+*/
+
+SELECT user_id FROM oauth_identities
+WHERE provider = ?1 AND subject = ?2
+`
+
+type GetOAuthIdentityParams struct {
+	Provider string
+	Subject  string
+}
+
+func (q *Queries) GetOAuthIdentity(ctx context.Context, arg GetOAuthIdentityParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getOAuthIdentity, arg.Provider, arg.Subject)
+	var user_id int64
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const getSessionBySelector = `-- name: GetSessionBySelector :one
@@ -205,6 +254,28 @@ func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateOAuthIdentityLogin = `-- name: UpdateOAuthIdentityLogin :exec
+UPDATE oauth_identities SET login = ?1, updated_at = ?2
+WHERE provider = ?3 AND subject = ?4
+`
+
+type UpdateOAuthIdentityLoginParams struct {
+	Login     string
+	UpdatedAt models.UTCTime
+	Provider  string
+	Subject   string
+}
+
+func (q *Queries) UpdateOAuthIdentityLogin(ctx context.Context, arg UpdateOAuthIdentityLoginParams) error {
+	_, err := q.db.ExecContext(ctx, updateOAuthIdentityLogin,
+		arg.Login,
+		arg.UpdatedAt,
+		arg.Provider,
+		arg.Subject,
+	)
+	return err
 }
 
 const upsertUserCredential = `-- name: UpsertUserCredential :exec

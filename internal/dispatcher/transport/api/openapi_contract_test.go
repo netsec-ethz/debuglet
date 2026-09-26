@@ -167,7 +167,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 	t.Run("accepted requirements reach the handler", func(t *testing.T) {
 		// An absent or blank header states no requirement, which is what every
 		// client written before the contract was versioned sends.
-		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2"} {
+		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3"} {
 			headers := map[string]string{}
 			if required != "absent" {
 				headers[apispec.VersionHeader] = required
@@ -189,7 +189,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 		// None of these is a substring of the implemented version, so a
 		// message naming that version cannot be mistaken for an echo of the
 		// value the caller sent.
-		for _, required := range []string{"3", "2.0", "0.9", "1.3", "one", "1.0.0", "-1", "1.0; drop"} {
+		for _, required := range []string{"4", "2.0", "0.9", "1.4", "one", "1.0.0", "-1", "1.0; drop"} {
 			rec := oaServe(f.e, http.MethodPut, "/user", []byte(`{"name":"x"}`),
 				map[string]string{apispec.VersionHeader: required})
 			if rec.Code != http.StatusBadRequest {
@@ -351,6 +351,8 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeLiveness, nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeReadiness, nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeHealth, nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github", nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github/callback", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip?ip=127.0.0.1&n=5", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip?ip=203.0.113.7", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip", nil)

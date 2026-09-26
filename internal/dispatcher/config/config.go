@@ -6,19 +6,27 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
 )
 
 type DispatcherConfig struct {
-	Server    ServerConfig    `toml:"server"`
-	Logging   LoggingConfig   `toml:"logging"`
-	Scheduler SchedulerConfig `toml:"scheduler"`
-	TLS       TLSConfig       `toml:"tls"`
-	Database  DatabaseConfig  `toml:"database"`
-	Sui       SuiConfig       `toml:"sui"`
-	CORS      CORSConfig      `toml:"cors"`
+	Server      ServerConfig      `toml:"server"`
+	Logging     LoggingConfig     `toml:"logging"`
+	Scheduler   SchedulerConfig   `toml:"scheduler"`
+	TLS         TLSConfig         `toml:"tls"`
+	Database    DatabaseConfig    `toml:"database"`
+	Sui         SuiConfig         `toml:"sui"`
+	CORS        CORSConfig        `toml:"cors"`
+	GitHubOAuth GitHubOAuthConfig `toml:"github_oauth"`
+}
+
+type GitHubOAuthConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	CallbackURL string `toml:"callback_url"`
+	SuccessURL  string `toml:"success_url"`
 }
 
 type ServerConfig struct {
@@ -202,6 +210,17 @@ func (cfg *DispatcherConfig) Validate() error {
 		}
 		if err := configcheck.Origin(field, origin); err != nil {
 			return err
+		}
+	}
+	if cfg.GitHubOAuth.Enabled {
+		if cfg.TLS.Disable && !cfg.Server.BehindTLSTerminator {
+			return errors.New("github_oauth.enabled requires dispatcher TLS or server.behind_tls_terminator so browser credentials use Secure cookies")
+		}
+		for field, value := range map[string]string{"github_oauth.callback_url": cfg.GitHubOAuth.CallbackURL, "github_oauth.success_url": cfg.GitHubOAuth.SuccessURL} {
+			parsed, err := url.Parse(value)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+				return fmt.Errorf("%s must be an absolute HTTPS URL without credentials or a fragment", field)
+			}
 		}
 	}
 	return nil

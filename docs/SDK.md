@@ -38,7 +38,7 @@ Types mirror the dispatcher's JSON keys (`order_id`, `executor_id`, `floor_bw`, 
 
 ## API contract version
 
-Every request announces `Debuglet-API-Version: 1.2`, the contract version in `client.APIVersion`. A dispatcher that cannot serve it answers HTTP 400 with an explicit incompatibility error, which reaches the caller as an ordinary `*HTTPError`; `Version` and the contract document itself always answer, so a rejected client can still read what the dispatcher speaks. A dispatcher written before contract versioning ignores the header, so this SDK also works against an older one. [docs/API.md](API.md) states what a minor version may change and what requires a major one; the SDK ignores unknown response fields accordingly.
+Every request announces `Debuglet-API-Version: 1.3`, the contract version in `client.APIVersion`. A dispatcher that cannot serve it answers HTTP 400 with an explicit incompatibility error, which reaches the caller as an ordinary `*HTTPError`; `Version` and the contract document itself always answer, so a rejected client can still read what the dispatcher speaks. A dispatcher written before contract versioning ignores the header, so this SDK also works against an older one. [docs/API.md](API.md) states what a minor version may change and what requires a major one; the SDK ignores unknown response fields accordingly.
 
 ## Credentials
 

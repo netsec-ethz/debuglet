@@ -20,14 +20,14 @@ Three identities are versioned independently, and `GET /version` reports all thr
 
 `version` remains the dispatcher's configured version string, unchanged for clients written before the contract was versioned.
 
-The current contract version is **1.2**. A major version changes when a client that satisfied the previous contract can no longer read the new one. A minor version changes when the contract only grows.
+The current contract version is **1.3**. A major version changes when a client that satisfied the previous contract can no longer read the new one. A minor version changes when the contract only grows.
 
 ## How a client selects a version
 
 A client sends the contract version it was written against:
 
 ```
-Debuglet-API-Version: 1.2
+Debuglet-API-Version: 1.3
 ```
 
 Every response carries the version the dispatcher implements in the same header, and the dispatcher exposes it through CORS so that a browser client can read it. The header is part of the machine-readable contract: every operation declares it as a request parameter, and every documented response declares it as a response header. A request that requires a major version the dispatcher does not serve, or a minor version above the one it implements, is answered with HTTP 400 and an explicit incompatibility error rather than a best-effort body. `GET /version` and `GET /openapi.yaml` always answer, whatever the header says, so a client that has been rejected can still discover what the dispatcher speaks.
@@ -151,6 +151,8 @@ Requests are authenticated with a server-issued session. Nothing else is a crede
 
 `PUT /user` registers an account and returns, exactly once, its **account key** and its **recovery code**. The dispatcher stores only their SHA-256 digests and cannot show either again. `POST /auth/login` exchanges the account key for a **session**; `POST /auth/recover` exchanges the recovery code for a replacement account key and recovery code, revoking every session the account had. A recovery code names its own account and can name no other, so recovering never grants access to somebody else's.
 
+A deployment may also enable GitHub browser login. `GET /auth/github` starts the authorization-code flow and `GET /auth/github/callback` completes it. The dispatcher binds the immutable GitHub numeric user ID to one Debuglet account, stores no GitHub access token, issues the same Debuglet session and CSRF cookies as account-key login, and redirects only to the console URL fixed in deployment configuration. OAuth state is held in a short-lived HttpOnly, Secure, SameSite=Lax cookie. Account-key login remains available to native clients.
+
 Every credential is printed as `<prefix>_<selector>.<verifier>`: 16 random bytes of public selector and 32 random bytes of secret verifier, both unpadded base64url. The prefix names the kind (`dba` account key, `dbr` recovery code, `dbs` session token), so a credential of one kind cannot be presented as another. The verifier is compared in constant time against the stored digest.
 
 ### Presenting a credential
@@ -171,7 +173,7 @@ A session expires 12 hours after it was issued and is not extended by use; a cli
 | Read liveness, readiness and health | `GET /healthz`, `GET /readyz`, `GET /health` | Anyone. They carry no run data and no operator note |
 | List executors, read TESLA parameters | `GET /executors`, `GET /executors/{id}/tesla` | Anyone. This is deliberately public attribution data, not run data |
 | Register an account | `PUT /user` | Anyone. It is the credential issuer and a caller has no credential yet |
-| Obtain, end or replace a credential | `POST /auth/login`, `/auth/logout`, `/auth/recover` | Whoever holds the corresponding credential |
+| Obtain, end or replace a credential | `POST /auth/login`, `/auth/logout`, `/auth/recover`; `GET /auth/github`, `/auth/github/callback` | Whoever holds the corresponding credential, or completes the configured GitHub flow |
 | Report the caller's account | `GET /me` | Any authenticated account, about itself |
 | Price a batch, submit a batch | `PUT /payment/intent`, `PUT /debuglet` | Any authenticated account. A submission may only spend a payment order of the account that created it |
 | Read the payment status | `GET /payment/{transaction_id}/status` | The account that created the order |

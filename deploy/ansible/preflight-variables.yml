@@ -123,6 +123,25 @@
         quiet: true
       when: dispatcher_require_client_cert | bool
 
+    - name: Inspect local GitHub OAuth credentials
+      ansible.builtin.stat:
+        path: "{{ dispatcher_github_oauth_env_file }}"
+      delegate_to: localhost
+      register: github_oauth_credentials
+      when: dispatcher_github_oauth_enabled | bool
+
+    - name: Require local GitHub OAuth credentials
+      ansible.builtin.assert:
+        that:
+          - github_oauth_credentials.stat.exists
+          - github_oauth_credentials.stat.isreg
+          - github_oauth_credentials.stat.mode in ['0600', '0400']
+        fail_msg: >-
+          Create {{ dispatcher_github_oauth_env_file }} from
+          github-oauth.env.example and chmod it 600. Never commit this file.
+        quiet: true
+      when: dispatcher_github_oauth_enabled | bool
+
     - name: Require an authority for client certificates
       ansible.builtin.assert:
         that:

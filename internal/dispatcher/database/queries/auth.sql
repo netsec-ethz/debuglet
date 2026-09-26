@@ -45,6 +45,24 @@ DELETE FROM sessions WHERE expires_at < sqlc.arg(before);
 
 /*
 
+OAUTH IDENTITIES
+
+*/
+
+-- name: GetOAuthIdentity :one
+SELECT user_id FROM oauth_identities
+WHERE provider = sqlc.arg(provider) AND subject = sqlc.arg(subject);
+
+-- name: CreateOAuthIdentity :exec
+INSERT INTO oauth_identities (provider, subject, user_id, login, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: UpdateOAuthIdentityLogin :exec
+UPDATE oauth_identities SET login = sqlc.arg(login), updated_at = sqlc.arg(updated_at)
+WHERE provider = sqlc.arg(provider) AND subject = sqlc.arg(subject);
+
+/*
+
 OWNERSHIP
 
 */

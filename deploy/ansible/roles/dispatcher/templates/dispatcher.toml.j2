@@ -50,3 +50,8 @@ path = "{{ state_dir }}/dispatcher/dispatcher.db"
 
 [cors]
 allowed_origins = {{ dispatcher_cors_allowed_origins | to_json }}
+
+[github_oauth]
+enabled = {{ dispatcher_github_oauth_enabled | bool | lower }}
+callback_url = "{{ dispatcher_github_oauth_callback_url }}"
+success_url = "{{ dispatcher_github_oauth_success_url }}"

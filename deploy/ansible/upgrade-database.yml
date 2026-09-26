@@ -1,15 +1,18 @@
 ---
 # Upgrade the dispatcher and executor databases in place with the packaged
-# migrations of the installed release. Run it after deploying a release whose
-# daemons refuse the existing database as outdated. The deployment playbooks
-# never upgrade a database, and nothing imports this playbook.
+# migrations of the candidate release in deploy/dist. Run it before the full
+# deployment: it stops each service, backs up the database, installs the
+# verified candidate payload without restarting it, upgrades with that candidate,
+# then starts the service. The deployment playbooks never upgrade a database,
+# and nothing imports this playbook.
 #
 # On each host it stops the service, copies the database and its -wal and -shm
-# companions into a new backup-TIMESTAMP directory next to it, runs the
-# daemon's -upgrade-database mode as the service user through runuser, so the
-# database keeps its owner, and starts the service again. When the upgrade
-# fails the play stops there: the service stays stopped, the backup stays in
-# place, and the database is left at the last migration that completed.
+# companions into a new backup-TIMESTAMP directory next to it, installs the
+# candidate without restarting it, and runs the candidate daemon's
+# -upgrade-database mode as the service user through runuser, so the database
+# keeps its owner, and starts the service again. When the upgrade fails the
+# play stops there: the service stays stopped, the backup stays in place, and
+# the database is left at the last migration that completed.
 # Executors are upgraded one host at a time, and a failure on one of them
 # leaves the remaining executors untouched.
 #
@@ -28,6 +31,7 @@
   become: true
   vars:
     upgrade_database: "{{ state_dir }}/dispatcher/dispatcher.db"
+    payload_restart_services: false
   tasks:
     - name: Inspect the dispatcher database
       ansible.builtin.stat:
@@ -80,6 +84,10 @@
         label: "{{ upgrade_database }}{{ item.item }}"
       when: item.stat.exists
 
+    - name: Install the candidate payload without restarting the dispatcher
+      ansible.builtin.include_role:
+        name: payload
+
     - name: Upgrade the dispatcher database
       ansible.builtin.command:
         argv:
@@ -110,6 +118,7 @@
   serial: 1
   vars:
     upgrade_database: "{{ executor_state_dir }}/executor.db"
+    payload_restart_services: false
   tasks:
     - name: Inspect the executor database
       ansible.builtin.stat:
@@ -161,6 +170,10 @@
       loop_control:
         label: "{{ upgrade_database }}{{ item.item }}"
       when: item.stat.exists
+
+    - name: Install the candidate payload without restarting the executor
+      ansible.builtin.include_role:
+        name: payload
 
     - name: Upgrade the executor database
       ansible.builtin.command:

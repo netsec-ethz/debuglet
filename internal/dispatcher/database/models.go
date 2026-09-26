@@ -73,6 +73,15 @@ type ExecutorEnrollmentToken struct {
 	ExpiresAt  models.UTCTime
 }
 
+type OauthIdentity struct {
+	Provider  string
+	Subject   string
+	UserID    int64
+	Login     string
+	CreatedAt models.UTCTime
+	UpdatedAt models.UTCTime
+}
+
 type Session struct {
 	ID           int64
 	Selector     string

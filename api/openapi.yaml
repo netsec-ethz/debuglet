@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.2"
+  version: "1.3"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/API.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -194,6 +194,144 @@ paths:
                 $ref: "#/components/schemas/HealthResponse"
         "413":
           description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/github:
+    get:
+      operationId: "startGitHubLogin"
+      summary: "Start browser login with GitHub."
+      description: "When GitHub OAuth is enabled, sets a short-lived HttpOnly state cookie and redirects to GitHub. The callback and final console URL are fixed by deployment configuration."
+      security: []
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: "Redirect to GitHub's authorization endpoint."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+        "404":
+          description: "GitHub login is not enabled."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds 33554432 bytes."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "A login state could not be generated."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/github/callback:
+    get:
+      operationId: "completeGitHubLogin"
+      summary: "Complete browser login with GitHub."
+      description: "Validates the state cookie, exchanges GitHub's one-time code, creates or finds the Debuglet account bound to the immutable GitHub user ID, issues Debuglet session and CSRF cookies, and redirects to the configured console URL."
+      security: []
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: string
+        - name: "code"
+          in: "query"
+          required: true
+          schema:
+            type: string
+        - name: "state"
+          in: "query"
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: "The session was issued; redirect to the configured console URL."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+        "400":
+          description: "The state or authorization code is missing or invalid."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "GitHub login is not enabled."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds 33554432 bytes."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The account or session could not be stored."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: "GitHub's token or user endpoint failed."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."

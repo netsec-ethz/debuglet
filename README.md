@@ -119,6 +119,12 @@ the CLI does not yet expose recovery. The [CLI guide](docs/CLI.md#credentials)
 covers credential locations and the [HTTP API guide](docs/API.md)
 covers recovery and authorization.
 
+Managed deployments may also expose **Sign in with GitHub** in the browser
+console. The dispatcher completes GitHub's authorization-code flow, maps the
+GitHub account to a Debuglet account, and issues the same 12-hour session
+cookie; GitHub tokens are not retained. Native CLI and SDK clients continue to
+use account keys.
+
 ## Write a measurement or application
 
 To build a Go measurement, install Go **1.25.11**, clone this repository and run:
