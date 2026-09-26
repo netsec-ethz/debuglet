@@ -7,8 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"time"
@@ -150,7 +150,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, op *debugletOperation) 
 	// Finish local registration before cancellation may remove its limiter
 	// entry. Every partial registration then closes through the same runtime.
 	defer op.ownRuntime(deb)
-	err := e.limiter.InsertDebuglet(spec.DebugletID, app.Bitrate(spec.Policy.FloorBW), app.Bitrate(spec.Policy.CeilBW), spec.Policy.Addresses)
+	err := e.limiter.InsertDebuglet(spec.DebugletID, bitrate.Bitrate(spec.Policy.FloorBW), bitrate.Bitrate(spec.Policy.CeilBW), spec.Policy.Addresses)
 	if err != nil {
 		return nil, err
 	}

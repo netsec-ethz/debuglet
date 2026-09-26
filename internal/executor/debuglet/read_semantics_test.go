@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
@@ -174,7 +175,7 @@ func TestReadSemanticsWASM(t *testing.T) {
 		t.Fatalf("tesla schedule: %v", err)
 	}
 
-	const highLimit = app.Gigabit
+	const highLimit = bitrate.Gigabit
 	addresses := []string{"127.0.0.1"}
 	policy := scheduler.Policy{
 		FloorBW:   0,

@@ -12,6 +12,8 @@ import (
 
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
+
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 type TransferDirection = int
@@ -30,7 +32,7 @@ type UsageTracker struct {
 	usageIn map[string]*rate.Limiter
 	// { destination: rateLimit }
 	usageOut map[string]*rate.Limiter
-	capacity map[string]Bitrate
+	capacity map[string]bitrate.Bitrate
 	logger   *zap.Logger
 
 	mu sync.Mutex
@@ -40,16 +42,16 @@ func NewUsageTracker(l *zap.Logger) *UsageTracker {
 	return &UsageTracker{
 		usageIn:  make(map[string]*rate.Limiter),
 		usageOut: make(map[string]*rate.Limiter),
-		capacity: make(map[string]Bitrate),
+		capacity: make(map[string]bitrate.Bitrate),
 		logger:   l,
 	}
 }
 
 type UsageLimits struct {
-	ExecutorRatelimit    Bitrate
-	ExecutorBurst        Bitrate
-	DestinationRatelimit Bitrate
-	DestinationBurst     Bitrate
+	ExecutorRatelimit    bitrate.Bitrate
+	ExecutorBurst        bitrate.Bitrate
+	DestinationRatelimit bitrate.Bitrate
+	DestinationBurst     bitrate.Bitrate
 }
 
 func (u *UsageTracker) Upsert(destination string, limits UsageLimits) {
@@ -98,7 +100,7 @@ func (u *UsageTracker) upsert(dir TransferDirection, destination string, limits 
 }
 
 // Wait uses a token bucket to sleep until either the context finishes or a packet of a given size has enough space
-func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destination string, size Bitrate) error {
+func (u *UsageTracker) Wait(ctx context.Context, dir TransferDirection, destination string, size bitrate.Bitrate) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

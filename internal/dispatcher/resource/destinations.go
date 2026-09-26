@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/avl"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"iter"
 
 	"github.com/google/uuid"
@@ -36,13 +37,13 @@ type activeKey struct {
 // exactly the values that were charged.
 type allocation struct {
 	executorID string
-	minimum    Bitrate
-	maximum    Bitrate
+	minimum    bitrate.Bitrate
+	maximum    bitrate.Bitrate
 }
 
 type storeValue struct {
-	minimum Bitrate
-	maximum Bitrate
+	minimum bitrate.Bitrate
+	maximum bitrate.Bitrate
 	// runs is the number of allocations aggregated in this value. An executor
 	// keeps its place on a destination while it holds at least one of them,
 	// even when none of them leaves residual bandwidth behind.
@@ -53,20 +54,20 @@ type DestinationsUsage struct {
 	// The residual (limit-minimum) bandwidths of assignments available for fairsharing
 	trees map[string]*avl.AVL[string]
 	// The explicit TOTAL destination capacities
-	capacities map[string]Bitrate
+	capacities map[string]bitrate.Bitrate
 	// The total capacity for a destination used up by all relevant job's minimums
-	usedCapacities map[string]Bitrate
+	usedCapacities map[string]bitrate.Bitrate
 	// The minimum capacities of jobs
 	store           map[storeKey]*storeValue
 	activeDebuglets map[activeKey]allocation
-	defaultCap      Bitrate
+	defaultCap      bitrate.Bitrate
 }
 
-func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
+func NewDestinations(defaultCap bitrate.Bitrate) *DestinationsUsage {
 	return &DestinationsUsage{
 		trees:           make(map[string]*avl.AVL[string]),
-		capacities:      make(map[string]Bitrate),
-		usedCapacities:  make(map[string]Bitrate),
+		capacities:      make(map[string]bitrate.Bitrate),
+		usedCapacities:  make(map[string]bitrate.Bitrate),
 		store:           make(map[storeKey]*storeValue),
 		activeDebuglets: make(map[activeKey]allocation),
 		defaultCap:      defaultCap,
@@ -76,7 +77,7 @@ func NewDestinations(defaultCap Bitrate) *DestinationsUsage {
 // CheckCapacity reports whether a floor still fits on a destination. The
 // allocation path decides capacity itself, so this remains only as a capacity
 // query for callers and tests of other packages.
-func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) error {
+func (d *DestinationsUsage) CheckCapacity(destination string, minimum bitrate.Bitrate) error {
 	cap := d.Cap(destination)
 	used := d.usedCapacities[destination]
 	if used+minimum > cap {
@@ -85,7 +86,7 @@ func (d *DestinationsUsage) CheckCapacity(destination string, minimum Bitrate) e
 	return nil
 }
 
-func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], Bitrate) {
+func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], bitrate.Bitrate) {
 	tree, exists := d.trees[destination]
 	if !exists {
 		tree = &avl.AVL[string]{}
@@ -94,7 +95,7 @@ func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], Bi
 	return tree, d.Cap(destination)
 }
 
-func (d *DestinationsUsage) Cap(destination string) Bitrate {
+func (d *DestinationsUsage) Cap(destination string) bitrate.Bitrate {
 	cap, exists := d.capacities[destination]
 	if !exists {
 		cap = d.defaultCap
@@ -104,7 +105,7 @@ func (d *DestinationsUsage) Cap(destination string) Bitrate {
 
 // Insert records the allocation of one debuglet on a single destination. It is
 // the one-destination form of Allocate and shares its behaviour.
-func (d *DestinationsUsage) Insert(debugletID uuid.UUID, destination, executorID string, minimum, maximum Bitrate) error {
+func (d *DestinationsUsage) Insert(debugletID uuid.UUID, destination, executorID string, minimum, maximum bitrate.Bitrate) error {
 	return d.Allocate(debugletID, executorID, []string{destination}, minimum, maximum)
 }
 
@@ -115,7 +116,7 @@ func (d *DestinationsUsage) Insert(debugletID uuid.UUID, destination, executorID
 // recorded decision is rejected before anything is charged. If any destination
 // cannot be charged, the destinations charged by this call are released again:
 // the allocation either holds for every destination or for none.
-func (d *DestinationsUsage) Allocate(debugletID uuid.UUID, executorID string, destinations []string, minimum, maximum Bitrate) error {
+func (d *DestinationsUsage) Allocate(debugletID uuid.UUID, executorID string, destinations []string, minimum, maximum bitrate.Bitrate) error {
 	if minimum > maximum {
 		return fmt.Errorf("allocation failed with min=%d>max=%d: %w", minimum, maximum, ErrMinGreater)
 	}
@@ -234,7 +235,7 @@ func (d *DestinationsUsage) Len() int {
 // An executor is a member of the tree of a destination exactly while it holds
 // totals there, and it is a member once, so every node has its totals and each
 // executor is yielded a single time.
-func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitrate] {
+func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, bitrate.Bitrate] {
 	tree, cap := d.getTreeCap(destination)
 	usage := d.usedCapacities[destination]
 
@@ -247,11 +248,11 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitr
 		shareable = 0
 	}
 	fairshare := tree.Fairshare(int64(shareable))
-	return func(yield func(string, Bitrate) bool) {
+	return func(yield func(string, bitrate.Bitrate) bool) {
 		for n := range tree.Range(avl.Unbounded, avl.Unbounded) {
 			jk := storeKey{ID: n.ID, destination: destination}
 			s := d.store[jk]
-			actualLimit := min(s.maximum, Bitrate(fairshare)+s.minimum)
+			actualLimit := min(s.maximum, bitrate.Bitrate(fairshare)+s.minimum)
 			if !yield(n.ID, actualLimit) {
 				return
 			}
@@ -262,7 +263,7 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, Bitr
 // SetLimit records the total capacity of a destination. A limit below the
 // floors already charged there is refused and nothing is recorded: those
 // floors were admitted and stay, so the limit can be lowered once they end.
-func (d *DestinationsUsage) SetLimit(destination string, limit Bitrate) error {
+func (d *DestinationsUsage) SetLimit(destination string, limit bitrate.Bitrate) error {
 	if used := d.usedCapacities[destination]; limit < used {
 		return fmt.Errorf("%s destination limit below its charged floors (want %s, charged %s): %w", destination, limit, used, ErrCapacityFull)
 	}

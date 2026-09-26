@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 // The ranges a policy's numbers are admitted in, in the units the contract
@@ -24,7 +24,7 @@ const (
 	// A bandwidth is summed with the other runs of its executor and of its
 	// destinations before a run is admitted, so this single-run bound is what
 	// keeps those aggregates exact.
-	MaxPolicyBandwidthBPS = int64(resource.MaxBitrate)
+	MaxPolicyBandwidthBPS = int64(bitrate.Max)
 )
 
 // PolicyBound identifies the range a policy's numbers leave. Each caller
@@ -56,9 +56,9 @@ func CheckPolicyNumbers(floorBPS, ceilBPS, timeoutMS int64) PolicyBound {
 	switch {
 	case timeoutMS < 1 || timeoutMS > MaxPolicyTimeoutMS:
 		return PolicyBoundTimeout
-	case floorBPS < 0 || floorBPS > MaxPolicyBandwidthBPS:
+	case !bitrate.InPolicyRange(floorBPS):
 		return PolicyBoundFloor
-	case ceilBPS < 0 || ceilBPS > MaxPolicyBandwidthBPS:
+	case !bitrate.InPolicyRange(ceilBPS):
 		return PolicyBoundCeil
 	case ceilBPS < floorBPS:
 		return PolicyBoundCeilBelowFloor

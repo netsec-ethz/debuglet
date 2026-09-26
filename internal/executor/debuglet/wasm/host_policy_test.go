@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
@@ -66,11 +67,11 @@ func policyEnv(t *testing.T, spec netpolicy.Spec, run netpolicy.Run, options ...
 	}
 	id := uuid.New()
 	limiter := app.NewLimiter(zap.NewNop())
-	limiter.SetExecutorCapacity(app.Gigabit)
+	limiter.SetExecutorCapacity(bitrate.Gigabit)
 	for _, addr := range run.Addresses {
-		limiter.SetAddrCapacity(addr, app.Gigabit)
+		limiter.SetAddrCapacity(addr, bitrate.Gigabit)
 	}
-	if err := limiter.InsertDebuglet(id, 0, app.Gigabit, run.Addresses); err != nil {
+	if err := limiter.InsertDebuglet(id, 0, bitrate.Gigabit, run.Addresses); err != nil {
 		t.Fatalf("InsertDebuglet: %v", err)
 	}
 	execLimit, _, err := limiter.GetExecLimit(id)

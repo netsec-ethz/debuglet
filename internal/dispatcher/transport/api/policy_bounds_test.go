@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 )
 
 // The numeric ranges of a policy are enforced by the server, on both routes a
@@ -193,7 +193,7 @@ func TestAPIToSpecKeepsUnitsAtTheBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatalf("boundary request rejected: %v", err)
 			}
-			if spec.Policy.FloorBW != resource.Bitrate(tc.floor) || spec.Policy.CeilBW != resource.Bitrate(tc.ceil) {
+			if spec.Policy.FloorBW != bitrate.Bitrate(tc.floor) || spec.Policy.CeilBW != bitrate.Bitrate(tc.ceil) {
 				t.Fatalf("bandwidth = (%d, %d), want (%d, %d) bits per second",
 					int64(spec.Policy.FloorBW), int64(spec.Policy.CeilBW), tc.floor, tc.ceil)
 			}

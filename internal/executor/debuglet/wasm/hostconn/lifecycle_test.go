@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 )
 
 type countedConn struct {
@@ -31,7 +31,7 @@ type constructorCounter struct {
 func (c *constructorCounter) Attach(conn net.Conn, _ uuid.UUID, _ string) (net.Conn, error) {
 	return c.attach(conn)
 }
-func (c *constructorCounter) SetLimit(string, uuid.UUID, app.Bitrate) error { return c.limitErr }
+func (c *constructorCounter) SetLimit(string, uuid.UUID, bitrate.Bitrate) error { return c.limitErr }
 
 func TestConstructorConsumesConnectionOnEveryFailure(t *testing.T) {
 	sentinel := errors.New("constructor failure")

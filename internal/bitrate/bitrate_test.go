@@ -1,4 +1,4 @@
-package resource
+package bitrate
 
 import (
 	"math"

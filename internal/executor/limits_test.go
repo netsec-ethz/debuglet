@@ -7,32 +7,32 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
 // recordingPacketCount keeps the last limit applied to each active connection.
 type recordingPacketCount struct {
 	mu          sync.Mutex
-	executor    map[uuid.UUID]app.Bitrate
-	destination map[string]app.Bitrate
+	executor    map[uuid.UUID]bitrate.Bitrate
+	destination map[string]bitrate.Bitrate
 }
 
 func newRecordingPacketCount() *recordingPacketCount {
-	return &recordingPacketCount{executor: make(map[uuid.UUID]app.Bitrate), destination: make(map[string]app.Bitrate)}
+	return &recordingPacketCount{executor: make(map[uuid.UUID]bitrate.Bitrate), destination: make(map[string]bitrate.Bitrate)}
 }
 
 func (c *recordingPacketCount) Attach(conn net.Conn, _ uuid.UUID, _ string) (net.Conn, error) {
 	return conn, nil
 }
-func (c *recordingPacketCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error {
+func (c *recordingPacketCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.destination[addr+"|"+id.String()] = limit
 	return nil
 }
-func (c *recordingPacketCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
+func (c *recordingPacketCount) SetExecLimit(id uuid.UUID, limit bitrate.Bitrate) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.executor[id] = limit
@@ -48,7 +48,7 @@ func (c *recordingPacketCount) DeleteExecLimit(id uuid.UUID) error {
 func (c *recordingPacketCount) Detach(string, uuid.UUID, netutil.IPv6) error { return nil }
 func (c *recordingPacketCount) Close() error                                 { return nil }
 func (c *recordingPacketCount) Type() string                                 { return "recording" }
-func (c *recordingPacketCount) appliedExecutor(id uuid.UUID) app.Bitrate {
+func (c *recordingPacketCount) appliedExecutor(id uuid.UUID) bitrate.Bitrate {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.executor[id]
@@ -58,7 +58,7 @@ func (c *recordingPacketCount) executorLimits() int {
 	defer c.mu.Unlock()
 	return len(c.executor)
 }
-func (c *recordingPacketCount) appliedDestination(addr string, id uuid.UUID) app.Bitrate {
+func (c *recordingPacketCount) appliedDestination(addr string, id uuid.UUID) bitrate.Bitrate {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.destination[addr+"|"+id.String()]

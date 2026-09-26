@@ -4,7 +4,7 @@
 package schedule
 
 import (
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"testing"
 	"time"
 )
@@ -19,7 +19,7 @@ func makeReq(exec string, dests []string, from, to time.Time, use int64) Request
 		Destination: dests,
 		From:        from,
 		To:          to,
-		Use:         resource.Bitrate(use),
+		Use:         bitrate.Bitrate(use),
 	}
 }
 

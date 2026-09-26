@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 
 	"github.com/labstack/echo/v4"
@@ -36,7 +37,7 @@ func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 	// A refused limit changes nothing. Otherwise the limit is recorded, and 204
 	// says every executor holding an allocation on the destination also
 	// received the recomputed share.
-	if err := h.dispatcher.SetDestinationLimit(req.Destination, resource.Bitrate(req.Limit)); err != nil {
+	if err := h.dispatcher.SetDestinationLimit(req.Destination, bitrate.Bitrate(req.Limit)); err != nil {
 		if errors.Is(err, resource.ErrCapacityFull) {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted,
 				"limit is below the floors charged to active allocations on the destination", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	dispatcherrpc "github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
@@ -272,7 +272,7 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = d.OnResources(resourceTicket.Context(), resourceTicket, &pb.ResourcesRequest{ExecutorId: e.cfg.Identity.ExecutorID, BandwidthCapacity: int64(resource.Megabit)})
+	_, err = d.OnResources(resourceTicket.Context(), resourceTicket, &pb.ResourcesRequest{ExecutorId: e.cfg.Identity.ExecutorID, BandwidthCapacity: int64(bitrate.Megabit)})
 	resourceTicket.Finish()
 	if err != nil {
 		t.Fatal(err)
@@ -293,8 +293,8 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	}
 	// The run fits on the first destination and not on the second, so the
 	// dispatcher rejects the whole allocation after charging the first one.
-	d.SetDestinationLimit(destination, resource.Bitrate(floor))
-	d.SetDestinationLimit(blocked, resource.Bitrate(floor-1))
+	d.SetDestinationLimit(destination, bitrate.Bitrate(floor))
+	d.SetDestinationLimit(blocked, bitrate.Bitrate(floor-1))
 	if _, err := client.Upload(ctx, &pb.UploadRequest{ControlBinding: &pb.ControlBinding{DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID}, Id: id.String(), TransactionId: transaction, Wasm: []byte("\x00asm\x01\x00\x00\x00"), Policy: &pb.DebugletPolicy{FloorBw: floor, CeilBw: 2 * floor, TimeoutMs: 30000, Addresses: addresses}}); err != nil {
 		t.Fatal(err)
 	}

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	erpc "github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/testpeer"
@@ -433,7 +433,7 @@ func TestRegistrationAvailabilityAcrossRealTransport(t *testing.T) {
 	siAwait(t, p.committed, "real registry publication")
 	ctx, cancel := context.WithTimeout(f.ctx, siBound)
 	defer cancel()
-	if _, err := f.rpc.Resources(ctx, &pb.ResourcesRequest{ExecutorId: "held", BandwidthCapacity: int64(resource.Megabit)}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := f.rpc.Resources(ctx, &pb.ResourcesRequest{ExecutorId: "held", BandwidthCapacity: int64(bitrate.Megabit)}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("unbound Resources before callback completion: %v", err)
 	}
 	if _, err := f.rpc.Heartbeat(ctx, &pb.HeartbeatRequest{ExecutorId: "held", TeslaKeyEpoch: 1, TeslaKey: []byte("local-key")}); status.Code(err) != codes.FailedPrecondition {
@@ -470,7 +470,7 @@ func TestRegistrationAvailabilityAcrossRealTransport(t *testing.T) {
 	siAvailable(t, p, owner)
 	f.checkPeer("held", "held")
 	client := f.boundClient("held")
-	if _, err := client.Resources(ctx, &pb.ResourcesRequest{ExecutorId: "held", BandwidthCapacity: int64(resource.Megabit)}); err != nil {
+	if _, err := client.Resources(ctx, &pb.ResourcesRequest{ExecutorId: "held", BandwidthCapacity: int64(bitrate.Megabit)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Heartbeat(ctx, &pb.HeartbeatRequest{ExecutorId: "held", TeslaKeyEpoch: 1, TeslaKey: []byte("local-key")}); err != nil {
@@ -480,7 +480,7 @@ func TestRegistrationAvailabilityAcrossRealTransport(t *testing.T) {
 		t.Fatalf("admission after callback completion: %v", err)
 	}
 	snapshot, _ := f.d.GetExecutor("held")
-	if !snapshot.Ready || snapshot.capacity != resource.Megabit {
+	if !snapshot.Ready || snapshot.capacity != bitrate.Megabit {
 		t.Fatalf("bound updates after availability were lost: %+v", snapshot)
 	}
 }

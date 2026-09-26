@@ -36,6 +36,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	hostdebuglet "github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
@@ -175,7 +176,7 @@ func startGuest(t *testing.T, wasm []byte, opts hostOptions) *guestRun {
 		t.Fatalf("tesla schedule: %v", err)
 	}
 
-	const capacity = app.Gigabit
+	const capacity = bitrate.Gigabit
 	budget := opts.budget
 	if budget == 0 {
 		budget = defaultBudget

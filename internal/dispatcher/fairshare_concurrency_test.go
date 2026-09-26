@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -51,7 +51,7 @@ func (p *fairsharePeer) recorded() []*pb.BandwidthRequest {
 
 func fairshareStartPeer(t *testing.T, ctx context.Context, d *Dispatcher, peer *fairsharePeer) {
 	t.Helper()
-	stop, err := startTerminalPeer(ctx, d, resource.Gigabit, peer)
+	stop, err := startTerminalPeer(ctx, d, bitrate.Gigabit, peer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestFairshareConcurrentAllocationRemovalAndLimits(t *testing.T) {
 	launch(func() error {
 		for i := range 4 * iterations {
 			for _, dest := range dests {
-				d.SetDestinationLimit(dest, resource.Bitrate(4096+i%2))
+				d.SetDestinationLimit(dest, bitrate.Bitrate(4096+i%2))
 			}
 		}
 		return nil

@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/time/rate"
+
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 func TestLimiterAccountingAfterPublication(t *testing.T) {
@@ -20,7 +22,7 @@ func TestLimiterAccountingAfterPublication(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	for _, capacity := range []Bitrate{800, 400, 600} {
+	for _, capacity := range []bitrate.Bitrate{800, 400, 600} {
 		l.SetExecutorCapacity(capacity)
 		l.SetAddrCapacity(limiterAddrA, capacity/2)
 		// Registration and packet-counter publication read both dimensions
@@ -57,7 +59,7 @@ func TestUsageTrackerUpsertPreservesBalances(t *testing.T) {
 	limits := UsageLimits{ExecutorBurst: 100, DestinationBurst: 100}
 	u.Upsert(limiterAddrA, limits)
 	for _, direction := range []TransferDirection{TransferIn, TransferOut} {
-		for _, size := range []Bitrate{90, 0, -8} {
+		for _, size := range []bitrate.Bitrate{90, 0, -8} {
 			if err := u.Wait(context.Background(), direction, limiterAddrA, size); err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +118,7 @@ func TestLimiterAccountingZeroBudget(t *testing.T) {
 func TestUsageTrackerCancellationRefundsPendingReservations(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
-		rate, burst, size Bitrate
+		rate, burst, size bitrate.Bitrate
 		drain             bool
 	}{
 		{"multiple_chunks", 1, 100, 201, true},

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 func waitForFIFOQueue(t *testing.T, lock *FIFOLock, size int) {
@@ -66,7 +66,7 @@ func TestFIFOLockCancellationPreservesSurvivorOrder(t *testing.T) {
 
 func TestQueuedWriteExpiresWithoutSocketIO(t *testing.T) {
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(1024), app.FromBytes(1024))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1024), bitrate.FromBytes(1024))
 	fc.writeMu.Lock()
 	if err := fc.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 		t.Fatalf("SetWriteDeadline: %v", err)

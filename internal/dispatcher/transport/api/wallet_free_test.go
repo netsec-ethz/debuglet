@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
@@ -47,8 +47,8 @@ const (
 	wfFloorBW      = int64(1000)
 	wfTimeoutMS    = int64(10_000)
 	wfOrderPrice   = wfPricePerBwS * wfFloorBW * (wfTimeoutMS / 1000)
-	wfHighCapacity = resource.Megabit
-	wfLowCapacity  = resource.Bitrate(wfFloorBW - 1)
+	wfHighCapacity = bitrate.Megabit
+	wfLowCapacity  = bitrate.Bitrate(wfFloorBW - 1)
 
 	wfChainTxID          = "wf-chain-paid"
 	wfChainAuthKey       = "wf-chain-auth-key"
@@ -206,7 +206,7 @@ func wfDebuglets() []DebugletRequest {
 	}}
 }
 
-func wfSetCapacity(t *testing.T, d *dispatcher.Dispatcher, owner *rpc.SessionOwner, capacity resource.Bitrate) {
+func wfSetCapacity(t *testing.T, d *dispatcher.Dispatcher, owner *rpc.SessionOwner, capacity bitrate.Bitrate) {
 	t.Helper()
 	mutation := apiTestMutation(t, context.Background(), owner)
 	defer mutation.Finish()
