@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/google/uuid"
 	apispec "github.com/netsec-ethz/debuglet/api"
 	"github.com/netsec-ethz/debuglet/internal/artifact"
 	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"io"
 	"os"
@@ -331,8 +331,8 @@ func validReceipt(r RunReceipt, executor string) bool {
 	}
 }
 func canonicalUUID(s string) bool {
-	u, err := uuid.Parse(s)
-	return err == nil && u != uuid.Nil && u.String() == s
+	_, ok := ids.ParseCanonical(s)
+	return ok
 }
 func lowerHex(s string, n int) bool {
 	if len(s) != n {

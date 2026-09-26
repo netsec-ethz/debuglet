@@ -745,10 +745,11 @@ paths:
         - name: "id"
           in: "path"
           required: true
-          description: "Canonical 36-character debuglet UUID."
+          description: "Canonical 36-character debuglet UUID, in lowercase as submission returns it."
           schema:
             type: string
             format: uuid
+            pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         - name: "Debuglet-API-Version"
           in: "header"
           required: false
@@ -830,10 +831,11 @@ paths:
         - name: "id"
           in: "path"
           required: true
-          description: "Canonical 36-character debuglet UUID."
+          description: "Canonical 36-character debuglet UUID, in lowercase as submission returns it."
           schema:
             type: string
             format: uuid
+            pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         - name: "after"
           in: "query"
           required: false
@@ -1961,6 +1963,7 @@ components:
       items:
         type: string
         format: uuid
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     DebugletDeleteRequest:
       type: object
       additionalProperties: false
@@ -1971,6 +1974,7 @@ components:
         debuglet_id:
           type: string
           format: uuid
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         executor_id:
           type: string
     DebugletStateResponse:

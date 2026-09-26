@@ -30,8 +30,10 @@ integration branch is supported.
 - `GET /debuglet/{id}/state` and `/logs` accept only the lowercase canonical
   run ID that submission returns, as the control protocol does, and reject a
   nil, uppercase, braced, `urn:uuid:` or unhyphenated `{id}` with 400
-  `invalid_request`. `dbl status`, `logs` and `cancel` and the `pkg/client`
-  methods refuse an uppercase ID before sending it; pass the ID as printed.
+  `invalid_request`. `DELETE /debuglet` holds the `debuglet_id` in its body to
+  the same rule, and `api/openapi.yaml` states it as a pattern. `dbl status`,
+  `logs` and `cancel` and the `pkg/client` methods refuse an uppercase ID
+  before sending it; pass the ID as printed.
 - `make deploy-update-config` and `make deploy-update-addr` render the version
   of the release installed on each host, read from its deployment record,
   instead of `git describe` of the operator's checkout and `unknown`

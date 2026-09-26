@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -583,6 +584,9 @@ func validateString(schema map[string]any, value any, where string) []string {
 			return []string{fmt.Sprintf("%s: %q is not a canonical UUID as documented", where, text)}
 		}
 	}
+	if pattern, ok := schema["pattern"].(string); ok && !regexp.MustCompile(pattern).MatchString(text) {
+		return []string{fmt.Sprintf("%s: %q does not match the documented pattern %s", where, text, pattern)}
+	}
 	return nil
 }
 
@@ -698,7 +702,7 @@ var schemaCommonAssertions = []string{"enum", "nullable", "type"}
 var schemaTypeAssertions = map[string][]string{
 	"object":  {"additionalProperties", "properties", "required"},
 	"array":   {"items"},
-	"string":  {"format"},
+	"string":  {"format", "pattern"},
 	"integer": {"format", "maximum", "minimum"},
 	"number":  {"maximum", "minimum"},
 	"boolean": nil,
@@ -973,6 +977,14 @@ func checkScalarSchema(mapping map[string]any, name, where string, problems *[]s
 		text, ok := format.(string)
 		if !ok || !slices.Contains(schemaFormats[name], text) {
 			*problems = append(*problems, fmt.Sprintf("%s: format %v is not implemented for type %q", where, format, name))
+		}
+	}
+	if pattern, present := mapping["pattern"]; present {
+		text, ok := pattern.(string)
+		if !ok {
+			*problems = append(*problems, fmt.Sprintf("%s: pattern is %T, and only a string is read", where, pattern))
+		} else if _, err := regexp.Compile(text); err != nil {
+			*problems = append(*problems, fmt.Sprintf("%s: pattern %q does not compile: %v", where, text, err))
 		}
 	}
 	for _, bound := range []string{"maximum", "minimum"} {

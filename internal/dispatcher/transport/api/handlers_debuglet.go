@@ -287,10 +287,21 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 
 // DELETE /debuglet
 func (h *Handler) DeleteDebuglet(c echo.Context) error {
-	var req DebugletDeleteRequest
-	if err := c.Bind(&req); err != nil {
+	// The ID is read as text so that it is held to the same spelling as the
+	// other run routes: uuid.UUID's JSON decoding would accept the nil,
+	// uppercase, braced and urn:uuid: spellings too.
+	var body struct {
+		DebugletID string `json:"debuglet_id"`
+		ExecutorID string `json:"executor_id"`
+	}
+	if err := c.Bind(&body); err != nil {
 		return bindError(err)
 	}
+	id, err := parseDebugletID(body.DebugletID)
+	if err != nil {
+		return err
+	}
+	req := DebugletDeleteRequest{DebugletID: id, ExecutorID: body.ExecutorID}
 
 	// Ownership is decided before the cancellation is attempted, so a run the
 	// caller may not see is neither cancelled nor reported as existing. The

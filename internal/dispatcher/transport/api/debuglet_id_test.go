@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -48,6 +49,30 @@ func TestDebugletRoutesAcceptOnlyCanonicalIDs(t *testing.T) {
 			if status, envelope := get(value); status != http.StatusNotFound || envelope.Code != CodeNotFound {
 				t.Errorf("%s %q: %d %q, want 404 %q", route, value, status, envelope.Code, CodeNotFound)
 			}
+		}
+	}
+
+	// DELETE /debuglet carries the ID in its body and holds it to the same
+	// rule.
+	for _, value := range refused {
+		payload, err := json.Marshal(map[string]string{"debuglet_id": value, "executor_id": "executor"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequest(http.MethodDelete, f.server.URL+"/debuglet", bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := f.server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope ErrorResponse
+		_ = json.NewDecoder(response.Body).Decode(&envelope)
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest || envelope.Code != CodeInvalidRequest {
+			t.Errorf("DELETE %q: %d %q, want 400 %q", value, response.StatusCode, envelope.Code, CodeInvalidRequest)
 		}
 	}
 }
