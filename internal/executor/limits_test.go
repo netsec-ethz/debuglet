@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"net"
 	"sync"
 	"testing"
@@ -37,8 +38,13 @@ func (c *recordingPacketCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) err
 	c.executor[id] = limit
 	return nil
 }
-func (c *recordingPacketCount) DeleteLimit(netutil.IPv6, uuid.UUID) error    { return nil }
-func (c *recordingPacketCount) DeleteExecLimit(uuid.UUID) error              { return nil }
+func (c *recordingPacketCount) DeleteLimit(netutil.IPv6, uuid.UUID) error { return nil }
+func (c *recordingPacketCount) DeleteExecLimit(id uuid.UUID) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.executor, id)
+	return nil
+}
 func (c *recordingPacketCount) Detach(string, uuid.UUID, netutil.IPv6) error { return nil }
 func (c *recordingPacketCount) Close() error                                 { return nil }
 func (c *recordingPacketCount) Type() string                                 { return "recording" }
@@ -46,6 +52,11 @@ func (c *recordingPacketCount) appliedExecutor(id uuid.UUID) app.Bitrate {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.executor[id]
+}
+func (c *recordingPacketCount) executorLimits() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.executor)
 }
 func (c *recordingPacketCount) appliedDestination(addr string, id uuid.UUID) app.Bitrate {
 	c.mu.Lock()
@@ -96,5 +107,30 @@ func TestChangedCapacityReachesActiveRuns(t *testing.T) {
 	}
 	if got := counter.appliedDestination(addr, id); got != 200 {
 		t.Fatalf("executor capacity change moved the destination limit to %d", got)
+	}
+}
+
+// A run's executor-wide limit lives exactly as long as the run. The eBPF map
+// holding it has a fixed size, so a limit left behind by every departed run
+// would eventually refuse every new one.
+func TestDepartedRunsLeaveNoExecutorLimit(t *testing.T) {
+	counter := newRecordingPacketCount()
+	e := newFixtureExecutor(t, fixtureConfig(), counter, newFixtureMemoryStorage(t))
+	for range 3 {
+		spec := operationSpec()
+		op := newDebugletOperation(context.Background())
+		installOperationRuntime(e, spec, &operationRuntime{})
+		if _, err := e.registerDebuglet(spec, op); err != nil {
+			t.Fatal(err)
+		}
+		if got := counter.executorLimits(); got != 1 {
+			t.Fatalf("a registered run holds %d executor limits, want 1", got)
+		}
+		op.finish(nil, nil)
+		e.unregisterDebuglet(spec.DebugletID, op)
+		op.cancel(nil)
+		if got := counter.executorLimits(); got != 0 {
+			t.Fatalf("%d executor limits remain after the run departed", got)
+		}
 	}
 }

@@ -206,7 +206,10 @@ func (bc *BpfCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
 
 func (bc *BpfCount) DeleteExecLimit(id uuid.UUID) error {
 	key := countExecKey{Uuid: [16]byte(id)}
-	return bc.objs.ExecRatesMap.Delete(&key)
+	if err := bc.objs.ExecRatesMap.Delete(&key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (bc *BpfCount) Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error {

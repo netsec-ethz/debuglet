@@ -15,6 +15,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
 )
 
@@ -335,6 +336,21 @@ func TestBPFCounterLinuxLoad(t *testing.T) {
 	})
 	if len(count.cleanup.resources) != 9 {
 		t.Fatalf("owned kernel handles=%d want=9", len(count.cleanup.resources))
+	}
+	// A run's executor limit is removed from the kernel map, and removing one
+	// that is already gone succeeds: unregistration removes it unconditionally.
+	id := uuid.New()
+	if err := count.SetExecLimit(id, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := count.DeleteExecLimit(id); err != nil {
+			t.Fatalf("DeleteExecLimit: %v", err)
+		}
+	}
+	var limit uint64
+	if err := count.objs.ExecRatesMap.Lookup(&countExecKey{Uuid: [16]byte(id)}, &limit); !errors.Is(err, ebpf.ErrKeyNotExist) {
+		t.Fatalf("executor limit lookup after delete: %v, want ErrKeyNotExist", err)
 	}
 	// Both programs/maps and pinned cilium/ebpf's tcxLink (via RawLink)
 	// expose FD. Observe the actual transferred descriptors before and after

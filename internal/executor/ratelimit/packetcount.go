@@ -30,7 +30,8 @@ type PacketCount interface {
 	SetExecLimit(id uuid.UUID, limit app.Bitrate) error
 	// DeleteLimit removes the bitrate limit for a specific IP address and debuglet ID.
 	DeleteLimit(addr netutil.IPv6, id uuid.UUID) error
-	// DeleteLimit removes the bitrate limit for all traffic associated with the given debuglet ID.
+	// DeleteExecLimit removes the bitrate limit for all traffic associated with the given debuglet ID.
+	// Removing a limit that is not set succeeds.
 	DeleteExecLimit(id uuid.UUID) error
 	// Detach removes the domain→IP association for a connection that was previously attached.
 	Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error

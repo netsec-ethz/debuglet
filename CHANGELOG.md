@@ -38,6 +38,10 @@ integration branch is supported.
   409 `capacity_exhausted`.
 
 ### Fixed
+- The executor removes a run's executor-wide bandwidth limit from its packet
+  counter when the run ends. The eBPF counter's map holds 10,000 entries, so
+  an executor process previously refused every run after about 10,000 runs.
+  No configuration, protocol or schema change.
 - The dispatcher and executor daemons enforce the schema's foreign keys and
   cascades, and wait up to one second for a database lock held by another
   process instead of failing at once. `PUT /payment/intent` now creates the
