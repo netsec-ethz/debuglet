@@ -5,8 +5,8 @@
 `compatibility`, `local` and `kernel`. The `required` check succeeds only if all
 of them succeed. A pending, skipped or canceled lane is not a complete gate.
 
-The workflow runs on pull requests to `main` and `dev`, pushes to `main` and
-`dev`, and manual dispatches. Each job uses a fresh GitHub-hosted
+The workflow runs on pull requests and pushes to `main`, plus manual
+dispatches. Each job uses a fresh GitHub-hosted
 `ubuntu-24.04` full virtual machine and checks out the event's exact commit
 (the merge commit for a pull request). Do not replace this runner with
 `ubuntu-slim`: the kernel lane needs a full VM with its own kernel boundary.

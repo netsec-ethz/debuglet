@@ -15,12 +15,12 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
         echo 'CI requires the official repository and a GitHub-hosted Linux X64 VM.' >&2; exit 1;
     }
     case "${GITHUB_EVENT_NAME:-}:${GITHUB_REF:-}" in
-        push:refs/heads/main|push:refs/heads/dev|\
+        push:refs/heads/main|\
         workflow_dispatch:refs/heads/*) ;;
         pull_request:refs/pull/*/merge)
             [[ ${GITHUB_REF:-} =~ ^refs/pull/[0-9]+/merge$ &&
-               ( ${GITHUB_BASE_REF:-} == main || ${GITHUB_BASE_REF:-} == dev ) ]] || {
-                echo 'pull request CI requires a merge ref targeting main or dev' >&2; exit 1;
+               ${GITHUB_BASE_REF:-} == main ]] || {
+                echo 'pull request CI requires a merge ref targeting main' >&2; exit 1;
             }
             ;;
         *) echo 'unsupported CI event or ref' >&2; exit 1 ;;

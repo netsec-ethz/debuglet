@@ -87,14 +87,15 @@ Load/attach checks do not establish packet-policy enforcement, performance, or p
 
 ## Branches and CI
 
-Open pull requests against `dev` in [netsec-ethz/debuglet](https://github.com/netsec-ethz/debuglet).
+Open pull requests against `main` in [netsec-ethz/debuglet](https://github.com/netsec-ethz/debuglet).
 Use a focused feature or fix branch and request review from a project maintainer.
-Feature work is integrated through `dev`; release pull requests promote reviewed
-changes from `dev` to `main`.
+Merge reviewed changes directly into the protected `main` branch. Deploy the
+development environment from a selected validated `main` revision, and deploy
+production only from an explicit stable release tag.
 
 The GitHub workflow runs all eleven validation lanes on fresh GitHub-hosted
-`ubuntu-24.04` full VMs, including kernel checks. It handles pull requests to
-`main` and `dev`, pushes to `main` and `dev`, and manual branch
+`ubuntu-24.04` full VMs, including kernel checks. It handles pull requests and
+pushes to `main`, and manual branch
 dispatches, with read-only permissions and no repository secrets. It needs no
 self-hosted runner registration or branch-protection prerequisite. Maintainers
 should require the aggregate `CI / required` check and code review before merging;
