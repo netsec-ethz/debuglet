@@ -14,6 +14,14 @@
   # against an unroutable host — with max_fail_percentage: 100 the following
   # host was still never attempted; with ignore_unreachable it runs, and the
   # dead host is reported as ignored.
+  #
+  # ignore_unreachable alone is not enough: the unreachable host stays in the
+  # play, its inspections register no result, and a controller-side check that
+  # reads one would fail it, which ends the play again. So the roles end such a
+  # host themselves right after inspecting it (roles/executor/tasks/inspect.yml,
+  # and the package inspection in roles/payload). A new check that reads a
+  # registered result belongs after that guard. deploy/test/unreachable-host.sh
+  # exercises it.
   ignore_unreachable: true
   become: true
   roles:

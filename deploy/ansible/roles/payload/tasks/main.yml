@@ -92,6 +92,24 @@
     - "{{ debuglet_release.archive }}"
     - install.sh
 
+# A host that stopped answering registers no inspection, and the digest check
+# below runs on the controller. It is ended cleanly rather than failed, so
+# the play continues with the next host (see roles/executor/tasks/inspect.yml).
+- name: End a host that did not answer the package inspection
+  when: >-
+    debuglet_payload_files.results is not defined
+    or debuglet_payload_files.results | rejectattr('stat', 'defined') | list | length > 0
+  block:
+    - name: Report the host that is not deployed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} did not answer the package inspection and is
+          not deployed; the play continues with the next host. Deploy it again
+          once it is reachable.
+
+    - name: Stop deploying this host
+      ansible.builtin.meta: end_host
+
 - name: Require the recorded package digests
   ansible.builtin.assert:
     that:

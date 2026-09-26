@@ -1,0 +1,41 @@
+---
+# What the host holds, which every later check and change of this role reads.
+- name: Inspect the executor database
+  ansible.builtin.stat:
+    path: "{{ executor_state_dir }}/executor.db"
+  register: executor_db
+
+- name: Inspect existing executor databases at previous locations
+  ansible.builtin.stat:
+    path: "{{ item }}/executor.db"
+  loop: "{{ [executor_legacy_config_dir, executor_legacy_state_dir, executor_config_dir] | unique }}"
+  register: executor_previous_databases
+
+- name: Inspect the legacy executor unit
+  ansible.builtin.stat:
+    path: "{{ systemd_unit_dir }}/{{ executor_legacy_service }}.service"
+  register: executor_legacy_unit
+
+# A host that stops answering mid-play is kept in it by ignore_unreachable
+# (deploy-executors.yml), but its inspections then register no result. The
+# checks below run on the controller and would dereference that missing
+# result, failing the host, and under serial: 1 a failed host ends the play
+# for every host after it. Skipping the checks instead would let a host that
+# answers again moments later change its state without them. So such a host
+# is ended here, cleanly, and the play moves on to the next one.
+- name: End a host that did not answer its inspection
+  when: >-
+    executor_db.stat is not defined
+    or executor_legacy_unit.stat is not defined
+    or executor_previous_databases.results is not defined
+    or executor_previous_databases.results | rejectattr('stat', 'defined') | list | length > 0
+  block:
+    - name: Report the host that is not deployed
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} did not answer its inspection and is not
+          deployed; the play continues with the next host. Deploy it again once
+          it is reachable.
+
+    - name: Stop deploying this host
+      ansible.builtin.meta: end_host
