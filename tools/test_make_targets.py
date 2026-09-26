@@ -22,6 +22,7 @@ class MakeTargetsTest(unittest.TestCase):
             shutil.copyfile(REPOSITORY / name, self.root / name)
         self.controller = self.script(
             'deploy/debuglet-deploy', 'printf "%s\\n" "$@" > deploy-called')
+        self.script('deploy/scripts/build-linux.sh', 'touch deploy-built')
         self.inventory = self.script('inventory', 'printf "%s\\n" "$@" > ../../inventory-args; cat "$(dirname "$0")/inventory.json"')
         self.playbook = self.script('playbook', 'printf "%s\\n" "$@" > ../../playbook-called')
 
@@ -147,6 +148,7 @@ printf new > target/wasm32-wasip1/release/debuglet.wasm''')
                 result = self.make('deploy-upgrade-db', DEPLOY_ENV=environment,
                                    ANSIBLE_PLAYBOOK=self.playbook)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.root / 'deploy-built').exists())
                 self.assertEqual((self.root / 'playbook-called').read_text().splitlines()[:7],
                                  ['-i', inventory, '-e', f'@vars/{environment}.yml', '-e',
                                   f'known_hosts_file={{{{ playbook_dir }}}}/{known_hosts}',
