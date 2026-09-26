@@ -84,7 +84,7 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 	var constructorCleanup error
 	if iface != nil && runtime.GOOS == "linux" {
 		if bt, err := newBPF(logger, iface, schedule, []byte(debugletID.String())); err == nil {
-			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name))
+			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name), zap.String("attachment", bt.Attachment))
 			pktTagger = bt
 		} else {
 			constructorCleanup = ebpf.CleanupError(err)

@@ -55,6 +55,7 @@ for event in skips:
 required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestBPFLinuxLoad"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestKernelTagMatchesGoTagger"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestLegacyTCAttachesAndRemovesOnlyItsFilter"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestBPFCounterLinuxLoad"),
 }
 passed = {(e.get("Package"), e.get("Test")) for e in events if e.get("Action") == "pass"}

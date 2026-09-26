@@ -173,7 +173,7 @@ func TestTaggerAttachFailureReleasesEveryObject(t *testing.T) {
 			if rollbackFails {
 				program.err, mapping.err = programErr, mapErr
 			}
-			attached, err := attachWithRollback(func() (link.Link, error) { return nil, attachErr }, program, mapping)
+			attached, err := attachWithRollback(func() (io.Closer, error) { return nil, attachErr }, program, mapping)
 			if attached != nil || !errors.Is(err, attachErr) {
 				t.Fatalf("attach result=%v,%v", attached, err)
 			}
@@ -209,7 +209,7 @@ func TestTaggerAttachTransfersOwnershipOnlyOnSuccess(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			attached := &rollbackLink{refreshCloser: refreshCloser{err: linkErr}}
 			program, mapping := &refreshCloser{}, &refreshCloser{}
-			got, err := attachWithRollback(func() (link.Link, error) {
+			got, err := attachWithRollback(func() (io.Closer, error) {
 				if succeeds {
 					return attached, nil
 				}
