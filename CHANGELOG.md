@@ -39,6 +39,11 @@ integration branch is supported.
   deployment record needs a full deployment first.
 
 ### Fixed
+- An executor that stops answering during `make deploy` or
+  `deploy-executors.yml` is reported as not deployed and ended cleanly, and
+  the play continues with the next executor. Before, its missing inspection
+  results failed it, and with one host deployed at a time that ended the play
+  for every executor after it. Deploy the skipped host again once it answers.
 - The `scion_path_length` and `scion_get_interface_details` guest imports
   answer a negative or out-of-range index, or a path without metadata, with -1
   and zeros respectively, instead of panicking inside the executor. The import
