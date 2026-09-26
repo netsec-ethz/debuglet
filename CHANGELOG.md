@@ -5,199 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Until the next tagged release, `[Unreleased]` is the only section that changes.
-Each entry names a user-visible change and its compatibility consequence: whether
-the CLI, the control protocol between dispatcher and executor or the database
-schema changed, and what an operator does with an existing state directory.
-Entries promise nothing across commits, since only the current commit of the
-integration branch is supported.
+Only `[Unreleased]` changes between tags. Release entries summarize user-visible
+changes; the linked API and deployment documentation contains operational detail.
 
 ## [Unreleased]
 
 ## [0.2.0-rc.3] - 2026-09-26
 
 ### Changed
-- The HTTP contract remains version `1.3`. The `v0.2.0-rc.2` prose
-  incorrectly said `1.2`, although its embedded OpenAPI document, `/version`
-  response and client constant correctly reported `1.3` for the GitHub browser
-  login routes.
-- Without TCX (kernels before 6.6), the executor attaches the eBPF tagger as a
-  tc `clsact` filter instead of falling back to the pure-Go tagger. The startup
-  log names the attachment.
-- Without any eBPF tagger, the pure-Go tagger now tags UDP and ICMP to IPv4
-  destinations by sending them through raw sockets (`CAP_NET_RAW`), with the
-  same SipHash tag the eBPF tagger writes. Before, nothing was tagged in that
-  mode. TCP and TLS stay untagged there, and the executor says so.
-- The pure-Go tag is SipHash-2-4 instead of HMAC-SHA256.
-  `local/scripts/verify_pcap.py` checks SipHash only.
-- `GET /debuglet/{id}/state` and `/logs` accept only the lowercase canonical
-  run ID that submission returns, as the control protocol does, and reject a
-  nil, uppercase, braced, `urn:uuid:` or unhyphenated `{id}` with 400
-  `invalid_request`. `DELETE /debuglet` holds the `debuglet_id` in its body to
-  the same rule, and `api/openapi.yaml` states it as a pattern. `dbl status`,
-  `logs` and `cancel` and the `pkg/client` methods refuse an uppercase ID
-  before sending it; pass the ID as printed.
-- `make deploy-update-config` and `make deploy-update-addr` render the version
-  of the release installed on each host, read from its deployment record,
-  instead of `git describe` of the operator's checkout and `unknown`
-  respectively. `DEPLOY_VERSION` is no longer read, and an explicit
-  `-e deploy_version` that names another release is refused. A host without a
-  deployment record needs a full deployment first.
+- Keep the HTTP API at `1.3`; the `rc.2` changelog incorrectly said `1.2`.
+- Use tc `clsact` when TCX is unavailable. The pure-Go fallback now tags IPv4
+  UDP and ICMP with SipHash-2-4 and `CAP_NET_RAW`; TCP, TLS, and SCION remain
+  untagged in this mode.
+- Require lowercase canonical run IDs in the API, CLI, and Go client.
+- Configuration-only deployments now preserve the release recorded on each
+  host and reject conflicting version overrides.
 
 ### Fixed
-- An executor that stops answering during `make deploy` or
-  `deploy-executors.yml` is reported as not deployed and ended cleanly, and
-  the play continues with the next executor. Before, its missing inspection
-  results failed it, and with one host deployed at a time that ended the play
-  for every executor after it. Deploy the skipped host again once it answers.
-- The `scion_path_length` and `scion_get_interface_details` guest imports
-  answer a negative or out-of-range index, or a path without metadata, with -1
-  and zeros respectively, instead of panicking inside the executor. The import
-  signatures are unchanged.
-- The executor refuses to start with a client certificate outside its validity
-  window, naming `credentials.client_cert`, as the dispatcher already does for
-  its own certificate. Before, it started and every control connection was
-  rejected. Renew the certificate if the executor now refuses to start.
-- The CLI's saved connections and credentials, local role records, readiness
-  records, and managed-service configuration, unit, record and maintenance
-  files are flushed to disk before they replace the previous file, so a crash
-  cannot leave one empty or truncated. No format or location changes.
-- `make bootstrap-sudo`, `make deploy-update-addr` and `make deploy-update-config`
-  verify SSH host keys against the selected environment's file. With
-  `DEPLOY_ENV=dev` they used the production `known_hosts`, and so refused dev
-  hosts missing from it. No change for `DEPLOY_ENV=prod`.
-- The executor removes a run's executor-wide bandwidth limit from its packet
-  counter when the run ends. The eBPF counter's map holds 10,000 entries, so
-  an executor process previously refused every run after about 10,000 runs.
-  No configuration, protocol or schema change.
-- The dispatcher and executor daemons enforce the schema's foreign keys and
-  cascades, and wait up to one second for a database lock held by another
-  process instead of failing at once. `PUT /payment/intent` now writes the
-  transaction, its orders and its owner in one SQL transaction. The schema is
-  unchanged; `-upgrade-database` warns about rows an earlier version wrote
-  that break a foreign key, and leaves them in place.
+- Continue deploying other executors when one host becomes unreachable.
+- Handle invalid SCION path indices and missing metadata without panicking.
+- Reject expired or not-yet-valid executor client certificates at startup.
+- Flush credentials, local state, and managed-service files before atomic
+  replacement to prevent empty or truncated files after a crash.
+- Use the selected environment's SSH `known_hosts` file in maintenance tasks.
+- Release completed runs from the eBPF bandwidth-counter map.
+- Enforce SQLite foreign keys, briefly wait for locks, and write payment intent
+  data atomically. Database upgrades report existing invalid rows.
 
 ### Removed
-- `tools/verify-offline.py`, `local/scripts/client.py`, `local/scripts/debug_tesla.py`
-  and `local/scripts/cross_check_tesla/`, which nothing ran or documented. `dbl`,
-  `pkg/client` and `local/scripts/verify_pcap.py` cover their uses.
-- The committed big-endian eBPF bindings and objects (`*_bpfeb.go`,
-  `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
-  covers every supported platform; the executor no longer builds for
-  big-endian Linux (mips, ppc64, s390x).
+- Remove unused verification scripts superseded by `dbl`, `pkg/client`, and
+  `verify_pcap.py`.
+- Drop big-endian eBPF artifacts and executor builds; supported Linux targets
+  are little-endian.
 
 ### Known limitations
-- SCION sockets cannot be marked, so their packets are not attributed to the
-  run by the eBPF tagger. The executor logs a warning once when it dials SCION.
-- The separately deployed web dashboard is not yet fully compatible with the
-  authenticated session API. Use `dbl` or `pkg/client` for complete workflows.
-- Only Linux amd64 packages are published. Local state directories remain
-  package-version-specific, and interrupted runs are not recovered.
+- SCION traffic is not attributed to runs.
+- The web dashboard is not fully compatible with authenticated sessions; use
+  `dbl` or `pkg/client` for complete workflows.
+- Packages are Linux amd64 only. Local state is package-version-specific, and
+  interrupted runs are not recovered.
 
 ## [0.2.0-rc.2] - 2026-09-25
 
 ### Added
-- Add browser login with GitHub OAuth, including PKCE, short-lived login state,
-  and deployment-specific credentials stored outside version control. This adds
-  dispatcher database migration 00009; run `make deploy-upgrade-db
-  DEPLOY_ENV=<env>` before the full deployment. The target builds and installs
-  the candidate payload before it applies that payload's migration.
-- `debuglet-dispatcher -upgrade-database`, `debuglet-executor -upgrade-database`
-  and `deploy/ansible/upgrade-database.yml` bring a deployed database forward to
-  the packaged schema, with a backup taken by the playbook. The upgrade is
-  supported for wallet-free TEST state only; local state directories still
-  require a new directory per package version.
+- Add GitHub browser login with OAuth PKCE and deployment-specific credentials.
+- Add backed-up database upgrades for deployed wallet-free TEST state. Before
+  deploying, run `make deploy-upgrade-db DEPLOY_ENV=<env>`.
 
 ### Changed
-- The HTTP contract stays at version `1.2` while it changes in ways that its
-  rules otherwise reserve for a major version. Release candidates may do so
-  before the final `v0.2.0`; from then on the rules bind without exception.
-  [docs/API.md](docs/API.md#release-candidates) lists every such change of this
-  candidate, including the ones below.
-- Every route answers a body above 32 MiB with 413 `payload_too_large`.
-- An identical resubmission on `PUT /debuglet` answers 200 with the runs already
-  recorded for the batch instead of admitting it again. `PUT /payment/intent`
-  refuses an empty batch and a repeated `order_id`.
-- `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
-  instead of whole seconds truncated. Sub-second runs are no longer free, and a
-  client that computes prices itself must use the new formula.
-- `DELETE /debuglet` answers an executor's refusal 400 `cancel_refused` whatever
-  its gRPC code, and an Abort that may not have reached the executor 500
-  `internal_error` ("cancellation not confirmed").
-- `dbl service status` exits 4 when the role is not ready, where it exited 0.
-- Setting a destination limit below the floors already admitted is refused with
-  409 `capacity_exhausted`.
+- Advance the HTTP API to `1.3` for GitHub browser login routes.
+- Reject request bodies over 32 MiB and invalid or duplicate payment batches.
+- Make run submission idempotent and charge timeout prices by rounded-up
+  milliseconds.
+- Return stable cancellation errors, report unready services with exit code 4,
+  and reject destination limits below admitted capacity.
 
 ### Fixed
-- A refused resubmission of a batch whose orders already have runs no longer
-  refunds its transaction.
-- A datagram read into a buffer shorter than the datagram is charged for the
-  whole datagram.
+- Do not refund refused resubmissions whose orders already have runs.
+- Charge the full datagram size when the receiving buffer truncates it.
 
 ### Schema
-- Dispatcher migration 00004 gained `DEFAULT` clauses after v0.1.0, so that a
-  populated database at version 3 can be upgraded. A database already past
-  version 4 is unaffected and keeps the columns without defaults.
+- Allow populated dispatcher databases at schema 3 to upgrade through migration
+  00004. Databases already past schema 4 are unchanged.
 
 ### Known limitations
-- SCION sockets cannot be marked, so their packets are not attributed to the
-  run by the eBPF tagger. The executor logs a warning once when it dials SCION.
-- The limitations of `v0.2.0-rc.1` still apply, except that a deployed database
-  can now be upgraded: the web dashboard is not compatible, only Linux amd64
-  packages are published, a local state directory stays with its package version
-  and interrupted runs are not recovered.
+- SCION traffic is not attributed to runs. The dashboard remains incompatible,
+  packages are Linux amd64 only, local state is package-version-specific, and
+  interrupted runs are not recovered.
 
 ## [0.2.0-rc.1] - 2026-09-25
 
 ### Added
-- Add the `dbl` CLI, Go client SDK, versioned OpenAPI contract, and packaged
-  local demo for running Debuglet without a pre-existing deployment.
-- Add independently managed dispatcher and executor roles, systemd service
-  installation, drain operations, readiness reporting, and verified Linux
-  amd64 release packages.
-- Add authenticated accounts, expiring sessions, credential recovery, operator
-  roles, executor enrollment, and ownership checks for runs and results.
-- Add reproducible GitHub CI lanes for formatting, generation, tests, race
-  detection, kernel integration, packaging, compatibility, and local operation.
-- Add isolated development and production deployment profiles with pinned
-  dependencies, SSH host identities, TLS certificates, preflight checks, and
-  post-deployment verification.
+- Add the `dbl` CLI, Go SDK, OpenAPI contract, and packaged local demo.
+- Add managed dispatcher/executor services, drain and readiness operations, and
+  verified Linux amd64 packages.
+- Add accounts, expiring sessions, recovery, operator roles, executor
+  enrollment, and per-owner authorization.
+- Add reproducible CI and isolated, verified development/production deployment.
 
 ### Changed
-- Replace UUID-based client identity with account keys and server-issued
-  sessions. Existing dashboard clients must migrate to the session API.
-- Version the HTTP API independently from the binaries and executor control
-  protocol; the initial documented HTTP contract is `1.2`.
-- Package the dispatcher, executor, CLI, migrations, sample module, installer,
-  manifest, and checksums as one versioned Linux amd64 release.
-- Require a fresh state directory when moving between package versions; state
-  upgrades are not supported by this release candidate.
-- Make production deployment an explicit local operator action while retaining
-  GitHub CI for build and validation.
+- Replace UUID client identity with account keys and server-issued sessions.
+- Version HTTP (`1.2`), binary, and executor-control compatibility separately.
+- Bundle services, CLI, migrations, sample module, installer, manifest, and
+  checksums in one release archive.
+- Require fresh local state between versions and make production deployment an
+  explicit operator action.
 
 ### Security
-- Bind executor control sessions to enrolled identities and short-lived leases,
-  and verify mutual TLS identities across remote deployments.
-- Enforce per-account authorization for runs, output, cancellation, payment
-  status, and administrative operations.
-- Apply destination policy and traffic accounting to outbound and accepted
-  guest traffic, including a userspace counter for hosts without usable eBPF.
-- Harden installation, generated configuration, process ownership, shutdown,
-  credential storage, error redaction, and release artifact verification.
+- Bind executor sessions to enrolled identities and short leases with mutual TLS.
+- Enforce account authorization, destination policy, and traffic accounting.
+- Harden installation, configuration, process ownership, credentials, errors,
+  shutdown, and artifact verification.
 
 ### Fixed
-- Prevent a stalled executor handshake from blocking registration indefinitely.
-- Preserve completed work and acknowledgements across executor restarts, and
-  isolate unreachable executors during deployment.
-- Make deployment versions, certificate identities, interpreter selection, and
-  fallback packet counting explicit and verifiable.
+- Bound executor registration handshakes, preserve completed work across
+  restarts, and isolate unreachable hosts during deployment.
+- Make versions, certificate identities, interpreters, and fallback packet
+  counting explicit and verifiable.
 
 ### Known limitations
-- The separately deployed web dashboard still uses the retired mock-login API
-  and is not compatible with this release candidate. Its migration is tracked
-  separately; use `dbl` or `pkg/client` in the meantime.
-- Only Linux amd64 packages are published. Database upgrades between package
-  versions and durable recovery of interrupted runs are not supported.
+- The dashboard is incompatible; use `dbl` or `pkg/client`.
+- Packages are Linux amd64 only. Database upgrades and interrupted-run recovery
+  are not supported in this candidate.
 
 ## [0.1.0] - 2026-09-17
 
