@@ -30,7 +30,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 8
+	MinimumDispatcherVersion int64 = 9
 	MinimumExecutorVersion   int64 = 5
 )
 
@@ -72,6 +72,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
 			"executor_enrollments":       {"executor_id", "fingerprint"},
 			"executor_enrollment_tokens": {"selector", "executor_id", "secret_hash", "expires_at"},
+			"oauth_identities":           {"provider", "subject", "user_id", "login", "created_at", "updated_at"},
 			"sessions":                   {"selector", "verifier_hash", "csrf_hash", "user_id", "expires_at", "revoked"},
 			"transaction_users":          {"transaction_id", "user_id"},
 			"transactions":               {"currency", "status"},

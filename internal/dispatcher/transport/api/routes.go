@@ -42,8 +42,19 @@ type Handler struct {
 	localDevelopment bool
 	// cookieSecure marks the session cookies Secure. See CookieSecure.
 	cookieSecure bool
+	githubOAuth  GitHubOAuthConfig
 	// health holds the last health observation. See handlers_health.go.
 	health healthMemo
+}
+
+type GitHubOAuthConfig struct {
+	Enabled                 bool
+	ClientID, ClientSecret  string
+	CallbackURL, SuccessURL string
+}
+
+func GitHubOAuth(cfg GitHubOAuthConfig) Option {
+	return func(h *Handler) { h.githubOAuth = cfg }
 }
 
 // Option configures a Handler. Every option is explicit: the zero
@@ -110,6 +121,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/auth/login", h.PostLogin)
 	e.POST("/auth/logout", h.PostLogout)
 	e.POST("/auth/recover", h.PostRecover)
+	e.GET("/auth/github", h.GetGitHubLogin)
+	e.GET("/auth/github/callback", h.GetGitHubCallback)
 	// debuglet
 	e.PUT("/debuglet", h.PutDebuglets)
 	e.GET("/debuglet/:id/logs", h.GetDebugletLogs)

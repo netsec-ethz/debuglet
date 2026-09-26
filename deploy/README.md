@@ -296,6 +296,23 @@ Select the environment explicitly. The deployment command maps `dev` to
 corresponding unsuffixed inventory and host-key file plus `vars/prod.yml`.
 There is no production default. CI deploys nowhere.
 
+GitHub browser login is enabled for the managed profiles. Create one ignored,
+owner-only credential file per environment before preflight:
+
+```sh
+mkdir -p ansible/secrets/prod ansible/secrets/dev
+cp ansible/github-oauth.env.example ansible/secrets/prod/github-oauth.env
+cp ansible/github-oauth.env.example ansible/secrets/dev/github-oauth.env
+chmod 600 ansible/secrets/{prod,dev}/github-oauth.env
+```
+
+Fill each file from its matching GitHub OAuth application. Configure the OAuth
+applications' callback URLs as
+`https://debuglet.netsec.ethz.ch/api/auth/github/callback` and
+`https://dev.debuglet.netsec.ethz.ch/api/auth/github/callback`. Ansible copies
+the selected file to the dispatcher with mode 0600 and systemd reads it as an
+environment file; neither the secret nor the real file belongs in Git.
+
 The selected vars file supplies the official public API origin. Set these
 inputs for any other deployment:
 

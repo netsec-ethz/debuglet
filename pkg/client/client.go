@@ -36,7 +36,7 @@ const (
 	// server implementing an incompatible contract rejects the request
 	// explicitly instead of answering a shape the client cannot read. A server
 	// written before the contract was versioned ignores the header.
-	APIVersion = "1.2"
+	APIVersion = "1.3"
 	// apiVersionHeader carries APIVersion on requests and the server's
 	// implemented contract version on responses.
 	apiVersionHeader = "Debuglet-API-Version"

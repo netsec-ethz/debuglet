@@ -55,6 +55,17 @@
     mode: "0640"
   notify: Restart dispatcher
 
+- name: Deploy GitHub OAuth credentials
+  ansible.builtin.copy:
+    src: "{{ dispatcher_github_oauth_env_file }}"
+    dest: "{{ config_dir }}/dispatcher/github-oauth.env"
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0600"
+  no_log: true
+  when: dispatcher_github_oauth_enabled | bool
+  notify: Restart dispatcher
+
 - name: Install dispatcher systemd unit
   ansible.builtin.template:
     src: dispatcher.service.j2

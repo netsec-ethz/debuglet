@@ -27,6 +27,8 @@ func TestRejectsUnsupportedOrMalformedFields(t *testing.T) {
 		{"wildcard origin", "[cors]\nallowed_origins = ['*']\n", "cors.allowed_origins[0]"},
 		{"origin with path", "[cors]\nallowed_origins = ['https://example.org/app']\n", "without a path"},
 		{"origin without scheme", "[cors]\nallowed_origins = ['example.org']\n", "cors.allowed_origins[0]"},
+		{"OAuth callback without TLS", "[github_oauth]\nenabled = true\ncallback_url = 'http://example.org/api/auth/github/callback'\nsuccess_url = 'https://example.org/console/'\n", "github_oauth.callback_url"},
+		{"OAuth success with credentials", "[github_oauth]\nenabled = true\ncallback_url = 'https://example.org/api/auth/github/callback'\nsuccess_url = 'https://user:secret@example.org/console/'\n", "github_oauth.success_url"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := LoadConfig(writeConfig(t, baseSections+tc.body))

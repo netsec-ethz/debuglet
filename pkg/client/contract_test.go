@@ -31,7 +31,7 @@ func TestClientAnnouncesContractVersionOnEveryRequest(t *testing.T) {
 func TestVersionReportsSeparateIdentities(t *testing.T) {
 	f := newFakeServer(t, "")
 	f.handle("GET /version", jsonHandler(http.StatusOK,
-		`{"version":"cfg","api_version":"1.2","api_versions":["1"],"binary_version":"v0.3.1","binary_revision":"deadbeef","protocol_version":"3"}`))
+		`{"version":"cfg","api_version":"1.3","api_versions":["1"],"binary_version":"v0.3.1","binary_revision":"deadbeef","protocol_version":"3"}`))
 	c := f.client(t, Options{})
 
 	version, err := c.Version(testContext(t))

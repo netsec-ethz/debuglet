@@ -15,6 +15,10 @@ integration branch is supported.
 ## [Unreleased]
 
 ### Added
+- Add browser login with GitHub OAuth, including PKCE, short-lived login state,
+  and deployment-specific credentials stored outside version control. This adds
+  dispatcher database migration 00009; upgrade an existing managed database
+  with `deploy/ansible/upgrade-database.yml` before deploying.
 - `debuglet-dispatcher -upgrade-database`, `debuglet-executor -upgrade-database`
   and `deploy/ansible/upgrade-database.yml` bring a deployed database forward to
   the packaged schema, with a backup taken by the playbook. The upgrade is

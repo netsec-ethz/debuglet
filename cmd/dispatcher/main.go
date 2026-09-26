@@ -364,6 +364,9 @@ func (c *ownedConn) Close() error {
 
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
 func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
+	if cfg.GitHubOAuth.Enabled && (os.Getenv("GITHUB_OAUTH_CLIENT_ID") == "" || os.Getenv("GITHUB_OAUTH_CLIENT_SECRET") == "") {
+		return errors.New("github_oauth.enabled requires GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET")
+	}
 	// The local development profile of the HTTP API needs both the operator's
 	// explicit opt-in and an environment this command recognises as local:
 	// blockchain payments disabled, the TLS listener disabled and both listeners
@@ -373,7 +376,12 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	// from a request header, for the reason recorded at the Serve call below.
 	handler := api.NewHandler(manager, db, logger,
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
-		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator))
+		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),
+		api.GitHubOAuth(api.GitHubOAuthConfig{
+			Enabled: cfg.GitHubOAuth.Enabled, ClientID: os.Getenv("GITHUB_OAUTH_CLIENT_ID"),
+			ClientSecret: os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"),
+			CallbackURL:  cfg.GitHubOAuth.CallbackURL, SuccessURL: cfg.GitHubOAuth.SuccessURL,
+		}))
 
 	e := echo.New()
 	e.HideBanner = true
