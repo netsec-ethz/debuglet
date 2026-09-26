@@ -208,8 +208,8 @@ identifier does not pass.
 
 ## Supported Go examples
 
-The examples live in [`local/wasm_samples/go`](../local/wasm_samples/go). Build
-one with `make wasm SAMPLE_DIR=local/wasm_samples/go/<name>`, which writes
+The examples live in [`examples/debuglets/go`](../examples/debuglets/go). Build
+one with `make wasm SAMPLE_DIR=examples/debuglets/go/<name>`, which writes
 `debuglet.wasm` next to its source.
 
 Each supported example compiles with the pinned toolchain and is executed
@@ -274,13 +274,11 @@ test:
 
 ## Other languages
 
-Go is the supported guest language. The [Rust](../local/wasm_samples/rust),
-[C](../local/wasm_samples/c), [JavaScript](../local/wasm_samples/javascript) and
-[Python](../local/wasm_samples/python) directories are experimental: they are
-not built or executed by this repository's gate, their bindings are not covered
-by the compatibility suite, and a successful build of one of them establishes
-nothing about its behaviour on an executor. Python has no build path that
-produces a runnable guest at all.
+Go is the supported guest language. The [Rust](../examples/debuglets/rust) and
+[C](../examples/debuglets/c) directories are experimental: they are not built or
+executed by this repository's gate, their bindings are not covered by the
+compatibility suite, and a successful build of one of them establishes nothing
+about its behaviour on an executor.
 
 ## Limits
 

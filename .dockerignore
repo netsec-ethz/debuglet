@@ -29,10 +29,10 @@ deploy/ansible/hosts.dev.yml
 deploy/ansible/known_hosts
 deploy/ansible/known_hosts.dev
 deploy/docker/nginx/certs
-local/configs/dispatcher/server.crt
-local/configs/dispatcher/server.key
-local/configs/executor/client.crt
-local/configs/executor/client.key
+configs/dispatcher/server.crt
+configs/dispatcher/server.key
+configs/executor/client.crt
+configs/executor/client.key
 **/*.crt
 **/*.key
 **/*.pcap

@@ -31,8 +31,8 @@ type buildRecord struct {
 
 var targets = map[string]string{
 	"debuglet-dispatcher": "./cmd/dispatcher", "debuglet-executor": "./cmd/executor", "dbl": "./cmd/dbl",
-	"helloworld.wasm": "./local/wasm_samples/go/helloworld", "ping.wasm": "./local/wasm_samples/go/ping", "demo.wasm": "./local/wasm_samples/go/demo",
-	"hello.wasm": "./local/wasm_samples/go/hello-local",
+	"helloworld.wasm": "./examples/debuglets/go/helloworld", "ping.wasm": "./examples/debuglets/go/ping", "demo.wasm": "./examples/debuglets/go/demo",
+	"hello.wasm": "./examples/debuglets/go/hello-local",
 }
 
 func main() {

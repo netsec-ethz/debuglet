@@ -8,6 +8,8 @@ curl -s http://127.0.0.1:9000/openapi.yaml
 
 The document is the wire contract: request and response shapes, which fields may be `null`, the unit of every numeric field, the accepted query parameters with their defaults and bounds, and the status codes each route returns. The Go SDK in [`pkg/client`](SDK.md) is one consumer of that contract, not the definition of it.
 
+[`api/http-examples.json`](../api/http-examples.json) shows illustrative requests and responses for a few routes. It is not a recorded capture and not part of the contract.
+
 ## What is versioned
 
 Three identities are versioned independently, and `GET /version` reports all three:

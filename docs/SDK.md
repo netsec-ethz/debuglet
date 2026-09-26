@@ -130,8 +130,8 @@ source checkout with Go 1.25.11, build a guest and run the
 [complete client example](../examples/client/main.go):
 
 ```sh
-make wasm SAMPLE_DIR=local/wasm_samples/go/hello-local
-go run -mod=readonly ./examples/client --wasm local/wasm_samples/go/hello-local/debuglet.wasm
+make wasm SAMPLE_DIR=examples/debuglets/go/hello-local
+go run -mod=readonly ./examples/client --wasm examples/debuglets/go/hello-local/debuglet.wasm
 ```
 
 The example discovers the sole ready executor, submits the guest with TEST

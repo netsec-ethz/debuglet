@@ -768,7 +768,7 @@ func commandRecoveryGuest(t *testing.T, dir string) []byte {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	out := filepath.Join(dir, "command-demo.wasm")
-	cmd := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-trimpath", "-o", out, "../../local/wasm_samples/go/demo")
+	cmd := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-trimpath", "-o", out, "../../examples/debuglets/go/demo")
 	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOFLAGS=")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

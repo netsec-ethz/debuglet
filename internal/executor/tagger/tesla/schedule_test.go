@@ -393,7 +393,7 @@ func TestFullVerificationFlow(t *testing.T) {
 }
 
 // TestComputeTagVectors pins the tag to values computed independently by
-// local/scripts/verify_pcap.py, whose SipHash-2-4 follows tagger.c: at most 64
+// tools/verify_pcap.py, whose SipHash-2-4 follows tagger.c: at most 64
 // bytes are hashed, and the bytes after the last full 8-byte block enter only
 // through the length. Equal tags for 64 and 100 bytes show the 64-byte cut.
 func TestComputeTagVectors(t *testing.T) {

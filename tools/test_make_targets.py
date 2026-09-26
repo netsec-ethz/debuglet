@@ -8,7 +8,7 @@ import unittest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 LANGUAGES = {'rust': ('Cargo.toml', 'CARGO'), 'go': ('main.go', 'GO'),
-             'c': ('main.c', 'CLANG'), 'js': ('main.js', 'JAVY')}
+             'c': ('main.c', 'CLANG')}
 
 
 class MakeTargetsTest(unittest.TestCase):

@@ -87,12 +87,10 @@ GOOSE ?= goose
 #   C      : a wasm32-wasi clang (wasi-sdk). Set WASI_SDK=/path/to/wasi-sdk
 #            (then CLANG defaults to $(WASI_SDK)/bin/clang), or set CLANG directly.
 #   Rust   : rustup target add wasm32-wasip1
-#   JS     : javy (https://github.com/bytecodealliance/javy)
 # --------------------------------------------------------------------
 WASI_SDK    ?=
 CLANG       ?= $(if $(WASI_SDK),$(WASI_SDK)/bin/clang,clang)
 CARGO       ?= cargo
-JAVY        ?= javy
 RUST_TARGET ?= wasm32-wasip1
 
 .PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config deploy-upgrade-db bootstrap-sudo generate-sql
@@ -125,19 +123,19 @@ build: build-exec build-disp
 # Run locally
 # --------------------------------------------------------------------
 dispatcher d:
-	@$(GO) run cmd/dispatcher/main.go -config local/configs/dispatcher/dispatcher.toml
+	@$(GO) run cmd/dispatcher/main.go -config configs/dispatcher/dispatcher.toml
 
 executor e:
 ifdef EBPF
 	$(MAKE) build-exec
-	sudo ./$(EXECUTOR_BINARY) -config local/configs/executor/executor.toml
+	sudo ./$(EXECUTOR_BINARY) -config configs/executor/executor.toml
 else
-	@$(GO) run cmd/executor/main.go -config local/configs/executor/executor.toml
+	@$(GO) run cmd/executor/main.go -config configs/executor/executor.toml
 endif
 
 # Build a debuglet sample to $(SAMPLE_DIR)/debuglet.wasm. The language is
 # detected from the entrypoint file present in SAMPLE_DIR.
-#   Usage: make wasm SAMPLE_DIR=local/wasm_samples/<lang>/<sample>
+#   Usage: make wasm SAMPLE_DIR=examples/debuglets/<lang>/<sample>
 wasm:
 	@if [ -z "$(SAMPLE_DIR)" ]; then echo "SAMPLE_DIR is required. Usage: make wasm SAMPLE_DIR=..."; exit 1; fi
 	@set -e; out="$(SAMPLE_DIR)/debuglet.wasm"; \
@@ -151,11 +149,8 @@ wasm:
 	elif [ -f "$(SAMPLE_DIR)/main.c" ]; then \
 		echo "[c] building $(SAMPLE_DIR) with $(CLANG)"; \
 		$(CLANG) -O2 "$(SAMPLE_DIR)/main.c" -lm -o "$$out"; \
-	elif [ -f "$(SAMPLE_DIR)/main.js" ]; then \
-		echo "[js] building $(SAMPLE_DIR) with $(JAVY)"; \
-		$(JAVY) build "$(SAMPLE_DIR)/main.js" -o "$$out"; \
 	else \
-		echo "no recognized entrypoint (Cargo.toml/main.go/main.c/main.js) in $(SAMPLE_DIR)"; exit 1; \
+		echo "no recognized entrypoint (Cargo.toml/main.go/main.c) in $(SAMPLE_DIR)"; exit 1; \
 	fi; \
 	echo "wrote $$out"
 
@@ -176,14 +171,14 @@ setcaps: build
 	sudo setcap cap_net_admin,cap_bpf+ep ./$(EXECUTOR_BINARY)
 
 test:
-	$(GO) test $$($(GO) list ./... | grep -v /local/) -v
+	$(GO) test $$($(GO) list ./... | grep -v /examples/debuglets/) -v
 
 coverage:
-	$(GO) test -coverprofile .testCoverage.txt $$($(GO) list ./... | grep -v /local/)
+	$(GO) test -coverprofile .testCoverage.txt $$($(GO) list ./... | grep -v /examples/debuglets/)
 
 benchmark:
 	mkdir -p benchmarks
-	$(GO) test $$($(GO) list ./... | grep -v /local/) -bench=. -count=10 -benchtime=5s | tee benchmarks/bench.txt
+	$(GO) test $$($(GO) list ./... | grep -v /examples/debuglets/) -bench=. -count=10 -benchtime=5s | tee benchmarks/bench.txt
 	benchstat benchmarks/bench.txt
 
 MEMORY_PACKAGE = ./internal/dispatcher/resource
@@ -243,18 +238,18 @@ docker-down:
 	docker compose down
 
 # --------------------------------------------------------------------
-# Generate self-signed certificates for local development in local/configs.
+# Generate self-signed certificates for local development in configs.
 # A client matches a certificate by its subjectAltName, so both carry the
 # loopback names, and each names the role it may be used for. The local
 # configurations run with TLS disabled and do not read these; deployment
 # material is a different thing, see deploy/scripts/generate-certs.sh.
 # --------------------------------------------------------------------
 generate-certs:
-	@mkdir -p local/configs/executor local/configs/dispatcher
+	@mkdir -p configs/executor configs/dispatcher
 	@echo "Generating executor certificates..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/executor/client.key -out local/configs/executor/client.crt -subj "/CN=executor" -addext "basicConstraints=critical,CA:FALSE" -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=clientAuth" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout configs/executor/client.key -out configs/executor/client.crt -subj "/CN=executor" -addext "basicConstraints=critical,CA:FALSE" -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=clientAuth" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 	@echo "Generating dispatcher certificates..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout local/configs/dispatcher/server.key -out local/configs/dispatcher/server.crt -subj "/CN=dispatcher" -addext "basicConstraints=critical,CA:FALSE" -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=serverAuth" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+	openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout configs/dispatcher/server.key -out configs/dispatcher/server.crt -subj "/CN=dispatcher" -addext "basicConstraints=critical,CA:FALSE" -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=serverAuth" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
 # --------------------------------------------------------------------
 # Remote deployment (requires: docker). deploy-certs additionally runs openssl

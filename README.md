@@ -130,20 +130,20 @@ use account keys.
 To build a Go measurement, install Go **1.25.11**, clone this repository and run:
 
 ```sh
-make wasm SAMPLE_DIR=local/wasm_samples/go/hello-local
-dbl run --wasm local/wasm_samples/go/hello-local/debuglet.wasm --wait
+make wasm SAMPLE_DIR=examples/debuglets/go/hello-local
+dbl run --wasm examples/debuglets/go/hello-local/debuglet.wasm --wait
 ```
 
 Replace the sample with your own guest. Go guests compile for
 `GOOS=wasip1 GOARCH=wasm` and import `github.com/netsec-ethz/debuglet/pkg/debuglet`
-when they need Debuglet's network operations. See the [WASM samples](local/wasm_samples/README.md).
+when they need Debuglet's network operations. See the [WASM samples](examples/debuglets/README.md).
 
 For an application that submits measurements and reads results, use the native
 [`pkg/client` SDK](docs/SDK.md). With a dispatcher and executor still running, this complete example
 submits the guest you just built and prints its output:
 
 ```sh
-go run -mod=readonly ./examples/client --wasm local/wasm_samples/go/hello-local/debuglet.wasm
+go run -mod=readonly ./examples/client --wasm examples/debuglets/go/hello-local/debuglet.wasm
 ```
 
 The [CLI guide](docs/CLI.md) covers submission, results, logs, and cancellation.
