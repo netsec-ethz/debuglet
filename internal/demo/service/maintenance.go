@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/internal/fsutil"
 )
 
 // MaintenanceFileEnv is the environment variable a generated dispatcher unit
@@ -52,7 +54,7 @@ func WriteMaintenance(path string, reason string, at time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return writeFileAtomic(path, append(data, '\n'), 0644)
+	return fsutil.WriteFile(path, append(data, '\n'), 0644)
 }
 
 // ClearMaintenance resumes submission admission by removing the switch. A

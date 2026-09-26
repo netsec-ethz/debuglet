@@ -197,6 +197,17 @@ func TestClientCredentialErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create expired authority: %v", err)
 	}
+	issueClient := func(name string, notBefore, notAfter time.Time) *testtls.Identity {
+		t.Helper()
+		identity, err := f.ca.Issue(name, testtls.Options{Hosts: []string{"executor.example.org"}, Client: true,
+			NotBefore: notBefore, NotAfter: notAfter})
+		if err != nil {
+			t.Fatalf("issue %s client identity: %v", name, err)
+		}
+		return identity
+	}
+	expiredClient := issueClient("expired-client", time.Now().Add(-48*time.Hour), time.Now().Add(-24*time.Hour))
+	futureClient := issueClient("future-client", time.Now().Add(24*time.Hour), time.Now().Add(48*time.Hour))
 	malformed := filepath.Join(f.dir, "malformed.pem")
 	if err := os.WriteFile(malformed, []byte("not a certificate\n"), 0o600); err != nil {
 		t.Fatalf("write malformed authority: %v", err)
@@ -212,6 +223,12 @@ func TestClientCredentialErrors(t *testing.T) {
 		{"mismatched key", func(c *config.ExecutorConfig) {
 			c.Credentials.ClientKey = f.server.KeyFile
 		}, "credentials.client_key"},
+		{"expired client certificate", func(c *config.ExecutorConfig) {
+			c.Credentials.ClientCert, c.Credentials.ClientKey = expiredClient.CertFile, expiredClient.KeyFile
+		}, "credentials.client_cert"},
+		{"not yet valid client certificate", func(c *config.ExecutorConfig) {
+			c.Credentials.ClientCert, c.Credentials.ClientKey = futureClient.CertFile, futureClient.KeyFile
+		}, "renew it before starting"},
 		{"missing authority", func(c *config.ExecutorConfig) {
 			c.Credentials.CACert = filepath.Join(f.dir, "absent.crt")
 		}, "credentials.ca_cert"},

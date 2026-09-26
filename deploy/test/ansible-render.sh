@@ -24,7 +24,9 @@
 #      through their own validator,
 #   7. the deployment record names both the application and the provisioner,
 #   8. applying the same variables again changes nothing (check mode reports
-#      no change).
+#      no change),
+#   9. a configuration-only update renders the version installed on each host
+#      and refuses another one.
 #
 # It needs a built release package in deploy/dist (./deploy/scripts/build-linux.sh)
 # and the pinned provisioner, so run it through deploy/test/provisioner-check.sh.
@@ -538,6 +540,30 @@ if run "$work/recheck.log" site.yml --check --diff; then
 else
 	check 'a repeated run reports no change on every host' fail
 	tail -30 "$work/recheck.log" >&2
+fi
+
+# ---------------------------------------------------------- config update ---
+# A configuration-only update renders the release each host has installed,
+# which it reads from the host's deployment record, and refuses a version that
+# names another release. The fixture's deploy_version names none, so the
+# accepted run passes the installed one explicitly, as an operator may.
+if run "$work/update-config.log" update-config.yml -e "deploy_version=$release_version"; then
+	check 'a configuration update applies against the fixture host' pass
+else
+	check 'a configuration update applies against the fixture host' fail
+	tail -30 "$work/update-config.log" >&2
+fi
+expect 'a configuration update renders the installed dispatcher version' "$dispatcher_toml" \
+	"version = \"$release_version\""
+expect 'a configuration update renders the installed executor version' "$executor_toml" \
+	"version = \"$release_version\""
+if run "$work/update-config-conflict.log" update-config.yml; then
+	check 'a configuration update refuses a version other than the installed one' fail
+elif grep -qF "but this host runs $release_version" "$work/update-config-conflict.log"; then
+	check 'a configuration update refuses a version other than the installed one' pass
+else
+	check 'a configuration update refuses a version other than the installed one' fail
+	tail -10 "$work/update-config-conflict.log" >&2
 fi
 
 # -------------------------------------------------- shared executor host ---

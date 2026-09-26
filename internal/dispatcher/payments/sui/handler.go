@@ -86,7 +86,9 @@ func (h *SuiPaymentHandler) Start(ctx context.Context) error {
 	return h.lis.Start(ctx)
 }
 
-func (h *SuiPaymentHandler) CreatePaymentIntent(transactionId string, price int64, currency string, hash string, ctx context.Context) (SuiPaymentIntent, error) {
+// CreatePaymentIntent stores the transaction row of a new intent through db,
+// which may be the caller's SQL transaction.
+func (h *SuiPaymentHandler) CreatePaymentIntent(db database.DBTX, transactionId string, price int64, currency string, hash string, ctx context.Context) (SuiPaymentIntent, error) {
 	b_authKey := make([]byte, 16)
 	_, err := rand.Read(b_authKey)
 	if err != nil {
@@ -100,7 +102,7 @@ func (h *SuiPaymentHandler) CreatePaymentIntent(transactionId string, price int6
 
 	expiresAt := time.Now().Add(time.Minute * 5)
 	authKey := hex.EncodeToString(b_authKey)
-	queries := database.New(h.db)
+	queries := database.New(db)
 	if _, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{
 		ID:        transactionId,
 		AuthKey:   authKey,
