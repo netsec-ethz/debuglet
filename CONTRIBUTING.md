@@ -73,7 +73,7 @@ Changes to eBPF C sources additionally require their generation and kernel check
 
 ## Kernel checks
 
-`make ci-kernel` runs in an isolated container on a fresh GitHub-hosted `ubuntu-24.04` full VM. The launcher builds the pinned tools image and grants the four capabilities described in [CI runners](deploy/ci/README.md); local reproduction needs an equivalent Linux environment. The lane loads and closes both the tagger and packet counter, rejects skipped kernel tests, and separately checks C compilation. Ordinary tests may skip privileged loading when those capabilities are unavailable. The container toolchain is pinned, but the hosted kernel is not.
+`make ci-kernel` runs in an isolated container on a fresh GitHub-hosted `ubuntu-24.04` full VM. The launcher builds the pinned tools image and grants the five capabilities described in [CI runners](deploy/ci/README.md); local reproduction needs an equivalent Linux environment. The lane loads and closes both the tagger and packet counter, compares the kernel's tags with the pure-Go tagger's, attaches the legacy tc filter, sends user-space-tagged datagrams, rejects skipped kernel tests, and separately checks C compilation. Ordinary tests may skip privileged loading when those capabilities are unavailable. The container toolchain is pinned, but the hosted kernel is not.
 
 Load/attach checks do not establish packet-policy enforcement, performance, or production isolation. Do not broaden privileges or claim those properties from a normal test pass.
 

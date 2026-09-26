@@ -202,6 +202,7 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 			panic(fmt.Errorf("connect: %w", failures))
 		}
 
+		conn = tagDatagrams(env, conn, socketType)
 		handle, err := attachSocket(ctx, env, conn, destination.Key, socketType)
 		if err != nil {
 			env.Logger.Warnw("hostConnect: failed to admit connection", "addr", dialed, "err", err)

@@ -24,7 +24,6 @@ package tagger
 import (
 	"encoding/binary"
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
@@ -158,54 +157,4 @@ func IPv4Checksum(header []byte) uint16 {
 		sum = (sum & 0xFFFF) + (sum >> 16)
 	}
 	return ^uint16(sum)
-}
-
-// =============================================================================
-// WrappedConn — transparent stream socket wrapper
-// =============================================================================
-
-// WrappedConn wraps a net.Conn and tags every Write with the Tagger before
-// sending. Reads pass through unmodified. All other net.Conn methods delegate
-// to the underlying connection.
-type WrappedConn struct {
-	net.Conn
-	tagger TaggerInterface
-}
-
-// WrapConn returns a WrappedConn that tags outgoing packets.
-func WrapConn(c net.Conn, t TaggerInterface) *WrappedConn {
-	return &WrappedConn{Conn: c, tagger: t}
-}
-
-// Write tags b before writing it to the underlying connection.
-func (w *WrappedConn) Write(b []byte) (int, error) {
-	tagged, err := w.tagger.TagPacket(b)
-	if err != nil {
-		return 0, fmt.Errorf("WrappedConn.Write: %w", err)
-	}
-	return w.Conn.Write(tagged)
-}
-
-// =============================================================================
-// WrappedPacketConn — transparent packet socket wrapper
-// =============================================================================
-
-// WrappedPacketConn wraps a net.PacketConn and tags every WriteTo call.
-type WrappedPacketConn struct {
-	net.PacketConn
-	tagger TaggerInterface
-}
-
-// WrapPacketConn returns a WrappedPacketConn that tags outgoing packets.
-func WrapPacketConn(c net.PacketConn, t TaggerInterface) *WrappedPacketConn {
-	return &WrappedPacketConn{PacketConn: c, tagger: t}
-}
-
-// WriteTo tags b before sending it to addr via the underlying PacketConn.
-func (w *WrappedPacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
-	tagged, err := w.tagger.TagPacket(b)
-	if err != nil {
-		return 0, fmt.Errorf("WrappedPacketConn.WriteTo: %w", err)
-	}
-	return w.PacketConn.WriteTo(tagged, addr)
 }

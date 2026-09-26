@@ -59,8 +59,9 @@ CAPABILITIES = (
     "CAP_PERFMON CAP_BPF CAP_CHECKPOINT_RESTORE"
 ).split()
 
-# Loading and attaching the tagger and packet counter needs these.
-REQUIRED_CAPABILITIES = ("CAP_BPF", "CAP_PERFMON", "CAP_NET_ADMIN", "CAP_SYS_RESOURCE")
+# Loading and attaching the tagger and packet counter needs these, and the
+# pure-Go tagger's raw sockets need CAP_NET_RAW.
+REQUIRED_CAPABILITIES = ("CAP_BPF", "CAP_PERFMON", "CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_SYS_RESOURCE")
 
 # Any of these would let the job leave its own boundary.
 FORBIDDEN_CAPABILITIES = (

@@ -46,6 +46,9 @@ type WasmEnv struct {
 	Logger       *zap.SugaredLogger
 	TlsCfg       *tls.Config
 	Tagger       tagger.TaggerInterface
+	// untaggedOnce reports once per run that a datagram connection is sent
+	// untagged by the pure-Go tagger.
+	untaggedOnce sync.Once
 
 	// Listeners
 	PortManager *socket.PortManager
@@ -62,6 +65,30 @@ type WasmEnv struct {
 
 	Registry  *socket.SocketRegistry
 	ScionConn *socket.SCIONConnRegistry
+}
+
+// DatagramTagger is the pure-Go tagger, which tags UDP and ICMP by sending
+// them itself; the eBPF tagger tags every socket in the kernel instead.
+type DatagramTagger interface {
+	WrapDatagram(net.Conn) (net.Conn, error)
+}
+
+// tagDatagrams returns conn wrapped so its datagrams leave tagged, when the
+// run's tagger is the pure-Go one and conn is a UDP or ICMP connection. A
+// connection it cannot wrap is returned as it is and sent untagged.
+func tagDatagrams(e *WasmEnv, conn net.Conn, socketType socket.SocketType) net.Conn {
+	datagrams, ok := e.Tagger.(DatagramTagger)
+	if !ok || (socketType != socket.SocketTypeUDP && socketType != socket.SocketTypeICMP4) {
+		return conn
+	}
+	wrapped, err := datagrams.WrapDatagram(conn)
+	if err != nil {
+		e.untaggedOnce.Do(func() {
+			e.Logger.Warnw("Datagrams of this run leave untagged", "remote", conn.RemoteAddr().String(), "err", err)
+		})
+		return conn
+	}
+	return wrapped
 }
 
 // markSocket puts conn under this run's packet attribution. Without a tagger

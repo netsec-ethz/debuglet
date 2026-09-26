@@ -39,7 +39,7 @@ case "$lane" in
     local|kernel) image=$DEBUGLET_CI_TOOLS_IMAGE; profile=$lane ;;
 esac
 if [[ $lane == kernel ]]; then
-    options+=(--cap-add BPF --cap-add NET_ADMIN --cap-add PERFMON --cap-add SYS_RESOURCE)
+    options+=(--cap-add BPF --cap-add NET_ADMIN --cap-add NET_RAW --cap-add PERFMON --cap-add SYS_RESOURCE)
 fi
 # Hosted jobs start with a fresh VM. Local reproduction can use prepared images.
 if [[ ${GITHUB_ACTIONS:-} == true ]]; then

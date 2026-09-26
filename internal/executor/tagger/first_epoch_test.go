@@ -6,7 +6,6 @@ package tagger
 import (
 	"bytes"
 	"encoding/binary"
-	"net"
 	"testing"
 	"time"
 
@@ -68,24 +67,4 @@ func TestTagPacketFirstEpochPassesThrough(t *testing.T) {
 		t.Error("IPv4 checksum invalid after tagging in epoch 1")
 	}
 
-	t.Run("Wrapped", func(t *testing.T) {
-		tgr := New(firstEpochSchedule(t, time.Now()), testMeasurementID)
-
-		conn := &mockConn{}
-		if n, err := WrapConn(conn, tgr).Write(firstEpochPacket()); err != nil || n != len(original) {
-			t.Fatalf("WrappedConn.Write in epoch 0 = %d, %v", n, err)
-		}
-		if !bytes.Equal(conn.written, original) {
-			t.Errorf("WrappedConn changed the packet in epoch 0:\n got %x\nwant %x", conn.written, original)
-		}
-
-		pconn := &mockPacketConn{}
-		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 1234}
-		if n, err := WrapPacketConn(pconn, tgr).WriteTo(firstEpochPacket(), addr); err != nil || n != len(original) {
-			t.Fatalf("WrappedPacketConn.WriteTo in epoch 0 = %d, %v", n, err)
-		}
-		if !bytes.Equal(pconn.written, original) {
-			t.Errorf("WrappedPacketConn changed the packet in epoch 0:\n got %x\nwant %x", pconn.written, original)
-		}
-	})
 }

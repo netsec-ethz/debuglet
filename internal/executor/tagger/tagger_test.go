@@ -6,7 +6,6 @@ package tagger
 import (
 	"bytes"
 	"encoding/binary"
-	"net"
 	"testing"
 	"time"
 
@@ -301,85 +300,5 @@ func TestAccountabilityTamperedPacket(t *testing.T) {
 	}
 	if ok {
 		t.Error("VerifyTag returned true for a tampered packet — verification is broken")
-	}
-}
-
-// ---- WrappedConn tests ------------------------------------------------------
-
-// mockConn is a net.Conn stub that captures written bytes.
-type mockConn struct {
-	net.Conn
-	written []byte
-}
-
-func (m *mockConn) Write(b []byte) (int, error) {
-	m.written = make([]byte, len(b))
-	copy(m.written, b)
-	return len(b), nil
-}
-
-func TestWrappedConnTagsPacket(t *testing.T) {
-	tgr := newTestTagger(t)
-	mock := &mockConn{}
-	wc := WrapConn(mock, tgr)
-
-	payload := []byte("wrapped conn test")
-	pkt := buildIPv4Packet(payload)
-
-	_, err := wc.Write(pkt)
-	if err != nil {
-		t.Fatalf("WrappedConn.Write: %v", err)
-	}
-
-	if len(mock.written) < 20 {
-		t.Fatal("WrappedConn did not write enough bytes")
-	}
-	ipid := ReadIPID(mock.written)
-	if ipid == 0 {
-		t.Error("WrappedConn did not apply IPID tag")
-	}
-	if !validateIPv4Checksum(mock.written) {
-		t.Error("IPv4 checksum invalid after WrappedConn.Write")
-	}
-}
-
-// ---- WrappedPacketConn tests ------------------------------------------------
-
-// mockPacketConn captures WriteTo calls.
-type mockPacketConn struct {
-	net.PacketConn
-	written []byte
-	dst     net.Addr
-}
-
-func (m *mockPacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
-	m.written = make([]byte, len(b))
-	copy(m.written, b)
-	m.dst = addr
-	return len(b), nil
-}
-
-func TestWrappedPacketConnTagsPacket(t *testing.T) {
-	tgr := newTestTagger(t)
-	mock := &mockPacketConn{}
-	wpc := WrapPacketConn(mock, tgr)
-
-	payload := []byte("wrapped packet conn test")
-	pkt := buildIPv4Packet(payload)
-	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 1234}
-
-	_, err := wpc.WriteTo(pkt, addr)
-	if err != nil {
-		t.Fatalf("WrappedPacketConn.WriteTo: %v", err)
-	}
-
-	if len(mock.written) < 20 {
-		t.Fatal("not enough bytes written")
-	}
-	if ReadIPID(mock.written) == 0 {
-		t.Error("WrappedPacketConn did not apply IPID tag")
-	}
-	if !validateIPv4Checksum(mock.written) {
-		t.Error("IPv4 checksum invalid after WrappedPacketConn.WriteTo")
 	}
 }

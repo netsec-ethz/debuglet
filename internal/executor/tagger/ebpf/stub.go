@@ -21,7 +21,10 @@ import (
 )
 
 // BPFTagger is a no-op stub on non-Linux platforms.
-type BPFTagger struct{}
+type BPFTagger struct {
+	// Attachment is never set: no program is attached off Linux.
+	Attachment string
+}
 
 // NewBPFTagger always returns an error on non-Linux platforms.
 // Callers should fall back to the pure-Go tagger.

@@ -37,7 +37,7 @@ trap release_ownership EXIT
 # Test the committed objects: these are the bytes ci-build embeds.
 sha256sum internal/executor/{ratelimit,tagger}/ebpf/*.o > .cache/ci/ebpf-objects-before.sha256
 "$ci_go" test -json -count=1 -timeout="${CI_TEST_TIMEOUT:-2m}" \
-    ./internal/executor/tagger/ebpf ./internal/executor/ratelimit/ebpf \
+    ./internal/executor/tagger ./internal/executor/tagger/ebpf ./internal/executor/ratelimit/ebpf \
     | tee .cache/ci/kernel-tests.json
 
 # Go considers t.Skip a successful exit, so enforce actual kernel evidence.
@@ -56,6 +56,7 @@ required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestBPFLinuxLoad"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestKernelTagMatchesGoTagger"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestLegacyTCAttachesAndRemovesOnlyItsFilter"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/tagger", "TestTaggedDatagramsReachTheWire"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestBPFCounterLinuxLoad"),
 }
 passed = {(e.get("Package"), e.get("Test")) for e in events if e.get("Action") == "pass"}
@@ -64,7 +65,7 @@ for package, test in sorted(missing):
     print(f"Missing passing {package}/{test}; kernel checks did not run.", file=sys.stderr)
 if skips or missing:
     sys.exit(1)
-print("Tagger load, kernel/Go tag parity and packet-counter load/close checks passed with zero skipped tests.")
+print("Tagger load, kernel/Go tag parity, legacy tc, user-space datagram tagging and packet-counter checks passed with zero skipped tests.")
 PY
 
 # Separately prove that the checked-in C sources compile with this toolchain.

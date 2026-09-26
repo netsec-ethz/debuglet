@@ -27,6 +27,15 @@ integration branch is supported.
   require a new directory per package version.
 
 ### Changed
+- Without TCX (kernels before 6.6), the executor attaches the eBPF tagger as a
+  tc `clsact` filter instead of falling back to the pure-Go tagger. The startup
+  log names the attachment.
+- Without any eBPF tagger, the pure-Go tagger now tags UDP and ICMP to IPv4
+  destinations by sending them through raw sockets (`CAP_NET_RAW`), with the
+  same SipHash tag the eBPF tagger writes. Before, nothing was tagged in that
+  mode. TCP and TLS stay untagged there, and the executor says so.
+- The pure-Go tag is SipHash-2-4 instead of HMAC-SHA256.
+  `local/scripts/verify_pcap.py` checks SipHash only.
 - `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
   instead of whole seconds truncated. Sub-second runs are no longer free, and a
   client that computes prices itself must use the new formula.
