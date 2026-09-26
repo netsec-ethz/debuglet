@@ -84,7 +84,7 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 	var constructorCleanup error
 	if iface != nil && runtime.GOOS == "linux" {
 		if bt, err := newBPF(logger, iface, schedule, []byte(debugletID.String())); err == nil {
-			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name))
+			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name), zap.String("attachment", bt.Attachment))
 			pktTagger = bt
 		} else {
 			constructorCleanup = ebpf.CleanupError(err)
@@ -93,10 +93,10 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 	}
 
 	if pktTagger == nil {
-		// The pure-Go tagger only rewrites buffers handed to it explicitly;
-		// the socket data path relies on SO_MARK + TC egress, so nothing is
-		// tagged on this path and packet attribution is unavailable.
-		logger.Warn("No eBPF tagger available: outgoing packets will NOT carry attribution tags",
+		// The pure-Go tagger sends UDP and ICMP to IPv4 destinations itself,
+		// through raw sockets, and tags them as the kernel would. Streams stay
+		// with the kernel, which writes their IP headers, so they are untagged.
+		logger.Warn("No eBPF tagger available: UDP and ICMP to IPv4 destinations are tagged in user space when raw sockets are permitted (CAP_NET_RAW); TCP and TLS packets will NOT carry attribution tags",
 			zap.Bool("interface_configured", iface != nil), zap.String("goos", runtime.GOOS))
 		pktTagger = tagger.New(schedule, []byte(debugletID.String()))
 	}

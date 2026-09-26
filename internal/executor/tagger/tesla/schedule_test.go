@@ -391,3 +391,32 @@ func TestFullVerificationFlow(t *testing.T) {
 		t.Error("full verification flow failed: tag mismatch")
 	}
 }
+
+// TestComputeTagVectors pins the tag to values computed independently by
+// local/scripts/verify_pcap.py, whose SipHash-2-4 follows tagger.c: at most 64
+// bytes are hashed, and the bytes after the last full 8-byte block enter only
+// through the length. Equal tags for 64 and 100 bytes show the 64-byte cut.
+func TestComputeTagVectors(t *testing.T) {
+	ak := make([]byte, 16)
+	for i := range ak {
+		ak[i] = byte(i)
+	}
+	for _, tc := range []struct {
+		length int
+		want   uint16
+	}{
+		{0, 0x0e31}, {1, 0x67fd}, {7, 0x313a}, {8, 0x0cfe}, {13, 0x9db5}, {64, 0x2882}, {100, 0x2882},
+	} {
+		data := make([]byte, tc.length)
+		for i := range data {
+			data[i] = byte(i*31 + 5)
+		}
+		got, err := ComputeTag(ak, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("ComputeTag over %d bytes = %04x, want %04x", tc.length, got, tc.want)
+		}
+	}
+}

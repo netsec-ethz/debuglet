@@ -57,7 +57,7 @@ The run state `RunStateUnreconciled` means that the dispatcher failed the submis
 
 ### Release candidates
 
-The rules above bind from the final `v0.2.0` on. Until then, a release candidate may fix the contract in ways the list above reserves for a major version while keeping the version number, and its release notes name each such change. `v0.2.0-rc.2` keeps contract version **1.2** and, compared with `v0.2.0-rc.1`:
+The rules above bind from the final `v0.2.0` on. Until then, a release candidate may fix the contract in ways the list above reserves for a major version while keeping the version number, and its release notes name each such change. `v0.2.0-rc.2` serves contract version **1.3**: version 1.3 adds the GitHub browser-login routes, and compared with `v0.2.0-rc.1` that candidate also:
 
 - answers a body above 33554432 bytes on every route with 413 `payload_too_large`;
 - answers `DELETE /debuglet` with 500 `internal_error` when the executor acknowledged the cancellation but its result was not recorded, or when the Abort may not have reached the executor, and with 400 `cancel_refused` when the executor refused it, whatever the executor's gRPC code;
@@ -67,13 +67,18 @@ The rules above bind from the final `v0.2.0` on. Until then, a release candidate
 
 A client written against `v0.2.0-rc.1` that treats an unknown status as a plain failure of its class keeps working, except that it must not compute prices itself with the old formula.
 
+`v0.2.0-rc.3` keeps contract version **1.3** and additionally requires every
+run ID in the state, logs and cancellation routes to use the lowercase
+hyphenated form returned by submission. It rejects other UUID spellings with
+400 `invalid_request`; pass the ID exactly as returned.
+
 ## Deprecation
 
 A route or field that is to be removed is first marked deprecated in `api/openapi.yaml` and in this document, in a minor version, while it keeps working. It is removed only in a following major version, whose contract is published as a new `api/openapi.yaml` before the removal takes effect. Release candidates may still change before the final `v0.2.0`; pin the exact tag as described in [the SDK guide](SDK.md).
 
 ## Supported revisions
 
-Only the latest release candidate (currently `v0.2.0-rc.2`, published from `main`) and the current commit of the `dev` integration branch are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
+Only the latest release candidate (currently `v0.2.0-rc.3`, published from `main`) and the current commit of the `dev` integration branch are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
 
 ## Errors
 
@@ -145,6 +150,7 @@ Units are stated per field in the contract document. The recurring ones:
 
 Request limits:
 
+- `GET /debuglet/{id}/state`, `GET /debuglet/{id}/logs` and the `debuglet_id` of `DELETE /debuglet`: the ID must be the lowercase 36-character hyphenated UUID spelling that submission returns, and not the nil UUID. Uppercase, braced, `urn:uuid:` and unhyphenated spellings are rejected with 400 `invalid_request`.
 - `GET /debuglet/{id}/logs`: `after` must be a non-negative integer and `limit` a positive integer when present; both are rejected with 400 otherwise. `limit` defaults to 100 and is clamped to 1000.
 - `GET /list-debuglets`: `limit` defaults to 100 and is clamped to 100; `offset` defaults to 0. Neither may be negative and `limit` may not be zero.
 - `GET /executors/by-ip`: `ip` is required; `n` defaults to 10 and must be positive when present. It is clamped to 100 candidates before ownership is applied, but the executor registry retains at most 20 recent identifiers per executor, so at most 20 can ever be returned and usually fewer, since only the caller's own are listed. An account owning none of them receives an empty array, never null.

@@ -29,7 +29,7 @@ socket, Actions token, runner installation, host home or deployment inventory
 is passed into the child.
 
 Ordinary lanes receive Docker's default capabilities. The kernel lane adds only
-`BPF`, `NET_ADMIN`, `PERFMON` and `SYS_RESOURCE`, with private process, mount and
+`BPF`, `NET_ADMIN`, `NET_RAW`, `PERFMON` and `SYS_RESOURCE`, with private process, mount and
 network namespaces; it never uses `--privileged` or host networking. Its eBPF
 attachments use loopback inside that network namespace. The Go volumes
 `debuglet-ci-go-mod` and `debuglet-ci-go-build` last only for the job's VM. There

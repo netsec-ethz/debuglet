@@ -340,13 +340,13 @@ func TestClientTransport(t *testing.T) {
 		if n := len(f.requests()); n != 0 {
 			t.Fatalf("%d requests reached the server", n)
 		}
-		// Upper-case hex is a valid spelling and is used verbatim.
-		upper := strings.ToUpper(fixtureID)
-		if _, err := c.Status(ctx, upper); err != nil {
-			t.Fatalf("upper-case id rejected: %v", err)
+		// Upper-case hex is refused locally: the dispatcher accepts only the
+		// lowercase spelling.
+		if _, err := c.Status(ctx, strings.ToUpper(fixtureID)); err == nil {
+			t.Fatal("upper-case id accepted")
 		}
-		if got := f.requests()[0].Path; got != "/api/debuglet/"+upper+"/state" {
-			t.Fatalf("path %q", got)
+		if n := len(f.requests()); n != 0 {
+			t.Fatalf("an upper-case id reached the server in %d requests", n)
 		}
 	})
 

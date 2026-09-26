@@ -5,12 +5,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"math/rand/v2"
 	"os"
@@ -49,6 +49,16 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("database %s now records executor schema version %d\n", cfg.Database.Path, version)
+		// The daemon enforces foreign keys on new writes only; rows an
+		// earlier version wrote without them are reported, not changed.
+		violations, err := storagecheck.ForeignKeyViolations(context.Background(), cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+			os.Exit(1)
+		}
+		for _, violation := range violations {
+			fmt.Fprintf(os.Stderr, "executor: warning: %s; the daemon keeps them, but they are not consistent\n", violation)
+		}
 		return
 	}
 
@@ -112,11 +122,10 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 	if err := storagecheck.Check(ctx, storagecheck.Executor, cfg.Database.Path); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", cfg.Database.Path)
+	db, err := sqlitedb.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
 	node, err := executor.NewNode(cfg, logger, db)
 	if err != nil {
 		return errors.Join(err, db.Close())

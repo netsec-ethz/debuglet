@@ -16,16 +16,9 @@
     group: "{{ executor_group }}"
     mode: "0700"
 
-- name: Inspect the executor database
-  ansible.builtin.stat:
-    path: "{{ executor_state_dir }}/executor.db"
-  register: executor_db
-
-- name: Inspect existing executor databases at previous locations
-  ansible.builtin.stat:
-    path: "{{ item }}/executor.db"
-  loop: "{{ [executor_legacy_config_dir, executor_legacy_state_dir, executor_config_dir] | unique }}"
-  register: executor_previous_databases
+# Inspect the host once, before any check or change depends on what it holds.
+- name: Inspect the executor host
+  ansible.builtin.import_tasks: inspect.yml
 
 - name: Require an explicit upgrade of existing executor state
   ansible.builtin.assert:
@@ -41,11 +34,6 @@
   loop: "{{ executor_previous_databases.results }}"
   loop_control:
     label: "{{ item.item }}"
-
-- name: Inspect the legacy executor unit
-  ansible.builtin.stat:
-    path: "{{ systemd_unit_dir }}/{{ executor_legacy_service }}.service"
-  register: executor_legacy_unit
 
 - name: Require explicit ownership of legacy executor retirement
   ansible.builtin.assert:
@@ -65,7 +53,7 @@
   when:
     - debuglet_manage_services | bool
     - executor_retire_legacy_install | bool
-    - executor_legacy_unit.stat.exists | default(false)
+    - executor_legacy_unit.stat.exists
 
 # An interrupted initial start can leave a zero-byte database. It contains no
 # state; unlike a nonempty database it must not block installation of the seed.

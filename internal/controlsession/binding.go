@@ -9,6 +9,8 @@ import (
 	"io"
 
 	"github.com/google/uuid"
+
+	"github.com/netsec-ethz/debuglet/internal/ids"
 )
 
 // Binding identifies one session in one dispatcher incarnation. Both fields
@@ -60,9 +62,6 @@ func newIdentity(random io.Reader) (string, error) {
 }
 
 func canonicalID(value string) bool {
-	if len(value) != 36 {
-		return false
-	}
-	id, err := uuid.Parse(value)
-	return err == nil && id != uuid.Nil && id.String() == value
+	_, ok := ids.ParseCanonical(value)
+	return ok
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/google/uuid"
@@ -239,11 +241,16 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dispatcher.sqlite")
 	cfg := wfDisabledConfig()
 
-	db, err := sql.Open("sqlite", dbPath)
+	// Open the way the daemon does, so the flow runs with foreign keys
+	// enforced. The daemon's opener never creates a file; an empty one is an
+	// empty database.
+	if err := os.WriteFile(dbPath, nil, 0o600); err != nil {
+		t.Fatalf("create sqlite: %v", err)
+	}
+	db, err := sqlitedb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	dbOpen := true
 	t.Cleanup(func() {
 		if dbOpen {
@@ -340,6 +347,25 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	wfExpect(t, "payment status", status, http.StatusOK, body)
 	if strings.TrimSpace(string(body)) != "true" {
 		t.Fatalf("payment status body %q, want true", body)
+	}
+
+	// ---- 1b. A failed order write leaves no transaction behind ----
+	// The transaction, its orders and its owner are one SQL transaction, so
+	// an order insert that fails after the transaction row was written rolls
+	// that row back too.
+	beforeFailedIntent := wfTakeSnapshot(t, db)
+	if _, err := db.Exec("CREATE TRIGGER wf_abort_order_insert BEFORE INSERT ON debuglet_order BEGIN SELECT RAISE(ABORT, 'wf_order_insert_refused'); END"); err != nil {
+		t.Fatalf("create order trigger: %v", err)
+	}
+	status, body = client.do(http.MethodPut, "/payment/intent", PaymentIntentRequest{
+		Debuglets: debuglets, PaymentMethod: "TEST",
+	})
+	if _, err := db.Exec("DROP TRIGGER wf_abort_order_insert"); err != nil {
+		t.Fatalf("drop order trigger: %v", err)
+	}
+	wfExpect(t, "TEST intent with a failing order write", status, http.StatusInternalServerError, body)
+	if after := wfTakeSnapshot(t, db); after != beforeFailedIntent {
+		t.Fatalf("a failed intent left rows behind:\nbefore:\n%s\nafter:\n%s", beforeFailedIntent, after)
 	}
 
 	// ---- 2. Hash and auth-key checks still reject, rows unchanged ----
@@ -551,11 +577,10 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	}
 	dbOpen = false
 
-	db2, err := sql.Open("sqlite", dbPath)
+	db2, err := sqlitedb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
-	db2.SetMaxOpenConns(1)
 	defer db2.Close()
 	reopened, err := database.New(db2).GetTransactionByID(ctx, txID)
 	if err != nil {

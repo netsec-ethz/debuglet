@@ -171,6 +171,12 @@ func (e *Executor) unregisterDebuglet(id uuid.UUID, op *debugletOperation) {
 	e.mu.Lock()
 	if running, ok := e.running[id]; ok && running.operation == op {
 		delete(e.running, id)
+		// Registration set this run's executor-wide limit. Removing it under
+		// e.mu, after the run left e.running, means no concurrent publish can
+		// set it again, so the counter's map never keeps a departed run.
+		if err := e.packetCount.DeleteExecLimit(id); err != nil {
+			e.logger.Warn("Failed to remove executor limit", zap.String("debugletID", id.String()), zap.Error(err))
+		}
 	}
 	// A departure releases its share to whatever is still running.
 	e.publishLimitsLocked(nil)

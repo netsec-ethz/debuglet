@@ -142,7 +142,7 @@ const scHeaderOperation = `responses:
       X-Thing:
         schema:
           type: string
-          pattern: "^a+$"
+          maxLength: 1
     content:
       application/json:
         schema:
@@ -159,7 +159,7 @@ Thing:
       type: string
       minLength: 8`
 
-	scValuesPattern = `
+	scValuesMaxLength = `
 Thing:
   type: object
   additionalProperties: false
@@ -168,7 +168,7 @@ Thing:
       type: array
       items:
         type: string
-        pattern: "^[a-z]+$"`
+        maxLength: 2`
 )
 
 // TestSchemaSubsetCheckRejectsUnsupportedConstructs covers every position the
@@ -212,18 +212,18 @@ Thing:
 			schemas:   scNameMinLength,
 		},
 		{
-			name:      "a pattern nothing matches on the items of an array",
+			name:      "a length nothing measures on the items of an array",
 			operation: scThingResponse,
-			want:      []string{"components.schemas.Thing.properties.values.items", `"pattern"`},
-			body:      `{"values":["0-0"]}`,
-			schemas:   scValuesPattern,
+			want:      []string{"components.schemas.Thing.properties.values.items", `"maxLength"`},
+			body:      `{"values":["000"]}`,
+			schemas:   scValuesMaxLength,
 		},
 		{
 			name:      "a constraint on the items of an empty array",
 			operation: scThingResponse,
-			want:      []string{"components.schemas.Thing.properties.values.items", `"pattern"`},
+			want:      []string{"components.schemas.Thing.properties.values.items", `"maxLength"`},
 			body:      `{"values":[]}`,
-			schemas:   scValuesPattern,
+			schemas:   scValuesMaxLength,
 		},
 		{
 			name:      "a constraint in the alternative that does not match",
@@ -332,7 +332,7 @@ Thing:
 		{
 			name:      "an unknown keyword in a response header schema",
 			operation: scHeaderOperation,
-			want:      []string{"paths./thing.get.responses.200.headers.X-Thing.schema", `"pattern"`},
+			want:      []string{"paths./thing.get.responses.200.headers.X-Thing.schema", `"maxLength"`},
 			schemas:   scStringThing,
 		},
 		{
@@ -425,6 +425,15 @@ Thing:
       $ref: "#/components/schemas/Missing"`,
 		},
 		{
+			name:      "a pattern that does not compile",
+			operation: scThingResponse,
+			want:      []string{"components.schemas.Thing", "does not compile"},
+			schemas: `
+Thing:
+  type: string
+  pattern: "^[a-z$"`,
+		},
+		{
 			name:      "a reference outside the schemas section",
 			operation: scThingResponse,
 			want:      []string{"components.schemas.Thing.properties.inner", `unsupported reference "#/components/responses/Thing"`},
@@ -500,6 +509,7 @@ Thing:
   properties:
     name:
       type: string
+      pattern: "^[a-z]+$"
       description: "A name."
       deprecated: false
     key:
@@ -570,6 +580,7 @@ func TestSchemaSubsetCheckAcceptsTheImplementedSubset(t *testing.T) {
 		{name: "an undocumented field", body: `{"name":"n","extra":1}`},
 		{name: "a bound", body: `{"name":"n","count":11}`},
 		{name: "a format", body: `{"name":"n","id":"not-a-uuid"}`},
+		{name: "a pattern", body: `{"name":"N"}`},
 		{name: "a null that is not documented", body: `{"name":null}`},
 		{name: "an element of an array", body: `{"name":"n","values":[{"text":1}]}`},
 		{name: "no matching alternative", body: `{"name":"n","choice":"neither"}`},

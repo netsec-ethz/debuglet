@@ -14,6 +14,86 @@ integration branch is supported.
 
 ## [Unreleased]
 
+## [0.2.0-rc.3] - 2026-09-26
+
+### Changed
+- The HTTP contract remains version `1.3`. The `v0.2.0-rc.2` prose
+  incorrectly said `1.2`, although its embedded OpenAPI document, `/version`
+  response and client constant correctly reported `1.3` for the GitHub browser
+  login routes.
+- Without TCX (kernels before 6.6), the executor attaches the eBPF tagger as a
+  tc `clsact` filter instead of falling back to the pure-Go tagger. The startup
+  log names the attachment.
+- Without any eBPF tagger, the pure-Go tagger now tags UDP and ICMP to IPv4
+  destinations by sending them through raw sockets (`CAP_NET_RAW`), with the
+  same SipHash tag the eBPF tagger writes. Before, nothing was tagged in that
+  mode. TCP and TLS stay untagged there, and the executor says so.
+- The pure-Go tag is SipHash-2-4 instead of HMAC-SHA256.
+  `local/scripts/verify_pcap.py` checks SipHash only.
+- `GET /debuglet/{id}/state` and `/logs` accept only the lowercase canonical
+  run ID that submission returns, as the control protocol does, and reject a
+  nil, uppercase, braced, `urn:uuid:` or unhyphenated `{id}` with 400
+  `invalid_request`. `DELETE /debuglet` holds the `debuglet_id` in its body to
+  the same rule, and `api/openapi.yaml` states it as a pattern. `dbl status`,
+  `logs` and `cancel` and the `pkg/client` methods refuse an uppercase ID
+  before sending it; pass the ID as printed.
+- `make deploy-update-config` and `make deploy-update-addr` render the version
+  of the release installed on each host, read from its deployment record,
+  instead of `git describe` of the operator's checkout and `unknown`
+  respectively. `DEPLOY_VERSION` is no longer read, and an explicit
+  `-e deploy_version` that names another release is refused. A host without a
+  deployment record needs a full deployment first.
+
+### Fixed
+- An executor that stops answering during `make deploy` or
+  `deploy-executors.yml` is reported as not deployed and ended cleanly, and
+  the play continues with the next executor. Before, its missing inspection
+  results failed it, and with one host deployed at a time that ended the play
+  for every executor after it. Deploy the skipped host again once it answers.
+- The `scion_path_length` and `scion_get_interface_details` guest imports
+  answer a negative or out-of-range index, or a path without metadata, with -1
+  and zeros respectively, instead of panicking inside the executor. The import
+  signatures are unchanged.
+- The executor refuses to start with a client certificate outside its validity
+  window, naming `credentials.client_cert`, as the dispatcher already does for
+  its own certificate. Before, it started and every control connection was
+  rejected. Renew the certificate if the executor now refuses to start.
+- The CLI's saved connections and credentials, local role records, readiness
+  records, and managed-service configuration, unit, record and maintenance
+  files are flushed to disk before they replace the previous file, so a crash
+  cannot leave one empty or truncated. No format or location changes.
+- `make bootstrap-sudo`, `make deploy-update-addr` and `make deploy-update-config`
+  verify SSH host keys against the selected environment's file. With
+  `DEPLOY_ENV=dev` they used the production `known_hosts`, and so refused dev
+  hosts missing from it. No change for `DEPLOY_ENV=prod`.
+- The executor removes a run's executor-wide bandwidth limit from its packet
+  counter when the run ends. The eBPF counter's map holds 10,000 entries, so
+  an executor process previously refused every run after about 10,000 runs.
+  No configuration, protocol or schema change.
+- The dispatcher and executor daemons enforce the schema's foreign keys and
+  cascades, and wait up to one second for a database lock held by another
+  process instead of failing at once. `PUT /payment/intent` now writes the
+  transaction, its orders and its owner in one SQL transaction. The schema is
+  unchanged; `-upgrade-database` warns about rows an earlier version wrote
+  that break a foreign key, and leaves them in place.
+
+### Removed
+- `tools/verify-offline.py`, `local/scripts/client.py`, `local/scripts/debug_tesla.py`
+  and `local/scripts/cross_check_tesla/`, which nothing ran or documented. `dbl`,
+  `pkg/client` and `local/scripts/verify_pcap.py` cover their uses.
+- The committed big-endian eBPF bindings and objects (`*_bpfeb.go`,
+  `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
+  covers every supported platform; the executor no longer builds for
+  big-endian Linux (mips, ppc64, s390x).
+
+### Known limitations
+- SCION sockets cannot be marked, so their packets are not attributed to the
+  run by the eBPF tagger. The executor logs a warning once when it dials SCION.
+- The separately deployed web dashboard is not yet fully compatible with the
+  authenticated session API. Use `dbl` or `pkg/client` for complete workflows.
+- Only Linux amd64 packages are published. Local state directories remain
+  package-version-specific, and interrupted runs are not recovered.
+
 ## [0.2.0-rc.2] - 2026-09-25
 
 ### Added
@@ -124,7 +204,8 @@ integration branch is supported.
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.3...HEAD
+[0.2.0-rc.3]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
 [0.1.0]: https://github.com/netsec-ethz/debuglet/releases/tag/v0.1.0

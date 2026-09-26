@@ -124,7 +124,7 @@ elif sys.argv[1] == 'run':
         self.assertEqual(result.returncode, 0, result.stderr)
         args = next(args for args in self.arguments() if args[0] == 'run')
         self.assertEqual([args[i + 1] for i, arg in enumerate(args) if arg == '--cap-add'],
-                         ['BPF', 'NET_ADMIN', 'PERFMON', 'SYS_RESOURCE'])
+                         ['BPF', 'NET_ADMIN', 'NET_RAW', 'PERFMON', 'SYS_RESOURCE'])
         self.assertNotIn('--privileged', args)
         build = next(call for call in self.arguments() if call[0] == 'build')
         self.assertIn('deploy/ci/Dockerfile', build)

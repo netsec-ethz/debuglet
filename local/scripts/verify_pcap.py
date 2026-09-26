@@ -39,9 +39,8 @@ Workflow
    c. Verify chain consistency: H^t(k_t) == k_0.
    d. For each candidate debuglet ID derive the per-measurement key:
           ak = HKDF-SHA256(secret=k_t, info=debuglet_id)
-      and check the tag stored in the IP-ID field. Both tag functions are
-      tried: SipHash-2-4 (the eBPF/TC egress tagger, the production path)
-      and HMAC-SHA256 (the pure-Go tagger).
+      and check the tag stored in the IP-ID field: SipHash-2-4, which the
+      eBPF tagger and the pure-Go fallback compute alike.
 5. Report which debuglet IDs verified for each packet.
 
 Usage
@@ -119,7 +118,7 @@ def siphash24(k0: int, k1: int, data: bytes) -> int:
 
     tagger.c hashes only whole 8-byte blocks (at most 8 of them) and folds
     the *capped* length into the finalisation word, so trailing bytes beyond
-    the last full block never enter the state. ComputeBPFTag in Go does the
+    the last full block never enter the state. tesla.ComputeTag in Go does the
     same; this function reproduces both.
     """
 
@@ -167,16 +166,10 @@ def siphash24(k0: int, k1: int, data: bytes) -> int:
 
 
 def compute_bpf_tag(ak: bytes, payload: bytes) -> int:
-    """16-bit SipHash-2-4 tag — the eBPF tagger. Matches ComputeBPFTag in Go."""
+    """16-bit SipHash-2-4 tag — the eBPF tagger. Matches tesla.ComputeTag in Go."""
     k0 = struct.unpack_from("<Q", ak, 0)[0]
     k1 = struct.unpack_from("<Q", ak, 8)[0]
     return siphash24(k0, k1, payload[:64])
-
-
-def compute_hmac_tag(ak: bytes, payload: bytes) -> int:
-    """16-bit HMAC-SHA256 tag — the pure-Go tagger. Matches ComputeTag in Go."""
-    mac = hmac.new(ak, payload, hashlib.sha256).digest()
-    return struct.unpack_from(">H", mac, 0)[0]
 
 
 def canonicalize_ipv4(raw: bytes) -> bytes:
@@ -493,10 +486,7 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
                 continue
             ak = hkdf_sha256(chain_key, mid.encode())
             if compute_bpf_tag(ak, canonical) == tag:
-                matched.append((mid, epoch, "ebpf/siphash"))
-                seen.add(mid)
-            elif compute_hmac_tag(ak, canonical) == tag:
-                matched.append((mid, epoch, "go/hmac"))
+                matched.append((mid, epoch, "siphash"))
                 seen.add(mid)
     if not matched:
         if pkt_epoch < 1:
