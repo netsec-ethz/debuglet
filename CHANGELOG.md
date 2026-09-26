@@ -14,7 +14,13 @@ integration branch is supported.
 
 ## [Unreleased]
 
+## [0.2.0-rc.3] - 2026-09-26
+
 ### Changed
+- The HTTP contract remains version `1.3`. The `v0.2.0-rc.2` prose
+  incorrectly said `1.2`, although its embedded OpenAPI document, `/version`
+  response and client constant correctly reported `1.3` for the GitHub browser
+  login routes.
 - Without TCX (kernels before 6.6), the executor attaches the eBPF tagger as a
   tc `clsact` filter instead of falling back to the pure-Go tagger. The startup
   log names the attachment.
@@ -79,6 +85,14 @@ integration branch is supported.
   `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
   covers every supported platform; the executor no longer builds for
   big-endian Linux (mips, ppc64, s390x).
+
+### Known limitations
+- SCION sockets cannot be marked, so their packets are not attributed to the
+  run by the eBPF tagger. The executor logs a warning once when it dials SCION.
+- The separately deployed web dashboard is not yet fully compatible with the
+  authenticated session API. Use `dbl` or `pkg/client` for complete workflows.
+- Only Linux amd64 packages are published. Local state directories remain
+  package-version-specific, and interrupted runs are not recovered.
 
 ## [0.2.0-rc.2] - 2026-09-25
 
@@ -190,7 +204,8 @@ integration branch is supported.
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.3...HEAD
+[0.2.0-rc.3]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
 [0.1.0]: https://github.com/netsec-ethz/debuglet/releases/tag/v0.1.0
