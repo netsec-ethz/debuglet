@@ -38,6 +38,12 @@ integration branch is supported.
   409 `capacity_exhausted`.
 
 ### Fixed
+- The dispatcher and executor daemons enforce the schema's foreign keys and
+  cascades, and wait up to one second for a database lock held by another
+  process instead of failing at once. `PUT /payment/intent` now creates the
+  transaction before the orders that reference it. The schema is unchanged;
+  an existing database may be checked for rows written without enforcement
+  with `PRAGMA foreign_key_check`.
 - A refused resubmission of a batch whose orders already have runs no longer
   refunds its transaction.
 - A datagram read into a buffer shorter than the datagram is charged for the

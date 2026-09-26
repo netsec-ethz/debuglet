@@ -5,12 +5,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"math/rand/v2"
 	"os"
@@ -112,11 +112,10 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 	if err := storagecheck.Check(ctx, storagecheck.Executor, cfg.Database.Path); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", cfg.Database.Path)
+	db, err := sqlitedb.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
 	node, err := executor.NewNode(cfg, logger, db)
 	if err != nil {
 		return errors.Join(err, db.Close())

@@ -35,6 +35,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 
 	"github.com/google/uuid"
@@ -141,11 +142,10 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", cfg.Database.Path)
+	db, err := sqlitedb.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
 	defer db.Close()
 	paymentHandler := payments.NewPaymentHandler(db, cfg, logger)
 	d, err := dispatcher.New(logger, db, cfg.Server.Version, time.Duration(cfg.Scheduler.ExecutorTimeout)*time.Second, time.Duration(cfg.Scheduler.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
@@ -454,11 +454,10 @@ func administerRole(ctx context.Context, cfg *config.DispatcherConfig, grant, re
 	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", cfg.Database.Path)
+	db, err := sqlitedb.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
 	defer db.Close()
 	changed, err := database.New(db).SetUserRole(ctx, database.SetUserRoleParams{Role: role, Uuid: account})
 	if err != nil {
@@ -482,11 +481,10 @@ func administerEnrollment(ctx context.Context, cfg *config.DispatcherConfig, enr
 	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", cfg.Database.Path)
+	db, err := sqlitedb.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
 	defer db.Close()
 	store := enrollment.NewStore(db)
 	if revoke != "" {

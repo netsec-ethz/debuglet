@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/google/uuid"
@@ -239,11 +241,16 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dispatcher.sqlite")
 	cfg := wfDisabledConfig()
 
-	db, err := sql.Open("sqlite", dbPath)
+	// Open the way the daemon does, so the flow runs with foreign keys
+	// enforced. The daemon's opener never creates a file; an empty one is an
+	// empty database.
+	if err := os.WriteFile(dbPath, nil, 0o600); err != nil {
+		t.Fatalf("create sqlite: %v", err)
+	}
+	db, err := sqlitedb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	dbOpen := true
 	t.Cleanup(func() {
 		if dbOpen {
@@ -551,11 +558,10 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	}
 	dbOpen = false
 
-	db2, err := sql.Open("sqlite", dbPath)
+	db2, err := sqlitedb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
-	db2.SetMaxOpenConns(1)
 	defer db2.Close()
 	reopened, err := database.New(db2).GetTransactionByID(ctx, txID)
 	if err != nil {
