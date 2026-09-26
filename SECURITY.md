@@ -6,7 +6,7 @@ trust boundaries and known limits are described in [docs/SECURITY.md](docs/SECUR
 ## Supported versions
 
 This policy covers the `v0.2.0` release candidates, published from `main`
-(currently `v0.2.0-rc.1`), and the `dev` integration branch. Use the latest
+(currently `v0.2.0-rc.2`), and the `dev` integration branch. Use the latest
 release candidate, or the current reviewed commit of `dev` with passing
 validation, and record the exact package version and source revision. There is
 no backport branch; the existing `v0.1.0` tag predates this package format.

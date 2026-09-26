@@ -14,18 +14,6 @@ integration branch is supported.
 
 ## [Unreleased]
 
-### Added
-- Add browser login with GitHub OAuth, including PKCE, short-lived login state,
-  and deployment-specific credentials stored outside version control. This adds
-  dispatcher database migration 00009; run `make deploy-upgrade-db
-  DEPLOY_ENV=<env>` before the full deployment. The target builds and installs
-  the candidate payload before it applies that payload's migration.
-- `debuglet-dispatcher -upgrade-database`, `debuglet-executor -upgrade-database`
-  and `deploy/ansible/upgrade-database.yml` bring a deployed database forward to
-  the packaged schema, with a backup taken by the playbook. The upgrade is
-  supported for wallet-free TEST state only; local state directories still
-  require a new directory per package version.
-
 ### Changed
 - `GET /debuglet/{id}/state` and `/logs` accept only the lowercase canonical
   run ID that submission returns, as the control protocol does, and reject a
@@ -40,15 +28,6 @@ integration branch is supported.
   respectively. `DEPLOY_VERSION` is no longer read, and an explicit
   `-e deploy_version` that names another release is refused. A host without a
   deployment record needs a full deployment first.
-- `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
-  instead of whole seconds truncated. Sub-second runs are no longer free, and a
-  client that computes prices itself must use the new formula.
-- `DELETE /debuglet` answers an executor's refusal 400 `cancel_refused` whatever
-  its gRPC code, and an Abort that may not have reached the executor 500
-  `internal_error` ("cancellation not confirmed").
-- `dbl service status` exits 4 when the role is not ready, where it exited 0.
-- Setting a destination limit below the floors already admitted is refused with
-  409 `capacity_exhausted`.
 
 ### Fixed
 - The `scion_path_length` and `scion_get_interface_details` guest imports
@@ -77,6 +56,42 @@ integration branch is supported.
   transaction, its orders and its owner in one SQL transaction. The schema is
   unchanged; `-upgrade-database` warns about rows an earlier version wrote
   that break a foreign key, and leaves them in place.
+
+## [0.2.0-rc.2] - 2026-09-25
+
+### Added
+- Add browser login with GitHub OAuth, including PKCE, short-lived login state,
+  and deployment-specific credentials stored outside version control. This adds
+  dispatcher database migration 00009; run `make deploy-upgrade-db
+  DEPLOY_ENV=<env>` before the full deployment. The target builds and installs
+  the candidate payload before it applies that payload's migration.
+- `debuglet-dispatcher -upgrade-database`, `debuglet-executor -upgrade-database`
+  and `deploy/ansible/upgrade-database.yml` bring a deployed database forward to
+  the packaged schema, with a backup taken by the playbook. The upgrade is
+  supported for wallet-free TEST state only; local state directories still
+  require a new directory per package version.
+
+### Changed
+- The HTTP contract stays at version `1.2` while it changes in ways that its
+  rules otherwise reserve for a major version. Release candidates may do so
+  before the final `v0.2.0`; from then on the rules bind without exception.
+  [docs/API.md](docs/API.md#release-candidates) lists every such change of this
+  candidate, including the ones below.
+- Every route answers a body above 32 MiB with 413 `payload_too_large`.
+- An identical resubmission on `PUT /debuglet` answers 200 with the runs already
+  recorded for the batch instead of admitting it again. `PUT /payment/intent`
+  refuses an empty batch and a repeated `order_id`.
+- `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
+  instead of whole seconds truncated. Sub-second runs are no longer free, and a
+  client that computes prices itself must use the new formula.
+- `DELETE /debuglet` answers an executor's refusal 400 `cancel_refused` whatever
+  its gRPC code, and an Abort that may not have reached the executor 500
+  `internal_error` ("cancellation not confirmed").
+- `dbl service status` exits 4 when the role is not ready, where it exited 0.
+- Setting a destination limit below the floors already admitted is refused with
+  409 `capacity_exhausted`.
+
+### Fixed
 - A refused resubmission of a batch whose orders already have runs no longer
   refunds its transaction.
 - A datagram read into a buffer shorter than the datagram is charged for the
@@ -90,6 +105,10 @@ integration branch is supported.
 ### Known limitations
 - SCION sockets cannot be marked, so their packets are not attributed to the
   run by the eBPF tagger. The executor logs a warning once when it dials SCION.
+- The limitations of `v0.2.0-rc.1` still apply, except that a deployed database
+  can now be upgraded: the web dashboard is not compatible, only Linux amd64
+  packages are published, a local state directory stays with its package version
+  and interrupted runs are not recovered.
 
 ## [0.2.0-rc.1] - 2026-09-25
 
@@ -148,6 +167,7 @@ integration branch is supported.
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
 [0.1.0]: https://github.com/netsec-ethz/debuglet/releases/tag/v0.1.0
