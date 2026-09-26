@@ -9,6 +9,7 @@ in that module's LICENSE file:
 github.com/DATA-DOG/go-sqlmock v1.5.2 - BSD-3-Clause (tests only)
 github.com/block-vision/sui-go-sdk v1.2.1 - Apache-2.0
 github.com/cilium/ebpf v0.21.0 - MIT
+github.com/florianl/go-tc v0.4.8 - MIT
 github.com/google/uuid v1.6.0 - BSD-3-Clause
 github.com/hashicorp/yamux v0.1.2 - MPL-2.0
 github.com/labstack/echo/v4 v4.13.4 - MIT

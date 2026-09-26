@@ -43,7 +43,8 @@ import (
 )
 
 // akEntry mirrors the struct ak_entry in tagger.c.
-// The 32-byte HMAC key is split into two 64-bit SipHash key words.
+// The first 16 bytes of the 32-byte derived key ak are the two 64-bit SipHash
+// key words.
 type akEntry struct {
 	K0 uint64
 	K1 uint64
@@ -64,9 +65,12 @@ func akFromKey(ak []byte) akEntry {
 // It implements tagger.TaggerInterface (eBPF side) and exposes a
 // KeyManager for periodic key updates.
 type BPFTagger struct {
-	objs        taggerObjects
-	logger      *zap.Logger
-	qdisc       link.Link
+	objs       taggerObjects
+	logger     *zap.Logger
+	attachment io.Closer
+	// Attachment names how the program is attached: "tcx", or "tc" for the
+	// legacy clsact filter used where the kernel has no TCX.
+	Attachment  string
 	iface       *net.Interface
 	schedule    *tesla.KeySchedule
 	measureID   []byte
@@ -100,20 +104,31 @@ func NewBPFTagger(logger *zap.Logger, iface *net.Interface, schedule *tesla.KeyS
 		return nil, fmt.Errorf("ebpf: load tagger objects: %w", err)
 	}
 
-	// Attach to TC egress using TCX.
-	l, err := attachWithRollback(func() (link.Link, error) {
+	// Attach to TC egress using TCX, or as a legacy clsact filter where the
+	// kernel has no TCX. Only a missing TCX falls back: a refused attach, such
+	// as a missing privilege, would be refused there too.
+	attachment := "tcx"
+	l, err := attachWithRollback(func() (io.Closer, error) {
 		attached, err := link.AttachTCX(link.TCXOptions{
 			Interface: iface.Index,
 			Program:   objs.DebugletTag,
 			Attach:    ebpf.AttachTCXEgress,
 		})
+		if errors.Is(err, ebpf.ErrNotSupported) {
+			attachment = "tc"
+			filter, legacyErr := attachLegacyTC(iface, objs.DebugletTag, mapKey(measurementID))
+			if legacyErr != nil {
+				return nil, fmt.Errorf("TCX unavailable (%v), and legacy tc: %w", err, legacyErr)
+			}
+			return filter, nil
+		}
 		if err != nil {
 			return nil, err
 		}
 		return attached, nil
 	}, objs.DebugletTag, objs.AkMap)
 	if err != nil {
-		return nil, fmt.Errorf("ebpf: attach TCX: %w", err)
+		return nil, fmt.Errorf("ebpf: attach tagger: %w", err)
 	}
 
 	mid := make([]byte, len(measurementID))
@@ -123,14 +138,15 @@ func NewBPFTagger(logger *zap.Logger, iface *net.Interface, schedule *tesla.KeyS
 		logger = zap.NewNop()
 	}
 	bt := &BPFTagger{
-		objs:      objs,
-		logger:    logger,
-		qdisc:     l,
-		iface:     iface,
-		schedule:  schedule,
-		measureID: mid,
-		stopCh:    make(chan struct{}),
-		closers:   []io.Closer{l, objs.DebugletTag, objs.AkMap},
+		objs:       objs,
+		logger:     logger,
+		attachment: l,
+		Attachment: attachment,
+		iface:      iface,
+		schedule:   schedule,
+		measureID:  mid,
+		stopCh:     make(chan struct{}),
+		closers:    []io.Closer{l, objs.DebugletTag, objs.AkMap},
 	}
 
 	if err := bt.initializeRefresh(bt.updateKey, func() (<-chan time.Time, func()) {
@@ -146,7 +162,7 @@ func NewBPFTagger(logger *zap.Logger, iface *net.Interface, schedule *tesla.KeyS
 // attachWithRollback owns the already-loaded program/maps until successful
 // attachment transfers them to BPFTagger. Even a failed link returned alongside
 // an error is released, followed by every independently acquired object.
-func attachWithRollback(attach func() (link.Link, error), owned ...io.Closer) (link.Link, error) {
+func attachWithRollback(attach func() (io.Closer, error), owned ...io.Closer) (io.Closer, error) {
 	attached, err := attach()
 	if err == nil {
 		return attached, nil
@@ -207,8 +223,14 @@ func (bt *BPFTagger) applyKeyAt(now time.Time, install func(akEntry) error, remo
 }
 
 func (bt *BPFTagger) MapKey() uint32 {
+	return mapKey(bt.measureID)
+}
+
+// mapKey is the slot and socket mark of one measurement, and the handle of its
+// legacy tc filter.
+func mapKey(measurementID []byte) uint32 {
 	h := fnv.New32a()
-	h.Write(bt.measureID)
+	h.Write(measurementID)
 	return h.Sum32()
 }
 

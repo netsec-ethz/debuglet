@@ -37,7 +37,10 @@
 //
 // The authentication tag written into the IPv4 IPID field is:
 //
-//	tag = HMAC-SHA256(ak, packet_payload)[0:2]   (16-bit truncation)
+//	tag = SipHash-2-4(k0 || k1 = ak[0:16], packet[0:64])[0:2]   (16-bit truncation)
+//
+// with the packet's IPID and checksum fields zeroed. The eBPF tagger (tagger.c)
+// and the pure-Go fallback compute it identically; see ComputeTag.
 package tesla
 
 import (
@@ -345,60 +348,6 @@ func ChainSeed(seed []byte, generation int64) ([]byte, error) {
 	return tail, nil
 }
 
-// ComputeTag computes the 16-bit authentication tag for a packet payload:
-//
-//	tag = HMAC-SHA256(ak, payload)[0:2]
-//
-// The returned uint16 is in host byte order; the caller is responsible for
-// writing it into the IPID field in network (big-endian) byte order.
-func ComputeTag(ak, payload []byte) (uint16, error) {
-	mac := hmac.New(sha256.New, ak)
-	mac.Write(payload)
-	sum := mac.Sum(nil)
-	return binary.BigEndian.Uint16(sum[:2]), nil
-}
-
-// ComputeTagForPacket is a convenience wrapper that derives ak from the chain
-// key at time t and then computes the tag over payload. It fails while no
-// chain key is usable.
-func (ks *KeySchedule) ComputeTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
-	ak, err := ks.currentAK(t, measurementID)
-	if err != nil {
-		return 0, err
-	}
-	return ComputeTag(ak, payload)
-}
-
-// VerifyTag checks whether tag matches the expected HMAC for the packet at a
-// given epoch, given the disclosed key for that epoch and the measurement ID.
-//
-// If packet begins with a valid IPv4 header (version == 4, length ≥ 20), both
-// the IPID field (bytes 4–5) and the IPv4 checksum field (bytes 10–11) are
-// zeroed before hashing, exactly as TagPacket does. The caller should pass the
-// full received packet bytes (with the IPID field containing the observed tag
-// and the checksum field as received on the wire).
-func VerifyTag(disclosedKey []byte, epoch int64, measurementID, packet []byte, tag uint16) (bool, error) {
-	// Canonicalise IPv4 mutable fields before hashing, to match TagPacket.
-	if len(packet) >= 20 && (packet[0]>>4) == 4 {
-		pkt := make([]byte, len(packet))
-		copy(pkt, packet)
-		pkt[4] = 0 // IPID
-		pkt[5] = 0
-		pkt[10] = 0 // IPv4 checksum
-		pkt[11] = 0
-		packet = pkt
-	}
-	ak, err := DeriveAK(disclosedKey, measurementID)
-	if err != nil {
-		return false, err
-	}
-	expected, err := ComputeTag(ak, packet)
-	if err != nil {
-		return false, err
-	}
-	return expected == tag, nil
-}
-
 // siphash24 computes SipHash-2-4.
 func siphash24(k0, k1 uint64, data []byte) uint64 {
 	v0 := k0 ^ 0x736f6d6570736575
@@ -475,10 +424,11 @@ func siphash24(k0, k1 uint64, data []byte) uint64 {
 	return v0 ^ v1 ^ v2 ^ v3
 }
 
-// ComputeBPFTag computes the BPF SipHash-2-4 tag for a packet payload.
-// It does not perform packet canonicalization (which should be done by the caller or
-// on raw packet payloads).
-func ComputeBPFTag(ak, payload []byte) (uint16, error) {
+// ComputeTag computes the 16-bit attribution tag both taggers write into the
+// IPv4 Identification field: SipHash-2-4 keyed with ak over at most the first
+// 64 bytes of the packet, as tagger.c computes it in the kernel. It does not
+// canonicalize the packet; the caller zeroes the mutable header fields.
+func ComputeTag(ak, payload []byte) (uint16, error) {
 	if len(ak) < 16 {
 		return 0, fmt.Errorf("tesla: ak too short")
 	}
@@ -494,19 +444,21 @@ func ComputeBPFTag(ak, payload []byte) (uint16, error) {
 	return uint16(hash & 0xFFFF), nil
 }
 
-// ComputeBPFTagForPacket derives ak from the chain key at time t and then
-// computes the BPF SipHash-2-4 tag over payload. It fails while no chain key
-// is usable.
-func (ks *KeySchedule) ComputeBPFTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
+// ComputeTagForPacket derives ak from the chain key at time t and then
+// computes the tag over payload. It fails while no chain key is usable.
+func (ks *KeySchedule) ComputeTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
 	ak, err := ks.currentAK(t, measurementID)
 	if err != nil {
 		return 0, err
 	}
-	return ComputeBPFTag(ak, payload)
+	return ComputeTag(ak, payload)
 }
 
-// VerifyBPFTag checks whether tag matches the expected SipHash for the packet
-func VerifyBPFTag(disclosedKey []byte, epoch int64, measurementID, packet []byte, tag uint16) (bool, error) {
+// VerifyTag checks whether tag matches the expected tag for the packet at a
+// given epoch, given the disclosed key for that epoch and the measurement ID.
+// A packet that begins with an IPv4 header has its IPID and checksum fields
+// zeroed before hashing, as both taggers do.
+func VerifyTag(disclosedKey []byte, epoch int64, measurementID, packet []byte, tag uint16) (bool, error) {
 	if len(packet) >= 20 && (packet[0]>>4) == 4 {
 		pkt := make([]byte, len(packet))
 		copy(pkt, packet)
@@ -520,7 +472,7 @@ func VerifyBPFTag(disclosedKey []byte, epoch int64, measurementID, packet []byte
 	if err != nil {
 		return false, err
 	}
-	expected, err := ComputeBPFTag(ak, packet)
+	expected, err := ComputeTag(ak, packet)
 	if err != nil {
 		return false, err
 	}

@@ -30,9 +30,6 @@ func TestNoSigningKeyBeforeEpochOne(t *testing.T) {
 		if _, err := ks.ComputeTagForPacket(at, testMeasurementID, payload); err == nil {
 			t.Errorf("ComputeTagForPacket(%s) succeeded without a usable key", at.Sub(start))
 		}
-		if _, err := ks.ComputeBPFTagForPacket(at, testMeasurementID, payload); err == nil {
-			t.Errorf("ComputeBPFTagForPacket(%s) succeeded without a usable key", at.Sub(start))
-		}
 	}
 
 	k1 := ks.CurrentKey(start.Add(delay))
@@ -66,12 +63,12 @@ func TestAnchorCannotProduceAcceptedTag(t *testing.T) {
 		t.Fatalf("DeriveAK(anchor): %v", err)
 	}
 	forged, _ := ComputeTag(forgedAK, payload)
-	forgedBPF, _ := ComputeBPFTag(forgedAK, payload)
+	forgedBPF, _ := ComputeTag(forgedAK, payload)
 
 	if tag, err := ks.ComputeTagForPacket(start, testMeasurementID, payload); err == nil && tag == forged {
 		t.Error("the tag emitted in epoch 0 is computable from the public anchor")
 	}
-	if tag, err := ks.ComputeBPFTagForPacket(start, testMeasurementID, payload); err == nil && tag == forgedBPF {
+	if tag, err := ks.ComputeTagForPacket(start, testMeasurementID, payload); err == nil && tag == forgedBPF {
 		t.Error("the BPF tag emitted in epoch 0 is computable from the public anchor")
 	}
 
@@ -79,8 +76,8 @@ func TestAnchorCannotProduceAcceptedTag(t *testing.T) {
 	if ok, err := VerifyTag(k1, 1, testMeasurementID, payload, forged); err != nil || ok {
 		t.Errorf("VerifyTag(k_1, anchor-derived tag) = %v, %v; want false", ok, err)
 	}
-	if ok, err := VerifyBPFTag(k1, 1, testMeasurementID, payload, forgedBPF); err != nil || ok {
-		t.Errorf("VerifyBPFTag(k_1, anchor-derived tag) = %v, %v; want false", ok, err)
+	if ok, err := VerifyTag(k1, 1, testMeasurementID, payload, forgedBPF); err != nil || ok {
+		t.Errorf("VerifyTag(k_1, anchor-derived tag) = %v, %v; want false", ok, err)
 	}
 
 	real, err := ks.ComputeTagForPacket(start.Add(delay), testMeasurementID, payload)
@@ -90,12 +87,12 @@ func TestAnchorCannotProduceAcceptedTag(t *testing.T) {
 	if ok, err := VerifyTag(k1, 1, testMeasurementID, payload, real); err != nil || !ok {
 		t.Errorf("VerifyTag(k_1, epoch-1 tag) = %v, %v; want true", ok, err)
 	}
-	realBPF, err := ks.ComputeBPFTagForPacket(start.Add(delay), testMeasurementID, payload)
+	realBPF, err := ks.ComputeTagForPacket(start.Add(delay), testMeasurementID, payload)
 	if err != nil {
-		t.Fatalf("ComputeBPFTagForPacket(epoch 1): %v", err)
+		t.Fatalf("ComputeTagForPacket(epoch 1): %v", err)
 	}
-	if ok, err := VerifyBPFTag(k1, 1, testMeasurementID, payload, realBPF); err != nil || !ok {
-		t.Errorf("VerifyBPFTag(k_1, epoch-1 tag) = %v, %v; want true", ok, err)
+	if ok, err := VerifyTag(k1, 1, testMeasurementID, payload, realBPF); err != nil || !ok {
+		t.Errorf("VerifyTag(k_1, epoch-1 tag) = %v, %v; want true", ok, err)
 	}
 }
 
