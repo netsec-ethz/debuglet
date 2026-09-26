@@ -26,7 +26,9 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 inspect=$root/deploy/ansible/roles/executor/tasks/inspect.yml
 failures=0
 
-command -v ansible-playbook >/dev/null || { echo "missing ansible-playbook" >&2; exit 2; }
+for tool in ansible-playbook python3; do
+	command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
+done
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/debuglet-unreachable.XXXXXXXX")
 trap 'rm -rf -- "$work"' EXIT INT TERM
@@ -42,13 +44,15 @@ check() {
 }
 
 # The unreachable host is an SSH connection to a loopback port nothing
-# listens on, which is refused at once.
+# listens on, which is refused at once. The port is one the kernel just handed
+# out and took back, so no service can be listening on it.
+closed_port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
 cat >"$work/inventory.yml" <<EOF
 all:
   hosts:
     unreachable:
       ansible_host: 127.0.0.1
-      ansible_port: 9
+      ansible_port: $closed_port
       ansible_ssh_common_args: "-o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     reachable:
       ansible_connection: local
