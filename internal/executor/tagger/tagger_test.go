@@ -177,42 +177,44 @@ func TestAccountabilityRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAccountabilityBPFRoundTrip performs a BPF end-to-end accountability check:
-//  1. Compute a BPF tag for a packet using the current key.
-//  2. Verify the tag using VerifyBPFTag.
-func TestAccountabilityBPFRoundTrip(t *testing.T) {
+// TestTagPacketMatchesKernelComputation checks that the pure-Go tagger writes
+// exactly the tag tagger.c computes: SipHash over at most the first 64 bytes of
+// the IPv4 packet with its IPID and checksum zeroed. Packets shorter than,
+// equal to and longer than the 64-byte limit are covered, including lengths
+// that are not a multiple of the 8-byte block.
+func TestTagPacketMatchesKernelComputation(t *testing.T) {
 	now := time.Now()
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
 		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: now.Add(-10 * time.Second),
+		Delay: time.Hour,
+		Epoch: now.Add(-time.Hour),
 	})
+	tgr := New(ks, testMeasurementID)
+	for _, payloadLen := range []int{0, 1, 8, 13, 44, 45, 100, 1400} {
+		payload := make([]byte, payloadLen)
+		for i := range payload {
+			payload[i] = byte(i*7 + payloadLen)
+		}
+		pkt := buildIPv4Packet(payload)
 
-	payload := []byte("bpf accountability test payload")
-	pkt := buildIPv4Packet(payload)
+		canonical := append([]byte(nil), pkt...)
+		binary.BigEndian.PutUint16(canonical[4:6], 0)
+		binary.BigEndian.PutUint16(canonical[10:12], 0)
+		want, err := ks.ComputeTagForPacket(now, testMeasurementID, canonical)
+		if err != nil {
+			t.Fatalf("ComputeTagForPacket: %v", err)
+		}
 
-	// In BPF-mode, mutable fields (IPID, checksum) are zeroed during tagging.
-	binary.BigEndian.PutUint16(pkt[4:6], 0)   // IPID
-	binary.BigEndian.PutUint16(pkt[10:12], 0) // IPv4 checksum
-
-	tag, err := ks.ComputeBPFTagForPacket(now, testMeasurementID, pkt)
-	if err != nil {
-		t.Fatalf("ComputeBPFTagForPacket: %v", err)
-	}
-
-	// Write tag to packet IPID (to mirror kernel behavior)
-	writeIPID(pkt, tag)
-	recomputeIPv4Checksum(pkt)
-
-	observedTag := ReadIPID(pkt)
-
-	disclosedKey := ks.CurrentKey(now) // key for epoch 1
-	ok, err := tesla.VerifyBPFTag(disclosedKey, 1, testMeasurementID, pkt, observedTag)
-	if err != nil {
-		t.Fatalf("VerifyBPFTag: %v", err)
-	}
-	if !ok {
-		t.Error("VerifyBPFTag returned false — BPF accountability verification failed")
+		tagged, err := tgr.TagPacket(pkt)
+		if err != nil {
+			t.Fatalf("TagPacket: %v", err)
+		}
+		if got := ReadIPID(tagged); got != want {
+			t.Errorf("payload %d: tag %04x, want the kernel's %04x", payloadLen, got, want)
+		}
+		if IPv4Checksum(tagged[:20]) != 0 {
+			t.Errorf("payload %d: the tagged header checksum does not verify", payloadLen)
+		}
 	}
 }
 
@@ -269,61 +271,6 @@ func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 	}
 	if !ok {
 		t.Error("VerifyTag failed using delayed disclosed key")
-	}
-}
-
-// TestAccountabilityBPFRealDelayedDisclosure simulates the real delayed disclosure flow for BPF tags:
-//  1. Compute BPF tag at time T = now + delay (Epoch 1).
-//  2. At time T = now + 3*delay (Epoch 3), the disclosed key is for Epoch 2.
-//  3. Derive Epoch 1's key from the disclosed Epoch 2 key.
-//  4. Verify the BPF tag using the derived key.
-func TestAccountabilityBPFRealDelayedDisclosure(t *testing.T) {
-	delay := 100 * time.Millisecond
-	now := time.Now()
-	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: delay,
-		Epoch: now,
-	})
-
-	payload := []byte("delayed disclosure BPF payload")
-	pkt := buildIPv4Packet(payload)
-
-	// Zero mutable fields
-	binary.BigEndian.PutUint16(pkt[4:6], 0)
-	binary.BigEndian.PutUint16(pkt[10:12], 0)
-
-	// Compute BPF tag at T = now + delay (Epoch 1)
-	tag, err := ks.ComputeBPFTagForPacket(now.Add(delay), testMeasurementID, pkt)
-	if err != nil {
-		t.Fatalf("ComputeBPFTagForPacket: %v", err)
-	}
-	writeIPID(pkt, tag)
-	recomputeIPv4Checksum(pkt)
-
-	observedTag := ReadIPID(pkt)
-
-	// At T = now + 3*delay (Epoch 3), the disclosed key is for Epoch 2.
-	disclosedEpoch, disclosedKey, ok := ks.DisclosedKey(now.Add(3 * delay))
-	if !ok {
-		t.Fatal("expected disclosed key at Epoch 3")
-	}
-	if disclosedEpoch != 2 {
-		t.Fatalf("expected disclosed epoch index 2, got %d", disclosedEpoch)
-	}
-
-	// Derive target key for Epoch 1 from disclosed Epoch 2 key
-	targetKey, err := tesla.DeriveFromDisclosed(disclosedKey, disclosedEpoch, 1)
-	if err != nil {
-		t.Fatalf("DeriveFromDisclosed: %v", err)
-	}
-
-	ok, err = tesla.VerifyBPFTag(targetKey, 1, testMeasurementID, pkt, observedTag)
-	if err != nil {
-		t.Fatalf("VerifyBPFTag: %v", err)
-	}
-	if !ok {
-		t.Error("VerifyBPFTag failed using delayed disclosed key")
 	}
 }
 

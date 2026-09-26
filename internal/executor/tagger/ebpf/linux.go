@@ -43,7 +43,8 @@ import (
 )
 
 // akEntry mirrors the struct ak_entry in tagger.c.
-// The 32-byte HMAC key is split into two 64-bit SipHash key words.
+// The first 16 bytes of the 32-byte derived key ak are the two 64-bit SipHash
+// key words.
 type akEntry struct {
 	K0 uint64
 	K1 uint64

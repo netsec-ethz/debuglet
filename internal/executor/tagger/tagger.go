@@ -60,7 +60,8 @@ func New(schedule *tesla.KeySchedule, measurementID []byte) *Tagger {
 // IPv4 header checksum. The packet is modified in-place; the same slice is
 // returned.
 //
-// The HMAC tag is computed over the packet in canonical form: both the IPID
+// The tag is the kernel tagger's SipHash, computed over the packet in
+// canonical form (see tesla.ComputeTag): both the IPID
 // field (bytes 4–5) and the IPv4 header checksum field (bytes 10–11) are
 // zeroed before hashing. This allows a verifier to reproduce the same hash
 // input without knowing the original checksum or IPID values.

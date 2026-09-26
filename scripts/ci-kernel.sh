@@ -54,6 +54,7 @@ for event in skips:
 
 required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestBPFLinuxLoad"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestKernelTagMatchesGoTagger"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestBPFCounterLinuxLoad"),
 }
 passed = {(e.get("Package"), e.get("Test")) for e in events if e.get("Action") == "pass"}
@@ -62,7 +63,7 @@ for package, test in sorted(missing):
     print(f"Missing passing {package}/{test}; kernel checks did not run.", file=sys.stderr)
 if skips or missing:
     sys.exit(1)
-print("Tagger load and packet-counter load/close checks passed with zero skipped tests.")
+print("Tagger load, kernel/Go tag parity and packet-counter load/close checks passed with zero skipped tests.")
 PY
 
 # Separately prove that the checked-in C sources compile with this toolchain.

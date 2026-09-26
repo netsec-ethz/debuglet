@@ -42,9 +42,6 @@ func TestExhaustedChainHasNoSigningKey(t *testing.T) {
 		if _, err := ks.ComputeTagForPacket(at(epoch), testMeasurementID, payload); err == nil {
 			t.Errorf("ComputeTagForPacket(epoch %d) succeeded on an exhausted chain", epoch)
 		}
-		if _, err := ks.ComputeBPFTagForPacket(at(epoch), testMeasurementID, payload); err == nil {
-			t.Errorf("ComputeBPFTagForPacket(epoch %d) succeeded on an exhausted chain", epoch)
-		}
 		idx, key, ok := ks.DisclosedKey(at(epoch))
 		if !ok || idx != 2 || !bytes.Equal(key, k2) {
 			t.Errorf("DisclosedKey(epoch %d) = (%d, %x, %v); want (2, k_2, true)", epoch, idx, key, ok)
