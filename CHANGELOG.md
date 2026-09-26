@@ -49,6 +49,10 @@ integration branch is supported.
   409 `capacity_exhausted`.
 
 ### Fixed
+- The `scion_path_length` and `scion_get_interface_details` guest imports
+  answer a negative or out-of-range index, or a path without metadata, with -1
+  and zeros respectively, instead of panicking inside the executor. The import
+  signatures are unchanged.
 - The executor refuses to start with a client certificate outside its validity
   window, naming `credentials.client_cert`, as the dispatcher already does for
   its own certificate. Before, it started and every control connection was
