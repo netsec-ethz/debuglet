@@ -13,6 +13,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	"net/http"
 	"strconv"
 	"strings"
@@ -197,9 +198,9 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 		limit = 1000
 	}
 
-	id, err := uuid.Parse(debugletID)
+	id, err := parseDebugletID(debugletID)
 	if err != nil {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid debuglet id: "+echoed(err.Error()))
+		return err
 	}
 	if err := h.authorizeDebuglet(c, id); err != nil {
 		return err
@@ -245,13 +246,24 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	})
 }
 
+// parseDebugletID accepts the run IDs the control protocol accepts: the
+// lowercase canonical spelling of a non-nil UUID.
+func parseDebugletID(value string) (uuid.UUID, error) {
+	id, ok := ids.ParseCanonical(value)
+	if !ok {
+		return uuid.Nil, apiError(http.StatusBadRequest, CodeInvalidRequest,
+			"invalid debuglet id: want a lowercase canonical, non-nil UUID")
+	}
+	return id, nil
+}
+
 // GET /debuglet/:id/state
 func (h *Handler) GetDebugletState(c echo.Context) error {
 	debugletID := c.Param("id")
 
-	id, err := uuid.Parse(debugletID)
+	id, err := parseDebugletID(debugletID)
 	if err != nil {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid debuglet id: "+echoed(err.Error()))
+		return err
 	}
 	if err := h.authorizeDebuglet(c, id); err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,8 +34,8 @@ func (e *Executor) OnInspectRetainedRun(ctx context.Context, binding controlsess
 	if err := rpc.CheckPayloadBinding(req.GetControlBinding(), binding); err != nil {
 		return nil, err
 	}
-	id, err := uuid.Parse(req.GetDebugletId())
-	if err != nil || id == uuid.Nil || id.String() != req.GetDebugletId() {
+	id, ok := ids.ParseCanonical(req.GetDebugletId())
+	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "invalid debuglet ID")
 	}
 	inspector, ok := e.scheduler.(scheduler.RunInspection)

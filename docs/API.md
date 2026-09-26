@@ -133,6 +133,7 @@ Units are stated per field in the contract document. The recurring ones:
 
 Request limits:
 
+- `GET /debuglet/{id}/state` and `GET /debuglet/{id}/logs`: `{id}` must be the lowercase 36-character hyphenated UUID spelling that submission returns, and not the nil UUID. Uppercase, braced, `urn:uuid:` and unhyphenated spellings are rejected with 400 `invalid_request`.
 - `GET /debuglet/{id}/logs`: `after` must be a non-negative integer and `limit` a positive integer when present; both are rejected with 400 otherwise. `limit` defaults to 100 and is clamped to 1000.
 - `GET /list-debuglets`: `limit` defaults to 100 and is clamped to 100; `offset` defaults to 0. Neither may be negative and `limit` may not be zero.
 - `GET /executors/by-ip`: `ip` is required; `n` defaults to 10 and must be positive when present. It is clamped to 100 candidates before ownership is applied, but the executor registry retains at most 20 recent identifiers per executor, so at most 20 can ever be returned and usually fewer, since only the caller's own are listed. An account owning none of them receives an empty array, never null.

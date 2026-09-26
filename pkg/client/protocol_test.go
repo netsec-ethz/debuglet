@@ -18,13 +18,13 @@ func TestClientProtocol(t *testing.T) {
 	t.Run("SubmitTEST happy path", func(t *testing.T) {
 		f := newFakeServer(t, "/api")
 		f.defaults()
-		f.handle("PUT /debuglet", jsonHandler(http.StatusOK, `["A94C47E1-E09E-4EF2-A00F-E4DB0EB4CDB0"]`))
+		f.handle("PUT /debuglet", jsonHandler(http.StatusOK, `["`+fixtureID+`"]`))
 		c := f.client(t, Options{})
 		sub, err := c.SubmitTEST(testContext(t), sampleBatch(t))
 		if err != nil {
 			t.Fatalf("SubmitTEST: %v", err)
 		}
-		if sub.TransactionID != fixtureTx || len(sub.IDs) != 1 || sub.IDs[0] != "A94C47E1-E09E-4EF2-A00F-E4DB0EB4CDB0" {
+		if sub.TransactionID != fixtureTx || len(sub.IDs) != 1 || sub.IDs[0] != fixtureID {
 			t.Fatalf("submission %+v", sub)
 		}
 		reqs := f.requests()
@@ -134,7 +134,8 @@ func TestClientProtocol(t *testing.T) {
 			{"unhyphenated uuid", sampleBatch(t), jsonHandler(http.StatusOK, `["`+strings.ReplaceAll(fixtureID, "-", "")+`"]`), true, 0, "not a canonical UUID"},
 			{"nil uuid", sampleBatch(t), jsonHandler(http.StatusOK, `["00000000-0000-0000-0000-000000000000"]`), true, 0, "nil UUID"},
 			{"non-string id", sampleBatch(t), jsonHandler(http.StatusOK, `[7]`), true, 0, "malformed JSON"},
-			{"duplicate ids differing in case", twoBatch, jsonHandler(http.StatusOK, `["`+fixtureID+`","`+strings.ToUpper(fixtureID)+`"]`), true, 0, "duplicates"},
+			{"upper-case id", sampleBatch(t), jsonHandler(http.StatusOK, `["`+strings.ToUpper(fixtureID)+`"]`), true, 0, "not a canonical UUID"},
+			{"duplicate ids", twoBatch, jsonHandler(http.StatusOK, `["`+fixtureID+`","`+fixtureID+`"]`), true, 0, "duplicates"},
 			{"oversized success", sampleBatch(t), jsonHandler(http.StatusOK, `["`+strings.Repeat("a", maxSuccessBody)+`"]`), true, 0, "exceeds 4 MiB"},
 		}
 		for _, tc := range cases {

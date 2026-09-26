@@ -14,6 +14,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"io"
 	"maps"
@@ -468,8 +469,8 @@ func requireMutation(mutation *rpc.Mutation, claimedExecutor string) (*rpc.Sessi
 }
 
 func parseRunID(value string) (uuid.UUID, error) {
-	id, err := uuid.Parse(value)
-	if err != nil || id == uuid.Nil || id.String() != value {
+	id, ok := ids.ParseCanonical(value)
+	if !ok {
 		return uuid.Nil, status.Error(codes.InvalidArgument, "invalid debuglet ID")
 	}
 	return id, nil

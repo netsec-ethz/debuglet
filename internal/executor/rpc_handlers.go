@@ -12,13 +12,13 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"math"
 	"time"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -92,8 +92,8 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	}
 	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("transaction_id", req.GetTransactionId()))
 
-	id, err := uuid.Parse(req.GetId())
-	if err != nil || id == uuid.Nil || id.String() != req.GetId() {
+	id, ok := ids.ParseCanonical(req.GetId())
+	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "invalid debuglet ID")
 	}
 
@@ -147,8 +147,8 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 	debugletID := req.GetDebugletId()
 	e.logger.Debug("Abort received", zap.String("debugletID", debugletID))
 
-	id, err := uuid.Parse(debugletID)
-	if err != nil || id == uuid.Nil || id.String() != debugletID {
+	id, ok := ids.ParseCanonical(debugletID)
+	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "invalid debuglet ID")
 	}
 
