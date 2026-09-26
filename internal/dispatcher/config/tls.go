@@ -17,11 +17,10 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
-	"fmt"
-	"os"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/internal/tlsfiles"
 )
 
 // ServerTLS is the loaded transport security for the dispatcher's listeners.
@@ -59,24 +58,13 @@ func loadServerTLS(cfg TLSConfig, now time.Time) (*ServerTLS, error) {
 		}
 		return nil, nil
 	}
-	certificate, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	certificate, err := tlsfiles.KeyPair("tls.cert_file", cfg.CertFile, "tls.key_file", cfg.KeyFile, now)
 	if err != nil {
-		return nil, fmt.Errorf("tls.cert_file %q with tls.key_file %q: %w", cfg.CertFile, cfg.KeyFile, err)
+		return nil, err
 	}
-	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-	if err != nil {
-		return nil, fmt.Errorf("tls.cert_file %q: %w", cfg.CertFile, err)
-	}
-	// An expired or not yet valid identity fails every handshake. Report it
-	// once, here, instead of as an unexplained rejection per connection.
-	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
-		return nil, fmt.Errorf("tls.cert_file %q: certificate is valid from %s to %s, which does not include %s; renew it before starting",
-			cfg.CertFile, leaf.NotBefore.UTC().Format(time.RFC3339), leaf.NotAfter.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
-	}
-	certificate.Leaf = leaf
 	var roots *x509.CertPool
 	if cfg.CAFile != "" {
-		roots, err = trustRoots("tls.ca_file", cfg.CAFile, now)
+		roots, err = tlsfiles.TrustRoots("tls.ca_file", cfg.CAFile, now)
 		if err != nil {
 			return nil, err
 		}
@@ -103,40 +91,4 @@ func loadServerTLS(cfg TLSConfig, now time.Time) (*ServerTLS, error) {
 		direct.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 	return &ServerTLS{Combined: combined, Direct: direct, RequireClientIdentity: cfg.RequireClientCert}, nil
-}
-
-// trustRoots reads an authority file and refuses one that cannot verify
-// anything: a file holding no certificate, a certificate that does not parse,
-// and a root outside its validity window, which would fail every chain built on
-// it. A file may hold several roots, which is what an authority rotation needs.
-func trustRoots(field, path string, now time.Time) (*x509.CertPool, error) {
-	pemBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", field, err)
-	}
-	pool := x509.NewCertPool()
-	roots := 0
-	for rest := pemBytes; ; {
-		var block *pem.Block
-		if block, rest = pem.Decode(rest); block == nil {
-			break
-		}
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		root, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("%s %q: %w", field, path, err)
-		}
-		if now.Before(root.NotBefore) || now.After(root.NotAfter) {
-			return nil, fmt.Errorf("%s %q: authority %q is valid from %s to %s, which does not include %s; renew it before starting",
-				field, path, root.Subject.CommonName, root.NotBefore.UTC().Format(time.RFC3339), root.NotAfter.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
-		}
-		pool.AddCert(root)
-		roots++
-	}
-	if roots == 0 {
-		return nil, fmt.Errorf("%s %q holds no PEM certificate", field, path)
-	}
-	return pool, nil
 }

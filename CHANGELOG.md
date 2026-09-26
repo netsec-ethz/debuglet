@@ -49,6 +49,10 @@ integration branch is supported.
   409 `capacity_exhausted`.
 
 ### Fixed
+- The executor refuses to start with a client certificate outside its validity
+  window, naming `credentials.client_cert`, as the dispatcher already does for
+  its own certificate. Before, it started and every control connection was
+  rejected. Renew the certificate if the executor now refuses to start.
 - The CLI's saved connections and credentials, local role records, readiness
   records, and managed-service configuration, unit, record and maintenance
   files are flushed to disk before they replace the previous file, so a crash
