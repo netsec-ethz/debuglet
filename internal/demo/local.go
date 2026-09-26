@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/fsutil"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -238,16 +239,7 @@ func writeLocalJSON(path string, value any) (err error) {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".local-record-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	_, writeErr := file.Write(append(data, '\n'))
-	if err := errors.Join(writeErr, file.Close()); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return fsutil.WriteFile(path, append(data, '\n'), 0600)
 }
 
 // prepareStateDir makes dir absolute, creates it when absent and then refuses

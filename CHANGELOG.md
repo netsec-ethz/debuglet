@@ -49,6 +49,10 @@ integration branch is supported.
   409 `capacity_exhausted`.
 
 ### Fixed
+- The CLI's saved connections and credentials, local role records, readiness
+  records, and managed-service configuration, unit, record and maintenance
+  files are flushed to disk before they replace the previous file, so a crash
+  cannot leave one empty or truncated. No format or location changes.
 - `make bootstrap-sudo`, `make deploy-update-addr` and `make deploy-update-config`
   verify SSH host keys against the selected environment's file. With
   `DEPLOY_ENV=dev` they used the production `known_hosts`, and so refused dev

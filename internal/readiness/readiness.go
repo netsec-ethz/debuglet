@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/netsec-ethz/debuglet/internal/fsutil"
 )
 
 type Record struct {
@@ -35,6 +37,10 @@ func write(path string, record Record, rename func(string, string) error) error 
 		f.Close()
 		return fmt.Errorf("encode readiness record: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("sync readiness record: %w", err)
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close readiness record: %w", err)
 	}
@@ -43,6 +49,9 @@ func write(path string, record Record, rename func(string, string) error) error 
 	}
 	if err := rename(f.Name(), path); err != nil {
 		return fmt.Errorf("publish readiness record: %w", err)
+	}
+	if err := fsutil.SyncDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync readiness directory: %w", err)
 	}
 	return nil
 }
