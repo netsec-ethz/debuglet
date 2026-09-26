@@ -119,7 +119,7 @@ func TestTLSCertificatesRequiredWhenEnabled(t *testing.T) {
 func TestRepositoryConfigurationLoads(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	paths := []string{
-		filepath.Join(root, "local", "configs", "dispatcher", "dispatcher.toml"),
+		filepath.Join(root, "configs", "dispatcher", "dispatcher.toml"),
 		filepath.Join(root, "deploy", "docker", "configs", "dispatcher", "dispatcher.toml"),
 	}
 	for _, path := range paths {

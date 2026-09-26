@@ -148,7 +148,7 @@ func TestCredentialsRequiredWhenTLSEnabled(t *testing.T) {
 func TestRepositoryConfigurationLoads(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	paths := []string{
-		filepath.Join(root, "local", "configs", "executor", "executor.toml"),
+		filepath.Join(root, "configs", "executor", "executor.toml"),
 		filepath.Join(root, "deploy", "docker", "configs", "executor", "executor.toml"),
 	}
 	for _, path := range paths {

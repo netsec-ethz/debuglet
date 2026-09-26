@@ -17,7 +17,7 @@ package debuglet_test
 // The published Go examples are covered here: every one of them compiles with
 // the pinned toolchain, and every supported one runs on the real engine
 // against a loopback peer this test owns. docs/GUESTS.md and
-// local/wasm_samples/go/README.md publish the same set.
+// examples/debuglets/go/README.md publish the same set.
 
 import (
 	"context"
@@ -59,7 +59,7 @@ var goExamples = []goExample{
 	{name: "download", reason: "raw host-import reference that needs an HTTP target to download from"},
 }
 
-func examplePath(name string) string { return "./local/wasm_samples/go/" + name }
+func examplePath(name string) string { return "./examples/debuglets/go/" + name }
 
 // TestGoExamplesAreListed keeps the table above complete. A sample that is
 // added without an entry is a sample nothing builds or runs.
@@ -68,7 +68,7 @@ func TestGoExamplesAreListed(t *testing.T) {
 	for _, example := range goExamples {
 		listed[example.name] = true
 	}
-	root := filepath.Join(repoRoot(t), "local", "wasm_samples", "go")
+	root := filepath.Join(repoRoot(t), "examples", "debuglets", "go")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read the Go example directory: %v", err)
@@ -85,7 +85,7 @@ func TestGoExamplesAreListed(t *testing.T) {
 		delete(listed, entry.Name())
 	}
 	for name := range listed {
-		t.Errorf("the example table lists %s, which is not a directory under local/wasm_samples/go", name)
+		t.Errorf("the example table lists %s, which is not a directory under examples/debuglets/go", name)
 	}
 	if directories == 0 {
 		t.Fatalf("no example directories under %s", root)

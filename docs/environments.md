@@ -4,7 +4,7 @@ The compatibility checker runs an installed Debuglet package on Linux with a tem
 
 ## Manifest
 
-Start with [local/configs/canary.json](../local/configs/canary.json). Set a canonical nonzero lowercase executor UUID and an operator label of 1–64 ASCII letters, digits, spaces, underscores, dots, or hyphens, beginning with a letter or digit.
+Start with [configs/canary.json](../configs/canary.json). Set a canonical nonzero lowercase executor UUID and an operator label of 1–64 ASCII letters, digits, spaces, underscores, dots, or hyphens, beginning with a letter or digit.
 
 Every illustrated key is required. Leave the API/control addresses and deployment record empty: the checker allocates its own listeners and reads daemon readiness records. The environment is `local`, target host is `127.0.0.1`, and control protection is `owned-loopback`.
 
@@ -18,7 +18,7 @@ Install a checksum-verified package first; see [installation](../README-install.
 mkdir -p .ci .cache
 go build -mod=readonly -o .ci/local-compatibility ./internal/acceptance/canary
 .ci/local-compatibility \
-  -manifest local/configs/canary.json \
+  -manifest configs/canary.json \
   -installed-root "$HOME/.local/lib/debuglet/VERSION" \
   -archive-sha256 ARCHIVE_SHA256 \
   -evidence-dir "$PWD/.cache/local-check-result" \
@@ -318,7 +318,7 @@ file says otherwise, so an executor that writes no policy reaches no service
 behind its own loopback interface. The local, wallet-free environment does
 measure against this machine and sets it: `dbl demo`, `dbl up` and the role
 commands write it into the configuration they generate, and
-[local/configs/executor/executor.toml](../local/configs/executor/executor.toml)
+[configs/executor/executor.toml](../configs/executor/executor.toml)
 sets it for a daemon started directly with `--config`. The other reserved and
 internal ranges — this host, private, carrier-grade, link-local, unique-local,
 multicast, the documentation and benchmarking ranges, the 6to4 relay prefix and
@@ -620,7 +620,7 @@ Existing nonempty legacy databases are preserved. Discovering legacy state while
 
 `deploy/test/ansible-render.sh` applies the deployment roles to a temporary directory tree over the local connection. It checks that the preflight refuses a missing dispatcher address, a missing API origin, a wildcard credentialed origin, colliding listener ports and a non-UUID executor identity; that the rendered configurations name the configured listener addresses and keep each database in the writable state directory rather than the read-only configuration directory; that the installed daemons accept both rendered configurations through their own validator; and that repeating the same variables changes nothing. Nothing is deployed anywhere.
 
-Certificate material is issued by two targets, both writing outside the repository's tracked files. `make deploy-certs INVENTORY=hosts.dev.yml DEPLOY_ENV=dev DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10"` runs `deploy/scripts/generate-certs.sh` for every executor in the inventory and installs the result: it writes a private CA to `deploy/certs/`, a dispatcher server certificate carrying exactly those subjectAltName entries with `serverAuth` extended key usage, and one client certificate per executor UUID with `clientAuth`, then `deploy/ansible/deploy-certs.yml` installs the server keypair and the CA on the dispatcher and the CA plus that host's client certificate on each executor. The subjectAltName list has no default and is required, because an executor verifies the dispatcher against the name it dialled and a common name alone is not accepted. The deployment preflight refuses missing material, an expired root, a leaf that does not chain to it and a leaf without the extended key usage for its side, before it touches a host; every certificate the generator issues comes straight from that CA, so a leaf file is a complete chain, while material from another authority has to carry the leaf followed by its intermediates, with authority files holding roots only. `make deploy` installs no certificates, so `make deploy-certs` comes first with the same inventory and environment. `make generate-certs` is the separate local-development target: it writes two self-signed keypairs into `local/configs/`, a dispatcher server certificate and an executor client certificate, each carrying `DNS:localhost` and `IP:127.0.0.1`; the `local/` configurations run with TLS disabled and do not read them.
+Certificate material is issued by two targets, both writing outside the repository's tracked files. `make deploy-certs INVENTORY=hosts.dev.yml DEPLOY_ENV=dev DISPATCHER_SANS="DNS:dispatcher.example.com,IP:203.0.113.10"` runs `deploy/scripts/generate-certs.sh` for every executor in the inventory and installs the result: it writes a private CA to `deploy/certs/`, a dispatcher server certificate carrying exactly those subjectAltName entries with `serverAuth` extended key usage, and one client certificate per executor UUID with `clientAuth`, then `deploy/ansible/deploy-certs.yml` installs the server keypair and the CA on the dispatcher and the CA plus that host's client certificate on each executor. The subjectAltName list has no default and is required, because an executor verifies the dispatcher against the name it dialled and a common name alone is not accepted. The deployment preflight refuses missing material, an expired root, a leaf that does not chain to it and a leaf without the extended key usage for its side, before it touches a host; every certificate the generator issues comes straight from that CA, so a leaf file is a complete chain, while material from another authority has to carry the leaf followed by its intermediates, with authority files holding roots only. `make deploy` installs no certificates, so `make deploy-certs` comes first with the same inventory and environment. `make generate-certs` is the separate local-development target: it writes two self-signed keypairs into `configs/`, a dispatcher server certificate and an executor client certificate, each carrying `DNS:localhost` and `IP:127.0.0.1`; the `local/` configurations run with TLS disabled and do not read them.
 
 Managed hosts are authenticated against a provisioned known-hosts file: an unknown or changed SSH host key ends the connection before a deployment changes anything, and no command trusts a key it merely scanned. `deploy/test/host-key-verification.sh` checks that against a throwaway loopback SSH server. The host-key provisioning and rotation procedure is in [deploy/README.md](../deploy/README.md).
 

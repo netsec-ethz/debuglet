@@ -183,10 +183,10 @@ code elsewhere if you need to regain access.
 **The Go SDK.** The [client example](../examples/client/main.go) takes the same three remote options: `--register NAME` creates an account and logs in for the rest of the run, `--allow-remote-test` sets `Options.AllowRemoteTEST`, and `--allow HOST[,HOST]` fills the request's address allowlist, which narrows the executor's own policy — public addresses admitted, loopback, private and reserved ranges denied — and never widens it. The account id is printed; the account key and the session token are not.
 
 ```sh
-make wasm SAMPLE_DIR=local/wasm_samples/go/latency
+make wasm SAMPLE_DIR=examples/debuglets/go/latency
 go run -mod=readonly ./examples/client --endpoint https://HOST:HTTP_PORT --register NAME \
     --allow-remote-test --allow example.com \
-    --wasm local/wasm_samples/go/latency/debuglet.wasm -- -addr example.com:80 -count 3
+    --wasm examples/debuglets/go/latency/debuglet.wasm -- -addr example.com:80 -count 3
 ```
 
 ```

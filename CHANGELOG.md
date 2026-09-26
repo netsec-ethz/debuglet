@@ -10,6 +10,17 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Changed
+- Move the debuglet examples from `local/wasm_samples/` to `examples/debuglets/`,
+  the local daemon configurations from `local/configs/` to `configs/`,
+  `verify_pcap.py` to `tools/`, and the illustrative HTTP exchanges to
+  `api/http-examples.json`. Update `make wasm SAMPLE_DIR=...` and `-config`
+  paths accordingly.
+
+### Removed
+- Remove the unsupported JavaScript and Python debuglet samples and the Javy
+  build path of `make wasm`.
+
 ## [0.2.0-rc.3] - 2026-09-26
 
 ### Changed

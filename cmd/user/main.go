@@ -22,7 +22,7 @@ var (
 	dispatcherTLS     = flag.Bool("tls", false, "use HTTPS when talking to the dispatcher")
 	measurementAmount = flag.Int("measurements", 1, "amount of measurements to add")
 	debugletAmount    = flag.Int("debuglets", 1, "amount of debuglets per measurement to add")
-	wasmPath          = flag.String("wasm", "local/wasm_samples/go/ping/debuglet.wasm", "wasm to use")
+	wasmPath          = flag.String("wasm", "examples/debuglets/go/ping/debuglet.wasm", "wasm to use")
 	abort             = flag.Bool("abort", false, "if measurements should be aborted right after they're submitted")
 	delay             = flag.Duration("delay", 0, "the delay after which to start debuglets")
 	executor          = flag.String("executor", "ac4e023b-1b69-44ed-905f-640e7a1841b4", "the executor to connect to")

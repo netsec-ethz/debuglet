@@ -54,7 +54,7 @@ func TestPolicyKeysKeepTheirDocumentedDefaults(t *testing.T) {
 // ships for the local environment: it is the one that says it measures against
 // this machine.
 func TestLocalProfileEnablesLocalTargets(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "local", "configs", "executor", "executor.toml")
+	path := filepath.Join("..", "..", "..", "configs", "executor", "executor.toml")
 	cfg, err := loadConfig(path, func() (*net.Interface, error) { return &net.Interface{Name: "discovered"}, nil })
 	if err != nil {
 		t.Fatalf("load the repository configuration: %v", err)
