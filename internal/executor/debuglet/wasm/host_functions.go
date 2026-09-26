@@ -736,8 +736,39 @@ func HostSCIONAvailablePaths(env *WasmEnv) func(ctx context.Context, mod api.Mod
 	}
 }
 
+// pathInterfaces returns the interfaces of path pathIdx, and false for an index
+// outside paths or a path without metadata. The indexes come from the guest,
+// and the path list may change between its calls, so neither is trusted.
+func pathInterfaces(paths []*pan.Path, pathIdx int32) ([]pan.PathInterface, bool) {
+	if pathIdx < 0 || int(pathIdx) >= len(paths) || paths[pathIdx] == nil || paths[pathIdx].Metadata == nil {
+		return nil, false
+	}
+	return paths[pathIdx].Metadata.Interfaces, true
+}
+
+// pathHops returns the hop count of path pathIdx, or -1 when there is no such
+// path or its interfaces are unknown.
+func pathHops(paths []*pan.Path, pathIdx int32) int32 {
+	interfaces, ok := pathInterfaces(paths, pathIdx)
+	if !ok {
+		return -1
+	}
+	return int32(len(interfaces) / 2)
+}
+
+// pathInterface returns the IA and IfID of interface ifIdx on path pathIdx,
+// or zeros when there is no such interface.
+func pathInterface(paths []*pan.Path, pathIdx, ifIdx int32) (int64, int64) {
+	interfaces, ok := pathInterfaces(paths, pathIdx)
+	if !ok || ifIdx < 0 || int(ifIdx) >= len(interfaces) {
+		return 0, 0
+	}
+	return int64(interfaces[ifIdx].IA), int64(interfaces[ifIdx].IfID)
+}
+
 // HostSCIONPathLength returns the hop count of path at index pathIdx for
-// the connection to the admitted destination.
+// the connection to the admitted destination, or -1 when there is no such
+// path or its interfaces are unknown.
 // WASM key: "scion_path_length"
 func HostSCIONPathLength(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) int32 {
 	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) int32 {
@@ -751,14 +782,13 @@ func HostSCIONPathLength(env *WasmEnv) func(ctx context.Context, mod api.Module,
 			panic(fmt.Errorf("scion_path_length: %w", err))
 		}
 
-		paths := sc.Selector.Paths()
-		hops := len(paths[pathIdx].Metadata.Interfaces) / 2
-		return int32(hops)
+		return pathHops(sc.Selector.Paths(), pathIdx)
 	}
 }
 
 // HostSCIONGetInterfaceDetails returns the IA and IfID of interface ifIdx
-// on path pathIdx for the connection to the admitted destination.
+// on path pathIdx for the connection to the admitted destination, or zeros
+// when there is no such interface.
 // WASM key: "scion_get_interface_details"
 func HostSCIONGetInterfaceDetails(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
 	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
@@ -772,16 +802,8 @@ func HostSCIONGetInterfaceDetails(env *WasmEnv) func(ctx context.Context, mod ap
 			panic(fmt.Errorf("scion_get_interface_details: %w", err))
 		}
 
-		paths := sc.Selector.Paths()
-
 		env.Logger.Debugw("hostSCIONGetInterfaceDetails", "path", pathIdx, "interface", ifIdx)
-
-		if int(pathIdx) >= len(paths) || int(ifIdx) >= len(paths[pathIdx].Metadata.Interfaces) {
-			return 0, 0
-		}
-
-		iface := paths[pathIdx].Metadata.Interfaces[ifIdx]
-		return int64(iface.IA), int64(iface.IfID)
+		return pathInterface(sc.Selector.Paths(), pathIdx, ifIdx)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/fsutil"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 )
 
@@ -361,7 +362,13 @@ func (i *Installer) writeConfiguration(p Profile) (bool, error) {
 	} else if same {
 		return false, nil
 	}
-	return true, os.Rename(temporary, p.ConfigPath)
+	if err := fsutil.SyncFile(temporary); err != nil {
+		return false, err
+	}
+	if err := os.Rename(temporary, p.ConfigPath); err != nil {
+		return false, err
+	}
+	return true, fsutil.SyncDir(filepath.Dir(p.ConfigPath))
 }
 
 // writeUnit publishes the generated unit and reports whether it changed.
@@ -379,16 +386,7 @@ func (i *Installer) writeUnit(p Profile) (bool, error) {
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	temporary, err := os.CreateTemp(directory, ".debuglet-unit-")
-	if err != nil {
-		return false, err
-	}
-	defer os.Remove(temporary.Name())
-	_, writeErr := temporary.WriteString(text)
-	if err := errors.Join(writeErr, temporary.Chmod(0644), temporary.Close()); err != nil {
-		return false, err
-	}
-	return true, os.Rename(temporary.Name(), p.UnitPath)
+	return true, fsutil.WriteFile(p.UnitPath, []byte(text), 0644)
 }
 
 // own hands the whole state directory to the service account: mode 0700 for
@@ -754,22 +752,7 @@ func writeRecord(p Profile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return writeFileAtomic(path, append(data, '\n'), 0644)
-}
-
-// writeFileAtomic publishes exact bytes at path through a same-directory
-// rename, so a reader sees either the previous file or the complete new one.
-func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".debuglet-record-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	_, writeErr := file.Write(data)
-	if err := errors.Join(writeErr, file.Chmod(mode), file.Close()); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return fsutil.WriteFile(path, append(data, '\n'), 0644)
 }
 
 func sameContent(path, candidate string) (bool, error) {

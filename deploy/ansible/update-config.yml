@@ -2,8 +2,9 @@
 # Re-render dispatcher + executor configs from the templates and restart the
 # services where the config changed. No binaries are rebuilt or redeployed.
 #
-# Use this to push a config-only change (version, dispatcher address, log level,
-# ports, TLS flags, capacity, …) to running services.
+# Use this to push a config-only change (dispatcher address, log level, ports,
+# TLS flags, capacity, …) to running services. The version each daemon reports
+# is the release installed on its host, read from the deployment record.
 #
 # Executor paths and unit names are environment-scoped, so pass the matching
 # vars file (or use the Makefile targets, which do it for you):
@@ -11,10 +12,6 @@
 # Usage:
 #   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml update-config.yml
 #   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml update-config.yml
-#
-#   Stamp a version (overrides the "unknown" default) without editing files:
-#     ansible-playbook -i hosts.yml -e @vars/prod.yml update-config.yml \
-#         -e "deploy_version=$(git rev-parse --short HEAD)"
 #
 #   Limit to some hosts:
 #     ansible-playbook -i hosts.yml -e @vars/prod.yml update-config.yml --limit executor.example.com
@@ -25,6 +22,9 @@
   hosts: dispatcher
   become: true
   tasks:
+    - name: Use the installed version
+      ansible.builtin.import_tasks: tasks/installed-version.yml
+
     - name: Regenerate dispatcher config
       ansible.builtin.template:
         src: "{{ playbook_dir }}/roles/dispatcher/templates/dispatcher.toml.j2"
@@ -57,6 +57,9 @@
   hosts: executors
   become: true
   tasks:
+    - name: Use the installed version
+      ansible.builtin.import_tasks: tasks/installed-version.yml
+
     - name: Regenerate executor config
       ansible.builtin.template:
         src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"

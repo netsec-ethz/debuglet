@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/netsec-ethz/debuglet/internal/fsutil"
 )
 
 // ErrCredentialEndpointMismatch means a saved session belongs to a different
@@ -119,19 +121,8 @@ func writeCredentials(path string, store CredentialStore) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(file), ".credentials-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	// CreateTemp is already owner-only; setting the mode explicitly keeps the
-	// guarantee independent of that and of the process umask.
-	chmodErr := f.Chmod(CredentialFileMode)
-	_, writeErr := f.Write(append(data, '\n'))
-	if err := errors.Join(chmodErr, writeErr, f.Close()); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), file)
+	// The mode is set explicitly, independent of the process umask.
+	return fsutil.WriteFile(file, append(data, '\n'), CredentialFileMode)
 }
 
 // SaveCredential records the credential of one profile, replacing its own.

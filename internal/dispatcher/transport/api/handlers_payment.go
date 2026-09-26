@@ -22,20 +22,33 @@ import (
 // 503 when a chain payment method is requested while Sui payments are disabled.
 const paymentsDisabledMessage = "blockchain payments are disabled"
 
-// LockPrice creates the Outstanding debuglet_order rows for an intent and returns
-// the total price. The payment-mode preflight runs first so that a disabled
-// chain method never reaches the executor lookup or any order write, even when
-// this function is called directly rather than via PutPaymentIntent.
-// The whole batch is validated and priced before the first order row is
-// written, so validation or pricing refusals leave no rows behind.
+// LockPrice prices an intent and creates its Outstanding debuglet_order rows,
+// returning the total price. The rows reference the intent's transaction, so
+// that transaction must already exist; PutPaymentIntent therefore prices,
+// creates the transaction and only then stores the orders.
 // Every failure it reports is already a documented API error, so a caller can
 // return it unchanged.
 func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, refundAddress string, ctx context.Context) (int64, error) {
+	prices, total, err := h.priceIntent(request)
+	if err != nil {
+		return 0, err
+	}
+	if err := h.storeOrders(ctx, database.New(h.db), request, transactionId, refundAddress, prices); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// priceIntent validates and prices every debuglet of an intent without
+// writing anything, returning each order's price and the total. The
+// payment-mode preflight runs first so that a disabled chain method never
+// reaches the executor lookup.
+func (h *Handler) priceIntent(request PaymentIntentRequest) ([]int64, int64, error) {
 	if err := h.dispatcher.Payment.CheckPaymentMethod(request.PaymentMethod); err != nil {
-		return 0, paymentMethodError(request.PaymentMethod, err)
+		return nil, 0, paymentMethodError(request.PaymentMethod, err)
 	}
 	if len(request.Debuglets) == 0 {
-		return 0, apiError(http.StatusBadRequest, CodeInvalidRequest, "no debuglets provided")
+		return nil, 0, apiError(http.StatusBadRequest, CodeInvalidRequest, "no debuglets provided")
 	}
 	price := new(big.Int)
 	prices := make([]int64, len(request.Debuglets))
@@ -43,14 +56,14 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 	for i, req := range request.Debuglets {
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
 		if !exists {
-			return 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
+			return nil, 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
 				"unknown executor: "+echoed(req.ExecutorID))
 		}
 		if err := validatePolicy(req.OrderID, req.Policy); err != nil {
-			return 0, err
+			return nil, 0, err
 		}
 		if _, repeated := seen[req.OrderID]; repeated {
-			return 0, policyError(req.OrderID, "order_id is repeated in the batch")
+			return nil, 0, policyError(req.OrderID, "order_id is repeated in the batch")
 		}
 		seen[req.OrderID] = struct{}{}
 
@@ -66,17 +79,22 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 			debugletPrice.Add(debugletPrice, big.NewInt(1))
 		}
 		if !debugletPrice.IsInt64() {
-			return 0, policyError(req.OrderID, "the price of the order overflows")
+			return nil, 0, policyError(req.OrderID, "the price of the order overflows")
 		}
 		prices[i] = debugletPrice.Int64()
 		price.Add(price, debugletPrice)
 		if !price.IsInt64() {
-			return 0, apiError(http.StatusBadRequest, CodeInvalidPolicy,
+			return nil, 0, apiError(http.StatusBadRequest, CodeInvalidPolicy,
 				"invalid policy: the total price of the batch overflows")
 		}
 	}
 	//TODO? Add margin on price
-	queries := database.New(h.db)
+	return prices, price.Int64(), nil
+}
+
+// storeOrders writes one Outstanding debuglet_order row per priced debuglet of
+// an intent whose transaction already exists.
+func (h *Handler) storeOrders(ctx context.Context, queries *database.Queries, request PaymentIntentRequest, transactionId, refundAddress string, prices []int64) error {
 	for i, req := range request.Debuglets {
 		h.logger.Debug("Create order", zap.String("txid", transactionId), zap.Int64("orderID", req.OrderID))
 		_, err := queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
@@ -89,10 +107,10 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 			State:         int64(models.Outstanding),
 		})
 		if err != nil {
-			return 0, apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the order", err)
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the order", err)
 		}
 	}
-	return price.Int64(), nil
+	return nil
 }
 
 // PUT /payment/intent
@@ -139,31 +157,48 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	price, err := h.LockPrice(req, transactionId, req.RefundAddress, ctx)
+	prices, price, err := h.priceIntent(req)
 	if err != nil {
-		// LockPrice reports documented API errors; returning the value
+		// priceIntent reports documented API errors; returning the value
 		// serializes the envelope instead of the error itself.
 		return err
 	}
 	h.logger.Info("intent", zap.Int64("price", price))
 
+	// The transaction, its orders and its owner are written together or not
+	// at all: a failure part way must not leave a paid TEST transaction
+	// without its orders or its owner. The transaction row comes first,
+	// since the orders reference it. Nothing below may use h.db directly:
+	// the pool holds one connection, and this transaction owns it.
 	hash := hashDebugletRequest(req.Debuglets)
-	intent, err := h.dispatcher.Payment.CreatePaymentIntent(transactionId, price, req.PaymentMethod, hash, c.Request().Context())
+	dbTx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to begin the payment intent", err)
+	}
+	defer dbTx.Rollback()
+	intent, err := h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash))
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)
+	}
+	queries := database.New(dbTx)
+	if err := h.storeOrders(ctx, queries, req, transactionId, req.RefundAddress, prices); err != nil {
+		return err
 	}
 	// Record the owner before the intent is handed out, so that the auth key
 	// this response carries can only ever be spent by the account it was
 	// issued to. The local development bypass names no account and keeps the
 	// ownerless behaviour it had.
 	if owner, ok := established.owner(); ok {
-		if err := database.New(h.db).SetTransactionOwner(ctx, database.SetTransactionOwnerParams{
+		if err := queries.SetTransactionOwner(ctx, database.SetTransactionOwnerParams{
 			TransactionID: transactionId,
 			Uuid:          owner,
 		}); err != nil {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to record the payment order owner", err)
 		}
+	}
+	if err := dbTx.Commit(); err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the payment intent", err)
 	}
 	switch req.PaymentMethod {
 	case "USDC":

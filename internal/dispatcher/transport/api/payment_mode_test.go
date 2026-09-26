@@ -366,7 +366,7 @@ func TestModeLockPriceGuard(t *testing.T) {
 }
 
 // TestModeDisabledTestIntentSucceeds: in disabled mode a TEST intent still
-// writes its Outstanding order and a Paid TEST transaction and returns the
+// writes a Paid TEST transaction and its Outstanding order and returns the
 // existing payload shape {"method":"TEST","intent":{"transaction_id":...,
 // "auth_key":""}}.
 func TestModeDisabledTestIntentSucceeds(t *testing.T) {
@@ -378,14 +378,18 @@ func TestModeDisabledTestIntentSucceeds(t *testing.T) {
 	orderTxID := &modeArgCapture{}
 	transactionTxID := &modeArgCapture{}
 
-	f.mock.ExpectQuery(modeCreateOrderQuery).
-		WithArgs(orderTxID, modeOrderID, modeExecutorID, modeOrderPrice, "TEST", modeRefundAddr, int64(models.Outstanding)).
-		WillReturnRows(modeOrderRows("", "TEST", models.Outstanding))
 	// CreateDummyIntent stores method TEST, an empty auth key, the request hash
-	// and status Paid; price and currency are not part of its parameters.
+	// and status Paid; price and currency are not part of its parameters. The
+	// transaction is written before the order that references it, and both
+	// in one SQL transaction.
+	f.mock.ExpectBegin()
 	f.mock.ExpectQuery(modeCreateTransactionQuery).
 		WithArgs(transactionTxID, "", sqlmock.AnyArg(), sqlmock.AnyArg(), "TEST", sqlmock.AnyArg(), int64(models.Paid), hash).
 		WillReturnRows(modeTransactionRows(modeChainTxID, "", "TEST", "", hash, models.Paid))
+	f.mock.ExpectQuery(modeCreateOrderQuery).
+		WithArgs(orderTxID, modeOrderID, modeExecutorID, modeOrderPrice, "TEST", modeRefundAddr, int64(models.Outstanding)).
+		WillReturnRows(modeOrderRows("", "TEST", models.Outstanding))
+	f.mock.ExpectCommit()
 
 	rec := f.do(http.MethodPut, "/payment/intent", modeIntentBody("TEST"))
 	modeAssertStatus(t, rec, http.StatusOK)
