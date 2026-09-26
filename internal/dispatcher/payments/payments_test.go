@@ -144,7 +144,7 @@ func (f *fakeChain) Start(ctx context.Context) error {
 	}
 }
 
-func (f *fakeChain) CreatePaymentIntent(transactionId string, price int64, currency string, hash string, ctx context.Context) (sui.SuiPaymentIntent, error) {
+func (f *fakeChain) CreatePaymentIntent(_ database.DBTX, transactionId string, price int64, currency string, hash string, ctx context.Context) (sui.SuiPaymentIntent, error) {
 	f.record("CreatePaymentIntent")
 	f.mu.Lock()
 	f.intentTx, f.intentPx, f.intentCcy, f.intentHsh = transactionId, price, currency, hash

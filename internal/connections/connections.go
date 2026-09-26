@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/netsec-ethz/debuglet/internal/fsutil"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -147,16 +148,7 @@ func write(path string, cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".config-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	_, writeErr := f.Write(append(data, '\n'))
-	if err := errors.Join(writeErr, f.Close()); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
+	return fsutil.WriteFile(path, append(data, '\n'), 0600)
 }
 
 // Save replaces a named profile chosen by the operator and selects it when

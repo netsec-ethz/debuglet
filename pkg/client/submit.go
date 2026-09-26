@@ -87,7 +87,7 @@ func (c *Client) SubmitTEST(ctx context.Context, batch *PreparedBatch) (Submissi
 }
 
 // validateSubmittedIDs requires one nonzero canonical UUID per request with
-// no case-insensitive duplicates.
+// no duplicates.
 func (c *Client) validateSubmittedIDs(ids []string, count int) error {
 	if len(ids) != count {
 		return c.protocolErr(http.MethodPut, routeDebuglet, fmt.Sprintf("returned %d ids for %d debuglets", len(ids), count))
@@ -100,11 +100,10 @@ func (c *Client) validateSubmittedIDs(ids []string, count int) error {
 		if isNilUUID(id) {
 			return c.protocolErr(http.MethodPut, routeDebuglet, fmt.Sprintf("id %d is the nil UUID", i))
 		}
-		key := strings.ToLower(id)
-		if _, duplicate := seen[key]; duplicate {
+		if _, duplicate := seen[id]; duplicate {
 			return c.protocolErr(http.MethodPut, routeDebuglet, fmt.Sprintf("id %d duplicates an earlier id", i))
 		}
-		seen[key] = struct{}{}
+		seen[id] = struct{}{}
 	}
 	return nil
 }

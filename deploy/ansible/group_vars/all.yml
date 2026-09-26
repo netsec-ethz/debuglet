@@ -61,8 +61,9 @@ dispatcher_http_port: 9000
 # control channel in cleartext is not a supported configuration.
 dispatcher_disable_tls: false
 
-# Version string the daemons report. Set it to the release being deployed;
-# `make deploy-update-config DEPLOY_VERSION=v1.2.3` passes it through.
+# Version string the daemons report. A full deployment sets it from the release
+# it installs (deploy/debuglet-deploy); the config-only playbooks read it from
+# the host's deployment record (tasks/installed-version.yml).
 deploy_version: "unknown"
 
 # =============================================================================

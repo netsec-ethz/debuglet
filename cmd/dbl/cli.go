@@ -340,13 +340,14 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// validateJobID checks the canonical 36-character UUID spelling in either hex
-// case and rejects the nil UUID, before the ID is ever placed in a URL.
+// validateJobID checks the lowercase canonical 36-character UUID spelling the
+// dispatcher accepts and rejects the nil UUID, before the ID is ever placed in
+// a URL.
 func validateJobID(id string) error {
 	if !uuidPattern.MatchString(id) {
-		return fmt.Errorf("invalid debuglet ID %q: want a canonical UUID", id)
+		return fmt.Errorf("invalid debuglet ID %q: want a lowercase canonical UUID", id)
 	}
 	if strings.Trim(id, "0-") == "" {
 		return fmt.Errorf("invalid debuglet ID %q: the nil UUID is not a job", id)

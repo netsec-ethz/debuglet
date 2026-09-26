@@ -2,9 +2,10 @@ package client
 
 import "errors"
 
-// isCanonicalUUID reports whether s is the 36-character hyphenated hex
-// spelling of a UUID in either hex case. Only these characters can appear in
-// a validated ID, so an ID can never escape the base path.
+// isCanonicalUUID reports whether s is the 36-character hyphenated lowercase
+// hex spelling of a UUID, the only spelling the dispatcher accepts. Only these
+// characters can appear in a validated ID, so an ID can never escape the base
+// path.
 func isCanonicalUUID(s string) bool {
 	if len(s) != 36 {
 		return false
@@ -26,7 +27,7 @@ func isCanonicalUUID(s string) bool {
 }
 
 func isHex(c byte) bool {
-	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
 }
 
 // isNilUUID reports whether a canonical UUID is all zeros.
@@ -39,7 +40,7 @@ func isNilUUID(s string) bool {
 	return true
 }
 
-var errInvalidJobID = errors.New("client: invalid debuglet id: expected a canonical 36-character UUID")
+var errInvalidJobID = errors.New("client: invalid debuglet id: expected a lowercase canonical 36-character UUID")
 
 // validateJobID rejects any caller-supplied job ID that is not a nonzero
 // canonical UUID before it can be placed in a URL.

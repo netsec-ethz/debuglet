@@ -13,6 +13,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	"net/http"
 	"strconv"
 	"strings"
@@ -197,9 +198,9 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 		limit = 1000
 	}
 
-	id, err := uuid.Parse(debugletID)
+	id, err := parseDebugletID(debugletID)
 	if err != nil {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid debuglet id: "+echoed(err.Error()))
+		return err
 	}
 	if err := h.authorizeDebuglet(c, id); err != nil {
 		return err
@@ -245,13 +246,24 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	})
 }
 
+// parseDebugletID accepts the run IDs the control protocol accepts: the
+// lowercase canonical spelling of a non-nil UUID.
+func parseDebugletID(value string) (uuid.UUID, error) {
+	id, ok := ids.ParseCanonical(value)
+	if !ok {
+		return uuid.Nil, apiError(http.StatusBadRequest, CodeInvalidRequest,
+			"invalid debuglet id: want a lowercase canonical, non-nil UUID")
+	}
+	return id, nil
+}
+
 // GET /debuglet/:id/state
 func (h *Handler) GetDebugletState(c echo.Context) error {
 	debugletID := c.Param("id")
 
-	id, err := uuid.Parse(debugletID)
+	id, err := parseDebugletID(debugletID)
 	if err != nil {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid debuglet id: "+echoed(err.Error()))
+		return err
 	}
 	if err := h.authorizeDebuglet(c, id); err != nil {
 		return err
@@ -275,10 +287,21 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 
 // DELETE /debuglet
 func (h *Handler) DeleteDebuglet(c echo.Context) error {
-	var req DebugletDeleteRequest
-	if err := c.Bind(&req); err != nil {
+	// The ID is read as text so that it is held to the same spelling as the
+	// other run routes: uuid.UUID's JSON decoding would accept the nil,
+	// uppercase, braced and urn:uuid: spellings too.
+	var body struct {
+		DebugletID string `json:"debuglet_id"`
+		ExecutorID string `json:"executor_id"`
+	}
+	if err := c.Bind(&body); err != nil {
 		return bindError(err)
 	}
+	id, err := parseDebugletID(body.DebugletID)
+	if err != nil {
+		return err
+	}
+	req := DebugletDeleteRequest{DebugletID: id, ExecutorID: body.ExecutorID}
 
 	// Ownership is decided before the cancellation is attempted, so a run the
 	// caller may not see is neither cancelled nor reported as existing. The

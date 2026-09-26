@@ -34,7 +34,7 @@ var (
 // network or key file; *sui.SuiPaymentHandler satisfies it unchanged.
 type chainBackend interface {
 	Start(ctx context.Context) error
-	CreatePaymentIntent(transactionId string, price int64, currency string, hash string, ctx context.Context) (sui.SuiPaymentIntent, error)
+	CreatePaymentIntent(db database.DBTX, transactionId string, price int64, currency string, hash string, ctx context.Context) (sui.SuiPaymentIntent, error)
 	RefundDebuglet(debugletOrder *database.DebugletOrder, refundAddress string, ctx context.Context) error
 	TransferCoins(amount uint64, cointype string, refundAddress string, ctx context.Context) error
 }
@@ -154,6 +154,13 @@ func (p *PaymentHandler) Start(ctx context.Context) error {
 }
 
 func (p *PaymentHandler) CreatePaymentIntent(transactionId string, price int64, method string, hash string, ctx context.Context) (PaymentIntent, error) {
+	return p.CreatePaymentIntentIn(p.db, transactionId, price, method, hash, ctx)
+}
+
+// CreatePaymentIntentIn is CreatePaymentIntent writing the transaction row
+// through db, so a caller can store the intent and its orders in one SQL
+// transaction.
+func (p *PaymentHandler) CreatePaymentIntentIn(db database.DBTX, transactionId string, price int64, method string, hash string, ctx context.Context) (PaymentIntent, error) {
 	switch method {
 	case "USDC":
 		fallthrough
@@ -161,13 +168,13 @@ func (p *PaymentHandler) CreatePaymentIntent(transactionId string, price int64, 
 		if err := p.requireChain(method, "create payment intent"); err != nil {
 			return PaymentIntent{}, err
 		}
-		suiIntent, err := p.sui.CreatePaymentIntent(transactionId, price, method, hash, ctx)
+		suiIntent, err := p.sui.CreatePaymentIntent(db, transactionId, price, method, hash, ctx)
 		if err != nil {
 			return PaymentIntent{}, fmt.Errorf("Failed to get Intent: %w", err)
 		}
 		return PaymentIntent{method: method, Intent: suiIntent}, nil
 	case "TEST":
-		err := p.CreateDummyIntent(transactionId, price, hash, ctx)
+		err := p.createDummyIntent(db, transactionId, price, hash, ctx)
 		return PaymentIntent{method: "TEST", Intent: DummyIntent{TransactionId: transactionId, AuthKey: ""}}, err
 	default:
 		return PaymentIntent{}, fmt.Errorf("Unsupported payment method: %s", method)
@@ -198,10 +205,14 @@ func (p *PaymentHandler) NewTransactionID() (string, error) {
 
 // This is for testing only. Creates a transaction and immediately sets it to paid
 func (p *PaymentHandler) CreateDummyIntent(transactionId string, price int64, hash string, ctx context.Context) error {
+	return p.createDummyIntent(p.db, transactionId, price, hash, ctx)
+}
+
+func (p *PaymentHandler) createDummyIntent(db database.DBTX, transactionId string, price int64, hash string, ctx context.Context) error {
 	//TODO check if we can fetch a timestamp from chain to avoid drift
 	expiresAt := time.Now().Add(time.Minute * 5)
 
-	queries := database.New(p.db)
+	queries := database.New(db)
 	if t, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{
 		ID:        transactionId,
 		Price:     price,

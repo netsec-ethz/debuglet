@@ -14,6 +14,60 @@ integration branch is supported.
 
 ## [Unreleased]
 
+### Changed
+- `GET /debuglet/{id}/state` and `/logs` accept only the lowercase canonical
+  run ID that submission returns, as the control protocol does, and reject a
+  nil, uppercase, braced, `urn:uuid:` or unhyphenated `{id}` with 400
+  `invalid_request`. `DELETE /debuglet` holds the `debuglet_id` in its body to
+  the same rule, and `api/openapi.yaml` states it as a pattern. `dbl status`,
+  `logs` and `cancel` and the `pkg/client` methods refuse an uppercase ID
+  before sending it; pass the ID as printed.
+- `make deploy-update-config` and `make deploy-update-addr` render the version
+  of the release installed on each host, read from its deployment record,
+  instead of `git describe` of the operator's checkout and `unknown`
+  respectively. `DEPLOY_VERSION` is no longer read, and an explicit
+  `-e deploy_version` that names another release is refused. A host without a
+  deployment record needs a full deployment first.
+
+### Fixed
+- The `scion_path_length` and `scion_get_interface_details` guest imports
+  answer a negative or out-of-range index, or a path without metadata, with -1
+  and zeros respectively, instead of panicking inside the executor. The import
+  signatures are unchanged.
+- The executor refuses to start with a client certificate outside its validity
+  window, naming `credentials.client_cert`, as the dispatcher already does for
+  its own certificate. Before, it started and every control connection was
+  rejected. Renew the certificate if the executor now refuses to start.
+- The CLI's saved connections and credentials, local role records, readiness
+  records, and managed-service configuration, unit, record and maintenance
+  files are flushed to disk before they replace the previous file, so a crash
+  cannot leave one empty or truncated. No format or location changes.
+- `make bootstrap-sudo`, `make deploy-update-addr` and `make deploy-update-config`
+  verify SSH host keys against the selected environment's file. With
+  `DEPLOY_ENV=dev` they used the production `known_hosts`, and so refused dev
+  hosts missing from it. No change for `DEPLOY_ENV=prod`.
+- The executor removes a run's executor-wide bandwidth limit from its packet
+  counter when the run ends. The eBPF counter's map holds 10,000 entries, so
+  an executor process previously refused every run after about 10,000 runs.
+  No configuration, protocol or schema change.
+- The dispatcher and executor daemons enforce the schema's foreign keys and
+  cascades, and wait up to one second for a database lock held by another
+  process instead of failing at once. `PUT /payment/intent` now writes the
+  transaction, its orders and its owner in one SQL transaction. The schema is
+  unchanged; `-upgrade-database` warns about rows an earlier version wrote
+  that break a foreign key, and leaves them in place.
+
+### Removed
+- `tools/verify-offline.py`, `local/scripts/client.py`, `local/scripts/debug_tesla.py`
+  and `local/scripts/cross_check_tesla/`, which nothing ran or documented. `dbl`,
+  `pkg/client` and `local/scripts/verify_pcap.py` cover their uses.
+- The committed big-endian eBPF bindings and objects (`*_bpfeb.go`,
+  `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
+  covers every supported platform; the executor no longer builds for
+  big-endian Linux (mips, ppc64, s390x).
+
+## [0.2.0-rc.2] - 2026-09-25
+
 ### Added
 - Add browser login with GitHub OAuth, including PKCE, short-lived login state,
   and deployment-specific credentials stored outside version control. This adds
@@ -27,6 +81,15 @@ integration branch is supported.
   require a new directory per package version.
 
 ### Changed
+- The HTTP contract stays at version `1.2` while it changes in ways that its
+  rules otherwise reserve for a major version. Release candidates may do so
+  before the final `v0.2.0`; from then on the rules bind without exception.
+  [docs/API.md](docs/API.md#release-candidates) lists every such change of this
+  candidate, including the ones below.
+- Every route answers a body above 32 MiB with 413 `payload_too_large`.
+- An identical resubmission on `PUT /debuglet` answers 200 with the runs already
+  recorded for the batch instead of admitting it again. `PUT /payment/intent`
+  refuses an empty batch and a repeated `order_id`.
 - `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
   instead of whole seconds truncated. Sub-second runs are no longer free, and a
   client that computes prices itself must use the new formula.
@@ -48,18 +111,13 @@ integration branch is supported.
   populated database at version 3 can be upgraded. A database already past
   version 4 is unaffected and keeps the columns without defaults.
 
-### Removed
-- `tools/verify-offline.py`, `local/scripts/client.py`, `local/scripts/debug_tesla.py`
-  and `local/scripts/cross_check_tesla/`, which nothing ran or documented. `dbl`,
-  `pkg/client` and `local/scripts/verify_pcap.py` cover their uses.
-- The committed big-endian eBPF bindings and objects (`*_bpfeb.go`,
-  `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
-  covers every supported platform; the executor no longer builds for
-  big-endian Linux (mips, ppc64, s390x).
-
 ### Known limitations
 - SCION sockets cannot be marked, so their packets are not attributed to the
   run by the eBPF tagger. The executor logs a warning once when it dials SCION.
+- The limitations of `v0.2.0-rc.1` still apply, except that a deployed database
+  can now be upgraded: the web dashboard is not compatible, only Linux amd64
+  packages are published, a local state directory stays with its package version
+  and interrupted runs are not recovered.
 
 ## [0.2.0-rc.1] - 2026-09-25
 
@@ -118,6 +176,7 @@ integration branch is supported.
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
 [0.1.0]: https://github.com/netsec-ethz/debuglet/releases/tag/v0.1.0

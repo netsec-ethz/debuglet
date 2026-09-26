@@ -16,6 +16,9 @@
   hosts: executors
   become: true
   tasks:
+    - name: Use the installed version
+      ansible.builtin.import_tasks: tasks/installed-version.yml
+
     - name: Regenerate executor config
       ansible.builtin.template:
         src: "{{ playbook_dir }}/roles/executor/templates/executor.toml.j2"
