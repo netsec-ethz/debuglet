@@ -8,10 +8,10 @@
 From your application's Go module, select the release candidate:
 
 ```sh
-go get github.com/netsec-ethz/debuglet/pkg/client@v0.2.0-rc.2
+go get github.com/netsec-ethz/debuglet/pkg/client@v0.2.0-rc.3
 ```
 
-Import `github.com/netsec-ethz/debuglet/pkg/client`. Public fetching needs no credentials or `GOPRIVATE` setting. `v0.2.0-rc.2` is the current release candidate; `v0.2.0-rc.1` was the first to contain this client, and `v0.1.0` predates it. Release candidates may change the HTTP contract before the final `v0.2.0`, as [the API guide](API.md#release-candidates) describes, so pin the exact tag.
+Import `github.com/netsec-ethz/debuglet/pkg/client`. Public fetching needs no credentials or `GOPRIVATE` setting. `v0.2.0-rc.3` is the current release candidate; `v0.2.0-rc.1` was the first to contain this client, and `v0.1.0` predates it. Release candidates may change the HTTP contract before the final `v0.2.0`, as [the API guide](API.md#release-candidates) describes, so pin the exact tag.
 
 ## Surface
 
