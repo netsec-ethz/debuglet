@@ -1,6 +1,22 @@
+# Key material, certificates and packet captures are generated or recorded
+# locally and never committed. Tests issue certificates at runtime
+# (internal/testtls).
 *.crt
 *.key
+*.pem
+*.der
+*.p12
+*.pfx
+*.csr
+*.srl
+*.jks
 *.pcap
+*.pcapng
+*.cap
+# A root .env holds local secrets. Other *.env files are tracked on purpose
+# (deploy/ci/images.env, deploy/provisioner.env); deployment secrets live in
+# the ignored deploy/ansible/secrets/.
+/.env
 # Local dev TLS material predating the convention above: these files have
 # no extension, so *.crt / *.key never matched them and they ended up
 # tracked. `make generate-certs` writes server.* / client.* instead.
@@ -14,7 +30,6 @@ debuglet-dispatcher*
 # names start with the daemon names above; keep them out of that rule.
 !/deploy/systemd/debuglet-dispatcher-*.service
 !/deploy/systemd/debuglet-executor-*.service
-tagger.o
 /dispatcher
 /executor
 __debug*
@@ -38,6 +53,13 @@ benchmarks
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Editor leftovers
+*.swp
+*.swo
+*.swn
+*~
+.*.un~
 
 # Python generated files
 .mypy_cache/
