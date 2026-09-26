@@ -132,7 +132,9 @@ func TestDispatcherEffectsRejectForeignRunAndTransaction(t *testing.T) {
 					_, err := f.d.OnDebugletExit(f.ctx, mutation, &pb.DebugletExitRequest{DebugletId: run.id.String()})
 					return err
 				},
-				func() error { return f.d.AbortDebuglet(f.ctx, id, run.id, "foreign abort") },
+			}
+			if !sameID {
+				calls = append(calls, func() error { return f.d.AbortDebuglet(f.ctx, id, run.id, "foreign abort") })
 			}
 			for i, call := range calls {
 				if err := call(); status.Code(err) != codes.PermissionDenied {

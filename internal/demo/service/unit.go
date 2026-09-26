@@ -39,7 +39,7 @@ func Unit(p Profile) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\n")
 	fmt.Fprintf(&b, "Description=%s\n", description)
-	fmt.Fprintf(&b, "Documentation=https://github.com/netsec-ethz/debuglet/blob/hardening/docs/environments.md\n")
+	fmt.Fprintf(&b, "Documentation=https://github.com/netsec-ethz/debuglet/blob/main/docs/environments.md\n")
 	fmt.Fprintf(&b, "After=network-online.target\n")
 	fmt.Fprintf(&b, "Wants=network-online.target\n\n")
 	fmt.Fprintf(&b, "[Service]\n")

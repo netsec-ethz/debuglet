@@ -31,7 +31,10 @@ Workflow
       disclosed_epoch       – tau, the latest epoch whose key is published
       disclosed_key         – k_tau (base64)
 4. For each IPv4 packet:
-   a. Compute the epoch t from the packet timestamp.
+   a. Compute the epoch t from the packet timestamp. Epoch 0 has no signing
+      key: k_0 is the public anchor, so the executor never tags with it and
+      epoch 0 is never a candidate; a packet from epoch 0 that matches no
+      later epoch is reported as carrying no attribution tag.
    b. Derive k_t = H^(tau-t)(k_tau)   [hash forward in the backward chain].
    c. Verify chain consistency: H^t(k_t) == k_0.
    d. For each candidate debuglet ID derive the per-measurement key:
@@ -479,9 +482,10 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
     matched = []
     seen = set()
     # Tolerate one epoch of clock skew between the capture host and the
-    # executor in either direction.
+    # executor in either direction. Epoch 0 is never a candidate: a tag
+    # derived from the public anchor k_0 proves nothing.
     for epoch in (pkt_epoch, pkt_epoch - 1, pkt_epoch + 1):
-        if epoch < 0 or epoch > disclosed_epoch:
+        if epoch < 1 or epoch > disclosed_epoch:
             continue
         chain_key = hash_chain_forward(disclosed_key, disclosed_epoch - epoch)
         for mid in debuglet_ids:
@@ -495,6 +499,9 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
                 matched.append((mid, epoch, "go/hmac"))
                 seen.add(mid)
     if not matched:
+        if pkt_epoch < 1:
+            return [], ("no signing key in epoch 0: packets sent during the "
+                        "executor's first epoch carry no attribution tag")
         return [], "no recent debuglet on this executor produces this tag"
     return matched, ""
 

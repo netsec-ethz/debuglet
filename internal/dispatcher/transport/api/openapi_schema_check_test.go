@@ -19,7 +19,7 @@ func scDocument(operation, schemas string) []byte {
 	return []byte(`openapi: "3.0.3"
 info:
   title: "Fragment"
-  version: "1.2"
+  version: "1.3"
 paths:
   /thing:
     get:

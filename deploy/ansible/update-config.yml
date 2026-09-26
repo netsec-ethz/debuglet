@@ -33,11 +33,25 @@
         mode: "0640"
       register: dispatcher_config
 
+    - name: Update GitHub OAuth credentials
+      ansible.builtin.copy:
+        src: "{{ dispatcher_github_oauth_env_file }}"
+        dest: "{{ config_dir }}/dispatcher/github-oauth.env"
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0600"
+      no_log: true
+      register: dispatcher_github_oauth_credentials
+      when: dispatcher_github_oauth_enabled | bool
+
     - name: Restart dispatcher if config changed
       ansible.builtin.systemd:
         name: debuglet-dispatcher
         state: restarted
-      when: debuglet_manage_services | bool and dispatcher_config.changed
+      when: >-
+        debuglet_manage_services | bool and
+        (dispatcher_config.changed or
+         (dispatcher_github_oauth_credentials.changed | default(false)))
 
 - name: Update executor config
   hosts: executors

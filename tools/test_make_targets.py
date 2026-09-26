@@ -22,6 +22,7 @@ class MakeTargetsTest(unittest.TestCase):
             shutil.copyfile(REPOSITORY / name, self.root / name)
         self.controller = self.script(
             'deploy/debuglet-deploy', 'printf "%s\\n" "$@" > deploy-called')
+        self.script('deploy/scripts/build-linux.sh', 'touch deploy-built')
         self.inventory = self.script('inventory', 'printf "%s\\n" "$@" > ../../inventory-args; cat "$(dirname "$0")/inventory.json"')
         self.playbook = self.script('playbook', 'printf "%s\\n" "$@" > ../../playbook-called')
 
@@ -139,6 +140,25 @@ printf new > target/wasm32-wasip1/release/debuglet.wasm''')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((self.root / 'playbook-called').read_text().splitlines()[:4],
                                  ['-i', 'hosts.dev.yml', '-e', '@vars/dev.yml'])
+
+    def test_database_upgrade_uses_selected_environment(self):
+        for environment, inventory, known_hosts in (('dev', 'hosts.dev.yml', 'known_hosts.dev'),
+                                                    ('prod', 'hosts.yml', 'known_hosts')):
+            with self.subTest(environment=environment):
+                result = self.make('deploy-upgrade-db', DEPLOY_ENV=environment,
+                                   ANSIBLE_PLAYBOOK=self.playbook)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.root / 'deploy-built').exists())
+                self.assertEqual((self.root / 'playbook-called').read_text().splitlines()[:7],
+                                 ['-i', inventory, '-e', f'@vars/{environment}.yml', '-e',
+                                  f'known_hosts_file={{{{ playbook_dir }}}}/{known_hosts}',
+                                  'upgrade-database.yml'])
+
+    def test_database_upgrade_requires_an_environment(self):
+        result = self.make('deploy-upgrade-db', ANSIBLE_PLAYBOOK=self.playbook)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('DEPLOY_ENV must be dev or prod', result.stderr)
+        self.assertFalse((self.root / 'playbook-called').exists())
 
 
 if __name__ == '__main__':

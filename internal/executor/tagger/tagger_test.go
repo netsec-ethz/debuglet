@@ -23,7 +23,7 @@ func newTestTagger(t *testing.T) *Tagger {
 	ks, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:  fixedSeed,
 		Delay: 10 * time.Second,
-		Epoch: time.Now(),
+		Epoch: time.Now().Add(-10 * time.Second),
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
@@ -92,7 +92,7 @@ func TestTagPacketDeterminism(t *testing.T) {
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
 		Seed:  fixedSeed,
 		Delay: 10 * time.Second,
-		Epoch: time.Now(),
+		Epoch: time.Now().Add(-10 * time.Second),
 	})
 	tgr := New(ks, testMeasurementID)
 
@@ -151,7 +151,7 @@ func TestAccountabilityRoundTrip(t *testing.T) {
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
 		Seed:  fixedSeed,
 		Delay: 10 * time.Second,
-		Epoch: now,
+		Epoch: now.Add(-10 * time.Second),
 	})
 	tgr := New(ks, testMeasurementID)
 
@@ -185,7 +185,7 @@ func TestAccountabilityBPFRoundTrip(t *testing.T) {
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
 		Seed:  fixedSeed,
 		Delay: 10 * time.Second,
-		Epoch: now,
+		Epoch: now.Add(-10 * time.Second),
 	})
 
 	payload := []byte("bpf accountability test payload")
@@ -333,7 +333,7 @@ func TestAccountabilityTamperedPacket(t *testing.T) {
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
 		Seed:  fixedSeed,
 		Delay: 10 * time.Second,
-		Epoch: now,
+		Epoch: now.Add(-10 * time.Second),
 	})
 	tgr := New(ks, testMeasurementID)
 

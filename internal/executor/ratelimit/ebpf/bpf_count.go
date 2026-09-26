@@ -72,7 +72,17 @@ func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, err
 	}
 	objs, resources, err := deps.load()
 	if err != nil {
-		return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, fmt.Errorf("failed to load eBPF objects: %w", err))
+		err = fmt.Errorf("failed to load eBPF objects: %w", err)
+		// EPERM, EACCES and EINVAL are what an unprivileged process sees,
+		// depending on the kernel and the failing step, and what a kernel
+		// that does not accept a program or map returns; the caller falls
+		// back on them. Any other errno is not such a refusal and stays fatal
+		// for the operator to look at. In every case cilium/ebpf closes the
+		// objects a failed load created.
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EINVAL) {
+			return nil, err
+		}
+		return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, err)
 	}
 	bc := &BpfCount{
 		objs: objs, cleanup: counterCleanup{resources: resources},

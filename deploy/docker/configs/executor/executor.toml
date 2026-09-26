@@ -45,11 +45,12 @@ capacity = 1_000_000_000
 max_debuglets = 20
 
 [tesla]
-# Empty seed: the executor generates its own key schedule at startup. One
-# second per epoch with a chain of 3600 epochs covers an hour of rig uptime.
+# Empty seed: the executor generates its own key schedule at startup. A
+# chain length of 0 is derived from the delay so the chain covers the default
+# horizon of seven days of rig uptime.
 seed = ""
 delay = 1
-chain_length = 3600
+chain_length = 0
 
 [network]
 # The fallback packet counter keeps the executor off the eBPF egress tagger,

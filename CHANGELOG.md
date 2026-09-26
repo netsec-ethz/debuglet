@@ -5,7 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Until the next tagged release, `[Unreleased]` is the only section that changes.
+Each entry names a user-visible change and its compatibility consequence: whether
+the CLI, the control protocol between dispatcher and executor or the database
+schema changed, and what an operator does with an existing state directory.
+Entries promise nothing across commits, since only the current commit of the
+integration branch is supported.
+
 ## [Unreleased]
+
+## [0.2.0-rc.2] - 2026-09-25
+
+### Added
+- Add browser login with GitHub OAuth, including PKCE, short-lived login state,
+  and deployment-specific credentials stored outside version control. This adds
+  dispatcher database migration 00009; run `make deploy-upgrade-db
+  DEPLOY_ENV=<env>` before the full deployment. The target builds and installs
+  the candidate payload before it applies that payload's migration.
+- `debuglet-dispatcher -upgrade-database`, `debuglet-executor -upgrade-database`
+  and `deploy/ansible/upgrade-database.yml` bring a deployed database forward to
+  the packaged schema, with a backup taken by the playbook. The upgrade is
+  supported for wallet-free TEST state only; local state directories still
+  require a new directory per package version.
+
+### Changed
+- The HTTP contract stays at version `1.2` while it changes in ways that its
+  rules otherwise reserve for a major version. Release candidates may do so
+  before the final `v0.2.0`; from then on the rules bind without exception.
+  [docs/API.md](docs/API.md#release-candidates) lists every such change of this
+  candidate, including the ones below.
+- Every route answers a body above 32 MiB with 413 `payload_too_large`.
+- An identical resubmission on `PUT /debuglet` answers 200 with the runs already
+  recorded for the batch instead of admitting it again. `PUT /payment/intent`
+  refuses an empty batch and a repeated `order_id`.
+- `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
+  instead of whole seconds truncated. Sub-second runs are no longer free, and a
+  client that computes prices itself must use the new formula.
+- `DELETE /debuglet` answers an executor's refusal 400 `cancel_refused` whatever
+  its gRPC code, and an Abort that may not have reached the executor 500
+  `internal_error` ("cancellation not confirmed").
+- `dbl service status` exits 4 when the role is not ready, where it exited 0.
+- Setting a destination limit below the floors already admitted is refused with
+  409 `capacity_exhausted`.
+
+### Fixed
+- A refused resubmission of a batch whose orders already have runs no longer
+  refunds its transaction.
+- A datagram read into a buffer shorter than the datagram is charged for the
+  whole datagram.
+
+### Schema
+- Dispatcher migration 00004 gained `DEFAULT` clauses after v0.1.0, so that a
+  populated database at version 3 can be upgraded. A database already past
+  version 4 is unaffected and keeps the columns without defaults.
+
+### Known limitations
+- SCION sockets cannot be marked, so their packets are not attributed to the
+  run by the eBPF tagger. The executor logs a warning once when it dials SCION.
+- The limitations of `v0.2.0-rc.1` still apply, except that a deployed database
+  can now be upgraded: the web dashboard is not compatible, only Linux amd64
+  packages are published, a local state directory stays with its package version
+  and interrupted runs are not recovered.
 
 ## [0.2.0-rc.1] - 2026-09-25
 
@@ -64,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
 [0.1.0]: https://github.com/netsec-ethz/debuglet/releases/tag/v0.1.0

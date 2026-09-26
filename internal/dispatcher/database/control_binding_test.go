@@ -113,7 +113,7 @@ func TestControlBindingMigrationPreservesDispatcherRows(t *testing.T) {
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := provider.GetDBVersion(ctx); err != nil || version != 7 {
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != 9 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)

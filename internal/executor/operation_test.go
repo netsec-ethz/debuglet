@@ -74,7 +74,7 @@ func TestOperationCancellationDuringAllocate(t *testing.T) {
 	if !operationAwait(t, allocateEntered, "real Allocate RPC") {
 		return
 	}
-	cause := errors.New("explicit cancellation cause")
+	cause := abortReason{reason: "explicit cancellation cause"}
 	call.cancel(cause)
 	if !operationAwait(t, call.done, "allocation cancellation") || !operationAwait(t, allocateJoined, "allocation handler") {
 		return
@@ -189,7 +189,7 @@ func TestOperationStartedStateFailureJoinsOutput(t *testing.T) {
 	if runtime.starts.Load() != 0 || runtime.closes.Load() != 1 || call.completion.CleanupErr != nil {
 		t.Fatal("pre-Run failure did not clean exactly its owned resources")
 	}
-	if report := operationReport(t, peer, spec.DebugletID); report.ExitCode != -1 || !strings.Contains(report.GetErrorMessage(), "started state fixture") {
+	if report := operationReport(t, peer, spec.DebugletID); report.ExitCode != -1 || report.GetErrorMessage() != genericOutcome || strings.Contains(report.GetErrorMessage(), "started state fixture") {
 		t.Fatal("setup failure outcome lost")
 	}
 }
@@ -232,7 +232,7 @@ func TestOperationOutputSendFailureCancelsProducer(t *testing.T) {
 	if runtime.closes.Load() != 1 || call.completion.CleanupErr != nil {
 		t.Fatal("send failure lost local cleanup")
 	}
-	if report := operationReport(t, peer, spec.DebugletID); report.ExitCode != -1 || !strings.Contains(report.GetErrorMessage(), "output") {
+	if report := operationReport(t, peer, spec.DebugletID); report.ExitCode != -1 || report.GetErrorMessage() != genericOutcome {
 		t.Fatal("Send failure did not become the single operation outcome")
 	}
 }
@@ -319,7 +319,7 @@ func TestOperationRetainsOwnershipDuringUninterruptibleSetup(t *testing.T) {
 	if !operationAwait(t, setupEntered, "held setup") {
 		return
 	}
-	call.cancel(errors.New("cancel held setup"))
+	call.cancel(abortReason{reason: "cancel held setup"})
 	if !operationAwait(t, closeJoined, "I/O closure before setup joins") {
 		return
 	}
@@ -376,10 +376,11 @@ func TestFailedOperationReportsWithoutAllocation(t *testing.T) {
 			if name == "already_started" {
 				failure = scheduler.ErrDebugletAlreadyStarted
 			}
-			want := failure
+			want := genericOutcome
 			if name == "cancelled" {
-				want = errors.New("cancel before scheduler callback")
-				cancel(want)
+				reason := abortReason{reason: "cancel before scheduler callback"}
+				want = reason.Error()
+				cancel(reason)
 			}
 			done := make(chan struct{})
 			var completion scheduler.Completion
@@ -392,7 +393,7 @@ func TestFailedOperationReportsWithoutAllocation(t *testing.T) {
 				t.Fatal("failed callback replayed execution or mistook reporting for cleanup")
 			}
 			report := operationRetriedReport(t, peer, spec.DebugletID)
-			if report.ExitCode != -1 || report.GetErrorMessage() != want.Error() || !reportContextOK.Load() {
+			if report.ExitCode != -1 || report.GetErrorMessage() != want || !reportContextOK.Load() {
 				t.Fatalf("failed callback lost cause or detached report context: %+v context=%t", report, reportContextOK.Load())
 			}
 		})

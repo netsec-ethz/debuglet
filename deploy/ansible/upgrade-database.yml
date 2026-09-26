@@ -1,0 +1,200 @@
+---
+# Upgrade the dispatcher and executor databases in place with the packaged
+# migrations of the candidate release in deploy/dist. Run it before the full
+# deployment: it stops each service, backs up the database, installs the
+# verified candidate payload without restarting it, upgrades with that candidate,
+# then starts the service. The deployment playbooks never upgrade a database,
+# and nothing imports this playbook.
+#
+# On each host it stops the service, copies the database and its -wal and -shm
+# companions into a new backup-TIMESTAMP directory next to it, installs the
+# candidate without restarting it, and runs the candidate daemon's
+# -upgrade-database mode as the service user through runuser, so the database
+# keeps its owner, and starts the service again. When the upgrade fails the
+# play stops there: the service stays stopped, the backup stays in place, and
+# the database is left at the last migration that completed.
+# Executors are upgraded one host at a time, and a failure on one of them
+# leaves the remaining executors untouched.
+#
+# Usage:
+#   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml
+#   cd deploy/ansible && ansible-playbook -i hosts.dev.yml -e @vars/dev.yml \
+#     -e known_hosts_file="{{ playbook_dir }}/known_hosts.dev" upgrade-database.yml
+#
+#   Limit to some hosts:
+#     ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml --limit executor.example.com
+
+- import_playbook: preflight.yml
+
+- name: Upgrade the dispatcher database
+  hosts: dispatcher
+  become: true
+  vars:
+    upgrade_database: "{{ state_dir }}/dispatcher/dispatcher.db"
+    payload_restart_services: false
+  tasks:
+    - name: Inspect the dispatcher database
+      ansible.builtin.stat:
+        path: "{{ upgrade_database }}"
+      register: upgrade_database_file
+
+    - name: Require an existing dispatcher database
+      ansible.builtin.assert:
+        that:
+          - upgrade_database_file.stat.exists
+        fail_msg: >-
+          No dispatcher database exists at {{ upgrade_database }}; there is
+          nothing to upgrade. The deployment playbooks create a new one.
+        quiet: true
+
+    - name: Name the backup directory
+      ansible.builtin.set_fact:
+        upgrade_backup_dir: "{{ upgrade_database | dirname }}/backup-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+
+    - name: Stop the dispatcher
+      ansible.builtin.systemd:
+        name: debuglet-dispatcher
+        state: stopped
+      when: debuglet_manage_services | bool
+
+    - name: Create the backup directory
+      ansible.builtin.file:
+        path: "{{ upgrade_backup_dir }}"
+        state: directory
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0700"
+
+    - name: Inspect the database companions
+      ansible.builtin.stat:
+        path: "{{ upgrade_database }}{{ item }}"
+      loop: ["", "-wal", "-shm"]
+      register: upgrade_database_files
+
+    - name: Back up the dispatcher database
+      ansible.builtin.copy:
+        src: "{{ item.stat.path }}"
+        dest: "{{ upgrade_backup_dir }}/{{ item.stat.path | basename }}"
+        remote_src: true
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0600"
+      loop: "{{ upgrade_database_files.results }}"
+      loop_control:
+        label: "{{ upgrade_database }}{{ item.item }}"
+      when: item.stat.exists
+
+    - name: Install the candidate payload without restarting the dispatcher
+      ansible.builtin.include_role:
+        name: payload
+
+    - name: Upgrade the dispatcher database
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - -u
+          - "{{ debuglet_user }}"
+          - --
+          - "{{ payload_prefix }}/bin/debuglet-dispatcher"
+          - -config
+          - "{{ config_dir }}/dispatcher/dispatcher.toml"
+          - -upgrade-database
+      register: upgrade_result
+      changed_when: true
+
+    - name: Report the dispatcher upgrade
+      ansible.builtin.debug:
+        msg: "{{ upgrade_result.stdout }} (backup in {{ upgrade_backup_dir }})"
+
+    - name: Start the dispatcher
+      ansible.builtin.systemd:
+        name: debuglet-dispatcher
+        state: started
+      when: debuglet_manage_services | bool
+
+- name: Upgrade the executor databases
+  hosts: executors
+  become: true
+  serial: 1
+  vars:
+    upgrade_database: "{{ executor_state_dir }}/executor.db"
+    payload_restart_services: false
+  tasks:
+    - name: Inspect the executor database
+      ansible.builtin.stat:
+        path: "{{ upgrade_database }}"
+      register: upgrade_database_file
+
+    - name: Require an existing executor database
+      ansible.builtin.assert:
+        that:
+          - upgrade_database_file.stat.exists
+        fail_msg: >-
+          No executor database exists at {{ upgrade_database }}; there is
+          nothing to upgrade. The deployment playbooks create a new one.
+        quiet: true
+
+    - name: Name the backup directory
+      ansible.builtin.set_fact:
+        upgrade_backup_dir: "{{ upgrade_database | dirname }}/backup-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+
+    - name: Stop the executor
+      ansible.builtin.systemd:
+        name: "{{ executor_service }}"
+        state: stopped
+      when: debuglet_manage_services | bool
+
+    - name: Create the backup directory
+      ansible.builtin.file:
+        path: "{{ upgrade_backup_dir }}"
+        state: directory
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
+        mode: "0700"
+
+    - name: Inspect the database companions
+      ansible.builtin.stat:
+        path: "{{ upgrade_database }}{{ item }}"
+      loop: ["", "-wal", "-shm"]
+      register: upgrade_database_files
+
+    - name: Back up the executor database
+      ansible.builtin.copy:
+        src: "{{ item.stat.path }}"
+        dest: "{{ upgrade_backup_dir }}/{{ item.stat.path | basename }}"
+        remote_src: true
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
+        mode: "0600"
+      loop: "{{ upgrade_database_files.results }}"
+      loop_control:
+        label: "{{ upgrade_database }}{{ item.item }}"
+      when: item.stat.exists
+
+    - name: Install the candidate payload without restarting the executor
+      ansible.builtin.include_role:
+        name: payload
+
+    - name: Upgrade the executor database
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - -u
+          - "{{ executor_user }}"
+          - --
+          - "{{ executor_binary }}"
+          - -config
+          - "{{ executor_config_dir }}/executor.toml"
+          - -upgrade-database
+      register: upgrade_result
+      changed_when: true
+
+    - name: Report the executor upgrade
+      ansible.builtin.debug:
+        msg: "{{ upgrade_result.stdout }} (backup in {{ upgrade_backup_dir }})"
+
+    - name: Start the executor
+      ansible.builtin.systemd:
+        name: "{{ executor_service }}"
+        state: started
+      when: debuglet_manage_services | bool

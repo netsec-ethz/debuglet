@@ -204,6 +204,8 @@ func (p *PaymentHandler) CreateDummyIntent(transactionId string, price int64, ha
 	queries := database.New(p.db)
 	if t, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{
 		ID:        transactionId,
+		Price:     price,
+		Currency:  "TEST",
 		Method:    "TEST",
 		ExpiresAt: models.NewUTCTime(expiresAt),
 		Hash:      hash,
@@ -261,6 +263,15 @@ func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, c
 	if err := p.requireChain(current.Currency, "credit order"); err != nil {
 		return err
 	}
+	// Only an outstanding order is credited. A credited order is already
+	// included in the executor's earnings; a refunded order is not credited.
+	switch models.TransactionState(current.State) {
+	case models.Outstanding:
+	case models.Credited, models.Refunded:
+		return nil
+	default:
+		return fmt.Errorf("cannot credit order of %s in state %v", debuglet.Uuid.String(), models.TransactionState(current.State))
+	}
 	order, err := queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
 		State:         int64(models.Credited),
 		TransactionID: debuglet.TransactionID,
@@ -269,12 +280,16 @@ func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, c
 	if err != nil {
 		return fmt.Errorf("Failed to update state of %s: %s", debuglet.Uuid.String(), err.Error())
 	}
-	p.CreateEarningsIfNotExists(debuglet.ExecutorID, order.Currency, "", queries, ctx)
-	err = queries.AddEarnings(ctx, database.AddEarningsParams{
+	if err := p.CreateEarningsIfNotExists(debuglet.ExecutorID, order.Currency, "", queries, ctx); err != nil {
+		return fmt.Errorf("failed to create earnings of %s: %w", debuglet.ExecutorID, err)
+	}
+	if err := queries.AddEarnings(ctx, database.AddEarningsParams{
 		Amount:     order.Price,
 		ExecutorID: debuglet.ExecutorID,
 		Currency:   order.Currency,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to credit earnings of %s: %w", debuglet.ExecutorID, err)
+	}
 	p.logger.Debug("Credited Executor", zap.String("ID", debuglet.ExecutorID), zap.String("currency", order.Currency), zap.Int64("amount", order.Price))
 	return tx.Commit()
 }
@@ -394,18 +409,19 @@ func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Con
 	return tx.Commit()
 }
 
-func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, wallet string, queries *database.Queries, ctx context.Context) {
+func (p *PaymentHandler) CreateEarningsIfNotExists(execID string, currency string, wallet string, queries *database.Queries, ctx context.Context) error {
 	_, err := queries.GetEarningsIn(ctx, database.GetEarningsInParams{
 		ExecutorID: execID,
 		Currency:   currency,
 	})
-	if err == sql.ErrNoRows {
-		queries.CreateEarnings(ctx, database.CreateEarningsParams{
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = queries.CreateEarnings(ctx, database.CreateEarningsParams{
 			ExecutorID:       execID,
 			Currency:         currency,
 			SuiWalletAddress: wallet,
 		})
 	}
+	return err
 }
 
 func (p *PaymentHandler) TransferUSDC(amount uint64, receiver string, ctx context.Context) error {

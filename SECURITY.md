@@ -5,16 +5,27 @@ trust boundaries and known limits are described in [docs/SECURITY.md](docs/SECUR
 
 ## Supported versions
 
-This policy covers the alpha on `hardening` and its eventual integration into
-`dev`. Use a reviewed commit with passing validation and record the exact package
-version and source revision. This alpha has no published release package or
-backport branch; the existing `v0.1.0` tag predates it.
+This policy covers the `v0.2.0` release candidates, published from `main`
+(currently `v0.2.0-rc.2`), and the `dev` integration branch. Use the latest
+release candidate, or the current reviewed commit of `dev` with passing
+validation, and record the exact package version and source revision. There is
+no backport branch; the existing `v0.1.0` tag predates this package format.
 
 To pick up a fix, build and install a validated revision as described in the
 [installation guide](README-install.md). Checksums establish identity against the
 supplied checksum file, which must come from a trusted source; they are not
-release signatures. State directories are tied to their package version and have
-no supported in-place upgrade path.
+release signatures. A state directory is tied to the package version that
+created it, and [docs/environments.md](docs/environments.md#stored-state) states
+what a build does with a database of another version.
+
+Only the latest release candidate and the current commit of `dev` are
+supported; fixes are not backported to earlier candidates. Across commits there
+is no compatibility promise for the `dbl` command
+line, the control protocol between dispatcher and executor, or the database
+schema: two commits are not promised to interoperate, and a state directory
+created by one commit is not promised to be readable by another. The HTTP API is
+versioned separately, as [docs/API.md](docs/API.md#supported-revisions)
+describes, and that versioning still applies.
 
 ## Reporting a vulnerability
 

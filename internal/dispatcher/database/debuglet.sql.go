@@ -401,9 +401,10 @@ WHERE uuid = ?2 AND state <> ?3
     WHEN 0 THEN 0
     WHEN 3 THEN 1
     WHEN 4 THEN 2
-    WHEN 1 THEN 3
-    WHEN 2 THEN 4
-    WHEN 5 THEN 5
+    WHEN 6 THEN 3
+    WHEN 1 THEN 4
+    WHEN 2 THEN 5
+    WHEN 5 THEN 6
     ELSE 999
   END < ?4
   AND executor_id = ?5

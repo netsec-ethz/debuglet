@@ -31,11 +31,25 @@ import (
 func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")
+	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
-		panic(fmt.Sprintf("Failed to load executor config: %v", err))
+		fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+		os.Exit(1)
+	}
+
+	// A database is upgraded only when its operator asks for it, never at
+	// start: a normal start refuses an outdated schema instead.
+	if *upgrade {
+		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Executor, cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("database %s now records executor schema version %d\n", cfg.Database.Path, version)
+		return
 	}
 
 	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)
@@ -54,11 +68,21 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runExecutor(ctx, cfg, *readyFile, logger); err != nil {
+	requested := make(chan struct{})
+	stopNotice := context.AfterFunc(ctx, func() {
+		defer close(requested)
+		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", "executor"))
+	})
+	err = runExecutor(ctx, cfg, *readyFile, logger)
+	if !stopNotice() {
+		<-requested
+	}
+	if err != nil {
 		logger.Error("executor exited with error", zap.Error(err))
 		logger.Sync()
 		os.Exit(1)
 	}
+	logger.Info("Executor stopped", zap.String("role", "executor"), zap.Bool("joined", true))
 }
 
 // configureSCIONEnvironment loads the SCION daemon address unless the operator
@@ -93,14 +117,14 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 		return fmt.Errorf("open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	node, err := executor.NewNode(cfg, logger)
+	node, err := executor.NewNode(cfg, logger, db)
 	if err != nil {
 		return errors.Join(err, db.Close())
 	}
 	return serveNode(ctx, readyFile, cfg.Identity.ExecutorID, nodeServices{
 		newSession: func() (executorSession, error) { return executor.NewSession(node, db) },
 		closeNode:  node.Close, closeStorage: db.Close,
-		wait: waitReconnect,
+		wait: waitReconnect, logger: logger,
 	})
 }
 
@@ -117,6 +141,7 @@ type nodeServices struct {
 	newSession              func() (executorSession, error)
 	closeNode, closeStorage func() error
 	wait                    func(context.Context, time.Duration) error
+	logger                  *zap.Logger // nil logs nothing
 }
 
 func waitReconnect(ctx context.Context, maximum time.Duration) error {
@@ -133,6 +158,10 @@ func waitReconnect(ctx context.Context, maximum time.Duration) error {
 }
 
 func serveNode(ctx context.Context, readyFile, executorID string, services nodeServices) (result error) {
+	logger := services.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	clean := true
 	defer func() {
 		if !clean {
@@ -175,6 +204,8 @@ func serveNode(ctx context.Context, readyFile, executorID string, services nodeS
 		if healthy >= 30*time.Second {
 			backoff = 250 * time.Millisecond
 		}
+		logger.Warn("Control session lost; reconnecting", zap.String("executor_id", executorID),
+			zap.Error(end), zap.Duration("max_delay", backoff))
 		if err := services.wait(ctx, backoff); err != nil {
 			if ctx.Err() != nil {
 				return nil

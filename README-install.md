@@ -29,9 +29,9 @@ eBPF objects and need no privileged kernel access.
 
 ## Download a published package
 
-`v0.2.0-rc.1` is the first release candidate published with all three assets.
-The existing `v0.1.0` tag predates this package format and is not an installation
-target for these instructions. Published packages are listed on the
+`v0.2.0-rc.2` is the current release candidate published with all three assets;
+`v0.2.0-rc.1` was the first. The existing `v0.1.0` tag predates this package format
+and is not an installation target for these instructions. Published packages are listed on the
 [releases page](https://github.com/netsec-ethz/debuglet/releases).
 
 For a published version, run this from a source checkout, replacing the placeholder
@@ -193,4 +193,4 @@ The installer verifies exact package members, permissions, and hashes. It refuse
 
 Use trusted shell/coreutils tools and a prefix whose ancestry and contents can be modified only by you, trusted administrators, and cooperating installers. The installer cannot protect directories that another process is allowed to rewrite. Its exclusive `.install.lock` serializes installations. If a forcibly killed installer leaves that lock, first verify that no installer is running, then remove only that stale lock directory before retrying.
 
-Checksums verify identity against the supplied checksum file; obtain that file from the same trusted source as the package. They are not release signatures. The local demo does not establish production isolation, packet-policy enforcement, durable recovery, or payment correctness. Supported upgrades are not provided: a state directory stays with the package version that created it, and moving to another version means a new state directory. The dispatcher does authenticate sessions and authorize every operation against an owning account, but nothing rate-limits registration or login attempts, registration is open to anyone who can reach the port, and the operator role can be granted only on the dispatcher host. Remote testbed compatibility is unconfirmed.
+Checksums verify identity against the supplied checksum file; obtain that file from the same trusted source as the package. They are not release signatures. The local demo does not establish production isolation, packet-policy enforcement, durable recovery, or payment correctness. A database is upgraded to another package version only by the explicit step described in [Stored state](docs/environments.md#stored-state), never automatically. The dispatcher does authenticate sessions and authorize every operation against an owning account, but nothing rate-limits registration or login attempts, registration is open to anyone who can reach the port, and the operator role can be granted only on the dispatcher host. Remote testbed compatibility is unconfirmed.

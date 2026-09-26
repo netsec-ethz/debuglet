@@ -1,7 +1,9 @@
 // Package storagecheck states which database schemas a build can operate on
 // and verifies a supplied SQLite file against that policy before a daemon
-// serves requests or restores work. It never migrates or repairs a database:
-// an incompatible file is refused with the action its operator has to take.
+// serves requests or restores work. The check never migrates or repairs a
+// database: an incompatible file is refused with the action its operator has
+// to take. Upgrade applies the packaged migrations only when an operator runs
+// it explicitly.
 package storagecheck
 
 import (
@@ -28,8 +30,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 7
-	MinimumExecutorVersion   int64 = 4
+	MinimumDispatcherVersion int64 = 9
+	MinimumExecutorVersion   int64 = 5
 )
 
 // Policy is the schema contract of one database for this build.
@@ -41,7 +43,7 @@ type Policy struct {
 	// beyond it was written by a newer Debuglet.
 	Current int64
 	// Identity lists tables, with columns, that only this role's database
-	// has and that it has carried since its early migrations. They are
+	// has and that it has carried since its first migration. They are
 	// checked before the version, so a path pointing at the other role's
 	// database is reported as the wrong file rather than as a wrong version.
 	Identity map[string][]string
@@ -60,16 +62,17 @@ func PolicyFor(role Role) (Policy, error) {
 			return Policy{}, err
 		}
 		return Policy{Role: role, Minimum: MinimumDispatcherVersion, Current: current, Identity: map[string][]string{
-			"debuglet_order": nil,
-			"users":          nil,
+			"transaction_states": nil,
+			"transactions":       nil,
 		}, Tables: map[string][]string{
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output"},
-			"debuglet_order":             {"transaction_id", "state", "refund_address"},
+			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
 			"debuglet_users":             {"debuglet_id", "user_id"},
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
 			"executor_enrollments":       {"executor_id", "fingerprint"},
 			"executor_enrollment_tokens": {"selector", "executor_id", "secret_hash", "expires_at"},
+			"oauth_identities":           {"provider", "subject", "user_id", "login", "created_at", "updated_at"},
 			"sessions":                   {"selector", "verifier_hash", "csrf_hash", "user_id", "expires_at", "revoked"},
 			"transaction_users":          {"transaction_id", "user_id"},
 			"transactions":               {"currency", "status"},
@@ -87,6 +90,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglets":      {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":  {"debuglet_id", "output"},
 			"debuglet_exits": {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
+			"tesla_chains":   {"generation", "anchor", "epoch_base", "delay_ns", "chain_length"},
 		}}, nil
 	default:
 		return Policy{}, fmt.Errorf("unknown database role %q", role)

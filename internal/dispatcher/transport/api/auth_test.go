@@ -704,6 +704,8 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"POST /auth/login":                    {anonymous: http.StatusUnauthorized, target: "/auth/login", body: []byte(`{"account_key":""}`), public: true},
 	"POST /auth/logout":                   {anonymous: http.StatusUnauthorized, target: "/auth/logout", body: []byte(`{}`)},
 	"POST /auth/recover":                  {anonymous: http.StatusUnauthorized, target: "/auth/recover", body: []byte(`{"recovery_code":""}`), public: true},
+	"GET /auth/github":                    {anonymous: http.StatusNotFound, target: "/auth/github", public: true},
+	"GET /auth/github/callback":           {anonymous: http.StatusNotFound, target: "/auth/github/callback", public: true},
 	"PUT /debuglet":                       {anonymous: http.StatusUnauthorized, target: "/debuglet", body: []byte(`{"debuglets":[{"order_id":0,"executor_id":"` + ccExecutorID + `","wasm":"","policy":{"floor_bw":0,"ceil_bw":0,"timeout_ms":1000}}],"transaction_id":"none","auth_key":""}`)},
 	"GET /debuglet/:id/logs":              {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/logs"},
 	"GET /debuglet/:id/state":             {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/state"},

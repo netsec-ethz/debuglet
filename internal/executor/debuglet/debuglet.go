@@ -59,6 +59,7 @@ type Debuglet struct {
 	mu           sync.Mutex
 	closed       bool
 	initialized  bool
+	initializing bool
 	closeOnce    sync.Once
 	closeErr     error
 	lateCloseErr error
@@ -77,12 +78,12 @@ func New(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy 
 
 // The constructor dependency is per call; production and fixtures execute the
 // same fallback/environment path without a mutable package-wide factory.
-func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, newBPF func(*net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error)) *Debuglet {
+func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, newBPF func(*zap.Logger, *net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error)) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	var constructorCleanup error
 	if iface != nil && runtime.GOOS == "linux" {
-		if bt, err := newBPF(iface, schedule, []byte(debugletID.String())); err == nil {
+		if bt, err := newBPF(logger, iface, schedule, []byte(debugletID.String())); err == nil {
 			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name))
 			pktTagger = bt
 		} else {
@@ -236,14 +237,24 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 	return nil
 }
 
+// CompileError is a module that wazero did not compile. Err is wazero's
+// description of the failure, which can quote names from the module itself.
+type CompileError struct{ Err error }
+
+func (e *CompileError) Error() string { return "compile: " + e.Err.Error() }
+func (e *CompileError) Unwrap() error { return e.Err }
+
 // createWASMInstance compiles the given WASM bytecode and instantiates a
 // wazero module with WASI and all host functions registered.
-func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) error {
+func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) (err error) {
 	if err := ctx.Err(); err != nil {
 		return context.Cause(ctx)
 	}
-	// Publish the runtime before compilation, so cancellation has a stable
-	// resource to close. Compile itself is not forcibly preemptible.
+	// Publish the runtime before compilation, so Close finds it, but leave
+	// it to this initializer until compilation and instantiation return:
+	// wazero does not support closing a runtime that is still compiling.
+	// A Close in between only marks the run closed; the deferred finisher
+	// then releases the runtime and the published compiled module.
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -254,12 +265,36 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 		return errors.New("runtime already initialized")
 	}
 	d.initialized = true
+	d.initializing = true
 	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter().WithCloseOnContextDone(true))
 	d.runtime = rt
 	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		d.initializing = false
+		closed, compiled := d.closed, d.compiled
+		d.mu.Unlock()
+		if !closed {
+			return
+		}
+		closeCtx := context.WithoutCancel(ctx)
+		closeErr := rt.Close(closeCtx)
+		if compiled != nil {
+			closeErr = errors.Join(closeErr, compiled.Close(closeCtx))
+		}
+		d.mu.Lock()
+		d.lateCloseErr = errors.Join(d.lateCloseErr, closeErr)
+		d.mu.Unlock()
+		// A closure is reported even if initialization failed for another
+		// reason meanwhile; that error stays joined to it.
+		if !errors.Is(err, net.ErrClosed) && (ctx.Err() == nil || !errors.Is(err, context.Cause(ctx))) {
+			err = errors.Join(net.ErrClosed, err)
+		}
+		err = errors.Join(err, closeErr)
+	}()
 	compiled, err := rt.CompileModule(ctx, wasmBytes)
 	if err != nil {
-		return fmt.Errorf("createWASMInstance: compile: %w", err)
+		return fmt.Errorf("createWASMInstance: %w", &CompileError{Err: err})
 	}
 	if err := d.publishCompiled(ctx, compiled); err != nil {
 		return err
@@ -282,8 +317,8 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) err
 	return context.Cause(ctx)
 }
 
-// publishCompiled consumes compilation's result even if cancellation closed
-// the runtime while the compiler was still running.
+// publishCompiled consumes compilation's result even if the run was closed
+// while the compiler was still running.
 func (d *Debuglet) publishCompiled(ctx context.Context, compiled wazero.CompiledModule) error {
 	d.mu.Lock()
 	closed := d.closed
@@ -348,14 +383,21 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 	return hmb
 }
 
-// Close terminates owned I/O and runtime resources exactly once. It does not
-// wait for Run or its caller's watcher: the executor joins those separately.
+// Close terminates owned I/O and runtime resources exactly once. While
+// InitRuntime is still running, Close leaves the runtime and any compiled
+// module it published to InitRuntime, which releases them once on return.
+// It does not wait for Run or its caller's watcher: the executor joins those
+// separately.
 // The context reaches wazero; it cannot force an arbitrary socket Close to end.
 func (d *Debuglet) Close(ctx context.Context) error {
 	d.closeOnce.Do(func() {
 		d.mu.Lock()
 		d.closed = true
 		rt, compiled := d.runtime, d.compiled
+		if d.initializing {
+			// The initializer's finisher releases both once it returns.
+			rt, compiled = nil, nil
+		}
 		d.mu.Unlock()
 		if d.env != nil {
 			_ = d.env.Close()

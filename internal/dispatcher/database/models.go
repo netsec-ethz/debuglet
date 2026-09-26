@@ -43,6 +43,7 @@ type DebugletOrder struct {
 	Currency      string
 	State         int64
 	RefundAddress string
+	DebugletID    sql.NullInt64
 }
 
 type DebugletUser struct {
@@ -70,6 +71,15 @@ type ExecutorEnrollmentToken struct {
 	SecretHash []byte
 	CreatedAt  models.UTCTime
 	ExpiresAt  models.UTCTime
+}
+
+type OauthIdentity struct {
+	Provider  string
+	Subject   string
+	UserID    int64
+	Login     string
+	CreatedAt models.UTCTime
+	UpdatedAt models.UTCTime
 }
 
 type Session struct {

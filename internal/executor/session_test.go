@@ -47,7 +47,7 @@ func newSessionFixture(t *testing.T) (*Node, *sql.DB, *nodeCounter) {
 		}
 	})
 	counter := &nodeCounter{}
-	n, err := newNode(nodeTestConfig(), zap.NewNop(), func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error) { return counter, nil })
+	n, err := newNode(nodeTestConfig(), zap.NewNop(), newFixtureDatabase(t), func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error) { return counter, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func tryRefusedSession(t *testing.T, n *Node, db *sql.DB) error {
 func TestNodeConstructionRollbackRetainsBothErrors(t *testing.T) {
 	initial, release := errors.New("counter construction failed"), errors.New("counter release failed")
 	c := &nodeCounter{err: release}
-	n, err := newNode(nodeTestConfig(), zap.NewNop(), func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error) { return c, initial })
+	n, err := newNode(nodeTestConfig(), zap.NewNop(), newFixtureDatabase(t), func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error) { return c, initial })
 	var end *controlsession.EndError
 	if n != nil || !errors.Is(err, initial) || !errors.Is(err, release) || !errors.As(err, &end) || end.Kind != controlsession.LocalFailure || c.closes.Load() != 1 {
 		t.Fatalf("node=%v error=%v closes=%d", n, err, c.closes.Load())

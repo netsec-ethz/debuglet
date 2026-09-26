@@ -34,8 +34,9 @@ func TestGeneratedConfigurationsLoad(t *testing.T) {
 	}
 
 	record := readiness.Record{GRPCAddr: "127.0.0.1:9001", HTTPAddr: "127.0.0.1:9000"}
-	// Combined environments size the chain explicitly; a role derives it.
-	for name, chainLength := range map[string]any{"combined": int64(3600), "role": 0} {
+	// Both a combined environment and a role derive the chain from the delay,
+	// so it covers the default horizon.
+	for name, chainLength := range map[string]any{"combined": int64(0), "role": 0} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "executor.toml")
 			config := executorConfiguration("test-version", "84b8f75e-a779-465a-8ce3-54b04ac15ef2", filepath.Join(dir, "executor.sqlite"), record)

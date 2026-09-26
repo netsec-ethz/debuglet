@@ -284,9 +284,12 @@ func TestCurrentKeyAdvances(t *testing.T) {
 	ks := newTestSchedule(t, delay)
 	epoch := ks.cfg.Epoch
 
-	k0 := ks.CurrentKey(epoch)
 	k1 := ks.CurrentKey(epoch.Add(delay))
-	if bytes.Equal(k0, k1) {
+	k2 := ks.CurrentKey(epoch.Add(2 * delay))
+	if k1 == nil || k2 == nil {
+		t.Fatalf("CurrentKey in epochs 1 and 2 = %x, %x; want usable keys", k1, k2)
+	}
+	if bytes.Equal(k1, k2) {
 		t.Error("CurrentKey did not change after one delay period")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,52 @@ type domainKey struct {
 type bucketState struct {
 	tokens app.Bitrate
 	last   time.Time
+	// Fractions are billionths of a bit. Tokens are capped; cumulative
+	// refill keeps all credit so refunds cannot delay an existing charge.
+	tokenFraction, refillFraction int64
+	// refilled only grows, by every credit refill grants, including the part
+	// the cap keeps out of tokens. A waiting charge is paid once refilled
+	// reaches the level it recorded when it was charged.
+	refilled app.Bitrate
+}
+
+// refill credits b for the time since it was last updated at rate, up to one
+// second of rate, and moves it to now.
+func (b *bucketState) refill(now time.Time, rate app.Bitrate) {
+	elapsed := now.Sub(b.last)
+	seconds, nanos := elapsed/time.Second, elapsed%time.Second
+	// Split before multiplying to retain sub-bit credit without multiplying
+	// the entire rate by a nanosecond duration.
+	partial := int64(nanos) * int64(rate%app.Bitrate(time.Second))
+	credit := app.Bitrate(seconds)*rate + app.Bitrate(nanos)*(rate/app.Bitrate(time.Second)) + app.Bitrate(partial/int64(time.Second))
+	fraction := partial % int64(time.Second)
+	b.tokenFraction += fraction
+	b.tokens += credit + app.Bitrate(b.tokenFraction/int64(time.Second))
+	b.tokenFraction %= int64(time.Second)
+	b.cap(rate)
+	b.refillFraction += fraction
+	b.refilled += credit + app.Bitrate(b.refillFraction/int64(time.Second))
+	b.refillFraction %= int64(time.Second)
+	b.last = now
+}
+
+func (b *bucketState) cap(rate app.Bitrate) {
+	if b.tokens >= rate {
+		b.tokens, b.tokenFraction = rate, 0
+	}
+}
+
+// bucketLocked returns the bucket under key refilled up to now at rate. A
+// missing bucket is created full. The count's mu must be held.
+func bucketLocked[K comparable](buckets map[K]*bucketState, key K, rate app.Bitrate, now time.Time) *bucketState {
+	b, ok := buckets[key]
+	if !ok {
+		b = &bucketState{last: now, tokens: rate}
+		buckets[key] = b
+		return b
+	}
+	b.refill(now, rate)
+	return b
 }
 
 type FallbackCount struct {
@@ -37,6 +84,11 @@ type FallbackCount struct {
 	// The maximum allowed bandwidth rates
 	rates     map[debugletKey]app.Bitrate
 	execRates map[uuid.UUID]app.Bitrate
+	// ratesChanged is closed and replaced whenever a rate moves or is
+	// deleted. A reservation keeps the channel that was current when it was
+	// taken, so a wait computed under rates that no longer hold is woken and
+	// recomputed (see FallbackConn.admit).
+	ratesChanged chan struct{}
 
 	domainIPs map[domainKey]map[netutil.IPv6]int
 	attached  map[debugletKey]int
@@ -51,6 +103,7 @@ func NewFallbackCount() (*FallbackCount, error) {
 		rates:          make(map[debugletKey]app.Bitrate),
 		execRates:      make(map[uuid.UUID]app.Bitrate),
 		attached:       make(map[debugletKey]int),
+		ratesChanged:   make(chan struct{}),
 	}, nil
 }
 
@@ -64,6 +117,13 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 		return nil, fmt.Errorf("invalid address: %w", err)
 	}
 	ipv6 := netutil.ToIPv6(remoteIP)
+	// A packet-oriented socket, UDP or IP such as ICMP, carries datagrams; a
+	// TCP or unix socket, and one without a local address, carries a stream.
+	datagram := false
+	if local := conn.LocalAddr(); local != nil {
+		network := local.Network()
+		datagram = strings.HasPrefix(network, "udp") || strings.HasPrefix(network, "ip")
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -84,6 +144,7 @@ func (f *FallbackCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Co
 		writeMu:              NewFIFOLock(),
 		ipv6:                 ipv6,
 		addr:                 addr,
+		datagram:             datagram,
 		close:                make(chan struct{}),
 		readDeadlineChanged:  make(chan struct{}),
 		writeDeadlineChanged: make(chan struct{}),
@@ -97,14 +158,14 @@ func (f *FallbackCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) e
 	if err == nil {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.rates[debugletKey{id: id, dest: netutil.ToIPv6(parsedIP)}] = limit
+		f.setRateLocked(debugletKey{id: id, dest: netutil.ToIPv6(parsedIP)}, limit)
 		return nil
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for ipv6 := range f.domainIPs[domainKey{domain: addr, id: id}] {
-		f.rates[debugletKey{id: id, dest: ipv6}] = limit
+		f.setRateLocked(debugletKey{id: id, dest: ipv6}, limit)
 	}
 	return nil
 }
@@ -112,6 +173,14 @@ func (f *FallbackCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) e
 func (f *FallbackCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	old, ok := f.execRates[id]
+	if ok && old != limit {
+		// Settled at the old rate first, as in setRateLocked.
+		if eb, ok := f.execPacketSize[id]; ok {
+			eb.refill(time.Now(), old)
+		}
+		f.ratesChangedLocked()
+	}
 	f.execRates[id] = limit
 	return nil
 }
@@ -122,6 +191,7 @@ func (f *FallbackCount) DeleteLimit(addr netutil.IPv6, id uuid.UUID) error {
 	k := debugletKey{id: id, dest: addr}
 	delete(f.rates, k)
 	delete(f.packetSize, k)
+	f.ratesChangedLocked()
 	return nil
 }
 
@@ -130,7 +200,33 @@ func (f *FallbackCount) DeleteExecLimit(id uuid.UUID) error {
 	defer f.mu.Unlock()
 	delete(f.execRates, id)
 	delete(f.execPacketSize, id)
+	f.ratesChangedLocked()
 	return nil
+}
+
+// setRateLocked stores the destination rate for key. A rate that moves wakes
+// the waiting reservations; a rate set for the first time has no reservation
+// taken under it yet. Every interval is credited at the rate in force during
+// it: the bucket is settled up to now at the old rate before the new one is
+// stored, so a waiting reservation pays the old rate until the change and the
+// new rate after it. f.mu must be held.
+func (f *FallbackCount) setRateLocked(key debugletKey, limit app.Bitrate) {
+	old, ok := f.rates[key]
+	if ok && old != limit {
+		if b, ok := f.packetSize[key]; ok {
+			b.refill(time.Now(), old)
+		}
+		f.ratesChangedLocked()
+	}
+	f.rates[key] = limit
+}
+
+// ratesChangedLocked wakes every reservation waiting under the rates in force
+// until now, so that its wait is recomputed under the current ones. f.mu must be
+// held.
+func (f *FallbackCount) ratesChangedLocked() {
+	close(f.ratesChanged)
+	f.ratesChanged = make(chan struct{})
 }
 
 func (f *FallbackCount) Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error {

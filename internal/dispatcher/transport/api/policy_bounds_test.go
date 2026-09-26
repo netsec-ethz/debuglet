@@ -275,6 +275,7 @@ func TestAdmissionRejectsAWindowThatDoesNotFit(t *testing.T) {
 			f.mock.ExpectQuery(modeGetTransactionQuery).
 				WithArgs(modeChainTxID).
 				WillReturnRows(modeTransactionRows(modeChainTxID, "", "TEST", "", hash, models.Paid))
+			modeExpectNoAdmittedRuns(f.mock)
 			f.mock.ExpectBegin()
 			f.mock.ExpectQuery(modeGetTransactionQuery).
 				WithArgs(modeChainTxID).

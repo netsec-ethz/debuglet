@@ -20,14 +20,14 @@ Three identities are versioned independently, and `GET /version` reports all thr
 
 `version` remains the dispatcher's configured version string, unchanged for clients written before the contract was versioned.
 
-The current contract version is **1.2**. A major version changes when a client that satisfied the previous contract can no longer read the new one. A minor version changes when the contract only grows.
+The current contract version is **1.3**. A major version changes when a client that satisfied the previous contract can no longer read the new one. A minor version changes when the contract only grows.
 
 ## How a client selects a version
 
 A client sends the contract version it was written against:
 
 ```
-Debuglet-API-Version: 1.2
+Debuglet-API-Version: 1.3
 ```
 
 Every response carries the version the dispatcher implements in the same header, and the dispatcher exposes it through CORS so that a browser client can read it. The header is part of the machine-readable contract: every operation declares it as a request parameter, and every documented response declares it as a response header. A request that requires a major version the dispatcher does not serve, or a minor version above the one it implements, is answered with HTTP 400 and an explicit incompatibility error rather than a best-effort body. `GET /version` and `GET /openapi.yaml` always answer, whatever the header says, so a client that has been rejected can still discover what the dispatcher speaks.
@@ -46,6 +46,8 @@ Within a major version the dispatcher may:
 
 A client must therefore ignore unknown response fields, ignore unknown values of open string fields, and never depend on the absence of a field. The SDK does this.
 
+The run state `RunStateUnreconciled` means that the dispatcher failed the submission the run belongs to and the run's executor refused its cancellation: the run may still execute, its outcome is recorded when the executor reports it, and nothing is replayed.
+
 ## What requires a major version
 
 - Removing or renaming a route, request field, response field or query parameter.
@@ -53,9 +55,25 @@ A client must therefore ignore unknown response fields, ignore unknown values of
 - Changing which status code a documented failure returns.
 - Narrowing what a request may contain.
 
+### Release candidates
+
+The rules above bind from the final `v0.2.0` on. Until then, a release candidate may fix the contract in ways the list above reserves for a major version while keeping the version number, and its release notes name each such change. `v0.2.0-rc.2` keeps contract version **1.2** and, compared with `v0.2.0-rc.1`:
+
+- answers a body above 33554432 bytes on every route with 413 `payload_too_large`;
+- answers `DELETE /debuglet` with 500 `internal_error` when the executor acknowledged the cancellation but its result was not recorded, or when the Abort may not have reached the executor, and with 400 `cancel_refused` when the executor refused it, whatever the executor's gRPC code;
+- answers `PATCH /destination` with 409 `capacity_exhausted` for a limit below the floors of active allocations, and with 500 `internal_error` when an executor did not acknowledge the recomputed share;
+- refuses an empty batch (`invalid_request`) and a repeated `order_id` (`invalid_policy`) on `PUT /payment/intent`, and prices an order by `timeout_ms` exactly, rounded up to the next whole unit, instead of by whole seconds;
+- answers an identical resubmission on `PUT /debuglet` with 200 and the runs already recorded for the batch, without admitting it again.
+
+A client written against `v0.2.0-rc.1` that treats an unknown status as a plain failure of its class keeps working, except that it must not compute prices itself with the old formula.
+
 ## Deprecation
 
 A route or field that is to be removed is first marked deprecated in `api/openapi.yaml` and in this document, in a minor version, while it keeps working. It is removed only in a following major version, whose contract is published as a new `api/openapi.yaml` before the removal takes effect. Release candidates may still change before the final `v0.2.0`; pin the exact tag as described in [the SDK guide](SDK.md).
+
+## Supported revisions
+
+Only the latest release candidate (currently `v0.2.0-rc.2`, published from `main`) and the current commit of the `dev` integration branch are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
 
 ## Errors
 
@@ -81,8 +99,8 @@ Every failure answers with one envelope, whatever the route and whichever layer 
 | `forbidden` | 403 | The authenticated account may not perform that operation, or a cookie-authenticated state change carried no CSRF token. |
 | `not_found` | 404 | No such debuglet, transaction, user, executor or route — or one that belongs to another account. |
 | `method_not_allowed` | 405 | The route does not serve that method. |
-| `capacity_exhausted` | 409 | The scheduler cannot admit the batch. |
-| `payload_too_large` | 413 | The body exceeds what the route accepts. |
+| `capacity_exhausted` | 409 | The scheduler cannot admit the batch, or a destination limit lies below the floors charged to active allocations on that destination. |
+| `payload_too_large` | 413 | The body exceeds the 33554432-byte (32 MiB) limit: a declared length above it is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this code. No handler sees a byte beyond the limit. |
 | `unsupported_media_type` | 415 | The route does not read that representation. |
 | `internal_error` | 500 | A failure inside the dispatcher. |
 | `payments_disabled` | 503 | A chain payment method while blockchain payments are disabled. |
@@ -94,6 +112,8 @@ A minor contract version may add codes, so treat an unknown code as a plain fail
 - The few failures that answered with a bare JSON string now answer with the envelope.
 - One status changed: a failure to store the orders of a payment intent answered 400 with the database error text and now answers 500 `internal_error`. It is a server failure, not a bad request, and the Go SDK consequently reports it as `OutcomeUnknown` at the intent stage rather than as a definite rejection.
 
+For `DELETE /debuglet`, an internal failure while reading or recording a cancellation answers 500 `internal_error`. This does not confirm a stored result or remote termination: the executor may have acknowledged cancellation, or the dispatcher may have failed to record it after the control session ended. Read the run's state before deciding whether to repeat the request.
+
 ## Health
 
 Three public routes report health separately, so a deployment can act on the right one:
@@ -102,9 +122,9 @@ Three public routes report health separately, so a deployment can act on the rig
 | --- | --- | --- |
 | `GET /healthz` | 200 `{"status":"ok"}` | The process serves requests, and nothing more: a live dispatcher may be paused or cut off from its dependencies. |
 | `GET /readyz` | 200, or 503 `{"status":"unready","reasons":[...]}` | This dispatcher would admit new work: admission is open, its database answers one bounded read, and its control listener accepts executor sessions. `reasons` carries fixed identifiers — `admission_paused`, `storage_unavailable`, `control_unavailable` — never an operator's note or a path. |
-| `GET /health` | 200 | The observations behind that decision, including `executors.eligible`, the executors whose control session lease is valid now, out of `executors.registered`. |
+| `GET /health` | 200 | The observations behind that decision, including `executors.eligible`, the executors whose control session lease was valid when checked, out of `executors.registered`. |
 
-Every observation is made while the request is served. A readiness file written at startup says that a daemon once started, and a heartbeat is what an executor claims, so neither is authority here. Each check is one in-memory read or one single-row query with a short timeout; none scans, changes run state or needs a credential. A 503 from `GET /readyz` refuses new work only: accepted runs keep running, results keep being reported and every query keeps answering. That 503 carries the status report above rather than the error envelope every other failure answers with: a probe reads `status` and `reasons`, and there is no `code` to branch on.
+The dependencies are evaluated on demand, and `GET /readyz` and `GET /health` reuse the completed report for one second. This is a cache interval, not a maximum observation age: evaluation time adds to the age of the earlier readings in the report. Admission does not wait for it: a submission reads the maintenance switch itself. A readiness file written at startup says that a daemon once started, and a heartbeat is what an executor claims, so neither is authority here. Each check is one in-memory read or one single-row query with a short timeout; none scans, changes run state or needs a credential. A 503 from `GET /readyz` refuses new work only: accepted runs keep running, results keep being reported and every query keeps answering. That 503 carries the status report above rather than the error envelope every other failure answers with: a probe reads `status` and `reasons`, and there is no `code` to branch on.
 
 ## Units and limits
 
@@ -113,10 +133,13 @@ Units are stated per field in the contract document. The recurring ones:
 - Bandwidth (`floor_bw`, `ceil_bw`, `price_per_bw`, `usage` on a listed debuglet, `limit` on `PATCH /destination`) is bits per second. A debuglet's `usage` is the `floor_bw` it was admitted with, not a measured consumption.
 - `floor_bw` and `ceil_bw` must each be between 0 and 1000000000000000 (1 Pbit/s), and `ceil_bw` at least `floor_bw`. Both the payment intent and the submission reject anything else with `invalid_policy`. The bound keeps a single reservation in a range a reader can check; what keeps an aggregate exact is that admission adds the reservations of a window with a checked addition and refuses a sum that does not fit, rather than the bound itself.
 - `timeout_ms` is milliseconds and must be between 1 and 9223372036854; above that the run budget would no longer fit a Go duration, and below it no run could be given the budget. Both the payment intent and the submission reject anything else with `invalid_policy`.
+- The price of an order is `price_per_bw` × `floor_bw` × `timeout_ms` / 1000, computed exactly and rounded up to the next whole unit of the executor's currency: a run of any positive length at a positive rate and floor costs at least one unit, and a `timeout_ms` that is a whole number of seconds prices as the product of whole seconds. A batch is priced as the sum of its orders. An order or a batch whose price does not fit a signed 64-bit integer is rejected with `invalid_policy`, an empty batch with `invalid_request` and a repeated `order_id` with `invalid_policy`. The payment intent writes its order rows only after every order of the batch has been validated and priced, so a rejected intent writes nothing.
+- A TEST transaction records the total of its batch as its price and `TEST` as its currency; the amounts are bookkeeping only and move no funds. A TEST transaction recorded before this was the case carries price 0 and an empty currency; it remains spendable exactly as before, its amount is the sum of its order rows, and nothing on the TEST path reads those two fields.
 - `start_time` is Unix seconds and must be between 0 and 9223372036 (2262-04-11). A `start_time` already in the past starts the run as soon as the schedule allows, as does an absent one.
 - The documented maxima bound each field, not a submission. The window a run reserves is `start_time` plus `timeout_ms` plus ten seconds for the executor's processing delay, and that window must end no later than 2262-04-11. A submission whose window does not fit is answered 400 with `invalid_policy` naming the fields, rather than reserved against a wrapped instant, even though every field is within its own range: `timeout_ms` at its maximum never fits, and a `start_time` near its maximum is admissible only with a budget that ends before 2262-04-11.
-- `limit` on `PATCH /destination` must be between 0 and 1000000000000000 (1 Pbit/s); it becomes the capacity the runs of that destination are shared out of. Anything else is rejected with `invalid_policy`.
+- `limit` on `PATCH /destination` must be between 0 and 1000000000000000 (1 Pbit/s); it becomes the capacity the runs of that destination are shared out of. Anything else is rejected with `invalid_policy`. The new limit applies to admission at once, and the share it gives each run is pushed to every executor holding an allocation on the destination, with a five-second delivery timeout. 204 means every one of them acknowledged it. 500 with `internal_error` means the limit is recorded but at least one delivery failed; the request may be repeated, which records the same limit and pushes it again. Pushes are unversioned: concurrent updates can arrive out of order, so an older share can overwrite a newer, lower one at an executor. This route does not guarantee revocation.
 - The same bandwidth and timeout ranges are enforced again on the executor control protocol, on the policy an Upload carries and on the destination limits an allocation answers with. Neither side relies on the other, or on the SDK, having checked the numbers.
+- A `limit` on `PATCH /destination` below the floors charged to active allocations on the destination is refused with 409 and `capacity_exhausted`, and nothing is recorded or pushed. These floors do not include future scheduler reservations whose runs have not allocated bandwidth yet. The runs holding active allocations keep their floors; lower the limit once they release them. A limit equal to those floors is accepted.
 - `tesla_delay_sec`, `delay_sec` and `expires_at_s` are seconds; `tesla_anchor_timestamp_ns` and `anchor_timestamp_ns` are Unix nanoseconds; `start_time`, `end_time` and `last_seen` are Unix seconds. Log entry `timestamp` is a UTC string formatted `2006-01-02T15:04:05Z`.
 - `wasm`, `output`, `tesla_anchor_key`, `anchor_key` and `disclosed_key` are base64.
 
@@ -125,7 +148,12 @@ Request limits:
 - `GET /debuglet/{id}/logs`: `after` must be a non-negative integer and `limit` a positive integer when present; both are rejected with 400 otherwise. `limit` defaults to 100 and is clamped to 1000.
 - `GET /list-debuglets`: `limit` defaults to 100 and is clamped to 100; `offset` defaults to 0. Neither may be negative and `limit` may not be zero.
 - `GET /executors/by-ip`: `ip` is required; `n` defaults to 10 and must be positive when present. It is clamped to 100 candidates before ownership is applied, but the executor registry retains at most 20 recent identifiers per executor, so at most 20 can ever be returned and usually fewer, since only the caller's own are listed. An account owning none of them receives an empty array, never null.
-- `PUT /payment/intent` and `PUT /debuglet` bodies are limited to 33554432 bytes (32 MiB) by the SDK, which measures the exact encoded envelope of each of the two requests.
+- Every request body is limited to 33554432 bytes (32 MiB) by the dispatcher. A declared `Content-Length` above the limit is answered 413 `payload_too_large` before any handler acts and without reading the body. A body of unknown length is cut at the limit: a handler never receives a byte beyond it, a decode that needs more fails with the same 413, and a value complete within the limit is handled as it arrived, after which the connection is closed. The SDK measures the exact encoded envelope of `PUT /payment/intent` and `PUT /debuglet` against the same bound before sending and always declares the length, so nothing it sends is refused for size.
+- `PUT /debuglet`: an identical resubmission of a batch this dispatcher already admitted answers 200 with the run IDs it recorded for that batch, in the order of the batch, and admits, schedules and uploads nothing again. A submitter whose response was lost can learn the IDs this way while the dispatcher admits work; a resubmission that arrives while admission is paused is handled like any submission then: the paid order is refunded where its payment method supports refunds and the answer is 503, after which the transaction is refused. A batch whose upload to its executor failed is refunded where its payment method supports refunds, and a refunded transaction is refused with `payment_incomplete` rather than answered. A TEST transaction is not refunded, so a resubmission of its failed batch answers the IDs of the runs that failed submission recorded.
+
+Run errors:
+
+The `error` field of `GET /debuglet/{id}/state` and `GET /debuglet/{id}/logs` is the run's recorded result for its owner. It is one line: at most 512 bytes of text, followed by `...` when longer text was cut. A failed run records the guest's exit code (`debuglet exited with code 7`), the policy timeout (`timeout of 30s exceeded`), a cancellation (`cancelled via API`, `debuglet cancelled`), a refused destination (`destination refused: ...`), a module that does not compile (`module does not compile: ...`), or `debuglet failed; the executor log has the details` when the cause is the executor's own; a guest trap, such as `unreachable`, is reported the same way. The executor daemon's log holds the full diagnostic under the run ID. Results recorded before this bound are returned as stored. The field remains free text, so this changes no contract version: no field or status is added.
 
 ## Authentication
 
@@ -134,6 +162,8 @@ Requests are authenticated with a server-issued session. Nothing else is a crede
 ### Obtaining a credential
 
 `PUT /user` registers an account and returns, exactly once, its **account key** and its **recovery code**. The dispatcher stores only their SHA-256 digests and cannot show either again. `POST /auth/login` exchanges the account key for a **session**; `POST /auth/recover` exchanges the recovery code for a replacement account key and recovery code, revoking every session the account had. A recovery code names its own account and can name no other, so recovering never grants access to somebody else's.
+
+A deployment may also enable GitHub browser login. `GET /auth/github` starts the authorization-code flow and `GET /auth/github/callback` completes it. The dispatcher binds the immutable GitHub numeric user ID to one Debuglet account, stores no GitHub access token, issues the same Debuglet session and CSRF cookies as account-key login, and redirects only to the console URL fixed in deployment configuration. OAuth state is held in a short-lived HttpOnly, Secure, SameSite=Lax cookie. Account-key login remains available to native clients.
 
 Every credential is printed as `<prefix>_<selector>.<verifier>`: 16 random bytes of public selector and 32 random bytes of secret verifier, both unpadded base64url. The prefix names the kind (`dba` account key, `dbr` recovery code, `dbs` session token), so a credential of one kind cannot be presented as another. The verifier is compared in constant time against the stored digest.
 
@@ -155,14 +185,14 @@ A session expires 12 hours after it was issued and is not extended by use; a cli
 | Read liveness, readiness and health | `GET /healthz`, `GET /readyz`, `GET /health` | Anyone. They carry no run data and no operator note |
 | List executors, read TESLA parameters | `GET /executors`, `GET /executors/{id}/tesla` | Anyone. This is deliberately public attribution data, not run data |
 | Register an account | `PUT /user` | Anyone. It is the credential issuer and a caller has no credential yet |
-| Obtain, end or replace a credential | `POST /auth/login`, `/auth/logout`, `/auth/recover` | Whoever holds the corresponding credential |
+| Obtain, end or replace a credential | `POST /auth/login`, `/auth/logout`, `/auth/recover`; `GET /auth/github`, `/auth/github/callback` | Whoever holds the corresponding credential, or completes the configured GitHub flow |
 | Report the caller's account | `GET /me` | Any authenticated account, about itself |
 | Price a batch, submit a batch | `PUT /payment/intent`, `PUT /debuglet` | Any authenticated account. A submission may only spend a payment order of the account that created it |
 | Read the payment status | `GET /payment/{transaction_id}/status` | The account that created the order |
 | Read run state and output, cancel | `GET /debuglet/{id}/state`, `/logs`, `DELETE /debuglet` | The account that owns the run |
 | List the caller's runs | `GET /list-debuglets` | Any authenticated account, about its own runs |
 | Find the executor serving an address | `GET /executors/by-ip` | Any authenticated account. The returned run identifiers are the caller's own |
-| Change a destination limit | `PATCH /destination` | An operator account |
+| Change a destination limit | `PATCH /destination` | An operator account. The change reaches admission and the executors holding the destination, as described under units and limits |
 | Enumerate accounts | `GET /user-ids` | An operator account |
 
 No route grants the operator role. It is given to an existing account on the dispatcher host, against the configured database and with the same schema checks the daemon applies before serving:

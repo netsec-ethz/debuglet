@@ -31,7 +31,7 @@ func TestClientAnnouncesContractVersionOnEveryRequest(t *testing.T) {
 func TestVersionReportsSeparateIdentities(t *testing.T) {
 	f := newFakeServer(t, "")
 	f.handle("GET /version", jsonHandler(http.StatusOK,
-		`{"version":"cfg","api_version":"1.2","api_versions":["1"],"binary_version":"v0.3.1","binary_revision":"deadbeef","protocol_version":"3"}`))
+		`{"version":"cfg","api_version":"1.3","api_versions":["1"],"binary_version":"v0.3.1","binary_revision":"deadbeef","protocol_version":"3"}`))
 	c := f.client(t, Options{})
 
 	version, err := c.Version(testContext(t))
@@ -110,6 +110,7 @@ func TestHTTPErrorExposesTheDocumentedCode(t *testing.T) {
 		{"code that is not a string", http.StatusBadRequest, `{"code":42,"message":"x"}`, "", "x"},
 		{"oversized code", http.StatusBadRequest, `{"code":"` + strings.Repeat("a", 65) + `","message":"x"}`, "", "x"},
 		{"plain text body", http.StatusBadGateway, `gateway said no`, "", "gateway said no"},
+		{"payload too large", http.StatusRequestEntityTooLarge, `{"code":"payload_too_large","message":"request body exceeds 33554432 bytes"}`, CodePayloadTooLarge, "request body exceeds 33554432 bytes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,6 +122,9 @@ func TestHTTPErrorExposesTheDocumentedCode(t *testing.T) {
 			var httpErr *HTTPError
 			if !errors.As(err, &httpErr) {
 				t.Fatalf("error = %T %v, want *HTTPError", err, err)
+			}
+			if httpErr.StatusCode != tc.status {
+				t.Fatalf("status = %d, want %d", httpErr.StatusCode, tc.status)
 			}
 			if httpErr.Code != tc.code {
 				t.Fatalf("code = %q, want %q", httpErr.Code, tc.code)

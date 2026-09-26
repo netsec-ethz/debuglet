@@ -32,10 +32,11 @@
     that:
       - not (item.stat.exists and (item.stat.size | default(0) | int > 0)) or (executor_db.stat.size | default(0) | int > 0)
     fail_msg: >-
-      Existing executor state at {{ item.item }}/executor.db has been preserved.
-      This alpha does not upgrade old database schemas. Back up and establish
-      compatibility before placing the upgraded database in {{ executor_state_dir }};
-      no seed or legacy service change has been applied.
+      Existing executor state at {{ item.item }}/executor.db has been preserved;
+      no seed or legacy service change has been applied. The deployment does
+      not upgrade a database. Back the database up, place it at
+      {{ executor_state_dir }}/executor.db, deploy again, then run
+      upgrade-database.yml.
     quiet: true
   loop: "{{ executor_previous_databases.results }}"
   loop_control:

@@ -243,6 +243,9 @@ func TestLookupFailuresKeepTheirDiagnosticsPrivate(t *testing.T) {
 // passed an error value to Echo and leaked the gRPC status text.
 func TestCancellationRefusalKeepsTransportDetailPrivate(t *testing.T) {
 	f := modeNewFixture(t)
+	f.mock.ExpectQuery("GetDebugletIdentityByUUID").
+		WithArgs(uuid.MustParse(logsPaginationID)).
+		WillReturnRows(sqlmock.NewRows([]string{"executor_id", "dispatcher_incarnation", "session_id"}).AddRow(modeExecutorID, "", ""))
 	rec := f.do(http.MethodDelete, "/debuglet", DebugletDeleteRequest{
 		DebugletID: uuid.MustParse(logsPaginationID), ExecutorID: modeExecutorID,
 	})

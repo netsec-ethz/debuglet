@@ -7,6 +7,9 @@ SDK, and sample measurements.
 
 The local alpha runs on **Linux amd64**. The complete package needs no Go compiler,
 wallet, SCION service, root privileges, or hand-written daemon configuration.
+The `dbl` client for a remote dispatcher runs on Linux amd64 and, in a container, on
+macOS; Windows, WSL and Linux arm64 clients are not supported
+([cross-host guide](docs/quickstart-remote.md#clients)).
 
 ## Install
 
@@ -37,7 +40,7 @@ The CLI is installed under `$HOME/.local/bin`, with its package under
 `$HOME/.local/lib/debuglet`. Copying the three package files to another Linux
 amd64 machine supports installation there without Go or a source checkout.
 The [installation guide](README-install.md) covers offline installation and
-version-pinned release downloads. The `v0.2.0-rc.1` package is the first release
+version-pinned release downloads. The `v0.2.0-rc.2` package is the current release
 candidate for this workflow; `v0.1.0` predates it.
 
 ```sh
@@ -116,6 +119,12 @@ the CLI does not yet expose recovery. The [CLI guide](docs/CLI.md#credentials)
 covers credential locations and the [HTTP API guide](docs/API.md)
 covers recovery and authorization.
 
+Managed deployments may also expose **Sign in with GitHub** in the browser
+console. The dispatcher completes GitHub's authorization-code flow, maps the
+GitHub account to a Debuglet account, and issues the same 12-hour session
+cookie; GitHub tokens are not retained. Native CLI and SDK clients continue to
+use account keys.
+
 ## Write a measurement or application
 
 To build a Go measurement, install Go **1.25.11**, clone this repository and run:
@@ -190,9 +199,11 @@ system, including both control paths and where a given change belongs.
   destinations. Keep the alpha in a trusted local environment.
 - SCION and remote testbed operation are outside this walkthrough. ETH testbed
   compatibility and deployment are unconfirmed.
-- Checksums are not release signatures. This release candidate has no supported
-  upgrade path: a state directory stays with the package
-  version that created it, and moving to another version means a new state directory.
+- Checksums are not release signatures. A local state directory stays with the
+  package version that created it, and moving to another version means a new
+  state directory. A deployed daemon's database is upgraded to another package
+  version only by the explicit step described in
+  [Stored state](docs/environments.md#stored-state), never automatically.
 
 The [threat model](docs/SECURITY.md) states which actors and trust boundaries the
 supported profile assumes, what it promises and what it does not, and why a

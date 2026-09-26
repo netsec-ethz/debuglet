@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"net"
 
+	"go.uber.org/zap"
+
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
@@ -23,7 +25,7 @@ type BPFTagger struct{}
 
 // NewBPFTagger always returns an error on non-Linux platforms.
 // Callers should fall back to the pure-Go tagger.
-func NewBPFTagger(iface *net.Interface, schedule *tesla.KeySchedule, measurementID []byte) (*BPFTagger, error) {
+func NewBPFTagger(logger *zap.Logger, iface *net.Interface, schedule *tesla.KeySchedule, measurementID []byte) (*BPFTagger, error) {
 	return nil, fmt.Errorf("ebpf: eBPF tagger is only available on Linux (current platform is non-Linux)")
 }
 

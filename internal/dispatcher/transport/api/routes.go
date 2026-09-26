@@ -5,6 +5,9 @@ package api
 
 import (
 	"database/sql"
+	"errors"
+	"net/http"
+	"strconv"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 
@@ -25,6 +28,11 @@ const (
 	routeHealth    = "/health"
 )
 
+// maxRequestBodyBytes bounds every request body the API reads. It is the bound
+// pkg/client applies to the exact encoded envelopes it sends, so a request the
+// SDK sends is never refused for its size.
+const maxRequestBodyBytes = 32 << 20
+
 type Handler struct {
 	dispatcher *dispatcher.Dispatcher
 	logger     *zap.Logger
@@ -34,8 +42,19 @@ type Handler struct {
 	localDevelopment bool
 	// cookieSecure marks the session cookies Secure. See CookieSecure.
 	cookieSecure bool
+	githubOAuth  GitHubOAuthConfig
 	// health holds the last health observation. See handlers_health.go.
 	health healthMemo
+}
+
+type GitHubOAuthConfig struct {
+	Enabled                 bool
+	ClientID, ClientSecret  string
+	CallbackURL, SuccessURL string
+}
+
+func GitHubOAuth(cfg GitHubOAuthConfig) Option {
+	return func(h *Handler) { h.githubOAuth = cfg }
 }
 
 // Option configures a Handler. Every option is explicit: the zero
@@ -88,6 +107,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// answers with the documented error envelope.
 	e.HTTPErrorHandler = h.errorHandler
 	e.Use(APIVersionMiddleware())
+	e.Use(bodyLimitMiddleware())
 	e.Use(AuthMiddleware(h.db, h.localDevelopment))
 
 	// contract
@@ -101,6 +121,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/auth/login", h.PostLogin)
 	e.POST("/auth/logout", h.PostLogout)
 	e.POST("/auth/recover", h.PostRecover)
+	e.GET("/auth/github", h.GetGitHubLogin)
+	e.GET("/auth/github/callback", h.GetGitHubCallback)
 	// debuglet
 	e.PUT("/debuglet", h.PutDebuglets)
 	e.GET("/debuglet/:id/logs", h.GetDebugletLogs)
@@ -121,4 +143,28 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/user-ids", h.ListUserIDs)
 	e.PUT("/user", h.CreateUser)
 	e.GET("/list-debuglets", h.ListUserDebuglets)
+}
+
+// bodyLimitMiddleware refuses a request body above maxRequestBodyBytes before
+// any handler acts on it. A declared length above the limit is refused without
+// reading the body. A body of unknown length is cut at the limit: the read that
+// would pass it fails, so a handler's decode fails and never sees a byte beyond
+// the limit, and that failure is reported as the same refusal.
+func bodyLimitMiddleware() echo.MiddlewareFunc {
+	message := "request body exceeds " + strconv.FormatInt(maxRequestBodyBytes, 10) + " bytes"
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			if req.ContentLength > maxRequestBodyBytes {
+				return apiError(http.StatusRequestEntityTooLarge, CodePayloadTooLarge, message)
+			}
+			req.Body = http.MaxBytesReader(c.Response().Writer, req.Body, maxRequestBodyBytes)
+			err := next(c)
+			var exceeded *http.MaxBytesError
+			if errors.As(err, &exceeded) {
+				return apiError(http.StatusRequestEntityTooLarge, CodePayloadTooLarge, message)
+			}
+			return err
+		}
+	}
 }

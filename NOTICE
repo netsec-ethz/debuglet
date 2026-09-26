@@ -1,0 +1,28 @@
+Debuglet
+Copyright 2025-2026 ETH Zurich
+
+This product is licensed under the Apache License, Version 2.0; see LICENSE.
+
+It depends on the following Go modules, each under its own licence as stated
+in that module's LICENSE file:
+
+github.com/DATA-DOG/go-sqlmock v1.5.2 - BSD-3-Clause (tests only)
+github.com/block-vision/sui-go-sdk v1.2.1 - Apache-2.0
+github.com/cilium/ebpf v0.21.0 - MIT
+github.com/google/uuid v1.6.0 - BSD-3-Clause
+github.com/hashicorp/yamux v0.1.2 - MPL-2.0
+github.com/labstack/echo/v4 v4.13.4 - MIT
+github.com/netsec-ethz/scion-apps v0.6.0 - Apache-2.0
+github.com/pelletier/go-toml/v2 v2.2.4 - MIT
+github.com/pressly/goose/v3 v3.27.3 - MIT
+github.com/scionproto/scion v0.11.1-0.20240610170620-50b971ca2d4b - Apache-2.0
+github.com/soheilhy/cmux v0.1.5 - Apache-2.0
+github.com/tetratelabs/wazero v1.12.0 - Apache-2.0
+go.uber.org/zap v1.27.0 - MIT
+golang.org/x/crypto v0.54.0 - BSD-3-Clause
+golang.org/x/sync v0.22.0 - BSD-3-Clause
+golang.org/x/sys v0.47.0 - BSD-3-Clause
+golang.org/x/time v0.11.0 - BSD-3-Clause
+google.golang.org/grpc v1.82.1 - Apache-2.0
+google.golang.org/protobuf v1.36.11 - BSD-3-Clause
+modernc.org/sqlite v1.54.0 - BSD-3-Clause

@@ -45,6 +45,11 @@ func newMaintenanceFixture(t *testing.T) *maintenanceFixture {
 
 func newMaintenanceFixtureWith(t *testing.T, options ...Option) *maintenanceFixture {
 	t.Helper()
+	return newMaintenanceFixtureLogged(t, zap.NewNop(), options...)
+}
+
+func newMaintenanceFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *maintenanceFixture {
+	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "maintenance.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +57,6 @@ func newMaintenanceFixtureWith(t *testing.T, options ...Option) *maintenanceFixt
 	t.Cleanup(func() { _ = db.Close() })
 	db.SetMaxOpenConns(1)
 	testutil.ApplyMigrations(t, db, "../../database/migrations")
-	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "maintenance-test", time.Minute, time.Minute, ph)
 	if err != nil {

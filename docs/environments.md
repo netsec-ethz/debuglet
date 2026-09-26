@@ -235,10 +235,24 @@ under [Deployment](#deployment), issue it.
 
 Both daemons read their certificate files once, at startup. Replacing a file on
 disk changes nothing until the process restarts, so a renewal is: write the new
-pair, put it in place, restart the daemon. An executor reconnects on its own
-after the dispatcher restarts, with the backoff it already applies to a lost
-control session, so a dispatcher renewal shows up as a reconnect rather than as
-an outage that needs a fleet action.
+pair, put it in place, restart the daemon. An executor retries the dispatcher
+addresses it was started with, `dispatcher.addr` and `dispatcher.yamux_addr` of
+its configuration (the generated `service.toml` for `dbl executor up` and a
+managed executor), with a jittered backoff that doubles up to 30 seconds. A
+dispatcher renewed on the same addresses is therefore rejoined without any
+action and shows up as a reconnect. A dispatcher that comes back on other
+addresses is not: the executor has to be brought up again with `dbl executor up
+--dispatcher` against the new endpoint, or installed again against it and
+restarted.
+
+The control session uses the yamux defaults at both ends, a keepalive every 30
+seconds with a 10-second write deadline, and a session that fails its keepalive
+ends. These defaults normally detect a partition in roughly 40 seconds; that
+is not a strict upper bound. An executor can lose eligibility earlier when its
+current lease expires (`scheduler.executor_timeout`, 60 seconds by default,
+measured from its last renewal). It rejoins on a new control session at its
+first reconnection attempt after the partition heals; the backoff starts each
+attempt at most 30 seconds after the previous one ended.
 
 Renew before expiry. A dispatcher whose certificate has expired refuses to start
 and reports the validity window; an executor whose dispatcher serves an expired
@@ -335,6 +349,32 @@ every transport but SCION.
 
 ## Stored state
 
+A dispatcher keeps what it records in its database until the operator deletes
+the state directory that holds it: run records with their declared
+destinations, stored guest output, accounts and their credentials, and payment
+rows. The one exception is a session, which is deleted the next time any
+session is issued once it has been expired for longer than its 12-hour
+lifetime. An executor keeps a run's module bytes, arguments and policy only
+while the run is outstanding and deletes them when it ends; a terminal result
+stays until the dispatcher acknowledges it, a result the dispatcher refused for
+good stays as evidence, and the rows of interrupted work stay until the
+directory is deleted, as
+[Draining a managed role](#draining-a-managed-role) describes. The state
+directory of `dbl up` is `$XDG_STATE_HOME/debuglet` when that variable holds an
+absolute path and `~/.local/state/debuglet` otherwise, and the role commands use
+`dispatchers/NAME` and `executors/NAME` below it unless `--state-dir` names
+another ([CLI.md](CLI.md)). A managed service keeps
+`/var/lib/debuglet/<role>s/<name>`, which `dbl service uninstall --purge`
+deletes and a plain `uninstall` keeps. The Ansible deployment keeps
+`/var/lib/debuglet/dispatcher/dispatcher.db` and
+`/var/lib/debuglet/executor-<env>/executor.db` under its default `state_dir`
+([deploy/README.md](../deploy/README.md)), and a daemon installed by hand keeps
+the database its configuration names in `database.path`. `dbl demo` removes its
+temporary state after successful cleanup. If a child cannot finish cleanup, it
+retains the directory and reports its path. The product has no retention period,
+no export and no route or command that deletes a run, its output or an account; automated
+retention is deferred until a deployment with a policy owner exists.
+
 Each daemon serves one SQLite database. This build states which schema versions
 it supports and checks the supplied database against them before it serves
 requests or restores queued work. A database is refused when it does not exist,
@@ -352,9 +392,46 @@ refused state can still be inspected or restored. A symbolic link is followed,
 as SQLite follows it too, and reading a database in WAL mode can still create
 the usual `-wal` and `-shm` companions next to it.
 
-Startup never migrates a database. Automatic upgrades are not supported: keep
-using the version that created a database, or start from a new state directory.
+Startup never migrates a database. An outdated database is upgraded only by an
+explicit step, with its daemon stopped and the file and its `-wal` and `-shm`
+companions backed up first: `debuglet-dispatcher -config FILE -upgrade-database`
+or `debuglet-executor -config FILE -upgrade-database` applies the packaged
+migrations to the configured `database.path`, checks the result as a start
+does, prints the schema version it now records and exits. It takes no backup
+itself, and it refuses without writing a database that does not exist, cannot be
+read, is not a Debuglet database, belongs to the other daemon or records a newer
+schema. A deployment runs `deploy/ansible/upgrade-database.yml`, which also takes
+the backup; see [deployment setup](../deploy/README.md#upgrading-a-database).
+Each migration commits on its own, so a failed one leaves the database at the
+last version that completed; a start refuses it as outdated, and running the
+upgrade again continues from there. A dispatcher database below schema version
+3 and an executor database at version 1 lose their runs and logs when upgraded,
+because the third dispatcher migration and the second executor migration
+recreate those tables. A dispatcher database at version 1 that holds
+transactions cannot be upgraded, because its second migration adds required
+columns without a default; the upgrade then stops at version 1. The alternative
+to an upgrade is to keep using the version that created a database, or to start
+from a new state directory.
+
+The supported upgrade path is wallet-free TEST use. Schema migration 4 preserves
+existing earnings balances but gives those rows an empty payout wallet. Executor
+re-registration does not fill it in, and both existing and later earnings in the
+same row remain unpayable. A successful schema check does not establish that
+financial state is usable. For a database with paid activity, preserve the
+database and its backup with chain payments disabled. Before enabling payments,
+the operator must reconcile the balances, orders and transactions against their
+records and verify ownership of each payout wallet; the product supplies no
+automatic recovery for this state. Do not replace paid state with an empty
+database or infer a historical payout address from a new registration.
+
 Local services create their database on first start and keep it across restarts.
+
+The executor database also records every TESLA chain the executor started: its
+generation, anchor, epoch base, epoch length and chain length. The chain is
+recorded before the node starts, and a start whose anchor is already recorded
+is refused. A configured `tesla.seed` yields a new chain for every start, derived
+from the seed and the generation. An upgrade from executor schema 4 keeps its
+rows and creates the chain table empty; the next start records its first chain.
 
 ## Managed services
 
@@ -415,7 +492,11 @@ so a managed executor accepts only a literal-loopback dispatcher address on the
 same host.
 
 A restart keeps the directory, so it keeps the databases, the stored results and
-a managed executor's identity. Installing is repeatable and changes nothing the
+a managed executor's identity. A copy of the state directory carries the identity
+with it: an executor started from the copy presents the original's identity, and
+running the original and the copy at the same time presents one executor from two
+processes, each connection replacing the other's control session.
+Installing is repeatable and changes nothing the
 second time; installing a different package version over an existing state
 directory is refused, because startup never migrates a database. A reinstall
 never restarts a running daemon: it reports that a restart is required and leaves
@@ -511,7 +592,10 @@ and survives a restart, so maintenance is not undone by the restart it was
 declared for; it is read for each submission, so `--resume` takes effect at once
 without a restart. It stops exactly one thing: accepted debuglets keep their
 persistence and schedule, executors keep their control sessions, and results and
-queries are unaffected. A switch file that exists but cannot be read or
+queries are unaffected. `GET /readyz` follows the switch on its next evaluation;
+probes reuse a completed report for one second, and evaluation time adds to
+that delay. Submissions read the switch directly and are refused or admitted
+at once. A switch file that exists but cannot be read or
 understood also stops admission; an operator removes the file to serve again.
 
 ## CI
@@ -532,7 +616,7 @@ A deployment installs the same verified package an operator installs by hand, an
 
 Select deployment targets explicitly: `./deploy/debuglet-deploy dev` builds, deploys and verifies development, while `prod` selects production. There is no production default. The command selects the environment's inventory, variables and pinned SSH host-key file. The environments use separate package prefixes (`/opt/debuglet/dev` and `/opt/debuglet/prod`), staging directories, deployment records and executor users, configurations, state and systemd units. See [deployment setup](../deploy/README.md) before using any command that changes hosts.
 
-Existing nonempty legacy databases are preserved. Discovering legacy state while a new environment-specific database is absent stops deployment; an operator must establish schema compatibility and prepare the intended state before proceeding. Moving a database is not a schema upgrade, and the playbooks do not perform one.
+Existing nonempty legacy databases are preserved. Discovering legacy state while a new environment-specific database is absent stops deployment; an operator backs the database up and places it at the selected state path before deploying again. Moving a database is not a schema upgrade, and the deployment playbooks do not perform one. An outdated database is upgraded by the operator-invoked `deploy/ansible/upgrade-database.yml` (`make deploy-upgrade-db`), which no deployment playbook imports; see [upgrading a database](../deploy/README.md#upgrading-a-database).
 
 `deploy/test/ansible-render.sh` applies the deployment roles to a temporary directory tree over the local connection. It checks that the preflight refuses a missing dispatcher address, a missing API origin, a wildcard credentialed origin, colliding listener ports and a non-UUID executor identity; that the rendered configurations name the configured listener addresses and keep each database in the writable state directory rather than the read-only configuration directory; that the installed daemons accept both rendered configurations through their own validator; and that repeating the same variables changes nothing. Nothing is deployed anywhere.
 

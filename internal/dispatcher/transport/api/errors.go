@@ -28,7 +28,8 @@ const (
 	CodeInvalidRequest = "invalid_request"
 	// CodeInvalidPolicy is a request whose debuglet policy cannot be priced or
 	// scheduled: a timeout outside 1..maxTimeoutMS milliseconds, a negative
-	// floor, a ceiling below the floor, or a batch whose total price overflows.
+	// floor, a ceiling below the floor, a repeated order_id, or an order or a
+	// batch whose price overflows.
 	CodeInvalidPolicy = "invalid_policy"
 	// CodeUnknownExecutor names an executor that is not registered.
 	CodeUnknownExecutor = "unknown_executor"
@@ -58,7 +59,8 @@ const (
 	// CodeNotFound is a debuglet, user or executor that does not exist.
 	CodeNotFound = "not_found"
 	// CodeCapacityExhausted is a batch the scheduler cannot admit within the
-	// executor's remaining capacity.
+	// executor's remaining capacity, or a destination limit below the floors
+	// already admitted on that destination.
 	CodeCapacityExhausted = "capacity_exhausted"
 	// CodeCancelRefused is a cancellation the dispatcher did not accept.
 	CodeCancelRefused = "cancel_refused"
