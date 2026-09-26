@@ -24,9 +24,9 @@ const legacyFilterPriority = 0xC0DE
 // legacyFilter is the tagger program attached as a direct-action tc bpf
 // filter on a clsact qdisc, the attachment kernels without TCX (before 6.6)
 // offer. Close removes this filter only: the clsact qdisc is shared by every
-// tagger on the interface and by whatever else uses it, so it stays.
+// tagger on the interface and by whatever else uses it, so it stays. No
+// rtnetlink socket is held between the attach and Close.
 type legacyFilter struct {
-	conn      *tc.Tc
 	filter    tc.Object
 	closeOnce sync.Once
 	closeErr  error
@@ -70,21 +70,30 @@ func attachLegacyTC(iface *net.Interface, program *ebpf.Program, handle uint32) 
 	if err := conn.Filter().Add(&filter); err != nil {
 		return nil, errors.Join(fmt.Errorf("add bpf egress filter: %w", err), conn.Close())
 	}
-	return &legacyFilter{conn: conn, filter: filter}, nil
+	attached := &legacyFilter{filter: filter}
+	if err := conn.Close(); err != nil {
+		return nil, errors.Join(fmt.Errorf("close rtnetlink: %w", err), attached.Close())
+	}
+	return attached, nil
 }
 
 // Close removes the filter once. A filter that is already gone, for example
 // with its interface, is not an error.
 func (f *legacyFilter) Close() error {
 	f.closeOnce.Do(func() {
-		deleteErr := f.conn.Filter().Delete(&f.filter)
+		conn, err := tc.Open(&tc.Config{})
+		if err != nil {
+			f.closeErr = fmt.Errorf("open rtnetlink: %w", err)
+			return
+		}
+		deleteErr := conn.Filter().Delete(&f.filter)
 		if errors.Is(deleteErr, unix.ENOENT) || errors.Is(deleteErr, unix.ENODEV) {
 			deleteErr = nil
 		}
 		if deleteErr != nil {
 			deleteErr = fmt.Errorf("delete bpf egress filter: %w", deleteErr)
 		}
-		f.closeErr = errors.Join(deleteErr, f.conn.Close())
+		f.closeErr = errors.Join(deleteErr, conn.Close())
 	})
 	return f.closeErr
 }
