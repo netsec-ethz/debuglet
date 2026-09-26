@@ -3,4 +3,4 @@
 
 package ebpf
 
-//go:generate go tool bpf2go -tags linux count count.c
+//go:generate go tool bpf2go -tags linux -target bpfel count count.c

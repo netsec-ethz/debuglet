@@ -48,6 +48,12 @@ integration branch is supported.
   populated database at version 3 can be upgraded. A database already past
   version 4 is unaffected and keeps the columns without defaults.
 
+### Removed
+- The committed big-endian eBPF bindings and objects (`*_bpfeb.go`,
+  `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
+  covers every supported platform; the executor no longer builds for
+  big-endian Linux (mips, ppc64, s390x).
+
 ### Known limitations
 - SCION sockets cannot be marked, so their packets are not attributed to the
   run by the eBPF tagger. The executor logs a warning once when it dials SCION.
