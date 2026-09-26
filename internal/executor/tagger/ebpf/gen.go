@@ -3,4 +3,4 @@
 
 package ebpf
 
-//go:generate go tool bpf2go -tags linux tagger tagger.c
+//go:generate go tool bpf2go -tags linux -target bpfel tagger tagger.c

@@ -57,6 +57,15 @@ integration branch is supported.
   unchanged; `-upgrade-database` warns about rows an earlier version wrote
   that break a foreign key, and leaves them in place.
 
+### Removed
+- `tools/verify-offline.py`, `local/scripts/client.py`, `local/scripts/debug_tesla.py`
+  and `local/scripts/cross_check_tesla/`, which nothing ran or documented. `dbl`,
+  `pkg/client` and `local/scripts/verify_pcap.py` cover their uses.
+- The committed big-endian eBPF bindings and objects (`*_bpfeb.go`,
+  `*_bpfeb.o`). `bpf2go` now generates only the little-endian target, which
+  covers every supported platform; the executor no longer builds for
+  big-endian Linux (mips, ppc64, s390x).
+
 ## [0.2.0-rc.2] - 2026-09-25
 
 ### Added
