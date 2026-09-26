@@ -11,18 +11,18 @@ import (
 	"net"
 	"sync"
 	"syscall"
-
-	"golang.org/x/sys/unix"
+	"time"
 )
 
 // WrapDatagram returns conn wrapped so that every Write leaves as one IPv4
 // packet whose IP ID carries this run's tag, as the eBPF tagger would have
 // written it. conn is a connected UDP socket or a connected ip4:icmp socket
-// to an IPv4 destination. UDP is sent through a separate raw socket and ICMP
-// through conn itself with IP_HDRINCL, so both need CAP_NET_RAW; replies keep
-// arriving on conn. Any other connection is refused with ErrDatagramUntagged
-// and stays usable untagged.
+// to an IPv4 destination. The packets are sent through a raw IPPROTO_RAW
+// socket of the wrapper's own, which needs CAP_NET_RAW; conn itself is left
+// as it is and keeps receiving the replies. Any other connection is refused
+// with ErrDatagramUntagged and stays usable untagged.
 func (t *Tagger) WrapDatagram(conn net.Conn) (net.Conn, error) {
+	wrapped := &taggedDatagramConn{Conn: conn, tagger: t}
 	switch c := conn.(type) {
 	case *net.UDPConn:
 		local, lok := c.LocalAddr().(*net.UDPAddr)
@@ -30,15 +30,8 @@ func (t *Tagger) WrapDatagram(conn net.Conn) (net.Conn, error) {
 		if !lok || !rok || local.IP.To4() == nil || remote.IP.To4() == nil {
 			return nil, ErrDatagramUntagged
 		}
-		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW|unix.SOCK_CLOEXEC, unix.IPPROTO_RAW)
-		if err != nil {
-			return nil, fmt.Errorf("%w: raw socket: %v", ErrDatagramUntagged, err)
-		}
-		return &taggedDatagramConn{
-			Conn: c, tagger: t, protocol: protoUDP, rawFD: fd,
-			src: local.IP.To4(), dst: remote.IP.To4(),
-			srcPort: uint16(local.Port), dstPort: uint16(remote.Port),
-		}, nil
+		wrapped.protocol, wrapped.src, wrapped.dst = protoUDP, local.IP.To4(), remote.IP.To4()
+		wrapped.srcPort, wrapped.dstPort = uint16(local.Port), uint16(remote.Port)
 	case *net.IPConn:
 		remote, ok := c.RemoteAddr().(*net.IPAddr)
 		if !ok || remote.IP.To4() == nil {
@@ -48,15 +41,19 @@ func (t *Tagger) WrapDatagram(conn net.Conn) (net.Conn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrDatagramUntagged, err)
 		}
-		if err := setHeaderIncluded(c); err != nil {
-			return nil, fmt.Errorf("%w: IP_HDRINCL: %v", ErrDatagramUntagged, err)
-		}
-		return &taggedDatagramConn{
-			Conn: c, tagger: t, protocol: protoICMP, rawFD: -1,
-			src: src, dst: remote.IP.To4(),
-		}, nil
+		wrapped.protocol, wrapped.src, wrapped.dst = protoICMP, src, remote.IP.To4()
+	default:
+		return nil, ErrDatagramUntagged
 	}
-	return nil, ErrDatagramUntagged
+	// IPPROTO_RAW implies IP_HDRINCL: the kernel sends the header as built.
+	// A Go connection rather than a bare descriptor, so that a Write racing
+	// Close can never reach a descriptor number reused by another socket.
+	raw, err := net.ListenIP("ip4:255", nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: raw socket: %v", ErrDatagramUntagged, err)
+	}
+	wrapped.raw = raw
+	return wrapped, nil
 }
 
 // sourceFor returns the address the kernel sends from towards dst. The tag
@@ -72,28 +69,13 @@ func sourceFor(dst net.IP) (net.IP, error) {
 	return probe.LocalAddr().(*net.UDPAddr).IP.To4(), nil
 }
 
-func setHeaderIncluded(c *net.IPConn) error {
-	raw, err := c.SyscallConn()
-	if err != nil {
-		return err
-	}
-	var optErr error
-	if err := raw.Control(func(fd uintptr) {
-		optErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
-	}); err != nil {
-		return err
-	}
-	return optErr
-}
-
-// taggedDatagramConn sends each Write as one tagged IPv4 packet. Reads,
-// addresses and deadlines are the wrapped connection's; a UDP write does not
-// observe the write deadline, since a raw send does not block on the peer.
+// taggedDatagramConn sends each Write as one tagged IPv4 packet through raw.
+// Reads and addresses are the wrapped connection's; deadlines apply to both.
 type taggedDatagramConn struct {
 	net.Conn
+	raw              *net.IPConn
 	tagger           *Tagger
 	protocol         uint8
-	rawFD            int
 	src, dst         net.IP
 	srcPort, dstPort uint16
 
@@ -112,23 +94,24 @@ func (c *taggedDatagramConn) Write(b []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if c.protocol == protoICMP {
-		if _, err := c.Conn.Write(tagged); err != nil {
-			return 0, err
+	if _, err := c.raw.WriteToIP(tagged, &net.IPAddr{IP: c.dst}); err != nil {
+		if errors.Is(err, syscall.EMSGSIZE) {
+			// A raw packet is never fragmented. A message larger than the
+			// path allows leaves through the wrapped socket, untagged, and
+			// the kernel fragments it as before.
+			return c.Conn.Write(b)
 		}
-		return len(b), nil
-	}
-	err = unix.Sendto(c.rawFD, tagged, 0, &unix.SockaddrInet4{Addr: [4]byte(c.dst)})
-	if errors.Is(err, unix.EMSGSIZE) {
-		// A raw packet is never fragmented. A datagram larger than the path
-		// allows leaves through the UDP socket, untagged, as the kernel
-		// would have fragmented it.
-		return c.Conn.Write(b)
-	}
-	if err != nil {
-		return 0, &net.OpError{Op: "write", Net: "udp", Source: c.LocalAddr(), Addr: c.RemoteAddr(), Err: err}
+		return 0, err
 	}
 	return len(b), nil
+}
+
+func (c *taggedDatagramConn) SetDeadline(t time.Time) error {
+	return errors.Join(c.Conn.SetDeadline(t), c.raw.SetDeadline(t))
+}
+
+func (c *taggedDatagramConn) SetWriteDeadline(t time.Time) error {
+	return errors.Join(c.Conn.SetWriteDeadline(t), c.raw.SetWriteDeadline(t))
 }
 
 // SyscallConn exposes the wrapped socket, which a packet counter attaches to.
@@ -142,11 +125,7 @@ func (c *taggedDatagramConn) SyscallConn() (syscall.RawConn, error) {
 
 func (c *taggedDatagramConn) Close() error {
 	c.closeOnce.Do(func() {
-		var rawErr error
-		if c.rawFD >= 0 {
-			rawErr = unix.Close(c.rawFD)
-		}
-		c.closeErr = errors.Join(c.Conn.Close(), rawErr)
+		c.closeErr = errors.Join(c.Conn.Close(), c.raw.Close())
 	})
 	return c.closeErr
 }

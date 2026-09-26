@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -112,6 +113,30 @@ func TestTaggedDatagramsReachTheWire(t *testing.T) {
 		}
 		if from.Port != wrapped.LocalAddr().(*net.UDPAddr).Port {
 			t.Errorf("the datagram came from port %d, not the connection's %d", from.Port, wrapped.LocalAddr().(*net.UDPAddr).Port)
+		}
+	})
+
+	t.Run("write deadline", func(t *testing.T) {
+		captureSocket(t, unix.IPPROTO_UDP) // skips without CAP_NET_RAW
+		listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		dialed, err := net.DialUDP("udp4", nil, listener.LocalAddr().(*net.UDPAddr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapped, err := tgr.WrapDatagram(dialed)
+		if err != nil {
+			t.Fatalf("WrapDatagram: %v", err)
+		}
+		defer wrapped.Close()
+		if err := wrapped.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wrapped.Write([]byte("late")); !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("Write after its deadline = %v, want os.ErrDeadlineExceeded", err)
 		}
 	})
 
