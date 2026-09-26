@@ -3,6 +3,7 @@ package readiness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,10 +20,10 @@ type Record struct {
 }
 
 func Write(path string, record Record) error {
-	return write(path, record, os.Rename)
+	return write(path, record, os.Rename, fsutil.SyncDir)
 }
 
-func write(path string, record Record, rename func(string, string) error) error {
+func write(path string, record Record, rename func(string, string) error, syncDir func(string) error) error {
 	// The caller owns the private parent directory. In particular, two daemon
 	// invocations must never race to publish the same path.
 	if err := requireAbsent(path); err != nil {
@@ -50,8 +51,11 @@ func write(path string, record Record, rename func(string, string) error) error 
 	if err := rename(f.Name(), path); err != nil {
 		return fmt.Errorf("publish readiness record: %w", err)
 	}
-	if err := fsutil.SyncDir(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("sync readiness directory: %w", err)
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		// The record is published, but the caller treats a failed Write as
+		// unpublished and never removes it. A stale record would refuse the
+		// next start, so this one is withdrawn.
+		return errors.Join(fmt.Errorf("sync readiness directory: %w", err), os.Remove(path))
 	}
 	return nil
 }

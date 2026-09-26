@@ -23,7 +23,7 @@ func TestReadyFileLifecycle(t *testing.T) {
 			}
 			assertRecord(t, temp, record)
 			return os.Rename(temp, final)
-		})
+		}, func(string) error { return nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +73,7 @@ func TestReadyFileLifecycle(t *testing.T) {
 	t.Run("failed publication cleans temporary file", func(t *testing.T) {
 		dir := t.TempDir()
 		sentinel := errors.New("rename failed")
-		err := write(filepath.Join(dir, "ready.json"), record, func(temp, final string) error { assertRecord(t, temp, record); return sentinel })
+		err := write(filepath.Join(dir, "ready.json"), record, func(temp, final string) error { assertRecord(t, temp, record); return sentinel }, func(string) error { return nil })
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("write error: %v", err)
 		}
@@ -118,5 +118,24 @@ func assertRecord(t *testing.T, path string, want Record) {
 	}
 	if err := dec.Decode(new(any)); err != io.EOF {
 		t.Fatalf("extra JSON: %v", err)
+	}
+}
+
+// A record whose directory could not be synced is withdrawn: the daemon
+// treats the failed Write as unpublished and would never remove it, and a
+// stale record would refuse its next start.
+func TestReadyFileWithdrawnWhenTheDirectorySyncFails(t *testing.T) {
+	record := Record{SchemaVersion: 1, PID: 123, ExecutorID: "executor"}
+	path := filepath.Join(t.TempDir(), "ready.json")
+	sentinel := errors.New("directory sync failed")
+	err := write(path, record, os.Rename, func(string) error { return sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Write error %v, want the sync failure", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("the record survived a failed Write: %v", err)
+	}
+	if err := Write(path, record); err != nil {
+		t.Fatalf("the next start could not publish: %v", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // WriteFile publishes data at path with the given mode through a temporary
@@ -43,10 +44,16 @@ func SyncFile(path string) error {
 }
 
 // SyncDir flushes a directory's entries, so a rename into it survives a crash.
+// A filesystem that cannot sync a directory (EINVAL or ENOTSUP, as some network
+// and FUSE mounts answer) offers nothing stronger, so that is not an error.
 func SyncDir(directory string) error {
 	dir, err := os.Open(directory)
 	if err != nil {
 		return err
 	}
-	return errors.Join(dir.Sync(), dir.Close())
+	syncErr := dir.Sync()
+	if errors.Is(syncErr, syscall.EINVAL) || errors.Is(syncErr, syscall.ENOTSUP) {
+		syncErr = nil
+	}
+	return errors.Join(syncErr, dir.Close())
 }
