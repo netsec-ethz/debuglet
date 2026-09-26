@@ -17,7 +17,7 @@ SPEC.loader.exec_module(ISOLATION)
 SHA = 'a' * 40
 METADATA = {
     'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'netsec-ethz/debuglet',
-    'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/dev',
+    'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/main',
     'GITHUB_REF_PROTECTED': 'false', 'GITHUB_SHA': SHA,
     'RUNNER_ENVIRONMENT': 'github-hosted', 'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'X64',
     'RUNNER_NAME': 'GitHub Actions 1',
@@ -29,7 +29,7 @@ class MetadataTest(unittest.TestCase):
         for changes in ({}, {'GITHUB_REF_PROTECTED': 'true'},
                         {'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REF': 'refs/heads/feature'},
                         {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_REF': 'refs/pull/12/merge',
-                         'GITHUB_BASE_REF': 'dev'}):
+                         'GITHUB_BASE_REF': 'main'}):
             with self.subTest(changes=changes):
                 results = ISOLATION.github_metadata_checks(dict(METADATA, **changes), SHA)
                 self.assertTrue(all(item['status'] == 'pass' for item in results), results)
@@ -138,7 +138,7 @@ elif sys.argv[1] == 'run':
                         {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_REF': 'refs/pull/12/merge',
                          'GITHUB_BASE_REF': 'other'},
                         {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_REF': 'refs/pull/not-a-number/merge',
-                         'GITHUB_BASE_REF': 'dev'}):
+                         'GITHUB_BASE_REF': 'main'}):
             with self.subTest(changes=changes):
                 result = self.launch(**changes)
                 self.assertNotEqual(result.returncode, 0)
@@ -146,7 +146,7 @@ elif sys.argv[1] == 'run':
 
     def test_pull_request_merge_ref_runs_without_protected_branch(self):
         result = self.launch('kernel', GITHUB_EVENT_NAME='pull_request',
-                             GITHUB_REF='refs/pull/12/merge', GITHUB_BASE_REF='dev',
+                             GITHUB_REF='refs/pull/12/merge', GITHUB_BASE_REF='main',
                              GITHUB_REF_PROTECTED='false')
         self.assertEqual(result.returncode, 0, result.stderr)
         args = next(call for call in self.arguments() if call[0] == 'run')

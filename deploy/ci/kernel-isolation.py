@@ -133,10 +133,10 @@ def github_metadata_checks(environ: Mapping[str, str], checkout_sha: str) -> lis
 
     ref = environ.get("GITHUB_REF", "")
     allowed_ref = (
-        event == "push" and ref in ("refs/heads/main", "refs/heads/dev", "refs/heads/hardening")
+        event == "push" and ref == "refs/heads/main"
         or event == "workflow_dispatch" and ref.startswith("refs/heads/")
         or event == "pull_request" and re.fullmatch(r"refs/pull/[0-9]+/merge", ref) is not None
-        and environ.get("GITHUB_BASE_REF") in ("main", "dev")
+        and environ.get("GITHUB_BASE_REF") == "main"
     )
     check(results, "event-ref", allowed_ref,
           f"ref {ref!r} must match a configured push, pull request or manual run")
