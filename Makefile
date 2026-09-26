@@ -272,7 +272,11 @@ ANSIBLE_INVENTORY ?= ../scripts/provisioner.sh ansible-inventory
 # selects the matching inventory, variables and known-hosts file itself.
 DEPLOY_ENV ?=
 INVENTORY ?= $(if $(filter dev,$(DEPLOY_ENV)),hosts.dev.yml,$(if $(filter prod,$(DEPLOY_ENV)),hosts.yml,))
-ENV_VARS = -e @vars/$(DEPLOY_ENV).yml
+# Every playbook pins the selected environment's SSH host identities, as
+# deploy/debuglet-deploy does; group_vars would otherwise fall back to the
+# production file.
+KNOWN_HOSTS = $(if $(filter dev,$(DEPLOY_ENV)),known_hosts.dev,known_hosts)
+ENV_VARS = -e @vars/$(DEPLOY_ENV).yml -e "known_hosts_file={{ playbook_dir }}/$(KNOWN_HOSTS)"
 
 .PHONY: require-deploy-env
 require-deploy-env:
@@ -350,13 +354,10 @@ deploy-update-config: require-deploy-env
 
 # Build and install the candidate payload, then back up and upgrade the deployed
 # databases with its migrations, stopping each service meanwhile (or pass
-# LIMIT=hostname). Full deploys never do this. It pins the selected environment's
-# SSH host identities as deploy/debuglet-deploy does.
+# LIMIT=hostname). Full deploys never do this.
 # Example: make deploy-upgrade-db DEPLOY_ENV=dev
-KNOWN_HOSTS = $(if $(filter dev,$(DEPLOY_ENV)),known_hosts.dev,known_hosts)
 deploy-upgrade-db: require-deploy-env deploy-build
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) \
-		-e "known_hosts_file={{ playbook_dir }}/$(KNOWN_HOSTS)" upgrade-database.yml \
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) upgrade-database.yml \
 		$(if $(LIMIT),--limit $(LIMIT),)
 
 # --------------------------------------------------------------------

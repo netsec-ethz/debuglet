@@ -38,6 +38,10 @@ integration branch is supported.
   409 `capacity_exhausted`.
 
 ### Fixed
+- `make bootstrap-sudo`, `make deploy-update-addr` and `make deploy-update-config`
+  verify SSH host keys against the selected environment's file. With
+  `DEPLOY_ENV=dev` they used the production `known_hosts`, and so refused dev
+  hosts missing from it. No change for `DEPLOY_ENV=prod`.
 - The executor removes a run's executor-wide bandwidth limit from its packet
   counter when the run ends. The eBPF counter's map holds 10,000 entries, so
   an executor process previously refused every run after about 10,000 runs.
