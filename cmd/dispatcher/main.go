@@ -71,6 +71,16 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("database %s now records dispatcher schema version %d\n", cfg.Database.Path, version)
+		// The daemon enforces foreign keys on new writes only; rows an
+		// earlier version wrote without them are reported, not changed.
+		violations, err := storagecheck.ForeignKeyViolations(context.Background(), cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		for _, violation := range violations {
+			fmt.Fprintf(os.Stderr, "dispatcher: warning: %s; the daemon keeps them, but they are not consistent\n", violation)
+		}
 		return
 	}
 	// Role administration is deliberately not an HTTP operation: the operator
