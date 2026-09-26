@@ -33,7 +33,7 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 	if err != nil {
 		return 0, err
 	}
-	if err := h.storeOrders(ctx, request, transactionId, refundAddress, prices); err != nil {
+	if err := h.storeOrders(ctx, database.New(h.db), request, transactionId, refundAddress, prices); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -94,8 +94,7 @@ func (h *Handler) priceIntent(request PaymentIntentRequest) ([]int64, int64, err
 
 // storeOrders writes one Outstanding debuglet_order row per priced debuglet of
 // an intent whose transaction already exists.
-func (h *Handler) storeOrders(ctx context.Context, request PaymentIntentRequest, transactionId, refundAddress string, prices []int64) error {
-	queries := database.New(h.db)
+func (h *Handler) storeOrders(ctx context.Context, queries *database.Queries, request PaymentIntentRequest, transactionId, refundAddress string, prices []int64) error {
 	for i, req := range request.Debuglets {
 		h.logger.Debug("Create order", zap.String("txid", transactionId), zap.Int64("orderID", req.OrderID))
 		_, err := queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
@@ -166,14 +165,24 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	}
 	h.logger.Info("intent", zap.Int64("price", price))
 
-	// The transaction is created before its orders, which reference it.
+	// The transaction, its orders and its owner are written together or not
+	// at all: a failure part way must not leave a paid TEST transaction
+	// without its orders or its owner. The transaction row comes first,
+	// since the orders reference it. Nothing below may use h.db directly:
+	// the pool holds one connection, and this transaction owns it.
 	hash := hashDebugletRequest(req.Debuglets)
-	intent, err := h.dispatcher.Payment.CreatePaymentIntent(transactionId, price, req.PaymentMethod, hash, c.Request().Context())
+	dbTx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to begin the payment intent", err)
+	}
+	defer dbTx.Rollback()
+	intent, err := h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash))
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)
 	}
-	if err := h.storeOrders(ctx, req, transactionId, req.RefundAddress, prices); err != nil {
+	queries := database.New(dbTx)
+	if err := h.storeOrders(ctx, queries, req, transactionId, req.RefundAddress, prices); err != nil {
 		return err
 	}
 	// Record the owner before the intent is handed out, so that the auth key
@@ -181,12 +190,15 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	// issued to. The local development bypass names no account and keeps the
 	// ownerless behaviour it had.
 	if owner, ok := established.owner(); ok {
-		if err := database.New(h.db).SetTransactionOwner(ctx, database.SetTransactionOwnerParams{
+		if err := queries.SetTransactionOwner(ctx, database.SetTransactionOwnerParams{
 			TransactionID: transactionId,
 			Uuid:          owner,
 		}); err != nil {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to record the payment order owner", err)
 		}
+	}
+	if err := dbTx.Commit(); err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the payment intent", err)
 	}
 	switch req.PaymentMethod {
 	case "USDC":

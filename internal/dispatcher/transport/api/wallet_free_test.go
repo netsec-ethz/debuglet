@@ -349,6 +349,25 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 		t.Fatalf("payment status body %q, want true", body)
 	}
 
+	// ---- 1b. A failed order write leaves no transaction behind ----
+	// The transaction, its orders and its owner are one SQL transaction, so
+	// an order insert that fails after the transaction row was written rolls
+	// that row back too.
+	beforeFailedIntent := wfTakeSnapshot(t, db)
+	if _, err := db.Exec("CREATE TRIGGER wf_abort_order_insert BEFORE INSERT ON debuglet_order BEGIN SELECT RAISE(ABORT, 'wf_order_insert_refused'); END"); err != nil {
+		t.Fatalf("create order trigger: %v", err)
+	}
+	status, body = client.do(http.MethodPut, "/payment/intent", PaymentIntentRequest{
+		Debuglets: debuglets, PaymentMethod: "TEST",
+	})
+	if _, err := db.Exec("DROP TRIGGER wf_abort_order_insert"); err != nil {
+		t.Fatalf("drop order trigger: %v", err)
+	}
+	wfExpect(t, "TEST intent with a failing order write", status, http.StatusInternalServerError, body)
+	if after := wfTakeSnapshot(t, db); after != beforeFailedIntent {
+		t.Fatalf("a failed intent left rows behind:\nbefore:\n%s\nafter:\n%s", beforeFailedIntent, after)
+	}
+
 	// ---- 2. Hash and auth-key checks still reject, rows unchanged ----
 	before := wfTakeSnapshot(t, db)
 	altered := wfDebuglets()
