@@ -30,6 +30,10 @@ debuglet-dispatcher*
 # names start with the daemon names above; keep them out of that rule.
 !/deploy/systemd/debuglet-dispatcher-*.service
 !/deploy/systemd/debuglet-executor-*.service
+# Object files are build output. The generated eBPF objects are the only ones
+# committed; bpf2go writes them next to their Go bindings.
+*.o
+!/internal/executor/*/ebpf/*_bpfel.o
 /dispatcher
 /executor
 __debug*
