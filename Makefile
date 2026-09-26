@@ -342,15 +342,11 @@ deploy-update-addr: require-deploy-env
 		$(if $(DISPATCHER_ADDR),-e "dispatcher_addr=$(DISPATCHER_ADDR)",)
 
 # Re-render dispatcher + executor configs and restart changed services (no
-# binary redeploy). DEPLOY_VERSION defaults to `git describe`, so a deploy from
-# a tagged commit reports v0.1.0 rather than an opaque SHA, and a deploy from an
-# uncommitted tree is visibly suffixed -dirty.
-# Example: make deploy-update-config
-#          make deploy-update-config DEPLOY_VERSION=v1.2.3
-DEPLOY_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
+# binary redeploy). Each daemon keeps reporting the release installed on its
+# host, which the playbook reads from the host's deployment record.
+# Example: make deploy-update-config DEPLOY_ENV=dev
 deploy-update-config: require-deploy-env
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml \
-		$(if $(DEPLOY_VERSION),-e "deploy_version=$(DEPLOY_VERSION)",)
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml
 
 # Build and install the candidate payload, then back up and upgrade the deployed
 # databases with its migrations, stopping each service meanwhile (or pass

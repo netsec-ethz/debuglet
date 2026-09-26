@@ -27,6 +27,12 @@ integration branch is supported.
   require a new directory per package version.
 
 ### Changed
+- `make deploy-update-config` and `make deploy-update-addr` render the version
+  of the release installed on each host, read from its deployment record,
+  instead of `git describe` of the operator's checkout and `unknown`
+  respectively. `DEPLOY_VERSION` is no longer read, and an explicit
+  `-e deploy_version` that names another release is refused. A host without a
+  deployment record needs a full deployment first.
 - `PUT /payment/intent` prices a run by its timeout in milliseconds, rounded up,
   instead of whole seconds truncated. Sub-second runs are no longer free, and a
   client that computes prices itself must use the new formula.

@@ -144,6 +144,17 @@ printf new > target/wasm32-wasip1/release/debuglet.wasm''')
                                      ['-i', inventory, '-e', f'@vars/{environment}.yml', '-e',
                                       f'known_hosts_file={{{{ playbook_dir }}}}/{known_hosts}'])
 
+    def test_config_update_renders_the_installed_version(self):
+        # The playbook reads the version from each host's deployment record;
+        # a version derived from this checkout, or the retired DEPLOY_VERSION
+        # override, would outrank it.
+        result = self.make('deploy-update-config', DEPLOY_ENV='dev', DEPLOY_VERSION='v9.9.9',
+                           ANSIBLE_PLAYBOOK=self.playbook)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = (self.root / 'playbook-called').read_text()
+        self.assertIn('update-config.yml', arguments)
+        self.assertNotIn('deploy_version', arguments)
+
     def test_database_upgrade_uses_selected_environment(self):
         for environment, inventory, known_hosts in (('dev', 'hosts.dev.yml', 'known_hosts.dev'),
                                                     ('prod', 'hosts.yml', 'known_hosts')):

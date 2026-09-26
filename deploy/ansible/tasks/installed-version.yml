@@ -1,0 +1,45 @@
+---
+# Render a host's configuration with the version it actually runs: the one the
+# payload role recorded when it installed the release, which verify.yml checks
+# after every full deployment. A config-only playbook installs nothing, so the
+# version of the operator's checkout or of the last local build would describe
+# some other release.
+
+- name: Look for the installed deployment record
+  ansible.builtin.stat:
+    path: "{{ config_dir }}/deployment-{{ debuglet_env }}.json"
+  register: installed_deployment_stat
+
+- name: Require an installed deployment
+  ansible.builtin.assert:
+    that: installed_deployment_stat.stat.exists
+    fail_msg: >-
+      {{ config_dir }}/deployment-{{ debuglet_env }}.json is missing, so this
+      host has no installed release to render a configuration for. Run a full
+      deployment first (make deploy DEPLOY_ENV={{ debuglet_env }}).
+    quiet: true
+
+- name: Read the installed deployment record
+  ansible.builtin.slurp:
+    src: "{{ config_dir }}/deployment-{{ debuglet_env }}.json"
+  register: installed_deployment_record
+
+- name: Remember the installed version
+  ansible.builtin.set_fact:
+    installed_deploy_version: "{{ (installed_deployment_record.content | b64decode | from_json).application.version }}"
+
+# set_fact outranks group_vars, so the templates render this version. An
+# explicit -e deploy_version outranks set_fact, and is refused below unless it
+# names the same release.
+- name: Render the installed version
+  ansible.builtin.set_fact:
+    deploy_version: "{{ installed_deploy_version }}"
+
+- name: Refuse a version other than the installed one
+  ansible.builtin.assert:
+    that: deploy_version == installed_deploy_version
+    fail_msg: >-
+      deploy_version={{ deploy_version }} was given, but this host runs
+      {{ installed_deploy_version }}. A configuration update renders the
+      installed version; deploy the other release to change it.
+    quiet: true
