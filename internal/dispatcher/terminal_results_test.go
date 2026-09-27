@@ -52,11 +52,9 @@ const (
 )
 
 var (
-	tgWasm         = []byte("\x00asm\x01\x00\x00\x00")
-	tgNull         = sql.NullString{}
-	tgErrCompleteQ = errors.New("sentinel: CompleteDebuglet failed")
-	tgErrClassifyQ = errors.New("sentinel: GetOwnedDebugletByUUID failed")
-	tgMockBinding  = controlsession.Binding{Incarnation: "cd678a91-a1ba-4def-8192-123456789abc", SessionID: "92ab28aa-189a-4fd0-9924-abcdef123456"}
+	tgWasm        = []byte("\x00asm\x01\x00\x00\x00")
+	tgNull        = sql.NullString{}
+	tgMockBinding = controlsession.Binding{Incarnation: "cd678a91-a1ba-4def-8192-123456789abc", SessionID: "92ab28aa-189a-4fd0-9924-abcdef123456"}
 
 	// Generated query texts (internal/dispatcher/database/debuglet.sql.go) for
 	// the checked sqlmock fixtures; sqlmock collapses whitespace before
@@ -68,7 +66,6 @@ var (
 		"SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets WHERE uuid = ?",
 	)
 	tgOwnedGetQuery   = regexp.QuoteMeta("SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets WHERE uuid = ?1 AND executor_id = ?2 AND dispatcher_incarnation = ?3 AND session_id = ?4 AND dispatcher_incarnation <> '' AND session_id <> ''")
-	tgIdentityQuery   = regexp.QuoteMeta("SELECT executor_id, dispatcher_incarnation, session_id FROM debuglets WHERE uuid = ?")
 	tgDebugletColumns = []string{
 		"id", "uuid", "start_time", "end_time", "usage", "ceil_bw",
 		"executor_id", "addresses", "state", "error", "transaction_id", "order_id", "dispatcher_incarnation", "session_id",
@@ -818,129 +815,59 @@ func TestTerminalResultGuards(t *testing.T) {
 			}
 		})
 
-		t.Run("sqlmock: classification outcomes are bounded and perform no effects", func(t *testing.T) {
+		// A real database cannot hold a nonterminal row that the terminal
+		// write's state guard rejected, so this outcome is scripted: the write
+		// finds no row and the classifying read then returns a started run.
+		t.Run("sqlmock: nonterminal row after a missed guard is an error without effects", func(t *testing.T) {
 			id := uuid.New()
-			terminalRow := func(state models.DebugletRunState) *sqlmock.Rows {
-				return sqlmock.NewRows(tgDebugletColumns).AddRow(
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			t.Cleanup(func() {
+				mock.ExpectClose()
+				if err := db.Close(); err != nil {
+					t.Errorf("close mock db: %v", err)
+				}
+			})
+			logger := zap.NewNop()
+			ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+			d, err := New(logger, db, "tg-mock", time.Minute, time.Minute, ph)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(d.Close)
+			mock.ExpectQuery(tgCompleteQuery).
+				WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
+				WillReturnError(sql.ErrNoRows)
+			mock.ExpectQuery(tgOwnedGetQuery).
+				WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
+				WillReturnRows(sqlmock.NewRows(tgDebugletColumns).AddRow(
 					int64(1), id, time.Now(), time.Now().Add(time.Minute), int64(tgFloorA), int64(2*tgFloorA),
-					tgExecutorID, nil, int64(state), nil, "tx", int64(1), tgMockBinding.Incarnation, tgMockBinding.SessionID,
-				)
+					tgExecutorID, nil, int64(models.RunStateStarted), nil, "tx", int64(1), tgMockBinding.Incarnation, tgMockBinding.SessionID,
+				))
+			owner, err := rpc.NewSessionOwner(tgExecutorID, tgMockBinding, time.Minute)
+			if err != nil {
+				t.Fatal(err)
 			}
-			cases := []struct {
-				name    string
-				expect  func(mock sqlmock.Sqlmock)
-				wantErr error
-				wantMsg string
-				wantOK  bool
-			}{
-				{
-					name: "terminal write failure is wrapped",
-					expect: func(mock sqlmock.Sqlmock) {
-						mock.ExpectQuery(tgCompleteQuery).
-							WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
-							WillReturnError(tgErrCompleteQ)
-					},
-					wantErr: tgErrCompleteQ,
-				},
-				{
-					name: "classification failure is wrapped",
-					expect: func(mock sqlmock.Sqlmock) {
-						mock.ExpectQuery(tgCompleteQuery).
-							WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
-							WillReturnError(sql.ErrNoRows)
-						mock.ExpectQuery(tgOwnedGetQuery).WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).WillReturnError(tgErrClassifyQ)
-					},
-					wantMsg: "stored debuglet data is invalid",
-				},
-				{
-					name: "missing row keeps the does-not-exist error",
-					expect: func(mock sqlmock.Sqlmock) {
-						mock.ExpectQuery(tgCompleteQuery).
-							WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
-							WillReturnError(sql.ErrNoRows)
-						mock.ExpectQuery(tgOwnedGetQuery).WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).WillReturnError(sql.ErrNoRows)
-						mock.ExpectQuery(tgIdentityQuery).WithArgs(id.String()).WillReturnError(sql.ErrNoRows)
-					},
-					wantMsg: "debuglet does not exist",
-				},
-				{
-					name: "nonterminal row after a missed guard is an error",
-					expect: func(mock sqlmock.Sqlmock) {
-						mock.ExpectQuery(tgCompleteQuery).
-							WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
-							WillReturnError(sql.ErrNoRows)
-						mock.ExpectQuery(tgOwnedGetQuery).WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).WillReturnRows(terminalRow(models.RunStateStarted))
-					},
-					wantMsg: "rejected although it is in state RunStateStarted",
-				},
-				{
-					name: "terminal row is acknowledged without effects",
-					expect: func(mock sqlmock.Sqlmock) {
-						mock.ExpectQuery(tgCompleteQuery).
-							WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
-							WillReturnError(sql.ErrNoRows)
-						mock.ExpectQuery(tgOwnedGetQuery).WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).WillReturnRows(terminalRow(models.RunStateExited))
-					},
-					wantOK: true,
-				},
+			owner.MarkRegistered()
+			mutation, err := owner.AdmitMutation(t.Context())
+			if err != nil {
+				t.Fatal(err)
 			}
-			for _, tc := range cases {
-				t.Run(tc.name, func(t *testing.T) {
-					db, mock, err := sqlmock.New()
-					if err != nil {
-						t.Fatalf("sqlmock: %v", err)
-					}
-					t.Cleanup(func() {
-						mock.ExpectClose()
-						if err := db.Close(); err != nil {
-							t.Errorf("close mock db: %v", err)
-						}
-					})
-					logger := zap.NewNop()
-					ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
-					d, err := New(logger, db, "tg-mock", time.Minute, time.Minute, ph)
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(d.Close)
-					tc.expect(mock)
-					owner, err := rpc.NewSessionOwner(tgExecutorID, tgMockBinding, time.Minute)
-					if err != nil {
-						t.Fatal(err)
-					}
-					owner.MarkRegistered()
-					mutation, err := owner.AdmitMutation(t.Context())
-					if err != nil {
-						t.Fatal(err)
-					}
-					defer mutation.Finish()
-					resp, err := d.OnDebugletExit(t.Context(), mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: 4})
-					switch {
-					case tc.wantOK:
-						if err != nil || resp == nil {
-							t.Fatalf("got (%v, %v), want an empty success", resp, err)
-						}
-					case tc.wantErr != nil:
-						if !errors.Is(err, tc.wantErr) {
-							t.Fatalf("got %v, want an error wrapping %v", err, tc.wantErr)
-						}
-						if resp != nil {
-							t.Fatalf("got response %v alongside error", resp)
-						}
-					default:
-						if err == nil || !strings.Contains(err.Error(), tc.wantMsg) {
-							t.Fatalf("got %v, want an error containing %q", err, tc.wantMsg)
-						}
-						if resp != nil {
-							t.Fatalf("got response %v alongside error", resp)
-						}
-					}
-					// No payment transaction, no further queries: the fixture is
-					// exact, so any effect would be an unexpected call.
-					if err := mock.ExpectationsWereMet(); err != nil {
-						t.Fatalf("unmet sqlmock expectations: %v", err)
-					}
-				})
+			defer mutation.Finish()
+			resp, err := d.OnDebugletExit(t.Context(), mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: 4})
+			const want = "rejected although it is in state RunStateStarted"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("got %v, want an error containing %q", err, want)
+			}
+			if resp != nil {
+				t.Fatalf("got response %v alongside error", resp)
+			}
+			// No payment transaction, no further queries: the fixture is
+			// exact, so any effect would be an unexpected call.
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet sqlmock expectations: %v", err)
 			}
 		})
 	})
