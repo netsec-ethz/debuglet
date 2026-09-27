@@ -10,16 +10,37 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-27
+
+### Added
+- Add the `dbl` CLI, Go SDK, OpenAPI contract, browser login, managed services,
+  backed-up database upgrades, and verified Linux amd64 packages.
+
 ### Changed
 - Move the debuglet examples from `local/wasm_samples/` to `examples/debuglets/`,
   the local daemon configurations from `local/configs/` to `configs/`,
   `verify_pcap.py` to `tools/`, and the illustrative HTTP exchanges to
   `api/http-examples.json`. Update `make wasm SAMPLE_DIR=...` and `-config`
   paths accordingly.
+- Require account-backed sessions, canonical lowercase run IDs, and HTTP API 1.3.
+- Use verified TLS control channels and preserve the recorded release during
+  configuration-only deployments.
+
+### Fixed
+- Preserve completed work and deployment state across restarts; continue
+  deploying reachable executors.
+- Harden database upgrades, credentials, certificate validation, SCION metadata
+  handling, and fallback packet accounting.
 
 ### Removed
 - Remove the unsupported JavaScript and Python debuglet samples and the Javy
   build path of `make wasm`.
+
+### Known limitations
+- SCION traffic is not attributed to runs, and the web dashboard is not fully
+  compatible with authenticated sessions.
+- Packages are Linux amd64 only; local state is package-version-specific and
+  interrupted runs are not recovered.
 
 ## [0.2.0-rc.3] - 2026-09-26
 
@@ -124,7 +145,8 @@ changes; the linked API and deployment documentation contains operational detail
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.3...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0
 [0.2.0-rc.3]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0-rc.1
