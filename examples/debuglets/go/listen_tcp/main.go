@@ -3,14 +3,14 @@
 // Publishes the job's TCP listener address, serves -count connections and
 // echoes the first chunk each client sends. The job must request a TCP listener
 // and the executor must have a public host and port range configured;
-// otherwise the listener address is unavailable and the guest exits.
+// otherwise the listener address is unavailable and the debuglet exits.
 //
 // Build:
 //
 //	make wasm SAMPLE_DIR=examples/debuglets/go/listen_tcp
 //
 // A listener is requested through the policy of a submission, which `dbl run`
-// does not expose: submit this guest with the Go client SDK (client.Policy's
+// does not expose: submit this debuglet with the Go client SDK (client.Policy's
 // ListenTCP) or through the dispatcher API.
 package main
 

@@ -1,7 +1,7 @@
 // dns — DNS A lookup over UDP, written with the Debuglet Go SDK.
 //
 // Sends one query to -addr and prints the A records of the reply. It builds and
-// parses the message itself: a guest has no resolver and no operating-system
+// parses the message itself: a debuglet has no resolver and no operating-system
 // sockets, only the executor's host imports.
 //
 // Build and run:
@@ -12,8 +12,8 @@
 //
 // The resolver's address must be in the job's --allow list, and only a resolver
 // you are authorized to query belongs there; the default names a public one, so
-// the guest reaches it only when a submission says so. A UDP read has no
-// deadline of its own: if the reply is lost, the guest waits until the job's
+// the debuglet reaches it only when a submission says so. A UDP read has no
+// deadline of its own: if the reply is lost, the debuglet waits until the job's
 // execution budget ends it, so give the job a budget you are willing to spend.
 package main
 

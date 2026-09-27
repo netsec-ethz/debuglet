@@ -1,6 +1,6 @@
 // throughput — TCP throughput sender, written with the Debuglet Go SDK.
 //
-// Read the respective README.md for more information on how to use this sample.
+// Read the respective README.md for more information on how to use this example.
 package main
 
 import (

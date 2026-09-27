@@ -2,7 +2,7 @@
 
 These examples are experimental. The project does not build or run them in CI, and their bindings are not covered by the supported compatibility path. Use the [Go examples](../go/README.md) for supported development.
 
-The crates target `wasm32-wasip1`. To explore them, install that Rust target, build one sample, and submit the resulting `debuglet.wasm`:
+The crates target `wasm32-wasip1`. To explore them, install that Rust target, build one example, and submit the resulting `debuglet.wasm`:
 
 ```sh
 rustup target add wasm32-wasip1

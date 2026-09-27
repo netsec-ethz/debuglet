@@ -1,8 +1,8 @@
 // download — HTTP download rate over the raw host imports.
 //
-// This sample calls the executor's imports directly instead of using the guest
+// This example calls the executor's imports directly instead of using the debuglet
 // SDK, so it shows what the SDK does with pointers and lengths. Prefer the SDK
-// (see the http_get sample) unless you need that level of detail.
+// (see the http_get example) unless you need that level of detail.
 //
 // It reports the transfer rate of one HTTP response body. Point it at a target
 // you are authorized to measure and add that target to the job's --allow list:

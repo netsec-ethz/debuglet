@@ -5,7 +5,7 @@
 //
 //	make wasm SAMPLE_DIR=examples/debuglets/go/ping
 //
-// Run (args after `--` are passed verbatim to the guest):
+// Run (args after `--` are passed verbatim to the debuglet):
 //
 //	dbl run --wasm examples/debuglets/go/ping/debuglet.wasm \
 //	  --executor EXECUTOR_ID --allow 1.1.1.1 --wait -- -addr 1.1.1.1 -iter 5

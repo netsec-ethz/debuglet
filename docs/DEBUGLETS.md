@@ -19,4 +19,4 @@ The stable host ABI is `debuglet-go-wasi-imports-v1`. The Go package hides its l
 
 ## Compatibility
 
-Build and test debuglets against the Debuglet release you plan to use. The executor records the guest ABI in its installation manifest. A debuglet must target an ABI the executor supports.
+Build and test debuglets against the Debuglet release you plan to use. The executor records the debuglet ABI in its installation manifest. A debuglet must target an ABI the executor supports.

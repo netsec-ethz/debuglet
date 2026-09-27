@@ -34,7 +34,7 @@ Executors initiate their connections to the dispatcher. Each active executor ses
 
 - The public API is described by [`api/openapi.yaml`](../api/openapi.yaml).
 - Go applications use [`pkg/client`](SDK.md).
-- Debuglets use [`pkg/debuglet`](GUESTS.md).
+- Debuglets use [`pkg/debuglet`](DEBUGLETS.md).
 - The dispatcher/executor control protocol is defined in [`protocol/protocol.proto`](../protocol/protocol.proto).
 
 For deployment topology, recovery, and operational guidance, use the [project Wiki](https://github.com/netsec-ethz/debuglet/wiki).
