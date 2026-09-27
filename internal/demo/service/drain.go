@@ -9,6 +9,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
+	"github.com/netsec-ethz/debuglet/internal/readiness"
 )
 
 // Drain removes one managed role from eligible capacity and reports what
@@ -149,7 +150,7 @@ func (i *Installer) pauseAdmission(ctx context.Context, p Profile, report DrainR
 	}
 	report.Active, report.Enabled = unit.Active, unit.Enabled
 	if unit.Running() {
-		if _, err := demo.ReadReadyRecord(p.ReadyFile, unit.MainPID, ""); err == nil {
+		if _, err := readiness.Read(p.ReadyFile, unit.MainPID, ""); err == nil {
 			report.Ready = true
 		}
 	}

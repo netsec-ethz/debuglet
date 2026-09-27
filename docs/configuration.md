@@ -17,6 +17,15 @@ instead of silently doing nothing. An omitted key keeps its documented default:
 An explicit value is always checked, so `max_debuglets = 0` is an error rather
 than a request for the default.
 
+A key that takes a DNS name (`server.bind_host`, the host of `dispatcher.addr`
+and `dispatcher.yamux_addr`, `tls.server_name` and `network.public_host`)
+follows the RFC 1123 host-name rules: dot-separated labels of 1 to 63 ASCII
+letters, digits and hyphens, none starting or ending with a hyphen, at most 253
+bytes in total, with one optional trailing dot. An underscore is refused,
+because it names DNS records such as SRV owners rather than hosts. The check is
+syntax only and performs no lookup; [`dbl validate`](CLI.md) applies the same
+rule to its `--allow` entries.
+
 The dispatcher requires `database.path`; `server.bind_host` empty, an IP address
 or a DNS name; `server.http_port` and `server.grpc_port` between 0 and 65535 and
 different from each other unless both are 0, which asks the operating system for

@@ -102,7 +102,7 @@ func TestHost(t *testing.T) {
 			t.Errorf("host %q: %v", host, err)
 		}
 	}
-	for _, host := range []string{"", "not a host", "-example.org", "example-.org", "exam/ple", strings.Repeat("a", 64) + ".org"} {
+	for _, host := range []string{"", "not a host", "-example.org", "example-.org", "exam/ple", strings.Repeat("a", 64) + ".org", "bad_name.example", "_srv._tcp.example.org"} {
 		if err := Host("server.bind_host", host); err == nil || !strings.Contains(err.Error(), "server.bind_host") {
 			t.Errorf("host %q: %v", host, err)
 		}

@@ -9,8 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/destinations"
 	"io"
 	"net"
 	"net/netip"
@@ -22,18 +23,13 @@ import (
 	"github.com/google/uuid"
 )
 
-type domainKey struct {
-	domain string
-	id     uuid.UUID
-}
-
 // BpfCount employs ratelimiting using an EBPF layer. It requires root priviliges to work.
 type BpfCount struct {
 	objs    countObjects
 	cleanup counterCleanup
 
-	mu        sync.Mutex
-	domainIPs map[domainKey]map[netutil.IPv6]int
+	mu           sync.Mutex
+	destinations destinations.Resolved
 }
 
 func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
@@ -84,10 +80,7 @@ func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, err
 		}
 		return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, err)
 	}
-	bc := &BpfCount{
-		objs: objs, cleanup: counterCleanup{resources: resources},
-		domainIPs: make(map[domainKey]map[netutil.IPv6]int),
-	}
+	bc := &BpfCount{objs: objs, cleanup: counterCleanup{resources: resources}}
 
 	egr, err := deps.attach(link.TCXOptions{
 		Program:   objs.HandleEgress,
@@ -153,25 +146,15 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	dk := domainKey{domain: addr, id: id}
-	if _, ok := bc.domainIPs[dk]; !ok {
-		bc.domainIPs[dk] = make(map[netutil.IPv6]int)
-	}
-	bc.domainIPs[dk][ipv6]++
+	bc.destinations.Add(addr, id, ipv6)
 
 	return &BpfConn{count: bc, conn: conn, socketID: socketID, domain: addr, id: id, resolvedIPv6: ipv6}, nil
 }
 
 func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {
-	parsedIP, err := netip.ParseAddr(addr)
-	if err == nil {
-		return bc.setIPv6Limit(netutil.ToIPv6(parsedIP), id, limit)
-	}
-
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	ips := bc.domainIPs[domainKey{domain: addr, id: id}]
-	for ipv6 := range ips {
+	for ipv6 := range bc.destinations.Targets(addr, id) {
 		if err := bc.setIPv6Limit(ipv6, id, limit); err != nil {
 			return err
 		}
@@ -215,25 +198,13 @@ func (bc *BpfCount) DeleteExecLimit(id uuid.UUID) error {
 func (bc *BpfCount) Detach(addr string, id uuid.UUID, ipv6 netutil.IPv6) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
-	dk := domainKey{domain: addr, id: id}
-	ips, ok := bc.domainIPs[dk]
-	if !ok {
+	if remaining, ok := bc.destinations.Remove(addr, id, ipv6); !ok || remaining > 0 {
 		return nil
 	}
-	ips[ipv6]--
-	if ips[ipv6] <= 0 {
-		delete(ips, ipv6)
-		if err := bc.objs.RatesMap.Delete(&countDebugletKey{
-			Uuid: [16]byte(id),
-			Ipv6: ipv6.IP.As16(),
-		}); err != nil {
-			return err
-		}
-	}
-	if len(ips) == 0 {
-		delete(bc.domainIPs, dk)
-	}
-	return nil
+	return bc.objs.RatesMap.Delete(&countDebugletKey{
+		Uuid: [16]byte(id),
+		Ipv6: ipv6.IP.As16(),
+	})
 }
 
 func (f *BpfCount) Type() string { return "ebpf" }

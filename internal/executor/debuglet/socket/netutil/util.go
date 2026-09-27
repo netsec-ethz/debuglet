@@ -18,23 +18,38 @@ func (ip IPv6) String() string {
 	return ip.IP.String()
 }
 
+// ToIPv6 keys an address in the 16-byte form the packet counters use: an IPv4
+// address becomes its IPv4-mapped IPv6 form, and an IPv6 address, including
+// its zone, is kept as it is.
 func ToIPv6(addr netip.Addr) IPv6 {
 	if addr.Is4() {
-		ip4 := addr.As4()
-		return IPv6{IP: netip.AddrFrom16([16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, ip4[0], ip4[1], ip4[2], ip4[3]})}
+		return IPv6{IP: netip.AddrFrom16(addr.As16())}
 	}
 	return IPv6{IP: addr}
 }
 
-func HostFromAddr(addr string) (string, error) {
-	host, _, err := net.SplitHostPort(addr)
+// SplitOptionalPort splits "host:port" like net.SplitHostPort, and also
+// accepts an address without a port, for which it returns the address itself
+// as host and hasPort false. A bare bracketed IPv6 literal keeps its brackets.
+// Any other malformed address returns net.SplitHostPort's error.
+func SplitOptionalPort(address string) (host, port string, hasPort bool, err error) {
+	host, port, err = net.SplitHostPort(address)
 	if err != nil {
 		var addrErr *net.AddrError
 		if errors.As(err, &addrErr) && addrErr.Err == "missing port in address" {
-			host = addr
-		} else {
-			return "", fmt.Errorf("invalid address format: %w", err)
+			return address, "", false, nil
 		}
+		return "", "", false, err
+	}
+	return host, port, true, nil
+}
+
+// HostFromAddr returns the host of "host:port", or the address itself when it
+// has no port.
+func HostFromAddr(addr string) (string, error) {
+	host, _, _, err := SplitOptionalPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("invalid address format: %w", err)
 	}
 	return host, nil
 }

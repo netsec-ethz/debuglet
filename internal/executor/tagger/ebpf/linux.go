@@ -39,6 +39,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"go.uber.org/zap"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
@@ -170,7 +171,7 @@ func attachWithRollback(attach func() (io.Closer, error), owned ...io.Closer) (i
 	if attached != nil {
 		owned = append([]io.Closer{attached}, owned...)
 	}
-	return nil, withCleanupError(err, closeResources(owned...))
+	return nil, cleanup.Join(err, closeResources(owned...))
 }
 
 // akEntryAt returns the map entry for measurementID at time t, and false when
@@ -238,7 +239,7 @@ func mapKey(measurementID []byte) uint32 {
 // failure has no refresh goroutine to join and still releases every resource.
 func (bt *BPFTagger) initializeRefresh(update func() error, newTicks func() (<-chan time.Time, func())) error {
 	if err := update(); err != nil {
-		return withCleanupError(err, bt.Close())
+		return cleanup.Join(err, bt.Close())
 	}
 	ticks, stopTicker := newTicks()
 	bt.refreshDone = make(chan struct{})

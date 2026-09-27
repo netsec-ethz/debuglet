@@ -8,7 +8,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 )
 
 type counterResource struct {

@@ -125,25 +125,32 @@ func Host(field, host string) error {
 	if net.ParseIP(host) != nil {
 		return nil
 	}
-	if !dnsName(host) {
+	if !DNSName(host) {
 		return fmt.Errorf("%s must be an IP address or a DNS name, got %q", field, host)
 	}
 	return nil
 }
 
-func dnsName(host string) bool {
-	host = strings.TrimSuffix(host, ".")
-	if host == "" || len(host) > 253 {
+// DNSName reports whether name is a host name under the RFC 1123 rules: one or
+// more dot-separated labels of 1 to 63 ASCII letters, digits and hyphens, none
+// starting or ending with a hyphen, at most 253 bytes in total. One trailing
+// dot, marking the name absolute, is accepted. An underscore is refused: it is
+// valid in DNS records such as SRV owners but never in a name a host is
+// reached by. This is the one rule shared by daemon configuration and
+// `dbl validate`.
+func DNSName(name string) bool {
+	name = strings.TrimSuffix(name, ".")
+	if name == "" || len(name) > 253 {
 		return false
 	}
-	for _, label := range strings.Split(host, ".") {
+	for _, label := range strings.Split(name, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
 		for i := 0; i < len(label); i++ {
 			c := label[i]
 			letter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-			if !letter && (c < '0' || c > '9') && c != '-' && c != '_' {
+			if !letter && (c < '0' || c > '9') && c != '-' {
 				return false
 			}
 		}

@@ -16,7 +16,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/google/uuid"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 )
 
 func TestCounterObjectOwnershipList(t *testing.T) {

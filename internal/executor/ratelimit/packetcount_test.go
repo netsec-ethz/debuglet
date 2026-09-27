@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/fallback"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

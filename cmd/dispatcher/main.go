@@ -13,11 +13,9 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -27,6 +25,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -104,31 +103,12 @@ func main() {
 		return
 	}
 
-	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)
-	if err != nil {
-		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
-	}
-	logCfg := zap.NewDevelopmentConfig()
-	if cfg.Logging.JSONLogs {
-		logCfg = zap.NewProductionConfig()
-	}
-	logCfg.Level = logLevel
-	logCfg.OutputPaths = []string{"stdout"}
-	logCfg.DisableStacktrace = true
-	logger, _ := logCfg.Build()
+	logger := daemonlog.New(cfg.Logging.LogLevel, cfg.Logging.JSONLogs)
 	defer logger.Sync()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	requested := make(chan struct{})
-	stopNotice := context.AfterFunc(ctx, func() {
-		defer close(requested)
-		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", "dispatcher"))
+	err = daemonlog.Run(logger, "dispatcher", func(ctx context.Context) error {
+		return runDispatcher(ctx, cfg, *readyFile, logger)
 	})
-	err = runDispatcher(ctx, cfg, *readyFile, logger)
-	if !stopNotice() {
-		<-requested
-	}
 	if err != nil {
 		logger.Error("dispatcher exited with error", zap.Error(err))
 		logger.Sync()

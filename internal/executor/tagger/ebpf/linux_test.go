@@ -18,6 +18,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"go.uber.org/zap"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
@@ -146,8 +147,8 @@ func TestTaggerInitialUpdateFailureDoesNotWaitForUnstartedRefresh(t *testing.T) 
 	if !errors.Is(got, initErr) || !errors.Is(got, releaseErr) {
 		t.Fatalf("initial failure=%v", got)
 	}
-	if cleanup := CleanupError(got); !errors.Is(cleanup, releaseErr) || errors.Is(cleanup, initErr) {
-		t.Fatalf("initial update cleanup classification: %v", cleanup)
+	if released := cleanup.Released(got); !errors.Is(released, releaseErr) || errors.Is(released, initErr) {
+		t.Fatalf("initial update cleanup classification: %v", released)
 	}
 	if bt.refreshDone != nil {
 		t.Fatal("unstarted refresh acquired a join owner")
@@ -180,13 +181,13 @@ func TestTaggerAttachFailureReleasesEveryObject(t *testing.T) {
 			if program.calls.Load() != 1 || mapping.calls.Load() != 1 {
 				t.Fatalf("rollback stopped early: program=%d map=%d", program.calls.Load(), mapping.calls.Load())
 			}
-			cleanup := CleanupError(err)
+			released := cleanup.Released(err)
 			if rollbackFails {
-				if !errors.Is(err, programErr) || !errors.Is(err, mapErr) || !errors.Is(cleanup, programErr) || !errors.Is(cleanup, mapErr) || errors.Is(cleanup, attachErr) {
-					t.Fatalf("lost or conflated rollback errors: %v / %v", err, cleanup)
+				if !errors.Is(err, programErr) || !errors.Is(err, mapErr) || !errors.Is(released, programErr) || !errors.Is(released, mapErr) || errors.Is(released, attachErr) {
+					t.Fatalf("lost or conflated rollback errors: %v / %v", err, released)
 				}
-			} else if cleanup != nil {
-				t.Fatalf("ordinary unavailable TCX became cleanup failure: %v", cleanup)
+			} else if released != nil {
+				t.Fatalf("ordinary unavailable TCX became cleanup failure: %v", released)
 			}
 		})
 	}
@@ -226,7 +227,7 @@ func TestTaggerAttachTransfersOwnershipOnlyOnSuccess(t *testing.T) {
 				if !errors.Is(bt.Close(), linkErr) || !errors.Is(bt.Close(), linkErr) {
 					t.Fatal("transferred cleanup error lost")
 				}
-			} else if got != nil || !errors.Is(err, attachErr) || !errors.Is(CleanupError(err), linkErr) {
+			} else if got != nil || !errors.Is(err, attachErr) || !errors.Is(cleanup.Released(err), linkErr) {
 				t.Fatalf("partial attachment=%v,%v", got, err)
 			}
 			if attached.calls.Load() != 1 || program.calls.Load() != 1 || mapping.calls.Load() != 1 {
