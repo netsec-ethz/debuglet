@@ -15,7 +15,7 @@ CI_DIST ?= .cache/ci/dist
 # Race-detector lane: the scheduler, session/transport, registry and
 # owned-resource cleanup packages whose regressions depend on concurrent
 # lifecycles. These are explicit native roots for the same reason as above.
-# Keep the lane bounded; see docs/ci.md for the budget and what it excludes.
+# Keep the lane bounded; see docs/development/ci.md for the budget and what it excludes.
 CI_RACE_PACKAGES = \
 	./internal/connections \
 	./internal/controlsession \
@@ -158,7 +158,7 @@ wasm:
 # generators pinned in mise.toml. The result is what the pinned protocol
 # compiler produces, and scripts/ci-generate.sh rejects any difference between
 # it and the committed sources. Both targets fetch the pinned generators from
-# the Go module proxy the first time they are used. See docs/generation.md.
+# the Go module proxy the first time they are used. See docs/development/generated-code.md.
 proto:
 	GO="$(GO)" bash scripts/ci-generate.sh write-proto
 

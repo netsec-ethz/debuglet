@@ -1,6 +1,6 @@
 [Unit]
 Description=Debuglet executor worker (0.0.0-reference)
-Documentation=https://github.com/netsec-ethz/debuglet/blob/main/docs/services.md
+Documentation=https://github.com/netsec-ethz/debuglet/blob/main/docs/operations/services.md
 After=network-online.target
 Wants=network-online.target
 

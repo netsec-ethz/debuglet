@@ -26,4 +26,4 @@ dbl run --wasm examples/debuglets/go/latency/debuglet.wasm \
   --allow 127.0.0.1 --wait -- -addr 127.0.0.1:8080 -count 3
 ```
 
-See [Write a debuglet](../../docs/DEBUGLETS.md) for the execution model and SDK. Use `dbl demo` for a complete self-contained local walkthrough.
+See [Write a debuglet](../../docs/debuglets.md) for the execution model and SDK. Use `dbl demo` for a complete self-contained local walkthrough.

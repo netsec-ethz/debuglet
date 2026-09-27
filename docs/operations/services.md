@@ -1,6 +1,6 @@
 # Managed services
 
-`dbl service` installs a dispatcher or executor as a system service. Use it only for a host-local, managed profile. Networked production deployments use the [Ansible deployment](../deploy/ansible) and the [operator Wiki](https://github.com/netsec-ethz/debuglet/wiki).
+`dbl service` installs a dispatcher or executor as a system service. Use it only for a host-local, managed profile. Networked production deployments use the [Ansible deployment](../../deploy/ansible) and the [operator Wiki](https://github.com/netsec-ethz/debuglet/wiki).
 
 ## Basic workflow
 
@@ -17,4 +17,4 @@ Use `dbl drain --role executor` before planned maintenance and `dbl drain --role
 
 The service owns its role-specific SQLite state and retains it across restart. A database is not automatically migrated or safe to reuse across arbitrary package versions. Back up state and follow the [Deployment and Upgrades guide](https://github.com/netsec-ethz/debuglet/wiki/Deployment-and-Upgrades) before upgrading.
 
-Reference unit files live in [`deploy/systemd`](../deploy/systemd).
+Reference unit files live in [`deploy/systemd`](../../deploy/systemd).

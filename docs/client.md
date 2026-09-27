@@ -1,6 +1,6 @@
 # Go client library
 
-[`pkg/client`](../pkg/client) is the supported Go library for applications that submit debuglets and read their results from a dispatcher. It is a **client library**, not the SDK for writing a debuglet; use [`pkg/debuglet`](DEBUGLETS.md) for that.
+[`pkg/client`](../pkg/client) is the supported Go library for applications that submit debuglets and read their results from a dispatcher. It is a **client library**, not the SDK for writing a debuglet; use [`pkg/debuglet`](debuglets.md) for that.
 
 ## Use it
 
@@ -20,7 +20,7 @@ The library follows the HTTP API contract, including authentication, request val
 
 | Need | Use |
 | --- | --- |
-| Shell workflow, demos, and operations | [`dbl`](CLI.md) |
+| Shell workflow, demos, and operations | [`dbl`](cli.md) |
 | Go application that calls a dispatcher | `pkg/client` |
-| WebAssembly measurement written in Go | [`pkg/debuglet`](DEBUGLETS.md) |
-| Another language | [HTTP API](API.md) |
+| WebAssembly measurement written in Go | [`pkg/debuglet`](debuglets.md) |
+| Another language | [HTTP API](api.md) |

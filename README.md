@@ -35,11 +35,11 @@ The repository keeps stable developer and API references close to the code. The 
 | Need | Start here |
 | --- | --- |
 | Install and run a local demo | [Install Debuglet](README-install.md) |
-| Use the CLI | [CLI reference](docs/CLI.md) |
-| Write a Go application client | [Go client library](docs/SDK.md) |
-| Write a debuglet | [Debuglet SDK](docs/DEBUGLETS.md) |
-| Integrate with the HTTP API | [OpenAPI contract](api/openapi.yaml) and [API guide](docs/API.md) |
-| Understand the code and protocol | [Architecture](docs/ARCHITECTURE.md) |
+| Use the CLI | [CLI reference](docs/cli.md) |
+| Write a Go application client | [Go client library](docs/client.md) |
+| Write a debuglet | [Write a debuglet](docs/debuglets.md) |
+| Integrate with the HTTP API | [OpenAPI contract](api/openapi.yaml) and [API guide](docs/api.md) |
+| Understand the code and protocol | [Architecture](docs/architecture.md) |
 | Operate a service | [Project Wiki](https://github.com/netsec-ethz/debuglet/wiki) |
 | Contribute | [Contributing](CONTRIBUTING.md) |
 

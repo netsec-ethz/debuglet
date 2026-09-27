@@ -8,4 +8,4 @@ make wasm SAMPLE_DIR=examples/debuglets/go/hello-local
 go run ./examples/client --wasm examples/debuglets/go/hello-local/debuglet.wasm
 ```
 
-Pass `--endpoint`, `--executor`, `--allow`, and `--register` for a managed dispatcher. The example deliberately does not retain credentials; an application should store account keys and sessions with owner-only permissions. See the [Go client library guide](../../docs/SDK.md).
+Pass `--endpoint`, `--executor`, `--allow`, and `--register` for a managed dispatcher. The example deliberately does not retain credentials; an application should store account keys and sessions with owner-only permissions. See the [Go client library guide](../../docs/client.md).

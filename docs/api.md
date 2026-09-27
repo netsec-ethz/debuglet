@@ -9,7 +9,7 @@ curl -s https://dispatcher.example/version
 
 ## Use the API
 
-- Use [`pkg/client`](SDK.md) from Go.
+- Use [`pkg/client`](client.md) from Go.
 - Use `dbl` for shell workflows.
 - Generate or write a client from the OpenAPI document for other languages.
 - Authenticate protected requests with a session token. See the `securitySchemes` and per-operation requirements in OpenAPI.

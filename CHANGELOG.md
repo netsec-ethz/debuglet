@@ -14,7 +14,7 @@ changes; the linked API and deployment documentation contains operational detail
 - Reject `_` in DNS names in daemon configuration (`server.bind_host`,
   `dispatcher.addr`, `dispatcher.yamux_addr`, `tls.server_name`,
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
-  host-name rules documented in `docs/configuration.md`.
+  host-name rules documented in `docs/operations/configuration.md`.
 
 ## [0.2.0] - 2026-09-27
 
@@ -27,9 +27,9 @@ changes; the linked API and deployment documentation contains operational detail
   `bin` directory is not on `PATH`.
 - The README leads with downloading and verifying a published release; building
   from source moves to the installation guide. The daemon configuration and
-  stored-state reference moves to `docs/configuration.md`, and managed services
-  and drain to `docs/services.md`; `docs/environments.md` keeps the local
-  environment checker. `docs/API.md` lists the tested version combinations.
+  stored-state reference moves to `docs/operations/configuration.md`, and managed services
+  and drain to `docs/operations/services.md`; `docs/operations/local-checks.md` keeps the local
+  environment checker. `docs/api.md` lists the tested version combinations.
 - Move the debuglet examples from `local/wasm_samples/` to `examples/debuglets/`,
   the local daemon configurations from `local/configs/` to `configs/`,
   `verify_pcap.py` to `tools/`, and the illustrative HTTP exchanges to

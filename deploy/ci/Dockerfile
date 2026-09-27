@@ -6,7 +6,7 @@
 # timestamp, and each package by exact version. A version that the snapshot no
 # longer offers fails the build instead of resolving to a different one.
 #
-# Build and update: docs/ci-images.md.
+# Build and update: docs/development/ci-images.md.
 
 ARG BASE_IMAGE=golang:1.25.11-bookworm
 ARG BASE_DIGEST=sha256:b96f24a8d7d010ea0acb9c3ba99064740f02b6b984612b28bd3c9c5ab9453e38

@@ -9,4 +9,4 @@ change to the generated unit cannot land without updating this reference.
 
 They are not deployed by anything. The profile, the paths, what the unit states
 and why, and the drain semantics are described in
-[Managed services](../../docs/services.md).
+[Managed services](../../docs/operations/services.md).

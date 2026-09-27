@@ -16,7 +16,7 @@ The installer verifies the release files before writing them. It requires a POSI
 
 ## Next steps
 
-- Learn the commands in the [CLI reference](docs/CLI.md).
+- Learn the commands in the [CLI reference](docs/cli.md).
 - Run local roles separately with the [Getting Started guide](https://github.com/netsec-ethz/debuglet/wiki/Getting-Started).
 - Deploy a dispatcher or executor with the [operations guides](https://github.com/netsec-ethz/debuglet/wiki).
 
