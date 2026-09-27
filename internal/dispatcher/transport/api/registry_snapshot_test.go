@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -17,9 +16,10 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 )
@@ -28,13 +28,14 @@ import (
 // Direct explicit owners are unit fixtures; real transport completion is
 // exercised separately in TestRegistrationAvailabilityAcrossRealTransport.
 func TestRegistryHTTPSnapshotsAndAvailability(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "registry.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "registry.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, "../../database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, dispatcherdb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "snapshot-test", time.Minute, time.Minute, ph)

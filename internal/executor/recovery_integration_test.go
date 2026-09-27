@@ -13,12 +13,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	drpc "github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
+	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
 	erpc "github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -82,12 +83,13 @@ func newRecoveryHarness(t *testing.T, peer *operationPeer) *recoveryHarness {
 	// Even assertion failures retain joins before closing the database/node.
 	t.Cleanup(f.close)
 	var err error
-	f.db, err = sql.Open("sqlite", filepath.Join(dir, "recovery.sqlite"))
+	f.db, err = sqlitedb.Open(filepath.Join(dir, "recovery.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, f.db, "database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), f.db, executordb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	f.server, err = drpc.NewBidiServer(zap.NewNop(), f.peer, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)

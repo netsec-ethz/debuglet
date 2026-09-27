@@ -4,13 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/internal/controlsession"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
@@ -19,9 +21,10 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	dispatcherrpc "github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -185,23 +188,24 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	openDB := func(name, migrations string) *sql.DB {
+	openDB := func(name string, migrations fs.FS) *sql.DB {
 		t.Helper()
-		db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), name))
+		db, err := sqlitedb.Open(filepath.Join(t.TempDir(), name), sqlitedb.Create())
 		if err != nil {
 			t.Fatal(err)
 		}
-		db.SetMaxOpenConns(1)
 		t.Cleanup(func() {
 			if err := db.Close(); err != nil {
 				t.Error(err)
 			}
 		})
-		testutil.ApplyMigrations(t, db, migrations)
+		if _, err := sqlitedb.Migrate(t.Context(), db, migrations, sqlitedb.Latest); err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
 		return db
 	}
-	executorDB := openDB("executor.sqlite", "database/migrations")
-	dispatcherDB := openDB("dispatcher.sqlite", "../dispatcher/database/migrations")
+	executorDB := openDB("executor.sqlite", executordb.MigrationFS())
+	dispatcherDB := openDB("dispatcher.sqlite", dispatcherdb.MigrationFS())
 	logger := zap.NewNop()
 	payment := payments.NewPaymentHandler(dispatcherDB, &dispatcherconfig.DispatcherConfig{Sui: dispatcherconfig.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, dispatcherDB, "cancellation-fixture", time.Minute, time.Second, payment)

@@ -16,7 +16,7 @@ import (
 
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
-	"github.com/pressly/goose/v3"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	_ "modernc.org/sqlite"
 )
 
@@ -35,25 +35,17 @@ func fixture(t *testing.T, role Role, version int64) string {
 // up to version when it is nonzero, and closes it again.
 func migrate(t *testing.T, role Role, path string, version int64) {
 	t.Helper()
-	db, err := sql.Open("sqlite", path)
+	db, err := sqlitedb.Open(path, sqlitedb.Create())
 	if err != nil {
 		t.Fatalf("create fixture: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, packagedMigrations[role],
-		goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
-		db.Close()
-		t.Fatalf("create fixture provider: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if version == 0 {
-		_, err = provider.Up(ctx)
-	} else {
-		_, err = provider.UpTo(ctx, version)
+		version = sqlitedb.Latest
 	}
-	if closeErr := provider.Close(); closeErr != nil {
+	_, err = sqlitedb.Migrate(ctx, db, packagedMigrations[role], version)
+	if closeErr := db.Close(); closeErr != nil {
 		t.Fatalf("close fixture: %v", closeErr)
 	}
 	if err != nil {

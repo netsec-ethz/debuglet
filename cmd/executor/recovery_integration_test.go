@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,12 +30,12 @@ import (
 	ddb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
 	drpc "github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	edb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
@@ -54,8 +54,8 @@ const (
 	// that is already spent: an observation must fail with what it read.
 	commandRowMargin  = 500 * time.Millisecond
 	commandRowMinimum = 250 * time.Millisecond
-	// commandBusyTimeoutMS is the busy timeout the services' own DSNs carry.
-	commandBusyTimeoutMS = 1000
+	// commandBusyTimeoutMS is the busy timeout the services' own handles carry.
+	commandBusyTimeoutMS = sqlitedb.BusyTimeoutMS
 	// commandRequestTimeout bounds each request of the fixture's client. A
 	// TEST submission makes two, the payment intent and then the submission
 	// the dispatcher admits, so a submission that succeeds was admitted within
@@ -291,31 +291,29 @@ type commandRecovery struct {
 
 func (f *commandRecovery) open(dir string) {
 	f.t.Helper()
-	open := func(name, migrations string) *sql.DB {
+	open := func(name string, migrations fs.FS) *sql.DB {
 		f.t.Helper()
-		// Only the executor's database is read beside a service that writes to
-		// it. The dispatcher's handle is that service's own, and is left as the
-		// dispatcher opens it.
-		dsn := filepath.Join(dir, name)
-		if name == "executor.sqlite" {
-			dsn = commandDSN(dsn)
-		}
-		db, err := sql.Open("sqlite", dsn)
+		// Both handles are opened as the services open theirs. The executor's
+		// database is also read beside the command that writes to it, so its
+		// busy timeout is the services' own: a lock this reader can wait out is
+		// not an observation.
+		db, err := sqlitedb.Open(filepath.Join(dir, name), sqlitedb.Create())
 		if err != nil {
 			f.t.Fatal(err)
 		}
-		db.SetMaxOpenConns(1)
 		// Publish ownership before migrations can fail.
 		if name == "dispatcher.sqlite" {
 			f.dispatcherDB = db
 		} else {
 			f.executorDB = db
 		}
-		testutil.ApplyMigrations(f.t, db, migrations)
+		if _, err := sqlitedb.Migrate(f.t.Context(), db, migrations, sqlitedb.Latest); err != nil {
+			f.t.Fatalf("migrate %s: %v", name, err)
+		}
 		return db
 	}
-	open("dispatcher.sqlite", "../../internal/dispatcher/database/migrations")
-	open("executor.sqlite", "../../internal/executor/database/migrations")
+	open("dispatcher.sqlite", ddb.MigrationFS())
+	open("executor.sqlite", edb.MigrationFS())
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(f.dispatcherDB, &dconfig.DispatcherConfig{Sui: dconfig.SuiConfig{Disabled: true}}, logger)
 	var err error
@@ -453,18 +451,6 @@ func (f *commandRecovery) submit(wasm []byte, target *commandGuestTarget, start 
 	return submission
 }
 
-// commandDSN is the observer's connection to the executor's database, which
-// the actual command writes to throughout. A file URI keeps filename
-// characters separate from the connection options, and the busy timeout is the
-// one the services' own DSNs carry (internal/demo/schema.go,
-// internal/storagecheck): a lock this reader can wait out is not an
-// observation. The daemons' own handles are untouched.
-func commandDSN(path string) string {
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	dsn.RawQuery = url.Values{"_pragma": {fmt.Sprintf("busy_timeout(%d)", commandBusyTimeoutMS)}}.Encode()
-	return dsn.String()
-}
-
 // commandRowPending reports whether a failed read can still succeed: the live
 // command holds the database lock, or the canonical row it writes has not
 // appeared yet.
@@ -534,7 +520,7 @@ func (f *commandRecovery) executorRow(id string, bound time.Duration) edb.Debugl
 // services' busy timeout. A canonical row that never appears must still fail
 // inside the caller's bound, with the read's own diagnostic.
 func TestCanonicalRowWaitIsBounded(t *testing.T) {
-	db, err := sql.Open("sqlite", commandDSN(filepath.Join(t.TempDir(), "executor.sqlite")))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "executor.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,8 +529,9 @@ func TestCanonicalRowWaitIsBounded(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, "../../internal/executor/database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, edb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatal(err)
+	}
 	var timeout int64
 	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != commandBusyTimeoutMS {
 		t.Fatalf("fixture busy timeout is %d: %v", timeout, err)

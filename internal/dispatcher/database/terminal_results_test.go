@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 
 	"github.com/google/uuid"
 
@@ -23,7 +22,6 @@ const (
 	trIncarnation   = "00000000-0000-4000-8000-000000000001"
 	trSession       = "00000000-0000-4000-8000-000000000002"
 	trBusyTimeoutMS = 5000
-	trMigrationsDir = "migrations"
 	trRaceBound     = 15 * time.Second
 	trFailureText   = "debuglet exited with code 7"
 	trVerbatimText  = "  verbatim: quotes ' \" and\nnewline, unicode ü  "
@@ -50,16 +48,15 @@ var (
 // trOpen opens one *sql.DB handle to path with a single pooled connection and
 // a bounded busy timeout, and proves the timeout is in effect on that
 // connection: without it, a concurrent writer would surface SQLITE_BUSY.
-// synchronous(OFF) only skips fsync; locking and journaling, which decide the
+// WithoutSync only skips fsync; locking and journaling, which decide the
 // winner, are unchanged. On the CI container's overlay filesystem fsync
 // otherwise costs about half a second per fixture.
 func trOpen(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=synchronous(OFF)", path, trBusyTimeoutMS))
+	db, err := sqlitedb.Open(path, sqlitedb.Create(), sqlitedb.WithoutSync(), sqlitedb.BusyTimeout(trBusyTimeoutMS))
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Errorf("close sqlite: %v", err)
@@ -81,7 +78,9 @@ func trFresh(t *testing.T) (string, uuid.UUID) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "terminal.sqlite")
 	db := trOpen(t, path)
-	testutil.ApplyMigrations(t, db, trMigrationsDir)
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	id := uuid.New()
 	now := time.Now()
 	row, err := database.New(db).CreateDebuglet(context.Background(), database.CreateDebugletParams{

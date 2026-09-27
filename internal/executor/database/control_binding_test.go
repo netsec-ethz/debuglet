@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -13,8 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/executor/database"
-	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
 const (
@@ -22,13 +20,11 @@ const (
 	cbSession     = "6f2f15d8-f982-44a8-b22c-8d80fa5f8b62"
 )
 
-func cbOpen(t *testing.T, version int64) (context.Context, *sql.DB, *goose.Provider) {
+func cbOpen(t *testing.T, version int64) (context.Context, *sql.DB) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	t.Cleanup(cancel)
-	dsn := url.URL{Scheme: "file", Path: filepath.Join(t.TempDir(), "binding.sqlite")}
-	dsn.RawQuery = url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(1000)", "synchronous(OFF)"}}.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "binding.sqlite"), sqlitedb.Create(), sqlitedb.WithoutSync())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,19 +33,14 @@ func cbOpen(t *testing.T, version int64) (context.Context, *sql.DB, *goose.Provi
 			t.Error(err)
 		}
 	})
-	db.SetMaxOpenConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, database.MigrationFS(), goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
+	if _, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), version); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, version); err != nil {
-		t.Fatal(err)
-	}
-	return ctx, db, provider
+	return ctx, db
 }
 
 func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
-	ctx, db, provider := cbOpen(t, 2)
+	ctx, db := cbOpen(t, 2)
 	now := database.NewUTCTime(time.Now())
 	wasm := []byte("retained WASM fixture")
 	ids := []uuid.UUID{uuid.New(), uuid.New()}
@@ -62,10 +53,7 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if version, err := provider.GetDBVersion(ctx); err != nil || version != 5 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 5 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)
@@ -97,7 +85,7 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 }
 
 func TestControlBindingExecutorOwnedQueries(t *testing.T) {
-	ctx, db, _ := cbOpen(t, 3)
+	ctx, db := cbOpen(t, 3)
 	q := database.New(db)
 	id := uuid.New()
 	input := database.CreateDebugletParams{Uuid: id, Wasm: []byte("bound WASM"), TransactionID: "bound-transaction", FloorBw: 12, CeilBw: 34, TimeoutMs: 1000, DispatcherIncarnation: cbIncarnation, SessionID: cbSession}

@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"errors"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,6 +21,7 @@ import (
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
 func TestBootstrapFresh(t *testing.T) {
@@ -314,12 +314,10 @@ func assertSchemaFiles(t *testing.T, parent string, want ...string) {
 
 func openSchemaDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=rw"}
-	db, err := sql.Open("sqlite", dsn.String())
+	db, err := sqlitedb.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	return db
 }

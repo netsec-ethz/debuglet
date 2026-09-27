@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"path/filepath"
 	"sync"
@@ -12,9 +11,9 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/testtls"
 	pb "github.com/netsec-ethz/debuglet/protocol"
-	"github.com/pressly/goose/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -26,18 +25,12 @@ import (
 // production enrollment store deciding node identities.
 func enrolledControl(t *testing.T) (*controlTLS, *enrollment.Store, *countedNodes) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dispatcher.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "dispatcher.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	db.SetMaxOpenConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, database.MigrationFS(),
-		goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.Up(t.Context()); err != nil {
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatal(err)
 	}
 	store := enrollment.NewStore(db)

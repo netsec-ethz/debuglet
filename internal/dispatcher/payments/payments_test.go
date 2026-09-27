@@ -18,7 +18,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"go.uber.org/zap"
@@ -1197,13 +1197,14 @@ func TestCompleteTransaction(t *testing.T) {
 // rows in one transaction, and what matters here is the state it leaves.
 func newRefundDatabase(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "refund.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "refund.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, "../database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	return db
 }
 

@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	_ "modernc.org/sqlite"
 )
 
@@ -81,20 +81,9 @@ func (p Policy) locate(path string) (string, error) {
 }
 
 // openReadOnly opens an existing database without creating, upgrading or
-// journaling it. The file URI keeps filename characters out of the options.
+// journaling it.
 func openReadOnly(path string) (*sql.DB, error) {
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	dsn.RawQuery = url.Values{
-		"mode":    {"ro"},
-		"_pragma": {"query_only(1)", "busy_timeout(1000)"},
-	}.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	return db, nil
+	return sqlitedb.Open(path, sqlitedb.ReadOnly())
 }
 
 func (p Policy) verify(ctx context.Context, db *sql.DB, path string) error {

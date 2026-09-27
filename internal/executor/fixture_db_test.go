@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
-	_ "modernc.org/sqlite"
+	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
 // newFixtureDatabase opens one private file-backed executor database per test,
@@ -16,16 +16,17 @@ import (
 // before the database goes away.
 func newFixtureDatabase(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "executor.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "executor.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Error(err)
 		}
 	})
-	testutil.ApplyMigrations(t, db, "database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, executordb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	return db
 }

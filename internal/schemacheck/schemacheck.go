@@ -14,7 +14,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,7 +23,7 @@ import (
 
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
-	"github.com/pressly/goose/v3"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	_ "modernc.org/sqlite"
 )
 
@@ -139,24 +138,12 @@ func Directives(sequence fs.FS, name string) error {
 // OpenFresh creates a new SQLite database below dir and applies the embedded
 // sequence to it. The caller closes the returned handle.
 func OpenFresh(ctx context.Context, dir string, sequence fs.FS) (*sql.DB, error) {
-	path := filepath.Join(dir, "fresh.db")
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	dsn.RawQuery = url.Values{
-		"_pragma": {"foreign_keys(1)", "busy_timeout(1000)"},
-	}.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
+	db, err := sqlitedb.Open(filepath.Join(dir, "fresh.db"), sqlitedb.Create())
 	if err != nil {
 		return nil, fmt.Errorf("open fresh database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, sequence,
-		goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("create migration provider: %w", err), db.Close())
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		return nil, errors.Join(fmt.Errorf("apply migrations: %w", err), provider.Close())
+	if _, err := sqlitedb.Migrate(ctx, db, sequence, sqlitedb.Latest); err != nil {
+		return nil, errors.Join(fmt.Errorf("apply migrations: %w", err), db.Close())
 	}
 	return db, nil
 }

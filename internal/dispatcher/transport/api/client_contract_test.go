@@ -24,7 +24,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
@@ -36,16 +36,15 @@ import (
 )
 
 const (
-	ccExecutorID    = "cc-executor"
-	ccPricePerBwS   = int64(1)
-	ccFloorBW       = int64(1000)
-	ccDurationMS    = int64(2000)
-	ccCapacity      = resource.Megabit
-	ccBuildTimeout  = 120 * time.Second
-	ccRequestBound  = 10 * time.Second
-	ccCommandBound  = 20 * time.Second
-	ccCleanupBound  = 15 * time.Second
-	ccMigrationsDir = "../../database/migrations"
+	ccExecutorID   = "cc-executor"
+	ccPricePerBwS  = int64(1)
+	ccFloorBW      = int64(1000)
+	ccDurationMS   = int64(2000)
+	ccCapacity     = resource.Megabit
+	ccBuildTimeout = 120 * time.Second
+	ccRequestBound = 10 * time.Second
+	ccCommandBound = 20 * time.Second
+	ccCleanupBound = 15 * time.Second
 )
 
 // ccGuest is the bytes submitted as the guest. The dispatcher only decodes
@@ -107,7 +106,7 @@ func ccNewFixtureWith(t *testing.T, options ...Option) *ccFixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dispatcher.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "dispatcher.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -116,8 +115,9 @@ func ccNewFixtureWith(t *testing.T, options ...Option) *ccFixture {
 			t.Errorf("close sqlite: %v", err)
 		}
 	})
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, ccMigrationsDir)
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
