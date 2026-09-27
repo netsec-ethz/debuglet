@@ -8,16 +8,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 
 	"github.com/google/uuid"
 )
 
 // batch pays for one TEST transaction with one order per floor, numbered from
 // 1 the way LockPrice numbers them, and returns the matching submission specs.
-func (f *tgFixture) batch(t *testing.T, floors ...resource.Bitrate) []models.DebugletSpec {
+func (f *tgFixture) batch(t *testing.T, floors ...bitrate.Bitrate) []models.DebugletSpec {
 	t.Helper()
 	txID, err := f.ph.NewTransactionID()
 	if err != nil {

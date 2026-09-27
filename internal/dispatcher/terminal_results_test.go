@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -39,10 +39,10 @@ const (
 	tgExecutorID = "tg-executor"
 	tgCurrency   = "TEST"
 	tgPrice      = int64(1)
-	tgCapacity   = resource.Megabit
+	tgCapacity   = bitrate.Megabit
 	tgTimeout    = 10 * time.Second
-	tgFloorA     = resource.Bitrate(1000)
-	tgFloorB     = resource.Bitrate(3000)
+	tgFloorA     = bitrate.Bitrate(1000)
+	tgFloorB     = bitrate.Bitrate(3000)
 	tgBound      = 30 * time.Second
 	tgCallBound  = 10 * time.Second
 	tgMigrations = "database/migrations"
@@ -79,7 +79,7 @@ func tgStr(s string) *string { return &s }
 
 func tgText(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
 
-func tgOrderPrice(floor resource.Bitrate) int64 {
+func tgOrderPrice(floor bitrate.Bitrate) int64 {
 	return tgPrice * int64(floor) * int64(tgTimeout/time.Second)
 }
 
@@ -184,7 +184,7 @@ type tgDebuglet struct {
 	id      uuid.UUID
 	txID    string
 	orderID int64
-	floor   resource.Bitrate
+	floor   bitrate.Bitrate
 	row     database.Debuglet
 }
 
@@ -268,7 +268,7 @@ func newTGFixture(t *testing.T, peer *tgPeer) *tgFixture {
 }
 
 // spec pays for one TEST order and returns the matching submission spec.
-func (f *tgFixture) spec(t *testing.T, floor resource.Bitrate) models.DebugletSpec {
+func (f *tgFixture) spec(t *testing.T, floor bitrate.Bitrate) models.DebugletSpec {
 	t.Helper()
 	txID, err := f.ph.NewTransactionID()
 	if err != nil {
@@ -299,7 +299,7 @@ func (f *tgFixture) spec(t *testing.T, floor resource.Bitrate) models.DebugletSp
 // RPC (admission, row, executor history, scheduler reservation) and then
 // applies the guarded Uploaded write a successful upload performs. It lets
 // the callback subtests run without the peer transport.
-func (f *tgFixture) seedDirect(t *testing.T, floor resource.Bitrate) tgDebuglet {
+func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate) tgDebuglet {
 	t.Helper()
 	spec := f.spec(t, floor)
 	id := uuid.New()
@@ -346,7 +346,7 @@ func (f *tgFixture) seedDirect(t *testing.T, floor resource.Bitrate) tgDebuglet 
 
 // submit pays for and submits one debuglet through the real SubmitDebuglets
 // path, so the Upload RPC reaches the peer.
-func (f *tgFixture) submit(t *testing.T, floor resource.Bitrate) (tgDebuglet, error) {
+func (f *tgFixture) submit(t *testing.T, floor bitrate.Bitrate) (tgDebuglet, error) {
 	t.Helper()
 	spec := f.spec(t, floor)
 	deb := tgDebuglet{txID: spec.TransactionID, orderID: spec.OrderID, floor: floor}
@@ -442,7 +442,7 @@ func (f *tgFixture) earnings(t *testing.T) database.Earning {
 
 // reserved is the executor's maximum scheduled usage over the debuglet's
 // window: the scheduler reservation that a winning exit releases exactly once.
-func (f *tgFixture) reserved(t *testing.T, deb tgDebuglet) resource.Bitrate {
+func (f *tgFixture) reserved(t *testing.T, deb tgDebuglet) bitrate.Bitrate {
 	t.Helper()
 	return f.d.scheduler.QueryMaxExec(tgExecutorID, deb.row.StartTime.Time, deb.row.EndTime.Time)
 }
@@ -523,7 +523,7 @@ func tgAssertRow(t *testing.T, row database.Debuglet, state models.DebugletRunSt
 	}
 }
 
-func tgAssertReserved(t *testing.T, f *tgFixture, deb tgDebuglet, want resource.Bitrate) {
+func tgAssertReserved(t *testing.T, f *tgFixture, deb tgDebuglet, want bitrate.Bitrate) {
 	t.Helper()
 	if got := f.reserved(t, deb); got != want {
 		t.Fatalf("executor reservation over the window of %s is %s, want %s", deb.id, got, want)

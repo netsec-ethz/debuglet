@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -183,7 +183,7 @@ func (f *modeFixture) registerExecutor() {
 	defer mutation.Finish()
 	if _, err := f.d.OnResources(mutation.Context(), mutation, &protocol.ResourcesRequest{
 		ExecutorId:        modeExecutorID,
-		BandwidthCapacity: int64(resource.Gigabit),
+		BandwidthCapacity: int64(bitrate.Gigabit),
 	}); err != nil {
 		f.t.Fatalf("failed to set executor capacity: %v", err)
 	}

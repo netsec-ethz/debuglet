@@ -7,9 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
@@ -23,13 +23,14 @@ import (
 )
 
 // Numeric bounds the executor admits on the values the control protocol
-// carries. They repeat what the dispatcher's HTTP contract documents:
+// carries. They are what the dispatcher's HTTP contract documents, and the
+// bandwidth bound is the one [bitrate.InPolicyRange] applies on both roles:
 // bandwidth is bits per second and timeout_ms is milliseconds, and both are
 // bounded on each side so that the duration and the aggregate limits derived
 // from them stay exact. The executor enforces them itself: a control peer is
 // not a reason to convert an unchecked number into a run budget or a rate.
 const (
-	maxPolicyBitrate   = int64(app.Petabit)
+	maxPolicyBitrate   = int64(bitrate.Max)
 	maxPolicyTimeoutMS = int64(math.MaxInt64) / int64(time.Millisecond)
 )
 
@@ -38,9 +39,9 @@ const (
 func validatePolicyNumbers(policy *pb.DebugletPolicy) error {
 	floor, ceil, timeout := policy.GetFloorBw(), policy.GetCeilBw(), policy.GetTimeoutMs()
 	switch {
-	case floor < 0 || floor > maxPolicyBitrate:
+	case !bitrate.InPolicyRange(floor):
 		return status.Errorf(codes.InvalidArgument, "floor_bw %d must be between 0 and %d bits per second", floor, maxPolicyBitrate)
-	case ceil < 0 || ceil > maxPolicyBitrate:
+	case !bitrate.InPolicyRange(ceil):
 		return status.Errorf(codes.InvalidArgument, "ceil_bw %d must be between 0 and %d bits per second", ceil, maxPolicyBitrate)
 	case ceil < floor:
 		return status.Error(codes.InvalidArgument, "ceil_bw must be at least floor_bw")
@@ -187,7 +188,7 @@ func (e *Executor) applyBandwidth(binding controlsession.Binding, req *pb.Bandwi
 	// carrying one value the executor cannot account for leaves no capacity
 	// changed at all.
 	for _, up := range req.GetLimits() {
-		if bits := up.GetBitsLimit(); bits < 0 || bits > maxPolicyBitrate {
+		if bits := up.GetBitsLimit(); !bitrate.InPolicyRange(bits) {
 			return nil, status.Errorf(codes.InvalidArgument,
 				"destination limit %d must be between 0 and %d bits per second", bits, maxPolicyBitrate)
 		}
@@ -196,7 +197,7 @@ func (e *Executor) applyBandwidth(binding controlsession.Binding, req *pb.Bandwi
 	defer e.mu.Unlock()
 	destinations := make([]string, 0, len(req.GetLimits()))
 	for _, up := range req.GetLimits() {
-		e.limiter.SetAddrCapacity(up.GetAddress(), app.Bitrate(up.GetBitsLimit()))
+		e.limiter.SetAddrCapacity(up.GetAddress(), bitrate.Bitrate(up.GetBitsLimit()))
 		destinations = append(destinations, up.GetAddress())
 	}
 	e.publishLimitsLocked(destinations)

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/testpeer"
@@ -55,7 +55,7 @@ func (a *terminalPeerAdapter) OnExecutorConnected(ctx context.Context, owner *rp
 // it started. The returned stop is idempotent, bounded by its cleanup
 // context, and joins the complete Dispatcher before declaring teardown done.
 // Constructors also register idempotent Dispatcher.Close for setup failures.
-func startTerminalPeer(ctx context.Context, d *Dispatcher, capacity resource.Bitrate,
+func startTerminalPeer(ctx context.Context, d *Dispatcher, capacity bitrate.Bitrate,
 	peer pb.ExecutorServiceServer) (stop func(context.Context) error, err error) {
 	if capacity <= 0 {
 		return nil, errors.New("terminal peer: capacity must be positive")
@@ -189,7 +189,7 @@ func TestTerminalPeerLifecycle(t *testing.T) {
 
 	d := newTerminalPeerDispatcher(t)
 	peer := &terminalLifecyclePeer{id: "peer-exec", aborts: make(chan *pb.AbortRequest, 1)}
-	stop, err := startTerminalPeer(ctx, d, resource.Megabit, peer)
+	stop, err := startTerminalPeer(ctx, d, bitrate.Megabit, peer)
 	if err != nil {
 		t.Fatalf("startTerminalPeer: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestTerminalPeerLifecycle(t *testing.T) {
 	if !ok {
 		t.Fatal("executor not registered after startTerminalPeer returned")
 	}
-	if exec.capacity != resource.Megabit || exec.Currency != "TEST" || exec.PricePerBwS != 1 {
+	if exec.capacity != bitrate.Megabit || exec.Currency != "TEST" || exec.PricePerBwS != 1 {
 		t.Fatalf("registration incomplete: capacity=%s currency=%q price=%d", exec.capacity, exec.Currency, exec.PricePerBwS)
 	}
 	d.mu.RLock()
@@ -253,7 +253,7 @@ func TestTerminalPeerLifecycle(t *testing.T) {
 	badDispatcher := newTerminalPeerDispatcher(t)
 	badCtx, cancelBad := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelBad()
-	badStop, badErr := startTerminalPeer(badCtx, badDispatcher, resource.Megabit, bad)
+	badStop, badErr := startTerminalPeer(badCtx, badDispatcher, bitrate.Megabit, bad)
 	if badStop != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
@@ -300,7 +300,7 @@ func TestTerminalPeerStopWaitsForHandlers(t *testing.T) {
 		entered:               make(chan struct{}),
 		release:               make(chan struct{}), finished: make(chan struct{}),
 	}
-	stop, err := startTerminalPeer(ctx, d, resource.Megabit, peer)
+	stop, err := startTerminalPeer(ctx, d, bitrate.Megabit, peer)
 	if err != nil {
 		t.Fatalf("startTerminalPeer: %v", err)
 	}

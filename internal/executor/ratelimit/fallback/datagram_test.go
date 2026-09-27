@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 // The tests in this file run the limiter over real loopback UDP sockets. A
@@ -41,7 +41,7 @@ const (
 // limited side must be connected, because Attach keys its limits by the remote
 // address; the peer is an ordinary socket that sends with WriteToUDP and
 // receives with ReadFromUDP.
-func udpPair(t *testing.T, rate app.Bitrate) (*FallbackConn, *net.UDPConn) {
+func udpPair(t *testing.T, rate bitrate.Bitrate) (*FallbackConn, *net.UDPConn) {
 	t.Helper()
 	peer, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -124,7 +124,7 @@ func expectNothingAtPeer(t *testing.T, peer *net.UDPConn) {
 }
 
 // setRates installs rate on both limits of fc.
-func setRates(t *testing.T, fc *FallbackConn, rate app.Bitrate) {
+func setRates(t *testing.T, fc *FallbackConn, rate bitrate.Bitrate) {
 	t.Helper()
 	if err := fc.count.SetLimit(testAddr, fc.id, rate); err != nil {
 		t.Fatalf("SetLimit: %v", err)
@@ -153,7 +153,7 @@ func startIO(t *testing.T, fc *FallbackConn, op func()) <-chan struct{} {
 
 // waitForReservation returns once the operation under test has reserved its
 // bandwidth, which takes the destination balance below the seeded one.
-func waitForReservation(t *testing.T, fc *FallbackConn, seeded app.Bitrate) {
+func waitForReservation(t *testing.T, fc *FallbackConn, seeded bitrate.Bitrate) {
 	t.Helper()
 	waitUntil(t, func() bool {
 		dest, ok, _, _ := bucketTokens(fc)
@@ -165,7 +165,7 @@ func waitForReservation(t *testing.T, fc *FallbackConn, seeded app.Bitrate) {
 // seeded with: an operation that sent and received nothing keeps none of its
 // reservation. No seed is a debt, so this also keeps the accounting
 // nonnegative.
-func expectRefunded(t *testing.T, fc *FallbackConn, seeded app.Bitrate) {
+func expectRefunded(t *testing.T, fc *FallbackConn, seeded bitrate.Bitrate) {
 	t.Helper()
 	dest, destOK, exec, execOK := bucketTokens(fc)
 	if destOK && dest < seeded {
@@ -197,7 +197,7 @@ func transferTime(size, rate int) time.Duration {
 // a buffer that holds it, once the wait its size implies has passed. The next
 // Read returns the next datagram: nothing of the first is left over.
 func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
-	fc, peer := udpPair(t, app.FromBytes(datagramRate))
+	fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestUDPReadReturnsOversizedDatagramIntact(t *testing.T) {
 // A small datagram received into a large buffer from drained buckets waits
 // for its own size only: a buffer larger than the datagram costs nothing.
 func TestUDPReadChargesTheDatagramNotTheBuffer(t *testing.T) {
-	fc, peer := udpPair(t, app.FromBytes(datagramRate))
+	fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestUDPWriteSendsOneDatagram(t *testing.T) {
 		{"empty", 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fc, peer := udpPair(t, app.FromBytes(datagramRate))
+			fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 			if err := fc.SetWriteDeadline(time.Now().Add(boundedWait)); err != nil {
 				t.Fatalf("SetWriteDeadline: %v", err)
 			}
@@ -291,7 +291,7 @@ func TestUDPWriteSendsOneDatagram(t *testing.T) {
 // The limiter hands the socket the whole buffer, even one larger than a
 // rate-second.
 func TestUDPReadIntoSmallerBufferTruncatesAsTheSocketDoes(t *testing.T) {
-	fc, peer := udpPair(t, app.FromBytes(datagramRate))
+	fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestUDPReadIntoSmallerBufferTruncatesAsTheSocketDoes(t *testing.T) {
 // size, not for the part that fits: a guest reading with a small buffer takes
 // in large datagrams at their price.
 func TestUDPReadIntoSmallerBufferChargesTheWholeDatagram(t *testing.T) {
-	fc, peer := udpPair(t, app.FromBytes(datagramRate))
+	fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestUDPReadIntoSmallerBufferChargesTheWholeDatagram(t *testing.T) {
 // has no such wait to cancel: it takes the datagram off the socket before it
 // waits, see TestUDPCutShortReadKeepsTheCharge.
 func TestUDPCanceledDatagramWaitLeavesNoTrace(t *testing.T) {
-	full := app.FromBytes(datagramRate)
+	full := bitrate.FromBytes(datagramRate)
 	for _, tc := range []struct {
 		name    string
 		close   bool
@@ -398,7 +398,7 @@ func TestUDPCutShortReadKeepsTheCharge(t *testing.T) {
 		{"read close", true, net.ErrClosed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fc, peer := udpPair(t, app.FromBytes(datagramRate))
+			fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 			payload := udpDatagram(tc.name, oversizedDatagram)
 			sendToLimited(t, peer, fc, payload)
 			if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
@@ -468,7 +468,7 @@ func TestUDPEmptyDatagramRequiresPermission(t *testing.T) {
 		{"deleted executor", func(f *FallbackConn) error { return f.count.DeleteExecLimit(f.id) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fc, peer := udpPair(t, app.FromBytes(datagramRate))
+			fc, peer := udpPair(t, bitrate.FromBytes(datagramRate))
 			if err := tc.revoke(fc); err != nil {
 				t.Fatal(err)
 			}
@@ -490,7 +490,7 @@ func TestUDPEmptyDatagramRequiresPermission(t *testing.T) {
 func TestUDPRateChangeReachesWaitingDatagram(t *testing.T) {
 	t.Run("lowered", func(t *testing.T) {
 		const before, after = 3 * datagramRate, datagramRate
-		fc, peer := udpPair(t, app.FromBytes(before))
+		fc, peer := udpPair(t, bitrate.FromBytes(before))
 		if err := fc.SetWriteDeadline(time.Now().Add(boundedWait)); err != nil {
 			t.Fatalf("SetWriteDeadline: %v", err)
 		}
@@ -505,7 +505,7 @@ func TestUDPRateChangeReachesWaitingDatagram(t *testing.T) {
 			returned = time.Now()
 		})
 		waitForReservation(t, fc, 0)
-		setRates(t, fc, app.FromBytes(after))
+		setRates(t, fc, bitrate.FromBytes(after))
 		changed := time.Since(start)
 		if oldWait := transferTime(len(payload), before); changed >= oldWait {
 			t.Fatalf("rate lowered %v after the start, not within the %v wait", changed, oldWait)
@@ -527,14 +527,14 @@ func TestUDPRateChangeReachesWaitingDatagram(t *testing.T) {
 		// Five rate-seconds owed from earlier traffic make the old wait long
 		// enough to tell apart from the new one on a loaded host.
 		const debt = 5 * before
-		fc, peer := udpPair(t, app.FromBytes(before))
+		fc, peer := udpPair(t, bitrate.FromBytes(before))
 		if err := fc.SetWriteDeadline(time.Now().Add(boundedWait)); err != nil {
 			t.Fatalf("SetWriteDeadline: %v", err)
 		}
 		payload := udpDatagram("raised", before)
 		oldWait := transferTime(debt+len(payload), before)
 		start := time.Now()
-		seedBuckets(t, fc, -app.FromBytes(debt), -app.FromBytes(debt))
+		seedBuckets(t, fc, -bitrate.FromBytes(debt), -bitrate.FromBytes(debt))
 		var n int
 		var err error
 		var returned time.Time
@@ -542,8 +542,8 @@ func TestUDPRateChangeReachesWaitingDatagram(t *testing.T) {
 			n, err = fc.Write(payload)
 			returned = time.Now()
 		})
-		waitForReservation(t, fc, -app.FromBytes(debt))
-		setRates(t, fc, app.FromBytes(after))
+		waitForReservation(t, fc, -bitrate.FromBytes(debt))
+		setRates(t, fc, bitrate.FromBytes(after))
 		if changed := time.Since(start); changed >= oldWait/2 {
 			t.Fatalf("rate raised %v after the start, too late to tell the %v wait from a shorter one", changed, oldWait)
 		}
@@ -559,7 +559,7 @@ func TestUDPRateChangeReachesWaitingDatagram(t *testing.T) {
 
 	t.Run("revoked", func(t *testing.T) {
 		const before = 3 * datagramRate
-		fc, peer := udpPair(t, app.FromBytes(before))
+		fc, peer := udpPair(t, bitrate.FromBytes(before))
 		if err := fc.SetWriteDeadline(time.Now().Add(boundedWait)); err != nil {
 			t.Fatalf("SetWriteDeadline: %v", err)
 		}

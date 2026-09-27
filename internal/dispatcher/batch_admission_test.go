@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 
 	"github.com/google/uuid"
 )
 
-func batchSetCapacity(t *testing.T, f *tgFixture, capacity resource.Bitrate) {
+func batchSetCapacity(t *testing.T, f *tgFixture, capacity bitrate.Bitrate) {
 	t.Helper()
 	f.d.mu.Lock()
 	f.d.executors[tgExecutorID].capacity = capacity
@@ -28,7 +29,7 @@ func batchRows(t *testing.T, f *tgFixture) int {
 	return count
 }
 
-func batchReserved(f *tgFixture, from, to time.Time) resource.Bitrate {
+func batchReserved(f *tgFixture, from, to time.Time) bitrate.Bitrate {
 	return f.d.scheduler.QueryMaxExec(tgExecutorID, from, to)
 }
 
@@ -56,11 +57,11 @@ func TestSubmitDebugletsStagesWholeBatchCapacity(t *testing.T) {
 	t.Run("fitting overlap and nonoverlap commit once", func(t *testing.T) {
 		for _, tc := range []struct {
 			name       string
-			floors     []resource.Bitrate
+			floors     []bitrate.Bitrate
 			secondFrom time.Duration
 		}{
-			{name: "fitting overlap", floors: []resource.Bitrate{40, 60}},
-			{name: "nonoverlap", floors: []resource.Bitrate{100, 100}, secondFrom: time.Hour},
+			{name: "fitting overlap", floors: []bitrate.Bitrate{40, 60}},
+			{name: "nonoverlap", floors: []bitrate.Bitrate{100, 100}, secondFrom: time.Hour},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				peer := &tgPeer{}

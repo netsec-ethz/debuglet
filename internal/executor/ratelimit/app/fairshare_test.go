@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 // A floor is bandwidth its run already holds. Sharing therefore starts from
@@ -23,12 +25,12 @@ const (
 
 type fairRun struct {
 	id      uuid.UUID
-	floor   Bitrate
-	ceiling Bitrate
+	floor   bitrate.Bitrate
+	ceiling bitrate.Bitrate
 	addrs   []string
 }
 
-func fairInsert(t *testing.T, l *Limiter, floor, ceiling Bitrate, addrs ...string) fairRun {
+func fairInsert(t *testing.T, l *Limiter, floor, ceiling bitrate.Bitrate, addrs ...string) fairRun {
 	t.Helper()
 	run := fairRun{id: uuid.New(), floor: floor, ceiling: ceiling, addrs: addrs}
 	if err := l.InsertDebuglet(run.id, floor, ceiling, addrs); err != nil {
@@ -40,11 +42,11 @@ func fairInsert(t *testing.T, l *Limiter, floor, ceiling Bitrate, addrs ...strin
 // fairCheck states the whole contract of a limiter over one admitted set of
 // runs: every run keeps its floor, no run passes its ceiling, and the runs
 // sharing a dimension never add up to more than its capacity.
-func fairCheck(t *testing.T, what string, l *Limiter, runs []fairRun, execCapacity, addrCapacity Bitrate) {
+func fairCheck(t *testing.T, what string, l *Limiter, runs []fairRun, execCapacity, addrCapacity bitrate.Bitrate) {
 	t.Helper()
-	var execSum, execFloors Bitrate
-	addrSums := make(map[string]Bitrate)
-	addrFloors := make(map[string]Bitrate)
+	var execSum, execFloors bitrate.Bitrate
+	addrSums := make(map[string]bitrate.Bitrate)
+	addrFloors := make(map[string]bitrate.Bitrate)
 
 	for _, run := range runs {
 		limit, _, err := l.GetExecLimit(run.id)
@@ -122,7 +124,7 @@ func TestLimiterSharesOnlyWhatFloorsLeave(t *testing.T) {
 // no floors at all, floors equal to their ceilings, ceilings that differ, and
 // destinations shared by some runs and not by others.
 func TestLimiterFairshareShapes(t *testing.T) {
-	const capacity = Bitrate(100)
+	const capacity = bitrate.Bitrate(100)
 	for _, tc := range []struct {
 		name  string
 		build func(t *testing.T, l *Limiter) []fairRun
@@ -195,7 +197,7 @@ func TestLimiterFairshareShapes(t *testing.T) {
 // do not enumerate. Floors are drawn so that they fit the capacity, which is
 // what admission guarantees, and every intermediate state is checked.
 func TestLimiterFairshareRandomizedWorkloads(t *testing.T) {
-	const capacity = Bitrate(1000)
+	const capacity = bitrate.Bitrate(1000)
 	addrs := []string{fairAddrA, fairAddrB, fairAddrC}
 	for seed := int64(1); seed <= 16; seed++ {
 		t.Run(fmt.Sprintf("seed/%d", seed), func(t *testing.T) {
@@ -207,14 +209,14 @@ func TestLimiterFairshareRandomizedWorkloads(t *testing.T) {
 			}
 
 			var runs []fairRun
-			var floors Bitrate
+			var floors bitrate.Bitrate
 			for range 1 + random.Intn(6) {
-				floor := Bitrate(random.Intn(120))
+				floor := bitrate.Bitrate(random.Intn(120))
 				if floors+floor > capacity {
 					break
 				}
 				floors += floor
-				ceiling := floor + Bitrate(random.Intn(int(capacity)))
+				ceiling := floor + bitrate.Bitrate(random.Intn(int(capacity)))
 				var declared []string
 				for _, addr := range addrs {
 					if random.Intn(2) == 0 {

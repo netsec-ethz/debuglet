@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/avl"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"sync"
 
 	"github.com/google/uuid"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	defaultDestinationCapacity = Gigabit
+	defaultDestinationCapacity = bitrate.Gigabit
 	// executorDimension keys the executor-wide cache; every other key is a
 	// destination address. Both share one namespace of invalidation counters.
 	executorDimension = ""
@@ -27,20 +28,20 @@ var (
 )
 
 type Limit struct {
-	Executor Bitrate
-	Address  Bitrate
+	Executor bitrate.Bitrate
+	Address  bitrate.Bitrate
 	Updated  bool
 }
 
 type storeValue struct {
-	minimum Bitrate
-	maximum Bitrate
+	minimum bitrate.Bitrate
+	maximum bitrate.Bitrate
 
 	// Each cached value records the dimension version it was computed from, so
 	// recomputing one dimension never consumes another's pending invalidation.
-	lastExecLimit   Bitrate
+	lastExecLimit   bitrate.Bitrate
 	lastExecVersion uint64
-	lastAddrLimit   map[string]Bitrate
+	lastAddrLimit   map[string]bitrate.Bitrate
 	lastAddrVersion map[string]uint64
 	tracker         *UsageTracker
 
@@ -52,17 +53,17 @@ type storeValue struct {
 // level as well as per destination.
 type Limiter struct {
 	// max capacity for the executor
-	execCapacity Bitrate
+	execCapacity bitrate.Bitrate
 	// max capacity for a destination address
-	addrCapacity map[string]Bitrate
+	addrCapacity map[string]bitrate.Bitrate
 
 	// execUsed and addrUsed are the floors admitted on each dimension. A
 	// floor is bandwidth its run already holds, so only what is left after
 	// them is shared: sharing the whole capacity and then adding each floor
 	// back hands out the reserved part of the capacity a second time, once
 	// per run.
-	execUsed Bitrate
-	addrUsed map[string]Bitrate
+	execUsed bitrate.Bitrate
+	addrUsed map[string]bitrate.Bitrate
 
 	// tree for fairsharing the executors bandwidth
 	execT *avl.AVL[uuid.UUID]
@@ -89,8 +90,8 @@ type Limiter struct {
 
 func NewLimiter(l *zap.Logger) *Limiter {
 	return &Limiter{
-		addrCapacity: make(map[string]Bitrate),
-		addrUsed:     make(map[string]Bitrate),
+		addrCapacity: make(map[string]bitrate.Bitrate),
+		addrUsed:     make(map[string]bitrate.Bitrate),
 		execT:        &avl.AVL[uuid.UUID]{},
 		addrT:        make(map[string]*avl.AVL[uuid.UUID]),
 		stores:       make(map[uuid.UUID]*storeValue),
@@ -109,14 +110,14 @@ func (l *Limiter) invalidateLocked(dimension string) {
 // be shared: what is left once the floors it already owes are subtracted. It
 // never goes below zero, so a capacity that no longer covers its floors shares
 // nothing out rather than taking bandwidth away from them.
-func shareableCapacity(capacity, used Bitrate) Bitrate {
+func shareableCapacity(capacity, used bitrate.Bitrate) bitrate.Bitrate {
 	if used >= capacity {
 		return 0
 	}
 	return capacity - used
 }
 
-func (l *Limiter) SetExecutorCapacity(c Bitrate) {
+func (l *Limiter) SetExecutorCapacity(c bitrate.Bitrate) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.execCapacity == c {
@@ -125,12 +126,12 @@ func (l *Limiter) SetExecutorCapacity(c Bitrate) {
 	l.execCapacity = c
 	l.invalidateLocked(executorDimension)
 }
-func (l *Limiter) ExecutorCapacity() Bitrate {
+func (l *Limiter) ExecutorCapacity() bitrate.Bitrate {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.execCapacity
 }
-func (l *Limiter) SetAddrCapacity(addr string, c Bitrate) {
+func (l *Limiter) SetAddrCapacity(addr string, c bitrate.Bitrate) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if previous, ok := l.addrCapacity[addr]; ok && previous == c {
@@ -140,7 +141,7 @@ func (l *Limiter) SetAddrCapacity(addr string, c Bitrate) {
 	l.invalidateLocked(addr)
 }
 
-func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum Bitrate, addrs []string) error {
+func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum bitrate.Bitrate, addrs []string) error {
 	if minimum > maximum {
 		return fmt.Errorf("invalid input (Got minimum (%s) > maximum (%s), Want maximum >= minimum)", minimum, maximum)
 	}
@@ -155,7 +156,7 @@ func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum Bitrate, addrs [
 	l.execT.Insert(ID, residual)
 	l.execUsed += minimum
 
-	addrLimit := make(map[string]Bitrate)
+	addrLimit := make(map[string]bitrate.Bitrate)
 	addrVersion := make(map[string]uint64)
 	l.stores[ID] = &storeValue{
 		minimum:         minimum,
@@ -213,7 +214,7 @@ func (l *Limiter) RemoveDebuglet(ID uuid.UUID) {
 	delete(l.stores, ID)
 }
 
-func (l *Limiter) GetExecLimit(ID uuid.UUID) (Bitrate, bool, error) {
+func (l *Limiter) GetExecLimit(ID uuid.UUID) (bitrate.Bitrate, bool, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
@@ -229,7 +230,7 @@ func (l *Limiter) GetExecLimit(ID uuid.UUID) (Bitrate, bool, error) {
 
 	execLimit := store.lastExecLimit
 	if execLimit == -1 || store.lastExecVersion != version {
-		maxExecFairshare := Bitrate(l.execT.Fairshare(int64(shareable)))
+		maxExecFairshare := bitrate.Bitrate(l.execT.Fairshare(int64(shareable)))
 		execLimit = min(store.maximum, store.minimum+maxExecFairshare)
 		store.lastExecVersion = version
 		store.lastExecLimit = execLimit
@@ -239,7 +240,7 @@ func (l *Limiter) GetExecLimit(ID uuid.UUID) (Bitrate, bool, error) {
 	return execLimit, false, nil
 }
 
-func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (Bitrate, bool, error) {
+func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (bitrate.Bitrate, bool, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
@@ -269,7 +270,7 @@ func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (Bitrate, bool, error)
 
 	addrLimit, cached := store.lastAddrLimit[addr]
 	if !cached || addrLimit == -1 || store.lastAddrVersion[addr] != version {
-		maxAddrFairshare := Bitrate(tree.Fairshare(int64(shareable)))
+		maxAddrFairshare := bitrate.Bitrate(tree.Fairshare(int64(shareable)))
 		addrLimit = min(store.maximum, store.minimum+maxAddrFairshare)
 		store.lastAddrVersion[addr] = version
 		store.lastAddrLimit[addr] = addrLimit
@@ -295,7 +296,7 @@ func (l *Limiter) GetLimit(ID uuid.UUID, addr string) (Limit, error) {
 	return Limit{Executor: execLimit, Address: addrLimit, Updated: updated}, nil
 }
 
-func (l *Limiter) Wait(ctx context.Context, direction TransferDirection, ID uuid.UUID, addr string, size Bitrate) error {
+func (l *Limiter) Wait(ctx context.Context, direction TransferDirection, ID uuid.UUID, addr string, size bitrate.Bitrate) error {
 	l.mu.RLock()
 	store, ok := l.stores[ID]
 	if !ok {

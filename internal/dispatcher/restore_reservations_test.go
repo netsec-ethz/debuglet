@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
@@ -25,7 +26,7 @@ import (
 // restoreFloorFinished is the floor of the run that finishes before the
 // restart. It differs from the floors of the runs left unfinished, so the
 // restored total shows which stored runs a restore counted.
-const restoreFloorFinished = resource.Bitrate(5000)
+const restoreFloorFinished = bitrate.Bitrate(5000)
 
 // TestRestoreSchedulerSkipsFinishedRuns restarts the dispatcher over a
 // database that holds a run finished early through the terminal callback and
@@ -46,7 +47,7 @@ func TestRestoreSchedulerSkipsFinishedRuns(t *testing.T) {
 	if err := restoreAdmit(g, tgCapacity-unfinished); err != nil {
 		t.Errorf("released capacity was refused after restore: %v", err)
 	}
-	if err := restoreAdmit(g, tgCapacity-unfinished+resource.Bit); !errors.Is(err, resource.ErrCapacityFull) {
+	if err := restoreAdmit(g, tgCapacity-unfinished+bitrate.Bit); !errors.Is(err, resource.ErrCapacityFull) {
 		t.Errorf("run exceeding the capacity the unfinished runs leave: got %v, want %v", err, resource.ErrCapacityFull)
 	}
 	tgAssertReserved(t, g, run, unfinished)
@@ -167,7 +168,7 @@ func restartTG(t *testing.T, f *tgFixture) *tgFixture {
 
 // restoreAdmit is the admission decision SubmitDebuglets takes for a run of
 // floor over the fixture's window. It reserves nothing.
-func restoreAdmit(f *tgFixture, floor resource.Bitrate) error {
+func restoreAdmit(f *tgFixture, floor bitrate.Bitrate) error {
 	start := f.start
 	spec := models.DebugletSpec{
 		StartTime:  &start,

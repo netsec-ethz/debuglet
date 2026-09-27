@@ -6,7 +6,7 @@ package dispatcher
 import (
 	"context"
 	"errors"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"sync"
@@ -41,7 +41,7 @@ type RegisteredExecutor struct {
 	PricePerBwS int64
 	Currency    string
 	SuiWallet   string
-	capacity    resource.Bitrate
+	capacity    bitrate.Bitrate
 
 	sourceIp   string
 	publicHost *string

@@ -7,8 +7,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"math"
 	"net"
 	"net/http"
@@ -269,8 +269,8 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 		Args:       r.Args,
 		Wasm:       decoded,
 		Policy: models.DebugletPolicy{
-			FloorBW:     resource.Bitrate(r.Policy.FloorBW),
-			CeilBW:      resource.Bitrate(r.Policy.CeilBW),
+			FloorBW:     bitrate.Bitrate(r.Policy.FloorBW),
+			CeilBW:      bitrate.Bitrate(r.Policy.CeilBW),
 			Timeout:     time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
 			Addresses:   addrs,
 			RequireICMP: r.Policy.RequireICMP,

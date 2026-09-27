@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/testpeer"
@@ -168,7 +168,7 @@ var cpRegistrationBound = 10 * time.Second
 // waiting for active handlers, joins both serve goroutines and closes the
 // complete Dispatcher before reporting completion. Constructors also register
 // idempotent Dispatcher.Close immediately to cover setup failures.
-func startClientPeer(ctx context.Context, d *dispatcher.Dispatcher, capacity resource.Bitrate,
+func startClientPeer(ctx context.Context, d *dispatcher.Dispatcher, capacity bitrate.Bitrate,
 	peer pb.ExecutorServiceServer) (stop func(context.Context) error, err error) {
 	if capacity <= 0 {
 		return nil, errors.New("client peer: capacity must be positive")

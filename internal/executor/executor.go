@@ -34,6 +34,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
@@ -105,7 +106,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 		return nil, errors.New("scheduler is required")
 	}
 	limiter := app.NewLimiter(node.logger)
-	limiter.SetExecutorCapacity(app.Gigabit)
+	limiter.SetExecutorCapacity(bitrate.Gigabit)
 	ports, err := socket.NewPortManager(node.cfg.Network.PublicHost, node.cfg.Network.PublicPorts)
 	if err != nil {
 		return nil, err
@@ -215,7 +216,7 @@ func (e *Executor) resolveResources(err error) {
 	})
 }
 
-func (e *Executor) setResources(ctx context.Context, binding controlsession.Binding, capacity app.Bitrate) (*protocol.ResourcesResponse, error) {
+func (e *Executor) setResources(ctx context.Context, binding controlsession.Binding, capacity bitrate.Bitrate) (*protocol.ResourcesResponse, error) {
 	client, err := e.dispatcherClient(ctx, binding)
 	if err != nil {
 		return nil, err

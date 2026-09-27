@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -61,12 +62,12 @@ func TestDestinationLimitReachesTheHoldingExecutor(t *testing.T) {
 	if len(pushed) != 1 {
 		t.Fatalf("the executor received %d bandwidth updates after the limit changed, want 1", len(pushed))
 	}
-	if limits := pushed[0].GetLimits(); len(limits) != 1 || limits[0].GetAddress() != destination || resource.Bitrate(limits[0].GetBitsLimit()) != want {
+	if limits := pushed[0].GetLimits(); len(limits) != 1 || limits[0].GetAddress() != destination || bitrate.Bitrate(limits[0].GetBitsLimit()) != want {
 		t.Fatalf("pushed update %v, want %s at %s", limits, destination, want)
 	}
 }
 
-func dlCap(d *Dispatcher, destination string) resource.Bitrate {
+func dlCap(d *Dispatcher, destination string) bitrate.Bitrate {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.destinations.Cap(destination)

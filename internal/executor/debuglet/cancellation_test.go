@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
@@ -75,9 +76,9 @@ func cancellationEngine(t *testing.T, data []byte) (*debuglet.Debuglet, <-chan s
 		t.Fatal(err)
 	}
 	limiter := app.NewLimiter(logger)
-	limiter.SetExecutorCapacity(app.Gigabit)
-	limiter.SetAddrCapacity("127.0.0.1", app.Gigabit)
-	if err := limiter.InsertDebuglet(id, 0, app.Gigabit, []string{"127.0.0.1"}); err != nil {
+	limiter.SetExecutorCapacity(bitrate.Gigabit)
+	limiter.SetAddrCapacity("127.0.0.1", bitrate.Gigabit)
+	if err := limiter.InsertDebuglet(id, 0, bitrate.Gigabit, []string{"127.0.0.1"}); err != nil {
 		t.Fatal(err)
 	}
 	pc, err := fallback.NewFallbackCount()
@@ -85,7 +86,7 @@ func cancellationEngine(t *testing.T, data []byte) (*debuglet.Debuglet, <-chan s
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pc.Close() })
-	if err := pc.SetExecLimit(id, app.Gigabit); err != nil {
+	if err := pc.SetExecLimit(id, bitrate.Gigabit); err != nil {
 		t.Fatal(err)
 	}
 	observed := &observedCounter{PacketCount: pc, readEntered: make(chan struct{})}
@@ -93,7 +94,7 @@ func cancellationEngine(t *testing.T, data []byte) (*debuglet.Debuglet, <-chan s
 	if err != nil {
 		t.Fatal(err)
 	}
-	deb := debuglet.New(logger, id, "cancel-fixture", scheduler.Policy{CeilBW: int64(app.Gigabit), Timeout: time.Minute, Addresses: []string{"127.0.0.1"}}, operator, schedule, limiter, observed, nil, nil)
+	deb := debuglet.New(logger, id, "cancel-fixture", scheduler.Policy{CeilBW: int64(bitrate.Gigabit), Timeout: time.Minute, Addresses: []string{"127.0.0.1"}}, operator, schedule, limiter, observed, nil, nil)
 	t.Cleanup(func() {
 		if err := deb.Close(context.Background()); err != nil {
 			t.Error(err)

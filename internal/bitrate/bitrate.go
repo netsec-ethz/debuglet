@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 ETH Zurich
 
-package app
+// Package bitrate is the bandwidth type the dispatcher admits and the executor
+// enforces, so both compute with the same units and bounds.
+package bitrate
 
 import (
 	"fmt"
@@ -12,8 +14,6 @@ import (
 )
 
 // Bitrate in bits/s.
-//
-// Can also be used to generally indicate size.
 type Bitrate int64
 
 const (
@@ -31,19 +31,46 @@ const (
 	Petabyte         = 1000 * Terabyte
 )
 
+// Max is the largest bandwidth the dispatcher admits and the executor accepts
+// on any boundary.
+// It is far above any capacity a real executor announces and low enough that
+// the aggregate of every run a schedule can hold stays an exact int64.
+// api/openapi.yaml documents the same bound for floor_bw and ceil_bw.
+const Max = Petabit
+
+// InPolicyRange reports whether bps, a bandwidth in bits per second as the
+// control protocol and the HTTP contract carry it, lies in [0, Max]. The
+// dispatcher's admission and the executor's own checks both apply it, so
+// neither role can accept a bandwidth the other rejects.
+func InPolicyRange(bps int64) bool {
+	return bps >= 0 && bps <= int64(Max)
+}
+
+// Add adds two bandwidths and reports whether the sum is exact. Every
+// aggregate admission decision uses it, so a sum that would wrap rejects the
+// request instead of admitting it against a negative total.
+func Add(a, b Bitrate) (Bitrate, bool) {
+	sum := a + b
+	if (b > 0 && sum < a) || (b < 0 && sum > a) {
+		return 0, false
+	}
+	return sum, true
+}
+
 var sizeRegex = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)\s*([a-z]*)$`)
 
 func (b Bitrate) String() string {
-	bytes := b.SignedBytes()
 	switch {
-	case bytes >= 1<<30:
-		return fmt.Sprintf("%.1fGiB", float64(bytes)/float64(1<<30))
-	case bytes >= 1<<20:
-		return fmt.Sprintf("%.1fMiB", float64(bytes)/float64(1<<20))
-	case bytes >= 1<<10:
-		return fmt.Sprintf("%.1fKiB", float64(bytes)/float64(1<<10))
+	case b >= Terabit:
+		return fmt.Sprintf("%.2ftbit", float64(b)/float64(Terabit))
+	case b >= Gigabit:
+		return fmt.Sprintf("%.2fgbit", float64(b)/float64(Gigabit))
+	case b >= Megabit:
+		return fmt.Sprintf("%.2fmbit", float64(b)/float64(Megabit))
+	case b >= Kilobit:
+		return fmt.Sprintf("%.2fkbit", float64(b)/float64(Kilobit))
 	default:
-		return fmt.Sprintf("%dB", bytes)
+		return fmt.Sprintf("%dbit", b)
 	}
 }
 

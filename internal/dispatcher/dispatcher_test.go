@@ -6,6 +6,7 @@ package dispatcher_test
 import (
 	"database/sql"
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"regexp"
 	"testing"
@@ -26,7 +27,7 @@ const (
 	testExecutorID = "test"
 	testCurrency   = "USDC"
 	testWallet     = "0xwallet"
-	testCapacity   = resource.Gigabit
+	testCapacity   = bitrate.Gigabit
 	// testTimeout is the debuglet policy timeout. validateDebugletSpec adds a
 	// further 10s slack, so an admission window is [start, start+20s].
 	testTimeout = 10 * time.Second
@@ -67,7 +68,7 @@ var errSentinelInsert = errors.New("sentinel: insert reached")
 type restoredRow struct {
 	start time.Time
 	end   time.Time
-	usage resource.Bitrate
+	usage bitrate.Bitrate
 }
 
 // TestRestoreSchedulerAdmission verifies that reservations restored from the
@@ -86,7 +87,7 @@ func TestRestoreSchedulerAdmission(t *testing.T) {
 		name     string
 		restored []restoredRow
 		reqStart time.Time
-		reqFloor resource.Bitrate
+		reqFloor bitrate.Bitrate
 		admitted bool
 	}{
 		{
@@ -105,26 +106,26 @@ func TestRestoreSchedulerAdmission(t *testing.T) {
 		},
 		{
 			name:     "restored partial reservation admits request within remaining capacity",
-			restored: []restoredRow{{start, restoredEnd, 400 * resource.Megabit}},
+			restored: []restoredRow{{start, restoredEnd, 400 * bitrate.Megabit}},
 			reqStart: start,
-			reqFloor: 600 * resource.Megabit,
+			reqFloor: 600 * bitrate.Megabit,
 			admitted: true,
 		},
 		{
 			name:     "restored partial reservation rejects request exceeding remaining capacity",
-			restored: []restoredRow{{start, restoredEnd, 400 * resource.Megabit}},
+			restored: []restoredRow{{start, restoredEnd, 400 * bitrate.Megabit}},
 			reqStart: start,
-			reqFloor: 600*resource.Megabit + resource.Bit,
+			reqFloor: 600*bitrate.Megabit + bitrate.Bit,
 			admitted: false,
 		},
 		{
 			name: "multiple restored reservations are aggregated",
 			restored: []restoredRow{
-				{start, restoredEnd, 300 * resource.Megabit},
-				{start, restoredEnd, 300 * resource.Megabit},
+				{start, restoredEnd, 300 * bitrate.Megabit},
+				{start, restoredEnd, 300 * bitrate.Megabit},
 			},
 			reqStart: start,
-			reqFloor: 500 * resource.Megabit,
+			reqFloor: 500 * bitrate.Megabit,
 			admitted: false,
 		},
 		{

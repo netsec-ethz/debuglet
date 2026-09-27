@@ -7,7 +7,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"strings"
 	"time"
@@ -25,8 +25,8 @@ type DebugletSpec struct {
 }
 
 type DebugletPolicy struct {
-	FloorBW     resource.Bitrate
-	CeilBW      resource.Bitrate
+	FloorBW     bitrate.Bitrate
+	CeilBW      bitrate.Bitrate
 	Timeout     time.Duration
 	Addresses   []string
 	RequireICMP bool

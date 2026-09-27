@@ -4,7 +4,7 @@
 package schedule
 
 import (
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule/dyn"
 	"sync"
 	"time"
@@ -14,7 +14,7 @@ type Request struct {
 	Executor    string
 	Destination []string
 	From, To    time.Time
-	Use         resource.Bitrate
+	Use         bitrate.Bitrate
 }
 
 type SegTree interface {
@@ -67,7 +67,7 @@ func (j *JobScheduler) Submit(req Request) {
 	}
 }
 
-func (j *JobScheduler) submitExec(executor string, from, to int64, use resource.Bitrate) {
+func (j *JobScheduler) submitExec(executor string, from, to int64, use bitrate.Bitrate) {
 	t, ok := j.execTrees[executor]
 	if !ok {
 		t = dyn.New()
@@ -79,7 +79,7 @@ func (j *JobScheduler) submitExec(executor string, from, to int64, use resource.
 	}
 }
 
-func (j *JobScheduler) submitDest(destination string, from, to int64, use resource.Bitrate) {
+func (j *JobScheduler) submitDest(destination string, from, to int64, use bitrate.Bitrate) {
 	t, ok := j.destTrees[destination]
 	if !ok {
 		t = dyn.New()
@@ -103,15 +103,15 @@ func (j *JobScheduler) Remove(req Request) {
 	j.Submit(req)
 }
 
-func (j *JobScheduler) QueryMaxDest(destination string, from, to time.Time) resource.Bitrate {
+func (j *JobScheduler) QueryMaxDest(destination string, from, to time.Time) bitrate.Bitrate {
 	return j.queryMax(j.destTrees, destination, from, to)
 }
 
-func (j *JobScheduler) QueryMaxExec(executor string, from, to time.Time) resource.Bitrate {
+func (j *JobScheduler) QueryMaxExec(executor string, from, to time.Time) bitrate.Bitrate {
 	return j.queryMax(j.execTrees, executor, from, to)
 }
 
-func (j *JobScheduler) queryMax(m map[string]SegTree, key string, from, to time.Time) resource.Bitrate {
+func (j *JobScheduler) queryMax(m map[string]SegTree, key string, from, to time.Time) bitrate.Bitrate {
 	f := from.UnixNano() / j.granularity.Nanoseconds()
 	t := ceil(to.UnixNano(), j.granularity.Nanoseconds())
 	j.mu.RLock()
@@ -119,6 +119,6 @@ func (j *JobScheduler) queryMax(m map[string]SegTree, key string, from, to time.
 	if tree, ok := m[key]; !ok {
 		return 0
 	} else {
-		return resource.Bitrate(tree.QueryMax(f, t))
+		return bitrate.Bitrate(tree.QueryMax(f, t))
 	}
 }

@@ -10,9 +10,9 @@ import (
 	"net"
 	"sync"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 
 	"github.com/google/uuid"
 )
@@ -20,7 +20,7 @@ import (
 type HostConn struct {
 	pc    ratelimit.PacketCount
 	id    uuid.UUID
-	limit app.Bitrate
+	limit bitrate.Bitrate
 
 	conn       net.Conn
 	connCtx    context.Context
@@ -33,7 +33,7 @@ type HostConn struct {
 
 type HostConnOpts struct {
 	ConnAddr         string
-	MaximumBandwidth app.Bitrate
+	MaximumBandwidth bitrate.Bitrate
 	SocketType       socket.SocketType
 }
 
