@@ -75,80 +75,13 @@ same roles as supervised services instead of running them in a terminal.
 
 ## Managed services
 
-`dbl service` installs one verified role as a service the host's service manager
-supervises, next to the unprivileged foreground commands, which are unchanged. It
-needs administrator privileges and an existing unprivileged service account
-(`debuglet` by default); it never creates, changes or removes an account. Each
-instance owns exactly one unit, `debuglet-<role>-<name>.service`, one persistent
-state directory `/var/lib/debuglet/<role>s/<name>` holding its database, role
-identity and generated configuration, one administrator-owned record in
-`/etc/debuglet/services`, and one runtime directory `/run/debuglet/<role>s/<name>`
-holding only its readiness record. Every path an operation uses is derived from
-the role and name given on the command line; the record is believed only where it
-agrees with them, so nothing the service account can write decides where a
-privileged command acts.
-
-`--root DIR` writes the same files below another directory so they can be read
-before anything is installed for real. A staged tree is files and nothing else:
-the host has exactly one service manager, a unit of the same name there is the
-production instance, and a unit's runtime directory is the real `/run` whatever
-a staged unit says. A staged tree therefore drives no service manager at all,
-and `start`, `stop`, `uninstall`, `drain` and `--start`/`--enable` are refused
-together with `--root` rather than pointed at the production instance of that
-name. A staged instance is always reported `stopped`, so `service status --root`
-exits 4.
-
-The unit, the paths, the permissions and the shutdown budget are documented in
-[environments](environments.md#managed-services) and mirrored in
-[deploy/systemd](../deploy/systemd).
-
-Installing is repeatable: the same payload and options a second time change
-nothing and report nothing changed. A running daemon is never restarted as a
-side effect; when a reinstall changes the unit or the configuration, the report
-says a restart is required and leaves the decision to the operator. Installing a
-different package version over an existing state directory is refused, because
-local services do not migrate version-pinned role or service metadata. The
-[explicit database upgrade](environments.md#stored-state) changes SQLite schemas
-only; it does not make a local or managed state directory reusable by a different
-package version.
-A service is reported ready only
-after its daemon published its own readiness record and that record names the
-unit's main process; `started` alone is process creation and never counts as
-ready. `uninstall` stops and removes the unit and keeps every byte of state;
-`--purge` additionally deletes the database, the role identity, all retained
-results and the record, and is refused unless the daemon's last shutdown
-actually finished, which the service manager reports as an inactive unit with a
-successful result and a zero exit status. A refused purge undoes nothing.
-
-## Taking a role out of service
-
-`dbl drain` removes one managed role from eligible capacity.
-
-An executor is drained by stopping it: stopping is what revokes its control
-eligibility, signals its running work and joins its own local cleanup, and the
-drain also disables the unit so a reboot does not undo it (`--keep-enabled`
-opts out). Every other executor keeps serving. When the join is proven, which means the
-manager reports the unit inactive with a successful result and a zero exit
-status, the command reports what the node still holds: rows that were accepted but never
-started, rows that were started, the quarantine they all enter on the next start,
-and terminal results the dispatcher has not acknowledged. Nothing is replayed and
-nothing is deleted. A drain that does not join inside `--wait` is reported as
-incomplete and authorizes nothing: no deletion, no upgrade, no database closure.
-
-A dispatcher is not stopped. `dbl drain --role dispatcher` switches off the
-admission of new submissions only, so accepted debuglets keep their persistence
-and schedule, executors keep their control sessions, and results and queries are
-unaffected. The switch is a mode-`0644` file in `/etc/debuglet/services`, which
-only an administrator can write and which the dispatcher can neither replace nor
-remove, so it survives a restart and a reboot, needs no network route and takes
-effect immediately. A dispatcher is never stopped or disabled by a drain and
-takes no `--keep-enabled`. While it is paused the payment intent route is
-refused the same way, so nothing new is priced; an order that was already paid
-is refunded by the refusal, which spends it, so the same batch is refused from
-then on; where that refund cannot be performed the answer says the order is
-still paid and the batch can be submitted again once admission resumes.
-`--resume` reverses either drain; it replays nothing, and work retained from
-before an executor drain stays quarantined.
+`dbl service install|start|stop|status|uninstall --role ROLE [--name NAME]`
+installs one verified role as a service the host's service manager supervises,
+next to the unprivileged foreground commands, which are unchanged. `dbl drain
+--role ROLE` takes one managed role out of service and `--resume` puts it back.
+Both need administrator privileges. The profile, paths, readiness, purge rules
+and drain semantics are in [Managed services](services.md); the JSON reports are
+listed under [Commands](#commands) below.
 
 ## Credentials
 
@@ -213,8 +146,8 @@ and prints the dispatcher's `unauthorized` diagnostic.
 
 - `demo` uses the verified installed Linux amd64 payload to start its own wallet-free loopback dispatcher/executor, execute the bundled WASM/TCP measurement, verify the nonce/output/terminal result and clean up. See the [installation guide](../README-install.md). A CLI installed alone through `go install` has no bundled daemon/guest assets and cannot run this command.
 - `up` starts an installed local dispatcher and executor and stays in the foreground until Ctrl-C or SIGTERM. It creates configuration and SQLite databases automatically, disables wallet/SCION integration, and listens only on loopback. Default HTTP port is 9000. State defaults to `$XDG_STATE_HOME/debuglet` or `$HOME/.local/state/debuglet`; `--state-dir` selects another directory. Completed results and stored output survive stopping and restarting with the same package. A different package version requires a new state directory. Duplicate use of an active state directory is rejected. JSON mode emits one ready record with `state`, `endpoint`, `executor_id`, and `state_dir`; the same record is written to `environment.json` while running. Ctrl-C stops both child processes and retains the databases. This command does not install a background service or resume interrupted work.
-- `service` installs, starts, stops, inspects and removes one managed role instance, as described above. Its JSON report has `operation`, `role`, `name`, `unit`, `version`, `state` (`installed`, `ready`, `started`, `stopped`, `uninstalled`, `not-installed` or `incomplete`), `ready`, `enabled`, `active`, `main_pid`, `state_dir`, `unit_path`, `changed`, and, where they apply, `joined`, `executor_id`, `endpoint`, `restart_required` and `note`. After a stop or an uninstall, `joined` reports a daemon that completed its own shutdown, which is the only thing that permits deleting its state. The report is printed even when the operation failed, because the host's state has to be readable either way. `service status` exits 0 only when the role is ready and 4 when it completed its report of a role that is not ready (`started` without a readiness record, or `stopped`); an instance that is not installed is a failure (1).
-- `drain` takes one managed role out of service and `--resume` puts it back, as described above. Its JSON report has `operation`, `role`, `name`, `unit`, `outcome` (`drained`, `paused`, `resumed`, `started` or `incomplete`), `joined`, `enabled`, `active`, `state_dir`, `changed`, `note` and, after a joined executor drain, a `disposition` object counting `retained`, `queued`, `started`, `quarantined`, `bindings`, `retained_terminal`, `unsent_terminal` and `rejected_terminal`, plus `truncated` when the retained rows come from more control sessions than were counted, which makes `bindings` alone a lower bound. Only `joined` may be used to decide that state can be deleted, upgraded or rebuilt.
+- `service` installs, starts, stops, inspects and removes one managed role instance, as described in [Managed services](services.md). Its JSON report has `operation`, `role`, `name`, `unit`, `version`, `state` (`installed`, `ready`, `started`, `stopped`, `uninstalled`, `not-installed` or `incomplete`), `ready`, `enabled`, `active`, `main_pid`, `state_dir`, `unit_path`, `changed`, and, where they apply, `joined`, `executor_id`, `endpoint`, `restart_required` and `note`. After a stop or an uninstall, `joined` reports a daemon that completed its own shutdown, which is the only thing that permits deleting its state. The report is printed even when the operation failed, because the host's state has to be readable either way. `service status` exits 0 only when the role is ready and 4 when it completed its report of a role that is not ready (`started` without a readiness record, or `stopped`); an instance that is not installed is a failure (1).
+- `drain` takes one managed role out of service and `--resume` puts it back, as described in [Managed services](services.md#draining-a-managed-role). Its JSON report has `operation`, `role`, `name`, `unit`, `outcome` (`drained`, `paused`, `resumed`, `started` or `incomplete`), `joined`, `enabled`, `active`, `state_dir`, `changed`, `note` and, after a joined executor drain, a `disposition` object counting `retained`, `queued`, `started`, `quarantined`, `bindings`, `retained_terminal`, `unsent_terminal` and `rejected_terminal`, plus `truncated` when the retained rows come from more control sessions than were counted, which makes `bindings` alone a lower bound. Only `joined` may be used to decide that state can be deleted, upgraded or rebuilt.
 - `nodes` lists executors. JSON is always an array.
 - `validate` checks a workload without contacting a dispatcher. It reads the same bundled `hello` sample or regular WASM file accepted by `run`, bounds the read at 24 MiB, parses the module with the executor's WASM parser, and applies the SDK `Prepare` resource and envelope rules. Allowlist entries must be bare, unscoped IP addresses or syntactically valid DNS names; absolute DNS names with one trailing dot are accepted. Ports belong in guest arguments. Validation checks syntax only and performs no DNS lookup. A successful result reports the resolved local inputs and sizes, but does not claim that the module will execute, uses a particular ABI, or is supported by a selected executor. Invalid human output names the field on stderr. JSON output emits one object with `valid` and a `diagnostics` array containing stable `field` and `message` values. Validation creates no intent and sends no request.
 - `run` submits one job (order ID 0). Local options are validated before requesting an intent: nonblank executor selection (default `auto`) and exactly one of a file or `--sample hello`, `--duration` at least 1 ms and a whole number of milliseconds, nonnegative floor/ceil with floor ≤ ceil, guest arguments only after `--`. Bandwidth flags use bits per second. `--wasm` requires a regular file, including a symlink resolving to one; FIFOs, devices and directories are rejected before opening. File type/size are checked before and after opening, and reads are limited to 24 MiB. The SDK checks the 32 MiB intent envelope before sending and the actual submission envelope after server metadata is known; that second check may fail after an intent exists. `--allow` is repeatable and only populates the policy's address allowlist; the destination host and port a guest connects to belong in the guest arguments. Omitting `--executor`, or setting `--executor auto`, selects only when exactly one executor is ready; otherwise it fails before requesting an intent. An explicit ID skips discovery. No public destination is added. `--sample hello` reads the hello guest from the verified full installation and requires no compiler; `--wasm` accepts your own compiled guest. `--duration` is the server-side budget; `--timeout` bounds client requests and polling. `--allow-remote-test` is required for TEST submission to a non-loopback endpoint.

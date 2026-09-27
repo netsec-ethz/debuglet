@@ -17,6 +17,13 @@ changes; the linked API and deployment documentation contains operational detail
   backed-up database upgrades, and verified Linux amd64 packages.
 
 ### Changed
+- `install.sh` prints the `export PATH=...` line to use when the installed
+  `bin` directory is not on `PATH`.
+- The README leads with downloading and verifying a published release; building
+  from source moves to the installation guide. The daemon configuration and
+  stored-state reference moves to `docs/configuration.md`, and managed services
+  and drain to `docs/services.md`; `docs/environments.md` keeps the local
+  environment checker. `docs/API.md` lists the tested version combinations.
 - Move the debuglet examples from `local/wasm_samples/` to `examples/debuglets/`,
   the local daemon configurations from `local/configs/` to `configs/`,
   `verify_pcap.py` to `tools/`, and the illustrative HTTP exchanges to

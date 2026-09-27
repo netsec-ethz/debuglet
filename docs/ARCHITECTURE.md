@@ -131,7 +131,7 @@ A guest is a WASI command module. `Debuglet.registerHostFunctions` registers the
 
 ## Focused checks
 
-`make ci-test` runs the command, internal, public-package and protocol tests with structured output; `make ci-vet` vets the same set. A single package is faster during development: `go test -mod=readonly -count=1 ./internal/executor/debuglet/...`. Concurrency changes need `-race`, and the full native run is in [CONTRIBUTING.md](../CONTRIBUTING.md). The installed checks run in order — `make ci-build`, `ci-package`, `ci-demo`, `ci-compatibility`, `ci-local` — but only `ci-package` produces an archive; `ci-demo`, `ci-compatibility` and `ci-local` each install and exercise that same package; `scripts/ci-*.sh` holds their exact steps and `ci-local.sh` also invokes `ci-roles.sh` for separately started roles. `make ci-kernel` runs in an isolated container on a fresh GitHub-hosted `ubuntu-24.04` VM: it regenerates and loads the eBPF objects and rejects skipped kernel tests. All eleven lanes and their aggregate `required` check use GitHub-hosted VMs; the container toolchain is pinned, while the host kernel can change. To build a sample guest, `make wasm SAMPLE_DIR=examples/debuglets/<lang>/<sample>`.
+`make ci-test` runs the command, internal, public-package and protocol tests with structured output; `make ci-vet` vets the same set. A single package is faster during development: `go test -mod=readonly -count=1 ./internal/executor/debuglet/...`. Concurrency changes need `-race`, and the full native run is in [CONTRIBUTING.md](../CONTRIBUTING.md). The installed checks and the kernel lane are described in [CI setup](ci.md). To build a sample guest, `make wasm SAMPLE_DIR=examples/debuglets/<lang>/<sample>`.
 
 ## Debugging entry points
 

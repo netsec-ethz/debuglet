@@ -250,3 +250,11 @@ link_directory=$(mktemp -d "$prefix/bin/.dbl-link.XXXXXXXXXX") || fail 'cannot c
 ln -s -- "../lib/debuglet/$candidate_version/bin/dbl" "$link_directory/dbl" || fail 'cannot stage managed link'
 mv -T -f -- "$link_directory/dbl" "$cli" || fail 'cannot publish managed link'
 printf 'Installed Debuglet %s (%s) at %s\n' "$candidate_version" "$candidate_source" "$destination"
+case ":${PATH-}:" in
+*":$prefix/bin:"*) ;;
+*)
+	# Single-quote the directory so the printed line is safe to paste.
+	quoted=$(printf '%s' "$prefix/bin" | sed "s/'/'\\\\''/g")
+	printf "%s/bin is not on PATH. To use dbl directly, run:\n  export PATH='%s':\"\$PATH\"\n" "$prefix" "$quoted"
+	;;
+esac

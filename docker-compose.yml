@@ -1,12 +1,13 @@
 # Local TEST rig: the two daemons from the release payload, on one machine.
 #
-# Profile: local TEST. The default services are wallet-free and
-# credential-free. They need no private file, no external network and no
-# container privileges: the dispatcher's HTTP API is published on loopback
-# only, the executor shares the dispatcher's network namespace and reaches it
-# over loopback — the one shape a control channel without transport security
-# is supported in — and each daemon keeps its database on its own named
-# volume.
+# Profile: local TEST. The default services are wallet-free and need no
+# certificate or other private file, no external network and no container
+# privileges. The API still authenticates requests: a client registers and
+# logs in with `dbl login --register` (see the dispatcher service below). The
+# dispatcher's HTTP API is published on loopback only, the executor shares the
+# dispatcher's network namespace and reaches it over loopback — the one shape
+# a control channel without transport security is supported in — and each
+# daemon keeps its database on its own named volume.
 #
 #   docker compose build
 #   docker compose --profile seed run --rm seed     # create the databases

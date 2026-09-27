@@ -52,7 +52,7 @@ make ci-local
 
 `ci-build` writes native binaries and Go WASM guests to `.cache/ci/dist/`. `ci-package` writes and verifies an installable archive in `.cache/ci/packages/`. The demo, compatibility and local checks use that exact package. `ci-local` also needs Python 3; it exercises the installed combined environment, separately started roles, saved client connections, the Go SDK example and retained results after restart. These targets require the pinned Go toolchain and ordinary GNU command-line tools. Output directories used by an installed check must be fresh; use a separate checkout for independent runs.
 
-A successful compile alone does not prove a guest ran. The installed checks exercise real dispatcher/executor processes, SQLite, and a loopback TCP exchange. See [environment checks](docs/environments.md).
+A successful compile alone does not prove a guest ran. The installed checks exercise real dispatcher/executor processes, SQLite, and a loopback TCP exchange. See [CI setup](docs/ci.md#installed-lanes).
 
 ## Generated code
 

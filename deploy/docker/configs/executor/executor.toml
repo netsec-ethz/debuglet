@@ -10,7 +10,7 @@
 # A deployment is a different profile: deploy/ansible renders the executor
 # configuration from roles/executor/templates/executor.toml.j2.
 #
-# See deploy/README.md for the rig, and docs/environments.md for what each key
+# See deploy/README.md for the rig, and docs/configuration.md for what each key
 # means and which ones may be omitted.
 
 [identity]
