@@ -9,10 +9,10 @@
 //	make wasm SAMPLE_DIR=examples/debuglets/go/listen_udp
 //
 // A listener is requested through the policy of a submission, which `dbl run`
-// does not expose: submit this guest with the Go client SDK (client.Policy's
+// does not expose: submit this debuglet with the Go client SDK (client.Policy's
 // ListenUDP) or through the dispatcher API.
 //
-// ReadFromUDP has no deadline of its own: with no datagram to read, the guest
+// ReadFromUDP has no deadline of its own: with no datagram to read, the debuglet
 // waits until the job's execution budget ends it.
 package main
 

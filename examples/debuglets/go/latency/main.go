@@ -11,7 +11,7 @@
 //	  --executor EXECUTOR_ID --allow 127.0.0.1 --wait -- -addr 127.0.0.1:8080 -count 3
 //
 // The destination must be in the job's --allow list; a destination outside it
-// ends the job without guest output past the connect line.
+// ends the job without debuglet output past the connect line.
 package main
 
 import (

@@ -1,8 +1,8 @@
 // send_tcp — one TCP request over the raw host imports.
 //
-// This sample calls connect_tcp, send_tcp_data and receive_tcp_data directly
+// This example calls connect_tcp, send_tcp_data and receive_tcp_data directly
 // instead of using the debuglet SDK, so it shows the pointer-and-length calling
-// convention the SDK hides. Prefer the SDK (see the http_get sample) for
+// convention the SDK hides. Prefer the SDK (see the http_get example) for
 // ordinary measurements.
 //
 // Build and run:

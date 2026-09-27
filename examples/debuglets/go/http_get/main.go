@@ -12,7 +12,7 @@
 //	  --executor EXECUTOR_ID --allow 127.0.0.1 --wait -- -addr 127.0.0.1:8080 -path /
 //
 // The destination must be in the job's --allow list. "Connection: close" makes
-// the server end the stream, which the guest reads as a normal io.EOF.
+// the server end the stream, which the debuglet reads as a normal io.EOF.
 package main
 
 import (

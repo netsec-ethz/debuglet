@@ -1,7 +1,7 @@
 // send_udp — UDP sender, written with the Debuglet Go SDK.
 //
 // Sends -count datagrams to -addr on a connected UDP socket. No reply is read,
-// so the output only reports what the guest handed to the host.
+// so the output only reports what the debuglet handed to the host.
 //
 // Build and run:
 //

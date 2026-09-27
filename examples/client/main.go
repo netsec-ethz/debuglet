@@ -25,11 +25,11 @@ func main() {
 
 func run() error {
 	endpoint := flag.String("endpoint", "http://127.0.0.1:9000", "dispatcher URL")
-	wasmPath := flag.String("wasm", "", "compiled WASI guest")
+	wasmPath := flag.String("wasm", "", "compiled WASI debuglet")
 	executor := flag.String("executor", "", "executor ID (default: sole ready executor)")
 	register := flag.String("register", "", "account name to create and log in as")
 	allowRemote := flag.Bool("allow-remote-test", false, "permit TEST submission to a dispatcher that is not loopback")
-	allow := flag.String("allow", "", "comma-separated destinations the guest may reach")
+	allow := flag.String("allow", "", "comma-separated destinations the debuglet may reach")
 	flag.Parse()
 	if *wasmPath == "" {
 		return errors.New("--wasm FILE is required")
