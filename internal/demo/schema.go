@@ -2,20 +2,17 @@ package demo
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
-	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
 )
 
 type SchemaRole string
@@ -113,29 +110,15 @@ func bootstrapFresh(ctx context.Context, path string, migrations fs.FS) (err err
 		return fmt.Errorf("close new database file: %w", err)
 	}
 
-	// A file URI keeps spaces, question marks and other filename characters
-	// separate from connection options. mode=rw prevents implicit recreation.
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	dsn.RawQuery = url.Values{
-		"mode":    {"rw"},
-		"_pragma": {"foreign_keys(1)", "busy_timeout(1000)"},
-	}.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
+	// The file exists now, so the default mode=rw prevents implicit recreation.
+	db, err := sqlitedb.Open(path)
 	if err != nil {
 		return fmt.Errorf("open fresh database: %w", err)
 	}
 	closeDB = db.Close
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations,
-		goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
-		return fmt.Errorf("create fresh migration provider: %w", err)
-	}
-	closeDB = provider.Close
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if _, err := provider.Up(ctx); err != nil {
+	if _, err := sqlitedb.Migrate(ctx, db, migrations, sqlitedb.Latest); err != nil {
 		return fmt.Errorf("apply fresh database migrations: %w", err)
 	}
 	return ctx.Err()

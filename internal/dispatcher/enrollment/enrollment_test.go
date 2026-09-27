@@ -2,7 +2,6 @@ package enrollment_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"sync/atomic"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
-	"github.com/pressly/goose/v3"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	_ "modernc.org/sqlite"
 )
 
@@ -27,18 +26,12 @@ const (
 func openStore(t *testing.T) (context.Context, *enrollment.Store, *atomic.Pointer[time.Time]) {
 	t.Helper()
 	ctx := t.Context()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dispatcher.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "dispatcher.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	db.SetMaxOpenConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, database.MigrationFS(),
-		goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.Up(ctx); err != nil {
+	if _, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatal(err)
 	}
 	var clock atomic.Pointer[time.Time]

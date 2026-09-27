@@ -17,7 +17,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
 	"go.uber.org/zap"
@@ -60,17 +60,18 @@ func newFBFixture(t *testing.T, peer *fbPeer) *tgFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), tgBound)
 	t.Cleanup(cancel)
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=synchronous(OFF)", filepath.Join(t.TempDir(), "failed-batch.sqlite")))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "failed-batch.sqlite"), sqlitedb.Create(), sqlitedb.WithoutSync())
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Errorf("close sqlite: %v", err)
 		}
 	})
-	testutil.ApplyMigrations(t, db, tgMigrations)
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, db, "fb-test", time.Minute, time.Minute, ph)

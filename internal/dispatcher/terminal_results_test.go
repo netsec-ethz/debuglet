@@ -19,8 +19,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -45,7 +45,6 @@ const (
 	tgFloorB     = bitrate.Bitrate(3000)
 	tgBound      = 30 * time.Second
 	tgCallBound  = 10 * time.Second
-	tgMigrations = "database/migrations"
 	tgTrigger    = "tg_reject_state_write"
 	tgSentinel   = "tg_sentinel_state_write"
 	tgBadTime    = "tg-not-a-timestamp"
@@ -192,17 +191,18 @@ func newTGFixture(t *testing.T, peer *tgPeer) *tgFixture {
 
 	// synchronous(OFF) only skips fsync, which dominates fixture cost on the
 	// CI container's overlay filesystem; locking and journaling are unchanged.
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=synchronous(OFF)", filepath.Join(t.TempDir(), "guards.sqlite")))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "guards.sqlite"), sqlitedb.Create(), sqlitedb.WithoutSync())
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Errorf("close sqlite: %v", err)
 		}
 	})
-	testutil.ApplyMigrations(t, db, tgMigrations)
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)

@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	_ "modernc.org/sqlite"
 )
 
@@ -176,16 +176,5 @@ func open(path string) (*sql.DB, error) {
 	if path == "" {
 		return nil, errors.New("executor database path is empty")
 	}
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	dsn.RawQuery = url.Values{
-		"mode":    {"ro"},
-		"_pragma": {"query_only(1)", "busy_timeout(1000)"},
-	}.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	return db, nil
+	return sqlitedb.Open(path, sqlitedb.ReadOnly())
 }

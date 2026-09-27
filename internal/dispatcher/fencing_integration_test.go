@@ -17,8 +17,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -101,7 +101,9 @@ func fencingDispatcher(t *testing.T, gate *fencingSQLGate) *Dispatcher {
 			t.Error(err)
 		}
 	})
-	testutil.ApplyMigrations(t, db, "database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, db, "fencing-test", time.Minute, time.Minute, ph)

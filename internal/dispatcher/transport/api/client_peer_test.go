@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -13,9 +12,10 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/testpeer"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
@@ -300,7 +300,7 @@ func TestClientPeerRegistrationDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "peer.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "peer.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -309,8 +309,9 @@ func TestClientPeerRegistrationDeadline(t *testing.T) {
 			t.Errorf("close sqlite: %v", err)
 		}
 	})
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, ccMigrationsDir)
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 

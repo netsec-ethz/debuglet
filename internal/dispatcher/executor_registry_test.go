@@ -13,10 +13,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite"
@@ -43,7 +44,7 @@ func (t *registryTestTicker) Stop() {
 
 func newRegistryFixture(t *testing.T) (*Dispatcher, *sql.DB, *registryTestTicker) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "registry.db"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "registry.db"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +53,9 @@ func newRegistryFixture(t *testing.T) (*Dispatcher, *sql.DB, *registryTestTicker
 			t.Error(err)
 		}
 	})
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, "database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, dispatcherdb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	cfg := &config.DispatcherConfig{}
 	cfg.Sui.Disabled = true
 	d, err := New(zap.NewNop(), db, "registry-test", time.Minute, time.Second, payments.NewPaymentHandler(db, cfg, zap.NewNop()))

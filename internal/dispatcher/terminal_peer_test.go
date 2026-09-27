@@ -2,7 +2,6 @@ package dispatcher
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -12,9 +11,10 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/testpeer"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
@@ -162,13 +162,14 @@ func (p *terminalLifecyclePeer) Abort(_ context.Context, req *pb.AbortRequest) (
 // newTerminalPeerDispatcher uses SQLite because registration creates earnings.
 func newTerminalPeerDispatcher(t *testing.T) *Dispatcher {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "peer.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "peer.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
-	testutil.ApplyMigrations(t, db, "database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, dispatcherdb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, db, "peer-test", time.Minute, time.Minute, ph)

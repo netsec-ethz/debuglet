@@ -2,15 +2,12 @@ package storagecheck
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io/fs"
-	"net/url"
-	"path/filepath"
 
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
-	"github.com/pressly/goose/v3"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
 // Upgrade applies the packaged migrations of the role to the database at path
@@ -56,37 +53,24 @@ func Upgrade(ctx context.Context, role Role, path string) (int64, error) {
 }
 
 // applyPending applies every pending migration to an existing database and
-// reports the version it records afterwards. The file URI keeps filename
-// characters out of the options, and mode=rw never creates a missing file.
+// reports the version it records afterwards. sqlitedb.Open never creates a
+// missing file.
 func applyPending(ctx context.Context, path string, migrations fs.FS) (version int64, err error) {
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	dsn.RawQuery = url.Values{
-		"mode":    {"rw"},
-		"_pragma": {"foreign_keys(1)", "busy_timeout(1000)"},
-	}.Encode()
-	db, err := sql.Open("sqlite", dsn.String())
+	db, err := sqlitedb.Open(path)
 	if err != nil {
 		return 0, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations,
-		goose.WithDisableGlobalRegistry(true), goose.WithLogger(goose.NopLogger()))
-	if err != nil {
-		db.Close()
-		return 0, err
-	}
-	// Closing the provider closes the database.
 	defer func() {
-		if closeErr := provider.Close(); err == nil && closeErr != nil {
+		if closeErr := db.Close(); err == nil && closeErr != nil {
 			err = closeErr
 		}
 	}()
-	if _, err := provider.Up(ctx); err != nil {
-		if recorded, versionErr := provider.GetDBVersion(ctx); versionErr == nil {
-			err = fmt.Errorf("%w; the database records version %d, run the upgrade again to continue", err, recorded)
+	version, err = sqlitedb.Migrate(ctx, db, migrations, sqlitedb.Latest)
+	if err != nil {
+		if version >= 0 {
+			err = fmt.Errorf("%w; the database records version %d, run the upgrade again to continue", err, version)
 		}
 		return 0, err
 	}
-	return provider.GetDBVersion(ctx)
+	return version, nil
 }

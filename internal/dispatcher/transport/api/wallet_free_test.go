@@ -24,7 +24,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/protocol"
@@ -58,20 +57,11 @@ const (
 	wfDisabledMessage = "blockchain payments are disabled"
 	// wfSentinel is raised by a test-only trigger so a valid TEST submission
 	// proves it reached the debuglets insert without an executor transport.
-	wfSentinel      = "wf_sentinel_insert_reached"
-	wfTriggerName   = "wf_abort_debuglet_insert"
-	wfRequestBound  = 5 * time.Second
-	wfJoinBound     = 2 * time.Second
-	wfMigrationsDir = "../../database/migrations"
+	wfSentinel     = "wf_sentinel_insert_reached"
+	wfTriggerName  = "wf_abort_debuglet_insert"
+	wfRequestBound = 5 * time.Second
+	wfJoinBound    = 2 * time.Second
 )
-
-// wfApplyMigrations initialises a fresh database from the checked-in goose
-// migrations through the shared test helper, passing this package's relative
-// migrations directory.
-func wfApplyMigrations(t *testing.T, db *sql.DB) {
-	t.Helper()
-	testutil.ApplyMigrations(t, db, wfMigrationsDir)
-}
 
 // wfSnapshot is a canonical text rendering of every payment-relevant table.
 type wfSnapshot string
@@ -257,7 +247,9 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 			db.Close()
 		}
 	})
-	wfApplyMigrations(t, db)
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 
 	ph := payments.NewPaymentHandler(db, cfg, logger)
 	d, err := dispatcher.New(logger, db, "wf-test", time.Minute, time.Minute, ph)

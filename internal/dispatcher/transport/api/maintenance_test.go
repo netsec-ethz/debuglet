@@ -21,7 +21,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/testutil"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite"
 )
@@ -50,13 +50,14 @@ func newMaintenanceFixtureWith(t *testing.T, options ...Option) *maintenanceFixt
 
 func newMaintenanceFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *maintenanceFixture {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "maintenance.sqlite"))
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "maintenance.sqlite"), sqlitedb.Create())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	db.SetMaxOpenConns(1)
-	testutil.ApplyMigrations(t, db, "../../database/migrations")
+	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "maintenance-test", time.Minute, time.Minute, ph)
 	if err != nil {
