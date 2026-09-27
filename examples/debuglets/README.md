@@ -1,75 +1,29 @@
 # Debuglet examples
 
-A debuglet is a WASI preview1 command module that runs on an executor. These
-samples show how to produce output and use the executor's network API.
+A **debuglet** is a WASI WebAssembly program that an executor runs for one measurement. Start with the Go examples: they are built and exercised by this repository. The Rust and C directories are experiments and are not part of the supported workflow.
 
-| Language | Guide | Support in this repository |
+## Choose an example
+
+| Language | Status | Start here |
 | --- | --- | --- |
-| Go | [Go samples](go/README.md) | Supported: the guest SDK, and the examples the compatibility and example suites build and run |
-| Rust | [Rust samples](rust/README.md) | Experimental: bindings and samples, not built or run by this repository's checks |
-| C | [C samples](c/README.md) | Experimental: host bindings and samples, not built or run by this repository's checks |
+| Go | Supported | [`go/hello-local`](go/hello-local) for output; [`go/latency`](go/latency) for TCP; [`go/throughput`](go/throughput) for a local TCP sender. |
+| Rust | Experimental | [`rust/README.md`](rust/README.md) |
+| C | Experimental | [`c/README.md`](c/README.md) |
 
-Only the Go set is a quickstart. An experimental sample may compile and still
-behave differently from what its README describes, because nothing in this
-repository executes it. The guest ABI, the compatibility matrix and the
-supported example list are in the [guest guide](../../docs/GUESTS.md).
+## Build and run
 
-## Execution model
-
-The executor uses wazero to run `wasi_snapshot_preview1` modules. Write an
-ordinary `main`/`_start` entrypoint. Stdout and stderr become job output; the
-client reads the stored output through `dbl logs`.
-
-Arguments after `--` in `dbl run` become WASI argv directly, with **no program
-name** prepended. The first argument is `os.Args[0]` in Go, the first item from
-`std::env::args()` in Rust, or `argv[0]` in C. Many samples take
-`-addr HOST:PORT`.
-
-No guest filesystem is mounted. Networking uses custom imports from the `env`
-module; the language bindings pass addresses and buffers through WASM linear
-memory. Use the guest SDK rather than ordinary operating-system socket calls.
-One host call transfers at most 8192 bytes, so guests that call the imports
-directly must send and receive in a loop.
-
-## Build
-
-Run these from the repository root:
+From the repository root:
 
 ```sh
-make wasm SAMPLE_DIR=examples/debuglets/go/helloworld
-make wasm SAMPLE_DIR=examples/debuglets/rust/helloworld
-make wasm SAMPLE_DIR=examples/debuglets/c/helloworld WASI_SDK=/path/to/wasi-sdk
+make wasm SAMPLE_DIR=examples/debuglets/go/hello-local
+dbl run --wasm examples/debuglets/go/hello-local/debuglet.wasm --wait
 ```
 
-Each command writes `debuglet.wasm` into the sample directory. Go uses the
-pinned repository toolchain. Rust requires the `wasm32-wasip1` target; C
-requires wasi-sdk. Compilation of an experimental
-sample does not establish runtime compatibility.
-
-## Submit
-
-Use a dispatcher and executor you already configured, then choose an executor ID
-from `dbl nodes`:
+For network measurements, add the target to `--allow` and pass any program arguments after `--`. Only measure systems you are authorized to measure.
 
 ```sh
-dbl --endpoint http://127.0.0.1:9000 nodes
-dbl --endpoint http://127.0.0.1:9000 run \
-  --wasm examples/debuglets/go/helloworld/debuglet.wasm \
-  --executor EXECUTOR_ID --wait
+dbl run --wasm examples/debuglets/go/latency/debuglet.wasm \
+  --allow 127.0.0.1 --wait -- -addr 127.0.0.1:8080 -count 3
 ```
 
-Replace `EXECUTOR_ID` with the chosen node. For a network guest, add the
-destination to `--allow` and provide its target argument after `--`. A
-destination that is missing from `--allow` ends the job at the connect call.
-ICMP, public listeners, and SCION need additional executor configuration. Only
-use targets you are authorized to measure.
-
-For an automatic local walkthrough, use `dbl demo` from the complete installed
-package. See the [main README](../../README.md) and [CLI guide](../../docs/CLI.md).
-
-## Limits
-
-The Go SDK supports short TCP reads and normal EOF. Output delivery is not
-durable acknowledgement of the guest's entire output. A refused or disallowed
-destination ends the job rather than returning an error the guest can handle.
-The host API does not expose per-packet TTL controls for a conventional traceroute.
+See [Write a debuglet](../../docs/GUESTS.md) for the execution model and SDK. Use `dbl demo` for a complete self-contained local walkthrough.
