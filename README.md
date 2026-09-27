@@ -13,12 +13,12 @@ macOS; Windows, WSL and Linux arm64 clients are not supported
 
 ## Install
 
-Download the current release candidate, verify it and install it under
+Download the current release, verify it and install it under
 `$HOME/.local`. This needs only a POSIX shell, curl, GNU tar and coreutils
 (`sha256sum`); no Go compiler, Git or source checkout:
 
 ```sh
-version=v0.2.0-rc.3
+version=v0.2.0
 base=https://github.com/netsec-ethz/debuglet/releases/download/$version
 mkdir debuglet-$version && cd debuglet-$version
 for f in debuglet-$version-linux-amd64.tar.gz install.sh SHA256SUMS; do

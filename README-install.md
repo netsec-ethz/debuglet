@@ -11,7 +11,7 @@ This package supports Linux amd64. Installation requires a POSIX shell, GNU tar,
 
 ## Build a package from source
 
-The release candidate is on the `main` branch. On Linux amd64, install Go **1.25.11**,
+On Linux amd64, install Go **1.25.11**,
 Git, Make, Bash, GNU tar and coreutils, then use a clean checkout:
 
 ```sh
@@ -29,8 +29,8 @@ access.
 
 ## Download a published package
 
-`v0.2.0-rc.3` is the current release candidate published with all three assets;
-`v0.2.0-rc.1` was the first. The existing `v0.1.0` tag predates this package format
+`v0.2.0` is the current release, published with all three assets;
+`v0.2.0-rc.1` was the first release candidate in this format. The existing `v0.1.0` tag predates this package format
 and is not an installation target for these instructions. Published packages are listed on the
 [releases page](https://github.com/netsec-ethz/debuglet/releases).
 
