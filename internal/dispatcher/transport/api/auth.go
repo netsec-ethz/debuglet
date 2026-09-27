@@ -54,7 +54,7 @@ const (
 	// else.
 	RoleUser = "user"
 	// RoleOperator additionally reaches the dispatcher-wide administration
-	// operations listed in docs/API.md. No HTTP route grants this role; it is
+	// operations listed in docs/api.md. No HTTP route grants this role; it is
 	// held by the account the local development mode bootstraps.
 	RoleOperator = "operator"
 )

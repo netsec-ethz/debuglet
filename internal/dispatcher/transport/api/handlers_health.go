@@ -13,7 +13,7 @@ import (
 
 // The three health routes observe this process while a request is served:
 // liveness, admission readiness, and the dependency observations behind it.
-// docs/API.md states what each answers and what none of them consults.
+// docs/api.md states what each answers and what none of them consults.
 
 // healthRoutes report on this process rather than serve a caller. They
 // establish no caller and negotiate no contract version.

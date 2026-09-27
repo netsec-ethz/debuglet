@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 (( $# > 0 )) || { echo 'The race lane needs explicit native package roots.' >&2; exit 1; }
 command -v python3 >/dev/null || {
-    echo 'The race lane needs python3 to check its results; see docs/ci.md.' >&2
+    echo 'The race lane needs python3 to check its results; see docs/development/ci.md.' >&2
     exit 1
 }
 parallel="${CI_RACE_PACKAGE_PARALLEL:-2}"

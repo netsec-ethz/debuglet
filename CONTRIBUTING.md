@@ -14,7 +14,7 @@ make ci-build
 make ci-package
 ```
 
-Run the focused package tests while developing. Run the relevant full checks before requesting review. See [CI setup](docs/ci.md) for the complete validation matrix.
+Run the focused package tests while developing. Run the relevant full checks before requesting review. See [CI setup](docs/development/ci.md) for the complete validation matrix.
 
 ## Generated code
 
@@ -32,4 +32,4 @@ Keep generated output in the same pull request as its source:
 - Do not commit credentials, private keys, local inventory, databases, or build output.
 - Use a focused `feature/`, `fix/`, `docs/`, or `chore/` branch and target `main`.
 
-Read [Architecture](docs/ARCHITECTURE.md) to find the relevant subsystem. Follow [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+Read [Architecture](docs/architecture.md) to find the relevant subsystem. Follow [SECURITY.md](SECURITY.md) for private vulnerability reporting.

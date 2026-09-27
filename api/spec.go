@@ -1,6 +1,6 @@
 // Package api publishes the machine-readable description of the dispatcher's
 // public HTTP API together with the contract version it describes. The
-// dispatcher serves the embedded document at GET /openapi.yaml; docs/API.md
+// dispatcher serves the embedded document at GET /openapi.yaml; docs/api.md
 // states the compatibility and deprecation policy that governs it.
 package api
 

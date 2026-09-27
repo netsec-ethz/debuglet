@@ -2,13 +2,13 @@
 
 This directory holds the CI tools image and the kernel-lane isolation check.
 The lanes, the `required` aggregate, the runners and what a pass covers are
-described in [Continuous integration](../../docs/ci.md); the pinned images in
-[CI images](../../docs/ci-images.md). This page covers the container boundary
+described in [Continuous integration](../../docs/development/ci.md); the pinned images in
+[CI images](../../docs/development/ci-images.md). This page covers the container boundary
 each lane runs in and the kernel lane's evidence.
 
 ## Container boundary
 
-`scripts/ci-github.sh` pulls the [pinned base image](../../docs/ci-images.md) and,
+`scripts/ci-github.sh` pulls the [pinned base image](../../docs/development/ci-images.md) and,
 for `local` and `kernel`, builds the tools image from `deploy/ci/Dockerfile` on
 that job's VM. It then launches a disposable Docker container for the lane.
 GitHub job containers are not used. The child receives only the checkout, two
@@ -55,7 +55,7 @@ Outside GitHub CI the isolation script records its observations without failing,
 so local reproduction remains possible. `DEBUGLET_CI_ISOLATION_ENFORCE=1` adds
 enforcement; it cannot disable enforcement in CI. Without real platform metadata
 that mode fails the platform checks. Local launcher runs reuse locally prepared
-images; see [CI images](../../docs/ci-images.md).
+images; see [CI images](../../docs/development/ci-images.md).
 
 Evidence lives in `.cache/ci/ci-image-evidence/` and lane-specific JSON/log files.
 These checks inspect the job boundary. Kernel load results do not establish

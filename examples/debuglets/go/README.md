@@ -25,4 +25,4 @@ dbl run --wasm examples/debuglets/go/latency/debuglet.wasm \
 
 The debuglet can reach only destinations permitted by both the submitted policy and the executor configuration. Write progress to standard output: it becomes the measurement log.
 
-See [Write a debuglet](../../../docs/DEBUGLETS.md) for the SDK and runtime model, and [the shared examples guide](../README.md) for language support.
+See [Write a debuglet](../../../docs/debuglets.md) for the SDK and runtime model, and [the shared examples guide](../README.md) for language support.

@@ -13,4 +13,4 @@ make ci-compatibility
 make ci-local
 ```
 
-The test evidence is written below `.cache/ci/`. See [CI](ci.md) for the full validation matrix.
+The test evidence is written below `.cache/ci/`. See [CI](../development/ci.md) for the full validation matrix.

@@ -48,4 +48,4 @@ dbl --dispatcher research run --sample hello --wait --allow-remote-test
 
 Use `--output json` when another program reads command output. `--dispatcher NAME` selects a saved connection; `--endpoint URL` uses a one-off endpoint.
 
-The [Wiki](https://github.com/netsec-ethz/debuglet/wiki) explains managed services, deployment, and recovery. The [HTTP API guide](API.md) is the reference for applications that do not use `dbl`.
+The [Wiki](https://github.com/netsec-ethz/debuglet/wiki) explains managed services, deployment, and recovery. The [HTTP API guide](api.md) is the reference for applications that do not use `dbl`.

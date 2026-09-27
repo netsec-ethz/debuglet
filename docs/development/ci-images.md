@@ -1,6 +1,6 @@
 # CI images
 
-CI uses a pinned Go container for reproducible Linux amd64 builds. The exact image reference and package pins are in [`deploy/ci/images.env`](../deploy/ci/images.env) and [`deploy/ci/packages.txt`](../deploy/ci/packages.txt).
+CI uses a pinned Go container for reproducible Linux amd64 builds. The exact image reference and package pins are in [`deploy/ci/images.env`](../../deploy/ci/images.env) and [`deploy/ci/packages.txt`](../../deploy/ci/packages.txt).
 
 Most checks run in the pinned `golang` image. The local-role and kernel checks use the `debuglet-ci-tools` image built from the same base image. GitHub Actions builds the tools image on its disposable runner; it is not a published project artifact.
 

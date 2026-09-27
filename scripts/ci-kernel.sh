@@ -10,7 +10,7 @@ fi
 
 for tool in clang llvm-strip gcc python3; do
     command -v "$tool" >/dev/null || {
-        echo "Kernel checks require $tool; see docs/ci-images.md." >&2
+        echo "Kernel checks require $tool; see docs/development/ci-images.md." >&2
         exit 1
     }
 done

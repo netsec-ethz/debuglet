@@ -391,7 +391,7 @@ supported for wallet-free TEST deployments. It does not restore usable paid
 state: migration 4 leaves existing earnings with an empty payout wallet that
 executor re-registration does not repair. Keep chain payments disabled and
 preserve paid databases and their backups for verified operator reconciliation
-before enabling payments, as [Stored state](../docs/configuration.md#stored-state)
+before enabling payments, as [Stored state](../docs/operations/configuration.md)
 describes. Keep payments disabled when restarting upgraded paid-state
 deployments until that reconciliation is complete.
 
@@ -435,7 +435,7 @@ When step 5 fails the play stops on that host: the service stays stopped, the
 backup stays in place, the remaining executors are left untouched, and the
 database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
-[Stored state](../docs/configuration.md#stored-state) lists the versions whose
+[Stored state](../docs/operations/configuration.md) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
 `upgrade-database.yml`, and `site.yml` never runs it.
 
@@ -474,7 +474,7 @@ chain to it, and each leaf must carry the extended key usage for the side it
 is used on. Every certificate this script issues comes directly from that CA,
 so a leaf file is a complete chain on its own; material from another authority
 must follow the chain rules in
-[Provisioning](../docs/configuration.md#provisioning).
+[Provisioning](../docs/operations/configuration.md).
 
 Certificates therefore come first: issue and install them, then deploy. `make
 deploy-certs` does both halves in that order, and a deployment that verifies

@@ -8,7 +8,7 @@
 # host, and its configuration is rendered from
 # deploy/ansible/roles/dispatcher/templates/dispatcher.toml.j2.
 #
-# See deploy/README.md for the rig, and docs/configuration.md for what each key
+# See deploy/README.md for the rig, and docs/operations/configuration.md for what each key
 # means and which ones may be omitted.
 
 [server]

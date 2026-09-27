@@ -680,9 +680,9 @@ func TestPublicDataStaysPublic(t *testing.T) {
 }
 
 // TestEveryRegisteredRouteHasADecidedAccessPolicy compares the routes the
-// dispatcher installs against the access matrix docs/API.md publishes, so a
+// dispatcher installs against the access matrix docs/api.md publishes, so a
 // route added later cannot quietly reach the network without a decision.
-// authRoutePolicy is one row of the access matrix docs/API.md publishes: the
+// authRoutePolicy is one row of the access matrix docs/api.md publishes: the
 // status an anonymous request earns in the enforced profile, and a request
 // that actually reaches the route's handler.
 type authRoutePolicy struct {
