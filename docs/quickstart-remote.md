@@ -17,7 +17,7 @@ sh ./install.sh --archive ./debuglet-VERSION-linux-amd64.tar.gz --checksums ./SH
 export PATH="PREFIX/bin:$PATH"
 ```
 
-**2. Issue the authority and two leaf certificates.** The server certificate has to carry the address executors dial as a subject alternative name, written `DNS:HOST` where peers dial a name; a common name alone is not accepted. The client certificate is the executor's identity, which the executor daemon requires whenever TLS is on, whether or not the dispatcher verifies it. Afterwards `ca.crt` is the only file that leaves this host — it goes to every executor and every client — and `ca.key` belongs on neither daemon host, as [provisioning](environments.md#provisioning) describes.
+**2. Issue the authority and two leaf certificates.** The server certificate has to carry the address executors dial as a subject alternative name, written `DNS:HOST` where peers dial a name; a common name alone is not accepted. The client certificate is the executor's identity, which the executor daemon requires whenever TLS is on, whether or not the dispatcher verifies it. Afterwards `ca.crt` is the only file that leaves this host — it goes to every executor and every client — and `ca.key` belongs on neither daemon host, as [provisioning](configuration.md#provisioning) describes.
 
 ```sh
 mkdir -p /etc/debuglet/certs && cd /etc/debuglet/certs
@@ -41,7 +41,7 @@ mkdir -p /var/lib/debuglet/dispatcher && chmod 700 /var/lib/debuglet/dispatcher
 dbl dispatcher up --state-dir /var/lib/debuglet/dispatcher --port 0 --grpc-port 0
 ```
 
-**4. Write `/etc/debuglet/dispatcher.toml`.** Omitted keys keep the defaults documented under [daemon configuration](environments.md#daemon-configuration). `local_development = false` is what makes every request that is not public need a session, and `bind_host = "0.0.0.0"` is what puts the listeners on an address other than loopback. Adding `ca_file` and `require_client_cert = true` binds each executor ID to the certificate it enrolled with.
+**4. Write `/etc/debuglet/dispatcher.toml`.** Omitted keys keep the defaults documented under [daemon configuration](configuration.md#daemon-configuration). `local_development = false` is what makes every request that is not public need a session, and `bind_host = "0.0.0.0"` is what puts the listeners on an address other than loopback. Adding `ca_file` and `require_client_cert = true` binds each executor ID to the certificate it enrolled with.
 
 ```toml
 [server]
@@ -221,5 +221,5 @@ ERROR	rpc/bidi.go:321	failed to register executor	{"error": "rpc error: code = F
 - **An account name is a label, not an identity.** Registering the same name twice succeeds and makes two separate accounts with different ids, each with its own key and its own runs.
 - **Runs are private to the account that submitted them.** `status ID` and `logs ID` from another account answer `not_found`, the same as an ID that does not exist.
 - **The certificate is issued for the address dialled.** Reaching the same dispatcher by another name needs `tls.server_name` in the executor configuration, or a new certificate.
-- **Neither daemon initializes or upgrades its database automatically.** This walkthrough uses databases created by local `dbl` roles. Recognized older schemas can be upgraded explicitly with the daemon stopped; see [stored state](environments.md#stored-state) for the supported TEST profile, backups and migration limits. Local role metadata remains pinned to its package version.
+- **Neither daemon initializes or upgrades its database automatically.** This walkthrough uses databases created by local `dbl` roles. Recognized older schemas can be upgraded explicitly with the daemon stopped; see [stored state](configuration.md#stored-state) for the supported TEST profile, backups and migration limits. Local role metadata remains pinned to its package version.
 - **Fewer attribution tags without eBPF.** Where no eBPF tagger can attach, each job logs that TCP and TLS packets carry no attribution tags. UDP and ICMP to IPv4 destinations are still tagged when the executor may open raw sockets (`CAP_NET_RAW`); nothing else changes.

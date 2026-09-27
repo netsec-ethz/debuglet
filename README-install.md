@@ -21,11 +21,11 @@ make ci-build
 make ci-package
 ```
 
-The output in `.cache/ci/packages/` contains the three files listed below.
-Package creation also verifies an installation of those exact bytes. The
-[repository quickstart](https://github.com/netsec-ethz/debuglet/blob/main/README.md#install)
-shows how to install the result and run the demo. Native builds use committed
-eBPF objects and need no privileged kernel access.
+The output in `.cache/ci/packages/` contains the three files listed under
+[Offline package installation](#offline-package-installation); install them as
+described there. Package creation also verifies an installation of those exact
+bytes. Native builds use committed eBPF objects and need no privileged kernel
+access.
 
 ## Download a published package
 
@@ -34,19 +34,30 @@ eBPF objects and need no privileged kernel access.
 and is not an installation target for these instructions. Published packages are listed on the
 [releases page](https://github.com/netsec-ethz/debuglet/releases).
 
-For a published version, run this from a source checkout, replacing the placeholder
-with that release's exact version:
+A published version needs no source checkout. Download its three files into
+an empty directory, replacing the placeholder with that release's exact version,
+then install them as described under
+[Offline package installation](#offline-package-installation):
+
+```sh
+version='<published-version>'
+base=https://github.com/netsec-ethz/debuglet/releases/download/$version
+for f in debuglet-$version-linux-amd64.tar.gz install.sh SHA256SUMS; do
+  curl -fsSLO "$base/$f"
+done
+```
+
+The files are served over HTTPS and no token is needed. Nothing selects a
+branch, a CI job or a latest release automatically.
+
+From a source checkout, `scripts/bootstrap.sh` does the download, verifies both
+payloads and invokes the installer in one step; it prints the `PATH` line to
+use afterwards. Set `DEBUGLET_PREFIX` to change the default `$HOME/.local`
+prefix:
 
 ```sh
 DEBUGLET_VERSION='<published-version>' sh scripts/bootstrap.sh
 ```
-
-The bootstrap needs curl in addition to the installer tools. It downloads the
-version's archive, installer and checksums from
-`https://github.com/netsec-ethz/debuglet/releases/download/VERSION/` over HTTPS, verifies both payloads,
-and invokes that installer. No token is needed. Set `DEBUGLET_PREFIX` to change
-the default `$HOME/.local` prefix. It does not select a branch, a CI job or a
-latest release automatically.
 
 ## Offline package installation
 
@@ -161,8 +172,7 @@ existing service must keep 9000 or 9001.
 what it still holds; `sudo dbl drain --role dispatcher` stops the admission of
 new submissions without stopping the dispatcher. `sudo dbl drain --resume`
 reverses either. The complete profile, paths, permissions, shutdown budget and
-drain semantics are in the [environments guide](https://github.com/netsec-ethz/debuglet/blob/main/docs/environments.md)
-and the [CLI guide](https://github.com/netsec-ethz/debuglet/blob/main/docs/CLI.md).
+drain semantics are in [Managed services](https://github.com/netsec-ethz/debuglet/blob/main/docs/services.md).
 
 A managed dispatcher is a boot-time service every account on its host can reach,
 so its generated configuration leaves `server.local_development` off. It
@@ -193,4 +203,4 @@ The installer verifies exact package members, permissions, and hashes. It refuse
 
 Use trusted shell/coreutils tools and a prefix whose ancestry and contents can be modified only by you, trusted administrators, and cooperating installers. The installer cannot protect directories that another process is allowed to rewrite. Its exclusive `.install.lock` serializes installations. If a forcibly killed installer leaves that lock, first verify that no installer is running, then remove only that stale lock directory before retrying.
 
-Checksums verify identity against the supplied checksum file; obtain that file from the same trusted source as the package. They are not release signatures. The local demo does not establish production isolation, packet-policy enforcement, durable recovery, or payment correctness. A database is upgraded to another package version only by the explicit step described in [Stored state](docs/environments.md#stored-state), never automatically. The dispatcher does authenticate sessions and authorize every operation against an owning account, but nothing rate-limits registration or login attempts, registration is open to anyone who can reach the port, and the operator role can be granted only on the dispatcher host. Remote testbed compatibility is unconfirmed.
+Checksums verify identity against the supplied checksum file; obtain that file from the same trusted source as the package. They are not release signatures. The local demo does not establish production isolation, packet-policy enforcement, durable recovery, or payment correctness. A database is upgraded to another package version only by the explicit step described in [Stored state](https://github.com/netsec-ethz/debuglet/blob/main/docs/configuration.md#stored-state), never automatically. The dispatcher does authenticate sessions and authorize every operation against an owning account, but nothing rate-limits registration or login attempts, registration is open to anyone who can reach the port, and the operator role can be granted only on the dispatcher host. Remote testbed compatibility is unconfirmed.

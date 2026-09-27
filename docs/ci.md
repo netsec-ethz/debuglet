@@ -9,9 +9,14 @@ Results are retained under `.cache/ci/`. The aggregate `required` check passes
 only when all eleven lanes succeed; skipped or canceled lanes do not count.
 
 The workflow uses read-only permissions, no repository secrets and no persistent
-checkout credential. No self-hosted runners or protected refs are needed to run
-it. Maintainers should require `CI / required` in branch protection. See
-[CI runners](../deploy/ci/README.md) for the container boundary and kernel proof.
+checkout credential, and pull requests use `pull_request`, not
+`pull_request_target`. Each job checks out the event's exact commit (the merge
+commit for a pull request). Do not replace the runner with `ubuntu-slim`: the
+kernel lane needs a full VM with its own kernel boundary. No self-hosted
+runners or protected refs are needed to run it. Maintainers should require
+`CI / required` in branch protection. The workflow does not publish releases or
+deploy services. See [CI runners](../deploy/ci/README.md) for the container
+boundary and kernel proof.
 
 | Lane | Command | Result files |
 | --- | --- | --- |
@@ -28,6 +33,24 @@ it. Maintainers should require `CI / required` in branch protection. See
 The race, local and kernel lanes need Python 3 for their result checks; the
 installed lanes additionally need ordinary GNU command-line tools. Nothing here starts a
 service beyond the loopback processes the installed checks own themselves.
+
+## Installed lanes
+
+`make ci-package` is the only lane that produces an archive; `make ci-demo`,
+`make ci-compatibility` and `make ci-local` each install and exercise those same
+bytes, and `scripts/ci-*.sh` holds their exact steps. `ci-compatibility` runs the
+[local environment checker](environments.md) against the installed package.
+`ci-local` additionally checks the installed combined environment and
+independently started dispatcher, executor and client roles (through
+`scripts/ci-roles.sh`), including URL connection, executor selection, the SDK
+example and a same-package restart with retained results. Retained test output
+and result files are under `.cache/ci/`.
+
+A pass covers the installed package and local API-prefix traversal. It does not
+establish remote topology, SCION operation, authenticated nodes, or production
+readiness. Traffic-policy enforcement is covered by the package tests under
+`internal/executor` and `pkg/debuglet`, not by the installed checks. ETH testbed
+compatibility and deployment remain unconfirmed.
 
 ## Formatting
 

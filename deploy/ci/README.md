@@ -1,22 +1,10 @@
 # CI runners
 
-[The GitHub workflow](../../.github/workflows/ci.yml) runs eleven required lanes:
-`fmt`, `vet`, `generate`, `build`, `test`, `race`, `package`, `demo`,
-`compatibility`, `local` and `kernel`. The `required` check succeeds only if all
-of them succeed. A pending, skipped or canceled lane is not a complete gate.
-
-The workflow runs on pull requests and pushes to `main`, plus manual
-dispatches. Each job uses a fresh GitHub-hosted
-`ubuntu-24.04` full virtual machine and checks out the event's exact commit
-(the merge commit for a pull request). Do not replace this runner with
-`ubuntu-slim`: the kernel lane needs a full VM with its own kernel boundary.
-
-No runner registration, SSH access, custom labels or repository secrets are
-needed. Workflow permissions are read-only, checkout does not persist its
-credential, and pull requests use `pull_request`, not `pull_request_target`.
-Requiring `CI / required` in branch protection is a recommended team setting;
-branch protection is not a prerequisite for executing the checks. The workflow
-does not publish releases or deploy services.
+This directory holds the CI tools image and the kernel-lane isolation check.
+The lanes, the `required` aggregate, the runners and what a pass covers are
+described in [Continuous integration](../../docs/ci.md); the pinned images in
+[CI images](../../docs/ci-images.md). This page covers the container boundary
+each lane runs in and the kernel lane's evidence.
 
 ## Container boundary
 

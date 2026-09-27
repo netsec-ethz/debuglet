@@ -13,37 +13,20 @@ macOS; Windows, WSL and Linux arm64 clients are not supported
 
 ## Install
 
-Build the release candidate from the `main` branch on Linux amd64 with **Go 1.25.11**,
-Git, Make, Bash, GNU tar and coreutils (`sha256sum`). Use a clean checkout; the
-package records its exact source revision and uses committed eBPF objects, so
-building it needs no kernel privileges or eBPF compiler.
+Download the current release candidate, verify it and install it under
+`$HOME/.local`. This needs only a POSIX shell, curl, GNU tar and coreutils
+(`sha256sum`); no Go compiler, Git or source checkout:
 
 ```sh
-git clone --branch main https://github.com/netsec-ethz/debuglet.git
-cd debuglet
-make ci-build
-make ci-package
-(
-  set -eu
-  cd .cache/ci/packages
-  sha256sum --check SHA256SUMS
-  set -- debuglet-v*-linux-amd64.tar.gz
-  [ "$#" -eq 1 ]
-  [ -f "$1" ]
-  version=${1#debuglet-}; version=${version%-linux-amd64.tar.gz}
-  sh ./install.sh --archive "$1" --checksums ./SHA256SUMS \
-    --version "$version" --prefix "$HOME/.local"
-)
-```
-
-The CLI is installed under `$HOME/.local/bin`, with its package under
-`$HOME/.local/lib/debuglet`. Copying the three package files to another Linux
-amd64 machine supports installation there without Go or a source checkout.
-The [installation guide](README-install.md) covers offline installation and
-version-pinned release downloads. The `v0.2.0-rc.3` package is the current release
-candidate for this workflow; `v0.1.0` predates it.
-
-```sh
+version=v0.2.0-rc.3
+base=https://github.com/netsec-ethz/debuglet/releases/download/$version
+mkdir debuglet-$version && cd debuglet-$version
+for f in debuglet-$version-linux-amd64.tar.gz install.sh SHA256SUMS; do
+  curl -fsSLO "$base/$f"
+done
+sha256sum --check SHA256SUMS
+sh ./install.sh --archive ./debuglet-$version-linux-amd64.tar.gz \
+  --checksums ./SHA256SUMS --version "$version" --prefix "$HOME/.local"
 export PATH="$HOME/.local/bin:$PATH"
 dbl demo
 ```
@@ -53,45 +36,20 @@ measurement, checks the result, and cleans up. No existing service is required.
 Successful human output begins with `Debuglet VERSION completed locally:` and
 ends with `Cleanup: complete`; JSON output also records `RunStateExited`.
 
-## Start roles independently
+The [installation guide](README-install.md) is the reference for everything
+after that: offline installation of the same three files, building a package
+from source, starting the dispatcher, executor and client separately, and
+running the roles as services. Published packages are listed on the
+[releases page](https://github.com/netsec-ethz/debuglet/releases); `v0.1.0`
+predates this package format.
 
-Start a dispatcher in one terminal:
-
-```sh
-dbl dispatcher up
-```
-
-It creates its configuration and database and prints a dispatcher URL. In a
-second terminal, start an executor using that URL:
-
-```sh
-dbl executor up --dispatcher http://127.0.0.1:9000
-```
-
-The executor discovers the connection details, registers, and reports when it is
-ready. In a third terminal, connect the client and send a job:
-
-```sh
-dbl connect http://127.0.0.1:9000 --name local
-dbl dispatcher list
-dbl executor list
-dbl run --sample hello --wait
-dbl logs <id-from-the-run-receipt>
-```
-
-The client saves the connection. `--sample hello` needs no compiler or wallet.
-When exactly one executor is ready, `run` selects it; with several, use
-`--executor ID`. Press Ctrl-C to stop a foreground role. Same-package restarts
-retain its identity, completed results and output, but do not resume interrupted
-measurements.
-
-See the [CLI guide](docs/CLI.md) for multiple roles, state paths, validation,
+The [CLI guide](docs/CLI.md) covers multiple roles, state paths, validation,
 services and drain operations. The [architecture guide](docs/ARCHITECTURE.md#run-flow)
 shows how submission, execution, output and completion travel through the system.
 
 ## Credentials
 
-No login is needed for the local roles above. The configuration they generate sets
+No login is needed for `dbl demo`, `dbl up` or the separately started local roles. The configuration they generate sets
 `server.local_development`, the documented profile in which a dispatcher whose
 listeners are on loopback, with TLS and payments disabled, serves a request that
 presents no credential at all as its own local operator. Every other
@@ -169,6 +127,8 @@ make ci-package
 make ci-local
 ```
 
+To build and install a package from a checkout instead of downloading one, see
+[Build a package from source](README-install.md#build-a-package-from-source).
 Package builds require a clean, committed checkout and use the committed generated
 eBPF objects. Output is under `.cache/ci/packages/`. The CI workflow defines checks
 for tests, build, packaging, the installed demo, combined and separate local roles,
@@ -203,7 +163,7 @@ system, including both control paths and where a given change belongs.
   package version that created it, and moving to another version means a new
   state directory. A deployed daemon's database is upgraded to another package
   version only by the explicit step described in
-  [Stored state](docs/environments.md#stored-state), never automatically.
+  [Stored state](docs/configuration.md#stored-state), never automatically.
 
 The [threat model](docs/SECURITY.md) states which actors and trust boundaries the
 supported profile assumes, what it promises and what it does not, and why a

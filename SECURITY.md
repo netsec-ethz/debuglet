@@ -14,7 +14,7 @@ To pick up a fix, build and install a validated revision as described in the
 [installation guide](README-install.md). Checksums establish identity against the
 supplied checksum file, which must come from a trusted source; they are not
 release signatures. A state directory is tied to the package version that
-created it, and [docs/environments.md](docs/environments.md#stored-state) states
+created it, and [docs/configuration.md](docs/configuration.md#stored-state) states
 what a build does with a database of another version.
 
 Only the latest release candidate and the current validated commit of `main`
