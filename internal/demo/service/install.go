@@ -242,7 +242,7 @@ func (i *Installer) observeReady(ctx context.Context, p Profile, state UnitState
 			return readiness.Record{}, fmt.Errorf("unit is %s (%s) with no readiness record", state.Active, state.Sub)
 		}
 		if state.MainPID > 0 {
-			record, err := demo.ReadReadyRecord(p.ReadyFile, state.MainPID, p.ExecutorID)
+			record, err := readiness.Read(p.ReadyFile, state.MainPID, p.ExecutorID)
 			if err == nil {
 				return record, nil
 			}
@@ -600,7 +600,7 @@ func (i *Installer) Status(ctx context.Context, role demo.SchemaRole, name strin
 	report.State = "stopped"
 	if state.Running() {
 		report.State = "started"
-		if record, err := demo.ReadReadyRecord(p.ReadyFile, state.MainPID, p.ExecutorID); err == nil {
+		if record, err := readiness.Read(p.ReadyFile, state.MainPID, p.ExecutorID); err == nil {
 			report.Ready, report.State = true, "ready"
 			if p.Role == demo.DispatcherSchema {
 				report.Endpoint = "http://" + record.HTTPAddr

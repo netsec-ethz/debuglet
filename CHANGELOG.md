@@ -10,6 +10,12 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Changed
+- Reject `_` in DNS names in daemon configuration (`server.bind_host`,
+  `dispatcher.addr`, `dispatcher.yamux_addr`, `tls.server_name`,
+  `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
+  host-name rules documented in `docs/configuration.md`.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added

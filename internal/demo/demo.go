@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -339,7 +338,7 @@ func awaitReady(ctx context.Context, path string, pid int, executorID string) (r
 		if err := ctx.Err(); err != nil {
 			return readiness.Record{}, context.Cause(ctx)
 		}
-		record, err := ReadReadyRecord(path, pid, executorID)
+		record, err := readiness.Read(path, pid, executorID)
 		if err == nil {
 			return record, nil
 		}
@@ -350,43 +349,6 @@ func awaitReady(ctx context.Context, path string, pid int, executorID string) (r
 			return readiness.Record{}, err
 		}
 	}
-}
-
-// ReadReadyRecord reads one published readiness record and checks it against
-// the process that was supposed to publish it. The record is evidence that the
-// daemon reached its own ready point: an existing process, or a service
-// manager that merely created one, proves nothing on its own. A missing record
-// is reported as os.ErrNotExist so a caller can keep waiting for it.
-func ReadReadyRecord(path string, pid int, executorID string) (readiness.Record, error) {
-	data, err := readRegularFile(path, readyLimit)
-	if err != nil {
-		return readiness.Record{}, err
-	}
-	var record readiness.Record
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if err := dec.Decode(&record); err != nil {
-		return record, fmt.Errorf("invalid ready record: %w", err)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return record, errors.New("trailing ready record data")
-	}
-	if record.SchemaVersion != 1 || record.PID != pid || pid <= 0 {
-		return record, errors.New("ready record schema/PID does not match launched child")
-	}
-	if executorID == "" {
-		if record.ExecutorID != "" {
-			return record, errors.New("dispatcher ready record has executor identity")
-		}
-		if err := validateAddress(record.HTTPAddr); err != nil {
-			return record, err
-		}
-		if err := validateAddress(record.GRPCAddr); err != nil {
-			return record, err
-		}
-	} else if record.ExecutorID != executorID || record.HTTPAddr != "" || record.GRPCAddr != "" {
-		return record, errors.New("executor ready record does not match launched identity")
-	}
-	return record, nil
 }
 
 func validateAddress(addr string) error {

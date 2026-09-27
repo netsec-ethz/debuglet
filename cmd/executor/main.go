@@ -9,13 +9,12 @@ import (
 	"flag"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"math/rand/v2"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -62,31 +61,12 @@ func main() {
 		return
 	}
 
-	logLevel, err := zap.ParseAtomicLevel(cfg.Logging.LogLevel)
-	if err != nil {
-		logLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
-	}
-	logCfg := zap.NewDevelopmentConfig()
-	if cfg.Logging.JSONLogs {
-		logCfg = zap.NewProductionConfig()
-	}
-	logCfg.Level = logLevel
-	logCfg.OutputPaths = []string{"stdout"}
-	logCfg.DisableStacktrace = true
-	logger, _ := logCfg.Build()
+	logger := daemonlog.New(cfg.Logging.LogLevel, cfg.Logging.JSONLogs)
 	defer logger.Sync()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	requested := make(chan struct{})
-	stopNotice := context.AfterFunc(ctx, func() {
-		defer close(requested)
-		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", "executor"))
+	err = daemonlog.Run(logger, "executor", func(ctx context.Context) error {
+		return runExecutor(ctx, cfg, *readyFile, logger)
 	})
-	err = runExecutor(ctx, cfg, *readyFile, logger)
-	if !stopNotice() {
-		<-requested
-	}
 	if err != nil {
 		logger.Error("executor exited with error", zap.Error(err))
 		logger.Sync()

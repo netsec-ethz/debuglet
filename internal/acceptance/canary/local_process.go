@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"github.com/netsec-ethz/debuglet/internal/artifact"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"io"
 	"net"
@@ -77,47 +75,12 @@ func awaitReady(ctx context.Context, path string, owned *ownedChild, id string) 
 		if channelClosed(owned.child.Done()) || owned.capture.exceeded() {
 			return readiness.Record{}, errors.New("daemon failed before readiness")
 		}
-		info, err := os.Lstat(path)
+		record, err := readiness.Read(path, owned.child.PID(), id)
 		if err == nil {
-			if !info.Mode().IsRegular() || info.Size() > 4096 {
-				return readiness.Record{}, errors.New("invalid readiness file")
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return readiness.Record{}, err
-			}
-			data, readErr := io.ReadAll(io.LimitReader(f, 4097))
-			closeErr := f.Close()
-			if readErr != nil || closeErr != nil || len(data) > 4096 {
-				return readiness.Record{}, errors.New("readiness read failed")
-			}
-			if artifact.CheckUniqueJSON(data) != nil {
-				return readiness.Record{}, errors.New("duplicate readiness fields")
-			}
-			keys := []string{"schema_version", "pid", "http_addr", "grpc_addr"}
-			if id != "" {
-				keys = []string{"schema_version", "pid", "executor_id"}
-			}
-			if _, err := strictFields(data, keys, nil, nil); err != nil {
-				return readiness.Record{}, errors.New("invalid readiness fields")
-			}
-			var record readiness.Record
-			d := json.NewDecoder(bytes.NewReader(data))
-			d.DisallowUnknownFields()
-			if d.Decode(&record) != nil || d.Decode(new(any)) != io.EOF || record.SchemaVersion != 1 || record.PID != owned.child.PID() {
-				return record, errors.New("readiness identity mismatch")
-			}
-			if id == "" {
-				if record.ExecutorID != "" || !localAddress(record.HTTPAddr) || !localAddress(record.GRPCAddr) {
-					return record, errors.New("invalid dispatcher readiness")
-				}
-			} else if record.ExecutorID != id || record.HTTPAddr != "" || record.GRPCAddr != "" {
-				return record, errors.New("invalid executor readiness")
-			}
 			return record, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return readiness.Record{}, err
+			return record, err
 		}
 		timer := time.NewTimer(20 * time.Millisecond)
 		select {

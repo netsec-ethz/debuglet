@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 
@@ -37,22 +38,11 @@ type HostConnOpts struct {
 	SocketType       socket.SocketType
 }
 
-// cleanupError distinguishes connection release failure from attach/limit
-// failure without exposing a new guest ABI or conflating execution and cleanup.
-type cleanupError struct{ err error }
-
-func (e *cleanupError) Error() string { return e.err.Error() }
-func (e *cleanupError) Unwrap() error { return e.err }
-func CleanupError(err error) error {
-	var cleanup *cleanupError
-	if errors.As(err, &cleanup) {
-		return cleanup.err
-	}
-	return nil
-}
-
 // NewConnection consumes conn. On failure it closes the attached wrapper (if
 // available), otherwise the original connection. On success HostConn owns it.
+// A failed close is attached with cleanup.Join, so cleanup.Released separates
+// connection release failure from attach/limit failure without exposing a new
+// guest ABI or conflating execution and cleanup.
 func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, conn net.Conn, opts HostConnOpts) (_ *HostConn, err error) {
 	if conn == nil {
 		return nil, errors.New("received <nil> connection")
@@ -60,9 +50,7 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 	owned := conn
 	defer func() {
 		if err != nil {
-			if closeErr := owned.Close(); closeErr != nil {
-				err = errors.Join(err, &cleanupError{closeErr})
-			}
+			err = cleanup.Join(err, owned.Close())
 		}
 	}()
 	if pc == nil {

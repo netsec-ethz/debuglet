@@ -21,6 +21,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
@@ -95,7 +96,7 @@ func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, 
 	ownsRaw = false // NewConnection consumes conn even on failure.
 	hc, err := hostconn.NewConnection(ctx, env.PacketCount, env.DebugletID, conn, opts)
 	if err != nil {
-		env.RecordCleanupError(hostconn.CleanupError(err))
+		env.RecordCleanupError(cleanup.Released(err))
 		return -1, fmt.Errorf("failed to create HostConn: %w", err)
 	}
 	return env.Registry.Add(hc)

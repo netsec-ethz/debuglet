@@ -1,4 +1,5 @@
-// Package readiness publishes daemon startup records in owned private directories.
+// Package readiness publishes daemon startup records in owned private
+// directories and reads them back for the process that launched the daemon.
 package readiness
 
 import (

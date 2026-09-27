@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/configcheck"
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
@@ -108,6 +109,34 @@ func TestValidateCommandReportsFieldDiagnostics(t *testing.T) {
 				t.Fatalf("unexpected result: %+v", result)
 			}
 		})
+	}
+}
+
+// dbl validate and the daemon configuration checks share one DNS-name rule, so
+// a name one of them accepts the other accepts too. An underscore is refused by
+// both: it can appear in DNS records but not in a name a host is reached by.
+func TestValidateDestinationAgreesWithConfigcheckOnDNSNames(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{
+		{"example.org", true},
+		{"absolute.example.", true},
+		{"a-b.example", true},
+		{"localhost", true},
+		{"bad_name", false},
+		{"bad_name.example", false},
+		{"_srv._tcp.example.org", false},
+		{"-host.example", false},
+		{"host-.example", false},
+		{"host..example", false},
+		{strings.Repeat("a", 64) + ".example", false},
+	} {
+		destination := validateDestination(tc.name) == nil
+		config := configcheck.Host("network.public_host", tc.name) == nil
+		if destination != tc.valid || config != tc.valid {
+			t.Errorf("%q: dbl validate accepts=%v, configcheck accepts=%v, want %v", tc.name, destination, config, tc.valid)
+		}
 	}
 }
 

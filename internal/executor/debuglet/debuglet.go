@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm"
@@ -87,7 +88,7 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name), zap.String("attachment", bt.Attachment))
 			pktTagger = bt
 		} else {
-			constructorCleanup = ebpf.CleanupError(err)
+			constructorCleanup = cleanup.Released(err)
 			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go", zap.Error(err))
 		}
 	}

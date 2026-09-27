@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 )
 
 // resolveTTL bounds how long one name's addresses are reused. Inbound traffic
@@ -506,13 +508,12 @@ func splitTarget(t Transport, target string) (string, int, error) {
 // splitHostPort accepts both "host:port" and a bare host. A bracketed IPv6
 // literal keeps its brackets off the returned host.
 func splitHostPort(address string) (string, int, error) {
-	host, port, err := net.SplitHostPort(address)
+	host, port, hasPort, err := netutil.SplitOptionalPort(address)
 	if err != nil {
-		var addrErr *net.AddrError
-		if errors.As(err, &addrErr) && addrErr.Err == "missing port in address" {
-			return strings.Trim(address, "[]"), 0, nil
-		}
 		return "", 0, fmt.Errorf("invalid address %q", address)
+	}
+	if !hasPort {
+		return strings.Trim(host, "[]"), 0, nil
 	}
 	number, err := strconv.Atoi(port)
 	if err != nil || number < 0 || number > 65535 {

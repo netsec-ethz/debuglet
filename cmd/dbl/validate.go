@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/configcheck"
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 
@@ -228,28 +229,8 @@ func validateDestination(raw string) error {
 	if strings.Contains(raw, ":") {
 		return fmt.Errorf("ports are not allowed; pass the destination port in the guest arguments")
 	}
-	if !validDNSName(raw) {
+	if !configcheck.DNSName(raw) {
 		return fmt.Errorf("must be a bare IP address or syntactically valid DNS name")
 	}
 	return nil
-}
-
-func validDNSName(name string) bool {
-	if strings.HasSuffix(name, ".") {
-		name = strings.TrimSuffix(name, ".")
-	}
-	if len(name) == 0 || len(name) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(name, ".") {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, r := range label {
-			if r > 127 || !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
-				return false
-			}
-		}
-	}
-	return true
 }
