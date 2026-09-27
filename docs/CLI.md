@@ -1,189 +1,51 @@
 # `dbl` command-line client
 
-`dbl` starts local dispatcher/executor roles, saves dispatcher connections, lists executors, submits TEST-funded WASM, and reads results through the dispatcher's HTTP API. It is built from `cmd/dbl` on top of [`pkg/client`](SDK.md) and is intended for a trusted local environment. `v0.2.0-rc.1` is the first release candidate that includes it; `v0.1.0` predates this client.
+`dbl` is the fastest way to try Debuglet, manage local roles, submit debuglets, and inspect results. Run `dbl --help` for the complete, version-specific command reference.
 
+## Common workflows
 
-## Build or install
-
-From a source checkout, build the standalone client with `go build -mod=readonly -o dbl ./cmd/dbl`. It can use an existing dispatcher. The complete Linux amd64 package also includes the assets for `dbl demo`; see the [installation guide](../README-install.md).
-
-## Usage
-
-```
-dbl [--dispatcher NAME | --endpoint URL] [--config FILE] [--timeout 30s] [--output human|json] COMMAND
-dbl demo
-dbl up [--state-dir DIR] [--port 9000]
-dbl dispatcher up [--name local] [--port 9000] [--grpc-port 9001] [--state-dir DIR]
-dbl executor up [--name worker] [--dispatcher NAME|URL] [--state-dir DIR]
-dbl service install --role dispatcher|executor [--name NAME] [--user debuglet] \
-    [--port 9000] [--grpc-port 9001] [--dispatcher HOST:PORT] [--dispatcher-http HOST:PORT] \
-    [--start=false] [--enable=false] [--root DIR]
-dbl service start|stop|status --role ROLE [--name NAME]
-dbl service uninstall --role ROLE [--name NAME] [--purge]
-dbl drain --role ROLE [--name NAME] [--reason TEXT] [--wait DURATION] [--keep-enabled]
-dbl drain --role ROLE [--name NAME] --resume
-dbl connect URL [--name NAME]
-dbl login [--account-key-file FILE] [--register NAME] [--recovery-file FILE]
-dbl logout
-dbl dispatcher list
-dbl dispatcher use NAME
-dbl dispatcher remove NAME
-dbl executor list
-dbl nodes
-dbl validate (--wasm FILE | --sample hello) [--executor ID|auto] [--allow ADDRESS ...] \
-    [--duration 10s] [--floor-bps 1048576] [--ceil-bps 1048576] [-- guest arguments ...]
-dbl run (--wasm FILE | --sample hello) [--executor ID|auto] [--allow ADDRESS ...] \
-    [--duration 10s] [--floor-bps 1048576] [--ceil-bps 1048576] \
-    [--wait] [--allow-remote-test] [-- guest arguments ...]
-dbl status ID
-dbl logs [--after N] [--limit N] [--follow] ID
-dbl cancel ID
-dbl version [--server]
-```
-
-Global flags come before the command, command flags before positionals (`connect URL --name NAME` also accepts the name after the URL). Explicit `--endpoint` overrides the saved current connection; explicit `--dispatcher` selects a saved name, and supplying both is an error. Without either, the saved current connection is used; with none saved, the endpoint is `http://127.0.0.1:9000`; the SDK's endpoint rules apply (explicit prefix preserved, plaintext only for literal loopback IPs, no redirects, no insecure mode). Rejected endpoint values are omitted from diagnostics because they may contain credentials. `--timeout` supplies the command context for requests and polling; the default is 30 s, 60 s for `demo`, and 5 minutes for `service` and `drain`, which wait for a service manager and for local work to join rather than for a request. `up`, `dispatcher up` and `executor up` have no lifetime timeout unless you set `--timeout`; startup is bounded separately to 30 seconds. Local file operations are synchronous and cannot guarantee interruption of a stalled filesystem or hostile path replacement. `--output` defaults to `human`; `json` keeps stdout parseable. `--help` exits 0.
-
-## Saved connections and separate roles
-
-`dbl connect URL --name NAME` validates the HTTP server and saves/selects a profile.
-The default config path is the OS user config directory plus `debuglet/config.json`
-(on Linux, `$XDG_CONFIG_HOME/debuglet/config.json` or `~/.config/debuglet/config.json`).
-Global `--config FILE` keeps an independent profile set. Profiles contain names and
-addresses, not daemon state, a wallet or a credential.
-
-`dispatcher list` (alias `dispatchers`) lists saved connections without network
-probes. `dispatcher use NAME` changes the default. `dispatcher remove NAME` removes
-only that saved connection; it neither stops a server nor deletes its database.
-`executor list` (aliases `executors` and `nodes`) queries the selected dispatcher.
-
-`dispatcher up` starts only a dispatcher and saves its local connection. It binds
-loopback HTTP/yamux and gRPC listeners; port `0` selects an available port. Its
-printed URL is enough for `executor up --dispatcher URL`. A saved name also works.
-The executor gets control addresses from `GET /connection`; users need not derive
-or type the second port. It requires the server's `local-test` metadata and literal
-loopback addresses. A client can still save an older HTTP server lacking this
-optional metadata, but executor startup needs a dispatcher that supplies it.
-
-Roles create their configuration and fresh SQLite schema automatically, disable
-wallet/SCION integration, and use userspace packet counting. Each runs until Ctrl-C
-and stops only its owned daemon. State defaults to `dispatchers/NAME` or
-`executors/NAME` below the local state directory described for `up`; `--state-dir`
-overrides it. Executor UUIDs and stored results survive a clean same-package
-restart. Active state directories are locked. These commands provide no automatic
-database upgrades and no replay of interrupted work; `dbl service` installs the
-same roles as supervised services instead of running them in a terminal.
-
-## Managed services
-
-`dbl service install|start|stop|status|uninstall --role ROLE [--name NAME]`
-installs one verified role as a service the host's service manager supervises,
-next to the unprivileged foreground commands, which are unchanged. `dbl drain
---role ROLE` takes one managed role out of service and `--resume` puts it back.
-Both need administrator privileges. The profile, paths, readiness, purge rules
-and drain semantics are in [Managed services](services.md); the JSON reports are
-listed under [Commands](#commands) below.
-
-## Credentials
-
-A dispatcher authenticates every request that is not public, so a saved connection
-usually needs a credential as well as an endpoint. The two are stored separately:
-endpoints live in `config.json`, credentials in `credentials.json` beside it, mode
-`0600` in the mode-`0700` configuration directory. Only the session is stored
-there: the account key stays in the file its owner keeps, so a copy of the
-credential file yields one expiring session rather than permanent access. A credential file any other user
-can read is refused with the `chmod` that fixes it, rather than used.
+### Try Debuglet
 
 ```sh
-dbl connect http://127.0.0.1:9000 --name local
-dbl --dispatcher local login --register researcher   # creates an account
-dbl --dispatcher local run --sample hello --wait
-dbl --dispatcher local logout
+dbl demo
 ```
 
-- `login` obtains a session for the selected saved connection and stores it for that
-  connection. The account key comes from `--account-key-file FILE`, else from the
-  `DEBUGLET_ACCOUNT_KEY` environment variable; neither is a command-line argument, so
-  it does not appear in this machine's process list. With neither, a dispatcher
-  serving the local development profile issues a credential for its own local
-  account, which is how the wallet-free local flow gets one without a browser.
-- `login --register NAME` reserves both credential files before creating an
-  account on the selected dispatcher. Its credentials are written, **never
-  printed**, to owner-only files that must not exist yet: the account key to `--account-key-file FILE` (default
-  `account-key-PROFILE.txt` beside the connections file) and the recovery code to
-  `--recovery-file FILE` (default `recovery-PROFILE.txt`). Keep both; the dispatcher
-  cannot show either again. The account key logs in later, the recovery code
-  replaces both if it is lost, and both belong in a password manager.
-- `logout` attempts to revoke the session at its dispatcher and forgets it
-  locally even if that request fails. If the saved profile now names a different
-  endpoint, it removes the old credential locally without sending it to the new
-  endpoint; the old session remains valid until revoked or expired.
+### Run local roles separately
 
-No credential is ever printed. `login`, `logout`, `run`, `status`, `logs`, `cancel`,
-`dispatcher list` and every exported receipt carry endpoints and identifiers only.
-A stored credential is presented only to the endpoint it was issued for: selecting
-another profile sends that profile's credential or none, and changing a saved
-profile's endpoint makes `dbl` refuse the stored credential instead of forwarding it
-to the new origin. `login` can replace that mismatched credential with a session
-from the new endpoint, and `logout` can discard it locally.
+```sh
+# terminal 1
+dbl dispatcher up
 
-A credential belongs to a saved connection and to nothing else. An explicit
-`--endpoint URL` selects no saved connection, so it presents no credential and reads
-neither `config.json` nor `credentials.json`; commands that name their endpoint,
-such as `dbl --endpoint URL version --server`, therefore keep working where there is
-no configuration directory to locate at all. Use `--dispatcher NAME`, or the saved
-current connection, to send a credential. `login` and `logout` both act on a saved
-connection and say so when none is selected.
+# terminal 2
+dbl executor up --dispatcher http://127.0.0.1:9000
 
-A session expires after 12 hours and can be revoked at any time. Log in again
-with the account-key file created during registration, for example
-`dbl --dispatcher PROFILE login --account-key-file ~/.config/debuglet/account-key-PROFILE.txt`.
-The CLI does not discover that long-lived credential implicitly. If it is lost,
-use the recovery code with `POST /auth/recover` or `pkg/client.Recover`; the CLI
-does not yet expose account recovery. A command with an expired session exits 1
-and prints the dispatcher's `unauthorized` diagnostic.
+# terminal 3
+dbl connect http://127.0.0.1:9000 --name local
+dbl run --sample hello --wait
+dbl logs ID
+```
 
-## Commands
+### Use a managed dispatcher
 
-- `demo` uses the verified installed Linux amd64 payload to start its own wallet-free loopback dispatcher/executor, execute the bundled WASM/TCP measurement, verify the nonce/output/terminal result and clean up. See the [installation guide](../README-install.md). A CLI installed alone through `go install` has no bundled daemon/guest assets and cannot run this command.
-- `up` starts an installed local dispatcher and executor and stays in the foreground until Ctrl-C or SIGTERM. It creates configuration and SQLite databases automatically, disables wallet/SCION integration, and listens only on loopback. Default HTTP port is 9000. State defaults to `$XDG_STATE_HOME/debuglet` or `$HOME/.local/state/debuglet`; `--state-dir` selects another directory. Completed results and stored output survive stopping and restarting with the same package. A different package version requires a new state directory. Duplicate use of an active state directory is rejected. JSON mode emits one ready record with `state`, `endpoint`, `executor_id`, and `state_dir`; the same record is written to `environment.json` while running. Ctrl-C stops both child processes and retains the databases. This command does not install a background service or resume interrupted work.
-- `service` installs, starts, stops, inspects and removes one managed role instance, as described in [Managed services](services.md). Its JSON report has `operation`, `role`, `name`, `unit`, `version`, `state` (`installed`, `ready`, `started`, `stopped`, `uninstalled`, `not-installed` or `incomplete`), `ready`, `enabled`, `active`, `main_pid`, `state_dir`, `unit_path`, `changed`, and, where they apply, `joined`, `executor_id`, `endpoint`, `restart_required` and `note`. After a stop or an uninstall, `joined` reports a daemon that completed its own shutdown, which is the only thing that permits deleting its state. The report is printed even when the operation failed, because the host's state has to be readable either way. `service status` exits 0 only when the role is ready and 4 when it completed its report of a role that is not ready (`started` without a readiness record, or `stopped`); an instance that is not installed is a failure (1).
-- `drain` takes one managed role out of service and `--resume` puts it back, as described in [Managed services](services.md#draining-a-managed-role). Its JSON report has `operation`, `role`, `name`, `unit`, `outcome` (`drained`, `paused`, `resumed`, `started` or `incomplete`), `joined`, `enabled`, `active`, `state_dir`, `changed`, `note` and, after a joined executor drain, a `disposition` object counting `retained`, `queued`, `started`, `quarantined`, `bindings`, `retained_terminal`, `unsent_terminal` and `rejected_terminal`, plus `truncated` when the retained rows come from more control sessions than were counted, which makes `bindings` alone a lower bound. Only `joined` may be used to decide that state can be deleted, upgraded or rebuilt.
-- `nodes` lists executors. JSON is always an array.
-- `validate` checks a workload without contacting a dispatcher. It reads the same bundled `hello` sample or regular WASM file accepted by `run`, bounds the read at 24 MiB, parses the module with the executor's WASM parser, and applies the SDK `Prepare` resource and envelope rules. Allowlist entries must be bare, unscoped IP addresses or syntactically valid DNS names under the RFC 1123 host-name rules the daemon configuration also uses (see [configuration](configuration.md#daemon-configuration)): letters, digits and hyphens only, so an underscore is refused; absolute DNS names with one trailing dot are accepted. Ports belong in guest arguments. Validation checks syntax only and performs no DNS lookup. A successful result reports the resolved local inputs and sizes, but does not claim that the module will execute, uses a particular ABI, or is supported by a selected executor. Invalid human output names the field on stderr. JSON output emits one object with `valid` and a `diagnostics` array containing stable `field` and `message` values. Validation creates no intent and sends no request.
-- `run` submits one job (order ID 0). Local options are validated before requesting an intent: nonblank executor selection (default `auto`) and exactly one of a file or `--sample hello`, `--duration` at least 1 ms and a whole number of milliseconds, nonnegative floor/ceil with floor ≤ ceil, guest arguments only after `--`. Bandwidth flags use bits per second. `--wasm` requires a regular file, including a symlink resolving to one; FIFOs, devices and directories are rejected before opening. File type/size are checked before and after opening, and reads are limited to 24 MiB. The SDK checks the 32 MiB intent envelope before sending and the actual submission envelope after server metadata is known; that second check may fail after an intent exists. `--allow` is repeatable and only populates the policy's address allowlist; the destination host and port a guest connects to belong in the guest arguments. Omitting `--executor`, or setting `--executor auto`, selects only when exactly one executor is ready; otherwise it fails before requesting an intent. An explicit ID skips discovery. No public destination is added. `--sample hello` reads the hello guest from the verified full installation and requires no compiler; `--wasm` accepts your own compiled guest. `--duration` is the server-side budget; `--timeout` bounds client requests and polling. `--allow-remote-test` is required for TEST submission to a non-loopback endpoint.
-- `run --wait` polls the state every 250 ms until `RunStateExited`. An empty error is success (exit 0); a nonempty error is a workload failure (exit 3). Unknown states keep polling. A deadline or Ctrl-C ends the local requests, preserves the known IDs and never sends a cancellation.
-- `status ID` prints the reported state; exit 0 also when the state describes a failed job.
-- `logs ID` prints one page. Human output writes the exact decoded guest bytes to stdout and cursor/state information to stderr. `--follow` drains pages while more are reported, polls while the job is not terminal, and stops after an observed terminal page has been drained; it covers output visible at that time, not delivery. Cursors must strictly advance; corrupt output or a non-advancing cursor is an explicit failure. JSON follow emits one page per line.
-- `cancel ID` retrieves the job's executor and sends the cancellation. Success means the dispatcher acknowledged it and recorded it as the job's result, or that the job already had one; this does not certify remote termination. While the job's control session is live, the current server also acknowledges cancellation of a job that has already finished, as long as the job's executor still acknowledges it; once the executor no longer holds the job, the cancellation is refused. A cancellation of a job whose control session has ended, because the dispatcher restarted or the executor connected again in a new session, is recorded by the dispatcher without contacting an executor, and the recorded error says that the control session had ended and the executor's outcome was not observed. The server never rewrites a recorded terminal result, so `status` afterwards shows the server-reported error (`cancelled via API`, `cancelled via API; the control session had ended and the executor's outcome was not observed`, or the earlier exit error) unchanged; `dbl` prints only the acknowledgement and never claims the job stopped. A failed status lookup is reported as `dbl cancel: status lookup: ...` with that failure's own exit code and names no cancellation outcome. Once the executor is known, sending the cancellation ends in one of three outcomes. An acknowledgement prints `Cancellation acknowledged` and exits 0. A refusal by the server (an HTTP 4xx such as not found or `cancel_refused`, or any other unexpected response below 500) is reported as `cancellation rejected` with exit code 1. A server failure (HTTP 5xx), a transport failure (the request could not be sent, or no response was read, for example after a connection reset) or the command's deadline after the request was sent is reported as `cancellation not confirmed`: `dbl` cannot tell whether the request reached the dispatcher, which may have received the cancellation and recorded it, so check `status` and repeat `cancel`. It exits 1, or 124 when the command's deadline expired, in which case the message also says `command timed out` (130 and `interrupted` after Ctrl-C). A server error saying the cancellation was acknowledged but its result was not recorded means the dispatcher could not record that result, or could not confirm that it did: the executor may be stopping the job even if `status` does not show the cancellation, so check `status` and repeat `cancel` to record it.
-- `login` and `logout` manage the credential of the selected saved connection, as described above. They accept no positional arguments. JSON mode emits `{"dispatcher","endpoint","account","role","expires_at"}` for `login` and `{"dispatcher","endpoint","logged_out"}` for `logout`; neither document carries a credential.
-- `version` prints the local build metadata (`module`, `version`, `revision`, `modified`); `--server` adds a `server` object with the dispatcher's separate identities: its configured `version`, the HTTP contract it serves (`api_version`, `api_versions`), the build it came from (`binary_version`, `binary_revision`) and the executor control protocol it speaks (`protocol_version`). A dispatcher written before the contract was versioned fills in `version` only. See the [HTTP API guide](API.md).
+```sh
+dbl connect https://dispatcher.example --name research
+dbl --dispatcher research login --register researcher
+dbl --dispatcher research nodes
+dbl --dispatcher research run --sample hello --wait --allow-remote-test
+```
 
-## Receipts and JSON shapes
+## Command groups
 
-`run` emits exactly one receipt on stdout: `{"id","transaction_id","executor_id","state":"submitted"}`. With `--wait` the receipt is buffered and one final document is emitted instead, adding the observed `state` and `error`; on interruption, deadline or error the latest receipt is emitted once. If the second submission step fails, the receipt carries the known `transaction_id`, no invented `id`, and state `submission_unknown` (the server may have accepted the batch) or `submission_failed` (rejected or failed validation before sending). Unexpected submission 201/202 responses produce `submission_unknown` and exit 1. Before a transaction exists, failures emit no receipt. SDK diagnostics remove recognized credential fields and known auth keys as described in [SDK error handling](SDK.md#reading-results).
-
-`status` prints `{"id","state","error","executor_id"}`, `logs` prints the SDK's log page, `cancel` prints `{"id","acknowledged":true}` (human: `Cancellation acknowledged`), and `nodes` prints the node array.
-
-Role startup JSON is emitted once. Dispatcher fields are `state`, `role`, `name`,
-`endpoint`, `grpc_address`, `yamux_address`, and `state_dir`. Executor fields are
-`state`, `role`, `name`, `endpoint`, `executor_id`, and `state_dir`. `state` is `ready`;
-the same role record lives in its state directory's `ready.json` while active.
-`connect` returns a profile with `name`, `endpoint`, `grpc_address`, and
-`yamux_address`; `dispatcher list` returns `schema_version`, `current`, and the
-`dispatchers` array. Neither carries a credential: credentials live in the separate
-`credentials.json`. Stored profiles alone do not establish current reachability, and
-a saved profile without a stored credential reaches only the public routes.
-
-## Exit codes
-
-| Code | Meaning |
+| Goal | Commands |
 | --- | --- |
-| 0 | Command completed: a receipt, an acknowledgement or a query was delivered. Not a statement about workload success. |
-| 1 | Transport, API, protocol or local I/O failure |
-| 2 | Usage or validation error |
-| 3 | `run --wait` observed a terminal workload failure |
-| 4 | `service status` observed a role that is not ready |
-| 124 | The client deadline expired |
-| 130 | Interrupted by the user |
+| Run local roles | `demo`, `up`, `dispatcher up`, `executor up` |
+| Manage connections | `connect`, `dispatcher list`, `dispatcher use`, `dispatcher remove` |
+| Manage credentials | `login`, `logout` |
+| Submit work | `validate`, `run`, `cancel` |
+| Read results | `nodes`, `status`, `logs` |
+| Manage system services | `service`, `drain` |
+| Inspect versions | `version` |
 
-Diagnostics go to stderr. When a failure happens after a receipt exists, the receipt stays on stdout once and the failure is explained on stderr, so automation does not confuse acknowledged submission with successful execution.
+Use `--output json` when another program reads command output. `--dispatcher NAME` selects a saved connection; `--endpoint URL` uses a one-off endpoint.
+
+The [Wiki](https://github.com/netsec-ethz/debuglet/wiki) explains managed services, deployment, and recovery. The [HTTP API guide](API.md) is the reference for applications that do not use `dbl`.
