@@ -1,7 +1,7 @@
 // Command client submits a WASM measurement to a Debuglet environment and
 // prints its output using only the public Go SDK. Without flags it expects the
 // loopback environment of dbl up; --register, --allow-remote-test and --allow
-// add what a dispatcher on another host needs. See docs/quickstart-remote.md.
+// add what a dispatcher on another host needs. See the project Wiki for managed deployments.
 package main
 
 import (
