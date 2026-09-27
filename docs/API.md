@@ -80,7 +80,25 @@ A route or field that is to be removed is first marked deprecated in `api/openap
 
 ## Supported revisions
 
-Only the latest release candidate (currently `v0.2.0-rc.3`) and the current validated commit of `main` are supported; fixes are not backported to earlier candidates. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
+Only the latest release (currently `v0.2.0`) and the current validated commit of `main` are supported; fixes are not backported to earlier releases. Across commits there is no compatibility promise for the `dbl` command line, the control protocol between dispatcher and executor, or the database schema: two commits are not promised to interoperate, and a state directory created by one commit is not promised to be readable by another. The HTTP API is the exception: it is versioned as this document describes above, and that versioning is unchanged by this rule.
+
+### Tested combinations
+
+These are the combinations CI exercises for every candidate, so they are the only ones a supported revision promises. Anything not in the table is untested, not implicitly supported.
+
+| Component | Tested combination | Evidence |
+| --- | --- | --- |
+| Platform | Linux amd64: a GitHub-hosted `ubuntu-24.04` VM running the lanes in the pinned `golang:1.25.11-bookworm` image | [CI setup](ci.md), [CI images](ci-images.md) |
+| Kernel attachment | the eBPF objects regenerated and loaded on that VM's kernel, which is not pinned | `make ci-kernel` |
+| Package | the archive, installer and checksums of one candidate, installed and run without a compiler | `make ci-package`, `ci-demo`, `ci-compatibility`, `ci-local` |
+| Dispatcher and executor | both from the same package; control protocol `3` | `make ci-local` |
+| HTTP clients | `dbl` and `pkg/client` from the same commit, against HTTP contract `1.3` | `make ci-test`, `make ci-local` |
+| Guests | ABI `debuglet-go-wasi-imports-v1`: the frozen guest and the guests shipped in the package | [compatibility gate](GUESTS.md#the-compatibility-gate) |
+| State | a state directory created by the same package version; an older recognized schema only through the explicit upgrade | [Stored state](configuration.md#stored-state) |
+
+Mixing a dispatcher and an executor from different packages, a `dbl` or `pkg/client` from another commit, or a state directory from another package version is outside this table. The `dbl` client inside a container on macOS is documented in the [cross-host guide](quickstart-remote.md#clients) but not run in CI.
+
+A matching `protocol_version` says only which control protocol a peer speaks. It says nothing about who the peer is: an executor's identity is bound to an enrolled client certificate only where `tls.require_client_cert` is set, as the [threat model](SECURITY.md) describes, and two peers that agree on the protocol are not thereby authenticated to each other.
 
 ## Errors
 
@@ -210,7 +228,7 @@ debuglet-dispatcher -config /etc/debuglet/dispatcher/dispatcher.toml -grant-oper
 debuglet-dispatcher -config /etc/debuglet/dispatcher/dispatcher.toml -revoke-operator <account UUID>
 ```
 
-Both print what they changed and exit; an identifier that names no account is reported rather than created. This is the **only** way to obtain the role, apart from the account the local development profile below bootstraps. A role change takes effect on the account's next request, including one made with a session it already holds. [docs/environments.md](environments.md) describes where to run these commands.
+Both print what they changed and exit; an identifier that names no account is reported rather than created. This is the **only** way to obtain the role, apart from the account the local development profile below bootstraps. A role change takes effect on the account's next request, including one made with a session it already holds. [configuration reference](configuration.md) describes where to run these commands.
 
 Executor identities are administered on the host the same way, and are unrelated to accounts. `-enroll-executor <executor ID>` prints a single-use token, valid for 24 hours, that binds that ID to the client certificate the executor presents; `-revoke-executor <executor ID>` deletes the binding, after which that certificate is refused and recovery is a new token. An executor ID is whatever string the deployment uses, so `-enroll-executor` accepts any identifier and enrols it, including one no executor has ever used.
 

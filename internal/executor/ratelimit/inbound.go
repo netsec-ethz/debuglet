@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 )
 
@@ -53,7 +54,7 @@ func (a *Accountant) Account(ctx context.Context, direction app.TransferDirectio
 	if a == nil || a.limiter == nil || size <= 0 {
 		return nil
 	}
-	if err := a.limiter.Wait(ctx, direction, a.id, addr, app.FromBytes(size)); err != nil {
+	if err := a.limiter.Wait(ctx, direction, a.id, addr, bitrate.FromBytes(size)); err != nil {
 		return fmt.Errorf("failed to account %d bytes for %s: %w", size, addr, err)
 	}
 	return nil

@@ -5,8 +5,8 @@ package main
 
 import (
 	"flag"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/user"
 	"log"
 	"os"
@@ -91,7 +91,7 @@ func main() {
 					ListenUDP: *listenUDP,
 				},
 			})
-			log.Printf("added debuglets i=%d, len=%d, ceil=%s\n", i, len(debugletIDs), app.Bitrate(*ceilBW))
+			log.Printf("added debuglets i=%d, len=%d, ceil=%s\n", i, len(debugletIDs), bitrate.Bitrate(*ceilBW))
 			for j, m := range debugletIDs {
 				log.Printf("\t%d. %s\n", j, m)
 			}

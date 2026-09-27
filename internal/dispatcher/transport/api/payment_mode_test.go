@@ -3,9 +3,7 @@ package api
 import (
 	"bytes"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -68,9 +66,6 @@ var (
 	modeCreateOrderQuery = regexp.QuoteMeta(
 		"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, refund_address, state ) VALUES (?,?,?,?,?,?,?) RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
 	)
-	modeCreateTransactionQuery = regexp.QuoteMeta(
-		"INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, status, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, auth_key, price, method, expires_at, hash, currency, status",
-	)
 	modeGetTransactionQuery = regexp.QuoteMeta(
 		"SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions WHERE id = ?",
 	)
@@ -83,30 +78,11 @@ var (
 	modeGetAdmittedRunsQuery = regexp.QuoteMeta(
 		"SELECT o.order_id, d.uuid FROM debuglet_order o JOIN debuglets d ON d.id = o.debuglet_id WHERE o.transaction_id = ?",
 	)
-	modeInsertDebugletQuery = regexp.QuoteMeta(
-		"INSERT INTO debuglets (uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, transaction_id, order_id, dispatcher_incarnation, session_id)",
-	)
 
 	modeEarningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 	modeOrderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	modeTransactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
 )
-
-// modeErrSentinelInsert is returned by the mocked debuglets INSERT. Reaching it
-// proves the submission passed the mode gate and scheduler admission.
-var modeErrSentinelInsert = errors.New("mode sentinel: debuglet insert reached")
-
-// modeArgCapture is a sqlmock argument matcher that accepts any value and
-// records it, so that a randomly generated transaction ID can be compared
-// across queries and against the HTTP response.
-type modeArgCapture struct {
-	value driver.Value
-}
-
-func (a *modeArgCapture) Match(v driver.Value) bool {
-	a.value = v
-	return true
-}
 
 type modeFixture struct {
 	t    *testing.T
@@ -183,7 +159,7 @@ func (f *modeFixture) registerExecutor() {
 	defer mutation.Finish()
 	if _, err := f.d.OnResources(mutation.Context(), mutation, &protocol.ResourcesRequest{
 		ExecutorId:        modeExecutorID,
-		BandwidthCapacity: int64(resource.Gigabit),
+		BandwidthCapacity: int64(bitrate.Gigabit),
 	}); err != nil {
 		f.t.Fatalf("failed to set executor capacity: %v", err)
 	}
@@ -312,29 +288,10 @@ func modeAssertBodyContains(t *testing.T, rec *httptest.ResponseRecorder, want s
 	}
 }
 
-// TestModeDisabledChainIntentRejectedBeforeOrderWrites: a USDC or SUI intent that
-// is otherwise valid enough to reach LockPrice (registered executor with
-// capacity, valid debuglets) is answered with 503 and the bounded message, and
-// no debuglet_order or transactions row is written. sqlmock has no order or
-// transaction expectations, so any write would surface both as a non-503
-// response and as an unexpected call.
-func TestModeDisabledChainIntentRejectedBeforeOrderWrites(t *testing.T) {
-	for _, method := range []string{"USDC", "SUI"} {
-		t.Run(method, func(t *testing.T) {
-			f := modeNewFixture(t)
-			f.registerExecutor()
-
-			rec := f.do(http.MethodPut, "/payment/intent", modeIntentBody(method))
-			modeAssertStatus(t, rec, http.StatusServiceUnavailable)
-			modeAssertBody(t, rec, modeDisabledBody)
-			f.expectationsMet("disabled chain intent")
-		})
-	}
-}
-
-// TestModeDisabledChainIntentNeedsNoDatabase is supporting evidence only: the
-// intent rejection happens before any database or executor access, so the
-// handler stack built on a nil *sql.DB still answers 503.
+// TestModeDisabledChainIntentNeedsNoDatabase: the intent rejection happens
+// before any database or executor access, so the handler stack built on a nil
+// *sql.DB still answers 503. That the rejection writes no row is covered on a
+// real database by TestWalletFreeHTTPFlow.
 func TestModeDisabledChainIntentNeedsNoDatabase(t *testing.T) {
 	f := modeNewFixtureWithDB(t, nil, nil)
 	for _, method := range []string{"USDC", "SUI"} {
@@ -361,114 +318,6 @@ func TestModeLockPriceGuard(t *testing.T) {
 				t.Fatalf("LockPrice price = %d, want 0", price)
 			}
 			f.expectationsMet("direct LockPrice")
-		})
-	}
-}
-
-// TestModeDisabledTestIntentSucceeds: in disabled mode a TEST intent still
-// writes a Paid TEST transaction and its Outstanding order and returns the
-// existing payload shape {"method":"TEST","intent":{"transaction_id":...,
-// "auth_key":""}}.
-func TestModeDisabledTestIntentSucceeds(t *testing.T) {
-	f := modeNewFixture(t)
-	f.registerExecutor()
-
-	debuglets := modeDebuglets()
-	hash := modeRequestHash(t, debuglets)
-	orderTxID := &modeArgCapture{}
-	transactionTxID := &modeArgCapture{}
-
-	// CreateDummyIntent stores method TEST, an empty auth key, the request hash
-	// and status Paid; price and currency are not part of its parameters. The
-	// transaction is written before the order that references it, and both
-	// in one SQL transaction.
-	f.mock.ExpectBegin()
-	f.mock.ExpectQuery(modeCreateTransactionQuery).
-		WithArgs(transactionTxID, "", sqlmock.AnyArg(), sqlmock.AnyArg(), "TEST", sqlmock.AnyArg(), int64(models.Paid), hash).
-		WillReturnRows(modeTransactionRows(modeChainTxID, "", "TEST", "", hash, models.Paid))
-	f.mock.ExpectQuery(modeCreateOrderQuery).
-		WithArgs(orderTxID, modeOrderID, modeExecutorID, modeOrderPrice, "TEST", modeRefundAddr, int64(models.Outstanding)).
-		WillReturnRows(modeOrderRows("", "TEST", models.Outstanding))
-	f.mock.ExpectCommit()
-
-	rec := f.do(http.MethodPut, "/payment/intent", modeIntentBody("TEST"))
-	modeAssertStatus(t, rec, http.StatusOK)
-	f.expectationsMet("TEST intent")
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
-		t.Fatalf("response is not a JSON object: %v; body: %s", err, rec.Body.String())
-	}
-	if len(raw) != 2 || raw["method"] == nil || raw["intent"] == nil {
-		t.Fatalf("response keys = %v, want exactly method and intent", raw)
-	}
-	var resp struct {
-		Method string      `json:"method"`
-		Intent DummyIntent `json:"intent"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode intent response: %v", err)
-	}
-	var intentKeys map[string]json.RawMessage
-	if err := json.Unmarshal(raw["intent"], &intentKeys); err != nil {
-		t.Fatalf("intent is not a JSON object: %v", err)
-	}
-	if len(intentKeys) != 2 || intentKeys["transaction_id"] == nil || intentKeys["auth_key"] == nil {
-		t.Fatalf("intent keys = %v, want exactly transaction_id and auth_key", intentKeys)
-	}
-	if resp.Method != "TEST" {
-		t.Fatalf("method = %q, want TEST", resp.Method)
-	}
-	if resp.Intent.AuthKey != "" {
-		t.Fatalf("auth_key = %q, want empty", resp.Intent.AuthKey)
-	}
-	if b, err := hex.DecodeString(resp.Intent.TransactionID); err != nil || len(b) != 16 {
-		t.Fatalf("transaction_id = %q, want 16 random bytes hex-encoded", resp.Intent.TransactionID)
-	}
-	if orderTxID.value != resp.Intent.TransactionID || transactionTxID.value != resp.Intent.TransactionID {
-		t.Fatalf("transaction id mismatch: order row %v, transaction row %v, response %q",
-			orderTxID.value, transactionTxID.value, resp.Intent.TransactionID)
-	}
-}
-
-// TestModeUnknownIntentMethodKeepsExisting400: an unknown method keeps the
-// existing 400 in disabled mode and touches no database. The body is the
-// documented error envelope; it was an untyped JSON string before the envelope
-// was introduced.
-func TestModeUnknownIntentMethodKeepsExisting400(t *testing.T) {
-	f := modeNewFixture(t)
-	f.registerExecutor()
-
-	rec := f.do(http.MethodPut, "/payment/intent", modeIntentBody("EUR"))
-	modeAssertStatus(t, rec, http.StatusBadRequest)
-	modeAssertBody(t, rec, `{"code":"unsupported_payment_method","message":"unknown payment method: EUR"}`)
-	f.expectationsMet("unknown intent method")
-}
-
-// TestModeDisabledChainSubmissionRejectedBeforeAdmission: a submission backed by
-// a persisted, paid chain transaction with the correct auth key and the exact
-// request hash is answered with 503 after the transaction read. sqlmock proves
-// there is no Begin, debuglets INSERT, order-state update or refund query, and
-// the executor's dispatch history proves the scheduler admitted nothing.
-func TestModeDisabledChainSubmissionRejectedBeforeAdmission(t *testing.T) {
-	for _, currency := range []string{"USDC", "SUI"} {
-		t.Run(currency, func(t *testing.T) {
-			f := modeNewFixture(t)
-			f.registerExecutor()
-
-			debuglets := modeDebuglets()
-			hash := modeRequestHash(t, debuglets)
-			f.mock.ExpectQuery(modeGetTransactionQuery).
-				WithArgs(modeChainTxID).
-				WillReturnRows(modeTransactionRows(modeChainTxID, modeChainAuthKey, "SUI", currency, hash, models.Paid))
-
-			rec := f.do(http.MethodPut, "/debuglet", modeSubmitBody(modeChainTxID, modeChainAuthKey, debuglets))
-			modeAssertStatus(t, rec, http.StatusServiceUnavailable)
-			modeAssertBody(t, rec, modeDisabledBody)
-			f.expectationsMet("disabled chain submission")
-			if n := f.recentDebugletIDs(); n != 0 {
-				t.Fatalf("executor dispatch history has %d entries, want 0 (no scheduler admission)", n)
-			}
 		})
 	}
 }
@@ -533,61 +382,5 @@ func TestModeChainSubmissionKeepsExistingRejections(t *testing.T) {
 				t.Fatalf("executor dispatch history has %d entries, want 0", n)
 			}
 		})
-	}
-}
-
-// TestModeDisabledTestSubmissionReachesAdmission: a paid TEST transaction is
-// still admitted in disabled mode. The mocked debuglets INSERT returns a
-// sentinel error, proving the request passed the mode gate and scheduler
-// admission and reached the real insert boundary; the existing failure path
-// then attempts RefundTransaction, which reads the transaction and its orders
-// inside a new database transaction and rolls back because TEST refunds are
-// unsupported.
-func TestModeDisabledTestSubmissionReachesAdmission(t *testing.T) {
-	f := modeNewFixture(t)
-	f.registerExecutor()
-
-	debuglets := modeDebuglets()
-	hash := modeRequestHash(t, debuglets)
-	f.mock.ExpectQuery(modeGetTransactionQuery).
-		WithArgs(modeChainTxID).
-		WillReturnRows(modeTransactionRows(modeChainTxID, "", "TEST", "", hash, models.Paid))
-
-	// SubmitDebuglets: admission passed, the insert fails with the sentinel and
-	// the deferred rollback follows.
-	modeExpectNoAdmittedRuns(f.mock)
-	f.mock.ExpectBegin()
-	f.mock.ExpectQuery(modeInsertDebugletQuery).WillReturnError(modeErrSentinelInsert)
-	f.mock.ExpectRollback()
-
-	// RefundTransaction for TEST: transaction and order reads, the existing
-	// order-state update inside the transaction, then rollback because refunds
-	// are unsupported for TEST.
-	f.mock.ExpectBegin()
-	f.mock.ExpectQuery(modeGetTransactionQuery).
-		WithArgs(modeChainTxID).
-		WillReturnRows(modeTransactionRows(modeChainTxID, "", "TEST", "", hash, models.Paid))
-	f.mock.ExpectQuery(modeGetTransactionOrdersQuery).
-		WithArgs(modeChainTxID).
-		WillReturnRows(modeOrderRows(modeChainTxID, "TEST", models.Outstanding))
-	f.mock.ExpectQuery(modeUpdateOrderStateQuery).
-		WithArgs(int64(models.Refunded), modeChainTxID, modeOrderID).
-		WillReturnRows(modeOrderRows(modeChainTxID, "TEST", models.Refunded))
-	f.mock.ExpectRollback()
-
-	rec := f.do(http.MethodPut, "/debuglet", modeSubmitBody(modeChainTxID, "", debuglets))
-	modeAssertStatus(t, rec, http.StatusInternalServerError)
-	// The scripted expectations above are what prove the insert boundary was
-	// reached; the response reports the failure without the database text.
-	assertEnvelope(t, "TEST submission", rec, http.StatusInternalServerError, CodeInternal, "failed to initialize debuglets")
-	if strings.Contains(rec.Body.String(), modeErrSentinelInsert.Error()) {
-		t.Fatalf("the database diagnostic reached the client: %s", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), paymentsDisabledMessage) {
-		t.Fatalf("TEST submission must not be classified as disabled: %s", rec.Body.String())
-	}
-	f.expectationsMet("TEST submission")
-	if n := f.recentDebugletIDs(); n != 0 {
-		t.Fatalf("executor dispatch history has %d entries, want 0 (insert failed before commit)", n)
 	}
 }

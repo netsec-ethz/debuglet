@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
@@ -43,7 +44,7 @@ func allocationRequest(t *testing.T, f *tgFixture, deb tgDebuglet) *pb.DebugletA
 
 // allocationFairshare is the executor-to-limit result the dispatcher would
 // currently publish for a destination.
-func allocationFairshare(t *testing.T, d *Dispatcher, destination string) map[string]resource.Bitrate {
+func allocationFairshare(t *testing.T, d *Dispatcher, destination string) map[string]bitrate.Bitrate {
 	t.Helper()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -54,7 +55,7 @@ func allocationFairshare(t *testing.T, d *Dispatcher, destination string) map[st
 // destination limit at want, one more bit no longer fits while the existing
 // charge still does. Together that pins the charged floor to want. The limit
 // in force is restored before returning.
-func allocationCharged(t *testing.T, d *Dispatcher, destination string, want resource.Bitrate) {
+func allocationCharged(t *testing.T, d *Dispatcher, destination string, want bitrate.Bitrate) {
 	t.Helper()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -97,7 +98,7 @@ func TestAllocateRepeatsOneDecisionPerRun(t *testing.T) {
 		t.Fatalf("first allocation: %v", err)
 	}
 	decision := allocationFairshare(t, f.d, destination)
-	if want := map[string]resource.Bitrate{tgExecutorID: 2 * tgFloorA}; !maps.Equal(decision, want) {
+	if want := map[string]bitrate.Bitrate{tgExecutorID: 2 * tgFloorA}; !maps.Equal(decision, want) {
 		t.Fatalf("allocation decision %v, want %v", decision, want)
 	}
 
@@ -168,7 +169,7 @@ func TestAllocateRejectsChangedPolicy(t *testing.T) {
 		}
 	}
 	admitted := allocationFairshare(t, f.d, destination)
-	if want := map[string]resource.Bitrate{tgExecutorID: 2 * tgFloorA}; !maps.Equal(admitted, want) {
+	if want := map[string]bitrate.Bitrate{tgExecutorID: 2 * tgFloorA}; !maps.Equal(admitted, want) {
 		t.Fatalf("admitted fairshare %v, want %v", admitted, want)
 	}
 
@@ -231,7 +232,7 @@ func TestAllocateRetryKeepsFencing(t *testing.T) {
 		t.Fatalf("first allocation: %v", err)
 	}
 	decision := allocationFairshare(t, f.d, destination)
-	if want := map[string]resource.Bitrate{tgExecutorID: 2 * tgFloorA}; !maps.Equal(decision, want) {
+	if want := map[string]bitrate.Bitrate{tgExecutorID: 2 * tgFloorA}; !maps.Equal(decision, want) {
 		t.Fatalf("allocation decision %v, want %v", decision, want)
 	}
 	// The ambiguous response is retried on a fresh ticket of the same session.
@@ -310,7 +311,7 @@ func TestAllocateCommitsEveryDestinationAtomically(t *testing.T) {
 	if _, err := client.DebugletAllocate(ctx, allocationRequest(t, f, deb)); err != nil {
 		t.Fatalf("allocation after the destination admits it: %v", err)
 	}
-	want := map[string]resource.Bitrate{tgExecutorID: 2 * tgFloorA}
+	want := map[string]bitrate.Bitrate{tgExecutorID: 2 * tgFloorA}
 	for _, destination := range []string{first, blocked} {
 		if got := allocationFairshare(t, f.d, destination); !maps.Equal(got, want) {
 			t.Fatalf("fairshare of %s = %v, want %v", destination, got, want)
@@ -356,7 +357,7 @@ func TestAllocateChargesRepeatedDestinationsOnce(t *testing.T) {
 			t.Fatalf("allocation %d of a repeated destination: %v", i, err)
 		}
 	}
-	if got, want := allocationFairshare(t, f.d, destination), (map[string]resource.Bitrate{tgExecutorID: tgFloorA}); !maps.Equal(got, want) {
+	if got, want := allocationFairshare(t, f.d, destination), (map[string]bitrate.Bitrate{tgExecutorID: tgFloorA}); !maps.Equal(got, want) {
 		t.Fatalf("fairshare of a repeated destination = %v, want %v", got, want)
 	}
 	allocationCharged(t, f.d, destination, tgFloorA)
@@ -398,14 +399,14 @@ func TestExitKeepsFloorOnlySiblingRun(t *testing.T) {
 			t.Fatalf("allocate floor-only run: %v", err)
 		}
 	}
-	if got, want := allocationFairshare(t, f.d, destination), (map[string]resource.Bitrate{tgExecutorID: 2 * tgFloorA}); !maps.Equal(got, want) {
+	if got, want := allocationFairshare(t, f.d, destination), (map[string]bitrate.Bitrate{tgExecutorID: 2 * tgFloorA}); !maps.Equal(got, want) {
 		t.Fatalf("fairshare of both floor-only runs = %v, want %v", got, want)
 	}
 
 	if err := f.exit(t, first.id, 0, nil); err != nil {
 		t.Fatalf("terminal release of the first run: %v", err)
 	}
-	if got, want := allocationFairshare(t, f.d, destination), (map[string]resource.Bitrate{tgExecutorID: tgFloorA}); !maps.Equal(got, want) {
+	if got, want := allocationFairshare(t, f.d, destination), (map[string]bitrate.Bitrate{tgExecutorID: tgFloorA}); !maps.Equal(got, want) {
 		t.Fatalf("fairshare after one exit = %v, want %v", got, want)
 	}
 	allocationCharged(t, f.d, destination, tgFloorA)
@@ -527,7 +528,7 @@ func TestAdmissionAndRestoreChargeRepeatedDestinationsOnce(t *testing.T) {
 	if got := f.d.scheduler.QueryMaxDest(destination, row.StartTime.Time, row.EndTime.Time); got != 100 {
 		t.Fatalf("restored destination reservation = %d, want 100", got)
 	}
-	for i, remaining := range []resource.Bitrate{40, 0} {
+	for i, remaining := range []bitrate.Bitrate{40, 0} {
 		if err := f.exit(t, ids[i], 0, nil); err != nil {
 			t.Fatalf("terminal release: %v", err)
 		}

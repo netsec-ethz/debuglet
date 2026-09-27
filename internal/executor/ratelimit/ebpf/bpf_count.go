@@ -8,8 +8,8 @@ package ebpf
 import (
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
 	"io"
 	"net"
@@ -162,7 +162,7 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	return &BpfConn{count: bc, conn: conn, socketID: socketID, domain: addr, id: id, resolvedIPv6: ipv6}, nil
 }
 
-func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error {
+func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {
 	parsedIP, err := netip.ParseAddr(addr)
 	if err == nil {
 		return bc.setIPv6Limit(netutil.ToIPv6(parsedIP), id, limit)
@@ -179,7 +179,7 @@ func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error
 	return nil
 }
 
-func (bc *BpfCount) setIPv6Limit(addr netutil.IPv6, id uuid.UUID, limit app.Bitrate) error {
+func (bc *BpfCount) setIPv6Limit(addr netutil.IPv6, id uuid.UUID, limit bitrate.Bitrate) error {
 	v6Bytes := addr.IP.As16()
 	key := countDebugletKey{
 		Uuid: [16]byte(id),
@@ -198,7 +198,7 @@ func (bc *BpfCount) DeleteLimit(addr netutil.IPv6, id uuid.UUID) error {
 	return bc.objs.RatesMap.Delete(&key)
 }
 
-func (bc *BpfCount) SetExecLimit(id uuid.UUID, limit app.Bitrate) error {
+func (bc *BpfCount) SetExecLimit(id uuid.UUID, limit bitrate.Bitrate) error {
 	key := countExecKey{Uuid: [16]byte(id)}
 	bytes := uint64(limit.Bytes())
 	return bc.objs.ExecRatesMap.Update(&key, &bytes, ebpf.UpdateAny)

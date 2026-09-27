@@ -6,8 +6,8 @@ package fallback
 import (
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"io"
 	"math"
 	"net"
@@ -402,7 +402,7 @@ type reservation struct {
 // a fast enough link the exact wait is a fraction of a nanosecond, which the
 // clock cannot express and truncation would turn back into the early grant
 // this accounting exists to prevent.
-func tokenWait(deficit, rate app.Bitrate) time.Duration {
+func tokenWait(deficit, rate bitrate.Bitrate) time.Duration {
 	if deficit <= 0 || rate <= 0 {
 		return 0
 	}
@@ -442,7 +442,7 @@ func (f *FallbackConn) reserve(size int) (*reservation, error) {
 
 // ratesLocked returns the destination and executor rates of f. A missing rate
 // and a rate of zero both admit nothing. count.mu must be held.
-func (f *FallbackConn) ratesLocked() (app.Bitrate, app.Bitrate, error) {
+func (f *FallbackConn) ratesLocked() (bitrate.Bitrate, bitrate.Bitrate, error) {
 	rate, ok := f.count.rates[debugletKey{id: f.id, dest: f.ipv6}]
 	if !ok || rate <= 0 {
 		return 0, 0, fmt.Errorf("no dest rate allowed for addr '%s'", f.ipv6.String())
@@ -460,9 +460,9 @@ func (f *FallbackConn) ratesLocked() (app.Bitrate, app.Bitrate, error) {
 // charges both buckets; a recomputed one only a bucket that was deleted and
 // created again since, which lost the charge with the old bucket. count.mu
 // must be held.
-func (r *reservation) chargeLocked(rate, execRate app.Bitrate) {
+func (r *reservation) chargeLocked(rate, execRate bitrate.Bitrate) {
 	count, now := r.conn.count, time.Now()
-	reserved := app.FromBytes(r.allocated)
+	reserved := bitrate.FromBytes(r.allocated)
 	b := bucketLocked(count.packetSize, debugletKey{id: r.conn.id, dest: r.conn.ipv6}, rate, now)
 	eb := bucketLocked(count.execPacketSize, r.conn.id, execRate, now)
 	r.waitFor = max(r.dest.owed(b, reserved, rate), r.exec.owed(eb, reserved, execRate))
@@ -473,14 +473,14 @@ func (r *reservation) chargeLocked(rate, execRate app.Bitrate) {
 type charge struct {
 	bucket *bucketState
 	// need is the refill level of bucket at which the charge is paid.
-	need         app.Bitrate
+	need         bitrate.Bitrate
 	needFraction int64
 }
 
 // owed charges b with reserved unless c already holds a charge on it, and
 // returns how long the charge still waits at rate. The wait covers this
 // charge's own deficit only, never what later charges on b owe.
-func (c *charge) owed(b *bucketState, reserved, rate app.Bitrate) time.Duration {
+func (c *charge) owed(b *bucketState, reserved, rate bitrate.Bitrate) time.Duration {
 	if c.bucket != b {
 		c.bucket, c.need, c.needFraction = b, b.refilled, b.refillFraction
 		if reserved > b.tokens {
@@ -559,13 +559,13 @@ func (r *reservation) refundLocked(unused int) {
 	key := debugletKey{id: r.conn.id, dest: r.conn.ipv6}
 	if b, ok := count.packetSize[key]; ok {
 		if rate, ok := count.rates[key]; ok {
-			b.tokens += app.FromBytes(unused)
+			b.tokens += bitrate.FromBytes(unused)
 			b.cap(rate)
 		}
 	}
 	if eb, ok := count.execPacketSize[r.conn.id]; ok {
 		if execRate, ok := count.execRates[r.conn.id]; ok {
-			eb.tokens += app.FromBytes(unused)
+			eb.tokens += bitrate.FromBytes(unused)
 			eb.cap(execRate)
 		}
 	}

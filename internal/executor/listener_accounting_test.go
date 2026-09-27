@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/tetratelabs/wazero"
 )
@@ -23,11 +23,11 @@ func TestRegisteredListenerAccountsFirstDatagramAfterPublication(t *testing.T) {
 	localTargets := true
 	cfg.Network.Policy.LocalTargets = &localTargets
 	e := newFixtureExecutor(t, cfg, nil, newFixtureMemoryStorage(t))
-	e.limiter.SetAddrCapacity(addr, app.Megabit)
+	e.limiter.SetAddrCapacity(addr, bitrate.Megabit)
 	spec := scheduler.Spec{
 		DebugletID: uuid.New(),
 		Policy: scheduler.Policy{
-			CeilBW: int64(app.Megabit), Addresses: []string{addr}, ListenUDP: true,
+			CeilBW: int64(bitrate.Megabit), Addresses: []string{addr}, ListenUDP: true,
 		},
 	}
 	op := newDebugletOperation(ctx)

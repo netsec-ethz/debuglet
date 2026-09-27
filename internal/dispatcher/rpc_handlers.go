@@ -9,9 +9,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
@@ -87,7 +87,7 @@ func (d *Dispatcher) OnResources(ctx context.Context, mutation *rpc.Mutation, re
 		return nil, err
 	}
 	execID := owner.ExecutorID()
-	bw := resource.Bitrate(req.GetBandwidthCapacity())
+	bw := bitrate.Bitrate(req.GetBandwidthCapacity())
 	d.logger.Debug("Resource update received", zap.String("executor_id", execID), zap.String("capacity", bw.String()))
 	d.mu.Lock()
 	if exec, ok := d.executors[execID]; d.closed || !ok || exec.owner != owner {
@@ -208,8 +208,8 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutat
 	// duplicate or altered request from charging limits that differ from the
 	// ones the terminal release returns. A request that does not repeat the
 	// admitted policy is rejected before anything is charged.
-	floorBW := resource.Bitrate(deb.Usage)
-	ceilBW := resource.Bitrate(deb.CeilBw)
+	floorBW := bitrate.Bitrate(deb.Usage)
+	ceilBW := bitrate.Bitrate(deb.CeilBw)
 	destinations := []string(deb.Addresses)
 	if !repeatsPolicy(policy, floorBW, ceilBW, destinations) {
 		return nil, status.Error(codes.FailedPrecondition, "request does not repeat the admitted policy of the run")
@@ -255,8 +255,8 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutat
 // policy the run was admitted with. Destinations are compared as a set:
 // their order and repetition carry no meaning, a destination is either part
 // of the run or it is not.
-func repeatsPolicy(requested *pb.DebugletPolicy, floor, ceil resource.Bitrate, destinations []string) bool {
-	if resource.Bitrate(requested.GetFloorBw()) != floor || resource.Bitrate(requested.GetCeilBw()) != ceil {
+func repeatsPolicy(requested *pb.DebugletPolicy, floor, ceil bitrate.Bitrate, destinations []string) bool {
+	if bitrate.Bitrate(requested.GetFloorBw()) != floor || bitrate.Bitrate(requested.GetCeilBw()) != ceil {
 		return false
 	}
 	return maps.Equal(destinationSet(requested.GetAddresses()), destinationSet(destinations))
@@ -614,7 +614,7 @@ func (work *fairshareWork) send(ctx context.Context) error {
 			continue
 		}
 		for _, update := range r.updates {
-			work.d.logger.Debug("New fairshared update", zap.String("executorID", r.owner.ExecutorID()), zap.String("newLimit", resource.Bitrate(update.BitsLimit).String()))
+			work.d.logger.Debug("New fairshared update", zap.String("executorID", r.owner.ExecutorID()), zap.String("newLimit", bitrate.Bitrate(update.BitsLimit).String()))
 		}
 		g.Go(func() error {
 			callCtx, finish := mutationCallContext(subCtx, r.mutation)
@@ -634,7 +634,7 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, de
 	return work.send(ctx)
 }
 
-func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.Time, use resource.Bitrate) {
+func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.Time, use bitrate.Bitrate) {
 	r := schedule.Request{
 		Executor:    executor,
 		Destination: dest,
@@ -665,7 +665,7 @@ func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet,
 		}
 	}
 
-	floor := resource.Bitrate(deb.Usage)
+	floor := bitrate.Bitrate(deb.Usage)
 
 	d.mu.Lock()
 	for _, dest := range deb.Addresses {

@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 const (
@@ -17,7 +19,7 @@ const (
 
 // readDimension reads one cached dimension: the executor share under the empty
 // address, a destination share otherwise.
-func readDimension(l *Limiter, id uuid.UUID, dimension string) (Bitrate, bool, error) {
+func readDimension(l *Limiter, id uuid.UUID, dimension string) (bitrate.Bitrate, bool, error) {
 	if dimension == executorDimension {
 		return l.GetExecLimit(id)
 	}
@@ -141,7 +143,7 @@ func TestLimiterInvalidationIsNotMaskedByAnotherRead(t *testing.T) {
 // removed run is never readable again and leaves no fairshare membership.
 func TestLimiterConcurrentCapacityReadRemove(t *testing.T) {
 	l := NewLimiter(zap.NewNop())
-	l.SetExecutorCapacity(Gigabit)
+	l.SetExecutorCapacity(bitrate.Gigabit)
 	addrs := []string{limiterAddrA, limiterAddrB}
 
 	stop := make(chan struct{})
@@ -157,8 +159,8 @@ func TestLimiterConcurrentCapacityReadRemove(t *testing.T) {
 				return
 			default:
 			}
-			l.SetExecutorCapacity(Bitrate(round%7+1) * Megabit)
-			l.SetAddrCapacity(addrs[round%len(addrs)], Bitrate(round%5+1)*Megabit)
+			l.SetExecutorCapacity(bitrate.Bitrate(round%7+1) * bitrate.Megabit)
+			l.SetAddrCapacity(addrs[round%len(addrs)], bitrate.Bitrate(round%5+1)*bitrate.Megabit)
 		}
 	}()
 

@@ -6,8 +6,8 @@ package ratelimit
 import (
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/fallback"
@@ -25,9 +25,9 @@ type PacketCount interface {
 	// SetLimit sets a bitrate limit for a specific address (IP or domain) and debuglet ID.
 	// If addr is a plain IP, the limit is set directly. If addr is a domain, the limit is applied to all
 	// currently tracked IPs for that (domain, id) pair.
-	SetLimit(addr string, id uuid.UUID, limit app.Bitrate) error
+	SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error
 	// SetExecLimit sets a bitrate limit for all traffic associated with the given debuglet ID.
-	SetExecLimit(id uuid.UUID, limit app.Bitrate) error
+	SetExecLimit(id uuid.UUID, limit bitrate.Bitrate) error
 	// DeleteLimit removes the bitrate limit for a specific IP address and debuglet ID.
 	DeleteLimit(addr netutil.IPv6, id uuid.UUID) error
 	// DeleteExecLimit removes the bitrate limit for all traffic associated with the given debuglet ID.

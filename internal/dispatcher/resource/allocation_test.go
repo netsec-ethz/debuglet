@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 )
 
@@ -54,8 +55,8 @@ func TestInsertRejectsChangedPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		executorID string
-		minimum    resource.Bitrate
-		maximum    resource.Bitrate
+		minimum    bitrate.Bitrate
+		maximum    bitrate.Bitrate
 	}{
 		{"floor", "e1", 70, 40},
 		{"raised floor", "e1", 30, 40},
@@ -164,7 +165,7 @@ func TestAllocateRollsBackAPartialFailure(t *testing.T) {
 	if err := d.Allocate(testDebugletID, "e1", []string{first, blocked}, 10, 40); err != nil {
 		t.Fatalf("allocation after the destination admits it: %v", err)
 	}
-	if used, want := d.Used(first), resource.Bitrate(20); used != want {
+	if used, want := d.Used(first), bitrate.Bitrate(20); used != want {
 		t.Fatalf("charged floor on %s = %s, want %s", first, used, want)
 	}
 	for _, destination := range []string{first, blocked} {
@@ -191,7 +192,7 @@ func TestAllocateKeepsTotalsAcrossRunsAndDestinations(t *testing.T) {
 		}
 	}
 	for _, destination := range dests {
-		if used, want := d.Used(destination), resource.Bitrate(10*len(runs)); used != want {
+		if used, want := d.Used(destination), bitrate.Bitrate(10*len(runs)); used != want {
 			t.Fatalf("charged floor on %s = %s, want %s", destination, used, want)
 		}
 	}
@@ -200,7 +201,7 @@ func TestAllocateKeepsTotalsAcrossRunsAndDestinations(t *testing.T) {
 			d.Remove(runs[i], destination)
 		}
 		for _, destination := range dests {
-			if used, want := d.Used(destination), resource.Bitrate(10*i); used != want {
+			if used, want := d.Used(destination), bitrate.Bitrate(10*i); used != want {
 				t.Fatalf("charged floor on %s after releasing run %d = %s, want %s", destination, i, used, want)
 			}
 		}
@@ -227,7 +228,7 @@ func TestRemoveKeepsRemainingAllocations(t *testing.T) {
 	type run struct {
 		id               uuid.UUID
 		executor         string
-		minimum, maximum resource.Bitrate
+		minimum, maximum bitrate.Bitrate
 	}
 	for _, tc := range []struct {
 		name string
@@ -312,10 +313,10 @@ func TestFairshareYieldsEachExecutorOnce(t *testing.T) {
 	runs := []uuid.UUID{testDebugletID, testDebugletID2, testDebugletID3, testDebugletID4, testDebugletID5, testDebugletID6}
 	for _, tc := range []struct {
 		name    string
-		ceiling func(run int) resource.Bitrate
+		ceiling func(run int) bitrate.Bitrate
 	}{
-		{"floor-only runs", func(int) resource.Bitrate { return 10 }},
-		{"mixed residual and floor-only runs", func(run int) resource.Bitrate {
+		{"floor-only runs", func(int) bitrate.Bitrate { return 10 }},
+		{"mixed residual and floor-only runs", func(run int) bitrate.Bitrate {
 			if run%2 == 0 {
 				return 40
 			}
@@ -357,7 +358,7 @@ func TestFairshareYieldsEachExecutorOnce(t *testing.T) {
 					if !tracked {
 						t.Fatalf("tree member %s has no totals", member)
 					}
-					limit := resource.Bitrate(0)
+					limit := bitrate.Bitrate(0)
 					for id, value := range d.Fairshare(dest) {
 						if id == member {
 							limit = value

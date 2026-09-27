@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
@@ -19,7 +20,7 @@ import (
 
 // arithSpec is a submission that needs no payment row: it is rejected or
 // accepted by validateDebugletSpec alone.
-func arithSpec(floor, ceiling resource.Bitrate, timeout time.Duration, start *time.Time) models.DebugletSpec {
+func arithSpec(floor, ceiling bitrate.Bitrate, timeout time.Duration, start *time.Time) models.DebugletSpec {
 	return models.DebugletSpec{
 		StartTime:  start,
 		Wasm:       tgWasm,
@@ -48,9 +49,9 @@ func TestValidateDebugletSpecRejectsOutOfRangeNumbers(t *testing.T) {
 	}{
 		{"negative floor", arithSpec(-1, 1000, tgTimeout, &future)},
 		{"negative ceiling", arithSpec(0, -1, tgTimeout, &future)},
-		{"floor above the bound", arithSpec(resource.MaxBitrate+1, resource.MaxBitrate+1, tgTimeout, &future)},
+		{"floor above the bound", arithSpec(bitrate.Max+1, bitrate.Max+1, tgTimeout, &future)},
 		{"maximum floor", arithSpec(math.MaxInt64, math.MaxInt64, tgTimeout, &future)},
-		{"ceiling above the bound", arithSpec(0, resource.MaxBitrate+1, tgTimeout, &future)},
+		{"ceiling above the bound", arithSpec(0, bitrate.Max+1, tgTimeout, &future)},
 		{"ceiling below floor", arithSpec(1000, 999, tgTimeout, &future)},
 		{"zero timeout", arithSpec(0, 1000, 0, &future)},
 		{"negative timeout", arithSpec(0, 1000, -time.Second, &future)},
@@ -124,14 +125,14 @@ func TestValidateDebugletSpecChecksAggregateCapacity(t *testing.T) {
 		t.Run(dimension, func(t *testing.T) {
 			f := newTGFixture(t, nil)
 			const destination = "arith.example"
-			batchSetCapacity(t, f, resource.MaxBitrate)
-			f.d.destinations.SetLimit(destination, resource.MaxBitrate)
+			batchSetCapacity(t, f, bitrate.Max)
+			f.d.destinations.SetLimit(destination, bitrate.Max)
 
 			occupied := schedule.Request{
 				Executor: tgExecutorID,
 				From:     f.start.Add(-time.Hour),
 				To:       f.start.Add(time.Hour),
-				Use:      resource.Bitrate(math.MaxInt64) - 1000,
+				Use:      bitrate.Bitrate(math.MaxInt64) - 1000,
 			}
 			if dimension == "destination" {
 				// The executor tree stays empty, so only the destination sum
@@ -156,16 +157,16 @@ func TestValidateDebugletSpecChecksAggregateCapacity(t *testing.T) {
 // side: the extreme values that are admitted keep their units and their window.
 func TestValidateDebugletSpecAdmitsTheBoundaries(t *testing.T) {
 	f := newTGFixture(t, nil)
-	batchSetCapacity(t, f, resource.MaxBitrate)
+	batchSetCapacity(t, f, bitrate.Max)
 	for _, tc := range []struct {
 		name    string
-		floor   resource.Bitrate
-		ceiling resource.Bitrate
+		floor   bitrate.Bitrate
+		ceiling bitrate.Bitrate
 		timeout time.Duration
 	}{
 		{"zero bandwidth", 0, 0, time.Millisecond},
 		{"equal floor and ceiling", 1000, 1000, tgTimeout},
-		{"largest bandwidth", resource.MaxBitrate, resource.MaxBitrate, tgTimeout},
+		{"largest bandwidth", bitrate.Max, bitrate.Max, tgTimeout},
 		{"smallest budget", 0, 1000, time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,20 +218,20 @@ func TestSubmitDebugletsLeavesNoReservationForAnInvalidBatch(t *testing.T) {
 // on, stated on its own.
 func TestAddBitrateReportsInexactSums(t *testing.T) {
 	for _, tc := range []struct {
-		a, b  resource.Bitrate
-		sum   resource.Bitrate
+		a, b  bitrate.Bitrate
+		sum   bitrate.Bitrate
 		exact bool
 	}{
 		{0, 0, 0, true},
 		{1000, 2000, 3000, true},
-		{resource.MaxBitrate, resource.MaxBitrate, 2 * resource.MaxBitrate, true},
+		{bitrate.Max, bitrate.Max, 2 * bitrate.Max, true},
 		{math.MaxInt64, 1, 0, false},
 		{math.MaxInt64 - 1000, 1001, 0, false},
 		{math.MinInt64, -1, 0, false},
 		{math.MaxInt64, math.MinInt64, -1, true},
 		{-1000, 1000, 0, true},
 	} {
-		sum, exact := resource.AddBitrate(tc.a, tc.b)
+		sum, exact := bitrate.Add(tc.a, tc.b)
 		if exact != tc.exact || (exact && sum != tc.sum) {
 			t.Fatalf("AddBitrate(%d, %d) = (%d, %v), want (%d, %v)", int64(tc.a), int64(tc.b), int64(sum), exact, int64(tc.sum), tc.exact)
 		}

@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -40,7 +40,7 @@ const (
 	ccPricePerBwS  = int64(1)
 	ccFloorBW      = int64(1000)
 	ccDurationMS   = int64(2000)
-	ccCapacity     = resource.Megabit
+	ccCapacity     = bitrate.Megabit
 	ccBuildTimeout = 120 * time.Second
 	ccRequestBound = 10 * time.Second
 	ccCommandBound = 20 * time.Second

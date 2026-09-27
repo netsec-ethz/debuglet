@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"io"
 	"net"
@@ -85,9 +86,9 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 			env.Net = testPolicy(t, netpolicy.Run{Addresses: env.Policy.Addresses})
 			t.Cleanup(func() { _ = env.Close() })
 			if phase != "missing_limit" {
-				env.Limiter.SetExecutorCapacity(app.Gigabit)
-				env.Limiter.SetAddrCapacity("127.0.0.1", app.Gigabit)
-				if err := env.Limiter.InsertDebuglet(env.DebugletID, 0, app.Gigabit, env.Policy.Addresses); err != nil {
+				env.Limiter.SetExecutorCapacity(bitrate.Gigabit)
+				env.Limiter.SetAddrCapacity("127.0.0.1", bitrate.Gigabit)
+				if err := env.Limiter.InsertDebuglet(env.DebugletID, 0, bitrate.Gigabit, env.Policy.Addresses); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -134,9 +135,9 @@ func TestHostAcceptClosesLateConnection(t *testing.T) {
 	defer listener.Close()
 	id := uuid.New()
 	limiter := app.NewLimiter(zap.NewNop())
-	limiter.SetExecutorCapacity(app.Gigabit)
-	limiter.SetAddrCapacity("127.0.0.1", app.Gigabit)
-	if err := limiter.InsertDebuglet(id, 0, app.Gigabit, []string{"127.0.0.1"}); err != nil {
+	limiter.SetExecutorCapacity(bitrate.Gigabit)
+	limiter.SetAddrCapacity("127.0.0.1", bitrate.Gigabit)
+	if err := limiter.InsertDebuglet(id, 0, bitrate.Gigabit, []string{"127.0.0.1"}); err != nil {
 		t.Fatal(err)
 	}
 	counter, err := fallback.NewFallbackCount()
@@ -183,7 +184,7 @@ type heldConstructorCounter struct {
 func (c *heldConstructorCounter) Attach(conn net.Conn, _ uuid.UUID, _ string) (net.Conn, error) {
 	return &heldConstructorConn{Conn: conn, owner: c}, nil
 }
-func (c *heldConstructorCounter) SetLimit(string, uuid.UUID, app.Bitrate) error {
+func (c *heldConstructorCounter) SetLimit(string, uuid.UUID, bitrate.Bitrate) error {
 	return c.constructorErr
 }
 
@@ -208,9 +209,9 @@ func TestHostConnectLateConstructorCloseErrorReachesFinalCleanup(t *testing.T) {
 	counter := &heldConstructorCounter{entered: make(chan struct{}), release: make(chan struct{}), constructorErr: errors.New("limit rejected"), closeErr: errors.New("late wrapper close failure")}
 	env := &WasmEnv{DebugletID: uuid.New(), Policy: scheduler.Policy{Addresses: []string{"127.0.0.1"}}, Limiter: app.NewLimiter(zap.NewNop()), PacketCount: counter, Registry: &socket.SocketRegistry{}, Logger: zap.NewNop().Sugar()}
 	env.Net = testPolicy(t, netpolicy.Run{Addresses: env.Policy.Addresses})
-	env.Limiter.SetExecutorCapacity(app.Gigabit)
-	env.Limiter.SetAddrCapacity("127.0.0.1", app.Gigabit)
-	if err := env.Limiter.InsertDebuglet(env.DebugletID, 0, app.Gigabit, env.Policy.Addresses); err != nil {
+	env.Limiter.SetExecutorCapacity(bitrate.Gigabit)
+	env.Limiter.SetAddrCapacity("127.0.0.1", bitrate.Gigabit)
+	if err := env.Limiter.InsertDebuglet(env.DebugletID, 0, bitrate.Gigabit, env.Policy.Addresses); err != nil {
 		t.Fatal(err)
 	}
 	mod := newGuestModule(t)

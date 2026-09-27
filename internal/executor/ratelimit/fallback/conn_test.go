@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 const (
@@ -197,7 +197,7 @@ func (s *scriptedConn) written() [][]byte {
 
 // newTestConn attaches raw to a fresh FallbackCount. A zero rate leaves the
 // corresponding limit unconfigured.
-func newTestConn(t *testing.T, raw net.Conn, destRate, execRate app.Bitrate) *FallbackConn {
+func newTestConn(t *testing.T, raw net.Conn, destRate, execRate bitrate.Bitrate) *FallbackConn {
 	t.Helper()
 	count, err := NewFallbackCount()
 	if err != nil {
@@ -224,7 +224,7 @@ func newTestConn(t *testing.T, raw net.Conn, destRate, execRate app.Bitrate) *Fa
 }
 
 // bucketTokens reads the current credit of both accounting levels.
-func bucketTokens(fc *FallbackConn) (dest app.Bitrate, destOK bool, exec app.Bitrate, execOK bool) {
+func bucketTokens(fc *FallbackConn) (dest bitrate.Bitrate, destOK bool, exec bitrate.Bitrate, execOK bool) {
 	fc.count.mu.Lock()
 	defer fc.count.mu.Unlock()
 	if b, ok := fc.count.packetSize[debugletKey{id: fc.id, dest: fc.ipv6}]; ok {
@@ -236,7 +236,7 @@ func bucketTokens(fc *FallbackConn) (dest app.Bitrate, destOK bool, exec app.Bit
 	return dest, destOK, exec, execOK
 }
 
-func assertTokens(t *testing.T, fc *FallbackConn, wantDest, wantExec app.Bitrate) {
+func assertTokens(t *testing.T, fc *FallbackConn, wantDest, wantExec bitrate.Bitrate) {
 	t.Helper()
 	dest, destOK, exec, execOK := bucketTokens(fc)
 	if !destOK || dest != wantDest {
@@ -350,7 +350,7 @@ func TestReadReturnsShortReplyWhilePeerOpen(t *testing.T) {
 		<-stop
 		ackBeforeClose <- replyConsumed.Load()
 	})
-	fc := newTestConn(t, raw, app.FromBytes(1<<20), app.FromBytes(1<<20))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1<<20), bitrate.FromBytes(1<<20))
 	if err := fc.SetReadDeadline(time.Now().Add(boundedWait)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestBlockedReadAllowsWriteToReachPeer(t *testing.T) {
 		serverDone <- err
 	})
 	readStarted := make(chan struct{})
-	fc := newTestConn(t, &readStartedConn{Conn: raw, started: readStarted}, app.FromBytes(1024), app.FromBytes(1024))
+	fc := newTestConn(t, &readStartedConn{Conn: raw, started: readStarted}, bitrate.FromBytes(1024), bitrate.FromBytes(1024))
 	if err := fc.SetDeadline(time.Now().Add(boundedWait)); err != nil {
 		t.Fatalf("SetDeadline: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestReadReturnsSingleUnderlyingResult(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := oneRead(tc.n, tc.err)
-			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 
 			buf := make([]byte, bufSize)
 			n, err := fc.Read(buf)
@@ -486,40 +486,40 @@ func TestReadRefundsUnusedReservation(t *testing.T) {
 
 	t.Run("partial refund", func(t *testing.T) {
 		raw := oneRead(30, nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Read(make([]byte, bufSize)); n != 30 || err != nil {
 			t.Fatalf("Read = (%d, %v), want (30, nil)", n, err)
 		}
 		// Fresh buckets start full: dest 100-100+70, exec 400-100+70.
-		assertTokens(t, fc, app.FromBytes(70), app.FromBytes(370))
+		assertTokens(t, fc, bitrate.FromBytes(70), bitrate.FromBytes(370))
 	})
 
 	t.Run("full refund on zero read", func(t *testing.T) {
 		raw := oneRead(0, io.EOF)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Read(make([]byte, bufSize)); n != 0 || !errors.Is(err, io.EOF) {
 			t.Fatalf("Read = (%d, %v), want (0, io.EOF)", n, err)
 		}
-		assertTokens(t, fc, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 	})
 
 	t.Run("no refund when everything was used", func(t *testing.T) {
 		raw := oneRead(bufSize, nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Read(make([]byte, bufSize)); n != bufSize || err != nil {
 			t.Fatalf("Read = (%d, %v), want (%d, nil)", n, err, bufSize)
 		}
-		assertTokens(t, fc, 0, app.FromBytes(execBytes-destBytes))
+		assertTokens(t, fc, 0, bitrate.FromBytes(execBytes-destBytes))
 	})
 
 	t.Run("executor refunded after destination detach", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		r, err := fc.reserve(bufSize)
 		if err != nil {
 			t.Fatalf("reserve: %v", err)
 		}
-		assertTokens(t, fc, 0, app.FromBytes(execBytes-destBytes))
+		assertTokens(t, fc, 0, bitrate.FromBytes(execBytes-destBytes))
 
 		// Close detaches the destination entry first; the executor entry stays.
 		if err := fc.Close(); err != nil {
@@ -531,14 +531,14 @@ func TestReadRefundsUnusedReservation(t *testing.T) {
 		if destOK {
 			t.Error("destination bucket was recreated after detach")
 		}
-		if !execOK || exec != app.FromBytes(execBytes) {
-			t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes))
+		if !execOK || exec != bitrate.FromBytes(execBytes) {
+			t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, bitrate.FromBytes(execBytes))
 		}
 	})
 
 	t.Run("destination refunded after executor delete", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		r, err := fc.reserve(bufSize)
 		if err != nil {
 			t.Fatalf("reserve: %v", err)
@@ -552,26 +552,26 @@ func TestReadRefundsUnusedReservation(t *testing.T) {
 		if execOK {
 			t.Error("executor bucket was recreated after delete")
 		}
-		if !destOK || dest != app.FromBytes(destBytes) {
-			t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, app.FromBytes(destBytes))
+		if !destOK || dest != bitrate.FromBytes(destBytes) {
+			t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, bitrate.FromBytes(destBytes))
 		}
 	})
 
 	t.Run("refund is capped at the current rate", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		r, err := fc.reserve(bufSize)
 		if err != nil {
 			t.Fatalf("reserve: %v", err)
 		}
-		if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(50)); err != nil {
+		if err := fc.count.SetLimit(testAddr, fc.id, bitrate.FromBytes(50)); err != nil {
 			t.Fatalf("SetLimit: %v", err)
 		}
-		if err := fc.count.SetExecLimit(fc.id, app.FromBytes(200)); err != nil {
+		if err := fc.count.SetExecLimit(fc.id, bitrate.FromBytes(200)); err != nil {
 			t.Fatalf("SetExecLimit: %v", err)
 		}
 		r.free()
-		assertTokens(t, fc, app.FromBytes(50), app.FromBytes(200))
+		assertTokens(t, fc, bitrate.FromBytes(50), bitrate.FromBytes(200))
 	})
 }
 
@@ -605,7 +605,7 @@ func TestEmptyReadNeedsNoLimits(t *testing.T) {
 
 	t.Run("does not wait for the FIFO lock", func(t *testing.T) {
 		raw := newScriptedConn(nil) // blocks until closed
-		fc := newTestConn(t, raw, app.FromBytes(1024), app.FromBytes(1024))
+		fc := newTestConn(t, raw, bitrate.FromBytes(1024), bitrate.FromBytes(1024))
 
 		blockedRead := make(chan struct{})
 		go func() {
@@ -644,7 +644,7 @@ func TestReadExpiredDeadlineDuringReservationWait(t *testing.T) {
 	for name, setDeadline := range set {
 		t.Run(name, func(t *testing.T) {
 			raw := oneRead(1, nil)
-			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1))
 			forceReservationWait(t, fc)
 			destBefore, _, execBefore, _ := bucketTokens(fc)
 
@@ -675,7 +675,7 @@ func TestReadExpiredDeadlineDuringReservationWait(t *testing.T) {
 func TestLimiterWaitTracksDeadlineChanges(t *testing.T) {
 	t.Run("earlier", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+		fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1024))
 		forceReservationWait(t, fc)
 		if err := fc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("SetWriteDeadline: %v", err)
@@ -715,7 +715,7 @@ func TestLimiterWaitTracksDeadlineChanges(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := newScriptedConn(nil)
-			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+			fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1024))
 			forceReservationWait(t, fc)
 			if err := fc.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 				t.Fatalf("SetWriteDeadline: %v", err)
@@ -749,7 +749,7 @@ func TestLimiterWaitTracksDeadlineChanges(t *testing.T) {
 }
 
 func TestDirectionalDeadlineOverride(t *testing.T) {
-	fc := newTestConn(t, newScriptedConn(nil), app.FromBytes(1), app.FromBytes(1))
+	fc := newTestConn(t, newScriptedConn(nil), bitrate.FromBytes(1), bitrate.FromBytes(1))
 	common := time.Now().Add(time.Minute)
 	if err := fc.SetDeadline(common); err != nil {
 		t.Fatalf("SetDeadline: %v", err)
@@ -769,7 +769,7 @@ func TestDirectionalDeadlineOverride(t *testing.T) {
 
 func TestDeadlineSettersKeepSocketAndWrapperOrdered(t *testing.T) {
 	raw := newGatedDeadlineConn()
-	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1))
 	first := time.Now().Add(time.Minute)
 	second := first.Add(time.Minute)
 	firstDone := make(chan error, 1)
@@ -804,7 +804,7 @@ func TestDeadlineSettersKeepSocketAndWrapperOrdered(t *testing.T) {
 
 func TestLimiterTimerWakeRechecksCurrentDeadlineBeforeWrite(t *testing.T) {
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1024))
 	forceReservationWait(t, fc)
 	if err := fc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("initial SetWriteDeadline: %v", err)
@@ -841,7 +841,7 @@ func TestLimiterTimerWakeRechecksCurrentDeadlineBeforeWrite(t *testing.T) {
 
 func TestQueuedWriteTracksEarlierDeadline(t *testing.T) {
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(1024), app.FromBytes(1024))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1024), bitrate.FromBytes(1024))
 	fc.writeMu.Lock()
 	defer fc.writeMu.Unlock()
 	if err := fc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
@@ -872,7 +872,7 @@ func TestQueuedWriteTracksEarlierDeadline(t *testing.T) {
 // Regression 5b: Close cancels a reservation wait within a bounded time.
 func TestCloseDuringReservationWait(t *testing.T) {
 	raw := oneRead(1, nil)
-	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1024))
 	forceReservationWait(t, fc)
 	destBefore, _, _, _ := bucketTokens(fc)
 
@@ -913,7 +913,7 @@ func TestOperationQueuedBeforeCloseReturnsNetErrClosedWithoutIO(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := oneRead(1, nil)
-			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1))
 			gate := fc.writeMu
 			if tc.name == "read" {
 				gate = fc.readMu
@@ -959,7 +959,7 @@ func TestCloseDuringBlockedRead(t *testing.T) {
 
 	t.Run("scripted blocking conn", func(t *testing.T) {
 		raw := newScriptedConn(nil) // blocks until closed
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 
 		var (
 			n    int
@@ -986,14 +986,14 @@ func TestCloseDuringBlockedRead(t *testing.T) {
 		if destOK {
 			t.Error("destination bucket was recreated after Close")
 		}
-		if !execOK || exec != app.FromBytes(execBytes) {
-			t.Errorf("executor bucket = %d bits (present=%v), want full refund to %d bits", exec, execOK, app.FromBytes(execBytes))
+		if !execOK || exec != bitrate.FromBytes(execBytes) {
+			t.Errorf("executor bucket = %d bits (present=%v), want full refund to %d bits", exec, execOK, bitrate.FromBytes(execBytes))
 		}
 	})
 
 	t.Run("loopback tcp", func(t *testing.T) {
 		raw, join := loopbackPair(t, func(c net.Conn, stop <-chan struct{}) { <-stop })
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		// Final bound in case Close does not wake the socket read.
 		if err := fc.SetReadDeadline(time.Now().Add(2 * boundedWait)); err != nil {
 			t.Fatalf("SetReadDeadline: %v", err)
@@ -1037,7 +1037,7 @@ func TestWriteCompletesMultiChunkInOrder(t *testing.T) {
 	}
 
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+	fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 
 	n, err := fc.Write(data)
 	if n != payload || err != nil {
@@ -1074,11 +1074,11 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 
 	t.Run("full write", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Write(make([]byte, payload)); n != payload || err != nil {
 			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
 		}
-		assertTokens(t, fc, app.FromBytes(destBytes-payload), app.FromBytes(execBytes-payload))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes-payload), bitrate.FromBytes(execBytes-payload))
 	})
 
 	t.Run("short successful writes", func(t *testing.T) {
@@ -1091,14 +1091,14 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 			}
 			return len(b), nil
 		}
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Write(make([]byte, payload)); n != payload || err != nil {
 			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
 		}
 		if calls != 2 {
 			t.Fatalf("underlying Write calls = %d, want 2", calls)
 		}
-		assertTokens(t, fc, app.FromBytes(destBytes-payload), app.FromBytes(execBytes-payload))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes-payload), bitrate.FromBytes(execBytes-payload))
 	})
 
 	t.Run("accumulates short write before error", func(t *testing.T) {
@@ -1111,11 +1111,11 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 			}
 			return 20, sentinel
 		}
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Write(make([]byte, payload)); n != 50 || !errors.Is(err, sentinel) {
 			t.Fatalf("Write = (%d, %v), want (50, %v)", n, err, sentinel)
 		}
-		assertTokens(t, fc, app.FromBytes(destBytes-50), app.FromBytes(execBytes-50))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes-50), bitrate.FromBytes(execBytes-50))
 	})
 
 	for _, tc := range []struct {
@@ -1133,7 +1133,7 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := newScriptedConn(nil)
 			raw.write = func([]byte) (int, error) { return tc.n, tc.err }
-			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 			n, err := fc.Write(make([]byte, payload))
 			if n != tc.n || !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Write = (%d, %v), want (%d, %v)", n, err, tc.n, tc.wantErr)
@@ -1141,13 +1141,13 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 			if calls := len(raw.written()); calls != 1 {
 				t.Fatalf("underlying Write calls = %d, want 1", calls)
 			}
-			assertTokens(t, fc, app.FromBytes(tc.wantDest), app.FromBytes(tc.wantExec))
+			assertTokens(t, fc, bitrate.FromBytes(tc.wantDest), bitrate.FromBytes(tc.wantExec))
 		})
 	}
 
 	t.Run("executor refunded after destination detach", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		raw.write = func([]byte) (int, error) {
 			fc.count.Detach(fc.addr, fc.id, fc.ipv6)
 			return 30, sentinel
@@ -1159,14 +1159,14 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 		if destOK {
 			t.Error("destination bucket was recreated after detach")
 		}
-		if !execOK || exec != app.FromBytes(execBytes-30) {
-			t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes-30))
+		if !execOK || exec != bitrate.FromBytes(execBytes-30) {
+			t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, bitrate.FromBytes(execBytes-30))
 		}
 	})
 
 	t.Run("destination refunded after executor delete", func(t *testing.T) {
 		raw := newScriptedConn(nil)
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		raw.write = func([]byte) (int, error) {
 			if err := fc.count.DeleteExecLimit(fc.id); err != nil {
 				t.Fatalf("DeleteExecLimit: %v", err)
@@ -1180,8 +1180,8 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 		if execOK {
 			t.Error("executor bucket was recreated after delete")
 		}
-		if !destOK || dest != app.FromBytes(destBytes-30) {
-			t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, app.FromBytes(destBytes-30))
+		if !destOK || dest != bitrate.FromBytes(destBytes-30) {
+			t.Errorf("destination bucket = %d bits (present=%v), want %d bits", dest, destOK, bitrate.FromBytes(destBytes-30))
 		}
 	})
 
@@ -1189,14 +1189,14 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 		t.Run(fmt.Sprintf("invalid count %d", invalid), func(t *testing.T) {
 			raw := newScriptedConn(nil)
 			raw.write = func([]byte) (int, error) { return invalid, nil }
-			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 			n, err := fc.Write(make([]byte, payload))
 			if n != 0 || err == nil {
 				t.Fatalf("Write = (%d, %v), want (0, invalid-count error)", n, err)
 			}
 			// The writer's actual byte count is unknowable after it violates the
 			// contract, so retain the reservation rather than creating credit.
-			assertTokens(t, fc, app.FromBytes(destBytes-payload), app.FromBytes(execBytes-payload))
+			assertTokens(t, fc, bitrate.FromBytes(destBytes-payload), bitrate.FromBytes(execBytes-payload))
 		})
 	}
 }
@@ -1234,10 +1234,10 @@ func TestSharedIPRateLivesUntilLastAliasDetaches(t *testing.T) {
 		{"second.example", id},
 		{"first.example", otherID},
 	} {
-		if err := count.SetLimit(item.alias, item.id, app.FromBytes(limitBytes)); err != nil {
+		if err := count.SetLimit(item.alias, item.id, bitrate.FromBytes(limitBytes)); err != nil {
 			t.Fatalf("SetLimit(%q): %v", item.alias, err)
 		}
-		if err := count.SetExecLimit(item.id, app.FromBytes(limitBytes)); err != nil {
+		if err := count.SetExecLimit(item.id, bitrate.FromBytes(limitBytes)); err != nil {
 			t.Fatalf("SetExecLimit: %v", err)
 		}
 	}
@@ -1288,7 +1288,7 @@ func TestSharedIPRateLivesUntilLastAliasDetaches(t *testing.T) {
 }
 
 func TestClosedConnWithExpiredDeadlineReportsClosed(t *testing.T) {
-	fc := newTestConn(t, newScriptedConn(nil), app.FromBytes(1024), app.FromBytes(1024))
+	fc := newTestConn(t, newScriptedConn(nil), bitrate.FromBytes(1024), bitrate.FromBytes(1024))
 	if err := fc.SetDeadline(time.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -1307,7 +1307,7 @@ func TestClosedConnWithExpiredDeadlineReportsClosed(t *testing.T) {
 // reached the socket.
 type paidWrite struct {
 	at   time.Time
-	rate app.Bitrate
+	rate bitrate.Bitrate
 	// credit is the destination balance at that moment, in bits: the stored
 	// tokens refilled at rate since the bucket was last updated. A write that
 	// is released only once its reservation is paid for never finds it below
@@ -1354,10 +1354,10 @@ func TestLoweredRateDelaysWaitingWrite(t *testing.T) {
 		execBytes = 1 << 20
 	)
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(oldBytes), app.FromBytes(execBytes))
+	fc := newTestConn(t, raw, bitrate.FromBytes(oldBytes), bitrate.FromBytes(execBytes))
 	seen := observePaidWrites(fc, raw)
 	seeded := time.Now()
-	seedBuckets(t, fc, 0, app.FromBytes(execBytes))
+	seedBuckets(t, fc, 0, bitrate.FromBytes(execBytes))
 
 	var (
 		n    int
@@ -1372,7 +1372,7 @@ func TestLoweredRateDelaysWaitingWrite(t *testing.T) {
 		dest, _, _, _ := bucketTokens(fc)
 		return dest < 0
 	}, "reservation by the waiting Write")
-	if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(newBytes)); err != nil {
+	if err := fc.count.SetLimit(testAddr, fc.id, bitrate.FromBytes(newBytes)); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
 	lowered := time.Now()
@@ -1382,7 +1382,7 @@ func TestLoweredRateDelaysWaitingWrite(t *testing.T) {
 		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, payload)
 	}
 	w := onlyPaidWrite(t, raw, seen)
-	if w.rate != app.FromBytes(newBytes) {
+	if w.rate != bitrate.FromBytes(newBytes) {
 		t.Fatalf("write released at %d bits/s: the rate was not lowered while it waited", int64(w.rate))
 	}
 	if w.credit < 0 {
@@ -1390,8 +1390,8 @@ func TestLoweredRateDelaysWaitingWrite(t *testing.T) {
 	}
 	// Until the change the empty bucket gained at most the old rate; the rest
 	// of the payload can only have accrued at the new rate after it.
-	gained := lowered.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
-	owed := (float64(app.FromBytes(payload)) - gained) / float64(app.FromBytes(newBytes))
+	gained := lowered.Sub(seeded).Seconds() * float64(bitrate.FromBytes(oldBytes))
+	owed := (float64(bitrate.FromBytes(payload)) - gained) / float64(bitrate.FromBytes(newBytes))
 	if earliest := time.Duration(owed * float64(time.Second)); w.at.Sub(lowered) < earliest {
 		t.Errorf("write released %v after the rate was lowered, want at least %v", w.at.Sub(lowered), earliest)
 	}
@@ -1409,11 +1409,11 @@ func TestRaisedRateShortensWaitingWrite(t *testing.T) {
 		execBytes = 1 << 20
 	)
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(oldBytes), app.FromBytes(execBytes))
+	fc := newTestConn(t, raw, bitrate.FromBytes(oldBytes), bitrate.FromBytes(execBytes))
 	seen := observePaidWrites(fc, raw)
 	seeded := time.Now()
-	seedBuckets(t, fc, -app.FromBytes(debtBytes), app.FromBytes(execBytes))
-	owed := app.FromBytes(debtBytes + 1)
+	seedBuckets(t, fc, -bitrate.FromBytes(debtBytes), bitrate.FromBytes(execBytes))
+	owed := bitrate.FromBytes(debtBytes + 1)
 
 	var (
 		n    int
@@ -1427,9 +1427,9 @@ func TestRaisedRateShortensWaitingWrite(t *testing.T) {
 	}()
 	waitUntil(t, func() bool {
 		dest, _, _, _ := bucketTokens(fc)
-		return dest < -app.FromBytes(debtBytes)
+		return dest < -bitrate.FromBytes(debtBytes)
 	}, "reservation by the waiting Write")
-	if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(newBytes)); err != nil {
+	if err := fc.count.SetLimit(testAddr, fc.id, bitrate.FromBytes(newBytes)); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
 	raised := time.Now()
@@ -1439,20 +1439,20 @@ func TestRaisedRateShortensWaitingWrite(t *testing.T) {
 		t.Fatalf("Write = (%d, %v), want (1, nil)", n, err)
 	}
 	w := onlyPaidWrite(t, raw, seen)
-	if w.rate != app.FromBytes(newBytes) {
+	if w.rate != bitrate.FromBytes(newBytes) {
 		t.Fatalf("write released at %d bits/s, want the raised rate", int64(w.rate))
 	}
 	if w.credit < 0 {
 		t.Errorf("write released with %.1f bits of destination credit at the raised rate, want none owed", w.credit)
 	}
 	elapsed := w.at.Sub(start)
-	if old := tokenWait(owed, app.FromBytes(oldBytes)); elapsed >= old {
+	if old := tokenWait(owed, bitrate.FromBytes(oldBytes)); elapsed >= old {
 		t.Errorf("write released after %v, not earlier than the %v the old rate needed", elapsed, old)
 	}
 	// The debt still counts: before the change the old rate paid a negligible
 	// part of it, and the rest takes its time at the new rate.
-	gained := raised.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
-	if least := time.Duration((float64(owed) - gained) / float64(app.FromBytes(newBytes)) * float64(time.Second)); elapsed < least {
+	gained := raised.Sub(seeded).Seconds() * float64(bitrate.FromBytes(oldBytes))
+	if least := time.Duration((float64(owed) - gained) / float64(bitrate.FromBytes(newBytes)) * float64(time.Second)); elapsed < least {
 		t.Errorf("write released after %v, want at least the %v the debt takes at the raised rate", elapsed, least)
 	}
 }
@@ -1463,7 +1463,7 @@ func TestRaisedRateShortensWaitingWrite(t *testing.T) {
 // fails with the error a new reservation gets, before any I/O.
 func TestRevokedRateFailsWaitingWrite(t *testing.T) {
 	const debtBytes = 29 // at one byte per second the write below waits 30s
-	balance := -app.FromBytes(debtBytes)
+	balance := -bitrate.FromBytes(debtBytes)
 	for _, tc := range []struct {
 		name               string
 		revoke             func(*FallbackConn) error
@@ -1492,7 +1492,7 @@ func TestRevokedRateFailsWaitingWrite(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := newScriptedConn(nil)
-			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1))
 			seedBuckets(t, fc, balance, balance)
 
 			var (
@@ -1544,7 +1544,7 @@ func TestRateUpdatesDuringCanceledWaitConserveAccounting(t *testing.T) {
 		debtBytes = 29 // the write below waits 15s or more at either rate
 		updates   = 200
 	)
-	balance := -app.FromBytes(debtBytes)
+	balance := -bitrate.FromBytes(debtBytes)
 	for _, tc := range []struct {
 		name    string
 		cancel  func(*FallbackConn) error
@@ -1555,7 +1555,7 @@ func TestRateUpdatesDuringCanceledWaitConserveAccounting(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := newScriptedConn(nil)
-			fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1))
+			fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1))
 			seeded := time.Now()
 			seedBuckets(t, fc, balance, balance)
 
@@ -1576,7 +1576,7 @@ func TestRateUpdatesDuringCanceledWaitConserveAccounting(t *testing.T) {
 			go func() {
 				defer close(updated)
 				for i := range updates {
-					rate := app.FromBytes(1 + i%2)
+					rate := bitrate.FromBytes(1 + i%2)
 					_ = fc.count.SetLimit(testAddr, fc.id, rate)
 					_ = fc.count.SetExecLimit(fc.id, rate)
 				}
@@ -1593,7 +1593,7 @@ func TestRateUpdatesDuringCanceledWaitConserveAccounting(t *testing.T) {
 			if writes := raw.written(); len(writes) != 0 {
 				t.Fatalf("underlying writes = %d, want 0", len(writes))
 			}
-			most := balance + app.Bitrate(math.Ceil(time.Since(seeded).Seconds()*float64(app.FromBytes(2))))
+			most := balance + bitrate.Bitrate(math.Ceil(time.Since(seeded).Seconds()*float64(bitrate.FromBytes(2))))
 			dest, destOK, exec, execOK := bucketTokens(fc)
 			if !execOK || exec < balance || exec > most {
 				t.Errorf("executor bucket = %d bits (present=%v), want between %d and %d", int64(exec), execOK, int64(balance), int64(most))
@@ -1616,7 +1616,7 @@ func TestRaisedRateReleasesWaitingDatagramWhole(t *testing.T) {
 	)
 	raw := newScriptedConn(nil)
 	raw.network = "udp"
-	fc := newTestConn(t, raw, app.FromBytes(oldBytes), app.FromBytes(1<<20))
+	fc := newTestConn(t, raw, bitrate.FromBytes(oldBytes), bitrate.FromBytes(1<<20))
 
 	var (
 		n    int
@@ -1632,7 +1632,7 @@ func TestRaisedRateReleasesWaitingDatagramWhole(t *testing.T) {
 		dest, ok, _, _ := bucketTokens(fc)
 		return ok && dest < 0
 	}, "reservation by the waiting datagram")
-	if err := fc.count.SetLimit(testAddr, fc.id, app.FromBytes(newBytes)); err != nil {
+	if err := fc.count.SetLimit(testAddr, fc.id, bitrate.FromBytes(newBytes)); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
 	waitBounded(t, done, "datagram after the rate was raised", func() { _ = fc.Close() })
@@ -1643,7 +1643,7 @@ func TestRaisedRateReleasesWaitingDatagramWhole(t *testing.T) {
 	if writes := raw.written(); len(writes) != 1 || len(writes[0]) != size {
 		t.Fatalf("underlying writes = %d, want one write of the whole %d-byte datagram", len(writes), size)
 	}
-	if elapsed, old := time.Since(start), tokenWait(app.FromBytes(size-oldBytes), app.FromBytes(oldBytes)); elapsed >= old {
+	if elapsed, old := time.Since(start), tokenWait(bitrate.FromBytes(size-oldBytes), bitrate.FromBytes(oldBytes)); elapsed >= old {
 		t.Errorf("datagram released after %v, not earlier than the %v the old rate needed", elapsed, old)
 	}
 }
@@ -1660,12 +1660,12 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 		execBytes = 1 << 20
 		size      = 1020 // 20 bytes beyond the full bucket
 	)
-	wait := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+	wait := tokenWait(bitrate.FromBytes(size-destBytes), bitrate.FromBytes(destBytes))
 
 	t.Run("write", func(t *testing.T) {
 		raw := newScriptedConn(nil)
 		raw.network = "udp"
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		data := bytes.Repeat([]byte{'d'}, size)
 		start := time.Now()
 		if n, err := fc.Write(data); n != size || err != nil {
@@ -1678,17 +1678,17 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 			t.Fatalf("underlying writes = %d, want one write of the whole %d-byte datagram", len(writes), size)
 		}
 		// The part beyond the bucket is charged too, as debt.
-		assertTokens(t, fc, app.FromBytes(destBytes-size), app.FromBytes(execBytes-size))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes-size), bitrate.FromBytes(execBytes-size))
 	})
 
 	t.Run("read", func(t *testing.T) {
 		// A buffer of three rate-seconds would owe two of them if it were
 		// charged; the five-byte datagram fits the full bucket.
 		const bufSize = 3 * destBytes
-		bufferWait := tokenWait(app.FromBytes(bufSize-destBytes), app.FromBytes(destBytes))
+		bufferWait := tokenWait(bitrate.FromBytes(bufSize-destBytes), bitrate.FromBytes(destBytes))
 		raw := oneRead(5, nil)
 		raw.network = "udp"
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		start := time.Now()
 		if n, err := fc.Read(make([]byte, bufSize)); n != 5 || err != nil {
 			t.Fatalf("Read = (%d, %v), want (5, nil)", n, err)
@@ -1700,20 +1700,20 @@ func TestDatagramIsAdmittedWhole(t *testing.T) {
 			t.Fatalf("underlying reads = %d of sizes %v, want one read into at least the whole %d-byte buffer", calls, sizes, bufSize)
 		}
 		// Only the datagram that arrived is charged.
-		assertTokens(t, fc, app.FromBytes(destBytes-5), app.FromBytes(execBytes-5))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes-5), bitrate.FromBytes(execBytes-5))
 	})
 
 	t.Run("empty write", func(t *testing.T) {
 		raw := newScriptedConn(nil)
 		raw.network = "udp"
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Write(nil); n != 0 || err != nil {
 			t.Fatalf("Write(nil) = (%d, %v), want (0, nil)", n, err)
 		}
 		if writes := raw.written(); len(writes) != 1 || len(writes[0]) != 0 {
 			t.Fatalf("underlying writes = %q, want one empty datagram", writes)
 		}
-		assertTokens(t, fc, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		assertTokens(t, fc, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 	})
 
 	t.Run("empty write on a stream", func(t *testing.T) {
@@ -1743,9 +1743,9 @@ func TestIPConnectionCarriesDatagrams(t *testing.T) {
 	t.Run("write", func(t *testing.T) {
 		raw := newScriptedConn(nil)
 		raw.network = "ip"
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		data := bytes.Repeat([]byte{'d'}, size)
-		wait := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+		wait := tokenWait(bitrate.FromBytes(size-destBytes), bitrate.FromBytes(destBytes))
 		start := time.Now()
 		if n, err := fc.Write(data); n != size || err != nil {
 			t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, size)
@@ -1761,7 +1761,7 @@ func TestIPConnectionCarriesDatagrams(t *testing.T) {
 	t.Run("read", func(t *testing.T) {
 		raw := oneRead(64, nil)
 		raw.network = "ip"
-		fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+		fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 		if n, err := fc.Read(make([]byte, size)); n != 64 || err != nil {
 			t.Fatalf("Read = (%d, %v), want (64, nil)", n, err)
 		}
@@ -1803,7 +1803,7 @@ func TestUnrelatedRateChangesDoNotStarveWrite(t *testing.T) {
 			return
 		case <-ticker.C:
 			updates++
-			if err := fc.count.SetExecLimit(otherID, app.FromBytes(1+updates%2)); err != nil {
+			if err := fc.count.SetExecLimit(otherID, bitrate.FromBytes(1+updates%2)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -1825,7 +1825,7 @@ func TestZeroRateRefusesDatagram(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := oneRead(8, nil)
 			raw.network = "udp"
-			fc := newTestConn(t, raw, 0, app.FromBytes(1024))
+			fc := newTestConn(t, raw, 0, bitrate.FromBytes(1024))
 			if err := fc.count.SetLimit(testAddr, fc.id, 0); err != nil {
 				t.Fatalf("SetLimit: %v", err)
 			}
@@ -1876,17 +1876,17 @@ func TestRefusedDatagramChargeDropsDatagram(t *testing.T) {
 			})
 			raw.maxReads = 1
 			raw.network = "udp"
-			fc = newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			fc = newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 			n, err := fc.Read(make([]byte, 64))
 			if n != 0 || err == nil || !strings.Contains(err.Error(), "failed to reserve") || !tc.wantErr(err) {
 				t.Fatalf("Read = (%d, %v), want (0, the refused charge)", n, err)
 			}
 			dest, destOK, exec, execOK := bucketTokens(fc)
-			if destOK != tc.destKept || (destOK && dest != app.FromBytes(destBytes)) {
-				t.Errorf("destination bucket = %d bits (present=%v), want %d bits (present=%v)", dest, destOK, app.FromBytes(destBytes), tc.destKept)
+			if destOK != tc.destKept || (destOK && dest != bitrate.FromBytes(destBytes)) {
+				t.Errorf("destination bucket = %d bits (present=%v), want %d bits (present=%v)", dest, destOK, bitrate.FromBytes(destBytes), tc.destKept)
 			}
-			if !execOK || exec != app.FromBytes(execBytes) {
-				t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, app.FromBytes(execBytes))
+			if !execOK || exec != bitrate.FromBytes(execBytes) {
+				t.Errorf("executor bucket = %d bits (present=%v), want %d bits", exec, execOK, bitrate.FromBytes(execBytes))
 			}
 		})
 	}
@@ -1922,7 +1922,7 @@ func TestDatagramWriteResult(t *testing.T) {
 			raw := newScriptedConn(nil)
 			raw.network = "udp"
 			raw.write = func([]byte) (int, error) { return tc.n, tc.err }
-			fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
+			fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
 			n, err := fc.Write(make([]byte, payload))
 			switch {
 			case tc.wantErr == nil && (n != 0 || err == nil):
@@ -1933,7 +1933,7 @@ func TestDatagramWriteResult(t *testing.T) {
 			if writes := raw.written(); len(writes) != 1 || len(writes[0]) != payload {
 				t.Fatalf("underlying writes = %d, want one write of the whole datagram", len(writes))
 			}
-			assertTokens(t, fc, app.FromBytes(destBytes-tc.charged), app.FromBytes(execBytes-tc.charged))
+			assertTokens(t, fc, bitrate.FromBytes(destBytes-tc.charged), bitrate.FromBytes(execBytes-tc.charged))
 		})
 	}
 }
@@ -1953,8 +1953,8 @@ func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
 	)
 	raw := newScriptedConn(nil)
 	raw.network = "udp"
-	fc := newTestConn(t, raw, app.FromBytes(destBytes), app.FromBytes(execBytes))
-	owed := tokenWait(app.FromBytes(size-destBytes), app.FromBytes(destBytes))
+	fc := newTestConn(t, raw, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes))
+	owed := tokenWait(bitrate.FromBytes(size-destBytes), bitrate.FromBytes(destBytes))
 
 	var (
 		n    int
@@ -1971,7 +1971,7 @@ func TestRateChangeKeepsServedWaitOfDatagram(t *testing.T) {
 		return ok && dest < 0
 	}, "reservation by the waiting datagram")
 	time.Sleep(time.Until(start.Add(wakeAfter)))
-	if err := fc.count.SetExecLimit(fc.id, app.FromBytes(execBytes/2)); err != nil {
+	if err := fc.count.SetExecLimit(fc.id, bitrate.FromBytes(execBytes/2)); err != nil {
 		t.Fatalf("SetExecLimit: %v", err)
 	}
 	if moved := time.Since(start); moved >= owed {
@@ -2025,7 +2025,7 @@ func TestRateChangeKeepsOwnDeficitOfWaitingReservation(t *testing.T) {
 	rawA := newScriptedConn(nil)
 	rawA.network = "udp"
 	rawA.write = record(labelA)
-	fcA := newTestConn(t, rawA, app.FromBytes(oldBytes), app.FromBytes(oldBytes))
+	fcA := newTestConn(t, rawA, bitrate.FromBytes(oldBytes), bitrate.FromBytes(oldBytes))
 	rawB := newScriptedConn(nil)
 	rawB.network = "udp"
 	rawB.write = record(labelB)
@@ -2057,17 +2057,17 @@ func TestRateChangeKeepsOwnDeficitOfWaitingReservation(t *testing.T) {
 	}()
 	waitUntil(t, func() bool {
 		dest, _, _, _ := bucketTokens(fcA)
-		return dest < -app.FromBytes(sizeA)
+		return dest < -bitrate.FromBytes(sizeA)
 	}, "reservation by B behind A")
 	time.Sleep(time.Until(seeded.Add(raiseAt)))
-	if err := fcA.count.SetLimit(testAddr, fcA.id, app.FromBytes(newBytes)); err != nil {
+	if err := fcA.count.SetLimit(testAddr, fcA.id, bitrate.FromBytes(newBytes)); err != nil {
 		t.Fatalf("SetLimit: %v", err)
 	}
-	if err := fcA.count.SetExecLimit(fcA.id, app.FromBytes(newBytes)); err != nil {
+	if err := fcA.count.SetExecLimit(fcA.id, bitrate.FromBytes(newBytes)); err != nil {
 		t.Fatalf("SetExecLimit: %v", err)
 	}
 	raised := time.Now()
-	if ownWait := tokenWait(app.FromBytes(sizeA), app.FromBytes(oldBytes)); raised.Sub(seeded) >= ownWait {
+	if ownWait := tokenWait(bitrate.FromBytes(sizeA), bitrate.FromBytes(oldBytes)); raised.Sub(seeded) >= ownWait {
 		t.Fatalf("rates raised %v after the seed, not within A's %v wait", raised.Sub(seeded), ownWait)
 	}
 	waitBounded(t, doneA, "A after the rates were raised", func() { _ = fcA.Close() })
@@ -2085,12 +2085,12 @@ func TestRateChangeKeepsOwnDeficitOfWaitingReservation(t *testing.T) {
 	}
 	// Until the raise the empty buckets gained at most the old rate; the rest
 	// of A's own charge accrues at the new rate after it.
-	gained := raised.Sub(seeded).Seconds() * float64(app.FromBytes(oldBytes))
-	owed := (float64(app.FromBytes(sizeA)) - gained) / float64(app.FromBytes(newBytes))
+	gained := raised.Sub(seeded).Seconds() * float64(bitrate.FromBytes(oldBytes))
+	owed := (float64(bitrate.FromBytes(sizeA)) - gained) / float64(bitrate.FromBytes(newBytes))
 	if least := time.Duration(owed * float64(time.Second)); first.at.Sub(raised) < least {
 		t.Errorf("A released %v after the raise, want at least %v", first.at.Sub(raised), least)
 	}
-	if most := raised.Sub(seeded) + tokenWait(app.FromBytes(sizeA), app.FromBytes(newBytes)) + margin; first.at.Sub(seeded) > most {
+	if most := raised.Sub(seeded) + tokenWait(bitrate.FromBytes(sizeA), bitrate.FromBytes(newBytes)) + margin; first.at.Sub(seeded) > most {
 		t.Errorf("A released %v after the seed, want at most %v: it waited for the deficit of B charged after it", first.at.Sub(seeded), most)
 	}
 }
@@ -2100,7 +2100,7 @@ func TestRateChangeKeepsOwnDeficitOfWaitingReservation(t *testing.T) {
 // timer wake now checks for a rate change before admitting anything.
 func TestRateRevokedAsTimerFiresFailsWrite(t *testing.T) {
 	raw := newScriptedConn(nil)
-	fc := newTestConn(t, raw, app.FromBytes(1), app.FromBytes(1024))
+	fc := newTestConn(t, raw, bitrate.FromBytes(1), bitrate.FromBytes(1024))
 	forceReservationWait(t, fc)
 	fc.waitForLimiter = func(time.Duration, <-chan struct{}, <-chan struct{}, <-chan struct{}) limiterWaitResult {
 		// Both the timer and the rate change are ready; the timer is chosen.

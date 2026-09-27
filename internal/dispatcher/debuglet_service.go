@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
@@ -359,12 +360,12 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 	// The reserved floors of the window plus this one decide admission. A sum
 	// that does not fit is not a capacity that is available: it is rejected
 	// exactly like an exceeded one, never admitted against a wrapped total.
-	if total, exact := resource.AddBitrate(d.scheduler.QueryMaxExec(r.Executor, from, to), r.Use); !exact || total > exec.capacity {
+	if total, exact := bitrate.Add(d.scheduler.QueryMaxExec(r.Executor, from, to), r.Use); !exact || total > exec.capacity {
 		return nil, fmt.Errorf("time [%s, %s] executor '%s' capacity exceeded: %w", from, to, exec.ID, resource.ErrCapacityFull)
 	}
 
 	for _, dest := range spec.Policy.Addresses {
-		if total, exact := resource.AddBitrate(d.scheduler.QueryMaxDest(dest, from, to), r.Use); !exact || total > d.destinations.Cap(dest) {
+		if total, exact := bitrate.Add(d.scheduler.QueryMaxDest(dest, from, to), r.Use); !exact || total > d.destinations.Cap(dest) {
 			return nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, resource.ErrCapacityFull)
 		}
 	}

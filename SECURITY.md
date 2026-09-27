@@ -5,8 +5,8 @@ trust boundaries and known limits are described in [docs/SECURITY.md](docs/SECUR
 
 ## Supported versions
 
-This policy covers the `v0.2.0` release candidates and validated commits on
-`main` (currently `v0.2.0-rc.3`). Record the exact package version and source
+This policy covers the latest release (currently `v0.2.0`) and validated
+commits on `main`. Record the exact package version and source
 revision. There is no backport branch; the existing `v0.1.0` tag predates this
 package format.
 
@@ -14,11 +14,11 @@ To pick up a fix, build and install a validated revision as described in the
 [installation guide](README-install.md). Checksums establish identity against the
 supplied checksum file, which must come from a trusted source; they are not
 release signatures. A state directory is tied to the package version that
-created it, and [docs/environments.md](docs/environments.md#stored-state) states
+created it, and [docs/configuration.md](docs/configuration.md#stored-state) states
 what a build does with a database of another version.
 
-Only the latest release candidate and the current validated commit of `main`
-are supported; fixes are not backported to earlier candidates. Across commits there
+Only the latest release and the current validated commit of `main`
+are supported; fixes are not backported to earlier releases. Across commits there
 is no compatibility promise for the `dbl` command
 line, the control protocol between dispatcher and executor, or the database
 schema: two commits are not promised to interoperate, and a state directory

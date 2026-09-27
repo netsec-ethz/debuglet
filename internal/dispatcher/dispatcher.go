@@ -31,6 +31,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
@@ -97,7 +98,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		keystore:        tag.NewKeyStore(),
 		logger:          l,
 		db:              db,
-		destinations:    resource.NewDestinations(resource.Gigabit),
+		destinations:    resource.NewDestinations(bitrate.Gigabit),
 		Payment:         paymentHandler,
 		scheduler:       schedule.New(granularity),
 	}
@@ -167,7 +168,7 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 			From:        deb.StartTime.Time,
 			To:          deb.EndTime.Time,
 			Destination: deb.Addresses,
-			Use:         resource.Bitrate(deb.Usage),
+			Use:         bitrate.Bitrate(deb.Usage),
 		})
 	}
 	d.restored = true
@@ -211,7 +212,7 @@ func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
 // before anything is recorded or sent. Otherwise the limit governs admission
 // at once and stays recorded whether or not every executor acknowledged; the
 // error joins the failed deliveries.
-func (d *Dispatcher) SetDestinationLimit(destination string, limit resource.Bitrate) error {
+func (d *Dispatcher) SetDestinationLimit(destination string, limit bitrate.Bitrate) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	work, err := d.captureFairshareAfter(ctx, nil, []string{destination}, func() error {

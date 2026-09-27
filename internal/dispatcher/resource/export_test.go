@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/netsec-ethz/debuglet/internal/avl"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 // Snapshot renders the complete destination bookkeeping in a stable order:
@@ -39,10 +40,12 @@ func (d *DestinationsUsage) ActiveAllocations() int { return len(d.activeDebugle
 func (d *DestinationsUsage) ChargedDestinations() int { return len(d.usedCapacities) }
 
 // Used is the floor bandwidth charged on a destination.
-func (d *DestinationsUsage) Used(destination string) Bitrate { return d.usedCapacities[destination] }
+func (d *DestinationsUsage) Used(destination string) bitrate.Bitrate {
+	return d.usedCapacities[destination]
+}
 
 // Totals is the floor and ceiling an executor holds on a destination.
-func (d *DestinationsUsage) Totals(executorID, destination string) (Bitrate, Bitrate, bool) {
+func (d *DestinationsUsage) Totals(executorID, destination string) (bitrate.Bitrate, bitrate.Bitrate, bool) {
 	value, exists := d.store[storeKey{ID: executorID, destination: destination}]
 	if !exists {
 		return 0, 0, false

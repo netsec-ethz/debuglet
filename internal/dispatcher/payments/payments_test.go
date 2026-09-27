@@ -3,7 +3,6 @@ package payments
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -41,9 +40,6 @@ var (
 	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	earningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 
-	createTransactionQuery = regexp.QuoteMeta(
-		"INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, status, hash)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?)\nRETURNING id, auth_key, price, method, expires_at, hash, currency, status",
-	)
 	getTransactionByIDQuery = regexp.QuoteMeta(
 		"SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions\nWHERE id = ?",
 	)
@@ -58,15 +54,6 @@ var (
 	) + `\s*$`
 	updateDebugletOrderStateQuery = regexp.QuoteMeta(
 		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
-	)
-	getEarningsInQuery = regexp.QuoteMeta(
-		"SELECT executor_id, currency, total_income, current_balance, sui_wallet_address FROM earnings\nWHERE executor_id = ? AND currency = ?",
-	)
-	createEarningsQuery = regexp.QuoteMeta(
-		"INSERT INTO earnings (executor_id, currency, sui_wallet_address, total_income, current_balance)\nVALUES (?,?,?,0,0)\nRETURNING executor_id, currency, total_income, current_balance, sui_wallet_address",
-	)
-	addEarningsQuery = regexp.QuoteMeta(
-		"UPDATE earnings\nSET total_income = total_income + ?1,\n    current_balance = current_balance + ?1\nWHERE executor_id = ?2 AND currency = ?3",
 	)
 )
 
@@ -352,21 +339,6 @@ func expectTransactionOrdersRead(mock sqlmock.Sqlmock, currency string, n int) {
 	mock.ExpectQuery(getTransactionOrdersQuery).WithArgs(testTxID).WillReturnRows(rows)
 }
 
-// expiresWithin matches a time.Time argument that lies in [now+d-slack, now+d+slack].
-type expiresWithin struct {
-	d     time.Duration
-	slack time.Duration
-}
-
-func (e expiresWithin) Match(v driver.Value) bool {
-	ts, ok := v.(time.Time)
-	if !ok {
-		return false
-	}
-	want := time.Now().Add(e.d)
-	return ts.After(want.Add(-e.slack)) && ts.Before(want.Add(e.slack))
-}
-
 func assertMet(t *testing.T, mock sqlmock.Sqlmock) {
 	t.Helper()
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -614,48 +586,6 @@ func TestEnabledCreatePaymentIntentForwardsToBackend(t *testing.T) {
 	})
 }
 
-func expectDummyIntentInsert(mock sqlmock.Sqlmock) {
-	// CreateDummyIntent stores Method "TEST", Status Paid, an empty auth key,
-	// the locked price in the TEST currency, the request hash and a
-	// five-minute expiry.
-	mock.ExpectQuery(createTransactionQuery).
-		WithArgs(testTxID, "", testPrice, "TEST", "TEST", expiresWithin{5 * time.Minute, 30 * time.Second}, int64(models.Paid), testHash).
-		WillReturnRows(sqlmock.NewRows(transactionColumns).AddRow(
-			testTxID, "", testPrice, "TEST", time.Now().Add(5*time.Minute), testHash, "TEST", int64(models.Paid),
-		))
-}
-
-func TestCreatePaymentIntentTESTCreatesPaidTransaction(t *testing.T) {
-	for _, disabled := range []bool{true, false} {
-		t.Run(fmt.Sprintf("disabled=%v", disabled), func(t *testing.T) {
-			db, mock := newMockDB(t)
-			var h *PaymentHandler
-			var rec *depRecorder
-			if disabled {
-				h, rec = newDisabledHandler(t, db, true, true)
-			} else {
-				h, rec = newEnabledHandler(t, db, enabledConfig(t))
-			}
-			expectDummyIntentInsert(mock)
-
-			got, err := h.CreatePaymentIntent(testTxID, testPrice, "TEST", testHash, context.Background())
-			if err != nil {
-				t.Fatalf("CreatePaymentIntent(TEST): %v", err)
-			}
-			if got.method != "TEST" {
-				t.Fatalf("method %q", got.method)
-			}
-			if intent, ok := got.Intent.(DummyIntent); !ok || intent != (DummyIntent{TransactionId: testTxID, AuthKey: ""}) {
-				t.Fatalf("intent payload %#v", got.Intent)
-			}
-			if calls := rec.chain.Calls(); len(calls) != 0 {
-				t.Fatalf("TEST intent reached the chain backend: %v", calls)
-			}
-			assertMet(t, mock)
-		})
-	}
-}
-
 func TestCreatePaymentIntentUnknownMethod(t *testing.T) {
 	db, mock := newMockDB(t)
 	h, _ := newDisabledHandler(t, db, true, true)
@@ -767,33 +697,10 @@ func TestDisabledChainGuards(t *testing.T) {
 }
 
 // TestDisabledTESTPaths checks the database-only TEST behaviour in disabled
-// mode: completion credits the executor, refunds keep failing with the
-// existing unsupported-currency errors and never commit.
+// mode: refunds keep failing with the existing unsupported-currency errors and
+// never commit. Crediting a completed TEST order is covered on a real database
+// by TestSetDebugletOrderCompleteCreditsOnce.
 func TestDisabledTESTPaths(t *testing.T) {
-	t.Run("SetDebugletOrderComplete credits TEST order", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newDisabledHandler(t, db, true, true)
-
-		mock.ExpectBegin()
-		expectOrderRead(mock, "TEST", models.Outstanding)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Credited), testTxID, testOrderID).
-			WillReturnRows(orderRow("TEST", models.Credited))
-		mock.ExpectQuery(getEarningsInQuery).WithArgs(testExecutor, "TEST").WillReturnError(sql.ErrNoRows)
-		mock.ExpectQuery(createEarningsQuery).WithArgs(testExecutor, "TEST", "").
-			WillReturnRows(sqlmock.NewRows(earningsColumns).AddRow(testExecutor, "TEST", int64(0), int64(0), ""))
-		mock.ExpectExec(addEarningsQuery).WithArgs(testPrice, testExecutor, "TEST").WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
-
-		if err := h.SetDebugletOrderComplete(testDebuglet(), context.Background()); err != nil {
-			t.Fatalf("SetDebugletOrderComplete(TEST): %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 0 {
-			t.Fatalf("TEST completion reached the chain backend: %v", calls)
-		}
-		assertMet(t, mock)
-	})
-
 	t.Run("RefundDebugletOrder TEST order is unsupported", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newDisabledHandler(t, db, true, true)
@@ -1366,20 +1273,50 @@ func TestSetDebugletOrderCompleteLeavesRefundedOrder(t *testing.T) {
 	}
 }
 
-// A TEST intent records what was locked: its price and the TEST currency.
+// A TEST intent is a Paid TEST transaction that records what was locked (its
+// price and the TEST currency), the request hash, an empty auth key and a
+// five-minute expiry. It is created in both payment modes and never reaches the
+// chain backend.
 func TestCreatePaymentIntentTESTStoresPriceAndCurrency(t *testing.T) {
-	db := newRefundDatabase(t)
-	h, _ := newDisabledHandler(t, db, true, true)
+	for _, disabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("disabled=%v", disabled), func(t *testing.T) {
+			db := newRefundDatabase(t)
+			var h *PaymentHandler
+			var rec *depRecorder
+			if disabled {
+				h, rec = newDisabledHandler(t, db, true, true)
+			} else {
+				h, rec = newEnabledHandler(t, db, enabledConfig(t))
+			}
 
-	if _, err := h.CreatePaymentIntent(testTxID, testPrice, "TEST", testHash, t.Context()); err != nil {
-		t.Fatalf("CreatePaymentIntent(TEST): %v", err)
-	}
-	stored, err := database.New(db).GetTransactionByID(t.Context(), testTxID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.Price != testPrice || stored.Currency != "TEST" || stored.Method != "TEST" {
-		t.Fatalf("stored TEST transaction price=%d currency=%q method=%q, want %d %q %q",
-			stored.Price, stored.Currency, stored.Method, testPrice, "TEST", "TEST")
+			got, err := h.CreatePaymentIntent(testTxID, testPrice, "TEST", testHash, t.Context())
+			if err != nil {
+				t.Fatalf("CreatePaymentIntent(TEST): %v", err)
+			}
+			if got.method != "TEST" {
+				t.Fatalf("method %q", got.method)
+			}
+			if intent, ok := got.Intent.(DummyIntent); !ok || intent != (DummyIntent{TransactionId: testTxID, AuthKey: ""}) {
+				t.Fatalf("intent payload %#v", got.Intent)
+			}
+			if calls := rec.chain.Calls(); len(calls) != 0 {
+				t.Fatalf("TEST intent reached the chain backend: %v", calls)
+			}
+			stored, err := database.New(db).GetTransactionByID(t.Context(), testTxID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Price != testPrice || stored.Currency != "TEST" || stored.Method != "TEST" {
+				t.Fatalf("stored TEST transaction price=%d currency=%q method=%q, want %d %q %q",
+					stored.Price, stored.Currency, stored.Method, testPrice, "TEST", "TEST")
+			}
+			if stored.Status != int64(models.Paid) || stored.AuthKey != "" || stored.Hash != testHash {
+				t.Fatalf("stored TEST transaction status=%d auth_key=%q hash=%q, want %d %q %q",
+					stored.Status, stored.AuthKey, stored.Hash, models.Paid, "", testHash)
+			}
+			if until := time.Until(stored.ExpiresAt.Time); until < 5*time.Minute-30*time.Second || until > 5*time.Minute+30*time.Second {
+				t.Fatalf("stored TEST transaction expires in %v, want about 5m", until)
+			}
+		})
 	}
 }

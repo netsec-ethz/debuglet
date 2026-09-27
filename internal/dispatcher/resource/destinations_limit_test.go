@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 )
 
 // TestSetLimitRefusesALimitBelowTheChargedFloors states that a destination
@@ -39,7 +41,7 @@ func TestSetLimitRefusesALimitBelowTheChargedFloors(t *testing.T) {
 func TestFairshareKeepsFloorsBelowTheLimit(t *testing.T) {
 	d := NewDestinations(1000)
 	const dest = "192.0.2.101"
-	floors := map[string]Bitrate{"dlm-a": 30, "dlm-b": 20}
+	floors := map[string]bitrate.Bitrate{"dlm-a": 30, "dlm-b": 20}
 	if err := d.Insert(uuid.New(), dest, "dlm-a", 10, 80); err != nil {
 		t.Fatal(err)
 	}
