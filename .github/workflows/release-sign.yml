@@ -1,0 +1,118 @@
+name: Prepare signed release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful CI run for this protected version tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-sign-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'netsec-ethz/debuglet' && github.ref_type == 'tag' && github.ref_protected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      prepared: ${{ steps.prepare.outputs.prepared }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check the exact completed CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          mkdir .release-input
+          gh api "repos/$GITHUB_REPOSITORY/environments/release-signing" > .release-input/environment.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > .release-input/run.json
+          attempt=$(python3 -c 'import json; r=json.load(open(".release-input/run.json")); n=r["run_attempt"]; assert type(n) is int and n>0; print(n)')
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/attempts/$attempt/jobs?per_page=100" \
+            --jq '[.[] | .jobs[]]' > .release-input/jobs.json
+          python3 tools/release.py gates --run .release-input/run.json --jobs .release-input/jobs.json \
+            --environment .release-input/environment.json \
+            --version "$GITHUB_REF_NAME" --source "$GITHUB_SHA" --out .release-input/gates.json
+          printf 'CI_ATTEMPT=%s\n' "$attempt" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: netsec-ethz/debuglet
+          run-id: ${{ inputs.ci_run_id }}
+          name: package-${{ github.sha }}-${{ env.CI_ATTEMPT }}
+          path: .release-input/packages
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: netsec-ethz/debuglet
+          run-id: ${{ inputs.ci_run_id }}
+          name: build-${{ github.sha }}-${{ env.CI_ATTEMPT }}
+          path: .release-input/build
+      - name: Prepare immutable subjects without executing the payload
+        id: prepare
+        env:
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder="https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID"
+          python3 tools/release.py stage --packages .release-input/packages --directory .release --version "$GITHUB_REF_NAME"
+          cp .release-input/gates.json .release/gates.json
+          python3 tools/release_inventory.py generate --directory .release --version "$GITHUB_REF_NAME" \
+            --source "$GITHUB_SHA" --builder "$builder" --inputs .release-input/build/build-inputs.json
+          python3 tools/release.py prepare --directory .release --version "$GITHUB_REF_NAME" --source "$GITHUB_SHA" --builder "$builder"
+          printf 'prepared=true\n' >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prepared-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: prepare
+    if: needs.prepare.outputs.prepared == 'true' && github.repository == 'netsec-ethz/debuglet' && github.ref_type == 'tag' && github.ref_protected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release-signing
+    permissions:
+      actions: read
+    steps:
+      # This job checks out no code and never executes an artifact or installer.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: prepared-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release
+      - name: Sign the prepared subject bytes
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          key=$(mktemp "$RUNNER_TEMP/release-key.XXXXXXXX")
+          trap 'rm -f -- "$key"' EXIT
+          [[ -n "$RELEASE_SIGNING_KEY" ]]
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          unset RELEASE_SIGNING_KEY
+          ssh-keygen -Y sign -f "$key" -n debuglet-release release/release.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-release-${{ github.ref_name }}-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90

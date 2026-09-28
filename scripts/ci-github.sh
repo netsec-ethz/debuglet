@@ -136,6 +136,13 @@ docker run --rm --init --pull=never --name "$name" \
         case "$1" in
             fmt) python3 -m unittest -v tools/test_ci_fmt.py; make ci-fmt ;;
             generate) bash scripts/ci-generate.sh check ;;
+            build)
+                make ci-build
+                if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+                    python3 tools/release_inventory.py collect --source-directory . --dist .cache/ci/dist \
+                        --image-evidence .cache/ci/ci-image-evidence/base-image.json --out .cache/ci/build-inputs.json
+                fi
+                ;;
             race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
             secrets) python3 -m unittest -v tools/test_ci_security.py; bash "scripts/ci-$1.sh" ;;
             vulnerabilities) python3 -m unittest -v tools/test_ci_vulnerabilities.py; bash scripts/ci-vulnerabilities.sh ;;

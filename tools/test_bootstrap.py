@@ -68,10 +68,11 @@ class BootstrapTest(unittest.TestCase):
         self.curl_log = self.root / 'curl.jsonl'
         self.install_log = self.root / 'install.args'
         self.env = dict(os.environ, PATH=str(self.tools) + os.pathsep + os.environ['PATH'],
-                        DEBUGLET_VERSION=VERSION, HOME=str(self.root / 'home'), TMPDIR=str(self.tmp),
+                        DEBUGLET_VERSION=VERSION, DEBUGLET_ALLOW_UNSIGNED='1', HOME=str(self.root / 'home'), TMPDIR=str(self.tmp),
                         DEBUGLET_PREFIX=str(self.prefix), TEST_ASSETS=str(self.assets),
                         TEST_CURL_LOG=str(self.curl_log), TEST_INSTALL_LOG=str(self.install_log))
-        for key in ('TEST_HTTP_STATUS', 'TEST_CURL_EXIT', 'TEST_FAILURE_ASSET', 'TEST_INSTALL_EXIT'):
+        for key in ('TEST_HTTP_STATUS', 'TEST_CURL_EXIT', 'TEST_FAILURE_ASSET', 'TEST_INSTALL_EXIT',
+                    'DEBUGLET_RELEASE_TRUST', 'DEBUGLET_RELEASE_SIGNER', 'DEBUGLET_RELEASE_DIR', 'DEBUGLET_COMPONENT'):
             self.env.pop(key, None)
         self.make_assets()
 
@@ -215,6 +216,88 @@ class BootstrapTest(unittest.TestCase):
                 self.assertIn('README-install.md#supported-platforms', result.stderr)
                 self.assertNotIn('required command is missing', result.stderr)
                 self.assertFalse(self.curl_log.exists())
+
+    def sign_assets(self, identity='release@example.test'):
+        self.assertIsNotNone(shutil.which('ssh-keygen'))
+        key = self.root / 'signer'
+        if not key.exists():
+            subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True, timeout=8)
+        trust = self.root / 'allowed_signers'
+        trust.write_text(identity + ' namespaces="debuglet-release" ' + key.with_suffix('.pub').read_text())
+        release = {'schema_version': 1, 'version': VERSION, 'source_sha': 'a' * 40,
+                   'builder': 'https://github.com/netsec-ethz/debuglet/actions/runs/123',
+                   'files': {name: {'sha256': hashlib.sha256((self.assets / name).read_bytes()).hexdigest(),
+                                    'bytes': (self.assets / name).stat().st_size}
+                             for name in (ARCHIVE, 'install.sh', 'SHA256SUMS')}}
+        subject = self.assets / 'release.json'
+        subject.write_text(json.dumps(release))
+        subject.with_suffix('.json.sig').unlink(missing_ok=True)
+        subprocess.run(['ssh-keygen', '-q', '-Y', 'sign', '-f', str(key), '-n', 'debuglet-release', str(subject)],
+                       check=True, capture_output=True, timeout=8)
+        self.env.update(DEBUGLET_ALLOW_UNSIGNED='', DEBUGLET_RELEASE_TRUST=str(trust),
+                        DEBUGLET_RELEASE_SIGNER=identity)
+        return key, trust
+
+    def test_unsigned_legacy_install_requires_explicit_mode(self):
+        result = self.run_bootstrap({'DEBUGLET_ALLOW_UNSIGNED': ''})
+        self.assert_not_installed(result)
+        self.assertIn('explicit DEBUGLET_ALLOW_UNSIGNED=1', result.stderr)
+        self.assertFalse(self.curl_log.exists())
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('unsigned legacy/development package', result.stderr)
+
+    def test_signed_release_and_offline_install(self):
+        self.sign_assets()
+        result = self.run_bootstrap({'DEBUGLET_RELEASE_DIR': str(self.assets)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.curl_log.exists(), 'offline install contacted downloader')
+        self.assertIn('Verified release ' + VERSION, result.stdout)
+        self.assertIn('signed by release@example.test', result.stdout)
+
+    def test_signed_download_installs_only_after_verification(self):
+        self.sign_assets()
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call['url'].rsplit('/', 1)[1] for call in self.calls()],
+                         ['release.json', 'release.json.sig', ARCHIVE, 'install.sh', 'SHA256SUMS'])
+
+    def test_changed_signed_subjects_never_execute_installer(self):
+        for filename in (ARCHIVE, 'install.sh', 'SHA256SUMS', 'release.json'):
+            with self.subTest(filename=filename):
+                self.make_assets()
+                self.sign_assets()
+                with (self.assets / filename).open('ab') as output:
+                    output.write(b'tampered')
+                self.assert_not_installed(self.run_bootstrap())
+
+    def test_wrong_signer_and_missing_signature_do_not_install(self):
+        self.sign_assets()
+        self.assert_not_installed(self.run_bootstrap({'DEBUGLET_RELEASE_SIGNER': 'other@example.test'}))
+        (self.assets / 'release.json.sig').unlink()
+        self.assert_not_installed(self.run_bootstrap())
+
+    def test_wrong_signature_namespace_and_mixed_unsigned_mode_do_not_install(self):
+        key, _ = self.sign_assets()
+        self.assert_not_installed(self.run_bootstrap({'DEBUGLET_ALLOW_UNSIGNED': '1'}))
+        self.assertFalse(self.curl_log.exists(), 'mixed trust modes contacted downloader')
+        (self.assets / 'release.json.sig').unlink()
+        subprocess.run(['ssh-keygen', '-q', '-Y', 'sign', '-f', str(key), '-n', 'another-purpose',
+                        str(self.assets / 'release.json')], check=True, capture_output=True, timeout=8)
+        self.assert_not_installed(self.run_bootstrap())
+
+    def test_trust_rotation_revokes_old_key(self):
+        old_key, trust = self.sign_assets()
+        new_key = self.root / 'next-signer'
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(new_key)], check=True, timeout=8)
+        trust.write_text('release@example.test namespaces="debuglet-release" ' + new_key.with_suffix('.pub').read_text())
+        self.assert_not_installed(self.run_bootstrap())
+        (self.assets / 'release.json.sig').unlink()
+        subprocess.run(['ssh-keygen', '-q', '-Y', 'sign', '-f', str(new_key), '-n', 'debuglet-release',
+                        str(self.assets / 'release.json')], check=True, capture_output=True, timeout=8)
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 
 if __name__ == '__main__':

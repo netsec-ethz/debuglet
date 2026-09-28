@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# New tags have an all-zero before SHA. Scan their complete reachable history;
+# choosing HEAD as an ordinary base would silently scan an empty range.
+secret_scan_range() {
+    local base=${1:-}
+    if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
+        git rev-parse --verify HEAD^{commit} >/dev/null
+        printf '%s\n' HEAD
+        return
+    fi
+    [[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid source scan base revision' >&2; return 1; }
+    git cat-file -e "$base^{commit}" || return 1
+    git merge-base --is-ancestor "$base" HEAD || return 1
+    printf '%s..HEAD\n' "$base"
+}
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return; fi
 repo=$PWD
 mkdir -p .cache/ci/secrets
 work=$(mktemp -d)
@@ -38,10 +53,8 @@ found = {(f['File'], f['RuleID'], f['StartLine']) for f in json.load(open(sys.ar
 sys.exit(found != {('exempt.txt', 'github-pat', 2), ('other.txt', 'github-pat', 1),
                    ('wrong-rule.txt', 'github-pat', 1)})
 EOF
-base=${CI_SCAN_BASE:-}
-[[ "$base" =~ ^[0-9a-f]{40}$ ]] || { echo 'missing source scan base revision' >&2; exit 1; }
-git cat-file -e "$base^{commit}"
-scan --report .cache/ci/secrets/source.json -- git --log-opts="$base..HEAD" --ignore-gitleaks-allow .
+scan_range=$(secret_scan_range "${CI_SCAN_BASE:-}")
+scan --report .cache/ci/secrets/source.json -- git --log-opts="$scan_range" --ignore-gitleaks-allow .
 # Scan every tracked file at HEAD; existing fixtures pass only via exact exceptions.
 mkdir "$work/tree"
 git archive --format=tar HEAD | tar -xf - -C "$work/tree"

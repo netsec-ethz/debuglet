@@ -14,6 +14,10 @@ dbl demo
 
 The installer verifies the release files before writing them. It requires a POSIX shell, GNU tar, and coreutils. The demo needs no Go compiler, source checkout, service, account, wallet, or root access.
 
+For signed releases, provision trust and verify the installer before execution
+using [Signed releases and offline verification](docs/operations/releases.md).
+That guide also describes the explicit mode for existing unsigned packages.
+
 ## Supported platforms
 
 | Platform | `dbl` client | Dispatcher and executor | Bundled demo |
