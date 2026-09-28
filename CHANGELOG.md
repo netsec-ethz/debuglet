@@ -16,6 +16,12 @@ changes; the linked API and deployment documentation contains operational detail
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
   host-name rules documented in `docs/operations/configuration.md`.
 
+### Fixed
+- Answer `400 unknown_executor` when a submission names an executor that is
+  not registered or no longer available at admission, and `400 invalid_policy`
+  when the policy requires ICMP or a listener the executor cannot serve; these
+  answered `500 internal_error` before.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added

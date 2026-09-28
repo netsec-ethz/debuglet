@@ -592,7 +592,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/DebugletIDList"
         "400":
-          description: "Malformed body (invalid_request), a batch that does not match the intent (intent_mismatch), an unpaid transaction (payment_incomplete), an unsupported payment method (unsupported_payment_method), an invalid debuglet (invalid_request) or a policy the dispatcher does not admit, including a reserved window that does not fit (invalid_policy)."
+          description: "Malformed body (invalid_request), a batch that does not match the intent (intent_mismatch), an unpaid transaction (payment_incomplete), an unsupported payment method (unsupported_payment_method), an invalid debuglet (invalid_request), an executor that is not registered or no longer available (unknown_executor), or a policy the dispatcher does not admit, including a reserved window that does not fit or a capability the executor lacks (invalid_policy)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."

@@ -247,6 +247,11 @@ var (
 // the server.
 var ErrInvalidPolicy = errors.New("invalid policy")
 
+// ErrUnknownExecutor marks a submission for an executor that is not
+// registered, or no longer available, when the batch is admitted. It is a
+// rejection of the request, not a failure of the dispatcher.
+var ErrUnknownExecutor = errors.New("executor is not registered")
+
 // ErrPaymentInUse marks a submission refused where the transaction's orders
 // already carry runs, or where the dispatcher could not tell whether they do.
 // Those runs may be executing or already credited to their executor, so the
@@ -327,15 +332,15 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 
 	exec, exists := d.executors[spec.ExecutorID]
 	if d.closed || !exists || !exec.owner.Available() {
-		return nil, fmt.Errorf("executor '%s' not found", spec.ExecutorID)
+		return nil, fmt.Errorf("executor '%s' not found: %w", spec.ExecutorID, ErrUnknownExecutor)
 	}
 
 	if spec.Policy.RequireICMP && !exec.ICMPEnabled {
-		return nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
+		return nil, fmt.Errorf("executor does not support ICMP, but policy requires it: %w", ErrInvalidPolicy)
 	}
 
 	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
-		return nil, fmt.Errorf("executor '%s' has no public host, but policy requires a listener", spec.ExecutorID)
+		return nil, fmt.Errorf("executor has no public host, but policy requires a listener: %w", ErrInvalidPolicy)
 	}
 
 	var from time.Time
