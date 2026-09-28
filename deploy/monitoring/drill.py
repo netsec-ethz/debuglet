@@ -66,7 +66,8 @@ def main():
         result = subprocess.run([dbl, "--config", work / "client.json", "--output", "json", *arguments],
                                 env=environment, capture_output=True, text=True, timeout=35)
         if result.returncode:
-            raise RuntimeError("CLI command failed: " + arguments[0])
+            (work / "cli-error.log").write_text(result.stderr)
+            raise RuntimeError("CLI command failed; see private cli-error.log")
         return json.loads(result.stdout)
 
     def launch(kind, endpoint=None):
@@ -140,7 +141,8 @@ def main():
         key = work / "account-key"
         key.write_text(account["account_key"])
         key.chmod(0o600)
-        cli("--endpoint", endpoint, "login", "--account-key-file", str(key))
+        cli("connect", endpoint, "--name", "alert-drill")
+        cli("--dispatcher", "alert-drill", "login", "--account-key-file", str(key))
         config = work / "prometheus.yml"
         config.write_text("global:\n  scrape_interval: 15s\n  scrape_timeout: 5s\n  evaluation_interval: 15s\n"
                           + "rule_files:\n  - " + json.dumps(str(source / "alerts.yml")) + "\n"
@@ -154,7 +156,7 @@ def main():
         children.append(prom)
         wait_for("healthy monitored capacity", healthy, 45)
         events.append({"phase": "initial", "ready": True})
-        run_id = cli("--endpoint", endpoint, "run", "--wasm", str(loop), "--duration", "10m",
+        run_id = cli("--dispatcher", "alert-drill", "run", "--wasm", str(loop), "--duration", "10m",
                      "--floor-bps", "1", "--ceil-bps", "1")["id"]
         wait_for("guest started", lambda: request(endpoint + "/debuglet/" + run_id + "/state", token=token)["state"] == "RunStateStarted", 35)
         for role in ("executor", "dispatcher"):
@@ -181,22 +183,33 @@ def main():
             events.append({"phase": role + "_recovery", "alert_clear_seconds": round(time.monotonic() - began, 3),
                            "retained_unknown": True, "retained_state": retained["state"]})
         passed = True
-        print(json.dumps({"passed": True, "observation_budget_seconds": 90, "events": events}, indent=2))
     finally:
+        if not passed:
+            (work / "observations.json").write_text(json.dumps({
+                "events": events,
+                "metrics": query('{__name__=~"debuglet_.*|up|ALERTS"}'),
+            }, indent=2))
+        cleanup_errors = []
         for process in reversed(children):
             if process.poll() is None:
                 process.send_signal(signal.SIGINT)
                 try:
                     process.wait(timeout=35)
                 except subprocess.TimeoutExpired:
-                    passed = False
                     process.kill()
                     process.wait(timeout=10)
-                    raise RuntimeError("child failed to join; inspect isolated container before removal")
+                    cleanup_errors.append("child required forced termination")
+                if process.returncode != 0:
+                    cleanup_errors.append("child did not complete a clean shutdown")
+        if cleanup_errors:
+            passed = False
         if passed:
             shutil.rmtree(work)
         else:
             print("Private drill diagnostics retained at " + str(work))
+        if cleanup_errors:
+            raise RuntimeError("; ".join(cleanup_errors))
+    print(json.dumps({"passed": True, "observation_budget_seconds": 90, "events": events}, indent=2))
 
 
 if __name__ == "__main__":

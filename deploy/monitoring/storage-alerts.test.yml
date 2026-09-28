@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+rule_files: [storage-alerts.yml]
+evaluation_interval: 15s
+tests:
+  - name: storage low
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "1+0x8"
+      - series: "debuglet_state_capacity_bytes{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "100+0x8"
+      - series: "debuglet_observation_available{job=\"debuglet-dispatcher\",instance=\"owned:9000\",observation=\"state_available_bytes\"}"
+        values: "1+0x8"
+      - series: "debuglet_observation_available{job=\"debuglet-dispatcher\",instance=\"owned:9000\",observation=\"state_capacity_bytes\"}"
+        values: "1+0x8"
+      - series: "debuglet_state_available_bytes{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "5+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletStateStorageLow
+        exp_alerts:
+          - &DebugletStateStorageLow
+            exp_labels: {"job": "debuglet-dispatcher", "instance": "owned:9000", "owner": "debuglet-operator", "severity": "page"}
+            exp_annotations: {"summary": "Debuglet state storage is low or cannot be observed", "description": "Less than ten percent is available to unprivileged writes, or the storage observation is missing. Quotas and inode exhaustion need separate host monitoring.", "runbook_url": "https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#storage-and-backups"}
+  - name: storage missing
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "1+0x8"
+      - series: "debuglet_state_capacity_bytes{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "100+0x8"
+      - series: "debuglet_observation_available{job=\"debuglet-dispatcher\",instance=\"owned:9000\",observation=\"state_available_bytes\"}"
+        values: "1+0x8"
+      - series: "debuglet_observation_available{job=\"debuglet-dispatcher\",instance=\"owned:9000\",observation=\"state_capacity_bytes\"}"
+        values: "1+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletStateStorageLow
+        exp_alerts: [*DebugletStateStorageLow]
+  - name: storage recovered
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "1+0x8"
+      - series: "debuglet_state_capacity_bytes{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "100+0x8"
+      - series: "debuglet_observation_available{job=\"debuglet-dispatcher\",instance=\"owned:9000\",observation=\"state_available_bytes\"}"
+        values: "1+0x8"
+      - series: "debuglet_observation_available{job=\"debuglet-dispatcher\",instance=\"owned:9000\",observation=\"state_capacity_bytes\"}"
+        values: "1+0x8"
+      - series: "debuglet_state_available_bytes{job=\"debuglet-dispatcher\",instance=\"owned:9000\"}"
+        values: "5+0x4 50+0x3"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletStateStorageLow
+        exp_alerts: []
+  - name: backup failed
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+      - series: "debuglet_backup_last_completed_success{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupFailed
+        exp_alerts:
+          - &DebugletBackupFailed
+            exp_labels: {"job": "debuglet-backup", "instance": "owned:9100", "owner": "debuglet-operator", "severity": "page"}
+            exp_annotations: {"summary": "Debuglet backup failed or its result is unavailable", "description": "Inspect the offline backup command and textfile collector. A failed or incomplete attempt cannot advance verified backup freshness.", "runbook_url": "https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#storage-and-backups"}
+  - name: backup result missing
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupFailed
+        exp_alerts: [*DebugletBackupFailed]
+  - name: backup collector error
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "debuglet_backup_last_completed_success{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupFailed
+        exp_alerts: [*DebugletBackupFailed]
+  - name: backup result recovered
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+      - series: "debuglet_backup_last_completed_success{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x4 1+0x3"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupFailed
+        exp_alerts: []
+  - name: backup never verified
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupStale
+        exp_alerts:
+          - &DebugletBackupStale
+            exp_labels: {"job": "debuglet-backup", "instance": "owned:9100", "owner": "debuglet-operator", "severity": "page"}
+            exp_annotations: {"summary": "Debuglet has no verified backup within the last day", "description": "Complete a supported offline backup. A file timestamp, partial directory or failed command is not a verified backup.", "runbook_url": "https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#storage-and-backups"}
+  - name: backup expired
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+      - series: "debuglet_backup_last_verified_timestamp_seconds{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "-86400+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupStale
+        exp_alerts: [*DebugletBackupStale]
+  - name: backup verified
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+      - series: "debuglet_backup_last_verified_timestamp_seconds{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupStale
+        exp_alerts: []
+  - name: backup future timestamp
+    interval: 15s
+    input_series:
+      - series: "up{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "1+0x8"
+      - series: "node_textfile_scrape_error{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "0+0x8"
+      - series: "debuglet_backup_last_verified_timestamp_seconds{job=\"debuglet-backup\",instance=\"owned:9100\"}"
+        values: "86400+0x8"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: DebugletBackupStale
+        exp_alerts: [*DebugletBackupStale]

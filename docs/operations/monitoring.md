@@ -110,3 +110,93 @@ operator credential but does not validate external provisioning or notification
 routing. A successful drill joins children and removes its private state. On
 failure it prints the retained private diagnostic directory; remove the owned
 container after inspection.
+
+## Storage and backups
+
+Enable [storage-alerts.yml](../../deploy/monitoring/storage-alerts.yml) and the
+[backup scrape](../../deploy/monitoring/backup-scrape.yml.example) when operating
+the supported offline backup profile. `DebugletStateStorageLow` checks the
+**dispatcher's state filesystem**, firing below 10% space available to
+unprivileged writes, or when that observation is missing. This does not cover
+executor disks, filesystem quotas or inode exhaustion; retain host monitoring
+for those. A failed dispatcher scrape is covered by `DebugletUnavailable`.
+
+Backups currently require a clean, joined foreground shutdown and `--offline`.
+They do **not** cover running systemd services or independently started daemons.
+Use a package providing the installed `dbl backup` command; the wrapper does not
+make an unsupported state directory safe to copy. It does not stop services or
+schedule backups. Schedule a supported offline maintenance window at least daily
+if using the default 24-hour freshness threshold; choose a different documented
+threshold when your recovery objective requires one.
+
+Use an existing node_exporter textfile collector on the same host as Prometheus,
+listening on loopback. The tested version/checksum is in
+[node-exporter-version.env](../../deploy/monitoring/node-exporter-version.env).
+Create a dedicated textfile directory owned by the backup identity, readable by
+the collector, and not writable by any other user. For example:
+
+```sh
+node_exporter --web.listen-address=127.0.0.1:9100 \
+  --collector.textfile.directory=/var/lib/debuglet-backup-metrics
+python3 deploy/monitoring/backup-metrics.py \
+  --dbl /opt/debuglet/bin/dbl --state-dir /srv/debuglet-stopped \
+  --destination /srv/backups/debuglet-20260928 \
+  --metrics-file /var/lib/debuglet-backup-metrics/backup.prom --offline
+```
+
+Choose a **new** destination each time. This configuration monitors one backup
+state directory per collector target; do not publish duplicate metric names from
+multiple profiles into the same textfile collector. Keep the actual backup directory private;
+the `.prom` file contains only fixed numeric outcomes and timestamps, never
+credentials, identities or paths. The wrapper serializes its own invocations,
+runs the installed command with a five-minute timeout, and accepts success only
+after exit zero plus a matching published backup manifest. The installed command
+owns SQLite, schema and inventory verification. The wrapper never inspects the
+credential payload or treats a directory's mtime as proof of a valid backup.
+
+`DebugletBackupFailed` fires on a failed last completed attempt, missing result,
+failed scrape or textfile parsing error. `DebugletBackupStale` fires when there is
+no verified backup, its completion is over 24 hours old, or its timestamp is in
+the future. Failed or malformed output preserves the previous verified timestamp.
+Killing the wrapper cannot advance success; freshness will still expire even if
+that abrupt termination prevented recording a completed failure. These are
+**last completed attempt** metrics, not proof that a backup is currently running.
+Use the same 15-second collection/evaluation and 45-second pending period as the
+availability rules; the conservative observation budget is 90 seconds.
+
+When storage or backup alerts fire:
+
+- Inspect collector errors and the last completed result first. Check capacity,
+  permissions, quota/inodes, package compatibility and whether the foreground
+  writer really joined before invoking backup. Preserve the failed destination
+  for diagnosis; retry into a fresh destination.
+- Recover space by expanding the filesystem or moving verified, inactive backup
+  copies according to retention policy. Never delete the active installation,
+  state database, WAL/journal/SHM sidecars, executor identity or an in-progress
+  backup to silence an alert.
+- Complete a new verified backup. Confirm both backup alerts clear and the
+  verified timestamp advances; periodically exercise documented restore into a
+  **fresh** state directory. A green backup alert alone is not a restore drill.
+
+For the owned storage drill, provide a dedicated 64 MiB tmpfs at `/pressure`
+inside a disposable container (`--tmpfs /pressure:size=64m,mode=700`, no host
+network or published ports). Keep Prometheus data outside that tmpfs. The script
+refuses non-tmpfs or filesystems over 128 MiB and creates its own state directory.
+
+```sh
+python3 -m unittest discover -s deploy/monitoring -p '*_test.py'
+promtool test rules deploy/monitoring/storage-alerts.test.yml
+python3 deploy/monitoring/storage-drill.py \
+  --install-root /tmp/debuglet-install \
+  --backup-install-root /tmp/debuglet-backup-install \
+  --prometheus /tmp/prometheus/prometheus \
+  --node-exporter /tmp/node_exporter/node_exporter --pressure-dir /pressure
+```
+
+The two installed roots may be the same version once both capabilities are
+included. The drill measures an actual low-space alert, removes only its filler
+file, checks a missing-backup alert, makes an installed verified offline backup,
+injects a failed attempt using an existing destination, and verifies that a new
+successful backup resolves both failure and freshness. Rule tests separately
+advance synthetic time to cover expiration and future timestamps. No external
+notification delivery is claimed.

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+groups:
+  - name: debuglet-storage
+    interval: 15s
+    rules:
+      - alert: DebugletStateStorageLow
+        expr: |
+          up{job="debuglet-dispatcher"} == 1 unless on(job, instance)
+            ((debuglet_state_available_bytes{job="debuglet-dispatcher"}
+              / debuglet_state_capacity_bytes{job="debuglet-dispatcher"} >= 0.10)
+             and on(job, instance) (debuglet_state_capacity_bytes{job="debuglet-dispatcher"} > 0)
+             and on(job, instance) (debuglet_observation_available{job="debuglet-dispatcher",observation="state_available_bytes"} == 1)
+             and on(job, instance) (debuglet_observation_available{job="debuglet-dispatcher",observation="state_capacity_bytes"} == 1))
+        for: 45s
+        labels:
+          severity: page
+          owner: debuglet-operator
+        annotations:
+          summary: Debuglet state storage is low or cannot be observed
+          description: Less than ten percent is available to unprivileged writes, or the storage observation is missing. Quotas and inode exhaustion need separate host monitoring.
+          runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#storage-and-backups
+      - alert: DebugletBackupFailed
+        expr: |
+          (up{job="debuglet-backup"} unless on(job, instance)
+            ((up{job="debuglet-backup"} == 1)
+             and on(job, instance) (debuglet_backup_last_completed_success{job="debuglet-backup"} == 1)
+             and on(job, instance) (node_textfile_scrape_error{job="debuglet-backup"} == 0)))
+          or absent(up{job="debuglet-backup"})
+        for: 45s
+        labels:
+          severity: page
+          owner: debuglet-operator
+        annotations:
+          summary: Debuglet backup failed or its result is unavailable
+          description: Inspect the offline backup command and textfile collector. A failed or incomplete attempt cannot advance verified backup freshness.
+          runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#storage-and-backups
+      - alert: DebugletBackupStale
+        expr: |
+          (up{job="debuglet-backup"} unless on(job, instance)
+            ((time() - debuglet_backup_last_verified_timestamp_seconds{job="debuglet-backup"} <= 86400)
+             and on(job, instance) (debuglet_backup_last_verified_timestamp_seconds{job="debuglet-backup"} <= time() + 5)))
+          or absent(up{job="debuglet-backup"})
+        for: 45s
+        labels:
+          severity: page
+          owner: debuglet-operator
+        annotations:
+          summary: Debuglet has no verified backup within the last day
+          description: Complete a supported offline backup. A file timestamp, partial directory or failed command is not a verified backup.
+          runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#storage-and-backups
