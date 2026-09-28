@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 // helloDeadline is the bound registerExecutor puts on the reverse Hello.
@@ -129,6 +130,24 @@ func awaitRegistrationFailure(t *testing.T, s *stalledHelloServer, bound time.Du
 	return time.Time{}
 }
 
+// assertRegistrationCause requires the one logged failure to carry exactly one
+// of the dispatcher's own causes, so no text chosen by the peer can reach it.
+func assertRegistrationCause(t *testing.T, s *stalledHelloServer, want ...string) string {
+	t.Helper()
+	entries := s.logs.FilterMessage("failed to register executor").All()
+	if len(entries) != 1 {
+		t.Fatalf("failed registration lines: %d", len(entries))
+	}
+	cause, _ := entries[0].ContextMap()["error"].(string)
+	for _, w := range want {
+		if cause == w {
+			return cause
+		}
+	}
+	t.Fatalf("failed registration cause %q, want one of %q", cause, want)
+	return ""
+}
+
 func awaitPeerClosed(t *testing.T, session *yamux.Session) time.Time {
 	t.Helper()
 	select {
@@ -215,6 +234,7 @@ func TestBidiSilentReverseHelloEndsRegistration(t *testing.T) {
 				if elapsed < helloDeadline-500*time.Millisecond || elapsed > helloDeadline+time.Second {
 					t.Fatalf("registration ended after %v, want the %v Hello deadline", elapsed, helloDeadline)
 				}
+				t.Logf("logged cause: %q", assertRegistrationCause(t, s, "hello: "+context.DeadlineExceeded.Error()))
 				assertNoRegistration(t, s)
 			})
 		}
@@ -250,6 +270,8 @@ func TestBidiPeerClosedDuringHelloEndsRegistration(t *testing.T) {
 			session.Close()
 			failed := awaitRegistrationFailure(t, s, time.Second)
 			t.Logf("peer closed session -> failed to register executor: %v", failed.Sub(closed))
+			lost := func(code codes.Code) string { return "hello: " + code.String() }
+			t.Logf("logged cause: %q", assertRegistrationCause(t, s, lost(codes.Unavailable), lost(codes.Canceled)))
 			assertNoRegistration(t, s)
 		})
 	}
