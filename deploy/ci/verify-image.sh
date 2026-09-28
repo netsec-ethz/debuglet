@@ -32,12 +32,12 @@ case "$lane" in
         ;;
     kernel)
         expected_image="${DEBUGLET_CI_TOOLS_IMAGE}"
-        required_tools=(go gcc clang llvm-strip python3 bpftool git tar sha256sum)
+        required_tools=(go gcc clang llvm-strip python3 bpftool ip tc git tar sha256sum)
         pinned_packages=true
         ;;
     local)
         expected_image="${DEBUGLET_CI_TOOLS_IMAGE}"
-        required_tools=(go gcc python3 unzip git tar sha256sum)
+        required_tools=(go gcc python3 unzip ip tc git tar sha256sum)
         pinned_packages=true
         ;;
 esac
@@ -159,6 +159,8 @@ evidence = {
         "llvm-strip": version_of("llvm-strip", "--version"),
         "python3": version_of("python3", "--version"),
         "bpftool": version_of("bpftool", "version"),
+        "ip": version_of("ip", "-V"),
+        "tc": version_of("tc", "-V"),
         "unzip": version_of("unzip", "-v"),
     },
     "packages": packages(),

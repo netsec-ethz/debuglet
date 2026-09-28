@@ -15,7 +15,7 @@ FROM ${BASE_IMAGE}@${BASE_DIGEST}
 ARG BASE_IMAGE
 ARG BASE_DIGEST
 ARG DEBIAN_SNAPSHOT=20260918T000000Z
-ARG TOOLS_IMAGE=debuglet-ci-tools:20260928-1
+ARG TOOLS_IMAGE=debuglet-ci-tools:20261002-1
 
 COPY packages.txt /etc/debuglet-ci/packages.txt
 
@@ -71,6 +71,8 @@ RUN set -eu; \
       clang --version | head -n 1; \
       llvm-strip --version | head -n 1; \
       python3 --version; \
+      ip -V; \
+      tc -V; \
     } > /etc/debuglet-ci/tools.txt; \
     cat /etc/debuglet-ci/image.env /etc/debuglet-ci/tools.txt; \
     cat /etc/debuglet-ci/toolchain.sha256
