@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 lane=${1:-}
 case "$lane" in
-    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|offline) ;;
+    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline) ;;
     *) echo "unknown CI lane: $lane" >&2; exit 2 ;;
 esac
 
@@ -57,15 +57,15 @@ name="debuglet-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$lane-$$"
 prepare_name="$name-modules"
 cleanup() {
     local status=$?
-    if [[ $lane == faults ]]; then
-        mkdir -p .cache/ci/faults
+    if [[ $lane == faults || $lane == soak ]]; then
+        mkdir -p ".cache/ci/$lane"
         docker rm --force "$name" "$prepare_name" >/dev/null 2>&1 || true
         if remaining=$(docker container ls --all --format '{{.Names}}') &&
             ! grep -Fxq -e "$name" -e "$prepare_name" <<< "$remaining"; then
             printf '{"container":"%s","preparation_container":"%s","removed":true,"test_status":%s}\n' \
-                "$name" "$prepare_name" "$status" > .cache/ci/faults/cleanup.json
+                "$name" "$prepare_name" "$status" > ".cache/ci/$lane/cleanup.json"
         else
-            echo 'fault-suite container cleanup could not be verified' >&2
+            echo "$lane container cleanup could not be verified" >&2
             status=1
         fi
     else
@@ -85,13 +85,18 @@ for key in GITHUB_ACTIONS GITHUB_EVENT_NAME GITHUB_REPOSITORY GITHUB_REF GITHUB_
     GITHUB_SERVER_URL CI_SCAN_BASE RUNNER_NAME RUNNER_ENVIRONMENT RUNNER_OS RUNNER_ARCH; do
     [[ -z ${!key+x} ]] || forward+=(--env "$key")
 done
-# Fetch dependencies before the fault fixtures enter their no-network boundary.
-if [[ $lane == faults ]]; then
+# Fetch dependencies before local fixtures enter their no-network boundary.
+if [[ $lane == faults || $lane == soak ]]; then
     docker run --rm --init --pull=never --name "$prepare_name" \
         --mount "type=bind,source=$PWD,target=/workspace,readonly" \
         --mount type=volume,source=debuglet-ci-go-mod,target=/go/pkg/mod \
         --workdir /workspace --env GOTOOLCHAIN=local "$image" go mod download
-    options+=(--network none --cpus 4 --memory 4g --pids-limit 512 --env DEBUGLET_FAULT_ISOLATED=1)
+    options+=(--network none --cpus 4 --memory 4g --pids-limit 512)
+    if [[ $lane == faults ]]; then
+        options+=(--env DEBUGLET_FAULT_ISOLATED=1)
+    else
+        options+=(--env DEBUGLET_SOAK_ISOLATED=1)
+    fi
 fi
 docker run --rm --init --pull=never --name "$name" \
     --mount "type=bind,source=$PWD,target=/workspace" \
@@ -116,6 +121,7 @@ docker run --rm --init --pull=never --name "$name" \
             race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
             secrets) python3 -m unittest -v tools/test_ci_security.py; bash "scripts/ci-$1.sh" ;;
             faults) bash scripts/ci-faults.sh ;;
+            soak) bash scripts/ci-soak.sh ;;
             offline)
                 mkdir -p .cache/ci/offline-evidence
                 . scripts/ci-install-candidate.sh
