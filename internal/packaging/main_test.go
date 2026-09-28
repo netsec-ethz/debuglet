@@ -232,64 +232,14 @@ func TestBuildRecordValidation(t *testing.T) {
 		}
 	})
 }
-func TestDemoEvidenceRequiresActualPass(t *testing.T) {
-	for _, tc := range []struct {
-		name, data string
-		ok         bool
-	}{
-		{"pass", `{"Action":"pass","Test":"TestInstalledDemoAcceptance","Package":"github.com/netsec-ethz/debuglet/internal/demo"}`, true},
-		{"empty", "", false}, {"renamed", `{"Action":"pass","Test":"Other"}`, false},
-		{"skip", `{"Action":"skip","Test":"TestInstalledDemoAcceptance"}`, false}, {"bad JSON", "{", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := filepath.Join(t.TempDir(), "events")
-			if err := os.WriteFile(p, []byte(tc.data), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := checkDemoEvidence(p); (err == nil) != tc.ok {
-				t.Fatalf("result %v", err)
-			}
-		})
-	}
-}
-func TestCompatibilityEvidenceRequiresActualPass(t *testing.T) {
-	const pkg = "github.com/netsec-ethz/debuglet/internal/acceptance/canary"
-	const passed = `{"Action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`
-	for _, tc := range []struct {
-		name, data string
-		ok         bool
-	}{
-		{"pass", passed, true},
-		{"empty", "", false},
-		{"wrong test", `{"Action":"pass","Test":"Other","Package":"` + pkg + `"}`, false},
-		{"wrong package", `{"Action":"pass","Test":"TestCanaryLocal","Package":"other"}`, false},
-		{"duplicate pass", passed + "\n" + passed, false},
-		{"pass then package failure", passed + "\n" + `{"Action":"fail","Package":"` + pkg + `"}`, false},
-		{"pass then subtest skip", passed + "\n" + `{"Action":"skip","Test":"TestCanaryLocal/cleanup"}`, false},
-		{"trailing malformed event", passed + "\n{", false},
-		{"null event", passed + "\nnull", false},
-		{"empty event", passed + "\n{}", false},
-		{"unknown action", passed + "\n" + `{"Action":"unknown"}`, false},
-		{"overwritten failure", `{"Action":"fail","Action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`, false},
-		{"aliased failure", `{"Action":"fail","action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`, false},
-		{"aliased action", `{"action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "events")
-			if err := os.WriteFile(path, []byte(tc.data), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := checkTestEvidence(path, pkg, "TestCanaryLocal"); (err == nil) != tc.ok {
-				t.Fatalf("result %v", err)
-			}
-		})
-	}
-}
-
 func TestCompatibilityChecksBytesBeforeInstaller(t *testing.T) {
 	// The sentinel installer exits before any build. Its invocation is the
 	// positive control; a changed payload must fail before that invocation.
 	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci-compatibility.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci-install-candidate.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +258,7 @@ func TestCompatibilityChecksBytesBeforeInstaller(t *testing.T) {
 				}
 			}
 			write("scripts/ci-compatibility.sh", script)
+			write("scripts/ci-install-candidate.sh", helper)
 			const archiveName = "debuglet-v0.0.0-dev.aaaaaaaaaaaa-linux-amd64.tar.gz"
 			archive := []byte("fixture archive bytes")
 			installer := []byte("#!/bin/sh\nprintf 'ran' > .installer-ran\nexit 93\n")

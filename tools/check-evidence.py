@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the race lane's Go JSON results for actual, race-free test evidence.
+"""Check Go JSON results for executed tests and reject incomplete evidence.
 
 Go reports a package without tests, and a package whose tests all skipped, as a
 success. This gate requires every requested package root to report at least one
@@ -29,6 +29,25 @@ def import_path(module, root):
     return module + root[1:]
 
 
+def strict_event(pairs):
+    event = {}
+    seen = set()
+    controls = {'action': 'Action', 'package': 'Package', 'test': 'Test', 'output': 'Output'}
+    for key, value in pairs:
+        lower = key.lower()
+        if lower in seen:
+            raise ValueError('duplicate event field')
+        seen.add(lower)
+        if lower in controls and (key != controls[lower] or not isinstance(value, str)):
+            raise ValueError('invalid or aliased event control field')
+        event[key] = value
+    return event
+
+
+def reject_constant(value):
+    raise ValueError(f'invalid JSON constant {value}')
+
+
 def read_events(path):
     events = []
     with open(path, encoding='utf-8') as results:
@@ -36,8 +55,13 @@ def read_events(path):
             if not line.strip():
                 continue
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError as exc:
+                event = json.loads(line, object_pairs_hook=strict_event, parse_constant=reject_constant)
+                if not isinstance(event, dict) or event.get('Action') not in (
+                        'start', 'run', 'pause', 'cont', 'pass', 'bench', 'output',
+                        'build-output', 'fail', 'skip', 'build-fail'):
+                    raise ValueError('invalid test event or action')
+                events.append(event)
+            except (json.JSONDecodeError, ValueError) as exc:
                 raise ValueError(f'{path}:{number}: unreadable Go JSON result: {exc}') from exc
     return events
 
@@ -98,19 +122,49 @@ def report(events, required):
     return packages, skipped, problems
 
 
+def named_tests(events, required):
+    for event in events:
+        if event['Action'] in ('fail', 'skip', 'build-fail'):
+            raise ValueError('test evidence contains a failure or skip')
+        if any(marker in event.get('Output', '') for marker in RACE_MARKERS):
+            raise ValueError('data race reported')
+    for package, test in required:
+        passes = sum(event['Action'] == 'pass' and event.get('Package') == package
+                     and event.get('Test') == test for event in events)
+        if passes != 1:
+            raise ValueError(f'expected exactly one {package}/{test} pass event')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', type=Path, required=True)
     parser.add_argument('--budget-seconds', type=float, default=None)
-    parser.add_argument('packages', nargs='+', metavar='PACKAGE_ROOT')
+    parser.add_argument('--test', action='append', default=[], metavar='PACKAGE_ROOT:TEST')
+    parser.add_argument('packages', nargs='*', metavar='PACKAGE_ROOT')
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     module = module_path(repository)
+    events = read_events(args.evidence)
+    if args.test:
+        if args.packages or args.budget_seconds:
+            raise ValueError('named tests and package mode cannot be combined')
+        required = []
+        for selection in args.test:
+            root, separator, test = selection.partition(':')
+            if not separator or not test:
+                raise ValueError('expected PACKAGE_ROOT:TEST')
+            required.append((import_path(module, root), test))
+        if len(set(required)) != len(required):
+            raise ValueError('duplicate named test requested')
+        named_tests(events, required)
+        print(f'All {len(required)} named tests passed with no failures or skips.')
+        return 0
+    if not args.packages:
+        raise ValueError('at least one package or named test is required')
     required = [import_path(module, root) for root in args.packages]
     if len(set(required)) != len(required):
         raise ValueError('duplicate package root requested')
-    packages, skipped, problems = report(read_events(args.evidence), required)
-
+    packages, skipped, problems = report(events, required)
     total = sum(summary['elapsed'] for summary in packages.values())
     for name in required:
         summary = packages[name]
@@ -132,4 +186,8 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, TypeError) as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)

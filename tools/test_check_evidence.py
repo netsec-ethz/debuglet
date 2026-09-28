@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-CHECK = Path(__file__).resolve().parents[1] / 'tools' / 'check-race-evidence.py'
+CHECK = Path(__file__).resolve().parents[1] / 'tools' / 'check-evidence.py'
 MODULE = 'github.com/netsec-ethz/debuglet'
 SCHEDULER = './internal/executor/scheduler/memory'
 SESSION = './internal/controlsession'
@@ -96,6 +96,36 @@ class RaceEvidenceTest(unittest.TestCase):
         result = self.check(events(SCHEDULER), roots=('./internal/...',))
         self.assertNotEqual(result.returncode, 0, result.stdout.decode())
         self.assertIn(b'explicit package root', result.stderr)
+
+
+class NamedEvidenceTest(unittest.TestCase):
+    def check(self, data):
+        with tempfile.NamedTemporaryFile('w', suffix='.json') as evidence:
+            evidence.write(data)
+            evidence.flush()
+            return subprocess.run([sys.executable, str(CHECK), '--evidence', evidence.name,
+                                   '--test', './internal/demo:TestInstalledDemoAcceptance'],
+                                  capture_output=True, timeout=10)
+
+    def test_exact_named_pass_is_required(self):
+        passed = json.dumps({'Action': 'pass', 'Test': 'TestInstalledDemoAcceptance',
+                             'Package': MODULE + '/internal/demo'})
+        self.assertEqual(self.check(passed).returncode, 0)
+        controls = ['', passed + '\n' + passed, passed.replace('Acceptance', 'Renamed'),
+                    passed.replace('/internal/demo', '/other'), '{',
+                    passed + '\n{', passed + '\nnull', passed + '\n{}',
+                    passed + '\n{"Action":"fail"}', passed + '\n{"Action":"skip"}',
+                    passed + '\n{"Action":"build-fail"}', passed + '\n{"Action":"unknown"}',
+                    passed.replace('"Action": "pass"', '"Action":"fail","Action":"pass"'),
+                    passed.replace('"Action": "pass"', '"Action":"fail","action":"pass"'),
+                    passed.replace('"Action"', '"action"'),
+                    passed.replace('"Action": "pass"', '"Action":null'),
+                    passed + '\n{"Action":"output","Output":"WARNING: DATA RACE"}',
+                    *[passed + '\n{"Action":"pass","Elapsed":' + value + '}'
+                      for value in ('NaN', 'Infinity', '-Infinity')]]
+        for data in controls:
+            with self.subTest(data=data):
+                self.assertNotEqual(self.check(data).returncode, 0)
 
 
 if __name__ == '__main__':

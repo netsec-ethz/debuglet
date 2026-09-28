@@ -43,13 +43,12 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected build, package, verify, check-demo-evidence or check-compatibility-evidence")
+		return errors.New("expected build, package or verify")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dist := fs.String("dist", ".cache/ci/dist", "compiled artifacts")
 	out := fs.String("out", ".cache/ci/packages", "candidate output")
 	installed := fs.String("installed-root", "", "installed version directory")
-	evidence := fs.String("evidence", "", "Go JSON evidence file")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -69,18 +68,8 @@ func run(args []string) error {
 		return packWithCopy(*dist, *out, sha, copyFile)
 	case "verify":
 		return verifyInstalled(ctx, *installed, sha)
-	case "check-demo-evidence":
-		return checkDemoEvidence(*evidence)
-	case "check-compatibility-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/internal/acceptance/canary", "TestCanaryLocal")
-	case "check-local-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/internal/acceptance/localdev", "TestLocalDevelopment")
-	case "check-role-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/internal/acceptance/roles", "TestInstalledRoles")
-	case "check-guest-abi-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/pkg/debuglet", "TestGuestABIInstalledGuests")
 	default:
-		return errors.New("expected build, package, verify, check-demo-evidence or check-compatibility-evidence")
+		return errors.New("expected build, package or verify")
 	}
 }
 func command(ctx context.Context, name string, args ...string) (string, error) {
@@ -548,93 +537,6 @@ func readBuildRecord(path string) ([]byte, error) {
 		return nil, errors.New("build record exceeds 64 KiB")
 	}
 	return data, nil
-}
-
-func checkDemoEvidence(path string) error {
-	return checkTestEvidence(path, "github.com/netsec-ethz/debuglet/internal/demo", "TestInstalledDemoAcceptance")
-}
-
-func checkTestEvidence(path, packageName, testName string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	d := json.NewDecoder(f)
-	passes := 0
-	for {
-		var e struct{ Action, Test, Package string }
-		token, err := d.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if token != json.Delim('{') {
-			return errors.New("test evidence event is not an object")
-		}
-		seen := make(map[string]bool)
-		for d.More() {
-			token, err := d.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := token.(string)
-			if !ok || seen[strings.ToLower(key)] {
-				return errors.New("test evidence contains duplicate event fields")
-			}
-			seen[strings.ToLower(key)] = true
-			var value json.RawMessage
-			if err := d.Decode(&value); err != nil {
-				return err
-			}
-			var field *string
-			switch strings.ToLower(key) {
-			case "action":
-				if key != "Action" {
-					return errors.New("test evidence contains an aliased Action field")
-				}
-				field = &e.Action
-			case "test":
-				if key != "Test" {
-					return errors.New("test evidence contains an aliased Test field")
-				}
-				field = &e.Test
-			case "package":
-				if key != "Package" {
-					return errors.New("test evidence contains an aliased Package field")
-				}
-				field = &e.Package
-			}
-			if field != nil {
-				if bytes.Equal(value, []byte("null")) {
-					return errors.New("test evidence contains a null control field")
-				}
-				if err := json.Unmarshal(value, field); err != nil {
-					return err
-				}
-			}
-		}
-		if token, err := d.Token(); err != nil || token != json.Delim('}') {
-			return errors.New("test evidence contains an incomplete event")
-		}
-		if e.Action == "fail" || e.Action == "skip" || e.Action == "build-fail" {
-			return errors.New("test evidence contains a failure or skip")
-		}
-		switch e.Action {
-		case "start", "run", "pause", "cont", "pass", "bench", "output", "build-output":
-		default:
-			return errors.New("test evidence contains an invalid event action")
-		}
-		if e.Action == "pass" && e.Test == testName && e.Package == packageName {
-			passes++
-		}
-	}
-	if passes != 1 {
-		return fmt.Errorf("expected exactly one %s pass event", testName)
-	}
-	return nil
 }
 
 func verifyCompiler(ctx context.Context, path string) error {
