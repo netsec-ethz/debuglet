@@ -6,6 +6,9 @@ Debuglet is an alpha intended for trusted environments. The operational security
 
 The latest release and the current validated `main` commit are supported. Security fixes are not backported. Record the package version and source revision when reporting an issue.
 
+See [Versions and compatibility](docs/versions.md) for the tested combinations
+and how protocol, API, guest ABI, and state versions differ.
+
 ## Report a vulnerability
 
 Do not disclose vulnerability details, credentials, private keys, or exploit material in a public issue or pull request.

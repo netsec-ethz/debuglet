@@ -8,6 +8,7 @@ This directory contains versioned documentation that describes the source tree a
 - [Go client library](client.md) — submit debuglets and read results from an application.
 - [Write a debuglet](debuglets.md) — execution model and Go authoring interface.
 - [HTTP API](api.md) — public contract, authentication, compatibility, and deprecation.
+- [Versions and compatibility](versions.md) — tested combinations, support policy, and breaking changes.
 
 ## Understand the system
 

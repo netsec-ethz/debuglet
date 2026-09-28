@@ -14,6 +14,21 @@ dbl demo
 
 The installer verifies the release files before writing them. It requires a POSIX shell, GNU tar, and coreutils. The demo needs no Go compiler, source checkout, service, account, wallet, or root access.
 
+## Supported platforms
+
+| Platform | `dbl` client | Dispatcher and executor | Bundled demo |
+| --- | --- | --- | --- |
+| Linux amd64 | Validated native package | Validated for trusted deployments | Validated locally |
+| macOS, Intel or Apple Silicon | No native package; Linux amd64 container workflow not yet validated end to end | Not supported natively | Not validated |
+| Windows or WSL | Not validated | Not validated | Not validated |
+| Linux arm64 or other architectures | No released package; not validated | Not validated | Not validated |
+
+On an unsupported host, use a Linux amd64 machine and run `dbl` there to
+connect to your dispatcher. Do not run the Linux installer directly on macOS
+or Windows. A source build alone does not establish platform support. See
+[Versions and compatibility](docs/versions.md) for the support policy
+and the limits of those checks.
+
 ## Next steps
 
 - Learn the commands in the [CLI reference](docs/cli.md).
