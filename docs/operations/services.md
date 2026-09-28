@@ -1,6 +1,6 @@
 # Managed services
 
-`dbl service` installs a dispatcher or executor as a system service. Use it only for a host-local, managed profile. Networked production deployments use the [Ansible deployment](../../deploy/ansible) and the [operator Wiki](https://github.com/netsec-ethz/debuglet/wiki).
+`dbl service` installs a dispatcher or executor as a system service. Use it only for a host-local, managed profile. Networked production deployments use the [Ansible deployment guide](../../deploy/README.md).
 
 ## Basic workflow
 
@@ -15,9 +15,37 @@ sudo dbl service status --role executor
 
 Use `dbl drain --role executor` before planned maintenance and `dbl drain --role executor --resume` when it is ready again. Service commands need administrator privileges.
 
-The service owns its role-specific SQLite state and retains it across restart. A database is not automatically migrated or safe to reuse across arbitrary package versions. Back up state and follow the [Deployment and Upgrades guide](https://github.com/netsec-ethz/debuglet/wiki/Deployment-and-Upgrades) before upgrading.
+The service owns its role-specific SQLite state and retains it across restart. A database is not automatically migrated or safe to reuse across arbitrary package versions. Back up state and follow the [database upgrade procedure](../../deploy/README.md#upgrading-a-database) before upgrading.
 
 Reference unit files live in [`deploy/systemd`](../../deploy/systemd).
+
+## Tested managed profile
+
+The installed TEST flow was exercised with this one Linux amd64 combination.
+It is an observed profile, not a minimum-kernel or general distribution-support claim.
+
+| Property | Tested value |
+| --- | --- |
+| Package | `v0.0.0-dev.902d027f1d61`, source `902d027f1d61f7c06f1b2a5a906de2caa8c529f4` |
+| Full archive SHA-256 | `ce16b2326e9f9d732e6328d1e58fec1b9b0f13eb6218f3a2a99dcd6e417f5b62` |
+| Container userland | Ubuntu 24.04.4 LTS, amd64 |
+| Host kernel | `7.0.0-30-generic` |
+| Service manager / cgroups | systemd 255 (`255.4-1ubuntu8.17`), cgroup v2 |
+| Debuglet services | `debuglet` UID/GID 997, zero effective capabilities, `NoNewPrivileges=1` |
+| Network / counter | Private loopback-only fixture; userspace fallback |
+
+Both roles reached readiness and a TEST measurement completed. Restarting the
+executor preserved its identity and left completed output readable. It drained
+and preserved state through executor-only uninstall/reinstall. `doctor` ran
+with the service's identity and sandbox: a read-only database caused both a permission failure and startup
+failure. With BTF hidden and no capabilities, `auto` reached readiness through
+the fallback counter while doctor left privileged enforcement unverified.
+
+Follow the [disposable systemd fixture procedure](../../deploy/systemd/README.md#repeat-the-installed-profile-check)
+to repeat these checks against an exact full package. Docker's systemd-hosting
+privileges are separate from the unprivileged Debuglet services. This does not
+verify a clean VM boot, reboot behavior, privileged eBPF enforcement, or another
+host platform.
 
 ## Remove a role or inactive package
 
@@ -37,14 +65,18 @@ Package removal is separate:
 ```sh
 sudo dbl service prune --prefix /usr/local --version v0.1.0 --dry-run
 sudo dbl service prune --prefix /usr/local --version v0.1.0
+# Select a component package instead of the default full bundle:
+sudo dbl service prune --prefix /usr/local --version v0.1.0 --component executor --dry-run
 ```
 
-Pruning supports full bundles in administrator-owned system prefixes only. It refuses unverified
-packages and versions referenced by the active CLI link, retained managed-role
-records or running executables. Default uninstall therefore also keeps the
-package available for recovery. Stop foreground roles and do not launch the
-version being pruned. User-owned prefixes and component-package layouts are unsupported; an unreadable process
-or concurrent installer prevents pruning.
+Pruning supports administrator-owned system prefixes. `--component` selects
+`full` (the default), `cli`, `dispatcher` or `executor`. Only that package's
+version directory is removed; other components, links and state remain.
+It refuses unverified or aliased packages and anything referenced by a command
+link, retained managed-role record or running executable. Default uninstall
+therefore also keeps the package available for recovery. Stop foreground roles
+and do not launch the version being pruned. User-owned prefixes remain
+unsupported; an unreadable process or concurrent installer prevents pruning.
 
 ## Foreground daemon logs
 

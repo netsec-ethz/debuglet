@@ -199,6 +199,23 @@ class BootstrapTest(unittest.TestCase):
         self.assertTrue(self.install_log.exists())
         self.assertFalse(self.prefix.exists())
 
+    def test_unsupported_platform_precedes_linux_dependencies_and_downloads(self):
+        platform_tools = self.root / 'platform-tools'
+        platform_tools.mkdir()
+        uname = platform_tools / 'uname'
+        for system, arch in (('Darwin', 'arm64'), ('Linux', 'aarch64')):
+            with self.subTest(system=system, arch=arch):
+                uname.write_text('#!/bin/sh\ncase "$1" in\n'
+                                 f'-s) printf "%s\\n" {system} ;;\n'
+                                 f'-m) printf "%s\\n" {arch} ;;\nesac\n')
+                uname.chmod(0o755)
+                result = self.run_bootstrap({'PATH': str(platform_tools)})
+                self.assert_not_installed(result)
+                self.assertIn('Linux amd64 machine', result.stderr)
+                self.assertIn('README-install.md#supported-platforms', result.stderr)
+                self.assertNotIn('required command is missing', result.stderr)
+                self.assertFalse(self.curl_log.exists())
+
 
 if __name__ == '__main__':
     unittest.main()
