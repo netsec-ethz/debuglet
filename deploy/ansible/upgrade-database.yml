@@ -1,20 +1,41 @@
 ---
 # Upgrade the dispatcher and executor databases in place with the packaged
 # migrations of the candidate release in deploy/dist. Run it before the full
-# deployment: it stops each service, backs up the database, installs the
-# verified candidate payload without restarting it, upgrades with that candidate,
-# then starts the service. The deployment playbooks never upgrade a database,
-# and nothing imports this playbook.
+# deployment. The deployment playbooks never upgrade a database, and nothing
+# imports this playbook.
 #
-# On each host it stops the service, copies the database and its -wal and -shm
-# companions into a new backup-TIMESTAMP directory next to it, installs the
-# candidate without restarting it, and runs the candidate daemon's
-# -upgrade-database mode as the service user through runuser, so the database
-# keeps its owner, and starts the service again. When the upgrade fails the
-# play stops there: the service stays stopped, the backup stays in place, and
-# the database is left at the last migration that completed.
-# Executors are upgraded one host at a time, and a failure on one of them
-# leaves the remaining executors untouched.
+# On each host, in this order, it:
+#   1. refuses to start when debuglet_manage_services is false and the operator
+#      has not confirmed with upgrade_confirm_stopped=true that the daemon is
+#      stopped;
+#   2. requires the database to exist;
+#   3. installs the verified candidate payload without restarting the service,
+#      so the candidate's own schema policy answers the next step;
+#   4. runs the candidate daemon's read-only -check-database mode as the
+#      service user. A database that is already current ends the play on that
+#      host here: the service keeps running and no backup is taken, so running
+#      the playbook a second time changes nothing;
+#   5. refuses an upgrade that drops the recorded runs and their logs unless
+#      upgrade_accept_data_loss=true, naming the data concerned;
+#   6. requires twice the size of the database and its -wal and -shm companions
+#      to be free on the database's filesystem (one copy for the backup, one for
+#      the migration's own journal);
+#   7. stops the service; 8. copies the database and its companions into a new
+#      backup-TIMESTAMP directory next to it; 9. runs the candidate daemon's
+#      -upgrade-database mode as the service user through runuser, so the
+#      database keeps its owner; 10. reports the result; 11. starts the service.
+# A refusal in steps 1 to 6 leaves the database and the service untouched.
+# When the upgrade fails the play stops there: the service stays stopped, the
+# backup stays in place, and the database is left at the last migration that
+# completed. Backups are never removed; deploy/README.md describes their
+# cleanup. Executors are upgraded one host at a time, and a failure on one of
+# them leaves the remaining executors untouched.
+#
+# Extra variables, both false unless given on the command line:
+#   upgrade_confirm_stopped=true   with debuglet_manage_services=false, the
+#                                  operator has stopped the daemon
+#   upgrade_accept_data_loss=true  apply a migration that drops the recorded
+#                                  runs and their logs
 #
 # Usage:
 #   cd deploy/ansible && ansible-playbook -i hosts.yml -e @vars/prod.yml upgrade-database.yml
@@ -33,6 +54,17 @@
     upgrade_database: "{{ state_dir }}/dispatcher/dispatcher.db"
     payload_restart_services: false
   tasks:
+    - name: Require a stopped dispatcher when services are not managed
+      ansible.builtin.assert:
+        that:
+          - debuglet_manage_services | bool or (upgrade_confirm_stopped | default(false) | bool)
+        fail_msg: >-
+          With debuglet_manage_services=false this playbook cannot stop the
+          dispatcher. Stop it yourself and run the playbook again with
+          -e upgrade_confirm_stopped=true. Nothing on this host was changed
+          and its database was not read.
+        quiet: true
+
     - name: Inspect the dispatcher database
       ansible.builtin.stat:
         path: "{{ upgrade_database }}"
@@ -47,48 +79,11 @@
           nothing to upgrade. The deployment playbooks create a new one.
         quiet: true
 
-    - name: Name the backup directory
-      ansible.builtin.set_fact:
-        upgrade_backup_dir: "{{ upgrade_database | dirname }}/backup-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
-
-    - name: Stop the dispatcher
-      ansible.builtin.systemd:
-        name: debuglet-dispatcher
-        state: stopped
-      when: debuglet_manage_services | bool
-
-    - name: Create the backup directory
-      ansible.builtin.file:
-        path: "{{ upgrade_backup_dir }}"
-        state: directory
-        owner: "{{ debuglet_user }}"
-        group: "{{ debuglet_group }}"
-        mode: "0700"
-
-    - name: Inspect the database companions
-      ansible.builtin.stat:
-        path: "{{ upgrade_database }}{{ item }}"
-      loop: ["", "-wal", "-shm"]
-      register: upgrade_database_files
-
-    - name: Back up the dispatcher database
-      ansible.builtin.copy:
-        src: "{{ item.stat.path }}"
-        dest: "{{ upgrade_backup_dir }}/{{ item.stat.path | basename }}"
-        remote_src: true
-        owner: "{{ debuglet_user }}"
-        group: "{{ debuglet_group }}"
-        mode: "0600"
-      loop: "{{ upgrade_database_files.results }}"
-      loop_control:
-        label: "{{ upgrade_database }}{{ item.item }}"
-      when: item.stat.exists
-
     - name: Install the candidate payload without restarting the dispatcher
       ansible.builtin.include_role:
         name: payload
 
-    - name: Upgrade the dispatcher database
+    - name: Check the dispatcher database with the candidate
       ansible.builtin.command:
         argv:
           - runuser
@@ -98,19 +93,114 @@
           - "{{ payload_prefix }}/bin/debuglet-dispatcher"
           - -config
           - "{{ config_dir }}/dispatcher/dispatcher.toml"
-          - -upgrade-database
-      register: upgrade_result
-      changed_when: true
+          - -check-database
+      register: upgrade_check
+      changed_when: false
+      failed_when: upgrade_check.rc not in [0, 3, 4]
 
-    - name: Report the dispatcher upgrade
+    - name: Report a current dispatcher database
       ansible.builtin.debug:
-        msg: "{{ upgrade_result.stdout }} (backup in {{ upgrade_backup_dir }})"
+        msg: "{{ upgrade_check.stdout }}; the service keeps running and no backup is taken"
+      when: upgrade_check.rc == 0
 
-    - name: Start the dispatcher
-      ansible.builtin.systemd:
-        name: debuglet-dispatcher
-        state: started
-      when: debuglet_manage_services | bool
+    - name: Upgrade an outdated dispatcher database
+      when: upgrade_check.rc != 0
+      block:
+        - name: Require confirmation to drop recorded runs
+          ansible.builtin.assert:
+            that:
+              - upgrade_check.rc != 4 or (upgrade_accept_data_loss | default(false) | bool)
+            fail_msg: >-
+              {{ upgrade_check.stderr }}. Keep a backup of the recorded runs
+              you need and run the playbook again with
+              -e upgrade_accept_data_loss=true to accept the loss. The database
+              and the service were not touched.
+            quiet: true
+
+        - name: Measure the dispatcher database and its companions
+          ansible.builtin.stat:
+            path: "{{ upgrade_database }}{{ item }}"
+          loop: ["", "-wal", "-shm"]
+          register: upgrade_space_files
+
+        - name: Read the free space next to the dispatcher database
+          ansible.builtin.command:
+            argv: [df, --output=avail, -B1, --, "{{ upgrade_database | dirname }}"]
+          register: upgrade_space_free
+          changed_when: false
+
+        - name: Require room for the backup and the migration
+          vars:
+            upgrade_space_total: "{{ upgrade_space_files.results | selectattr('stat.exists') | map(attribute='stat.size') | sum }}"
+            upgrade_space_avail: "{{ upgrade_space_free.stdout_lines[-1] | trim }}"
+          ansible.builtin.assert:
+            that:
+              - upgrade_space_avail | int >= 2 * (upgrade_space_total | int)
+            fail_msg: >-
+              {{ upgrade_database | dirname }} has {{ upgrade_space_avail }}
+              bytes free; the backup and the migration need twice the
+              {{ upgrade_space_total }} bytes of the database and its
+              companions. Free space and run the playbook again. The database
+              and the service were not touched.
+            quiet: true
+
+        - name: Name the backup directory
+          ansible.builtin.set_fact:
+            upgrade_backup_dir: "{{ upgrade_database | dirname }}/backup-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+
+        - name: Stop the dispatcher
+          ansible.builtin.systemd:
+            name: debuglet-dispatcher
+            state: stopped
+          when: debuglet_manage_services | bool
+
+        - name: Create the backup directory
+          ansible.builtin.file:
+            path: "{{ upgrade_backup_dir }}"
+            state: directory
+            owner: "{{ debuglet_user }}"
+            group: "{{ debuglet_group }}"
+            mode: "0700"
+
+        - name: Inspect the database companions
+          ansible.builtin.stat:
+            path: "{{ upgrade_database }}{{ item }}"
+          loop: ["", "-wal", "-shm"]
+          register: upgrade_database_files
+
+        - name: Back up the dispatcher database
+          ansible.builtin.copy:
+            src: "{{ item.stat.path }}"
+            dest: "{{ upgrade_backup_dir }}/{{ item.stat.path | basename }}"
+            remote_src: true
+            owner: "{{ debuglet_user }}"
+            group: "{{ debuglet_group }}"
+            mode: "0600"
+          loop: "{{ upgrade_database_files.results }}"
+          loop_control:
+            label: "{{ upgrade_database }}{{ item.item }}"
+          when: item.stat.exists
+
+        - name: Upgrade the dispatcher database
+          ansible.builtin.command:
+            argv: >-
+              {{ ['runuser', '-u', debuglet_user, '--',
+                  payload_prefix ~ '/bin/debuglet-dispatcher',
+                  '-config', config_dir ~ '/dispatcher/dispatcher.toml',
+                  '-upgrade-database']
+                 + (['-accept-data-loss'] if upgrade_accept_data_loss | default(false) | bool else []) }}
+          register: upgrade_result
+          changed_when: true
+
+        - name: Report the dispatcher upgrade
+          ansible.builtin.debug:
+            msg: "{{ upgrade_result.stdout }} (backup in {{ upgrade_backup_dir }})"
+
+        - name: Start the dispatcher
+          ansible.builtin.systemd:
+            name: debuglet-dispatcher
+            state: started
+          when: debuglet_manage_services | bool
 
 - name: Upgrade the executor databases
   hosts: executors
@@ -120,6 +210,17 @@
     upgrade_database: "{{ executor_state_dir }}/executor.db"
     payload_restart_services: false
   tasks:
+    - name: Require a stopped executor when services are not managed
+      ansible.builtin.assert:
+        that:
+          - debuglet_manage_services | bool or (upgrade_confirm_stopped | default(false) | bool)
+        fail_msg: >-
+          With debuglet_manage_services=false this playbook cannot stop the
+          executor. Stop it yourself and run the playbook again with
+          -e upgrade_confirm_stopped=true. Nothing on this host was changed
+          and its database was not read.
+        quiet: true
+
     - name: Inspect the executor database
       ansible.builtin.stat:
         path: "{{ upgrade_database }}"
@@ -134,48 +235,11 @@
           nothing to upgrade. The deployment playbooks create a new one.
         quiet: true
 
-    - name: Name the backup directory
-      ansible.builtin.set_fact:
-        upgrade_backup_dir: "{{ upgrade_database | dirname }}/backup-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
-
-    - name: Stop the executor
-      ansible.builtin.systemd:
-        name: "{{ executor_service }}"
-        state: stopped
-      when: debuglet_manage_services | bool
-
-    - name: Create the backup directory
-      ansible.builtin.file:
-        path: "{{ upgrade_backup_dir }}"
-        state: directory
-        owner: "{{ executor_user }}"
-        group: "{{ executor_group }}"
-        mode: "0700"
-
-    - name: Inspect the database companions
-      ansible.builtin.stat:
-        path: "{{ upgrade_database }}{{ item }}"
-      loop: ["", "-wal", "-shm"]
-      register: upgrade_database_files
-
-    - name: Back up the executor database
-      ansible.builtin.copy:
-        src: "{{ item.stat.path }}"
-        dest: "{{ upgrade_backup_dir }}/{{ item.stat.path | basename }}"
-        remote_src: true
-        owner: "{{ executor_user }}"
-        group: "{{ executor_group }}"
-        mode: "0600"
-      loop: "{{ upgrade_database_files.results }}"
-      loop_control:
-        label: "{{ upgrade_database }}{{ item.item }}"
-      when: item.stat.exists
-
     - name: Install the candidate payload without restarting the executor
       ansible.builtin.include_role:
         name: payload
 
-    - name: Upgrade the executor database
+    - name: Check the executor database with the candidate
       ansible.builtin.command:
         argv:
           - runuser
@@ -185,16 +249,110 @@
           - "{{ executor_binary }}"
           - -config
           - "{{ executor_config_dir }}/executor.toml"
-          - -upgrade-database
-      register: upgrade_result
-      changed_when: true
+          - -check-database
+      register: upgrade_check
+      changed_when: false
+      failed_when: upgrade_check.rc not in [0, 3, 4]
 
-    - name: Report the executor upgrade
+    - name: Report a current executor database
       ansible.builtin.debug:
-        msg: "{{ upgrade_result.stdout }} (backup in {{ upgrade_backup_dir }})"
+        msg: "{{ upgrade_check.stdout }}; the service keeps running and no backup is taken"
+      when: upgrade_check.rc == 0
 
-    - name: Start the executor
-      ansible.builtin.systemd:
-        name: "{{ executor_service }}"
-        state: started
-      when: debuglet_manage_services | bool
+    - name: Upgrade an outdated executor database
+      when: upgrade_check.rc != 0
+      block:
+        - name: Require confirmation to drop recorded runs
+          ansible.builtin.assert:
+            that:
+              - upgrade_check.rc != 4 or (upgrade_accept_data_loss | default(false) | bool)
+            fail_msg: >-
+              {{ upgrade_check.stderr }}. Keep a backup of the recorded runs
+              you need and run the playbook again with
+              -e upgrade_accept_data_loss=true to accept the loss. The database
+              and the service were not touched.
+            quiet: true
+
+        - name: Measure the executor database and its companions
+          ansible.builtin.stat:
+            path: "{{ upgrade_database }}{{ item }}"
+          loop: ["", "-wal", "-shm"]
+          register: upgrade_space_files
+
+        - name: Read the free space next to the executor database
+          ansible.builtin.command:
+            argv: [df, --output=avail, -B1, --, "{{ upgrade_database | dirname }}"]
+          register: upgrade_space_free
+          changed_when: false
+
+        - name: Require room for the backup and the migration
+          vars:
+            upgrade_space_total: "{{ upgrade_space_files.results | selectattr('stat.exists') | map(attribute='stat.size') | sum }}"
+            upgrade_space_avail: "{{ upgrade_space_free.stdout_lines[-1] | trim }}"
+          ansible.builtin.assert:
+            that:
+              - upgrade_space_avail | int >= 2 * (upgrade_space_total | int)
+            fail_msg: >-
+              {{ upgrade_database | dirname }} has {{ upgrade_space_avail }}
+              bytes free; the backup and the migration need twice the
+              {{ upgrade_space_total }} bytes of the database and its
+              companions. Free space and run the playbook again. The database
+              and the service were not touched.
+            quiet: true
+
+        - name: Name the backup directory
+          ansible.builtin.set_fact:
+            upgrade_backup_dir: "{{ upgrade_database | dirname }}/backup-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+
+        - name: Stop the executor
+          ansible.builtin.systemd:
+            name: "{{ executor_service }}"
+            state: stopped
+          when: debuglet_manage_services | bool
+
+        - name: Create the backup directory
+          ansible.builtin.file:
+            path: "{{ upgrade_backup_dir }}"
+            state: directory
+            owner: "{{ executor_user }}"
+            group: "{{ executor_group }}"
+            mode: "0700"
+
+        - name: Inspect the database companions
+          ansible.builtin.stat:
+            path: "{{ upgrade_database }}{{ item }}"
+          loop: ["", "-wal", "-shm"]
+          register: upgrade_database_files
+
+        - name: Back up the executor database
+          ansible.builtin.copy:
+            src: "{{ item.stat.path }}"
+            dest: "{{ upgrade_backup_dir }}/{{ item.stat.path | basename }}"
+            remote_src: true
+            owner: "{{ executor_user }}"
+            group: "{{ executor_group }}"
+            mode: "0600"
+          loop: "{{ upgrade_database_files.results }}"
+          loop_control:
+            label: "{{ upgrade_database }}{{ item.item }}"
+          when: item.stat.exists
+
+        - name: Upgrade the executor database
+          ansible.builtin.command:
+            argv: >-
+              {{ ['runuser', '-u', executor_user, '--', executor_binary,
+                  '-config', executor_config_dir ~ '/executor.toml',
+                  '-upgrade-database']
+                 + (['-accept-data-loss'] if upgrade_accept_data_loss | default(false) | bool else []) }}
+          register: upgrade_result
+          changed_when: true
+
+        - name: Report the executor upgrade
+          ansible.builtin.debug:
+            msg: "{{ upgrade_result.stdout }} (backup in {{ upgrade_backup_dir }})"
+
+        - name: Start the executor
+          ansible.builtin.systemd:
+            name: "{{ executor_service }}"
+            state: started
+          when: debuglet_manage_services | bool

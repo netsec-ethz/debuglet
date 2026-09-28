@@ -370,6 +370,9 @@ Executors on a shared host use separate `debuglet-prod`/`debuglet-dev` users,
 `debuglet-executor-<env>.service` units. Package staging and deployment records
 are also separate. Prod and dev dispatchers remain on separate hosts.
 
+A daemon never creates its database. When a host has none yet, the roles
+install the schema-only seed that `make deploy-seed-db` wrote, which is the
+step a daemon's absent-database refusal names.
 The roles never overwrite a nonempty database with a seed, and they never
 upgrade one. A zero-byte executor database can be replaced with the seed. If a
 previous installation has nonempty state and the selected environment has no
@@ -416,28 +419,74 @@ The Make target builds the candidate package first. `upgrade-database.yml`
 runs the same preflight as a deployment, then handles
 the dispatcher and then the executors, one executor at a time. On each host it:
 
-1. stops when the database (`state_dir/dispatcher/dispatcher.db` or
+1. stops, before reading the database, when `debuglet_manage_services` is
+   false and `upgrade_confirm_stopped` is not set: the playbook then cannot
+   stop the daemon itself;
+2. stops when the database (`state_dir/dispatcher/dispatcher.db` or
    `state_dir/executor-<env>/executor.db`) does not exist, as a deployment
    seeds a new one;
-2. stops the service;
-3. copies the database and, when present, its `-wal` and `-shm` files into a
+3. installs the verified candidate payload without restarting the service;
+4. runs the candidate daemon with `-check-database` as the service user
+   through `runuser`. This mode only reads the database, so the service keeps
+   serving it, and it answers with the candidate's own schema policy. A
+   database that is already current ends the play on that host: the service
+   is not restarted and no backup is taken;
+5. stops when the upgrade would drop the recorded runs and their logs
+   (dispatcher databases below schema version 3, executor databases below
+   version 2) and `upgrade_accept_data_loss` is not set; the message names
+   the database, its version and the tables concerned;
+6. stops unless the database's filesystem has at least twice the size of the
+   database and its `-wal` and `-shm` files free, one copy for the backup and
+   one for the migration's own journal; the message gives both numbers;
+7. stops the service;
+8. copies the database and, when present, its `-wal` and `-shm` files into a
    new `backup-<UTC timestamp>` directory next to it, owned by the service user
    with mode 0700 and the files 0600;
-4. installs the verified candidate payload without restarting the service;
-5. runs the candidate daemon with `-upgrade-database` as the service user
-   through `runuser`, so the database keeps its owner; the daemon applies the
-   release's migrations to the configured database and checks the result as a
-   start does;
-6. starts the service again. Run the normal deployment command afterward to
-   install the candidate configuration and verify the complete deployment.
+9. runs the candidate daemon with `-upgrade-database` (and
+   `-accept-data-loss` when `upgrade_accept_data_loss=true`) as the service
+   user through `runuser`, so the database keeps its owner; the daemon names
+   the database it upgrades, applies the release's migrations to it and checks
+   the result as a start does;
+10. starts the service again. Run the normal deployment command afterward to
+    install the candidate configuration and verify the complete deployment.
 
-When step 5 fails the play stops on that host: the service stays stopped, the
+Two extra variables change this, both `false` unless given with `-e`:
+
+| Variable | Meaning |
+|---|---|
+| `upgrade_confirm_stopped=true` | With `debuglet_manage_services=false`, the operator has stopped the daemon on every selected host. Without it such a run fails at step 1. |
+| `upgrade_accept_data_loss=true` | Apply an upgrade that drops the recorded runs and their logs. Without it such a run fails at step 5. |
+
+A run that stops at steps 1 to 6 leaves the database and the service as they
+were; the candidate payload may already be installed, but the running service
+keeps the release it started with. Restarting the service before the upgrade
+would make it refuse the outdated database. Running the playbook a second time
+after a successful upgrade reports each database as current and neither
+restarts a service nor takes another backup.
+
+When step 9 fails the play stops on that host: the service stays stopped, the
 backup stays in place, the remaining executors are left untouched, and the
 database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
 [Stored state](../docs/operations/configuration.md) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
 `upgrade-database.yml`, and `site.yml` never runs it.
+
+#### Backup retention
+
+The playbooks never remove a backup, so every upgrade that ran leaves one
+`backup-<UTC timestamp>` directory next to the database. Once the upgraded
+service has been verified, remove older backups with an explicit command run
+as root on the host, for example keeping the two most recent dispatcher
+backups:
+
+```bash
+find /var/lib/debuglet/dispatcher -maxdepth 1 -type d -name 'backup-*' | sort | head -n -2 | xargs -r rm -r
+```
+
+Use `/var/lib/debuglet/executor-<env>` for an executor. Keep every backup of a
+database that holds paid state until the operator reconciliation described
+above is complete.
 
 ### Transport security
 

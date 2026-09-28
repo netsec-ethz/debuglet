@@ -10,11 +10,28 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Added
+- `debuglet-dispatcher -check-database` and `debuglet-executor -check-database`
+  report read-only whether the configured database is current for the build
+  (exit 0), needs the upgrade (3) or needs an upgrade that drops the recorded
+  runs and their logs (4). `-upgrade-database` refuses such an upgrade unless
+  `-accept-data-loss` is given. Both modes name the absolute database path.
+
 ### Changed
 - `install.sh` prints the `export PATH=...` line to use when the installed
   `bin` directory is not on `PATH`.
 - Lead the README with a published installation and organize versioned
   references under `docs/`; keep user and operator procedures in the Wiki.
+- `deploy/ansible/upgrade-database.yml` checks each database with the candidate
+  before stopping its service and leaves a current host running without a
+  backup; with `debuglet_manage_services=false` it requires
+  `upgrade_confirm_stopped=true`, before a destructive upgrade
+  `upgrade_accept_data_loss=true`, and before stopping the service twice the
+  database's size free. `deploy/README.md` documents the order and the cleanup
+  of `backup-*` directories.
+- The refusal of an absent database names the deployment seeding step and the
+  local-service copy a hand-installed host uses, instead of `make upgrade`;
+  `docs/operations/configuration.md` describes creating and upgrading a database.
 - Reject `_` in DNS names in daemon configuration (`server.bind_host`,
   `dispatcher.addr`, `dispatcher.yamux_addr`, `tls.server_name`,
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
