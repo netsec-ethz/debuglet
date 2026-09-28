@@ -152,26 +152,33 @@ elif sys.argv[1] == 'run':
         args = next(call for call in self.arguments() if call[0] == 'run')
         self.assertIn('GITHUB_BASE_REF', args)
 
-    def test_scheduled_faults_run_in_a_bounded_network_namespace(self):
-        result = self.launch('faults', GITHUB_EVENT_NAME='schedule')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        runs = [call for call in self.arguments() if call[0] == 'run']
-        self.assertEqual(len(runs), 2)
-        self.assertEqual(runs[0][-3:], ['go', 'mod', 'download'])
-        args = runs[1]
-        for option, value in (('--network', 'none'), ('--cpus', '4'),
-                              ('--memory', '4g'), ('--pids-limit', '512')):
-            self.assertEqual(args[args.index(option) + 1], value)
-        self.assertNotIn('--cap-add', args)
-        cleanup = json.loads((self.root / '.cache/ci/faults/cleanup.json').read_text())
-        self.assertTrue(cleanup['removed'])
+    def test_scheduled_fixtures_run_in_a_bounded_network_namespace(self):
+        for lane in ('faults', 'soak'):
+            with self.subTest(lane=lane):
+                self.calls.unlink(missing_ok=True)
+                result = self.launch(lane, GITHUB_EVENT_NAME='schedule')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                runs = [call for call in self.arguments() if call[0] == 'run']
+                self.assertEqual(len(runs), 2)
+                self.assertEqual(runs[0][-3:], ['go', 'mod', 'download'])
+                args = runs[1]
+                for option, value in (('--network', 'none'), ('--cpus', '4'),
+                                      ('--memory', '4g'), ('--pids-limit', '512')):
+                    self.assertEqual(args[args.index(option) + 1], value)
+                self.assertNotIn('--cap-add', args)
+                marker = 'FAULT' if lane == 'faults' else 'SOAK'
+                self.assertIn(f'DEBUGLET_{marker}_ISOLATED=1', args)
+                cleanup = json.loads((self.root / f'.cache/ci/{lane}/cleanup.json').read_text())
+                self.assertTrue(cleanup['removed'])
 
-    def test_fault_failure_is_preserved_after_container_cleanup(self):
-        result = self.launch('faults', GITHUB_EVENT_NAME='schedule', DOCKER_RESULT='42')
-        self.assertEqual(result.returncode, 42, result.stderr)
-        cleanup = json.loads((self.root / '.cache/ci/faults/cleanup.json').read_text())
-        self.assertEqual(cleanup['test_status'], 42)
-        self.assertTrue(cleanup['removed'])
+    def test_fixture_failure_is_preserved_after_container_cleanup(self):
+        for lane in ('faults', 'soak'):
+            with self.subTest(lane=lane):
+                result = self.launch(lane, GITHUB_EVENT_NAME='schedule', DOCKER_RESULT='42')
+                self.assertEqual(result.returncode, 42, result.stderr)
+                cleanup = json.loads((self.root / f'.cache/ci/{lane}/cleanup.json').read_text())
+                self.assertEqual(cleanup['test_status'], 42)
+                self.assertTrue(cleanup['removed'])
 
     def test_image_preparation_failure_stops_before_container(self):
         for command in ('pull', 'build'):
