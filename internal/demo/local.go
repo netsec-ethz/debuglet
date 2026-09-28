@@ -30,6 +30,7 @@ type LocalOptions struct {
 	StateDir string
 	Port     int
 	Ready    func(LocalEnvironment) error
+	Logs     LogOptions
 }
 
 type localState struct {
@@ -60,6 +61,11 @@ func Up(ctx context.Context, assets Assets, options LocalOptions) error {
 }
 
 func up(ctx context.Context, assets Assets, options LocalOptions, deps dependencies, startupTimeout time.Duration) (err error) {
+	options.Logs, err = options.Logs.defaults()
+	if err != nil {
+		return err
+	}
+
 	if runtime.GOOS != "linux" {
 		return errors.New("local environment requires Linux")
 	}
@@ -99,7 +105,7 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 	defer cancelStartup()
 	var watchers sync.WaitGroup
 	var children []childProcess
-	var logs []*os.File
+	var logs []*rotatingLog
 	defer func() {
 		cancelWatches()
 		watchers.Wait()
@@ -144,7 +150,7 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 		if err := writeConfig(configPath, config); err != nil {
 			return nil, err
 		}
-		log, err := os.OpenFile(filepath.Join(dir, name+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		log, err := newRotatingLog(filepath.Join(dir, name+".log"), options.Logs, cancelWork)
 		if err != nil {
 			return nil, err
 		}

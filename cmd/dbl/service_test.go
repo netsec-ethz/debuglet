@@ -413,3 +413,27 @@ func slicesContainsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestPruneReportNamesPackageWithoutDaemonReadiness(t *testing.T) {
+	var out bytes.Buffer
+	err := writeServiceReport(&out, service.Report{Operation: "prune", Version: "v0.1.0", State: "pruned", PackagePath: "/opt/debuglet/lib/debuglet/v0.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "prune v0.1.0: pruned") || !strings.Contains(out.String(), "package: /opt/debuglet/lib/debuglet/v0.1.0") || strings.Contains(out.String(), "ready") {
+		t.Fatalf("misleading package report: %s", out.String())
+	}
+}
+
+func TestPruneDoesNotResolveServiceManager(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	deps := serviceDependencies{manager: func(string) (service.Manager, error) {
+		t.Fatal("prune tried to resolve the service manager")
+		return nil, errors.New("unexpected manager lookup")
+	}}
+	code := serviceCommandWith(t.Context(), []string{"prune", "--prefix", t.TempDir(), "--version", "v0.1.0"},
+		globalOptions{Output: outputHuman}, &stdout, &stderr, deps)
+	if code != exitFailure || (!strings.Contains(stderr.String(), "no such file") && !strings.Contains(stderr.String(), "administrator access")) {
+		t.Fatalf("expected filesystem or permission refusal, got %d: %s", code, stderr.String())
+	}
+}

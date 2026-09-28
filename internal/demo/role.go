@@ -36,6 +36,7 @@ type RoleOptions struct {
 	Port, GRPCPort int
 	Dispatcher     connections.Profile
 	Ready          func(RoleEnvironment) error
+	Logs           LogOptions
 }
 
 // RoleState is the persistent identity of one managed role directory. It
@@ -63,6 +64,11 @@ func ExecutorUp(ctx context.Context, assets Assets, options RoleOptions) error {
 // Each role owns only its own process, state lock and readiness file. Joining
 // an executor never starts or stops the dispatcher it connects to.
 func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOptions, deps dependencies, startupTimeout time.Duration) (err error) {
+	options.Logs, err = options.Logs.defaults()
+	if err != nil {
+		return err
+	}
+
 	if runtime.GOOS != "linux" {
 		return errors.New("local services require Linux")
 	}
@@ -136,7 +142,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 	watchCtx, cancelWatch := context.WithCancel(workCtx)
 	var watcher sync.WaitGroup
 	var child childProcess
-	var log *os.File
+	var log *rotatingLog
 	defer func() {
 		cancelWatch()
 		watcher.Wait()
@@ -186,7 +192,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		return err
 	}
 	logPath := filepath.Join(dir, string(role)+".log")
-	log, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	log, err = newRotatingLog(logPath, options.Logs, cancelWork)
 	if err != nil {
 		return err
 	}
