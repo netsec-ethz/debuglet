@@ -2120,7 +2120,7 @@ components:
         price_per_bw:
           type: integer
           format: int64
-          description: "Price per bit per second and second of run time, in the executor's currency. An order costs price_per_bw × floor_bw × timeout_ms / 1000, rounded up to the next whole unit."
+          description: "Price per bit per second and second of run time, in the executor's currency. An order costs price_per_bw × floor_bw × timeout_ms / 1000, computed exactly and rounded up to the next whole unit. A batch costs the sum of its orders. An order or a batch whose price exceeds 9223372036854775807 is refused with invalid_policy, and nothing is written."
         currency:
           type: string
     ExecutorList:
