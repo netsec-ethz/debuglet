@@ -182,9 +182,26 @@ func TestInstalledScheduleSoak(t *testing.T) {
 			Database: executorconfig.DatabaseConfig{Path: filepath.Join(work, name, "state.sqlite")},
 			Logging:  executorconfig.LoggingConfig{LogLevel: "info", JSONLogs: true}, Pricing: executorconfig.PricingConfig{Currency: "TEST", PricePerBwS: 1}})
 	}
-	nodes, err := c.Nodes(ctx)
-	if err != nil || len(nodes) != 2 {
-		t.Fatalf("two ready executors: %v %v", nodes, err)
+	// Resources acknowledgement precedes the first heartbeat that makes a
+	// registered node ready for admission. Observe that public condition.
+	phase, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	readyTick := time.NewTicker(50 * time.Millisecond)
+	defer readyTick.Stop()
+	var nodes []client.Node
+	for {
+		nodes, err = c.Nodes(phase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(nodes) == 2 && nodes[0].Ready && nodes[1].Ready {
+			break
+		}
+		select {
+		case <-phase.Done():
+			t.Fatal("two nodes did not become ready", nodes, phase.Err())
+		case <-readyTick.C:
+		}
 	}
 	var firstExpiry, lastExpiry time.Time
 	for _, node := range nodes {
