@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.4"
+  version: "1.5"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -893,6 +893,93 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: "The state could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /debuglet/{id}/recovery:
+    get:
+      operationId: "getDebugletRecovery"
+      summary: "Inspect a known run without replaying or changing it."
+      description: "Separates stored outcome, original control availability and at most one validated, dated executor observation. A replaced observer remains historical. Missing or failed observations have null provenance; absent or filtered replies do not authorize replay. The lookup is bounded to five seconds and never retargets a replacement. See docs/operations/recovery-inspection.md."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          description: "Canonical 36-character debuglet UUID, in lowercase as submission returns it."
+          schema:
+            type: string
+            format: uuid
+            pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The inspection document, including unknown or failed executor observations."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recovery"
+        "400":
+          description: "The path segment is not a canonical UUID."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The known dispatcher run could not be read."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -2072,6 +2159,127 @@ components:
           description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Empty when the run has not failed."
         executor_id:
           type: string
+    Recovery:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - executor_id
+        - state
+        - error
+        - checked_at
+        - original_binding
+        - control_status
+        - observation
+      properties:
+        id:
+          type: string
+          format: uuid
+        executor_id:
+          type: string
+        state:
+          type: string
+          description: "Last stored run state, independent of control availability."
+        error:
+          type: string
+          description: "Last stored workload error, unchanged by inspection."
+        checked_at:
+          type: string
+          format: date-time
+          description: "Dispatcher UTC time of the final availability check."
+        original_binding:
+          $ref: "#/components/schemas/RecoveryOriginalBinding"
+        control_status:
+          type: string
+          description: "current: original session available at check; unavailable: original session unavailable; legacy: no complete original binding. Unknown future strings do not authorize replay."
+        observation:
+          $ref: "#/components/schemas/RecoveryObservation"
+    RecoveryOriginalBinding:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - dispatcher_incarnation
+        - session_id
+      properties:
+        dispatcher_incarnation:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+    RecoveryObservation:
+      type: object
+      additionalProperties: false
+      required:
+        - classification
+        - observer
+        - received_at
+        - current_at_check
+        - retained
+      properties:
+        classification:
+          type: string
+          description: "not_attempted, unavailable, unsupported, failed and invalid carry null provenance. retained_unstarted, started_unknown and legacy carry validated retained metadata. absent and filtered carry valid reply provenance but no retained metadata; neither proves work never executed. Future classifications must be preserved and never treated as permission to replay."
+        observer:
+          $ref: "#/components/schemas/RecoveryObserver"
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Dispatcher UTC receive time of the validated reply; null without one."
+        current_at_check:
+          type: boolean
+          nullable: true
+          description: "Whether the captured observer remained current at checked_at. False preserves a historical reply; null without a validated reply."
+        retained:
+          $ref: "#/components/schemas/RetainedRun"
+    RecoveryObserver:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - executor_id
+        - binding
+      properties:
+        executor_id:
+          type: string
+        binding:
+          type: object
+          additionalProperties: false
+          required:
+            - dispatcher_incarnation
+            - session_id
+          properties:
+            dispatcher_incarnation:
+              type: string
+              format: uuid
+            session_id:
+              type: string
+              format: uuid
+    RetainedRun:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - original_binding
+        - started
+        - started_at
+        - start_time
+      properties:
+        original_binding:
+          $ref: "#/components/schemas/RecoveryOriginalBinding"
+        started:
+          type: boolean
+          description: "Durable start marker, not proof that the guest ran."
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
     DebugletLogsResponse:
       type: object
       additionalProperties: false

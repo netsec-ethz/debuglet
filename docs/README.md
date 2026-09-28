@@ -22,6 +22,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Run Debuglet across hosts](operations/remote-deployment.md)
 - [Managed services](operations/services.md)
 - [Executor recovery](operations/executor-recovery.md)
+- [Inspect an interrupted run](operations/recovery-inspection.md)
 - [Local validation checks](operations/local-checks.md)
 
 Use the [deployment guide](../deploy/README.md) for the maintained Ansible procedures and upgrade inputs.

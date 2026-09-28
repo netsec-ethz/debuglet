@@ -150,10 +150,12 @@ successful verification.
 | Manage connections | `connect`, `dispatcher list`, `dispatcher use`, `dispatcher remove` |
 | Manage credentials | `login`, `logout`, `whoami` |
 | Submit work | `validate`, `run`, `cancel` |
-| Read results | `nodes`, `status`, `logs` |
+| Read results | `nodes`, `status`, `logs`, `recovery` |
 | Manage system services | `service`, `drain` |
 | Inspect versions | `version` |
 | Inspect local setup | `config`, `doctor` |
+
+`dbl recovery ID` separates the last stored outcome from control availability and a dated executor observation. See [recovery inspection](operations/recovery-inspection.md); no result authorizes replay.
 
 ## Common options
 

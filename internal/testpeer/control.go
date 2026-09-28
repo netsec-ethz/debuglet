@@ -31,6 +31,10 @@ func (s ExecutorState) OnBandwidth(ctx context.Context, _ controlsession.Binding
 	return s.Service.Bandwidth(ctx, r)
 }
 
+func (s ExecutorState) OnInspectRetainedRun(ctx context.Context, _ controlsession.Binding, r *pb.InspectRetainedRunRequest) (*pb.InspectRetainedRunResponse, error) {
+	return s.Service.InspectRetainedRun(ctx, r)
+}
+
 // Control owns separate loopback direct and reverse listeners and one actual
 // executor client. Startup readiness is deliberately observed by the caller
 // with its separate registration deadline.
