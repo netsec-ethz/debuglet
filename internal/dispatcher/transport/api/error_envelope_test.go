@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -246,18 +248,23 @@ func TestLookupFailuresKeepTheirDiagnosticsPrivate(t *testing.T) {
 // TestCancellationRefusalKeepsTransportDetailPrivate covers the path that
 // passed an error value to Echo and leaked the gRPC status text.
 func TestCancellationRefusalKeepsTransportDetailPrivate(t *testing.T) {
-	f := modeNewFixture(t)
-	f.mock.ExpectQuery("GetDebugletIdentityByUUID").
-		WithArgs(uuid.MustParse(logsPaginationID)).
-		WillReturnRows(sqlmock.NewRows([]string{"executor_id", "dispatcher_incarnation", "session_id"}).AddRow(modeExecutorID, "", ""))
-	rec := f.do(http.MethodDelete, "/debuglet", DebugletDeleteRequest{
-		DebugletID: uuid.MustParse(logsPaginationID), ExecutorID: modeExecutorID,
+	f := ccNewFixture(t)
+	sub := f.submit(f.client(f.root.URL, false), nil)
+	f.peer.setAbortHook(func(context.Context, *pb.AbortRequest) error {
+		return errString("rpc error: FailedPrecondition: private transport diagnostic")
 	})
-	assertEnvelope(t, "refused cancellation", rec, http.StatusBadRequest, CodeCancelRefused, "cancellation refused")
-	if strings.Contains(rec.Body.String(), "rpc error") || strings.Contains(rec.Body.String(), "FailedPrecondition") {
-		t.Fatalf("the transport diagnostic reached the client: %s", rec.Body.String())
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	status, body := raw.do(http.MethodDelete, "/debuglet", DebugletDeleteRequest{
+		DebugletID: uuid.MustParse(sub.IDs[0]), ExecutorID: ccExecutorID,
+	})
+	wfExpect(t, "refused cancellation", status, http.StatusBadRequest, body)
+	envelope := envelopeOf(t, "refused cancellation", body)
+	if envelope.Code != CodeCancelRefused || envelope.Message != "cancellation refused" {
+		t.Fatalf("refused cancellation: %+v", envelope)
 	}
-	f.expectationsMet("refused cancellation")
+	if strings.Contains(string(body), "rpc error") || strings.Contains(string(body), "FailedPrecondition") {
+		t.Fatalf("the transport diagnostic reached the client: %s", body)
+	}
 }
 
 // TestUnroutedRequestsAnswerWithATypedEnvelope covers the failures Echo raises

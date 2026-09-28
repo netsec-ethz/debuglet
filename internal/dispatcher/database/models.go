@@ -28,6 +28,16 @@ type Debuglet struct {
 	SessionID             string
 }
 
+type DebugletCancellation struct {
+	DebugletID     int64
+	RequestID      string
+	Reason         string
+	RequestedAt    int64
+	AttemptedAt    sql.NullInt64
+	AcknowledgedAt sql.NullInt64
+	Failure        string
+}
+
 type DebugletLog struct {
 	ID             int64
 	DebugletID     int64

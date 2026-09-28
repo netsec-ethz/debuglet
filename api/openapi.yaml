@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.8"
+  version: "1.9"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -840,7 +840,7 @@ paths:
             type: string
       responses:
         "204":
-          description: "Cancellation acknowledged and its result recorded, or the debuglet was already terminal and keeps its recorded result."
+          description: "A terminal result is recorded, or the run was already terminal and keeps its result. This does not alone confirm remote acknowledgement; inspect GET /debuglet/{id}/cancellation."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -891,7 +891,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: "The dispatcher could not complete or confirm the cancellation because of an internal failure (internal_error). The executor may already have acknowledged cancellation, the dispatcher may have failed to record a cancellation after the control session ended, or the executor could not be reached to confirm it. A 500 does not confirm either remote termination or a stored result; read the run's state before deciding whether to repeat the request."
+          description: "The dispatcher could not complete or confirm the cancellation because of an internal failure (internal_error). The executor may already have acknowledged cancellation, the dispatcher may have failed to record a cancellation after the control session ended, or the executor could not be reached to confirm it. A 500 does not confirm either remote termination or a stored result; inspect GET /debuglet/{id}/cancellation before deciding whether to repeat the request."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -978,6 +978,93 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: "The state could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /debuglet/{id}/cancellation:
+    get:
+      operationId: "getDebugletCancellation"
+      summary: "Inspect a durable cancellation request without retrying it."
+      description: "Added in API 1.9. Read-only: does not send Abort, select a terminal result or settle payment. Delivery attempts do not confirm receipt. Only a persisted successful Abort reply establishes acknowledgement; a local terminal result can coexist with an unknown remote outcome. Original binding never follows a replacement. No background cancellation replay occurs."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          description: "Canonical 36-character debuglet UUID, in lowercase as submission returns it."
+          schema:
+            type: string
+            format: uuid
+            pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The recorded request, acknowledgement and current stored run result."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cancellation"
+        "400":
+          description: "The path segment is not a canonical UUID."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No cancellation request is recorded for that run, the run is missing, or it belongs to another account. The two are deliberately indistinguishable."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The known dispatcher run could not be read."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -2245,6 +2332,62 @@ components:
           description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Empty when the run has not failed."
         executor_id:
           type: string
+    Cancellation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - request_id
+        - executor_id
+        - original_binding
+        - requested_at
+        - attempted_at
+        - acknowledged_at
+        - checked_at
+        - disposition
+        - reason
+        - state
+        - error
+      properties:
+        id:
+          type: string
+          format: uuid
+        request_id:
+          type: string
+          format: uuid
+          description: "Stable identity of the first cancellation request for this run."
+        executor_id:
+          type: string
+        original_binding:
+          $ref: "#/components/schemas/RecoveryOriginalBinding"
+        requested_at:
+          type: string
+          format: date-time
+        attempted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "First recorded delivery attempt; does not establish executor receipt."
+        acknowledged_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Persisted successful executor Abort reply. Null means acknowledgement is unknown."
+        checked_at:
+          type: string
+          format: date-time
+        disposition:
+          type: string
+          description: "requested, delivery_attempted, acknowledged or unresolved. Unknown future values remain observations, never replay advice."
+        reason:
+          type: string
+          description: "Empty or a bounded code: already_terminal (no delivery needed), original_binding_unavailable, transport_outcome_unknown or executor_refused."
+        state:
+          type: string
+          description: "Stored run state, independently of the cancellation acknowledgement."
+        error:
+          type: string
+          description: "Stored run result, never replaced by inspection."
     Recovery:
       type: object
       additionalProperties: false

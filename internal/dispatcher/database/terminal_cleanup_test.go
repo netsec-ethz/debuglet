@@ -26,7 +26,7 @@ func TestTerminalCleanupMigrationPreservesExistingResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 12 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 13 {
 		t.Fatalf("migration=%d, %v", version, err)
 	}
 	got, err := q.GetDebugletByUUID(ctx, run.Uuid)

@@ -45,3 +45,5 @@ merely because output is pending, unknown, or truncated.
 | Go application that calls a dispatcher | `pkg/client` |
 | WebAssembly measurement written in Go | [`pkg/debuglet`](debuglets.md) |
 | Another language | [HTTP API](api.md) |
+
+`Client.Cancellation(ctx, id)` inspects a durable cancellation request on API 1.9 or newer. It does not retry delivery. `AcknowledgedAt == nil` means the executor acknowledgement is unknown, including when the run has a local terminal result. Older dispatchers can return 404 for this optional route; `Client.Cancel` retains its existing signature and compatibility.

@@ -32,12 +32,15 @@ Reports the debuglet's state. The command completes (exit 0) whenever the
 dispatcher answered, including for a debuglet that failed.
 `
 	cancelUsage = `Usage:
-  dbl cancel ID
+  dbl cancel [--status] ID
+
+--status inspects the durable request without sending another cancellation (API
+1.9 or newer). Older dispatchers support cancel without this optional flag.
 
 Looks up the debuglet's executor, then asks the dispatcher to abort it. A
 success is an acknowledgement only, not proof that execution stopped. A
 server or transport failure leaves the cancellation unconfirmed; check
-dbl status ID.
+dbl cancel --status ID (or dbl status ID on older dispatchers).
 `
 	versionUsage = `Usage:
   dbl version [--server]
@@ -144,6 +147,7 @@ type cancelAcknowledgement struct {
 
 func cancelCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	fs := newCommandFlagSet("cancel")
+	inspect := fs.Bool("status", false, "inspect the recorded cancellation without retrying")
 	if code, ok := parseCommandFlags(fs, args, cancelUsage, stdout, stderr); !ok {
 		return code
 	}
@@ -155,11 +159,22 @@ func cancelCommand(ctx context.Context, args []string, options globalOptions, st
 	if !ok {
 		return code
 	}
+	if *inspect {
+		doc, err := c.Cancellation(ctx, id)
+		if err != nil {
+			return reportFailure(ctx, "dbl cancel: inspection", stderr, err)
+		}
+		return emit("dbl cancel", options.Output, stdout, stderr, doc, func(w io.Writer) error {
+			_, err := fmt.Fprintf(w, "request_id: %s\ndisposition: %s\nreason: %s\nstate: %s\n", doc.RequestID, doc.Disposition, doc.Reason, doc.State)
+			return err
+		})
+	}
 	st, err := c.Status(ctx, id)
 	if err != nil {
 		return reportFailure(ctx, "dbl cancel: status lookup", stderr, err)
 	}
 	if err := c.Cancel(ctx, id, st.ExecutorID); err != nil {
+		fmt.Fprintf(stderr, "Inspect the recorded request with dbl cancel --status %s (API 1.9 or newer).\n", id)
 		return reportFailure(ctx, cancelFailureName(err), stderr, err)
 	}
 	return emit("dbl cancel", options.Output, stdout, stderr, cancelAcknowledgement{ID: id, Acknowledged: true},

@@ -18,3 +18,5 @@ Use the same reviewed package version for the CLI, dispatcher, and executors in 
 Document an API deprecation in OpenAPI and the API guide while the old field or route still works. Remove it only in a later API major, with replacement and migration instructions in the release notes. Record CLI, protocol, ABI, and state changes in the [changelog](../CHANGELOG.md).
 
 A package version does not imply compatibility across every interface or platform. The project is a trusted-environment alpha; a passing CI run does not establish remote-deployment or untrusted-workload support.
+
+API 1.9 adds optional durable cancellation inspection. Dispatcher schema 13 stores one cancellation request per run; upgrade explicitly before starting this build. The executor schema and Abort wire protocol are unchanged. Cancellation is never automatically replayed after restart, and requests never acquire a replacement session's authority.
