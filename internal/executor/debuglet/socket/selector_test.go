@@ -16,7 +16,7 @@ func makeTestPath(fingerprint pan.PathFingerprint) *pan.Path {
 }
 
 // TestPathSelectorInitialize verifies that Initialize stores the paths and
-// resets current to zero.
+// selects the first path.
 func TestPathSelectorInitialize(t *testing.T) {
 	sel := NewPathSelector()
 
@@ -86,7 +86,7 @@ func TestPathSelectorForcePathOutOfRange(t *testing.T) {
 }
 
 // TestPathSelectorRefreshPreservesCurrent verifies that Refresh retains the
-// current index when the same fingerprint is present in the new list.
+// current fingerprint when the new list has a different order.
 func TestPathSelectorRefreshPreservesCurrent(t *testing.T) {
 	sel := NewPathSelector()
 	old := []*pan.Path{
@@ -95,18 +95,12 @@ func TestPathSelectorRefreshPreservesCurrent(t *testing.T) {
 	}
 	sel.Initialize(pan.UDPAddr{}, pan.UDPAddr{}, old)
 
-	// Manually bump current to "fp-b" by forcing it.
-	sel.ForcePath(1)
-	// Clear the force so Refresh logic is exercised.
-	sel.mu.Lock()
-	sel.current = 1
-	sel.forcedPath = -1
-	sel.mu.Unlock()
+	sel.PathDown("fp-a", pan.PathInterface{})
 
 	refreshed := []*pan.Path{
 		makeTestPath("fp-x"),
-		makeTestPath("fp-b"), // same fingerprint, different position 1
 		makeTestPath("fp-y"),
+		makeTestPath("fp-b"),
 	}
 	sel.Refresh(refreshed)
 
@@ -138,5 +132,101 @@ func TestPathSelectorClose(t *testing.T) {
 	sel := NewPathSelector()
 	if err := sel.Close(); err != nil {
 		t.Errorf("Close() returned unexpected error: %v", err)
+	}
+}
+
+func TestPathSelectorPathDown(t *testing.T) {
+	failedInterface := pan.PathInterface{IA: 1, IfID: 2}
+	shared := &pan.Path{Fingerprint: "shared", Metadata: &pan.PathMetadata{
+		Interfaces: []pan.PathInterface{failedInterface},
+	}}
+	alsoShared := &pan.Path{Fingerprint: "also-shared", Metadata: &pan.PathMetadata{
+		Interfaces: []pan.PathInterface{failedInterface},
+	}}
+	safe := makeTestPath("safe")
+	tests := []struct {
+		name      string
+		paths     []*pan.Path
+		failed    pan.PathFingerprint
+		iface     pan.PathInterface
+		want      *pan.Path
+		remaining int
+	}{
+		{name: "empty", failed: "missing"},
+		{name: "current", paths: []*pan.Path{makeTestPath("failed"), shared}, failed: "failed", want: shared, remaining: 1},
+		{name: "unrelated", paths: []*pan.Path{shared}, failed: "unrelated", want: shared, remaining: 1},
+		{name: "last", paths: []*pan.Path{makeTestPath("failed")}, failed: "failed"},
+		{name: "shared interface", paths: []*pan.Path{shared, alsoShared, safe}, failed: "unrelated", iface: failedInterface, want: safe, remaining: 1},
+		{name: "other path", paths: []*pan.Path{safe, shared}, failed: "shared", want: safe, remaining: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sel := NewPathSelector()
+			sel.Initialize(pan.UDPAddr{}, pan.UDPAddr{}, tt.paths)
+			sel.PathDown(tt.failed, tt.iface)
+			if got := sel.Path(); got != tt.want {
+				t.Fatalf("Path() = %v, want %v", got, tt.want)
+			}
+			if got := len(sel.Paths()); got != tt.remaining {
+				t.Fatalf("Paths() length = %d, want %d", got, tt.remaining)
+			}
+			// A repeated notification must also be safe after the last path is lost.
+			sel.PathDown(tt.failed, tt.iface)
+			if got := sel.Path(); got != tt.want {
+				t.Fatalf("repeated PathDown changed selection: got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPathSelectorPinSurvivesRefreshAndLoss(t *testing.T) {
+	sel := NewPathSelector()
+	a, b := makeTestPath("a"), makeTestPath("b")
+	sel.Initialize(pan.UDPAddr{}, pan.UDPAddr{}, []*pan.Path{a, b})
+	sel.ForcePath(1)
+
+	refreshed := makeTestPath("b")
+	sel.Refresh([]*pan.Path{refreshed, a})
+	if got := sel.Path(); got != refreshed {
+		t.Fatalf("reordered pin = %v, want refreshed path %v", got, refreshed)
+	}
+
+	sel.PathDown("a", pan.PathInterface{})
+	if got := sel.Path(); got != refreshed {
+		t.Fatalf("unrelated loss changed pin: %v", got)
+	}
+	sel.Refresh([]*pan.Path{refreshed, a})
+	sel.PathDown("b", pan.PathInterface{})
+	if got := sel.Path(); got != nil {
+		t.Fatalf("lost pin = %v, want nil", got)
+	}
+	sel.Refresh([]*pan.Path{a})
+	if got := sel.Path(); got != nil {
+		t.Fatalf("absent pin selected another path: %v", got)
+	}
+	sel.Refresh([]*pan.Path{a, b})
+	if got := sel.Path(); got != b {
+		t.Fatalf("restored pin = %v, want %v", got, b)
+	}
+
+	sel.Refresh(nil)
+	if got := sel.Path(); got != nil {
+		t.Fatalf("empty refresh = %v, want nil", got)
+	}
+	sel.Refresh([]*pan.Path{a})
+	sel.ForcePath(-1)
+	if got := sel.Path(); got != a {
+		t.Fatalf("cleared pin = %v, want %v", got, a)
+	}
+}
+
+func TestPathSelectorInvalidPinDoesNotSelectFutureIndex(t *testing.T) {
+	sel := NewPathSelector()
+	a, b := makeTestPath("a"), makeTestPath("b")
+	sel.Initialize(pan.UDPAddr{}, pan.UDPAddr{}, []*pan.Path{a})
+	sel.ForcePath(1)
+	sel.Refresh([]*pan.Path{a, b})
+	if got := sel.Path(); got != a {
+		t.Fatalf("invalid pin selected a later index: got %v, want %v", got, a)
 	}
 }
