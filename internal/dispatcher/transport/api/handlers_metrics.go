@@ -40,6 +40,7 @@ func (h *Handler) GetMetrics(c echo.Context) error {
 		return apiError(http.StatusServiceUnavailable, CodeUnavailable, "metrics collection is already in progress")
 	}
 	if time.Since(h.metrics.at) >= time.Second {
+		health := h.observeHealth(c.Request().Context())
 		control := dispatcher.ControlMetrics{ObservedAt: time.Now().UTC(), RegistryUnavailable: "unavailable"}
 		control.Runs.Unavailable = "unavailable"
 		if h.dispatcher != nil {
@@ -47,6 +48,11 @@ func (h *Handler) GetMetrics(c echo.Context) error {
 		}
 		host := observability.CollectHost(h.metrics.stateDirectory)
 		h.metrics.body = formatMetrics(control, host)
+		ready := 0
+		if health.Ready {
+			ready = 1
+		}
+		h.metrics.body += fmt.Sprintf("# HELP debuglet_api_ready Whether the dispatcher passes its authoritative API admission readiness checks.\n# TYPE debuglet_api_ready gauge\ndebuglet_api_ready %d\n", ready)
 		h.metrics.at = time.Now()
 	}
 	body := h.metrics.body
