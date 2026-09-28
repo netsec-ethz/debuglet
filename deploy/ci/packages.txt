@@ -11,11 +11,11 @@
 clang 1:14.0-55.7~deb12u1
 llvm 1:14.0-55.7~deb12u1
 libbpf-dev 1:1.1.2-0+deb12u1
-linux-libc-dev 6.1.174-1
+linux-libc-dev 6.1.187-1
 
 # Kernel-runner isolation evidence (deploy/ci/kernel-isolation.py).
-bpftool 7.1.0+6.1.174-1
+bpftool 7.1.0+6.1.187-1
 
 # Installed-package checks (scripts/ci-local.sh, tools/test_bootstrap.py).
-unzip 6.0-28
+unzip 6.0-28+deb12u1
 python3 3.11.2-1+b1

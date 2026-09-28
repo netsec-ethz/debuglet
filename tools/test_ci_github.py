@@ -107,7 +107,7 @@ elif sys.argv[1] == 'run':
         for secret in ('GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'DEPLOY_PASSWORD'):
             self.assertNotIn(secret, forwarded)
         self.assertIn('GITHUB_SHA', forwarded)
-        self.assertEqual(self.arguments()[0], ['pull', 'golang:1.25.11-bookworm@sha256:b96f24a8d7d010ea0acb9c3ba99064740f02b6b984612b28bd3c9c5ab9453e38'])
+        self.assertEqual(self.arguments()[0], ['pull', 'golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d'])
         self.assertFalse(any(call[0] == 'build' for call in self.arguments()))
         self.assertIn('--pull=never', args)
         self.assertNotIn('--cap-add', args)
@@ -128,8 +128,8 @@ elif sys.argv[1] == 'run':
         self.assertNotIn('--privileged', args)
         build = next(call for call in self.arguments() if call[0] == 'build')
         self.assertIn('deploy/ci/Dockerfile', build)
-        self.assertIn('BASE_DIGEST=sha256:b96f24a8d7d010ea0acb9c3ba99064740f02b6b984612b28bd3c9c5ab9453e38', build)
-        self.assertIn('DEBIAN_SNAPSHOT=20260623T000000Z', build)
+        self.assertIn('BASE_DIGEST=sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d', build)
+        self.assertIn('DEBIAN_SNAPSHOT=20260918T000000Z', build)
 
     def test_rejects_untrusted_metadata_before_launch(self):
         for changes in ({'GITHUB_SHA': SHA}, {'GITHUB_EVENT_NAME': 'pull_request'},

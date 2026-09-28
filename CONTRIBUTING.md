@@ -4,7 +4,7 @@ Start with an issue for a bug or proposal, then open a focused pull request. Des
 
 ## Development
 
-Debuglet development and release checks run on Linux amd64 with Go 1.25.11. The usual checks are:
+Debuglet development and release checks run on Linux amd64 with Go 1.26.8. The usual checks are:
 
 ```sh
 make ci-fmt

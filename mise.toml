@@ -1,5 +1,5 @@
 [tools]
-go = "1.25.11"
+go = "1.26.8"
 # protoc is the protocol compiler version the generated sources record.
 # scripts/ci-generate.sh reproduces that output through the Go toolchain and
 # never needs the binary itself.

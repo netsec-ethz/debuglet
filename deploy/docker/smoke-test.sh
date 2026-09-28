@@ -115,8 +115,8 @@ check_identity() {
 		"$image" "/opt/debuglet/lib/debuglet$component_path/$version/share/debuglet/manifest.json")
 	local toolchain
 	toolchain=$(printf '%s' "$manifest" | json_string go_version)
-	if [ "$toolchain" != "go1.25.11" ]; then
-		printf 'smoke: %s was built with %s, expected go1.25.11\n' "$image" "$toolchain" >&2
+	if [ "$toolchain" != "go1.26.8" ]; then
+		printf 'smoke: %s was built with %s, expected go1.26.8\n' "$image" "$toolchain" >&2
 		return 1
 	fi
 	note "$image is $version from $revision, built with $toolchain"

@@ -123,6 +123,20 @@ func TestVerifyInstallation(t *testing.T) {
 	}
 }
 
+func TestVerifyPriorToolchainInstallation(t *testing.T) {
+	root, manifest := installedFixture(t)
+	manifest.GoVersion = "go1.25.11"
+	writeManifest(t, root, manifest)
+	if _, err := Verify(root); err != nil {
+		t.Fatalf("verify prior installation: %v", err)
+	}
+	manifest.GoVersion = "go1.24.0"
+	writeManifest(t, root, manifest)
+	if _, err := Verify(root); err == nil {
+		t.Fatal("unsupported compiler accepted")
+	}
+}
+
 func TestManifestDecoding(t *testing.T) {
 	_, m := installedFixture(t)
 	data, err := json.Marshal(m)

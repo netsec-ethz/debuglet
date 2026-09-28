@@ -7,7 +7,7 @@
 # resolves the same bytes. The builder digest is the same one the pipeline
 # images use; move deploy/ci/images.env and this line together. The only
 # unpinned input below is the ca-certificates package apt installs.
-ARG GO_IMAGE=golang:1.25.11-bookworm@sha256:b96f24a8d7d010ea0acb9c3ba99064740f02b6b984612b28bd3c9c5ab9453e38
+ARG GO_IMAGE=golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d
 ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 FROM ${GO_IMAGE} AS payload

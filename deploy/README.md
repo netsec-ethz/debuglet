@@ -60,7 +60,7 @@ together.
 The build context is the repository root and must be a clean committed
 checkout including `.git`. The payload stage runs the same two steps as the
 build and package jobs — `internal/packaging build` with the pinned Go
-1.25.11 toolchain, then `scripts/ci-package.sh` — and installs the resulting
+1.26.8 toolchain, then `scripts/ci-package.sh` — and installs the resulting
 candidate with the package's own installer. Both steps refuse a modified or
 unidentified checkout, so there is no separate image build, no separate
 version stamping, and nothing to keep in step with the package contract by

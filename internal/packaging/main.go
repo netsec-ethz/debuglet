@@ -139,7 +139,7 @@ func realDirectory(path string) error {
 }
 func build(ctx context.Context, dist, sha string) error {
 	if runtime.Version() != artifact.Toolchain || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return errors.New("build requires pinned Go 1.25.11 on Linux amd64")
+		return fmt.Errorf("build requires pinned %s on Linux amd64", artifact.Toolchain)
 	}
 	version, err := candidateVersion(ctx, sha)
 	if err != nil {
@@ -471,7 +471,7 @@ func verifyInstalled(parent context.Context, root, sha string) error {
 	if err != nil {
 		return err
 	}
-	if m.SourceSHA != sha {
+	if m.SourceSHA != sha || m.GoVersion != artifact.Toolchain {
 		return errors.New("installed candidate does not match this checkout")
 	}
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
@@ -563,7 +563,7 @@ func verifyCompiler(ctx context.Context, path string) error {
 		return err
 	}
 	if version != "go version "+artifact.Toolchain+" linux/amd64" {
-		return errors.New("selected compiler is not pinned Go 1.25.11 for Linux amd64")
+		return fmt.Errorf("selected compiler is not pinned %s for Linux amd64", artifact.Toolchain)
 	}
 	return nil
 }

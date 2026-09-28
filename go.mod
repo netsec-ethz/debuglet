@@ -1,6 +1,6 @@
 module github.com/netsec-ethz/debuglet
 
-go 1.25.7
+go 1.26.8
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -17,12 +17,12 @@ require (
 	github.com/soheilhy/cmux v0.1.5
 	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	golang.org/x/time v0.11.0
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.54.0
 )
@@ -89,8 +89,8 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20260718201538-764159d718ef // indirect
 	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
 	modernc.org/libc v1.74.3 // indirect
