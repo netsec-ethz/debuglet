@@ -48,6 +48,10 @@ Commands:
   login [--account-key-file FILE] [--register NAME]
                                         obtain and store a session credential
   logout                                revoke and forget the stored credential
+  whoami                                show the selected session's account
+  config --role ROLE --file FILE        inspect redacted daemon configuration
+  doctor [--role ROLE --file FILE] [--connection]
+                                        diagnose local setup or a saved connection
   nodes                                 list registered executors
   validate (--wasm FILE | --sample hello) [--executor ID|auto] [--allow ADDRESS ...]
       [--duration 10s] [--floor-bps 1048576] [--ceil-bps 1048576]

@@ -127,10 +127,17 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
+	cfg, _, err := DecodeConfig(data)
+	return cfg, err
+}
+
+// DecodeConfig applies the startup defaults and validation without reading
+// files or discovering host resources. The document identifies supplied keys.
+func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) {
 	var cfg DispatcherConfig
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
-		return nil, err
+		return nil, document, err
 	}
 	if !document.Set("scheduler", "executor_timeout") {
 		cfg.Scheduler.ExecutorTimeout = DefaultExecutorTimeout
@@ -142,9 +149,9 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 		cfg.Server.Version = DefaultVersion
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, document, err
 	}
-	return &cfg, nil
+	return &cfg, document, nil
 }
 
 // Validate reports the first unusable configuration field. Defaults for omitted
