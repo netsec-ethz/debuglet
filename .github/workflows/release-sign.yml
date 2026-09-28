@@ -64,12 +64,16 @@ jobs:
         id: prepare
         env:
           CI_RUN_ID: ${{ inputs.ci_run_id }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           builder="https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID"
           python3 tools/release.py stage --packages .release-input/packages --directory .release --version "$GITHUB_REF_NAME"
           cp .release-input/gates.json .release/gates.json
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts?per_page=100" \
+            --jq '[.[] | .artifacts[]]' > .release-input/artifacts.json
+          python3 tools/release.py evidence --directory .release --artifacts .release-input/artifacts.json
           python3 tools/release_inventory.py generate --directory .release --version "$GITHUB_REF_NAME" \
             --source "$GITHUB_SHA" --builder "$builder" --inputs .release-input/build/build-inputs.json
           python3 tools/release.py prepare --directory .release --version "$GITHUB_REF_NAME" --source "$GITHUB_SHA" --builder "$builder"

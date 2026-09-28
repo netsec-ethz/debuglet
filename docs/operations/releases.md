@@ -99,10 +99,11 @@ packages; it neither rebuilds nor executes their payloads.
 
 After environment approval, a separate signing job receives only the prepared
 files. It checks out no source and signs `release.json` with the OpenSSH
-`debuglet-release` namespace. Download the resulting signed artifact before its
-90-day Actions retention expires. There is no automated release publication or
-pruning in this workflow; archive the complete bundle through your approved
-release-storage procedure and retain an approved rollback version.
+`debuglet-release` namespace. The signed bundle includes the original acceptance-evidence ZIPs and their
+exact-run/attempt index. Missing or expired required evidence prevents preparation;
+job links alone are insufficient. Download the resulting signed artifact before
+its 90-day Actions retention expires, then use the explicit retention procedure
+below. The signing workflow never publishes or prunes releases.
 
 To independently audit a complete downloaded bundle using a trusted checkout:
 
@@ -123,3 +124,69 @@ use the audit for the complete bundle. The SBOM records native Go module build
 information and same-source offline WASI dependency graphs. Runtime base-image
 pins are not a complete operating-system package inventory, and recorded BPF
 regeneration tools do not prove how inherited BPF objects were originally built.
+
+
+## Retain a complete release
+
+Designate a private GitHub repository for complete bundles. The public product
+repository is not a private archive. An administrator must enable immutable
+Releases, create the intended version tag in the archive, and grant the publisher
+Contents write and Administration read access (the latter checks immutability).
+The archive's tag identifies its catalog commit; the signed manifest identifies
+the separate product source commit. Provision signing trust independently as
+above. Authenticate `gh` for github.com without putting credentials in URLs.
+
+From a trusted checkout, explicitly promote a downloaded signed bundle:
+
+```sh
+umask 077
+python3 tools/release.py promote --repository "$DEBUGLET_RELEASE_ARCHIVE" \
+  --directory /path/to/release --version "$DEBUGLET_VERSION" \
+  --trust "$DEBUGLET_RELEASE_TRUST" --signer "$DEBUGLET_RELEASE_SIGNER"
+```
+
+Promotion verifies every signed subject before creating a draft, uploads without
+replacing assets, downloads and verifies the complete draft, then publishes it
+and confirms its immutable asset identities. Existing exact immutable bundles
+are verified without writes. An existing draft, mutable release or conflicting
+bundle refuses; inspect an interrupted draft manually. A failure after publishing
+can leave a retained release requiring inspection, but never changes which
+versions are designated supported. No package is rebuilt or executed.
+
+Retain promoted releases indefinitely. There is no release-deletion or pruning
+command; failed/unpromoted CI evidence continues to expire after fourteen days.
+Repository administrators can still delete entire releases or the archive, so
+restrict that authority. Immutability does not replace administrative retention
+policy or an independent backup.
+
+After both versions are archived and verified, review a `retention.json` change
+on the archive's protected default branch. The policy has `schema_version: 1`
+and distinct `current` and `rollback` objects, each containing `version`,
+`source_sha` and `manifest_sha256` from the verified promotion result. Promotion
+never edits these pointers or GitHub's latest-release designation. A rollback
+package still requires a compatible state backup and the documented restore
+procedure; retaining bytes does not establish schema downgrade compatibility.
+
+Audit the exact reviewed policy commit using a read-authorized identity:
+
+```sh
+umask 077
+python3 tools/release.py retention-audit --repository "$DEBUGLET_RELEASE_ARCHIVE" \
+  --policy-revision "$DEBUGLET_RETENTION_POLICY_REVISION" \
+  --trust "$DEBUGLET_RELEASE_TRUST" --signer "$DEBUGLET_RELEASE_SIGNER" \
+  > retention-audit.json
+```
+
+The policy revision must be the current protected default-branch commit. The
+private JSON report lists each pinned source, release ID, verified file digests
+and missing or invalid items; any gap exits nonzero. The tool checks that the
+policy did not change during the audit. Release credentials and raw GitHub error
+responses are not included. For installation from this private archive, use
+`gh release download` with explicit repository and version, then pass the
+verified download directory through `DEBUGLET_RELEASE_DIR`.
+
+Local tests of this procedure do not prove that a real archive is provisioned.
+Before relying on it, publish an authorized complete bundle, confirm authenticated
+download and independent verification, and verify unauthenticated access is
+refused. Repeat the download after the source Actions artifacts expire. Keep
+this actual-channel evidence separately from local fixture results.
