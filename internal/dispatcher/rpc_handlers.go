@@ -674,7 +674,13 @@ func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet,
 		d.destinations.Remove(deb.Uuid, dest)
 	}
 
-	d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
+	// Restore skipped old windows ending at or before restoredAt. Removing
+	// one would subtract another run's floor in shared rounded buckets. Runs
+	// admitted in this incarnation keep their own reservation even if the
+	// wall clock later moves behind the restore time.
+	if deb.DispatcherIncarnation == d.incarnation || deb.EndTime.Time.After(d.restoredAt) {
+		d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
+	}
 
 	d.mu.Unlock()
 }

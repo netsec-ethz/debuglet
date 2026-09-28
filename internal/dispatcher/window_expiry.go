@@ -9,10 +9,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"go.uber.org/zap"
 )
 
@@ -52,7 +50,7 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 		return last
 	}
 	d.mu.RLock()
-	closed, restoredAt := d.closed, d.restoredAt
+	closed := d.closed
 	d.mu.RUnlock()
 	if closed {
 		return last
@@ -90,14 +88,6 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 			continue
 		}
 		d.logger.Info("Classified debuglet with outcome unknown at the end of its window", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))
-		// The release below undoes a reservation. A window that had ended when
-		// this dispatcher restored its schedule was never reserved in this
-		// lifetime, so it is reserved here first and the release nets to zero.
-		if !deb.EndTime.Time.After(restoredAt) {
-			d.mu.Lock()
-			d.scheduler.Submit(schedule.Request{Executor: deb.ExecutorID, Destination: deb.Addresses, From: deb.StartTime.Time, To: deb.EndTime.Time, Use: bitrate.Bitrate(deb.Usage)})
-			d.mu.Unlock()
-		}
 		d.settleTerminal(ctx, &deb, -1)
 	}
 	return now

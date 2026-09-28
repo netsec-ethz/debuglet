@@ -127,8 +127,9 @@ func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming
 // the previous dispatcher did. A run whose stored state is exited released its
 // floor when it finished and reserves nothing; every other run, pending or of
 // uncertain outcome, keeps its reservation until its window ends. A run whose
-// window ended less than expiredWindowGrace ago is logged and not reserved,
-// since admission never overlaps a past window.
+// window ended less than expiredWindowGrace ago is logged and not reserved.
+// Terminal settlement must also skip its scheduler release: rounded buckets
+// can overlap a newly admitted window even when the actual windows do not.
 //
 // A restored run bound to a previous dispatcher lifetime is logged as a
 // warning with its ID: its control session ended with that lifetime, so it
