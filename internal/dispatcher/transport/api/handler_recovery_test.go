@@ -36,7 +36,6 @@ func TestRecoveryOnlyInspectsTheCallersKnownRun(t *testing.T) {
 	h := NewHandler(f.d, f.db, zap.NewNop())
 	e := echo.New()
 	h.RegisterRoutes(e)
-	e.GET("/debuglet/:id/recovery", h.GetDebugletRecovery)
 	for _, tc := range []struct {
 		name, id, token string
 		status          int
@@ -71,5 +70,23 @@ func TestRecoveryOnlyInspectsTheCallersKnownRun(t *testing.T) {
 	after, err := own.Status(f.ctx, id)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("inspection changed status: before=%+v after=%+v error=%v", before, after, err)
+	}
+}
+
+func TestRecoveryDatesMatchTheDocumentedFormat(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{"2026-09-28T12:00:00Z", true},
+		{"2026-09-28T12:00:00.123456789Z", true},
+		{"2026-09-28", false},
+		{"2026-13-28T12:00:00Z", false},
+		{"not a date", false},
+	} {
+		problems := validateString(map[string]any{"format": "date-time"}, tc.value, "checked_at")
+		if (len(problems) == 0) != tc.valid {
+			t.Errorf("%q: %v", tc.value, problems)
+		}
 	}
 }

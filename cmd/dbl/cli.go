@@ -65,6 +65,7 @@ Commands:
       [--wait] [--allow-remote-test] [-- guest arguments ...]
                                         submit one TEST-funded debuglet
   status ID                             report a debuglet's state
+  recovery ID                           inspect control and retained metadata
   logs [--after N] [--limit N] [--follow] ID
                                         read stored guest output
   cancel ID                             ask the dispatcher to abort a debuglet

@@ -16,6 +16,8 @@ if err != nil { /* handle error */ }
 
 The library follows the HTTP API contract, including authentication, request validation, submission, state, logs, and cancellation. Pin the module version you test and treat the [OpenAPI document](../api/openapi.yaml) as the wire-level reference.
 
+`Client.Recovery(ctx, id)` makes one bounded request for [recovery inspection](operations/recovery-inspection.md). Unknown classifications and failed workloads are successful inspections; transport and HTTP errors retain their normal types. Older dispatchers without this endpoint return an HTTP 404. The SDK continues to request its 1.3 minimum for existing operations.
+
 ## Choose an integration surface
 
 | Need | Use |

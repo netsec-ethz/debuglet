@@ -21,7 +21,7 @@ func TestRecoveryCommandIsOneSuccessfulQuotedInspection(t *testing.T) {
 	for _, output := range []string{outputHuman, outputJSON} {
 		var out, errOut bytes.Buffer
 		before := f.total()
-		code := recoveryCommand(t.Context(), []string{fixJobID}, globalOptions{Endpoint: f.endpoint(), EndpointSet: true, Output: output}, &out, &errOut)
+		code := run(t.Context(), []string{"--endpoint", f.endpoint(), "--output", output, "recovery", fixJobID}, &out, &errOut)
 		if code != exitOK || errOut.Len() != 0 || f.total() != before+1 {
 			t.Fatalf("code=%d stdout=%s stderr=%s requests=%d", code, out.String(), errOut.String(), f.total()-before)
 		}

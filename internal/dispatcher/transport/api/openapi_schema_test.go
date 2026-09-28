@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // This file holds the reader and validator used to check real handler
@@ -579,6 +580,10 @@ func validateString(schema map[string]any, value any, where string) []string {
 		if _, err := base64.StdEncoding.DecodeString(text); err != nil {
 			return []string{fmt.Sprintf("%s: is not base64 as documented", where)}
 		}
+	case "date-time":
+		if _, err := time.Parse(time.RFC3339Nano, text); err != nil {
+			return []string{fmt.Sprintf("%s: is not an RFC3339 timestamp as documented", where)}
+		}
 	case "uuid":
 		if !looksLikeUUID(text) {
 			return []string{fmt.Sprintf("%s: %q is not a canonical UUID as documented", where, text)}
@@ -713,7 +718,7 @@ var schemaTypeAssertions = map[string][]string{
 // as an int64, which is what format int64 documents. Every other format, and
 // any format on a type whose check does not read one, would be decoration.
 var schemaFormats = map[string][]string{
-	"string":  {"byte", "uuid"},
+	"string":  {"byte", "uuid", "date-time"},
 	"integer": {"int64"},
 }
 
