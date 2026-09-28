@@ -48,6 +48,9 @@ Use a private network namespace with `--network none` and no published ports.
 The fixture administrator needs `CAP_NET_ADMIN` for a loopback control-port drop;
 the Debuglet services retain their empty capability sets. Running systemd as PID 1
 also requires the [service profile's](services.md) container hosting setup.
+The script explicitly enables `network.policy.local_targets` in this disposable
+executor's configuration while stopped, then restarts it. Managed installations
+deny loopback targets by default; this controlled local target requires the opt-in.
 
 Pass the host's network namespace identity (`readlink /proc/self/ns/net`, taken
 outside the container) as `DEBUGLET_HOST_NETNS`, the installed manifest's exact
@@ -63,3 +66,19 @@ remain quarantined after its scheduled start. Recovery is observed before drain,
 doctor, resume and joined service removal; forced cleanup cannot supply a missing
 success observation. These measurements describe this local fixture, not an
 operational SLA or proof that earlier remote effects did not occur.
+
+One Ubuntu 24.04/systemd 255 run of installed candidate
+`v0.0.0-dev.f1cca5c40b7b` observed connected cancellation socket closure in
+0.079 seconds and its stored terminal result in 0.080 seconds. Silent control
+loss withdrew readiness and closed the guest socket in 58.908 seconds with the
+60-second lease; the executor process stayed running. Dispatcher restart restored
+eligible readiness in 0.287 seconds and fresh successful output in 0.752 seconds.
+The current lease was already partly elapsed when the packet drop began.
+These monotonic timings exclude the later queued-start observation and cleanup.
+
+In this drill the expired active guest closes locally and retains an
+unacknowledged terminal record, while its execution row is removed. Recovery
+inspection consequently reports `absent` for that execution row; the dispatcher's
+outcome remains unknown. Read-only checks after joined drains verify the retained
+terminal stays unchanged across executor restart. The queued execution row remains
+`retained_unstarted`. Neither observation authorizes replay.

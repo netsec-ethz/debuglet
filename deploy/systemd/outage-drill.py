@@ -8,11 +8,14 @@ namespace and DEBUGLET_SERVICE_FIXTURE=1. The caller owns container teardown.
 Never use host networking. Services retain their normal empty capability set.
 """
 import base64
+from contextlib import closing
 import json
 import os
 from pathlib import Path
+import re
 import select
 import socket
+import sqlite3
 import subprocess
 import time
 import tomllib
@@ -143,6 +146,14 @@ def main():
             process = dict(line.split(":", 1) for line in Path(f'/proc/{report["main_pid"]}/status').read_text().splitlines() if ":" in line)
             assert int(process["CapEff"], 16) == 0 and process["NoNewPrivs"].strip() == "1"
         identity = status("executor", "worker")["executor_id"]
+        assert cli("service", "stop", "--role", "executor", "--name", "worker")["joined"]
+        executor_config = STATE / "service.toml"
+        configured, count = re.subn(r"(?m)^(\s*local_targets\s*=\s*)false$", r"\g<1>true", executor_config.read_text())
+        assert count == 1
+        executor_config.write_text(configured)
+        assert cli("service", "start", "--role", "executor", "--name", "worker")["ready"]
+        assert status("executor", "worker")["executor_id"] == identity
+        event("fixture_policy", local_targets=True, scope="owned container loopback only")
         config = Path("/var/lib/debuglet/dispatchers/local/service.toml")
         lease = tomllib.loads(config.read_text())["scheduler"]["executor_timeout"]
         account = request("/user", data={"name": "outage-drill"}, method="PUT")
@@ -235,11 +246,13 @@ def main():
         fresh()  # Serving checkpoint after the old queued start became due.
         assert not select.select([queued_target], [], [], 0)[0]
         retained = []
-        for run_id, classification in ((active, "started_unknown"), (queued, "retained_unstarted")):
+        # Local cleanup retains an unacknowledged exit and removes the active
+        # execution row. Inspection covers execution rows, not terminal rows.
+        for run_id, classification in ((active, "absent"), (queued, "retained_unstarted")):
             observation = request("/debuglet/" + run_id + "/recovery", token)
             assert observation["state"] != "RunStateExited" and observation["original_binding"] == original
             assert observation["control_status"] == "unavailable"
-            assert observation["observation"]["classification"] == classification
+            assert observation["observation"]["classification"] == classification, observation
             assert observation["observation"]["current_at_check"] is True
             retained.append(observation)
         assert metrics(token)["debuglet_retained_runs_unknown"] >= 2
@@ -249,6 +262,13 @@ def main():
         drained = cli("drain", "--role", "executor", "--name", "worker", "--wait", "30s")
         assert drained["joined"] and drained["active"] == "inactive"
         assert not status("executor", "worker").get("ready")
+        def retained_exit():
+            with closing(sqlite3.connect((STATE / "executor.sqlite").as_uri() + "?mode=ro", uri=True)) as database:
+                row = database.execute("SELECT dispatcher_incarnation, session_id, exit_code, error_message, recorded_at, attempts, last_attempt_at, last_error, rejected FROM debuglet_exits WHERE debuglet_id = ?", (active,)).fetchone()
+            assert row and row[:2] == (original["dispatcher_incarnation"], original["session_id"])
+            assert row[2] == -1 and row[5] == 0 and row[7] and row[8] == 0
+            return row
+        terminal = retained_exit()
         doctor = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--unit", "debuglet-outage-doctor"]
         for setting in ("User=debuglet", "Group=debuglet", "NoNewPrivileges=yes", "CapabilityBoundingSet=", "AmbientCapabilities=", "PrivateTmp=yes", "ProtectSystem=strict", "ProtectHome=yes", "ProtectControlGroups=yes", "ProtectKernelModules=yes", "ReadWritePaths=" + str(STATE)):
             doctor += ["--property", setting]
@@ -258,7 +278,10 @@ def main():
         assert cli("drain", "--role", "executor", "--name", "worker", "--resume")["ready"]
         wait_for(lambda: metrics(token)["debuglet_executors_ready"] == 1, "resumed capacity")
         fresh()
-        event("drain_resume", joined=True, doctor=checks, fresh_measurement=True)
+        assert request("/debuglet/" + active + "/state", token)["state"] != "RunStateExited"
+        assert cli("drain", "--role", "executor", "--name", "worker", "--wait", "30s")["joined"]
+        assert retained_exit() == terminal
+        event("drain_resume", joined=True, doctor=checks, fresh_measurement=True, retained_terminal_unchanged=True)
     finally:
         cleanup_errors = []
         if dropped:
