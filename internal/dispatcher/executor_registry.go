@@ -111,6 +111,16 @@ func (e *RegisteredExecutor) AppendDebugletID(id uuid.UUID) {
 type executorEntry struct {
 	*RegisteredExecutor
 	owner *rpc.SessionOwner
+	// bandwidthTail is the done channel of the last bandwidth delivery
+	// captured for this executor, nil before the first. Each capture, under
+	// d.mu and in the order of the destination changes, waits for the
+	// previous tail and becomes the new one, so deliveries reach the executor
+	// in capture order and the newest share is applied last. A delivery always
+	// closes its channel when it ends, however it ends; one cut off at its
+	// bound while the executor still processes it closes the channel before
+	// its share is applied, so that share may land after its successor's and
+	// stay until the next update on the destination or the session end.
+	bandwidthTail chan struct{}
 }
 
 type registrationOperation struct{ cancel context.CancelFunc }

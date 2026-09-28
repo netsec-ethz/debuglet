@@ -47,6 +47,13 @@ changes; the linked API and deployment documentation contains operational detail
   releasing its reservation once. A cancellation the dispatcher could not
   deliver marks the run `RunStateUnreconciled`, and restart no longer reserves
   capacity for runs whose window already ended. `docs/api.md` describes states.
+- Deliver destination-limit updates to each executor in the order the
+  dispatcher decided them, so an older update can no longer overtake a newer
+  one; name the executor in the log and in the `PATCH /destination` answer
+  when an update is not delivered.
+- Refuse a destination limit below the floors reserved for admitted runs
+  whose window lies ahead, not only below the floors of active allocations
+  (`PATCH /destination` answers 409 `capacity_exhausted`).
 
 ## [0.2.0] - 2026-09-27
 

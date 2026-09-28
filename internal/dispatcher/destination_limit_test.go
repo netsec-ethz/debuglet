@@ -3,12 +3,15 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -118,6 +121,181 @@ func TestDestinationLimitReportsUndeliveredShares(t *testing.T) {
 	if got := dlCap(d, unreachable); got != 40 {
 		t.Fatalf("recorded limit %s after an undeliverable share, want 40", got)
 	}
+}
+
+// dlArrived lists the limits the executor received for destination, in the
+// order they arrived.
+func dlArrived(requests []*pb.BandwidthRequest, destination string) []bitrate.Bitrate {
+	var arrived []bitrate.Bitrate
+	for _, req := range requests {
+		for _, limit := range req.GetLimits() {
+			if limit.GetAddress() == destination {
+				arrived = append(arrived, bitrate.Bitrate(limit.GetBitsLimit()))
+			}
+		}
+	}
+	return arrived
+}
+
+// TestDestinationLimitUpdatesArriveInIssueOrder states that two limit changes
+// on one destination reach the holding executor in the order they were made,
+// so the newest share is the one it applies last. The executor holds the
+// first update until the second limit is recorded; a second update that is
+// not ordered behind the first overtakes it there.
+func TestDestinationLimitUpdatesArriveInIssueOrder(t *testing.T) {
+	d, _, _ := newRegistryFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	const destination = "192.0.2.96"
+	const older, newer = bitrate.Bitrate(60), bitrate.Bitrate(40)
+	entered := make(chan struct{})
+	var calls atomic.Int32
+	peer := &fairsharePeer{bandwidth: func() error {
+		if calls.Add(1) != 1 {
+			return nil
+		}
+		close(entered)
+		tick := time.NewTicker(time.Millisecond)
+		defer tick.Stop()
+		for dlCap(d, destination) != newer {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-tick.C:
+			}
+		}
+		return nil
+	}}
+	fairshareStartPeer(t, ctx, d, peer)
+	dlInsert(t, d, destination, fairshareExecutorID)
+
+	first := make(chan error, 1)
+	go func() { first <- d.SetDestinationLimit(destination, older) }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("the first update never reached the executor")
+	}
+	if err := d.SetDestinationLimit(destination, newer); err != nil {
+		t.Fatalf("newer limit: %v", err)
+	}
+	if err := <-first; err != nil {
+		t.Fatalf("older limit: %v", err)
+	}
+	if arrived := dlArrived(peer.recorded(), destination); !slices.Equal(arrived, []bitrate.Bitrate{older, newer}) {
+		t.Fatalf("updates arrived as %v, want %v: the newest limit must be applied last", arrived, []bitrate.Bitrate{older, newer})
+	}
+}
+
+// TestDestinationLimitFailedDeliveryDoesNotHoldTheNext states that a delivery
+// the executor refuses, or that has no client to reach it, neither blocks the
+// next delivery to the same executor nor hides which executor missed it.
+func TestDestinationLimitFailedDeliveryDoesNotHoldTheNext(t *testing.T) {
+	d, _, _ := newRegistryFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	const refusal = "dl-refused-once"
+	var calls atomic.Int32
+	peer := &fairsharePeer{bandwidth: func() error {
+		if calls.Add(1) == 1 {
+			return errors.New(refusal)
+		}
+		return nil
+	}}
+	fairshareStartPeer(t, ctx, d, peer)
+
+	const refused = "192.0.2.97"
+	dlInsert(t, d, refused, fairshareExecutorID)
+	err := d.SetDestinationLimit(refused, 60)
+	if err == nil || !strings.Contains(err.Error(), refusal) || !strings.Contains(err.Error(), "executor "+fairshareExecutorID) {
+		t.Fatalf("refused delivery returned %v, want the refusal naming executor %s", err, fairshareExecutorID)
+	}
+	if err := d.SetDestinationLimit(refused, 40); err != nil {
+		t.Fatalf("delivery after a refused one: %v", err)
+	}
+	if arrived := dlArrived(peer.recorded(), refused); !slices.Equal(arrived, []bitrate.Bitrate{40}) {
+		t.Fatalf("updates arrived as %v, want the one after the refusal", arrived)
+	}
+
+	// A registered executor without a client is a failed delivery on every
+	// change, each reported at once with the executor it missed.
+	const clientless, unreached = "dl-clientless-executor", "192.0.2.98"
+	registryRegister(t, d, clientless)
+	dlInsert(t, d, unreached, clientless)
+	for _, limit := range []bitrate.Bitrate{60, 40} {
+		start := time.Now()
+		err := d.SetDestinationLimit(unreached, limit)
+		if err == nil || errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "executor "+clientless) {
+			t.Fatalf("limit %s to an executor without a client returned %v, want its failure naming executor %s", limit, err, clientless)
+		}
+		if elapsed := time.Since(start); elapsed >= 5*time.Second {
+			t.Fatalf("limit %s returned after %s, at the delivery bound", limit, elapsed)
+		}
+	}
+}
+
+// dlSpec is a paid fixture spec whose policy is on destination.
+func dlSpec(t *testing.T, f *tgFixture, floor bitrate.Bitrate, destination string) models.DebugletSpec {
+	t.Helper()
+	spec := f.spec(t, floor)
+	spec.Policy.Addresses = []string{destination}
+	return spec
+}
+
+// dlAdmit submits spec through SubmitDebuglets. The run's floor is reserved on
+// its destination for the fixture's window an hour ahead; nothing is charged
+// until the run allocates.
+func dlAdmit(f *tgFixture, spec models.DebugletSpec) (tgDebuglet, error) {
+	ids, err := f.d.SubmitDebuglets(f.ctx, []models.DebugletSpec{spec}, nil)
+	if err != nil {
+		return tgDebuglet{}, err
+	}
+	row, err := f.q.GetDebugletByUUID(f.ctx, ids[0])
+	if err != nil {
+		return tgDebuglet{}, err
+	}
+	return tgDebuglet{id: ids[0], txID: spec.TransactionID, orderID: spec.OrderID, floor: spec.Policy.FloorBW, row: row}, nil
+}
+
+// TestDestinationLimitBelowTheReservedFloorsIsRefused states that a limit
+// below the floors the scheduler reserved for admitted runs whose window lies
+// ahead is refused like one below the charged floors, so such a run can still
+// allocate when its window starts.
+func TestDestinationLimitBelowTheReservedFloorsIsRefused(t *testing.T) {
+	peer := &tgPeer{}
+	f := newTGFixture(t, peer)
+	const destination = "192.0.2.99"
+	if err := f.d.SetDestinationLimit(destination, 10*tgFloorA); err != nil {
+		t.Fatalf("limit of an unheld destination: %v", err)
+	}
+	deb, err := dlAdmit(f, dlSpec(t, f, tgFloorA, destination))
+	if err != nil {
+		t.Fatalf("admission: %v", err)
+	}
+	allocationCharged(t, f.d, destination, 0)
+	before := len(dlBandwidth(peer))
+
+	if err := f.d.SetDestinationLimit(destination, tgFloorA-1); !errors.Is(err, resource.ErrCapacityFull) {
+		t.Fatalf("limit below the reserved floors returned %v, want %v", err, resource.ErrCapacityFull)
+	}
+	if got := dlCap(f.d, destination); got != 10*tgFloorA {
+		t.Fatalf("refused limit left the limit at %s, want %s", got, 10*tgFloorA)
+	}
+	if err := f.d.SetDestinationLimit(destination, tgFloorA); err != nil {
+		t.Fatalf("limit equal to the reserved floors: %v", err)
+	}
+	if got := dlCap(f.d, destination); got != tgFloorA {
+		t.Fatalf("recorded limit %s, want %s", got, tgFloorA)
+	}
+	if pushed := dlBandwidth(peer)[before:]; len(pushed) != 0 {
+		t.Fatalf("a destination nobody allocated sent %v", pushed)
+	}
+	ctx, cancel := context.WithTimeout(f.ctx, tgCallBound)
+	defer cancel()
+	if _, err := allocationClient(t, f.d).DebugletAllocate(ctx, allocationRequest(t, f, deb)); err != nil {
+		t.Fatalf("allocation of the reserved run under the accepted limit: %v", err)
+	}
+	allocationCharged(t, f.d, destination, tgFloorA)
 }
 
 // TestDestinationLimitWithoutAllocationsSendsNothing states that the limit of

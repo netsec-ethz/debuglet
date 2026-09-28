@@ -301,13 +301,15 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	if _, err := queries.CreateDebuglet(ctx, dispatcherdb.CreateDebugletParams{DispatcherIncarnation: binding.Incarnation, SessionID: binding.SessionID, Uuid: id, StartTime: models.NewUTCTime(start), EndTime: models.NewUTCTime(start.Add(time.Minute)), Usage: floor, CeilBw: 2 * floor, ExecutorID: e.cfg.Identity.ExecutorID, Addresses: addresses, State: models.RunStateUploaded, TransactionID: transaction, OrderID: 1}); err != nil {
 		t.Fatal(err)
 	}
+	// The run fits on the first destination and not on the second, so the
+	// dispatcher rejects the whole allocation after charging the first one.
+	// The limits are set before the run's floor is reserved, which a limit
+	// below it would otherwise be refused for.
+	d.SetDestinationLimit(destination, bitrate.Bitrate(floor))
+	d.SetDestinationLimit(blocked, bitrate.Bitrate(floor-1))
 	if err := d.RestoreScheduler(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// The run fits on the first destination and not on the second, so the
-	// dispatcher rejects the whole allocation after charging the first one.
-	d.SetDestinationLimit(destination, bitrate.Bitrate(floor))
-	d.SetDestinationLimit(blocked, bitrate.Bitrate(floor-1))
 	if _, err := client.Upload(ctx, &pb.UploadRequest{ControlBinding: &pb.ControlBinding{DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID}, Id: id.String(), TransactionId: transaction, Wasm: []byte("\x00asm\x01\x00\x00\x00"), Policy: &pb.DebugletPolicy{FloorBw: floor, CeilBw: 2 * floor, TimeoutMs: 30000, Addresses: addresses}}); err != nil {
 		t.Fatal(err)
 	}
