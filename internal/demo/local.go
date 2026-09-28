@@ -94,6 +94,9 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if err := removeLocalFile(filepath.Join(dir, OfflineStateFile)); err != nil {
+		return err
+	}
 	state, err := readLocalState(dir, assets.Manifest)
 	if err != nil {
 		return err
@@ -115,16 +118,22 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()
+		joined := len(children) == 2
 		for i := len(children) - 1; i >= 0; i-- {
 			phase, end := cleanupPhase(cleanupCtx, i+1)
-			err = errors.Join(err, children[i].Stop(phase))
+			stopErr := children[i].Stop(phase)
+			joined = joined && stopErr == nil
+			err = errors.Join(err, stopErr)
 			end()
 		}
 		for _, child := range children {
 			if !child.CleanupComplete() {
-				err = errors.Join(err, child.Stop(cleanupCtx))
+				stopErr := child.Stop(cleanupCtx)
+				joined = joined && stopErr == nil
+				err = errors.Join(err, stopErr)
 			}
 			if !child.CleanupComplete() {
+				joined = false
 				err = errors.Join(err, errors.New("local child cleanup incomplete; inspect retained state before restarting"))
 			}
 		}
@@ -133,6 +142,9 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 		}
 		for _, name := range []string{"environment.json", "dispatcher-ready.json", "executor-ready.json"} {
 			err = errors.Join(err, removeLocalFile(filepath.Join(dir, name)))
+		}
+		if joined {
+			err = errors.Join(err, recordStoppedState(dir, assets.Manifest))
 		}
 	}()
 	for _, name := range []string{"environment.json", "dispatcher-ready.json", "executor-ready.json", "dispatcher.toml", "executor.toml"} {

@@ -289,6 +289,9 @@ func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report
 	if !info.IsDir() || info.Mode().Perm() != 0700 {
 		return fmt.Errorf("%s must be a real mode-0700 directory", p.StateDir)
 	}
+	if err := os.Remove(filepath.Join(p.StateDir, demo.OfflineStateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	// The role identity is established before the database exists: a
 	// directory that already holds a database but no identity belongs to
 	// something else, and adopting it would take ownership of state this
@@ -483,6 +486,9 @@ func (i *Installer) own(dir string, account Account) error {
 func (i *Installer) Start(ctx context.Context, role demo.SchemaRole, name string) (Report, error) {
 	p, report, err := i.load(ctx, "start", role, name)
 	if err != nil {
+		return report, err
+	}
+	if err := os.Remove(filepath.Join(p.StateDir, demo.OfflineStateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return report, err
 	}
 	state, err := i.manager.State(ctx, p.Unit)

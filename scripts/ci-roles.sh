@@ -11,6 +11,7 @@ evidence="$(realpath .cache/ci)/role-evidence"
 mkdir -p -m 0700 "$evidence"
 export DEBUGLET_ROLE_EVIDENCE_DIR="$evidence"
 "${GO:-go}" test -mod=readonly -json -tags=roles_integration -count=1 -timeout=3m \
-  ./internal/acceptance/roles -run '^TestInstalledRoles$' | tee .cache/ci/role-tests.json
+  ./internal/acceptance/roles -run '^TestInstalled(Roles|BackupRestore)$' | tee .cache/ci/role-tests.json
 python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalledRoles \
+  --test ./internal/acceptance/roles:TestInstalledBackupRestore \
   --evidence .cache/ci/role-tests.json

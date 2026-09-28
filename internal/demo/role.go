@@ -118,6 +118,9 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if err := removeLocalFile(filepath.Join(dir, OfflineStateFile)); err != nil {
+		return err
+	}
 	state, err := readRoleState(dir, role, assets.Manifest)
 	if err != nil {
 		return err
@@ -150,21 +153,27 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		if ctx.Err() == context.Canceled && localCancellationOnly(err) {
 			err = nil
 		}
+		joined := false
 		if child != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-			err = errors.Join(err, child.Stop(cleanupCtx))
+			stopErr := child.Stop(cleanupCtx)
+			err = errors.Join(err, stopErr)
 			if !child.CleanupComplete() {
 				err = errors.Join(err, child.Stop(cleanupCtx))
 			}
 			if !child.CleanupComplete() {
 				err = errors.Join(err, errors.New("service cleanup incomplete; inspect retained state before restarting"))
 			}
+			joined = stopErr == nil && child.CleanupComplete()
 			cancel()
 		}
 		if log != nil {
 			err = errors.Join(err, log.Close())
 		}
 		err = errors.Join(err, removeLocalFile(filepath.Join(dir, "ready.json")), removeLocalFile(filepath.Join(dir, "child-ready.json")))
+		if joined {
+			err = errors.Join(err, recordStoppedState(dir, assets.Manifest))
+		}
 	}()
 	for _, name := range []string{"ready.json", "child-ready.json", "service.toml"} {
 		if err := removeLocalFile(filepath.Join(dir, name)); err != nil {

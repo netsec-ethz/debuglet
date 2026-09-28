@@ -47,7 +47,7 @@ func defaultCommandTimeout(command string, args ...string) time.Duration {
 	switch command {
 	case "up":
 		return 0 // Foreground lifetime; startup has a separate bound.
-	case "service", "drain":
+	case "service", "drain", "backup", "restore":
 		// A managed operation waits for a service manager and for local
 		// work to join, both of which are bounded in seconds, not requests.
 		return 5 * time.Minute
@@ -85,6 +85,8 @@ func dispatch(ctx context.Context, command string, args []string, options global
 		return nodesCommand(ctx, args, options, stdout, stderr)
 	case "up":
 		return upCommand(ctx, args, options, stdout, stderr)
+	case "backup", "restore":
+		return backupCommand(ctx, command, args, options, stdout, stderr)
 	case "service":
 		return serviceCommand(ctx, args, options, stdout, stderr)
 	case "drain":
