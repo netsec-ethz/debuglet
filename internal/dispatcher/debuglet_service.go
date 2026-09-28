@@ -336,11 +336,11 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 	}
 
 	if spec.Policy.RequireICMP && !exec.ICMPEnabled {
-		return nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it: %w", spec.ExecutorID, ErrInvalidPolicy)
+		return nil, fmt.Errorf("executor does not support ICMP, but policy requires it: %w", ErrInvalidPolicy)
 	}
 
 	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
-		return nil, fmt.Errorf("executor '%s' has no public host, but policy requires a listener: %w", spec.ExecutorID, ErrInvalidPolicy)
+		return nil, fmt.Errorf("executor has no public host, but policy requires a listener: %w", ErrInvalidPolicy)
 	}
 
 	var from time.Time

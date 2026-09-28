@@ -110,6 +110,11 @@ func ccNewFixtureWith(t *testing.T, options ...Option) *ccFixture {
 // handler and the API logging to logger.
 func ccNewFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *ccFixture {
 	t.Helper()
+	return ccNewFixturePeer(t, logger, &cpPeer{id: ccExecutorID, price: ccPricePerBwS, currency: "TEST"}, options...)
+}
+
+func ccNewFixturePeer(t *testing.T, logger *zap.Logger, peer *cpPeer, options ...Option) *ccFixture {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -132,7 +137,6 @@ func ccNewFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *cc
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	peer := &cpPeer{id: ccExecutorID, price: ccPricePerBwS, currency: "TEST"}
 	stop, err := startClientPeer(ctx, d, ccCapacity, peer)
 	if err != nil {
 		t.Fatalf("startClientPeer: %v", err)

@@ -126,10 +126,8 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		if errors.Is(err, resource.ErrCapacityFull) {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted, "capacity exceeded", err)
 		}
-		// A policy admission refuses on its numbers is a rejected request, not
-		// a failure of the server. Its message names the field, or a registered
-		// executor that lacks what the policy asks for, and carries no other
-		// caller-supplied text, so it is reported as it is.
+		// Policy refusals name a numeric field or a missing capability, without
+		// repeating executor IDs or other caller-supplied text.
 		if errors.Is(err, dispatcher.ErrInvalidPolicy) {
 			return apiErrorFrom(http.StatusBadRequest, CodeInvalidPolicy, err.Error(), err)
 		}

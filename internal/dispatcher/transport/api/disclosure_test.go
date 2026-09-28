@@ -430,3 +430,40 @@ func TestSubmissionRefusalsKeepTheirCodes(t *testing.T) {
 		}
 	})
 }
+
+func TestCapabilityRefusalsOmitRegisteredExecutorID(t *testing.T) {
+	for _, executorID := range []string{strings.Repeat("e", 96), "executor\n\t\x1b\x7f"} {
+		t.Run(fmt.Sprintf("%q", executorID), func(t *testing.T) {
+			peer := &cpPeer{id: executorID, price: ccPricePerBwS, currency: "TEST"}
+			f := ccNewFixturePeer(t, zap.NewNop(), peer)
+			_, token, _ := authAccount(t, f, "capabilities")
+			if registered, ok := f.d.GetExecutor(executorID); !ok || registered.ID != executorID {
+				t.Fatal("the executor was not registered with its original ID")
+			}
+			for _, capability := range []struct {
+				name    string
+				policy  DebugletPolicyRequest
+				message string
+			}{
+				{"ICMP", DebugletPolicyRequest{RequireICMP: true}, "executor does not support ICMP, but policy requires it"},
+				{"TCP listener", DebugletPolicyRequest{ListenTCP: true}, "executor has no public host, but policy requires a listener"},
+				{"UDP listener", DebugletPolicyRequest{ListenUDP: true}, "executor has no public host, but policy requires a listener"},
+			} {
+				t.Run(capability.name, func(t *testing.T) {
+					debuglets := dcDebuglets()
+					debuglets[0].ExecutorID = executorID
+					debuglets[0].Policy.RequireICMP = capability.policy.RequireICMP
+					debuglets[0].Policy.ListenTCP = capability.policy.ListenTCP
+					debuglets[0].Policy.ListenUDP = capability.policy.ListenUDP
+					txID := dcIntent(t, f, token, debuglets)
+					status, _, body, _ := authRequest(t, f, http.MethodPut, "/debuglet", dcSubmitBody(t, txID, "", debuglets), authBearer(token))
+					dcExpect(t, capability.name, status, body, http.StatusBadRequest, CodeInvalidPolicy,
+						"invalid debuglet spec (i=0): "+capability.message+": invalid policy")
+					if peer.uploadCount() != 0 {
+						t.Fatal("a refused policy reached the executor")
+					}
+				})
+			}
+		})
+	}
+}
