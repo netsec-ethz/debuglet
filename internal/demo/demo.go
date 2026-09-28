@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -41,8 +42,8 @@ type childProcess interface {
 // acceptance harness uses the same Run path with real children and an observer.
 type dependencies struct {
 	resolveAssets func(string) (Assets, error)
-	bootstrap     func(context.Context, SchemaRole, string) error
-	checkSchema   func(context.Context, SchemaRole, string) error
+	bootstrap     func(context.Context, storagecheck.Role, string) error
+	checkSchema   func(context.Context, storagecheck.Role, string) error
 	startChild    func(ChildSpec) (childProcess, error)
 	startTarget   func(context.Context, string) (targetProcess, error)
 	observe       func(context.Context, observation) error
@@ -50,10 +51,10 @@ type dependencies struct {
 
 // verifySchema checks a database against the supported schema versions before
 // a service is started on it.
-func (d dependencies) verifySchema(ctx context.Context, role SchemaRole, path string) error {
+func (d dependencies) verifySchema(ctx context.Context, role storagecheck.Role, path string) error {
 	check := d.checkSchema
 	if check == nil {
-		check = CheckSchema
+		check = storagecheck.Check
 	}
 	if err := check(ctx, role, path); err != nil {
 		return fmt.Errorf("%s database: %w", role, err)
@@ -71,8 +72,8 @@ type observation struct {
 func productionDependencies() dependencies {
 	return dependencies{
 		resolveAssets: ResolveAssets,
-		bootstrap:     BootstrapFresh,
-		checkSchema:   CheckSchema,
+		bootstrap:     storagecheck.BootstrapFresh,
+		checkSchema:   storagecheck.Check,
 		startChild:    func(spec ChildSpec) (childProcess, error) { return StartChild(spec) },
 		startTarget:   startTarget,
 	}
@@ -194,10 +195,10 @@ func run(ctx context.Context, assets Assets, deps dependencies) (result Result, 
 	}
 	dispatcherDB := filepath.Join(dir, "dispatcher.sqlite")
 	executorDB := filepath.Join(dir, "executor.sqlite")
-	if err := deps.bootstrap(workCtx, DispatcherSchema, dispatcherDB); err != nil {
+	if err := deps.bootstrap(workCtx, storagecheck.Dispatcher, dispatcherDB); err != nil {
 		return result, fmt.Errorf("bootstrap dispatcher: %w", err)
 	}
-	if err := deps.bootstrap(workCtx, ExecutorSchema, executorDB); err != nil {
+	if err := deps.bootstrap(workCtx, storagecheck.Executor, executorDB); err != nil {
 		return result, fmt.Errorf("bootstrap executor: %w", err)
 	}
 	nonce, err := randomHex()

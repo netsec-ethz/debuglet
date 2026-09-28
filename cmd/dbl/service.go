@@ -10,6 +10,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 const serviceUsage = `Usage:
@@ -185,16 +186,16 @@ func serviceFlags(fs *flag.FlagSet, local *serviceOptions, subcommand string) {
 // serviceRole validates the selected role and fills in the default instance
 // name. Managed services take no dispatcher endpoint: they are local
 // administration of this host, not a client of a remote one.
-func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options globalOptions, stderr io.Writer) (demo.SchemaRole, int, bool) {
+func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options globalOptions, stderr io.Writer) (storagecheck.Role, int, bool) {
 	if options.EndpointSet || options.Dispatcher != "" {
 		return "", usageError(name, serviceUsage, stderr, "managed service commands administer this host; they take no --endpoint or --dispatcher"), false
 	}
-	var role demo.SchemaRole
+	var role storagecheck.Role
 	switch local.Role {
-	case string(demo.DispatcherSchema):
-		role = demo.DispatcherSchema
-	case string(demo.ExecutorSchema):
-		role = demo.ExecutorSchema
+	case string(storagecheck.Dispatcher):
+		role = storagecheck.Dispatcher
+	case string(storagecheck.Executor):
+		role = storagecheck.Executor
 	case "":
 		return "", usageError(name, serviceUsage, stderr, "--role dispatcher or --role executor is required"), false
 	default:
@@ -219,8 +220,8 @@ func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options g
 }
 
 // defaultInstanceName keeps the managed names the same as the foreground ones.
-func defaultInstanceName(role demo.SchemaRole) string {
-	if role == demo.DispatcherSchema {
+func defaultInstanceName(role storagecheck.Role) string {
+	if role == storagecheck.Dispatcher {
 		return "local"
 	}
 	return "worker"

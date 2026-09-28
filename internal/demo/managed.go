@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // A managed service and a foreground role differ only in who supervises the
@@ -40,7 +41,7 @@ func ValidateControlAddress(address string) error {
 }
 
 // RoleDatabase names the database file a role keeps in its state directory.
-func RoleDatabase(dir string, role SchemaRole) string {
+func RoleDatabase(dir string, role storagecheck.Role) string {
 	return filepath.Join(dir, string(role)+".sqlite")
 }
 
@@ -57,21 +58,21 @@ func RoleDatabase(dir string, role SchemaRole) string {
 // its database existed can be completed by the next one, a finished directory
 // can have nothing created in it, and no account that could replace the name
 // in between has the directory to do it in.
-func PrepareRoleDatabase(ctx context.Context, role SchemaRole, dir string) (path string, created bool, err error) {
+func PrepareRoleDatabase(ctx context.Context, role storagecheck.Role, dir string) (path string, created bool, err error) {
 	return productionDependencies().prepareRoleDatabase(ctx, role, dir)
 }
 
 // prepareRoleDatabase is that decision with the bootstrap and the schema check
 // left as seams, so a foreground role and an installed unit make it once and
 // reach the same database in the same states.
-func (d dependencies) prepareRoleDatabase(ctx context.Context, role SchemaRole, dir string) (path string, created bool, err error) {
+func (d dependencies) prepareRoleDatabase(ctx context.Context, role storagecheck.Role, dir string) (path string, created bool, err error) {
 	path = RoleDatabase(dir, role)
 	info, err := os.Lstat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		bootstrap := d.bootstrap
 		if bootstrap == nil {
-			bootstrap = BootstrapFresh
+			bootstrap = storagecheck.BootstrapFresh
 		}
 		if err := bootstrap(ctx, role, path); err != nil {
 			return path, false, fmt.Errorf("bootstrap %s: %w", role, err)

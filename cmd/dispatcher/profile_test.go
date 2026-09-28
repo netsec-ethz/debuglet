@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 
 	"github.com/google/uuid"
 )
@@ -90,7 +90,7 @@ func TestOperatorRoleIsAdministeredOnTheHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "dispatcher.sqlite")
-	if err := demo.BootstrapFresh(context.Background(), demo.DispatcherSchema, path); err != nil {
+	if err := storagecheck.BootstrapFresh(context.Background(), storagecheck.Dispatcher, path); err != nil {
 		t.Fatalf("bootstrap database: %v", err)
 	}
 	db, err := sql.Open("sqlite", path)

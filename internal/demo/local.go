@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/fsutil"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -152,7 +153,7 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 			return err
 		}
 	}
-	for _, role := range []SchemaRole{DispatcherSchema, ExecutorSchema} {
+	for _, role := range []storagecheck.Role{storagecheck.Dispatcher, storagecheck.Executor} {
 		if _, _, err := deps.prepareRoleDatabase(startupCtx, role, dir); err != nil {
 			return err
 		}

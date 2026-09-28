@@ -17,11 +17,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/connections"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/pelletier/go-toml/v2"
 )
 
 func TestRoleIndependentLifecycle(t *testing.T) {
-	for _, role := range []SchemaRole{DispatcherSchema, ExecutorSchema} {
+	for _, role := range []storagecheck.Role{storagecheck.Dispatcher, storagecheck.Executor} {
 		t.Run(string(role), func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "service")
 			var identity string
@@ -41,7 +42,7 @@ func TestRoleIndependentLifecycle(t *testing.T) {
 				t.Cleanup(f.server.Close)
 				bootstrap := f.deps.bootstrap
 				calls := 0
-				f.deps.bootstrap = func(ctx context.Context, got SchemaRole, path string) error {
+				f.deps.bootstrap = func(ctx context.Context, got storagecheck.Role, path string) error {
 					calls++
 					if got != role {
 						t.Errorf("started another role database: %s", got)
@@ -50,7 +51,7 @@ func TestRoleIndependentLifecycle(t *testing.T) {
 				}
 				start := f.deps.startChild
 				f.deps.startChild = func(spec ChildSpec) (childProcess, error) {
-					if role == ExecutorSchema {
+					if role == storagecheck.Executor {
 						data, err := os.ReadFile(spec.Args[1])
 						if err != nil {
 							return nil, err
@@ -79,7 +80,7 @@ func TestRoleIndependentLifecycle(t *testing.T) {
 						if err != nil || json.Unmarshal(data, &saved) != nil || saved != record {
 							t.Error("persisted readiness does not match stdout record")
 						}
-						if role == ExecutorSchema {
+						if role == storagecheck.Executor {
 							if attempt == 0 {
 								identity = record.ExecutorID
 							} else if identity == "" || identity != record.ExecutorID {
@@ -93,7 +94,7 @@ func TestRoleIndependentLifecycle(t *testing.T) {
 				if err != nil || readyCalls != 1 || len(f.children) != 1 || !f.children[0].CleanupComplete() {
 					t.Fatalf("role lifecycle: ready=%d children=%d err=%v", readyCalls, len(f.children), err)
 				}
-				if calls != 1-attempt || (role == ExecutorSchema && metadataReads.Load() != 1) {
+				if calls != 1-attempt || (role == storagecheck.Executor && metadataReads.Load() != 1) {
 					t.Fatalf("bootstrap=%d metadata=%d", calls, metadataReads.Load())
 				}
 				if _, err := os.Stat(filepath.Join(dir, "ready.json")); !errors.Is(err, os.ErrNotExist) {
@@ -111,7 +112,7 @@ func TestRoleStateIdentityKey(t *testing.T) {
 	manifest := Manifest{Version: "v1", SourceSHA: strings.Repeat("a", 40)}
 	identity := func(state RoleState) string { return state.Identity }
 	dir := t.TempDir()
-	first, err := readRoleState(dir, DispatcherSchema, manifest)
+	first, err := readRoleState(dir, storagecheck.Dispatcher, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,12 +127,12 @@ func TestRoleStateIdentityKey(t *testing.T) {
 	if _, ok := stored["executor_id"]; ok || stored["identity"] != identity(first) || !canonicalUUID(identity(first)) {
 		t.Fatalf("state file keys: %s", data)
 	}
-	again, err := readRoleState(dir, DispatcherSchema, manifest)
+	again, err := readRoleState(dir, storagecheck.Dispatcher, manifest)
 	if err != nil || identity(again) != identity(first) {
 		t.Fatalf("second read: %q %v, want %q", identity(again), err, identity(first))
 	}
 	const earlier, current = "0b7c4d1e-2f3a-4b5c-8d6e-7f8091a2b3c4", "1c8d5e2f-3a4b-4c6d-9e7f-8091a2b3c4d5"
-	write := func(role SchemaRole, keys string) string {
+	write := func(role storagecheck.Role, keys string) string {
 		dir := t.TempDir()
 		content := `{"schema_version":1,"version":"v1","source_sha":"` + manifest.SourceSHA + `","role":"` + string(role) + `",` + keys + `}`
 		if err := os.WriteFile(filepath.Join(dir, "role-state.json"), []byte(content), 0600); err != nil {
@@ -139,7 +140,7 @@ func TestRoleStateIdentityKey(t *testing.T) {
 		}
 		return dir
 	}
-	for _, role := range []SchemaRole{DispatcherSchema, ExecutorSchema} {
+	for _, role := range []storagecheck.Role{storagecheck.Dispatcher, storagecheck.Executor} {
 		state, err := readRoleState(write(role, `"executor_id":"`+earlier+`"`), role, manifest)
 		if err != nil || identity(state) != earlier {
 			t.Fatalf("%s earlier state: %q %v", role, identity(state), err)
@@ -165,14 +166,14 @@ func canonicalUUID(value string) bool {
 func TestRoleRejectsUnmanagedOrRemoteState(t *testing.T) {
 	dir := t.TempDir()
 	manifest := Manifest{Version: "v1", SourceSHA: strings.Repeat("a", 40)}
-	if _, err := readRoleState(dir, DispatcherSchema, manifest); err != nil {
+	if _, err := readRoleState(dir, storagecheck.Dispatcher, manifest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readRoleState(dir, ExecutorSchema, manifest); err == nil {
+	if _, err := readRoleState(dir, storagecheck.Executor, manifest); err == nil {
 		t.Fatal("executor reused dispatcher role state")
 	}
 	manifest.SourceSHA = strings.Repeat("b", 40)
-	if _, err := readRoleState(dir, DispatcherSchema, manifest); err == nil {
+	if _, err := readRoleState(dir, storagecheck.Dispatcher, manifest); err == nil {
 		t.Fatal("different build silently adopted role database metadata")
 	}
 	for _, endpoint := range []string{"https://example.com", "http://localhost:9000", "http://192.0.2.1:9000"} {

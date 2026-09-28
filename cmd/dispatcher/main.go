@@ -53,6 +53,7 @@ func main() {
 	revoke := flag.String("revoke-operator", "", "Return the account with this UUID to the ordinary role in the configured database, then exit")
 	enroll := flag.String("enroll-executor", "", "Create a single-use enrollment token for this executor ID in the configured database, print it once, then exit")
 	unenroll := flag.String("revoke-executor", "", "Delete the node credential enrolled for this executor ID in the configured database, then exit")
+	initDatabase := flag.String("init-database", "", "Create a new database at this path, then exit; its parent must be a private directory owned by this user")
 	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
 	acceptDataLoss := flag.Bool("accept-data-loss", false, "With -upgrade-database, apply a migration that drops the recorded runs and their logs")
@@ -70,6 +71,26 @@ func main() {
 		return
 	}
 
+	initRequested, initOnly := false, true
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "init-database" {
+			initRequested = true
+		} else {
+			initOnly = false
+		}
+	})
+	if initRequested {
+		if !initOnly || flag.NArg() != 0 {
+			fmt.Fprintln(os.Stderr, "dispatcher: -init-database cannot be combined with other flags or arguments")
+			os.Exit(1)
+		}
+		if err := storagecheck.BootstrapFresh(context.Background(), storagecheck.Dispatcher, *initDatabase); err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("created dispatcher database %s\n", absoluteDatabasePath(*initDatabase))
+		return
+	}
 	if *checkDatabase && (*upgrade || *acceptDataLoss || *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "") {
 		fmt.Fprintln(os.Stderr, "dispatcher: -check-database cannot be combined with another administration flag")
 		os.Exit(1)
