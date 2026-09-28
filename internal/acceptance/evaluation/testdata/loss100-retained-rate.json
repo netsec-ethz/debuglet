@@ -1,0 +1,48 @@
+[
+  {
+    "kind": "htb",
+    "handle": "1:",
+    "root": true,
+    "refcnt": 2,
+    "options": {
+      "r2q": 10,
+      "default": "0x1",
+      "direct_packets_stat": 0,
+      "direct_qlen": 1000
+    },
+    "bytes": 190071533,
+    "packets": 15254,
+    "drops": 32,
+    "overlimits": 4635,
+    "requeues": 0,
+    "backlog": 0,
+    "qlen": 0
+  },
+  {
+    "kind": "netem",
+    "handle": "20:",
+    "parent": "1:2",
+    "options": {
+      "limit": 512,
+      "loss-random": {
+        "loss": 1,
+        "correlation": 0
+      },
+      "rate": {
+        "rate": 16000,
+        "packetoverhead": 0,
+        "cellsize": 0,
+        "celloverhead": 0
+      },
+      "ecn": false,
+      "gap": 0
+    },
+    "bytes": 1529710,
+    "packets": 1435,
+    "drops": 32,
+    "overlimits": 0,
+    "requeues": 0,
+    "backlog": 0,
+    "qlen": 0
+  }
+]

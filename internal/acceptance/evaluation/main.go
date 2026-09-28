@@ -233,11 +233,11 @@ func analyze(dir string) (summary, error) {
 		}
 		row := observation{Trial: item, Sent: 12, Received: len(measured.Latency.Replies), Reason: "latency or reply fraction exceeded", RTT: []int64{}, ProbeElapsedNS: measured.Latency.Elapsed}
 		prefix := fmt.Sprintf("%s-%d-%s", item.Condition, item.Repeat, item.Kind)
-		before, err := readNetem(filepath.Join(dir, prefix+"-qdisc-before.json"))
+		before, err := readNetem(filepath.Join(dir, prefix+"-qdisc-before.json"), *setup)
 		if err != nil {
 			return summary{}, err
 		}
-		after, err := readNetem(filepath.Join(dir, prefix+"-qdisc-after.json"))
+		after, err := readNetem(filepath.Join(dir, prefix+"-qdisc-after.json"), *setup)
 		if err != nil {
 			return summary{}, err
 		}
@@ -333,11 +333,23 @@ func analyze(dir string) (summary, error) {
 type qdiscStats struct {
 	Kind    string `json:"kind"`
 	Parent  string `json:"parent"`
+	Handle  string `json:"handle"`
 	Packets uint64 `json:"packets"`
 	Drops   uint64 `json:"drops"`
+	Options struct {
+		Limit int                                          `json:"limit"`
+		Delay struct{ Delay, Jitter, Correlation float64 } `json:"delay"`
+		Loss  struct{ Loss, Correlation float64 }          `json:"loss-random"`
+		Rate  struct {
+			Rate                                   uint64
+			PacketOverhead, CellSize, CellOverhead int64
+		} `json:"rate"`
+		ECN bool `json:"ecn"`
+		Gap int  `json:"gap"`
+	} `json:"options"`
 }
 
-func readNetem(path string) (qdiscStats, error) {
+func readNetem(path string, expected condition) (qdiscStats, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return qdiscStats{}, err
@@ -350,7 +362,18 @@ func readNetem(path string) (qdiscStats, error) {
 		return qdiscStats{}, err
 	}
 	for _, entry := range entries {
-		if entry.Kind == "netem" && entry.Parent == "1:2" {
+		if entry.Kind == "netem" && entry.Parent == "1:2" && entry.Handle == "20:" {
+			options := entry.Options
+			// Pinned tc JSON reports delay in seconds, loss as a fraction and
+			// rate in bytes/second. Allow its decimal/probability quantization,
+			// at most one microsecond or one millionth of probability.
+			if math.Abs(options.Delay.Delay-float64(expected.DelayMS)/1000) > 1e-6 ||
+				math.Abs(options.Loss.Loss-float64(expected.LossPercent)/100) > 1e-6 ||
+				options.Rate.Rate != uint64(expected.RateBPS/8) || options.Limit != 512 ||
+				options.Delay.Jitter != 0 || options.Delay.Correlation != 0 || options.Loss.Correlation != 0 ||
+				options.Rate.PacketOverhead != 0 || options.Rate.CellSize != 0 || options.Rate.CellOverhead != 0 || options.ECN || options.Gap != 0 {
+				return qdiscStats{}, fmt.Errorf("netem configuration for %s differs: delay %g s, loss %g, rate %d B/s", expected.Name, options.Delay.Delay, options.Loss.Loss, options.Rate.Rate)
+			}
 			return entry, nil
 		}
 	}

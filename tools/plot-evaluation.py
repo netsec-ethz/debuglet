@@ -31,8 +31,9 @@ def main():
             if row["p95_rtt_ns"] is not None:
                 p95.scatter(x, row["p95_rtt_ns"] / 1e6, color=color, marker=marker)
             replies.scatter(x, row["received"] / row["sent"] * 100, color=color, marker=marker)
-            timing.scatter([x] * len(row["rtt_minus_target_processing_and_nominal_delay_ns"]),
-                           [value / 1e6 for value in row["rtt_minus_target_processing_and_nominal_delay_ns"]],
+            timing_samples = row["rtt_minus_target_processing_and_nominal_delay_ns"] or []
+            timing.scatter([x] * len(timing_samples),
+                           [value / 1e6 for value in timing_samples],
                            color=color, marker=marker, s=10, alpha=.35)
             if row["burst_goodput_bits_per_second"] is not None:
                 burst.scatter(x, row["burst_goodput_bits_per_second"] / 1000, color=color, marker=marker)
@@ -43,15 +44,17 @@ def main():
             paired.scatter(positions[row["condition"]] + (row["repeat"] - 1) * .08,
                            row["wasm_minus_native_median_ns"] / 1e6, color="#756bb1", s=25)
     p95.axhline(80, color="black", linestyle="--", linewidth=.8, label="SLA threshold")
-    p95.text(5, .02, "no replies", transform=p95.get_xaxis_transform(), ha="center", fontsize=8)
+    p95.text(5, .02, "no replies\nSLA fails", transform=p95.get_xaxis_transform(), ha="center", fontsize=8)
     p95.legend(fontsize=8)
     replies.axhline(90, color="black", linestyle="--", linewidth=.8)
     replies.set_ylim(-3, 103)
     timing.axhline(0, color="black", linewidth=.8)
+    timing.text(.98, .02, "no timing\nobservations", transform=timing.transAxes, ha="right", fontsize=8)
     burst.axhline(128, color="black", linestyle="--", linewidth=.8, label="shared rate limit (rate128k only)")
     burst.set_yscale("log")
     burst.legend(fontsize=7)
     paired.axhline(0, color="black", linewidth=.8)
+    paired.text(.98, .02, "unavailable", transform=paired.transAxes, ha="right", fontsize=8)
     titles = ["Empirical p95 (12 probes per trial)", "Observed reply fraction",
               "RTT minus target processing and nominal delay", "Fixed 32 KiB burst echo goodput",
               "Outer trial time minus probe elapsed time", "Paired WASM minus native median RTT"]

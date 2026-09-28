@@ -242,7 +242,12 @@ func TestControlledNetworkEvaluation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(evidence, "filters.json"), filters, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, setup := range conditions {
+	for conditionIndex, setup := range conditions {
+		if conditionIndex > 0 {
+			// Replacing netem preserves some omitted options, including rate.
+			// Recreate only the owned leaf; control traffic keeps its class.
+			command(tc, "qdisc", "del", "dev", "lo", "parent", "1:2", "handle", "20:")
+		}
 		for repeat := 0; repeat < 3; repeat++ {
 			kinds := []string{"native", "wasm"}
 			if repeat%2 == 1 {

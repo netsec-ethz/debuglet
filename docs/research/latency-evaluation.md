@@ -38,7 +38,9 @@ Linux HTB sends only UDP packets with the owned target's destination **or**
 source port into netem; control traffic remains in the default class. Both
 classes have a 10 Gbit/s carrier ceiling. Saved filter commands/configurations
 and per-trial queue counters show which traffic was selected and the realized
-drops. Random loss can vary between repetitions, and losing either request or
+drops. The owned netem leaf is recreated between conditions so omitted options
+cannot carry over. Offline analysis checks both saved configurations against
+the declared delay, loss and rate, using the pinned tool's JSON units. Random loss can vary between repetitions, and losing either request or
 reply loses an echo; 25% per direction does not imply 25% missing replies.
 
 The target independently records receive/send timestamps and processing time
