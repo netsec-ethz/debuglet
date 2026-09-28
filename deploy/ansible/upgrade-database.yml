@@ -9,8 +9,8 @@
 #      has not confirmed with upgrade_confirm_stopped=true that the daemon is
 #      stopped;
 #   2. requires the database to exist;
-#   3. installs the verified candidate payload without restarting the service,
-#      so the candidate's own schema policy answers the next step;
+#   3. stages the verified candidate without changing command links or the
+#      deployment record, so its own schema policy answers the next step;
 #   4. runs the candidate daemon's read-only -check-database mode as the
 #      service user. A database that is already current ends the play on that
 #      host here: the service keeps running and no backup is taken, so running
@@ -23,7 +23,9 @@
 #   7. stops the service; 8. copies the database and its companions into a new
 #      backup-TIMESTAMP directory next to it; 9. runs the candidate daemon's
 #      -upgrade-database mode as the service user through runuser, so the
-#      database keeps its owner; 10. reports the result; 11. starts the service.
+#      database keeps its owner; 10. activates that daemon's candidate link;
+#      11. reports the result and starts the service. The normal deployment
+#      afterward activates the CLI and records the complete deployment.
 # A refusal in steps 1 to 6 leaves the database and the service untouched.
 # When the upgrade fails the play stops there: the service stays stopped, the
 # backup stays in place, and the database is left at the last migration that
@@ -53,6 +55,7 @@
   vars:
     upgrade_database: "{{ state_dir }}/dispatcher/dispatcher.db"
     payload_restart_services: false
+    payload_activate: false
   tasks:
     - name: Require a stopped dispatcher when services are not managed
       ansible.builtin.assert:
@@ -79,7 +82,7 @@
           nothing to upgrade. The deployment playbooks create a new one.
         quiet: true
 
-    - name: Install the candidate payload without restarting the dispatcher
+    - name: Stage the candidate without activating it
       ansible.builtin.include_role:
         name: payload
 
@@ -90,7 +93,7 @@
           - -u
           - "{{ debuglet_user }}"
           - --
-          - "{{ payload_prefix }}/bin/debuglet-dispatcher"
+          - "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-dispatcher"
           - -config
           - "{{ config_dir }}/dispatcher/dispatcher.toml"
           - -check-database
@@ -185,12 +188,21 @@
           ansible.builtin.command:
             argv: >-
               {{ ['runuser', '-u', debuglet_user, '--',
-                  payload_prefix ~ '/bin/debuglet-dispatcher',
+                  payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/bin/debuglet-dispatcher',
                   '-config', config_dir ~ '/dispatcher/dispatcher.toml',
                   '-upgrade-database']
                  + (['-accept-data-loss'] if upgrade_accept_data_loss | default(false) | bool else []) }}
           register: upgrade_result
           changed_when: true
+
+        - name: Activate the upgraded dispatcher
+          ansible.builtin.file:
+            src: "../lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-dispatcher"
+            dest: "{{ payload_prefix }}/bin/debuglet-dispatcher"
+            state: link
+            owner: root
+            group: root
+            follow: false
 
         - name: Report the dispatcher upgrade
           ansible.builtin.debug:
@@ -209,6 +221,7 @@
   vars:
     upgrade_database: "{{ executor_state_dir }}/executor.db"
     payload_restart_services: false
+    payload_activate: false
   tasks:
     - name: Require a stopped executor when services are not managed
       ansible.builtin.assert:
@@ -235,7 +248,7 @@
           nothing to upgrade. The deployment playbooks create a new one.
         quiet: true
 
-    - name: Install the candidate payload without restarting the executor
+    - name: Stage the candidate without activating it
       ansible.builtin.include_role:
         name: payload
 
@@ -246,7 +259,7 @@
           - -u
           - "{{ executor_user }}"
           - --
-          - "{{ executor_binary }}"
+          - "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
           - -config
           - "{{ executor_config_dir }}/executor.toml"
           - -check-database
@@ -340,12 +353,22 @@
         - name: Upgrade the executor database
           ansible.builtin.command:
             argv: >-
-              {{ ['runuser', '-u', executor_user, '--', executor_binary,
+              {{ ['runuser', '-u', executor_user, '--',
+                  payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/bin/debuglet-executor',
                   '-config', executor_config_dir ~ '/executor.toml',
                   '-upgrade-database']
                  + (['-accept-data-loss'] if upgrade_accept_data_loss | default(false) | bool else []) }}
           register: upgrade_result
           changed_when: true
+
+        - name: Activate the upgraded executor
+          ansible.builtin.file:
+            src: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
+            dest: "{{ executor_binary }}"
+            state: link
+            owner: root
+            group: root
+            follow: false
 
         - name: Report the executor upgrade
           ansible.builtin.debug:

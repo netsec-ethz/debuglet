@@ -126,10 +126,16 @@
   loop_control:
     label: "{{ item.0.item }}"
 
-# The installer publishes the version directory and the managed bin/dbl link.
+# The installer publishes the version directory and, unless staging, bin/dbl.
 # It refuses an archive, an installer or an installed tree that does not match
-# the candidate, and it is safely rerunnable; `creates` keeps a redeployment
-# of the same version from running it again at all.
+# the candidate. A staged version must still pass through activation during
+# a later deployment; an already active, unchanged version can be skipped.
+- name: Inspect the active CLI link
+  ansible.builtin.stat:
+    path: "{{ payload_prefix }}/bin/dbl"
+    follow: false
+  register: payload_cli_link
+
 - name: Install the release package
   ansible.builtin.command:
     cmd: >-
@@ -138,7 +144,12 @@
       --checksums {{ payload_staging_dir }}/SHA256SUMS
       --version {{ debuglet_release.version }}
       --prefix {{ payload_prefix }}
-    creates: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/share/debuglet/manifest.json"
+      {{ '' if payload_activate | bool else '--stage-only' }}
+    creates: >-
+      {{ payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/share/debuglet/manifest.json'
+         if not payload_activate | bool or payload_cli_link.stat.lnk_source | default('') ==
+            payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/bin/dbl'
+         else omit }}
   notify: Restart debuglet services
 
 # The installer links the CLI; the daemons get stable names next to it, so a
@@ -155,6 +166,7 @@
     - dispatcher
     - executor
   notify: Restart debuglet services
+  when: payload_activate | bool
 
 # What this host is running, and what put it there. The two identities are
 # recorded separately: the application comes from the release payload, the
@@ -180,3 +192,4 @@
     owner: root
     group: "{{ debuglet_group }}"
     mode: "0640"
+  when: payload_activate | bool

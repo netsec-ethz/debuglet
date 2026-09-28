@@ -425,7 +425,8 @@ the dispatcher and then the executors, one executor at a time. On each host it:
 2. stops when the database (`state_dir/dispatcher/dispatcher.db` or
    `state_dir/executor-<env>/executor.db`) does not exist, as a deployment
    seeds a new one;
-3. installs the verified candidate payload without restarting the service;
+3. stages the verified candidate without changing command links or the
+   deployment record;
 4. runs the candidate daemon with `-check-database` as the service user
    through `runuser`. This mode only reads the database, so the service keeps
    serving it, and it answers with the candidate's own schema policy. A
@@ -447,8 +448,10 @@ the dispatcher and then the executors, one executor at a time. On each host it:
    user through `runuser`, so the database keeps its owner; the daemon names
    the database it upgrades, applies the release's migrations to it and checks
    the result as a start does;
-10. starts the service again. Run the normal deployment command afterward to
-    install the candidate configuration and verify the complete deployment.
+10. activates only the upgraded daemon's candidate link and starts that
+    service again. Run the normal deployment command afterward to activate
+    the CLI, record the complete deployment, install the candidate
+    configuration and verify the deployment.
 
 Two extra variables change this, both `false` unless given with `-e`:
 
@@ -458,15 +461,15 @@ Two extra variables change this, both `false` unless given with `-e`:
 | `upgrade_accept_data_loss=true` | Apply an upgrade that drops the recorded runs and their logs. Without it such a run fails at step 5. |
 
 A run that stops at steps 1 to 6 leaves the database and the service as they
-were; the candidate payload may already be installed, but the running service
-keeps the release it started with. Restarting the service before the upgrade
-would make it refuse the outdated database. Running the playbook a second time
+were, including their restart targets and the deployment record. The candidate
+may be staged in its version directory, but preflight and migration invoke
+that exact executable without activating it. Running the playbook a second time
 after a successful upgrade reports each database as current and neither
 restarts a service nor takes another backup.
 
 When step 9 fails the play stops on that host: the service stays stopped, the
-backup stays in place, the remaining executors are left untouched, and the
-database is at the last migration that completed. Running the playbook again
+backup and previous daemon link stay in place, the remaining executors are left
+untouched, and the database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
 [Stored state](../docs/operations/configuration.md) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
