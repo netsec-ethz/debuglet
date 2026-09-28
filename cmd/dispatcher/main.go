@@ -433,14 +433,8 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	e.Use(api.RequestLog(logger))
 	e.Use(middleware.Recover())
-	logFormat := `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n"
-	if !cfg.Logging.JSONLogs {
-		logFormat = "${time_rfc3339}\t${method}\t${uri} ${status} ${latency_human} ${remote_ip}\n"
-	}
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Format: logFormat,
-	}))
 	corsConfig := middleware.DefaultCORSConfig
 	corsConfig.ExposeHeaders = []string{api.VersionHeader}
 	if len(cfg.CORS.AllowedOrigins) > 0 {

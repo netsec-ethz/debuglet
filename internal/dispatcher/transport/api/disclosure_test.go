@@ -207,7 +207,7 @@ func TestCredentialFailuresStayOutOfResponsesAndLogs(t *testing.T) {
 	}
 	// The submission logged at Info, so the absence below is observed on a
 	// live log and not on an empty one.
-	if logs.FilterMessage("transaction_id").Len() == 0 {
+	if logs.FilterMessage("Run admitted").Len() == 0 {
 		t.Fatal("the submission logged nothing at Info")
 	}
 	dcAssertPrivate(t, "ordinary flow", logs, nil, token, session.Token, session.CSRFToken, account.AccountKey, account.RecoveryCode)

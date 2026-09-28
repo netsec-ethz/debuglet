@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
@@ -161,6 +163,11 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 
 	d.mu.Unlock()
 	for i := range sreqs {
+		fields := daemonlog.RunFields(ctx, debugletIDS[i], specs[i].ExecutorID, selected[i].owner.Binding())
+		if userID != nil {
+			fields = append(fields, zap.String("user_id", userID.String()))
+		}
+		d.logger.Info("Run admitted", fields...)
 		g.Go(d.uploadToExecutor(subCtx, selected[i], i, debugletIDS[i], specs[i]))
 	}
 
@@ -187,11 +194,11 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			// path of an acknowledged cancellation.
 			if errors.Is(err, ErrAbortRefused) && status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
 				if _, err := d.OnDebugletExit(cleanupCtx, selected[i].mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
-					d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)))
+					d.logger.Error("Batch cleanup cancellation was not recorded", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", true), zap.String("cleanup_outcome", "unknown"))...)
 				}
 				continue
 			}
-			d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(err))
+			d.logger.Error("Batch cleanup cancellation unconfirmed", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", errors.Is(err, ErrCancellationNotRecorded)), zap.String("cleanup_outcome", "unknown"))...)
 			d.markUnreconciled(cleanupCtx, selected[i].owner, id)
 		}
 		return nil, fmt.Errorf("failed to upload debuglets: %w", err)
@@ -390,7 +397,8 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 	return func() error {
 		ctx, finish := mutationCallContext(ctx, selected.mutation)
 		defer finish()
-		d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID.String()), zap.String("executorID", spec.ExecutorID))
+		fields := daemonlog.RunFields(ctx, debugletID, spec.ExecutorID, selected.owner.Binding())
+		d.logger.Debug("Uploading to executor", fields...)
 		client, ok := d.Bidi.GetClientFor(selected.owner)
 		if !ok {
 			return status.Error(codes.FailedPrecondition, "upload session is unavailable")
@@ -422,7 +430,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 			selected.uploadErr = err
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
-		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID.String()), zap.String("executorID", spec.ExecutorID))
+		d.logger.Debug("Upload successful", fields...)
 
 		// Guarded ordinary update: an executor may report the exit before
 		// acknowledging the upload, and that terminal result must not be
@@ -476,6 +484,7 @@ func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debug
 		}
 		return status.Error(codes.Internal, "failed to classify debuglet ownership")
 	}
+	d.logger.Info("Cancellation requested", daemonlog.RunFields(ctx, debugletID, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID})...)
 	// Reserve the registry's current owner before the owned read. The
 	// persisted binding then rejects a same-ID replacement or another
 	// executor's run.
@@ -567,7 +576,7 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 		}
 		return nil
 	}
-	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", zap.String("debugletID", id.String()), zap.String("executor", identity.ExecutorID))
+	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", append(daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID}), zap.String("executor_outcome", "unknown"))...)
 	d.settleTerminal(ctx, &deb, -1)
 	return nil
 }
@@ -597,6 +606,7 @@ func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, 
 	if _, err := d.OnDebugletExit(ctx, mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
 		return fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)
 	}
+	d.logger.Info("Cancellation recorded", daemonlog.RunFields(ctx, id, owner.ExecutorID(), owner.Binding())...)
 	return nil
 }
 

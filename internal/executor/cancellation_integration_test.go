@@ -26,6 +26,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	_ "modernc.org/sqlite"
 )
@@ -74,6 +75,8 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 		}
 	}
 	e, client := newExecutorRPCFixture(t, peer, storage)
+	logCore, logEntries := observer.New(zap.InfoLevel)
+	e.logger = zap.New(logCore)
 	var runtimeCreated atomic.Int32
 	e.newRuntime = func(scheduler.Spec) runtimeDebuglet {
 		runtimeCreated.Add(1)
@@ -152,6 +155,9 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 		t.Fatalf("Abort returned before its terminal-report worker joined: %v", err)
 	default:
 	}
+	if logEntries.FilterMessage("Run cancellation joined").Len() != 0 {
+		t.Fatal("cancellation logged joined before terminal report completed")
+	}
 	var rows int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM debuglets WHERE uuid = ?", id).Scan(&rows); err != nil || rows != 1 {
 		t.Fatalf("executor row retired before callback joined: rows=%d err=%v", rows, err)
@@ -165,6 +171,10 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("Abort failed to join after report release")
+	}
+	joinedLogs := logEntries.FilterMessage("Run cancellation joined").All()
+	if len(joinedLogs) != 1 || joinedLogs[0].ContextMap()["run_id"] != id.String() || joinedLogs[0].ContextMap()["attempt"] != "unknown" {
+		t.Fatalf("missing joined run correlation: %+v", joinedLogs)
 	}
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM debuglets WHERE uuid = ?", id).Scan(&rows); err != nil || rows != 0 {
 		t.Fatalf("successful Abort left restorable row: rows=%d err=%v", rows, err)

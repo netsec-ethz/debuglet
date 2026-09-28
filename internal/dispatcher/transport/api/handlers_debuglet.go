@@ -56,7 +56,6 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 	transactionId := req.TransactionId
 	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
-	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Int64("status", tx.Status))
 	if err != nil || tx.AuthKey != req.AuthKey {
 		return apiErrorFrom(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key", err)
 	}
