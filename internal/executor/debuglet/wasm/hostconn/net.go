@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
@@ -99,3 +100,6 @@ func (h *HostConn) Addr() string {
 }
 
 func (h *HostConn) RemoteAddr() string { return h.conn.RemoteAddr().String() }
+
+func (h *HostConn) SetReadDeadline(t time.Time) error  { return h.conn.SetReadDeadline(t) }
+func (h *HostConn) SetWriteDeadline(t time.Time) error { return h.conn.SetWriteDeadline(t) }

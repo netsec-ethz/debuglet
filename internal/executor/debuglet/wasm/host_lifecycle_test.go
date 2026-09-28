@@ -19,6 +19,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/fallback"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/guestio"
 	"go.uber.org/zap"
 )
 
@@ -49,7 +50,7 @@ func hostTrap(fn func()) (err error) {
 }
 
 func TestHostConnectClosesRejectedConnection(t *testing.T) {
-	for _, phase := range []string{"missing_limit", "constructor_failure", "closed_registry"} {
+	for _, phase := range []string{"missing_limit", "constructor_failure", "closed_registry", "closed_registry_recoverable"} {
 		t.Run(phase, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -92,7 +93,7 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if phase == "closed_registry" {
+			if phase == "closed_registry" || phase == "closed_registry_recoverable" {
 				pc, err := fallback.NewFallbackCount()
 				if err != nil {
 					t.Fatal(err)
@@ -108,12 +109,19 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 			if !mod.Memory().Write(1024, []byte(addr)) {
 				t.Fatal("write guest address")
 			}
-			trap := hostTrap(func() { _ = HostConnect(env, socket.SocketTypeTCP)(ctx, mod, 1024, uint32(len(addr))) })
-			if trap == nil {
-				t.Fatal("rejected connection did not trap")
-			}
-			if phase == "closed_registry" && !errors.Is(trap, net.ErrClosed) {
-				t.Errorf("registry rejection=%v", trap)
+			if phase == "closed_registry_recoverable" {
+				result := HostIODial(env)(ctx, mod, uint32(socket.SocketTypeTCP), 1024, uint32(len(addr)), 0)
+				if uint32(result>>32) != guestio.Closed {
+					t.Fatalf("registry rejection=%x", result)
+				}
+			} else {
+				trap := hostTrap(func() { _ = HostConnect(env, socket.SocketTypeTCP)(ctx, mod, 1024, uint32(len(addr))) })
+				if trap == nil {
+					t.Fatal("rejected connection did not trap")
+				}
+				if phase == "closed_registry" && !errors.Is(trap, net.ErrClosed) {
+					t.Errorf("registry rejection=%v", trap)
+				}
 			}
 			select {
 			case <-done:
