@@ -41,7 +41,10 @@ func TestBootstrapFresh(t *testing.T) {
 			if role == Dispatcher {
 				assertSchema(t, db, map[string]string{
 					"debuglets":                  "id uuid start_time end_time usage ceil_bw executor_id addresses state error transaction_id order_id dispatcher_incarnation session_id",
-					"debuglet_logs":              "id debuglet_id timestamp output",
+					"debuglet_logs":              "id debuglet_id timestamp output source_sequence",
+					"debuglet_output":            "debuglet_id output_version owner_fingerprint account_id committed_sequence byte_count frame_count last_log_id final_sequence final_cursor status reason",
+					"output_account_usage":       "account_id charged_bytes frame_count",
+					"output_node_usage":          "singleton charged_bytes frame_count",
 					"transactions":               "id auth_key price method expires_at hash currency status",
 					"transaction_states":         "key value",
 					"earnings":                   "executor_id currency total_income current_balance sui_wallet_address",
@@ -54,7 +57,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"executor_enrollments":       "executor_id fingerprint enrolled_at",
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
 					"oauth_identities":           "provider subject user_id login created_at updated_at",
-				}, []string{"debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+				}, []string{"debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{
@@ -62,7 +65,10 @@ func TestBootstrapFresh(t *testing.T) {
 					"debuglet_logs":  "id debuglet_id timestamp output",
 					"debuglet_exits": "debuglet_id dispatcher_incarnation session_id exit_code error_message recorded_at attempts last_attempt_at last_error rejected",
 					"tesla_chains":   "generation anchor epoch_base delay_ns chain_length created_at",
-				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5})
+					"output_runs":    "run_id dispatcher_incarnation session_id output_version last_sequence acknowledged_sequence emitted_bytes queued_bytes queued_frames status reason end_acknowledged receipt_sequence receipt_reason",
+					"output_frames":  "run_id sequence timestamp_ns output",
+					"output_usage":   "singleton charged_bytes",
+				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6})
 				executorSchemaRoundTrip(t, db)
 			}
 			if err := db.Close(); err != nil {

@@ -53,13 +53,18 @@ func (s *local) launch(path string, args []string, daemon bool) (*ownedChild, er
 	s.children = append(s.children, owned)
 	return owned, nil
 }
+func localDispatcherConfiguration(version, db string) map[string]any {
+	cfg := demo.DispatcherConfiguration(version, db)
+	cfg["scheduler"].(map[string]any)["executor_timeout"] = 10
+	return cfg
+}
+
 func (s *local) StartDispatcher(ctx context.Context) (string, error) {
 	db := filepath.Join(s.dir, "dispatcher.sqlite")
 	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Dispatcher, db); err != nil {
 		return "", err
 	}
-	cfg := demo.DispatcherConfiguration(s.opts.Assets.Manifest.Version, db)
-	cfg["scheduler"].(map[string]any)["executor_timeout"] = 10
+	cfg := localDispatcherConfiguration(s.opts.Assets.Manifest.Version, db)
 	configPath, readyPath := filepath.Join(s.dir, "dispatcher.toml"), filepath.Join(s.dir, "dispatcher-ready.json")
 	if err := demo.WriteConfig(configPath, cfg); err != nil {
 		return "", err

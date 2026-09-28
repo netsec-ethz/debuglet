@@ -440,8 +440,11 @@ func strictCLIDocument(data []byte, out any) error {
 		_, err := strictFields(data, []string{"id", "state", "error", "executor_id"}, nil, nil)
 		return err
 	case *client.LogPage:
-		fields, err := strictFields(data, []string{"state", "error", "after", "logs", "has_more"}, nil, map[string]bool{"logs": true})
+		fields, err := strictFields(data, []string{"state", "error", "after", "logs", "has_more", "output"}, nil, map[string]bool{"logs": true})
 		if err != nil {
+			return err
+		}
+		if _, err := strictFields(fields["output"], []string{"state", "final_cursor", "loss_reason"}, nil, map[string]bool{"final_cursor": true}); err != nil {
 			return err
 		}
 		var entries []json.RawMessage

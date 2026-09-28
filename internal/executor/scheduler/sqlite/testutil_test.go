@@ -18,7 +18,7 @@ import (
 // cases construct their own guards instead.
 func newTestStorage(t *testing.T, db *sql.DB, eligibility scheduler.RestoreEligibility) *SqliteStorage {
 	t.Helper()
-	s, err := NewStorage(db, eligibility, scheduler.Admission{Insert: admissionPass, Start: admissionPass})
+	s, err := NewStorage(db, nil, eligibility, scheduler.Admission{Insert: admissionPass, Start: admissionPass})
 	if err != nil {
 		t.Fatal(err)
 	}

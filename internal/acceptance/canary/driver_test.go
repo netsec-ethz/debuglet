@@ -426,3 +426,30 @@ func TestEvidencePersistenceFailureIsNotSuccess(t *testing.T) {
 		t.Fatalf("persistence failure accepted: %+v %v writes=%d", ev, err, writes)
 	}
 }
+
+func TestLogPageOutputDocumentKeepsExactFields(t *testing.T) {
+	for _, tc := range []struct {
+		name, output string
+		valid        bool
+	}{
+		{"pending", `{"state":"pending","final_cursor":null,"loss_reason":""}`, true},
+		{"complete", `{"state":"complete","final_cursor":0,"loss_reason":""}`, true},
+		{"truncated", `{"state":"truncated","final_cursor":0,"loss_reason":"output_limit"}`, true},
+		{"null", `null`, false},
+		{"missing cursor", `{"state":"pending","loss_reason":""}`, false},
+		{"null state", `{"state":null,"final_cursor":null,"loss_reason":""}`, false},
+		{"null reason", `{"state":"pending","final_cursor":null,"loss_reason":null}`, false},
+		{"case override", `{"state":"truncated","State":"complete","final_cursor":0,"loss_reason":"output_limit"}`, false},
+		{"duplicate", `{"state":"pending","state":"complete","final_cursor":0,"loss_reason":""}`, false},
+		{"unknown field", `{"state":"complete","final_cursor":0,"loss_reason":"","other":true}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{"state":"RunStateExited","error":"","after":0,"logs":[],"has_more":false,"output":` + tc.output + `}`)
+			var page client.LogPage
+			err := decodeCommand(commandResult{Started: true, Stdout: raw}, &page)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t error=%v", tc.valid, err)
+			}
+		})
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
@@ -77,6 +78,10 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		Currency:    e.cfg.Pricing.Currency,
 		SuiWallet:   &e.cfg.Pricing.SuiWallet,
 	}
+	if e.output != nil && req.GetOutputVersion() == pb.OutputVersion {
+		resp.OutputVersion = pb.OutputVersion
+	}
+	e.outputVersion.Store(resp.OutputVersion)
 	// Presented until the dispatcher has bound this node's certificate to the
 	// executor ID; an already enrolled node sends nothing.
 	if e.cfg.Credentials.EnrollmentToken != "" {
@@ -112,6 +117,7 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 		startTime = &tmp
 	}
 	spec := scheduler.Spec{
+		OutputVersion: e.outputVersion.Load(),
 		Binding:       binding,
 		DebugletID:    id,
 		TransactionID: req.GetTransactionId(),
@@ -134,7 +140,13 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	if e.teslaSchedule.Exhausted(time.Now()) {
 		return nil, status.Error(codes.FailedPrecondition, "TESLA key chain exhausted: this executor admits no new runs until it is restarted")
 	}
+	if e.outputFailed != nil && e.outputFailed.Load() {
+		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")
+	}
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
+		if errors.Is(err, outputstore.ErrSpoolLimit) {
+			return nil, status.Error(codes.ResourceExhausted, "executor output storage limit reached")
+		}
 		return nil, err
 	}
 

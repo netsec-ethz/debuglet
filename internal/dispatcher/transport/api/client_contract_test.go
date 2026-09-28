@@ -447,8 +447,8 @@ func TestClientHTTPContract(t *testing.T) {
 		}
 
 		code, stdout, stderr := f.runCLI("--endpoint", f.root.URL, "--output", "json", "logs", "--follow", "--limit", "1", sub.IDs[0])
-		if code != 0 {
-			t.Fatalf("dbl logs --follow exit %d: %s", code, stderr)
+		if code != 1 || !bytes.Contains(stderr, []byte("completeness is unknown")) {
+			t.Fatalf("legacy dbl logs --follow exit %d: %s", code, stderr)
 		}
 		var pages []client.LogPage
 		scanner := bufio.NewScanner(bytes.NewReader(stdout))

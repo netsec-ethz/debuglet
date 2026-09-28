@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 9
-	MinimumExecutorVersion   int64 = 5
+	MinimumDispatcherVersion int64 = 10
+	MinimumExecutorVersion   int64 = 6
 )
 
 // Policy is the schema contract of one database for this build.
@@ -71,7 +71,10 @@ func PolicyFor(role Role) (Policy, error) {
 			"transactions":       nil,
 		}, Tables: map[string][]string{
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
-			"debuglet_logs":              {"debuglet_id", "output"},
+			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
+			"debuglet_output":            {"debuglet_id", "output_version", "owner_fingerprint", "account_id", "committed_sequence", "final_sequence", "final_cursor", "status", "reason"},
+			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
+			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
 			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
 			"debuglet_users":             {"debuglet_id", "user_id"},
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
@@ -96,6 +99,9 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglet_logs":  {"debuglet_id", "output"},
 			"debuglet_exits": {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
 			"tesla_chains":   {"generation", "anchor", "epoch_base", "delay_ns", "chain_length"},
+			"output_runs":    {"run_id", "dispatcher_incarnation", "session_id", "output_version", "last_sequence", "acknowledged_sequence", "emitted_bytes", "queued_bytes", "queued_frames", "status", "reason", "end_acknowledged", "receipt_sequence", "receipt_reason"},
+			"output_frames":  {"run_id", "sequence", "timestamp_ns", "output"},
+			"output_usage":   {"singleton", "charged_bytes"},
 		}}, nil
 	default:
 		return Policy{}, fmt.Errorf("unknown database role %q", role)

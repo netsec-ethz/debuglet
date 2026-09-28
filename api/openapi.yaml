@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.5"
+  version: "1.6"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -726,7 +726,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "503":
-          description: "The transaction is backed by a chain payment method while blockchain payments are disabled (payments_disabled), or an operator has stopped the admission of new submissions on this dispatcher (service_unavailable). Nothing is admitted or scheduled either way; a payment order that was already paid is refunded, which spends it, so the same batch is refused from then on. When the refund could not be performed the message says the order is still paid and the batch can be submitted again once admission resumes."
+          description: "The transaction is backed by a chain payment method while blockchain payments are disabled (payments_disabled), or an operator has stopped the admission of new submissions on this dispatcher (service_unavailable). Nothing is admitted or scheduled either way; a payment order that was already paid is refunded, which spends it, so the same batch is refused from then on. When the refund could not be performed the message says the order is still paid and the batch can be submitted again once admission resumes. Output storage capacity exhaustion also answers service_unavailable before upload; inspect the payment order before retrying."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -993,6 +993,7 @@ paths:
     get:
       operationId: "getDebugletLogs"
       summary: "Read one page of a debuglet's stored output."
+      description: "Entries, workload state and output finality come from one database snapshot. A terminal workload does not imply complete output. Output metadata was added in API 1.6; older servers omit it."
       parameters:
         - name: "id"
           in: "path"
@@ -2288,6 +2289,7 @@ components:
         - after
         - logs
         - has_more
+        - output
       properties:
         state:
           type: string
@@ -2308,6 +2310,28 @@ components:
         has_more:
           type: boolean
           description: "True when the page was filled to the limit. A full page may report true although no later entry exists."
+        output:
+          $ref: "#/components/schemas/OutputStatus"
+    OutputStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - final_cursor
+        - loss_reason
+      properties:
+        state:
+          type: string
+          description: "Open string: unknown for legacy output, pending while durable delivery is unfinished, complete for the entire output, or truncated for a retained prefix. Unknown future values never establish completeness. Independent of workload state."
+        final_cursor:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: "Immutable final log ID for complete or truncated output; zero for an empty prefix. Null for unknown or pending output. Drain through this ID before finishing, even after workload exit."
+        loss_reason:
+          type: string
+          description: "At most 64 bytes. Empty except for truncated output: output_limit, spool_limit, storage_limit, executor_interrupted or producer_failed. Future reasons remain incomplete. This is a fixed classification, never guest or host error text."
     DebugletLogEntry:
       type: object
       additionalProperties: false

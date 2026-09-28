@@ -133,7 +133,7 @@ WHERE uuid = ?3
   AND dispatcher_incarnation = ?5
   AND session_id = ?6
   AND dispatcher_incarnation <> '' AND session_id <> ''
-RETURNING id, debuglet_id, timestamp, output
+RETURNING id, debuglet_id, timestamp, output, source_sequence
 `
 
 type CreateDebugletLogParams struct {
@@ -160,6 +160,7 @@ func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogPa
 		&i.DebugletID,
 		&i.Timestamp,
 		&i.Output,
+		&i.SourceSequence,
 	)
 	return i, err
 }
@@ -254,7 +255,7 @@ func (q *Queries) GetOwnedDebugletByUUID(ctx context.Context, arg GetOwnedDebugl
 }
 
 const listDebugletLogs = `-- name: ListDebugletLogs :many
-SELECT debuglet_logs.id, debuglet_logs.debuglet_id, debuglet_logs.timestamp, debuglet_logs.output
+SELECT debuglet_logs.id, debuglet_logs.debuglet_id, debuglet_logs.timestamp, debuglet_logs.output, debuglet_logs.source_sequence
 FROM debuglet_logs
 INNER JOIN debuglets ON debuglet_logs.debuglet_id = debuglets.id
 WHERE uuid = ? AND debuglet_logs.id > ?
@@ -282,6 +283,7 @@ func (q *Queries) ListDebugletLogs(ctx context.Context, arg ListDebugletLogsPara
 			&i.DebugletID,
 			&i.Timestamp,
 			&i.Output,
+			&i.SourceSequence,
 		); err != nil {
 			return nil, err
 		}

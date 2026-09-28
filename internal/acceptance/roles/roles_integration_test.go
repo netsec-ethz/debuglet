@@ -205,6 +205,7 @@ func TestInstalledRoles(t *testing.T) {
 	report.FirstRun = first
 	original := awaitOutput(t, ctx, c, first, hello+"first-role\n")
 	assertCLILogs(t, cli(clientConfig, "logs", first), original)
+	assertInstalledCompleteFollow(t, cli(clientConfig, "logs", "--follow", "--limit", "1", first), original)
 	assertRunCorrelation(t, ctx, c, d, e, filepath.Join(root, "share", "debuglet", "hello.wasm"))
 
 	goPath := os.Getenv("GO")
@@ -259,6 +260,7 @@ func TestInstalledRoles(t *testing.T) {
 		t.Fatal("restart changed stored output")
 	}
 	assertCLILogs(t, cli(clientConfig, "logs", first), retained)
+	assertInstalledCompleteFollow(t, cli(clientConfig, "logs", "--follow", "--limit", "1", first), retained)
 	last := submit("", "after-restart", false)
 	if last == first {
 		t.Fatal("restart reused a run UUID")

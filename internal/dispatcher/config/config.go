@@ -21,6 +21,7 @@ type DispatcherConfig struct {
 	Sui         SuiConfig         `toml:"sui"`
 	CORS        CORSConfig        `toml:"cors"`
 	GitHubOAuth GitHubOAuthConfig `toml:"github_oauth"`
+	Output      OutputConfig      `toml:"output"`
 }
 
 type GitHubOAuthConfig struct {
@@ -135,6 +136,7 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 // files or discovering host resources. The document identifies supplied keys.
 func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) {
 	var cfg DispatcherConfig
+	cfg.Output = DefaultOutputConfig()
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
 		return nil, document, err
@@ -158,6 +160,9 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 // keys are applied by LoadConfig before this runs, so every value seen here is
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
+	if err := cfg.Output.Validate(); err != nil {
+		return err
+	}
 	if cfg.Server.BindHost != "" {
 		// An empty bind host keeps the documented "all interfaces" binding.
 		if err := configcheck.Host("server.bind_host", cfg.Server.BindHost); err != nil {

@@ -135,7 +135,7 @@ func fencingRun(t *testing.T, d *Dispatcher, owner *rpc.SessionOwner) database.D
 func TestControlMutationSQLDrainAcrossSuccessiveReplacements(t *testing.T) {
 	for _, tc := range []struct{ name, query string }{
 		{"state", "UpdateDebugletState"}, {"allocate", "GetOwnedDebugletByUUID"},
-		{"exit", "CompleteDebuglet"}, {"log", "CreateDebugletLog"},
+		{"exit", "CompleteDebuglet"}, {"log", "CreateSequencedDebugletLog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			release, open := siGate()

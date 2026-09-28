@@ -150,6 +150,10 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 				return nil, fmt.Errorf("failed to associate debuglet with user in database: %w", err)
 			}
 		}
+		if err := d.createOutputMetadata(ctx, qtx, debugletIDS[i], selected[i].owner.OutputVersion(), selected[i].owner.CredentialFingerprint()); err != nil {
+			failLocked()
+			return nil, fmt.Errorf("reserve output storage: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -195,6 +199,8 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			if errors.Is(err, ErrAbortRefused) && status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
 				if _, err := d.OnDebugletExit(cleanupCtx, selected[i].mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
 					d.logger.Error("Batch cleanup cancellation was not recorded", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", true), zap.String("cleanup_outcome", "unknown"))...)
+				} else if err := d.finishRefusedOutput(cleanupCtx, selected[i].mutation, id); err != nil {
+					d.logger.Error("Failed to finalize refused debuglet output", zap.String("debugletID", id.String()), zap.Error(err))
 				}
 				continue
 			}

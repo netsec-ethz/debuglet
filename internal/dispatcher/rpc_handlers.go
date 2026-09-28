@@ -393,6 +393,7 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 	}
 	ctx := stream.Context()
 	var runID uuid.UUID
+	var writer outputWriter
 	identified := false
 	for {
 		// An idle receive holds no mutation; the transport joins this handler.
@@ -402,9 +403,7 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 		}
 		if err != nil {
 			if identified && ctx.Err() == nil && status.Code(err) != codes.Canceled {
-				// A failed output transport is no evidence of how the guest
-				// ended; its executor reports that outcome. The run keeps the
-				// state its reports give it, and only the delivery is logged.
+				// Delivery failure does not establish a guest terminal outcome.
 				d.logger.Warn("Debuglet output stream failed", zap.String("debugletID", runID.String()), zap.Error(err))
 			}
 			return err
@@ -413,44 +412,60 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 		if err != nil {
 			return status.Error(codes.FailedPrecondition, "stream session is unavailable")
 		}
-		frameErr := func() error {
+		receipt, frameErr := func() (*pb.DebugletStreamResponse, error) {
 			defer mutation.Finish()
-			frameCtx := mutation.Context()
 			switch msg := in.GetMsg().(type) {
 			case *pb.DebugletStreamRequest_Ident:
 				if identified || msg.Ident == nil {
-					return status.Error(codes.InvalidArgument, "unexpected stream identity")
+					return nil, status.Error(codes.InvalidArgument, "unexpected stream identity")
+				}
+				if msg.Ident.GetExecutorId() != "" && msg.Ident.GetExecutorId() != owner.ExecutorID() {
+					return nil, status.Error(codes.PermissionDenied, "executor identity does not match session")
 				}
 				id, err := parseRunID(msg.Ident.GetDebugletId())
 				if err != nil {
-					return err
+					return nil, err
 				}
-				if _, err := d.ownedDebuglet(frameCtx, owner, id); err != nil {
-					return err
-				}
-				runID, identified = id, true
-				return nil
-			case *pb.DebugletStreamRequest_Output:
-				if !identified || msg.Output == nil || msg.Output.GetTimestamp() == nil || msg.Output.GetTimestamp().CheckValid() != nil {
-					return status.Error(codes.InvalidArgument, "invalid stream output frame")
-				}
-				_, err := database.New(d.db).CreateDebugletLog(frameCtx, database.CreateDebugletLogParams{
-					Uuid: runID, Timestamp: models.NewUTCTime(msg.Output.GetTimestamp().AsTime()), Output: msg.Output.GetOutput(),
-					ExecutorID: owner.ExecutorID(), DispatcherIncarnation: owner.Binding().Incarnation, SessionID: owner.Binding().SessionID,
-				})
-				if errors.Is(err, sql.ErrNoRows) {
-					_, err = d.ownedDebuglet(frameCtx, owner, runID)
-				}
+				writer, err = outputWriterFor(owner, msg.Ident.GetOriginalBinding())
 				if err != nil {
-					return err
+					return nil, err
 				}
-				return nil
+				receipt, err := d.storeOutput(mutation.Context(), writer, id, nil, nil)
+				if err == nil {
+					runID, identified = id, true
+				}
+				return receipt, err
+			case *pb.DebugletStreamRequest_Output:
+				if !identified || msg.Output == nil {
+					return nil, status.Error(codes.InvalidArgument, "unexpected output frame")
+				}
+				return d.storeOutput(mutation.Context(), writer, runID, msg.Output, nil)
+			case *pb.DebugletStreamRequest_End:
+				if !identified || msg.End == nil {
+					return nil, status.Error(codes.InvalidArgument, "unexpected output end")
+				}
+				return d.storeOutput(mutation.Context(), writer, runID, nil, msg.End)
 			default:
-				return status.Error(codes.InvalidArgument, "unknown stream frame")
+				return nil, status.Error(codes.InvalidArgument, "unknown stream frame")
 			}
 		}()
 		if frameErr != nil {
-			return frameErr
+			if status.Code(frameErr) != codes.Unknown {
+				return frameErr
+			}
+			d.logger.Warn("Debuglet output storage failed", zap.String("debugletID", runID.String()), zap.Error(frameErr))
+			return status.Error(codes.Unavailable, "output storage unavailable")
+		}
+		if writer.version == pb.OutputVersion {
+			if err := stream.Send(receipt); err != nil {
+				return err
+			}
+		}
+		if receipt.End != nil {
+			if writer.version == 0 {
+				return status.Error(codes.ResourceExhausted, "output storage limit reached")
+			}
+			return nil
 		}
 	}
 }

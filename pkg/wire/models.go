@@ -59,6 +59,16 @@ type LogPage[Binary ~string | ~[]byte] struct {
 	After   int64              `json:"after"`
 	Logs    []LogEntry[Binary] `json:"logs"`
 	HasMore bool               `json:"has_more"`
+	Output  OutputStatus       `json:"output"`
+}
+
+// OutputStatus describes the stored output independently of the workload state.
+// State is open: unknown future values do not establish completeness. A final
+// cursor is present only for complete or truncated output, and is zero if empty.
+type OutputStatus struct {
+	State       string `json:"state"`
+	FinalCursor *int64 `json:"final_cursor"`
+	LossReason  string `json:"loss_reason"`
 }
 
 // LogEntry is one stored output chunk. Output is base64 text on the server and
