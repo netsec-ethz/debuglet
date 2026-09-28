@@ -211,24 +211,8 @@ func loadConfig(path string, defaultInterface func() (*net.Interface, error)) (*
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
 
-	var cfg ExecutorConfig
-	document, err := configcheck.Decode(data, &cfg)
+	cfg, _, err := DecodeConfig(data)
 	if err != nil {
-		return nil, err
-	}
-
-	// defaults
-	if !document.Set("logging", "log_level") {
-		cfg.Logging.LogLevel = DefaultLogLevel
-	}
-	if !document.Set("resources", "max_debuglets") {
-		cfg.Resources.MaxDebuglets = DefaultMaxDebuglets
-	}
-	if cfg.Dispatcher.YamuxAddr == "" {
-		cfg.Dispatcher.YamuxAddr = cfg.Dispatcher.Addr
-	}
-
-	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -244,7 +228,35 @@ func loadConfig(path string, defaultInterface func() (*net.Interface, error)) (*
 		}
 	}
 
-	return &cfg, nil
+	return cfg, nil
+}
+
+// DecodeConfig applies startup defaults and validation without connecting to
+// a network or discovering the default interface. LoadConfig resolves an
+// omitted interface afterwards, when the daemon starts.
+func DecodeConfig(data []byte) (*ExecutorConfig, configcheck.Document, error) {
+	var cfg ExecutorConfig
+	document, err := configcheck.Decode(data, &cfg)
+	if err != nil {
+		return nil, document, err
+	}
+
+	// defaults
+	if !document.Set("logging", "log_level") {
+		cfg.Logging.LogLevel = DefaultLogLevel
+	}
+	if !document.Set("resources", "max_debuglets") {
+		cfg.Resources.MaxDebuglets = DefaultMaxDebuglets
+	}
+	if cfg.Dispatcher.YamuxAddr == "" {
+		cfg.Dispatcher.YamuxAddr = cfg.Dispatcher.Addr
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, document, err
+	}
+
+	return &cfg, document, nil
 }
 
 // Validate reports the first unusable configuration field. Defaults for omitted
