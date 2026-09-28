@@ -11,3 +11,25 @@ install_candidate "$prefix" .cache/ci/package-install.log "${CI_PACKAGE_DIR:-.ca
 # The same exact candidate must be safely rerunnable.
 sh "$(dirname "$archive")/install.sh" --archive "$archive" --checksums "$checksums" \
     --version "$version" --prefix "$prefix" >> .cache/ci/package-install.log
+
+# Role packages coexist at one prefix and only publish their own command link.
+role_prefix="$work/roles with spaces"
+for component in cli executor dispatcher; do
+    package_dir="${CI_PACKAGE_DIR:-.cache/ci/packages}/$component"
+    role_archive="$package_dir/debuglet-$component-$version-linux-amd64.tar.gz"
+    (cd "$package_dir" && sha256sum --check --strict "SHA256SUMS-$component")
+    for attempt in 1 2; do
+        sh "$package_dir/install-$component.sh" --archive "$role_archive" --checksums "$package_dir/SHA256SUMS-$component" \
+            --version "$version" --prefix "$role_prefix" >> .cache/ci/package-install.log
+    done
+    "${GO:-go}" run -mod=readonly ./internal/packaging verify \
+        -installed-root "$role_prefix/lib/debuglet/$component/$version" \
+        > ".cache/ci/package-install-$component.json"
+    binary=debuglet-$component
+    [[ "$component" != cli ]] || binary=dbl
+    "$role_prefix/bin/$binary" --help >> .cache/ci/package-install.log 2>&1
+    [[ $(find "$role_prefix/lib/debuglet/$component/$version/bin" -type f | wc -l) == 1 ]]
+done
+for binary in dbl debuglet-executor debuglet-dispatcher; do
+    [[ -x "$role_prefix/bin/$binary" ]]
+done

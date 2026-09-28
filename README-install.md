@@ -1,9 +1,9 @@
 # Install Debuglet
 
-Debuglet releases support Linux amd64. Download the archive, `install.sh`, and `SHA256SUMS` from the [latest release](https://github.com/netsec-ethz/debuglet/releases/latest), then install to your user directory:
+Debuglet releases support Linux amd64. For the full bundle, download the archive, `install.sh`, and `SHA256SUMS` from the [latest release](https://github.com/netsec-ethz/debuglet/releases/latest), then install to your user directory:
 
 ```sh
-archive=$(printf '%s\n' ./debuglet-*-linux-amd64.tar.gz)
+archive=$(printf '%s\n' ./debuglet-v*-linux-amd64.tar.gz)
 version=${archive#./debuglet-}
 version=${version%-linux-amd64.tar.gz}
 sh ./install.sh --archive "$archive" --checksums ./SHA256SUMS \
@@ -46,7 +46,36 @@ make ci-build
 make ci-package
 ```
 
-The resulting package is under `.cache/ci/packages/`. Use it with the same installer command above.
+The full bundle is under `.cache/ci/packages/`. Use it with the same installer command above. The build also produces the component packages below.
+
+## Install one component
+
+Component packages are available from current source builds and are intended for releases after v0.2.0. The v0.2.0 release contains only the full bundle.
+
+| Audience | Component | Source build directory | Installed command |
+| --- | --- | --- | --- |
+| Client users | `cli` | `.cache/ci/packages/cli/` | `dbl` |
+| Executor operators | `executor` | `.cache/ci/packages/executor/` | `debuglet-executor` |
+| Dispatcher operators | `dispatcher` | `.cache/ci/packages/dispatcher/` | `debuglet-dispatcher` |
+
+Choose a component, then run this from the source checkout after building:
+
+```sh
+component=cli # or executor or dispatcher
+cd ".cache/ci/packages/$component"
+archive=$(printf '%s\n' ./debuglet-"$component"-v*-linux-amd64.tar.gz)
+version=${archive#./debuglet-$component-}
+version=${version%-linux-amd64.tar.gz}
+sh "./install-$component.sh" --archive "$archive" \
+  --checksums "./SHA256SUMS-$component" --version "$version" --prefix "$HOME/.local"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Each directory contains only its archive, installer and checksums. These filenames are also unique release asset names. Role installations share a prefix safely: upgrading one changes only its own command link. The daemon packages include their SQLite support and embedded migrations; they do not require `goose` or `sqlc` at runtime. Daemons still need configuration and a prepared database; see the operator guide below.
+
+Use the full bundle for `dbl demo`, `dbl up`, `dbl dispatcher up`, `dbl executor up`, and bundled samples. The CLI-only package is for connecting to an existing dispatcher and submitting your own WASM files.
+
+Docker builds use `deploy/docker/debuglet.Dockerfile` targets `cli`, `executor` and `dispatcher` for one component, or `full` for local tools and samples. The local Compose fixture seeds its databases with the full image. With its dispatcher running, client commands use `docker compose run --rm tools --config /state/dbl.toml ...`; the daemon images do not contain `dbl`.
 
 ## For operators
 

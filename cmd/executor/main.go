@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
@@ -16,6 +17,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"go.uber.org/zap"
@@ -29,12 +31,25 @@ import (
 )
 
 func main() {
+	version := flag.Bool("version", false, "Print build identity as JSON and exit")
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")
 	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
 	acceptDataLoss := flag.Bool("accept-data-loss", false, "With -upgrade-database, apply a migration that drops the recorded runs and their logs")
 	flag.Parse()
+	if *version {
+		modified := false
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.modified" {
+					modified = setting.Value == "true"
+				}
+			}
+		}
+		fmt.Printf("{\"module\":%q,\"version\":%q,\"revision\":%q,\"modified\":%t}\n", "github.com/netsec-ethz/debuglet", buildinfo.Version, buildinfo.Revision, modified)
+		return
+	}
 
 	if *checkDatabase && (*upgrade || *acceptDataLoss) {
 		fmt.Fprintln(os.Stderr, "executor: -check-database cannot be combined with another administration flag")

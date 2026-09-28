@@ -24,11 +24,35 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // PayloadModes returns a fresh map, so callers cannot mutate the contract.
 func PayloadModes() map[string]fs.FileMode {
-	return map[string]fs.FileMode{
+	return PayloadModesFor("")
+}
+
+// PayloadModesFor returns the exact file set for a full bundle (empty component)
+// or one role. An unknown component has no payload.
+func PayloadModesFor(component string) map[string]fs.FileMode {
+	modes := map[string]fs.FileMode{
 		"bin/dbl": 0755, "bin/debuglet-dispatcher": 0755, "bin/debuglet-executor": 0755,
 		"share/debuglet/demo.wasm": 0644, "share/debuglet/hello.wasm": 0644,
 		ManifestPath: 0644, "LICENSE": 0644, "README-install.md": 0644,
 	}
+	if component == "" {
+		return modes
+	}
+	binary := ""
+	switch component {
+	case "cli":
+		binary = "bin/dbl"
+	case "executor", "dispatcher":
+		binary = "bin/debuglet-" + component
+	default:
+		return nil
+	}
+	for name := range modes {
+		if name != binary && name != ManifestPath && name != "LICENSE" && name != "README-install.md" {
+			delete(modes, name)
+		}
+	}
+	return modes
 }
 
 func ValidVersion(version string) bool {
@@ -43,7 +67,7 @@ func DecodeManifest(data []byte) (Manifest, error) {
 	if err != nil {
 		return m, err
 	}
-	modes := PayloadModes()
+	modes := PayloadModesFor(m.Component)
 	delete(modes, ManifestPath)
 	if len(m.Files) != len(modes) {
 		return m, errors.New("installation manifest has an unexpected file set")
@@ -71,7 +95,14 @@ func DecodeManifestMetadata(data []byte) (Manifest, error) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return m, err
 	}
-	if len(fields) != 10 {
+	expectedKeys := 10
+	if component, ok := fields["component"]; ok {
+		expectedKeys++
+		if bytes.Equal(bytes.TrimSpace(component), []byte("null")) {
+			return m, errors.New("installation component must not be null")
+		}
+	}
+	if len(fields) != expectedKeys {
 		return m, errors.New("installation metadata must contain exactly the canonical keys")
 	}
 	for _, key := range []string{"schema_version", "version", "source_sha", "dirty", "go_version", "goos", "goarch", "guest_abi", "files", "build_pipeline_url"} {
@@ -94,7 +125,9 @@ func DecodeManifestMetadata(data []byte) (Manifest, error) {
 	if err := dec.Decode(&m); err != nil {
 		return m, fmt.Errorf("decode installation manifest: %w", err)
 	}
-	if m.SchemaVersion != 1 || !ValidVersion(m.Version) || !ValidSourceSHA(m.SourceSHA) || m.Dirty || m.GoVersion != Toolchain || m.GOOS != "linux" || m.GOARCH != "amd64" || m.GuestABI != GuestABI {
+	_, hasComponent := fields["component"]
+	validSchema := m.SchemaVersion == 1 && !hasComponent || m.SchemaVersion == 2 && hasComponent && m.Component != "" && PayloadModesFor(m.Component) != nil
+	if !validSchema || !ValidVersion(m.Version) || !ValidSourceSHA(m.SourceSHA) || m.Dirty || m.GoVersion != Toolchain || m.GOOS != "linux" || m.GOARCH != "amd64" || m.GuestABI != GuestABI {
 		return m, errors.New("unsupported or incomplete installation identity")
 	}
 	return m, nil
@@ -233,9 +266,6 @@ func Verify(root string) (Manifest, error) {
 	if err != nil {
 		return m, err
 	}
-	if len(seen) != len(modes) {
-		return m, errors.New("installation is missing required files")
-	}
 	f, err := os.Open(filepath.Join(root, filepath.FromSlash(ManifestPath)))
 	if err != nil {
 		return m, err
@@ -248,6 +278,15 @@ func Verify(root string) (Manifest, error) {
 	m, err = DecodeManifest(data)
 	if err != nil {
 		return m, err
+	}
+	modes = PayloadModesFor(m.Component)
+	if len(seen) != len(modes) {
+		return m, errors.New("installation has an unexpected file set")
+	}
+	for name := range seen {
+		if _, ok := modes[name]; !ok {
+			return m, fmt.Errorf("unexpected installation file for component: %s", name)
+		}
 	}
 	for name, want := range m.Files {
 		got, err := HashFile(filepath.Join(root, filepath.FromSlash(name)))
