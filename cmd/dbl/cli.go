@@ -38,6 +38,10 @@ const usageText = `Usage:
 Commands:
   demo                                  run an installed local measurement
   up [--state-dir DIR] [--port 9000]      keep a local environment running
+  backup --state-dir DIR --destination BACKUP --offline
+                                        snapshot stopped foreground state
+  restore --backup BACKUP --state-dir NEWDIR
+                                        restore separate state without starting it
   service install|start|stop|status|uninstall --role ROLE [--name NAME]
                                         manage an installed role as a service
   drain --role ROLE [--name NAME] [--resume]
