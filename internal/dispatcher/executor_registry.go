@@ -319,10 +319,13 @@ type realExpiryTicker struct{ *time.Ticker }
 
 func (t realExpiryTicker) C() <-chan time.Time { return t.Ticker.C }
 
+// runExpiry is the sole expiry loop: on each tick it retires the owners whose
+// lease has run out and then classifies the runs whose window has ended.
 func (d *Dispatcher) runExpiry(done chan struct{}) {
 	defer close(done)
 	ticker := d.newExpiryTicker(d.leaseTiming.WatchdogInterval)
 	defer ticker.Stop()
+	var lastSweep time.Time
 	for {
 		select {
 		case <-d.expiryStop:
@@ -331,6 +334,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 			for _, owner := range d.expiryCandidates() {
 				d.expireOwner(owner)
 			}
+			lastSweep = d.sweepEndedWindows(lastSweep)
 		}
 	}
 }
