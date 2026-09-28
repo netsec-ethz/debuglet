@@ -5,10 +5,12 @@ package api
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"math"
 	"net"
 	"net/http"
@@ -19,42 +21,20 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// VersionResponse reports the version identities of a dispatcher. They are
-// independent: api_version is the HTTP contract this dispatcher serves,
-// binary_version identifies the build and protocol_version is the executor
-// control protocol, which no HTTP client speaks. Version is the dispatcher's
-// configured string, retained for clients written before the contract was
-// versioned.
-type VersionResponse struct {
-	Version         string   `json:"version"`
-	APIVersion      string   `json:"api_version"`
-	APIVersions     []string `json:"api_versions"`
-	BinaryVersion   string   `json:"binary_version"`
-	BinaryRevision  string   `json:"binary_revision,omitempty"`
-	ProtocolVersion string   `json:"protocol_version"`
+// VersionResponse reports the dispatcher's independent version identities.
+type VersionResponse wire.Version
+
+// MarshalJSON preserves the response's optional build revision.
+func (v VersionResponse) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		wire.Version
+		BinaryRevision string `json:"binary_revision,omitempty"`
+	}{wire.Version(v), v.BinaryRevision})
 }
 
-type DebugletPolicyRequest struct {
-	FloorBW     int64    `json:"floor_bw"`
-	CeilBW      int64    `json:"ceil_bw"`
-	TimeoutMS   int64    `json:"timeout_ms"`
-	Addresses   []string `json:"addresses"`
-	RequireICMP bool     `json:"require_icmp"`
-	ListenUDP   bool     `json:"listen_udp"`
-	ListenTCP   bool     `json:"listen_tcp"`
-	ListenSCION bool     `json:"listen_scion"`
-}
+type DebugletPolicyRequest = wire.Policy
 
-type DebugletRequest struct {
-	// Must be unique accross a single request
-	OrderID int64 `json:"order_id"`
-	// Optional start time as unix epoch time
-	StartTimestamp *int64                `json:"start_time,omitempty"`
-	ExecutorID     string                `json:"executor_id"`
-	Args           []string              `json:"args,omitempty"`
-	Wasm           string                `json:"wasm"`
-	Policy         DebugletPolicyRequest `json:"policy"`
-}
+type DebugletRequest = wire.Request[string]
 
 type SubmitDebugletsRequest struct {
 	Debuglets     []DebugletRequest `json:"debuglets"`
@@ -77,18 +57,7 @@ type DebugletDeleteRequest struct {
 	ExecutorID string    `json:"executor_id"`
 }
 
-type ExecutorResponse struct {
-	ID       string `json:"id"`
-	Ready    bool   `json:"ready"`
-	LastSeen int64  `json:"last_seen"`
-	Version  string `json:"version"`
-
-	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
-	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
-	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
-	PricePerBw             int64  `json:"price_per_bw"`
-	Currency               string `json:"currency"`
-}
+type ExecutorResponse = wire.Executor
 
 // ExecutorByIPResponse is returned by GET /executors/by-ip?ip=<ip>.
 // It identifies which executor corresponds to a given source IP and lists the
@@ -115,25 +84,19 @@ type DestinationLimitRequest struct {
 	Limit       int64  `json:"limit"`
 }
 
-type DebugletStateResponse struct {
-	State      string `json:"state"`
-	Error      string `json:"error"`
-	ExecutorID string `json:"executor_id"`
+type DebugletStateResponse = wire.State
+
+type DebugletLogsResponse wire.LogPage[string]
+
+// MarshalJSON preserves the response's optional workload error.
+func (p DebugletLogsResponse) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		wire.LogPage[string]
+		Error string `json:"error,omitempty"`
+	}{wire.LogPage[string](p), p.Error})
 }
 
-type DebugletLogsResponse struct {
-	State   string             `json:"state"`
-	Error   string             `json:"error,omitempty"`
-	After   int64              `json:"after"`
-	Logs    []DebugletLogEntry `json:"logs"`
-	HasMore bool               `json:"has_more"`
-}
-
-type DebugletLogEntry struct {
-	ID        int64  `json:"id"`
-	Timestamp string `json:"timestamp"`
-	Output    string `json:"output"` // base64-encoded
-}
+type DebugletLogEntry = wire.LogEntry[string]
 
 type BalanceResponse struct {
 	Balance int64 `json:"balance"`
@@ -165,13 +128,7 @@ type PaymentIntentRequest struct {
 	RefundAddress string            `json:"refund_address"`
 }
 
-type UserResponse struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	// Role is the account's role, "user" or "operator". It reports what the
-	// account may do; it is not a credential and grants nothing by itself.
-	Role string `json:"role"`
-}
+type UserResponse = wire.User
 
 type CreateUserRequest struct {
 	Name string `json:"name"`
