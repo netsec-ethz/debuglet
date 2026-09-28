@@ -99,3 +99,7 @@ container, image and temporary build directory, including on failure. It does
 not remove the supplied package. The [tested profile](../../docs/operations/services.md#tested-managed-profile)
 records the exact observed environment; apt packages in a later image build
 may differ, so retain the fixture's environment output when repeating it.
+
+The opt-in [installed outage drill](outage-drill.py) runs only in an owned,
+disposable Docker/systemd fixture. See the [outage runbook](../../docs/operations/dispatcher-outage.md)
+for its requirements, observations and recovery limits.
