@@ -30,21 +30,13 @@ const (
 	cleanupTimeout   = 5 * time.Second
 )
 
-type childProcess interface {
-	PID() int
-	Done() <-chan struct{}
-	Wait(context.Context) error
-	Stop(context.Context) error
-	CleanupComplete() bool
-}
-
 // dependencies is private so the CLI has no fault-injection switches. The
 // acceptance harness uses the same Run path with real children and an observer.
 type dependencies struct {
 	resolveAssets func(string) (Assets, error)
 	bootstrap     func(context.Context, storagecheck.Role, string) error
 	checkSchema   func(context.Context, storagecheck.Role, string) error
-	startChild    func(ChildSpec) (childProcess, error)
+	startChild    func(ChildSpec) (ChildProcess, error)
 	startTarget   func(context.Context, string) (targetProcess, error)
 	observe       func(context.Context, observation) error
 }
@@ -74,7 +66,7 @@ func productionDependencies() dependencies {
 		resolveAssets: ResolveAssets,
 		bootstrap:     storagecheck.BootstrapFresh,
 		checkSchema:   storagecheck.Check,
-		startChild:    func(spec ChildSpec) (childProcess, error) { return StartChild(spec) },
+		startChild:    func(spec ChildSpec) (ChildProcess, error) { return StartChild(spec) },
 		startTarget:   startTarget,
 	}
 }
@@ -111,28 +103,18 @@ func run(ctx context.Context, assets Assets, deps dependencies) (result Result, 
 	if err != nil {
 		return result, fmt.Errorf("create demo state: %w", err)
 	}
-	workCtx, cancelWork := context.WithCancelCause(ctx)
-	watchCtx, cancelWatches := context.WithCancel(workCtx)
-	var watchers sync.WaitGroup
-	var dispatcherChild, executorChild childProcess
+	supervisor := newSupervisor(ctx, deps)
+	workCtx, cancelWork := supervisor.Context(), supervisor.Cancel
+	var dispatcherChild, executorChild ChildProcess
 	var target targetProcess
 	var dispatcherLog, executorLog *boundedLog
 
 	defer func() {
-		for _, item := range []struct {
-			name  string
-			child childProcess
-		}{{"dispatcher", dispatcherChild}, {"executor", executorChild}} {
-			if item.child != nil && isDone(item.child.Done()) {
-				err = errors.Join(err, fmt.Errorf("%s exited before demo cleanup", item.name))
-			}
-		}
-		cancelWatches()
-		watchers.Wait()
+		err = errors.Join(err, supervisor.Healthy())
 		if workCtx.Err() != nil {
 			err = errors.Join(err, context.Cause(workCtx))
 		}
-		cancelWork(nil)
+		supervisor.Quiesce()
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()
 		var cleanupErr error
@@ -141,32 +123,13 @@ func run(ctx context.Context, assets Assets, deps dependencies) (result Result, 
 			cleanupErr = errors.Join(cleanupErr, target.Stop(phase))
 			end()
 		}
-		for index, item := range []struct {
-			name  string
-			child childProcess
-		}{{"executor", executorChild}, {"dispatcher", dispatcherChild}} {
-			if item.child != nil {
-				phase, end := cleanupPhase(cleanupCtx, 2-index)
-				if e := item.child.Stop(phase); e != nil {
-					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop %s: %w", item.name, e))
-				}
-				end()
-			}
-		}
-		// Direct-child reaping does not prove that descendants or the stop
-		// controller finished. Join the complete existing stop operation within
-		// the original deadline before deciding whether state can be removed.
-		for _, child := range []childProcess{executorChild, dispatcherChild} {
-			if child != nil && !child.CleanupComplete() {
-				cleanupErr = errors.Join(cleanupErr, child.Stop(cleanupCtx))
-			}
-		}
+		children, stopErr := supervisor.Close(cleanupCtx)
+		cleanupErr = errors.Join(cleanupErr, stopErr)
 		if target != nil && !isDone(target.Done()) {
 			cleanupErr = errors.Join(cleanupErr, target.Stop(cleanupCtx))
 		}
 		allJoined := (target == nil || isDone(target.Done())) &&
-			(dispatcherChild == nil || dispatcherChild.CleanupComplete()) &&
-			(executorChild == nil || executorChild.CleanupComplete())
+			children.Joined
 		for _, item := range []struct {
 			name string
 			log  *boundedLog
@@ -218,23 +181,17 @@ func run(ctx context.Context, assets Assets, deps dependencies) (result Result, 
 	}
 	dispatcherConfig := filepath.Join(dir, "dispatcher.toml")
 	dispatcherReady := filepath.Join(dir, "dispatcher-ready.json")
-	if err := writeConfig(dispatcherConfig, dispatcherConfiguration(assets.Manifest.Version, dispatcherDB)); err != nil {
-		return result, err
-	}
 	dispatcherLog, err = newBoundedLog(filepath.Join(dir, "dispatcher.log"), cancelWork)
 	if err != nil {
 		return result, err
 	}
-	dispatcherChild, err = deps.startChild(ChildSpec{
-		Path: assets.Dispatcher, Dir: dir,
-		Args: []string{"--config", dispatcherConfig, "--ready-file", dispatcherReady},
-		Env:  childEnvironment(dir), Stdout: dispatcherLog, Stderr: dispatcherLog,
+	var dispatcherRecord readiness.Record
+	dispatcherChild, dispatcherRecord, err = supervisor.StartRole(workCtx, RoleProcess{
+		Role: storagecheck.Dispatcher, Directory: dir, Executable: assets.Dispatcher,
+		ConfigPath: dispatcherConfig, ReadyPath: dispatcherReady,
+		Configuration: DispatcherConfiguration(assets.Manifest.Version, dispatcherDB),
+		Stdout:        dispatcherLog, Stderr: dispatcherLog,
 	})
-	if err != nil {
-		return result, err
-	}
-	watchChild(watchCtx, &watchers, "dispatcher", dispatcherChild, cancelWork)
-	dispatcherRecord, err := awaitReady(workCtx, dispatcherReady, dispatcherChild.PID(), "")
 	if err != nil {
 		return result, fmt.Errorf("dispatcher readiness: %w", err)
 	}
@@ -248,23 +205,17 @@ func run(ctx context.Context, assets Assets, deps dependencies) (result Result, 
 	}
 	executorConfig := filepath.Join(dir, "executor.toml")
 	executorReady := filepath.Join(dir, "executor-ready.json")
-	if err := writeConfig(executorConfig, executorConfiguration(assets.Manifest.Version, executorID, executorDB, dispatcherRecord)); err != nil {
-		return result, err
-	}
 	executorLog, err = newBoundedLog(filepath.Join(dir, "executor.log"), cancelWork)
 	if err != nil {
 		return result, err
 	}
-	executorChild, err = deps.startChild(ChildSpec{
-		Path: assets.Executor, Dir: dir,
-		Args: []string{"--config", executorConfig, "--ready-file", executorReady},
-		Env:  childEnvironment(dir), Stdout: executorLog, Stderr: executorLog,
+	executorChild, _, err = supervisor.StartRole(workCtx, RoleProcess{
+		Role: storagecheck.Executor, Directory: dir, Executable: assets.Executor,
+		ConfigPath: executorConfig, ReadyPath: executorReady, ExecutorID: executorID,
+		Configuration: ExecutorConfiguration(assets.Manifest.Version, executorID, executorDB, dispatcherRecord),
+		Stdout:        executorLog, Stderr: executorLog,
 	})
 	if err != nil {
-		return result, err
-	}
-	watchChild(watchCtx, &watchers, "executor", executorChild, cancelWork)
-	if _, err := awaitReady(workCtx, executorReady, executorChild.PID(), executorID); err != nil {
 		return result, fmt.Errorf("executor readiness: %w", err)
 	}
 	if err := awaitDiscovery(workCtx, c, executorID); err != nil {
@@ -318,20 +269,6 @@ func isDone(done <-chan struct{}) bool {
 	default:
 		return false
 	}
-}
-
-func watchChild(ctx context.Context, wg *sync.WaitGroup, name string, child childProcess, cancel context.CancelCauseFunc) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		select {
-		case <-ctx.Done():
-		case <-child.Done():
-			if ctx.Err() == nil {
-				cancel(fmt.Errorf("%s exited before demo cleanup: %w", name, errors.Join(errors.New("unexpected child exit"), child.Wait(ctx))))
-			}
-		}
-	}()
 }
 
 func awaitReady(ctx context.Context, path string, pid int, executorID string) (readiness.Record, error) {
@@ -480,7 +417,8 @@ func childEnvironment(dir string) []string {
 	return []string{"TMPDIR=" + dir, "LANG=C", "LC_ALL=C", "TZ=UTC"}
 }
 
-func dispatcherConfiguration(version, db string) map[string]any {
+// DispatcherConfiguration generates the loopback TEST dispatcher profile.
+func DispatcherConfiguration(version, db string) map[string]any {
 	return map[string]any{
 		// local_development is what makes the wallet-free flow usable without a
 		// credential. It is written only here, where this package generates the
@@ -494,7 +432,8 @@ func dispatcherConfiguration(version, db string) map[string]any {
 	}
 }
 
-func executorConfiguration(version, id, db string, record readiness.Record) map[string]any {
+// ExecutorConfiguration generates the TEST executor profile for local targets.
+func ExecutorConfiguration(version, id, db string, record readiness.Record) map[string]any {
 	return map[string]any{
 		"identity":   map[string]any{"executor_id": id, "version": version},
 		"dispatcher": map[string]any{"addr": record.GRPCAddr, "yamux_addr": record.HTTPAddr},
@@ -513,7 +452,8 @@ func executorConfiguration(version, id, db string, record readiness.Record) map[
 	}
 }
 
-func writeConfig(path string, config map[string]any) error {
+// WriteConfig writes a generated configuration to an absent path, mode 0600.
+func WriteConfig(path string, config map[string]any) error {
 	data, err := toml.Marshal(config)
 	if err != nil {
 		return err

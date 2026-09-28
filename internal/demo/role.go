@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,8 +86,9 @@ func upRole(ctx context.Context, role storagecheck.Role, assets Assets, options 
 	if options.Port < 0 || options.Port > 65535 || options.GRPCPort < 0 || options.GRPCPort > 65535 {
 		return errors.New("local ports must be between 0 and 65535")
 	}
-	workCtx, cancelWork := context.WithCancelCause(ctx)
-	defer cancelWork(nil)
+	supervisor := newSupervisor(ctx, deps)
+	workCtx, cancelWork := supervisor.Context(), supervisor.Cancel
+	defer supervisor.Quiesce()
 	startupCtx, cancelStartup := context.WithTimeout(workCtx, startupTimeout)
 	defer cancelStartup()
 	if ctx.Err() != nil {
@@ -143,31 +143,18 @@ func upRole(ctx context.Context, role storagecheck.Role, assets Assets, options 
 		}
 		options.Dispatcher = profile
 	}
-	watchCtx, cancelWatch := context.WithCancel(workCtx)
-	var watcher sync.WaitGroup
-	var child childProcess
+	var child ChildProcess
 	var log *rotatingLog
 	defer func() {
-		cancelWatch()
-		watcher.Wait()
-		cancelWork(nil)
+		supervisor.Quiesce()
 		if ctx.Err() == context.Canceled && localCancellationOnly(err) {
 			err = nil
 		}
-		joined := false
-		if child != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-			stopErr := child.Stop(cleanupCtx)
-			err = errors.Join(err, stopErr)
-			if !child.CleanupComplete() {
-				err = errors.Join(err, child.Stop(cleanupCtx))
-			}
-			if !child.CleanupComplete() {
-				err = errors.Join(err, errors.New("service cleanup incomplete; inspect retained state before restarting"))
-			}
-			joined = stopErr == nil && child.CleanupComplete()
-			cancel()
-		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+		children, stopErr := supervisor.Close(cleanupCtx)
+		cancel()
+		err = errors.Join(err, stopErr)
+		joined := child != nil && children.Joined && stopErr == nil
 		if log != nil {
 			err = errors.Join(err, log.Close())
 		}
@@ -185,39 +172,33 @@ func upRole(ctx context.Context, role storagecheck.Role, assets Assets, options 
 	if err != nil {
 		return err
 	}
-	config := dispatcherConfiguration(assets.Manifest.Version, dbPath)
+	config := DispatcherConfiguration(assets.Manifest.Version, dbPath)
 	executable := assets.Dispatcher
 	if role == storagecheck.Dispatcher {
 		config["server"].(map[string]any)["http_port"] = options.Port
 		config["server"].(map[string]any)["grpc_port"] = options.GRPCPort
 	} else {
 		executable = assets.Executor
-		config = executorConfiguration(assets.Manifest.Version, state.Identity, dbPath, readiness.Record{
+		config = ExecutorConfiguration(assets.Manifest.Version, state.Identity, dbPath, readiness.Record{
 			GRPCAddr: options.Dispatcher.GRPCAddress, HTTPAddr: options.Dispatcher.YamuxAddress,
 		})
 		config["tesla"].(map[string]any)["chain_length"] = 0
-	}
-	configPath := filepath.Join(dir, "service.toml")
-	if err := writeConfig(configPath, config); err != nil {
-		return err
 	}
 	logPath := filepath.Join(dir, string(role)+".log")
 	log, err = newRotatingLog(logPath, options.Logs, cancelWork)
 	if err != nil {
 		return err
 	}
-	child, err = deps.startChild(ChildSpec{Path: executable, Dir: dir,
-		Args: []string{"--config", configPath, "--ready-file", filepath.Join(dir, "child-ready.json")},
-		Env:  childEnvironment(dir), Stdout: log, Stderr: log})
-	if err != nil {
-		return fmt.Errorf("start %s (see %s): %w", role, logPath, err)
-	}
-	watchChild(watchCtx, &watcher, string(role), child, cancelWork)
 	id := ""
 	if role == storagecheck.Executor {
 		id = state.Identity
 	}
-	record, err := awaitReady(startupCtx, filepath.Join(dir, "child-ready.json"), child.PID(), id)
+	var record readiness.Record
+	child, record, err = supervisor.StartRole(startupCtx, RoleProcess{
+		Role: role, Directory: dir, Executable: executable,
+		ConfigPath: filepath.Join(dir, "service.toml"), ReadyPath: filepath.Join(dir, "child-ready.json"),
+		ExecutorID: id, Configuration: config, Stdout: log, Stderr: log,
+	})
 	if err != nil {
 		return fmt.Errorf("%s readiness (see %s): %w", role, logPath, err)
 	}

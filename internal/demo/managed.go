@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
@@ -16,23 +15,6 @@ import (
 // package generates, over a state directory this package owns. These exported
 // entry points keep that single generator, so an installed unit can never be
 // started against a configuration shape no foreground role was ever tested on.
-
-// DispatcherConfiguration returns the generated dispatcher configuration for a
-// database path. Callers may override the server ports before writing it.
-func DispatcherConfiguration(version, database string) map[string]any {
-	return dispatcherConfiguration(version, database)
-}
-
-// ExecutorConfiguration returns the generated executor configuration for one
-// executor identity, database and dispatcher control record.
-func ExecutorConfiguration(version, executorID, database string, dispatcher readiness.Record) map[string]any {
-	return executorConfiguration(version, executorID, database, dispatcher)
-}
-
-// WriteConfig writes a generated configuration to an absent path, mode 0600.
-func WriteConfig(path string, config map[string]any) error {
-	return writeConfig(path, config)
-}
 
 // ValidateControlAddress accepts the literal-loopback host:port spelling the
 // generated configurations use for the local control plane.

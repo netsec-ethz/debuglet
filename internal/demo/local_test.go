@@ -92,7 +92,7 @@ func TestLocalEnvironmentLockAndVersion(t *testing.T) {
 	defer cancel()
 	err := up(ctx, f.assets, LocalOptions{StateDir: dir, Ready: func(LocalEnvironment) error {
 		second := f.deps
-		second.startChild = func(ChildSpec) (childProcess, error) {
+		second.startChild = func(ChildSpec) (ChildProcess, error) {
 			t.Error("duplicate start launched child")
 			return nil, errors.New("unexpected child")
 		}

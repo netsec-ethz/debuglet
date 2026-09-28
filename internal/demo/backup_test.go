@@ -54,15 +54,15 @@ func backupFixture(t *testing.T, layout string) (string, Manifest) {
 		if err := storagecheck.BootstrapFresh(t.Context(), role, db); err != nil {
 			t.Fatal(err)
 		}
-		config := dispatcherConfiguration(m.Version, db)
+		config := DispatcherConfiguration(m.Version, db)
 		if role == storagecheck.Executor {
-			config = executorConfiguration(m.Version, id, db, readiness.Record{GRPCAddr: "127.0.0.1:9001", HTTPAddr: "127.0.0.1:9000"})
+			config = ExecutorConfiguration(m.Version, id, db, readiness.Record{GRPCAddr: "127.0.0.1:9001", HTTPAddr: "127.0.0.1:9000"})
 		}
 		name := "service.toml"
 		if layout == "local" {
 			name = string(role) + ".toml"
 		}
-		if err := writeConfig(filepath.Join(dir, name), config); err != nil {
+		if err := WriteConfig(filepath.Join(dir, name), config); err != nil {
 			t.Fatal(err)
 		}
 	}

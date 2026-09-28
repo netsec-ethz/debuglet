@@ -50,7 +50,7 @@ func TestRoleIndependentLifecycle(t *testing.T) {
 					return bootstrap(ctx, got, path)
 				}
 				start := f.deps.startChild
-				f.deps.startChild = func(spec ChildSpec) (childProcess, error) {
+				f.deps.startChild = func(spec ChildSpec) (ChildProcess, error) {
 					if role == storagecheck.Executor {
 						data, err := os.ReadFile(spec.Args[1])
 						if err != nil {

@@ -235,7 +235,7 @@ func newSupervisorFixture(t *testing.T, mode string) *supervisorFixture {
 	return f
 }
 
-func (f *supervisorFixture) startChild(spec ChildSpec) (childProcess, error) {
+func (f *supervisorFixture) startChild(spec ChildSpec) (ChildProcess, error) {
 	name := "dispatcher"
 	if spec.Path == f.assets.Executor {
 		name = "executor"

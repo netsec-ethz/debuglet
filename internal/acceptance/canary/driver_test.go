@@ -228,7 +228,7 @@ func (s *scriptedSession) Execute(ctx context.Context, args []string) commandRes
 	}
 }
 func scriptedDependencies(t *testing.T, opts Options, s *scriptedSession) driverDependencies {
-	return driverDependencies{validate: Validate, resolve: func(string) (demo.Assets, error) { return opts.Assets, nil }, open: func(_ Options, dir string) localSession { s.stateDir = dir; return s }, write: WriteEvidence, poll: func(context.Context) error {
+	return driverDependencies{validate: Validate, resolve: func(string) (demo.Assets, error) { return opts.Assets, nil }, open: func(_ context.Context, _ Options, dir string) localSession { s.stateDir = dir; return s }, write: WriteEvidence, poll: func(context.Context) error {
 		s.polls++
 		if s.fault == "missing_nonce" || s.fault == "registry_stays" {
 			return context.DeadlineExceeded
@@ -257,7 +257,7 @@ func TestDryRunNoEffects(t *testing.T) {
 				}
 				return a, nil
 			}
-			deps.open = func(Options, string) localSession {
+			deps.open = func(context.Context, Options, string) localSession {
 				opens++
 				t.Fatal("dry run created process/listener session")
 				return nil
@@ -355,7 +355,10 @@ func TestInvalidInputRedaction(t *testing.T) {
 		t.Fatal("invalid input reached provenance")
 		return demo.Assets{}, nil
 	}
-	deps.open = func(Options, string) localSession { t.Fatal("invalid input started runtime"); return nil }
+	deps.open = func(context.Context, Options, string) localSession {
+		t.Fatal("invalid input started runtime")
+		return nil
+	}
 	ev, err := runDriver(context.Background(), opts, deps)
 	if !errors.Is(err, errInvalidInput) {
 		t.Fatal(err)
