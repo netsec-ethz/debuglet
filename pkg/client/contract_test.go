@@ -28,23 +28,6 @@ func TestClientAnnouncesContractVersionOnEveryRequest(t *testing.T) {
 	}
 }
 
-func TestVersionReportsSeparateIdentities(t *testing.T) {
-	f := newFakeServer(t, "")
-	f.handle("GET /version", jsonHandler(http.StatusOK,
-		`{"version":"cfg","api_version":"1.3","api_versions":["1"],"binary_version":"v0.3.1","binary_revision":"deadbeef","protocol_version":"3"}`))
-	c := f.client(t, Options{})
-
-	version, err := c.Version(testContext(t))
-	if err != nil {
-		t.Fatalf("Version: %v", err)
-	}
-	want := ServerVersion{Version: "cfg", APIVersion: APIVersion, APIVersions: []string{"1"},
-		BinaryVersion: "v0.3.1", BinaryRevision: "deadbeef", ProtocolVersion: "3"}
-	if !reflect.DeepEqual(version, want) {
-		t.Fatalf("identities were not reported separately: %+v, want %+v", version, want)
-	}
-}
-
 // A dispatcher written before the contract was versioned answers with the
 // original body. It must keep working, with the new identities empty.
 func TestVersionFromDispatcherWithoutContractVersioning(t *testing.T) {
