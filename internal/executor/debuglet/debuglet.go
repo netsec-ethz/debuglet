@@ -12,12 +12,14 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
 	"github.com/netsec-ethz/debuglet/internal/executor/platform"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
@@ -157,6 +159,17 @@ type StartServersReq struct {
 	SCION bool
 }
 
+// markListener returns the listen control that puts a listening socket under
+// the run's packet attribution before it is bound, so its first handshake
+// reply or datagram is already marked and accepted connections inherit the
+// mark. Without a tagger there is nothing to mark.
+func markListener(tg tagger.TaggerInterface) func(network, address string, c syscall.RawConn) error {
+	if tg == nil {
+		return nil
+	}
+	return func(_, _ string, c syscall.RawConn) error { return hostconn.MarkSocket(c, tg) }
+}
+
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
@@ -178,7 +191,7 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if !d.env.PortManager.Enabled() {
 			return fmt.Errorf("startServers: TCP listener requested but not enabled (public_host/public_ports not configured)")
 		}
-		lis, port, addr, err := d.env.PortManager.ListenTCP()
+		lis, port, addr, err := d.env.PortManager.ListenTCP(markListener(d.env.Tagger))
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
 		}
@@ -195,7 +208,7 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if !d.env.PortManager.Enabled() {
 			return fmt.Errorf("startServers: UDP listener requested but not enabled (public_host/public_ports not configured)")
 		}
-		conn, port, addr, err := d.env.PortManager.ListenUDP()
+		conn, port, addr, err := d.env.PortManager.ListenUDP(markListener(d.env.Tagger))
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
 		}

@@ -16,6 +16,12 @@ changes; the linked API and deployment documentation contains operational detail
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
   host-name rules documented in `docs/operations/configuration.md`.
 
+### Fixed
+- Listener sockets of a run are marked for packet attribution before they
+  bind and listen, so a SYN-ACK and every accepted connection carry the
+  run's mark; a refused mark fails the listener instead of trying the next
+  port.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
