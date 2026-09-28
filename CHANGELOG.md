@@ -16,6 +16,12 @@ changes; the linked API and deployment documentation contains operational detail
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
   host-name rules documented in `docs/operations/configuration.md`.
 
+### Fixed
+- A TESLA key is disclosed only after every kernel tagger has moved off it,
+  including the last key at the end of the chain. The kernel key refresh runs
+  at each epoch boundary instead of every half epoch; a delayed or failed
+  refresh delays disclosure instead of leaving a disclosed key installed.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
