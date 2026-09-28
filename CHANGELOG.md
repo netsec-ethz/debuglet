@@ -21,6 +21,9 @@ changes; the linked API and deployment documentation contains operational detail
   including the last key at the end of the chain. The kernel key refresh runs
   at each epoch boundary instead of every half epoch; a delayed or failed
   refresh delays disclosure instead of leaving a disclosed key installed.
+- The executor reports "TESLA key chain nearly exhausted" and "TESLA key
+  chain exhausted" once per process; a reconnected control session no longer
+  repeats them.
 
 ## [0.2.0] - 2026-09-27
 

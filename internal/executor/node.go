@@ -43,6 +43,8 @@ type Node struct {
 	active      *Session
 	closeOnce   sync.Once
 	closeErr    error
+	// chainReport outlives sessions so the end of the chain is reported once.
+	chainReport chainReport
 }
 
 // NewNode records the TESLA chain this start uses in db before it acquires the
