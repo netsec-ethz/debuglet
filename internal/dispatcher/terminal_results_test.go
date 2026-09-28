@@ -329,7 +329,7 @@ func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate, addresses ..
 		t.Fatalf("create debuglet: %v", err)
 	}
 	f.d.executors[spec.ExecutorID].AppendDebugletID(id)
-	f.d.scheduler.Submit(*r)
+	f.d.reserveFloor(id, *r)
 	f.d.mu.Unlock()
 
 	row, err := f.q.UpdateDebugletState(f.ctx, database.UpdateDebugletStateParams{
@@ -838,9 +838,11 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(d.Close)
+			mock.ExpectBegin()
 			mock.ExpectQuery(tgCompleteQuery).
 				WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
 				WillReturnError(sql.ErrNoRows)
+			mock.ExpectRollback()
 			mock.ExpectQuery(tgOwnedGetQuery).
 				WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
 				WillReturnRows(sqlmock.NewRows(tgDebugletColumns).AddRow(

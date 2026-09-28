@@ -67,6 +67,10 @@ type DebugletProvenance struct {
 	Document   string
 }
 
+type DebugletTerminalCleanup struct {
+	DebugletID int64
+}
+
 type DebugletUser struct {
 	DebugletID int64
 	UserID     int64

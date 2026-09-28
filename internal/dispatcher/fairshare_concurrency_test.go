@@ -235,7 +235,9 @@ func TestFairshareConcurrentAllocationRemovalAndLimits(t *testing.T) {
 					return err
 				}
 				// Reserve the window the terminal release returns, as admission does.
-				d.scheduler.Submit(schedule.Request{Executor: fairshareExecutorID, Destination: dests, From: row.StartTime.Time, To: row.EndTime.Time, Use: 10})
+				d.mu.Lock()
+				d.reserveFloor(id, schedule.Request{Executor: fairshareExecutorID, Destination: dests, From: row.StartTime.Time, To: row.EndTime.Time, Use: 10})
+				d.mu.Unlock()
 				_, err = d.OnDebugletAllocate(ctx, origin, &pb.DebugletAllocateRequest{
 					DebugletId: id.String(), ExecutorId: fairshareExecutorID, TransactionId: transactionID,
 					Policy: &pb.DebugletPolicy{Addresses: dests, FloorBw: 10, CeilBw: 80},
@@ -333,7 +335,13 @@ func TestFairshareConcurrentAllocationRemovalAndLimits(t *testing.T) {
 		d.destinations.Remove(holder, dest)
 	}
 	remaining := d.destinations.Len()
+	if reserved := len(d.reservations); reserved != 0 {
+		t.Errorf("%d run reservations remain after joined removals", reserved)
+	}
 	for _, dest := range dests {
+		if reserved := d.scheduler.QueryMaxDest(dest, d.now(), maxReservableTime); reserved != 0 {
+			t.Errorf("destination %s retains %s of scheduled floor after joined removals", dest, reserved)
+		}
 		if err := d.destinations.CheckCapacity(dest, d.destinations.Cap(dest)); err != nil {
 			t.Errorf("capacity not fully recovered after joined removals: %v", err)
 		}

@@ -243,6 +243,7 @@ func newRestoredDispatcher(t *testing.T, restored []restoredRow) (*dispatcher.Di
 			"", "",                          // historical rows remain reserved in the dispatcher
 		)
 	}
+	mock.ExpectQuery("-- name: ListTerminalCleanup :many").WithArgs(int64(128)).WillReturnRows(sqlmock.NewRows(debugletColumns))
 	mock.ExpectQuery(listDebugletsEndAfterQuery).WillReturnRows(rows)
 
 	if err := d.RestoreScheduler(ctx); err != nil {
