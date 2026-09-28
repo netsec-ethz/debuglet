@@ -9,6 +9,7 @@ umask 077
 
 candidate_version='@VERSION@'
 candidate_source='@SOURCE_SHA@'
+candidate_component='@COMPONENT@'
 payload_sums='@PAYLOAD_SUMS@'
 
 fail() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -82,7 +83,40 @@ prefix_input=$(absolute_path "$prefix_arg")
 for input in "$archive_input" "$checksums_input" "$installer_input"; do
 	[ -f "$input" ] && [ ! -L "$input" ] || fail "input must be a regular file: $input"
 done
-archive_name=debuglet-${candidate_version}-linux-amd64.tar.gz
+component_path= command_name=dbl installer_name=install.sh
+case "$candidate_component" in
+	'') archive_name=debuglet-${candidate_version}-linux-amd64.tar.gz ;;
+	cli) component_path=/cli; archive_name=debuglet-cli-${candidate_version}-linux-amd64.tar.gz ;;
+	executor|dispatcher)
+		component_path=/$candidate_component
+		command_name=debuglet-$candidate_component
+		archive_name=debuglet-${candidate_component}-${candidate_version}-linux-amd64.tar.gz ;;
+	*) fail 'unsupported package component' ;;
+esac
+if [ -n "$candidate_component" ]; then installer_name=install-$candidate_component.sh; fi
+expected_names='LICENSE
+README-install.md'
+if [ -z "$candidate_component" ]; then
+	expected_names="$expected_names
+bin/dbl
+bin/debuglet-dispatcher
+bin/debuglet-executor
+share/debuglet/demo.wasm
+share/debuglet/hello.wasm"
+else
+	expected_names="$expected_names
+bin/$command_name"
+fi
+expected_names="$expected_names
+share/debuglet/manifest.json"
+expected_count=$(printf '%s\n' "$expected_names" | wc -l)
+is_payload_path() {
+	case "
+$expected_names
+" in *"
+$1
+"*) return 0 ;; *) return 1 ;; esac
+}
 archive_digest= installer_digest=
 while IFS= read -r checksum_line || [ -n "$checksum_line" ]; do
 	digest=${checksum_line%% *}
@@ -91,8 +125,8 @@ while IFS= read -r checksum_line || [ -n "$checksum_line" ]; do
 	[ "$checksum_line" = "$digest  $name" ] || fail 'invalid SHA256SUMS entry'
 	case "$name" in
 		"$archive_name") [ -z "$archive_digest" ] || fail 'duplicate archive checksum'; archive_digest=$digest ;;
-		install.sh) [ -z "$installer_digest" ] || fail 'duplicate installer checksum'; installer_digest=$digest ;;
-		*) fail 'SHA256SUMS must contain exactly this archive and install.sh' ;;
+		"$installer_name") [ -z "$installer_digest" ] || fail 'duplicate installer checksum'; installer_digest=$digest ;;
+		*) fail "checksums must contain exactly this archive and $installer_name" ;;
 	esac
 done < "$checksums_input"
 [ -n "$archive_digest" ] && [ -n "$installer_digest" ] || fail 'SHA256SUMS is incomplete'
@@ -137,8 +171,13 @@ for directory in "$prefix/bin" "$prefix/lib" "$prefix/lib/debuglet"; do
 	owned_directory "$directory" || fail 'invalid managed directory'
 done
 managed=$prefix/lib/debuglet
-destination=$managed/$candidate_version
-cli=$prefix/bin/dbl
+component_root=$managed$component_path
+if [ ! -e "$component_root" ] && [ ! -L "$component_root" ]; then
+	mkdir -m 0755 -- "$component_root" || fail 'cannot create component directory'
+fi
+owned_directory "$component_root" || fail 'invalid component directory'
+destination=$component_root/$candidate_version
+entrypoint=$prefix/bin/$command_name
 lock= stage= link_directory=
 cleanup() {
 	status=$?
@@ -159,41 +198,44 @@ else
 fi
 
 check_managed_link() (
-	if [ -L "$cli" ]; then
+	if [ -L "$entrypoint" ]; then
 		# Preserve trailing newlines so the exact managed-link check cannot
 		# accidentally accept a different link after command substitution.
-		link=$(readlink -n -- "$cli" || exit 1; printf '.') || exit 1
+		link=$(readlink -n -- "$entrypoint" || exit 1; printf '.') || exit 1
 		link=${link%.}
-		case "$link" in ../lib/debuglet/*/bin/dbl) previous=${link#../lib/debuglet/}; previous=${previous%/bin/dbl} ;; *) fail 'existing bin/dbl is not a managed link' ;; esac
-		valid_version "$previous" || fail 'existing bin/dbl has an invalid managed version'
+		case "$link" in
+			../lib/debuglet/*/bin/"$command_name") previous=${link#../lib/debuglet/}; previous=${previous%/bin/"$command_name"} ;;
+			*) fail "existing bin/$command_name is not a managed link" ;;
+		esac
 		old_root=$managed/$previous
+		case "$previous" in
+			*/*)
+				old_component=${previous%%/*}
+				case "$old_component:$command_name" in cli:dbl|executor:debuglet-executor|dispatcher:debuglet-dispatcher) ;;
+					*) fail 'existing managed link has another component' ;; esac
+				owned_directory "$managed/$old_component" || exit 1
+				previous=${previous#*/} ;;
+		esac
+		valid_version "$previous" || fail "existing bin/$command_name has an invalid managed version"
 		for directory in "$old_root" "$old_root/bin" "$old_root/share" "$old_root/share/debuglet"; do
 			owned_directory "$directory" || exit 1
 		done
-		regular_owned_file "$old_root/bin/dbl" || exit 1
+		regular_owned_file "$old_root/bin/$command_name" || exit 1
 		regular_owned_file "$old_root/share/debuglet/manifest.json" || exit 1
-	elif [ -e "$cli" ]; then
-		fail 'existing bin/dbl is unrelated to this managed installation'
+	elif [ -e "$entrypoint" ]; then
+		fail "existing bin/$command_name is unrelated to this managed installation"
 	fi
 )
-check_managed_link || fail 'refusing to replace existing bin/dbl'
+check_managed_link || fail "refusing to replace existing bin/$command_name"
 
-stage=$(mktemp -d "$managed/.install-stage.XXXXXXXXXX") || fail 'cannot create private stage'
+stage=$(mktemp -d "$component_root/.install-stage.XXXXXXXXXX") || fail 'cannot create private stage'
 # All archive reads below use this owned snapshot. Recheck after copying so a
 # changed download can never bypass the checks before extraction.
 cp -- "$archive_input" "$stage/archive.tar.gz" || fail 'cannot snapshot archive'
 check_digest "$stage/archive.tar.gz" "$archive_digest" || fail 'archive changed while staging'
-expected_names='LICENSE
-README-install.md
-bin/dbl
-bin/debuglet-dispatcher
-bin/debuglet-executor
-share/debuglet/demo.wasm
-share/debuglet/hello.wasm
-share/debuglet/manifest.json'
 tar --list --gzip --file "$stage/archive.tar.gz" --absolute-names --ignore-zeros --quoting-style=escape > "$stage/names" || fail 'cannot list archive'
 names=$(sort "$stage/names") || fail 'cannot inspect archive names'
-[ "$names" = "$expected_names" ] || fail 'archive must contain exactly the eight literal payload paths'
+[ "$names" = "$expected_names" ] || fail 'archive must contain exactly the component payload paths'
 tar --list --verbose --numeric-owner --gzip --file "$stage/archive.tar.gz" --absolute-names --ignore-zeros --quoting-style=escape > "$stage/details" || fail 'cannot inspect archive metadata'
 member_count=0
 while read -r mode owner size date clock name extra; do
@@ -206,7 +248,7 @@ while read -r mode owner size date clock name extra; do
 	[ "$mode" = "$expected_mode" ] || fail "archive member must be a regular file with the required mode: $name"
 	member_count=$((member_count + 1))
 done < "$stage/details"
-[ "$member_count" -eq 8 ] || fail 'archive member count is invalid'
+[ "$member_count" -eq "$expected_count" ] || fail 'archive member count is invalid'
 
 verify_tree() (
 	root=$1
@@ -216,8 +258,8 @@ verify_tree() (
 			[ -e "$entry" ] || [ -L "$entry" ] || continue
 			relative=${entry#"$root"/}
 			case "$relative" in
-				bin|share|share/debuglet|LICENSE|README-install.md|bin/dbl|bin/debuglet-dispatcher|bin/debuglet-executor|share/debuglet/demo.wasm|share/debuglet/hello.wasm|share/debuglet/manifest.json) ;;
-				*) fail "unexpected installed entry: $relative" ;;
+				bin|share|share/debuglet) ;;
+				*) is_payload_path "$relative" || fail "unexpected installed entry: $relative" ;;
 			esac
 		done
 	done
@@ -227,6 +269,7 @@ verify_tree() (
 		valid_digest "$digest" || fail 'invalid embedded payload checksum'
 		relative=${line#"$digest  "}
 		[ "$line" = "$digest  $relative" ] || fail 'invalid embedded payload entry'
+		is_payload_path "$relative" || fail 'unexpected embedded component payload entry'
 		case "$relative" in
 			bin/dbl|bin/debuglet-dispatcher|bin/debuglet-executor) mode=755 ;;
 			LICENSE|README-install.md|share/debuglet/demo.wasm|share/debuglet/hello.wasm|share/debuglet/manifest.json) mode=644 ;;
@@ -239,7 +282,7 @@ verify_tree() (
 	done <<PAYLOAD_DIGESTS
 $payload_sums
 PAYLOAD_DIGESTS
-	[ "$count" -eq 8 ] || fail 'embedded payload checksums are incomplete'
+	[ "$count" -eq "$expected_count" ] || fail 'embedded payload checksums are incomplete'
 )
 
 mkdir -m 0755 -- "$stage/payload" "$stage/payload/bin" "$stage/payload/share" "$stage/payload/share/debuglet" || fail 'cannot create payload stage'
@@ -258,14 +301,14 @@ fi
 # Recheck under the held lock immediately before replacing the managed link.
 check_managed_link || fail 'managed link changed during installation'
 link_directory=$(mktemp -d "$prefix/bin/.dbl-link.XXXXXXXXXX") || fail 'cannot create private link stage'
-ln -s -- "../lib/debuglet/$candidate_version/bin/dbl" "$link_directory/dbl" || fail 'cannot stage managed link'
-mv -T -f -- "$link_directory/dbl" "$cli" || fail 'cannot publish managed link'
+ln -s -- "../lib/debuglet$component_path/$candidate_version/bin/$command_name" "$link_directory/$command_name" || fail 'cannot stage managed link'
+mv -T -f -- "$link_directory/$command_name" "$entrypoint" || fail 'cannot publish managed link'
 printf 'Installed Debuglet %s (%s) at %s\n' "$candidate_version" "$candidate_source" "$destination"
 case ":${PATH-}:" in
 *":$prefix/bin:"*) ;;
 *)
 	# Single-quote the directory so the printed line is safe to paste.
 	quoted=$(printf '%s' "$prefix/bin" | sed "s/'/'\\\\''/g")
-	printf "%s/bin is not on PATH. To use dbl directly, run:\n  export PATH='%s':\"\$PATH\"\n" "$prefix" "$quoted"
+	printf "%s/bin is not on PATH. To use $command_name directly, run:\n  export PATH='%s':\"\$PATH\"\n" "$prefix" "$quoted"
 	;;
 esac

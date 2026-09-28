@@ -40,6 +40,7 @@ type installerFixture struct {
 	checksums string
 	prefix    string
 	version   string
+	component string
 	members   []installerMember
 }
 
@@ -50,10 +51,23 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 
 func newInstallerVersionFixture(t *testing.T, version string) *installerFixture {
 	t.Helper()
-	f := &installerFixture{t: t, directory: t.TempDir(), prefix: filepath.Join(t.TempDir(), "prefix with spaces"), version: version}
+	return newInstallerComponentFixture(t, version, "")
+}
+
+func newInstallerComponentFixture(t *testing.T, version, component string) *installerFixture {
+	t.Helper()
+	f := &installerFixture{t: t, directory: t.TempDir(), prefix: filepath.Join(t.TempDir(), "prefix with spaces"), version: version, component: component}
 	f.installer = filepath.Join(f.directory, "install.sh")
-	f.archive = filepath.Join(f.directory, "debuglet-"+version+"-linux-amd64.tar.gz")
+	archivePrefix := "debuglet-"
+	if component != "" {
+		archivePrefix += component + "-"
+	}
+	f.archive = filepath.Join(f.directory, archivePrefix+version+"-linux-amd64.tar.gz")
 	f.checksums = filepath.Join(f.directory, "SHA256SUMS")
+	if component != "" {
+		f.installer = filepath.Join(f.directory, "install-"+component+".sh")
+		f.checksums = filepath.Join(f.directory, "SHA256SUMS-"+component)
+	}
 	f.members = []installerMember{
 		{name: "LICENSE", mode: 0644, data: []byte("fixture license\n")},
 		{name: "README-install.md", mode: 0644, data: []byte("installer fixture, not a Debuglet runtime\n")},
@@ -64,6 +78,15 @@ func newInstallerVersionFixture(t *testing.T, version string) *installerFixture 
 		{name: "share/debuglet/hello.wasm", mode: 0644, data: []byte("fixture hello guest bytes")},
 		{name: "share/debuglet/manifest.json", mode: 0644, data: []byte(`{"fixture":true,"build_pipeline_url":"fixture-one"}`)},
 	}
+	if component != "" {
+		members := f.members[:0]
+		for _, member := range f.members {
+			if _, ok := artifact.PayloadModesFor(component)[member.name]; ok {
+				members = append(members, member)
+			}
+		}
+		f.members = members
+	}
 	template, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +95,7 @@ func newInstallerVersionFixture(t *testing.T, version string) *installerFixture 
 	for _, member := range f.members {
 		fmt.Fprintf(&sums, "%x  %s\n", sha256.Sum256(member.data), member.name)
 	}
-	installer := strings.NewReplacer("@VERSION@", version, "@SOURCE_SHA@", strings.Repeat("a", 40), "@PAYLOAD_SUMS@", strings.TrimSuffix(sums.String(), "\n")).Replace(string(template))
+	installer := strings.NewReplacer("@VERSION@", version, "@SOURCE_SHA@", strings.Repeat("a", 40), "@COMPONENT@", component, "@PAYLOAD_SUMS@", strings.TrimSuffix(sums.String(), "\n")).Replace(string(template))
 	installerWrite(t, f.installer, []byte(installer), 0755)
 	f.writeArchive(f.members)
 	return f
@@ -167,12 +190,12 @@ func (f *installerFixture) run(wantSuccess bool, environment ...string) string {
 }
 
 func (f *installerFixture) destination() string {
-	return filepath.Join(f.prefix, "lib", "debuglet", f.version)
+	return filepath.Join(f.prefix, "lib", "debuglet", f.component, f.version)
 }
 
 func (f *installerFixture) assertTemporaryCleanup() {
 	f.t.Helper()
-	for _, dir := range []string{filepath.Join(f.prefix, "lib", "debuglet"), filepath.Join(f.prefix, "bin")} {
+	for _, dir := range []string{filepath.Join(f.prefix, "lib", "debuglet", f.component), filepath.Join(f.prefix, "bin")} {
 		entries, err := os.ReadDir(dir)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -206,8 +229,13 @@ func (f *installerFixture) writePayload(root string) {
 
 func (f *installerFixture) assertInstalled() {
 	f.t.Helper()
-	link := filepath.Join(f.prefix, "bin", "dbl")
-	if got, err := os.Readlink(link); err != nil || got != "../lib/debuglet/"+f.version+"/bin/dbl" {
+	binary := "dbl"
+	if f.component == "executor" || f.component == "dispatcher" {
+		binary = "debuglet-" + f.component
+	}
+	link := filepath.Join(f.prefix, "bin", binary)
+	wantLink := filepath.Join("..", "lib", "debuglet", f.component, f.version, "bin", binary)
+	if got, err := os.Readlink(link); err != nil || got != wantLink {
 		f.t.Fatalf("managed link: %q, %v", got, err)
 	}
 	for _, member := range f.members {
@@ -765,4 +793,44 @@ func TestInstallerOwnershipLifecycle(t *testing.T) {
 
 func installerShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func TestRoleInstallerIndependentUpgrade(t *testing.T) {
+	prefix := filepath.Join(t.TempDir(), "shared prefix")
+	installed := map[string]*installerFixture{}
+	for _, component := range []string{"cli", "executor", "dispatcher"} {
+		f := newInstallerComponentFixture(t, "v1.0.0", component)
+		f.prefix = prefix
+		f.run(true)
+		f.assertInstalled()
+		installed[component] = f
+	}
+	for _, component := range []string{"dispatcher", "cli", "executor"} {
+		f := newInstallerComponentFixture(t, "v1.0.1", component)
+		f.prefix = prefix
+		f.run(true)
+		f.run(true)
+		installed[component] = f
+		for _, other := range installed {
+			other.assertInstalled()
+		}
+	}
+}
+
+func TestRoleInstallerRejectsExtraDaemon(t *testing.T) {
+	f := newInstallerComponentFixture(t, "v1.0.0", "cli")
+	f.writeArchive(append(f.members, installerMember{name: "bin/debuglet-executor", mode: 0755, data: []byte("unexpected daemon")}))
+	f.run(false)
+	f.assertNoPublishedVersion()
+}
+
+func TestRoleInstallerSwitchesCLIAndFullBundle(t *testing.T) {
+	full := newInstallerFixture(t)
+	full.run(true)
+	cli := newInstallerComponentFixture(t, full.version, "cli")
+	cli.prefix = full.prefix
+	cli.run(true)
+	cli.assertInstalled()
+	full.run(true)
+	full.assertInstalled()
 }

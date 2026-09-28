@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
@@ -44,6 +46,7 @@ import (
 )
 
 func main() {
+	version := flag.Bool("version", false, "Print build identity as JSON and exit")
 	cfgPath := flag.String("config", "/etc/debuglet/dispatcher/dispatcher.toml", "Path to dispatcher configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")
 	grant := flag.String("grant-operator", "", "Give the account with this UUID the operator role in the configured database, then exit")
@@ -54,6 +57,18 @@ func main() {
 	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
 	acceptDataLoss := flag.Bool("accept-data-loss", false, "With -upgrade-database, apply a migration that drops the recorded runs and their logs")
 	flag.Parse()
+	if *version {
+		modified := false
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.modified" {
+					modified = setting.Value == "true"
+				}
+			}
+		}
+		fmt.Printf("{\"module\":%q,\"version\":%q,\"revision\":%q,\"modified\":%t}\n", "github.com/netsec-ethz/debuglet", buildinfo.Version, buildinfo.Revision, modified)
+		return
+	}
 
 	if *checkDatabase && (*upgrade || *acceptDataLoss || *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "") {
 		fmt.Fprintln(os.Stderr, "dispatcher: -check-database cannot be combined with another administration flag")

@@ -99,7 +99,7 @@ func packageFixture(t *testing.T) (string, string, buildRecord) {
 }
 func TestCandidateArchive(t *testing.T) {
 	dist, out, r := packageFixture(t)
-	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, copyFile); err != nil {
+	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, "", copyFile); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(out, "debuglet-"+r.Metadata.Version+"-linux-amd64.tar.gz")
@@ -168,7 +168,7 @@ func TestPackageDetectsCopyMutation(t *testing.T) {
 		}
 		return copyFile(source, dest, mode)
 	}
-	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, copier); err == nil {
+	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, "", copier); err == nil {
 		t.Fatal("packaged changed compiled bytes")
 	}
 	entries, err := os.ReadDir(out)
@@ -313,6 +313,57 @@ func TestSelectedCompilerVersion(t *testing.T) {
 			err := verifyCompiler(ctx, path)
 			if (err == nil) != (version == "go version go1.25.11 linux/amd64") {
 				t.Fatalf("compiler result %v", err)
+			}
+		})
+	}
+}
+
+func TestComponentArchive(t *testing.T) {
+	for _, component := range []string{"cli", "executor", "dispatcher"} {
+		t.Run(component, func(t *testing.T) {
+			dist, out, r := packageFixture(t)
+			if err := packWithCopy(dist, out, r.Metadata.SourceSHA, component, copyFile); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(filepath.Join(out, "debuglet-"+component+"-"+r.Metadata.Version+"-linux-amd64.tar.gz"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			gz, err := gzip.NewReader(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gz.Close()
+			tr := tar.NewReader(gz)
+			modes := artifact.PayloadModesFor(component)
+			seen := map[string]bool{}
+			for {
+				h, err := tr.Next()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				mode, ok := modes[h.Name]
+				if !ok || seen[h.Name] || h.Typeflag != tar.TypeReg || h.Mode != int64(mode) {
+					t.Fatalf("unexpected member %+v", h)
+				}
+				seen[h.Name] = true
+				if h.Name == artifact.ManifestPath {
+					data, err := io.ReadAll(tr)
+					if err != nil {
+						t.Fatal(err)
+					}
+					m, err := artifact.DecodeManifest(data)
+					if err != nil || m.Component != component || m.SourceSHA != r.Metadata.SourceSHA {
+						t.Fatalf("manifest: %+v, %v", m, err)
+					}
+				}
+			}
+			if len(seen) != len(modes) {
+				t.Fatalf("members: %v", seen)
 			}
 		})
 	}

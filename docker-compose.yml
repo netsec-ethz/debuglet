@@ -87,13 +87,25 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/debuglet.Dockerfile
-      target: dispatcher
+      target: full
     entrypoint: ["/bin/sh", "/usr/local/bin/seed-state.sh"]
     network_mode: none
     volumes:
       - ./deploy/docker/seed-state.sh:/usr/local/bin/seed-state.sh:ro
       - dispatcher-state:/seed/dispatcher
       - executor-state:/seed/executor
+    restart: "no"
+
+  # Optional client and sample tools; daemon images contain only their own role.
+  tools:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: deploy/docker/debuglet.Dockerfile
+      target: full
+    network_mode: "service:dispatcher"
+    volumes:
+      - client-state:/state
     restart: "no"
 
   # Provisional TLS-terminating edge for API clients; see the note at the top
@@ -114,5 +126,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  client-state:
   dispatcher-state:
   executor-state:
