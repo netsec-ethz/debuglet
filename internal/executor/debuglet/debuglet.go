@@ -25,6 +25,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/guestio"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -309,6 +310,10 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) (er
 	if _, err := d.registerHostFunctions(rt.NewHostModuleBuilder("env")).Instantiate(ctx); err != nil {
 		return fmt.Errorf("createWASMInstance: host module instantiation: %w", err)
 	}
+	if _, err := wasm.RegisterIO(rt.NewHostModuleBuilder(guestio.Module), d.env).Instantiate(ctx); err != nil {
+		return fmt.Errorf("createWASMInstance: recoverable I/O module instantiation: %w", err)
+	}
+
 	d.mu.Lock()
 	closed := d.closed
 	d.mu.Unlock()

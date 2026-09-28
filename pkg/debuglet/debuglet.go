@@ -35,11 +35,16 @@
 // splits a longer stream payload into consecutive calls, and rejects a longer
 // datagram rather than sending a truncated one.
 //
-// Only a clean TCP/TLS end of stream surfaces as a Go error. Other host-side
+// In the legacy Conn API, only a clean TCP/TLS end of stream surfaces as a Go error. Other host-side
 // failures reach the caller as neither a value nor an error: a refused or
 // policy-denied destination, a socket error other than EOF, an invalid handle
 // and an invalid buffer all abort the guest as WASM traps, so the job ends
 // with whatever the guest printed before the call.
+//
+// Dial and DialTimeout use the optional debuglet_io_v1 extension and return
+// Socket instead. Its Read and Write preserve byte counts alongside typed
+// transport errors, so a diagnostic can handle a timeout or reset and continue.
+// Invalid memory and never-issued handles still trap.
 //
 // On non-wasip1 platforms the package compiles against panic stubs
 // (debuglet_stub.go) so the rest of the module builds and tests on the host;
