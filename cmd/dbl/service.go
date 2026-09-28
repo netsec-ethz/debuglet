@@ -18,7 +18,7 @@ const serviceUsage = `Usage:
       [--dispatcher-http 127.0.0.1:9000] [--start=false] [--enable=false] [--root DIR]
   dbl service start|stop|status (--role ROLE) [--name NAME]
   dbl service uninstall (--role ROLE) [--name NAME] [--purge]
-  dbl service prune --prefix DIR --version VERSION [--dry-run]
+  dbl service prune --prefix DIR --version VERSION [--component full|cli|dispatcher|executor] [--dry-run]
 
 Install one verified role as a service the host's service manager supervises.
 --root writes the same files below another directory to inspect them; a staged
@@ -30,8 +30,9 @@ Administrator privileges and an existing service account are required; the
 foreground commands (dbl up, dbl dispatcher up, dbl executor up) are unchanged.
 Uninstall retains recoverable state by default. Prune requires administrator
 access and an administrator-owned system prefix; user-owned prefixes are not
-supported. It removes one verified inactive package. The CLI link, retained
-managed roles and running executables protect their versions. Stop foreground
+supported. It removes one verified inactive package (--component defaults to
+full). Command links, retained managed roles and running executables protect
+their versions. Stop foreground
 roles before pruning. Use --dry-run to inspect the candidate. Service journal
 retention is configured by the host.
 `
@@ -332,10 +333,11 @@ func writeServiceReport(stdout io.Writer, report service.Report) error {
 func servicePruneCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer, deps serviceDependencies) int {
 	const name = "dbl service prune"
 	fs := newCommandFlagSet("service prune")
-	var prefix, version string
+	var prefix, version, component string
 	var dryRun bool
-	fs.StringVar(&prefix, "prefix", "", "installation prefix containing bin/dbl and lib/debuglet")
+	fs.StringVar(&prefix, "prefix", "", "installation prefix containing bin and lib/debuglet")
 	fs.StringVar(&version, "version", "", "one inactive installed version to remove")
+	fs.StringVar(&component, "component", "full", "package to remove: full, cli, dispatcher or executor")
 	fs.BoolVar(&dryRun, "dry-run", false, "verify the candidate without deleting it")
 	if code, ok := parseCommandFlags(fs, args, serviceUsage, stdout, stderr); !ok {
 		return code
@@ -349,7 +351,7 @@ func servicePruneCommand(ctx context.Context, args []string, options globalOptio
 	if err != nil {
 		return reportFailure(ctx, name, stderr, err)
 	}
-	report, err := installer.Prune(ctx, prefix, version, dryRun)
+	report, err := installer.Prune(ctx, prefix, version, component, dryRun)
 	if err != nil {
 		return reportFailure(ctx, name, stderr, err)
 	}

@@ -64,7 +64,7 @@ valid_version "$candidate_version" && valid_version "$version_arg" || fail 'inva
 [ "$version_arg" = "$candidate_version" ] || fail 'version does not match this installer'
 [ "${#candidate_source}" -eq 40 ] || fail 'invalid candidate source revision'
 case "$candidate_source" in *[!0-9a-f]*) fail 'invalid candidate source revision' ;; esac
-[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || fail 'this candidate requires Linux amd64'
+[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || fail 'supported platform: Linux amd64; run dbl on a Linux amd64 machine; see https://github.com/netsec-ethz/debuglet/blob/main/README-install.md#supported-platforms'
 
 # Resolve inputs before any directory changes. Reject newlines, which shell
 # command substitution cannot preserve in the final component of a pathname.

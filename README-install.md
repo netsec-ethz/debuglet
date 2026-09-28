@@ -27,13 +27,16 @@ On an unsupported host, use a Linux amd64 machine and run `dbl` there to
 connect to your dispatcher. Do not run the Linux installer directly on macOS
 or Windows. A source build alone does not establish platform support. See
 [Versions and compatibility](docs/versions.md) for the support policy
-and the limits of those checks.
+and the limits of those checks. The [Linux client-container guide](docs/operations/client-container.md)
+keeps credentials across container restarts; using it on macOS or Windows does
+not establish support for Docker Desktop or emulation there.
 
 ## Next steps
 
 - Learn the commands in the [CLI reference](docs/cli.md).
-- Run local roles separately with the [Getting Started guide](https://github.com/netsec-ethz/debuglet/wiki/Getting-Started).
-- Deploy a dispatcher or executor with the [operations guides](https://github.com/netsec-ethz/debuglet/wiki).
+- Return to an account with [re-login and recovery](docs/cli.md#return-to-an-existing-account), or start with [troubleshooting](docs/cli.md#troubleshooting).
+- Run local roles separately with the [local-role walkthrough](docs/cli.md#run-local-roles-separately).
+- Deploy a dispatcher or executor with the [across-host guide](docs/operations/remote-deployment.md).
 
 ## Build from source
 
@@ -79,4 +82,4 @@ Docker builds use `deploy/docker/debuglet.Dockerfile` targets `cli`, `executor` 
 
 ## For operators
 
-For offline installs, a system-wide installation, package retention, upgrades, or service management, use the [Deployment and Upgrades guide](https://github.com/netsec-ethz/debuglet/wiki/Deployment-and-Upgrades). Those procedures are deliberately kept in the Wiki because they depend on an operator's environment.
+For system-wide installation, retention and service management, use [Managed services](docs/operations/services.md). Networked deployments and database upgrades follow the [deployment guide](deploy/README.md).

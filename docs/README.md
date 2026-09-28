@@ -1,6 +1,6 @@
 # Debuglet documentation
 
-This directory contains versioned documentation that describes the source tree and its public contracts. The [Wiki](https://github.com/netsec-ethz/debuglet/wiki) contains living, role-based deployment and operations guides.
+This directory is the versioned source for the [Debuglet documentation site](https://debuglet.netsec.ethz.ch/docs/), including user and operator guides, architecture, and public contracts. Read the version matching your installation.
 
 ## Use Debuglet
 
@@ -9,6 +9,8 @@ This directory contains versioned documentation that describes the source tree a
 - [Write a debuglet](debuglets.md) — execution model and Go authoring interface.
 - [HTTP API](api.md) — public contract, authentication, compatibility, and deprecation.
 - [Versions and compatibility](versions.md) — tested combinations, support policy, and breaking changes.
+- [Linux client container](operations/client-container.md) — remote client with persistent credentials.
+- [Troubleshooting](operations/troubleshooting.md) — first steps for setup, login, readiness and state errors.
 
 ## Understand the system
 
@@ -22,7 +24,18 @@ This directory contains versioned documentation that describes the source tree a
 - [Executor recovery](operations/executor-recovery.md)
 - [Local validation checks](operations/local-checks.md)
 
-Use the [Wiki](https://github.com/netsec-ethz/debuglet/wiki) for complete procedures for dispatcher and executor operators.
+Use the [deployment guide](../deploy/README.md) for the maintained Ansible procedures and upgrade inputs.
+
+## Find the original walkthrough material
+
+| Topic | Current home |
+| --- | --- |
+| Submission and execution flow | [Architecture](architecture.md#measurement-flow) |
+| Guest-language examples | [Debuglet examples](../examples/debuglets); Go is supported, C and Rust are experimental |
+| Optional SCION and eBPF controls | [Executor configuration fields](../internal/executor/config/config.go) define `network.policy.scion`, `network.disable_scion_environment`, `network.packet_counter` and `network.interface`; see [kernel checks](../scripts/ci-kernel.sh) and [support limits](../SECURITY.md). SCION is off by default. |
+| Packet attribution | [Capture verifier](../tools/verify_pcap.py) and [current supported scope](../SECURITY.md); attribution is not destination consent or a general authentication guarantee |
+| Deployment and state | [Across-host topology](operations/remote-deployment.md), [managed services](operations/services.md), and the [deployment guide](../deploy/README.md) |
+| Local or legacy account-key users | [Re-login and recovery](cli.md#return-to-an-existing-account) |
 
 ## Develop and contribute
 
