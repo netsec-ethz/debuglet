@@ -38,7 +38,14 @@ valid_digest() {
 }
 
 archive_arg= checksums_arg= version_arg= prefix_arg=
+stage_only=false
 while [ "$#" -gt 0 ]; do
+	if [ "$1" = --stage-only ]; then
+		[ "$stage_only" = false ] || fail 'duplicate --stage-only'
+		stage_only=true
+		shift
+		continue
+	fi
 	[ "$#" -ge 2 ] || fail 'every option requires a value'
 	case "$1" in
 		--archive) [ -z "$archive_arg" ] || fail 'duplicate --archive'; archive_arg=$2 ;;
@@ -51,7 +58,7 @@ while [ "$#" -gt 0 ]; do
 	shift 2
 done
 [ -n "$archive_arg" ] && [ -n "$checksums_arg" ] && [ -n "$version_arg" ] && [ -n "$prefix_arg" ] ||
-	fail 'usage: install.sh --archive FILE --checksums FILE --version VERSION --prefix DIR'
+	fail 'usage: install.sh --archive FILE --checksums FILE --version VERSION --prefix DIR [--stage-only]'
 valid_version "$candidate_version" && valid_version "$version_arg" || fail 'invalid candidate version'
 [ "$version_arg" = "$candidate_version" ] || fail 'version does not match this installer'
 [ "${#candidate_source}" -eq 40 ] || fail 'invalid candidate source revision'
@@ -243,6 +250,10 @@ if [ -e "$destination" ] || [ -L "$destination" ]; then
 else
 	mv -T -n -- "$stage/payload" "$destination" || fail 'cannot publish version directory'
 	[ ! -e "$stage/payload" ] || fail 'version destination appeared during publication'
+fi
+if [ "$stage_only" = true ]; then
+	printf 'Staged Debuglet %s (%s) at %s; commands unchanged\n' "$candidate_version" "$candidate_source" "$destination"
+	exit 0
 fi
 # Recheck under the held lock immediately before replacing the managed link.
 check_managed_link || fail 'managed link changed during installation'

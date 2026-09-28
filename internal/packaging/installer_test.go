@@ -227,6 +227,27 @@ func (f *installerFixture) assertInstalled() {
 }
 
 func TestInstaller(t *testing.T) {
+	t.Run("stage before activation", func(t *testing.T) {
+		old := newInstallerVersionFixture(t, "v0.0.0-dev.bbbbbbbbbbbb")
+		old.run(true)
+		candidate := newInstallerFixture(t)
+		candidate.prefix = old.prefix
+		for range 2 {
+			cmd := candidate.command()
+			cmd.Args = append(cmd.Args, "--stage-only")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("stage candidate: %v\n%s", err, output)
+			}
+			old.assertInstalled()
+			if _, err := os.Stat(filepath.Join(candidate.destination(), "bin", "dbl")); err != nil {
+				t.Fatalf("staged candidate missing: %v", err)
+			}
+			candidate.assertTemporaryCleanup()
+		}
+		candidate.run(true)
+		candidate.assertInstalled()
+	})
+
 	t.Run("spaces and identical rerun", func(t *testing.T) {
 		f := newInstallerFixture(t)
 		f.run(true)

@@ -42,6 +42,10 @@ type Policy struct {
 	// Current is the version the packaged migrations produce. A database
 	// beyond it was written by a newer Debuglet.
 	Current int64
+	// DropsBelow is the version below which an upgrade drops the recorded
+	// runs and their logs (tables debuglets and debuglet_logs): the packaged
+	// migration that reaches it recreates both tables empty.
+	DropsBelow int64
 	// Identity lists tables, with columns, that only this role's database
 	// has and that it has carried since its first migration. They are
 	// checked before the version, so a path pointing at the other role's
@@ -61,7 +65,7 @@ func PolicyFor(role Role) (Policy, error) {
 		if err != nil {
 			return Policy{}, err
 		}
-		return Policy{Role: role, Minimum: MinimumDispatcherVersion, Current: current, Identity: map[string][]string{
+		return Policy{Role: role, Minimum: MinimumDispatcherVersion, Current: current, DropsBelow: 3, Identity: map[string][]string{
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
@@ -84,7 +88,7 @@ func PolicyFor(role Role) (Policy, error) {
 		if err != nil {
 			return Policy{}, err
 		}
-		return Policy{Role: role, Minimum: MinimumExecutorVersion, Current: current, Identity: map[string][]string{
+		return Policy{Role: role, Minimum: MinimumExecutorVersion, Current: current, DropsBelow: 2, Identity: map[string][]string{
 			"debuglets": {"wasm"},
 		}, Tables: map[string][]string{
 			"debuglets":      {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},

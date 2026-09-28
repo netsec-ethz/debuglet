@@ -1,4 +1,7 @@
 ---
+# Database upgrades stage the candidate before deciding whether to stop a service.
+payload_activate: true
+
 # The services this host runs, derived from the groups it is in. The payload
 # role restarts exactly these when the installed release changes, so it does
 # not have to know which daemon role follows it.

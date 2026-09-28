@@ -23,6 +23,9 @@ var (
 	ErrOutdated   = errors.New("outdated database schema")
 	ErrNewer      = errors.New("newer database schema")
 	ErrIncomplete = errors.New("incomplete database schema")
+	// ErrDataLoss accompanies ErrOutdated when the upgrade of the database
+	// drops the runs and logs it recorded.
+	ErrDataLoss = errors.New("upgrade drops recorded data")
 )
 
 // The table the packaged migrations record their progress in.
@@ -67,9 +70,10 @@ func (p Policy) locate(path string) (string, error) {
 	// a regular database file is served like the file itself.
 	info, err := os.Stat(absolute)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("%w: %s database %q does not exist; apply the packaged migrations to it first "+
-			"(make upgrade) or start a local service, which creates its own state directory",
-			ErrAbsent, p.Role, absolute)
+		return "", fmt.Errorf("%w: %s database %q does not exist; create it from the packaged schema first: "+
+			"a deployment seeds it (make deploy-seed-db, then deploy this host again), and a hand-installed host "+
+			"copies the database a fresh, stopped local service created (%s); see docs/operations/configuration.md",
+			ErrAbsent, p.Role, absolute, p.seedCommand())
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, absolute, err)
@@ -92,10 +96,15 @@ func (p Policy) verify(ctx context.Context, db *sql.DB, path string) error {
 		return err
 	}
 	if version < p.Minimum {
-		return fmt.Errorf("%w: %q uses %s schema version %d; this build supports %s. "+
+		outdated := fmt.Errorf("%w: %q uses %s schema version %d; this build supports %s. "+
 			"Stop the daemon, back the file up and run debuglet-%s -config FILE -upgrade-database "+
 			"(a deployment runs deploy/ansible/upgrade-database.yml), or start from a new state directory",
 			ErrOutdated, path, p.Role, version, p.supported(), p.Role)
+		if p.dropsData(version) {
+			return fmt.Errorf("%w; %w: the upgrade from version %d drops the recorded runs and their logs "+
+				"(tables debuglets and debuglet_logs) and needs -accept-data-loss", outdated, ErrDataLoss, version)
+		}
+		return outdated
 	}
 	return p.verifyTables(ctx, db, path, version, tables)
 }
@@ -176,6 +185,20 @@ func (p Policy) verifyTables(ctx context.Context, db *sql.DB, path string, versi
 		}
 	}
 	return nil
+}
+
+// dropsData reports whether upgrading from version drops the recorded runs.
+func (p Policy) dropsData(version int64) bool {
+	return version < p.DropsBelow
+}
+
+// seedCommand names the local service whose fresh database this role's
+// daemon accepts.
+func (p Policy) seedCommand() string {
+	if p.Role == Executor {
+		return "dbl up --state-dir DIR --port 0"
+	}
+	return "dbl dispatcher up --state-dir DIR --port 0 --grpc-port 0"
 }
 
 func (p Policy) supported() string {

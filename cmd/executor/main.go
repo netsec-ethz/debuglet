@@ -15,6 +15,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.uber.org/zap"
@@ -31,7 +32,18 @@ func main() {
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")
 	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
+	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
+	acceptDataLoss := flag.Bool("accept-data-loss", false, "With -upgrade-database, apply a migration that drops the recorded runs and their logs")
 	flag.Parse()
+
+	if *checkDatabase && (*upgrade || *acceptDataLoss) {
+		fmt.Fprintln(os.Stderr, "executor: -check-database cannot be combined with another administration flag")
+		os.Exit(1)
+	}
+	if *acceptDataLoss && !*upgrade {
+		fmt.Fprintln(os.Stderr, "executor: -accept-data-loss is only valid with -upgrade-database")
+		os.Exit(1)
+	}
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
@@ -39,15 +51,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Checking a database only reads it, so it is safe while the daemon
+	// serves it; the answer tells an upgrade whether there is work to do.
+	if *checkDatabase {
+		err := storagecheck.Check(context.Background(), storagecheck.Executor, cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "executor: %v\n", err)
+			os.Exit(checkDatabaseStatus(err))
+		}
+		fmt.Printf("executor database %s is current for this build\n", absoluteDatabasePath(cfg.Database.Path))
+		return
+	}
 	// A database is upgraded only when its operator asks for it, never at
 	// start: a normal start refuses an outdated schema instead.
 	if *upgrade {
-		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Executor, cfg.Database.Path)
+		var options []storagecheck.UpgradeOption
+		if *acceptDataLoss {
+			options = append(options, storagecheck.AcceptDataLoss())
+		}
+		path := absoluteDatabasePath(cfg.Database.Path)
+		fmt.Printf("upgrading executor database %s\n", path)
+		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Executor, cfg.Database.Path, options...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "executor: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("database %s now records executor schema version %d\n", cfg.Database.Path, version)
+		fmt.Printf("database %s now records executor schema version %d\n", path, version)
 		// The daemon enforces foreign keys on new writes only; rows an
 		// earlier version wrote without them are reported, not changed.
 		violations, err := storagecheck.ForeignKeyViolations(context.Background(), cfg.Database.Path)
@@ -73,6 +102,34 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Executor stopped", zap.String("role", "executor"), zap.Bool("joined", true))
+}
+
+// checkDatabaseStatus maps the answer of -check-database to its exit status:
+// 3 for a database the upgrade brings to this build keeping its data, 4 for
+// one whose upgrade drops the recorded runs, 1 for any other refusal.
+func checkDatabaseStatus(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, storagecheck.ErrOutdated) && errors.Is(err, storagecheck.ErrDataLoss):
+		return 4
+	case errors.Is(err, storagecheck.ErrOutdated):
+		return 3
+	default:
+		return 1
+	}
+}
+
+// absoluteDatabasePath names the database file an administration mode acts
+// on, which is not always next to the configuration file that names it.
+func absoluteDatabasePath(path string) string {
+	if path == "" {
+		return path
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		return absolute
+	}
+	return path
 }
 
 // configureSCIONEnvironment loads the SCION daemon address unless the operator
