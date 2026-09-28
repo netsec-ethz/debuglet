@@ -232,7 +232,7 @@ func (h *installedHarness) libraryCase(t *testing.T, fault string) {
 		}
 		return p, err
 	}
-	deps.startChild = func(spec ChildSpec) (childProcess, error) {
+	deps.startChild = func(spec ChildSpec) (ChildProcess, error) {
 		if fault == "executor_start_failure" && spec.Path == h.assets.Executor {
 			mu.Lock()
 			faultObserved = true

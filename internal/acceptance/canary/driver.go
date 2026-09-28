@@ -44,7 +44,7 @@ type localSession interface {
 type driverDependencies struct {
 	validate func(Manifest, demo.Assets) error
 	resolve  func(string) (demo.Assets, error)
-	open     func(Options, string) localSession
+	open     func(context.Context, Options, string) localSession
 	write    func(string, Evidence) error
 	poll     func(context.Context) error
 }
@@ -137,7 +137,7 @@ func runDriver(parent context.Context, opts Options, deps driverDependencies) (e
 	if err != nil {
 		return ev, err
 	}
-	session = deps.open(opts, stateDir)
+	session = deps.open(ctx, opts, stateDir)
 	ev.Phase = "startup"
 	endpoint, err := session.StartDispatcher(ctx)
 	if err != nil {

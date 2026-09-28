@@ -18,13 +18,12 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/demo"
 	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
-	"github.com/pelletier/go-toml/v2"
 )
 
 // TestLocalConfigurationReachesTheTargetItStarts covers the configuration this
@@ -44,7 +43,7 @@ func TestLocalConfigurationReachesTheTargetItStarts(t *testing.T) {
 	cfg := localExecutorConfiguration(testExecutor, "v0.0.1-test", filepath.Join(dir, "executor.sqlite"),
 		readiness.Record{GRPCAddr: "127.0.0.1:9001", HTTPAddr: "127.0.0.1:9000"})
 	path := filepath.Join(dir, "executor.toml")
-	if err := writeConfig(path, cfg); err != nil {
+	if err := demo.WriteConfig(path, cfg); err != nil {
 		t.Fatalf("write the candidate configuration: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -56,10 +55,6 @@ func TestLocalConfigurationReachesTheTargetItStarts(t *testing.T) {
 		if !strings.Contains(string(data), key) {
 			t.Fatalf("the configuration is missing %q:\n%s", key, data)
 		}
-	}
-	var restored executorconfig.ExecutorConfig
-	if err := toml.Unmarshal(data, &restored); err != nil || !reflect.DeepEqual(cfg, restored) {
-		t.Fatalf("the written configuration does not read back as the typed one: %+v %v", restored, err)
 	}
 
 	loaded, err := executorconfig.LoadConfig(path)

@@ -110,7 +110,7 @@ func TestLocalLogFailureJoinsChildren(t *testing.T) {
 	f := newSupervisorFixture(t, "success")
 	f.dir = filepath.Join(t.TempDir(), "state")
 	start := f.deps.startChild
-	f.deps.startChild = func(spec ChildSpec) (childProcess, error) {
+	f.deps.startChild = func(spec ChildSpec) (ChildProcess, error) {
 		child, err := start(spec)
 		if err == nil && spec.Path == f.assets.Executor {
 			log := spec.Stdout.(*rotatingLog)
