@@ -11,6 +11,10 @@ changes; the linked API and deployment documentation contains operational detail
 ## [Unreleased]
 
 ### Changed
+- `install.sh` prints the `export PATH=...` line to use when the installed
+  `bin` directory is not on `PATH`.
+- Lead the README with a published installation and organize versioned
+  references under `docs/`; keep user and operator procedures in the Wiki.
 - Reject `_` in DNS names in daemon configuration (`server.bind_host`,
   `dispatcher.addr`, `dispatcher.yamux_addr`, `tls.server_name`,
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
@@ -29,13 +33,6 @@ changes; the linked API and deployment documentation contains operational detail
   backed-up database upgrades, and verified Linux amd64 packages.
 
 ### Changed
-- `install.sh` prints the `export PATH=...` line to use when the installed
-  `bin` directory is not on `PATH`.
-- The README leads with downloading and verifying a published release; building
-  from source moves to the installation guide. The daemon configuration and
-  stored-state reference moves to `docs/operations/configuration.md`, and managed services
-  and drain to `docs/operations/services.md`; `docs/operations/local-checks.md` keeps the local
-  environment checker. `docs/api.md` lists the tested version combinations.
 - Move the debuglet examples from `local/wasm_samples/` to `examples/debuglets/`,
   the local daemon configurations from `local/configs/` to `configs/`,
   `verify_pcap.py` to `tools/`, and the illustrative HTTP exchanges to
