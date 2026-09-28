@@ -247,6 +247,30 @@ func assertTokens(t *testing.T, fc *FallbackConn, wantDest, wantExec bitrate.Bit
 	}
 }
 
+// assertTokensAfterTwoReservations checks both buckets of fc after one Write
+// took two reservations from buckets that the first one created full at
+// destRate and execRate. The first reservation kept firstUsed bits of its
+// charge; the second charged second bits and got refunded bits back. Before
+// charging, the second reservation refilled each bucket for the time since the
+// first, up to one second of its rate. The bucket records that credit in
+// refilled, so the expected balance is exact however long the two were apart.
+func assertTokensAfterTwoReservations(t *testing.T, fc *FallbackConn, destRate, execRate, firstUsed, second, refunded bitrate.Bitrate) {
+	t.Helper()
+	var destRefilled, execRefilled bitrate.Bitrate
+	fc.count.mu.Lock()
+	if b, ok := fc.count.packetSize[debugletKey{id: fc.id, dest: fc.ipv6}]; ok {
+		destRefilled = b.refilled
+	}
+	if eb, ok := fc.count.execPacketSize[fc.id]; ok {
+		execRefilled = eb.refilled
+	}
+	fc.count.mu.Unlock()
+	balance := func(rate, refilled bitrate.Bitrate) bitrate.Bitrate {
+		return min(rate, min(rate, rate-firstUsed+refilled)-second+refunded)
+	}
+	assertTokens(t, fc, balance(destRate, destRefilled), balance(execRate, execRefilled))
+}
+
 // forceReservationWait drives the buckets of a one-byte-per-second
 // connection into debt so that the next reservation on fc must sleep for
 // well over boundedWait. It uses the production reserve path only.
@@ -1098,7 +1122,10 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 		if calls != 2 {
 			t.Fatalf("underlying Write calls = %d, want 2", calls)
 		}
-		assertTokens(t, fc, bitrate.FromBytes(destBytes-payload), bitrate.FromBytes(execBytes-payload))
+		// The first reservation of the whole payload keeps 30 bytes; the
+		// second reserves and sends the remaining 70.
+		assertTokensAfterTwoReservations(t, fc, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes),
+			bitrate.FromBytes(30), bitrate.FromBytes(payload-30), 0)
 	})
 
 	t.Run("accumulates short write before error", func(t *testing.T) {
@@ -1115,7 +1142,10 @@ func TestWriteRefundsUnusedReservation(t *testing.T) {
 		if n, err := fc.Write(make([]byte, payload)); n != 50 || !errors.Is(err, sentinel) {
 			t.Fatalf("Write = (%d, %v), want (50, %v)", n, err, sentinel)
 		}
-		assertTokens(t, fc, bitrate.FromBytes(destBytes-50), bitrate.FromBytes(execBytes-50))
+		// The first reservation of the whole payload keeps 30 bytes; the
+		// second reserves the remaining 70, sends 20 and gets the other 50 back.
+		assertTokensAfterTwoReservations(t, fc, bitrate.FromBytes(destBytes), bitrate.FromBytes(execBytes),
+			bitrate.FromBytes(30), bitrate.FromBytes(payload-30), bitrate.FromBytes(payload-30-20))
 	})
 
 	for _, tc := range []struct {
