@@ -27,6 +27,7 @@ jobs:
           - {lane: test, timeout: 40}
           - {lane: race, timeout: 40}
           - {lane: kernel, timeout: 30}
+          - {lane: vulnerabilities, timeout: 30}
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -46,6 +47,7 @@ jobs:
             .cache/ci/kernel-tests.json
             .cache/ci/ebpf-objects-*.sha256
             .cache/ci/generation/
+            .cache/ci/vulnerabilities/
             .cache/ci/ci-image-evidence/
           include-hidden-files: true
           if-no-files-found: error

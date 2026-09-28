@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 lane=${1:-}
 case "$lane" in
-    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline) ;;
+    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline|vulnerabilities) ;;
     *) echo "unknown CI lane: $lane" >&2; exit 2 ;;
 esac
 
@@ -120,6 +120,7 @@ docker run --rm --init --pull=never --name "$name" \
             generate) bash scripts/ci-generate.sh check ;;
             race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
             secrets) python3 -m unittest -v tools/test_ci_security.py; bash "scripts/ci-$1.sh" ;;
+            vulnerabilities) python3 -m unittest -v tools/test_ci_vulnerabilities.py; bash scripts/ci-vulnerabilities.sh ;;
             faults) bash scripts/ci-faults.sh ;;
             soak) bash scripts/ci-soak.sh ;;
             offline)

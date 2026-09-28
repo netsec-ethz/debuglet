@@ -25,6 +25,14 @@ missing selections, malformed events and failed tests cannot pass as coverage.
 
 ## Security and offline checks
 
+The required vulnerability lane pins govulncheck and rejects known vulnerabilities
+reachable from native package symbols. It retains the tool/database versions and
+call paths. Findings limited to an uncalled module are informational. Any temporary
+exception in `tools/vulnerability-exceptions.json` must name one advisory and
+module, a review URL, a reason, and an expiry no more than 30 days away. Expired
+exceptions fail. This gate currently covers Go dependencies, not container OS
+packages.
+
 The secret lane scans proposed commits, every tracked file at `HEAD`, and the
 produced archives using pinned Gitleaks with its default rules. Reports contain
 rule, path and line only; match values are discarded. The scanner runs a harmless
