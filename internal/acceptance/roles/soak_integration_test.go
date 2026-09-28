@@ -120,7 +120,7 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := demo.BootstrapFresh(ctx, role, filepath.Join(dir, "state.sqlite")); err != nil {
+		if err := storagecheck.BootstrapFresh(ctx, role, filepath.Join(dir, "state.sqlite")); err != nil {
 			t.Fatal(err)
 		}
 		data, err := toml.Marshal(config)
