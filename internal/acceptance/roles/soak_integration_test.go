@@ -59,7 +59,7 @@ func TestInstalledScheduleSoak(t *testing.T) {
 	var listeners []net.Listener
 	var targets sync.WaitGroup
 	started := time.Now()
-	completed, reconciled := 0, 0
+	completed, failedExpired, unknownExpired := 0, 0, 0
 	t.Cleanup(func() {
 		cancel()
 		for _, listener := range listeners {
@@ -89,7 +89,11 @@ func TestInstalledScheduleSoak(t *testing.T) {
 			}
 		}
 		result := map[string]any{"event": "result", "passed": !t.Failed(), "joined": joined, "completed": completed,
-			"reconciled_expired_runs": reconciled, "elapsed_seconds": time.Since(started).Seconds()}
+			"failed_expired_runs": failedExpired, "unknown_expired_outcomes": unknownExpired,
+			"elapsed_seconds": time.Since(started).Seconds()}
+		if !t.Failed() {
+			result["healthy_unknown_outcomes"] = 0
+		}
 		if err := json.NewEncoder(journal).Encode(result); err != nil {
 			t.Error(err)
 		}
@@ -107,7 +111,8 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		"executors": 2, "max_debuglets_per_executor": 4, "maximum_jobs": 122, "epoch_seconds": 1,
 		"chain_length": 120, "schedule_lifetime_seconds": 120, "max_start_delay_seconds": 3,
 		"max_completion_seconds": 8, "max_rss_bytes": 512 << 20, "max_rss_growth_bytes": 128 << 20,
-		"max_fds": 128, "max_fd_growth": 32, "max_storage_bytes": 256 << 20, "packet_counter": "fallback"})
+		"max_fds": 128, "max_fd_growth": 32, "max_storage_bytes": 256 << 20, "packet_counter": "fallback",
+		"maximum_healthy_unknown_outcomes": 0, "maximum_expired_unknown_outcomes": 1})
 	launch := func(name, executable string, role storagecheck.Role, config any) readiness.Record {
 		t.Helper()
 		emit(map[string]any{"event": "daemon_configuration", "name": name, "config": config})
@@ -362,7 +367,9 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		submitted := time.Now()
 		receipt, err := c.SubmitTEST(ctx, prepared)
 		if err != nil {
-			emit(map[string]any{"event": "unexpected_submission_failure", "error": err.Error()})
+			var submission *client.SubmissionError
+			unknown := errors.As(err, &submission) && submission.OutcomeUnknown
+			emit(map[string]any{"event": "unexpected_submission_failure", "error": err.Error(), "outcome_unknown": unknown})
 			t.Fatal(err)
 		}
 		for i, id := range receipt.IDs {
@@ -418,41 +425,78 @@ func TestInstalledScheduleSoak(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.QueryContext(ctx, "SELECT uuid FROM debuglets WHERE transaction_id = ? ORDER BY order_id", submission.TransactionID)
+	rows, err := db.QueryContext(ctx, "SELECT uuid, executor_id, order_id, end_time FROM debuglets WHERE transaction_id = ? ORDER BY order_id", submission.TransactionID)
 	if err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
 	var expiredIDs []string
+	observeUntil := lastExpiry.Add(10 * time.Second)
 	for rows.Next() {
 		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var executorID string
+		var order int
+		var end time.Time
+		if err := rows.Scan(&id, &executorID, &order, &end); err != nil {
 			t.Error(err)
 			break
 		}
+		if order != len(expiredIDs) || order >= len(ids) || executorID != ids[order] || end.IsZero() {
+			t.Error("expired batch has incorrect identity or reservation", id, executorID, order, end)
+			break
+		}
+		emit(map[string]any{"event": "expired_reservation", "id": id, "executor": executorID, "order": order, "end": end})
 		expiredIDs = append(expiredIDs, id.String())
+		if end.Add(2 * time.Second).After(observeUntil) {
+			observeUntil = end.Add(2 * time.Second)
+		}
 	}
 	err = errors.Join(rows.Err(), rows.Close(), db.Close())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(expiredIDs) != 2 {
+	if len(expiredIDs) != 2 || expiredIDs[0] == expiredIDs[1] {
 		t.Fatal("expired batch has unresolved run identities", expiredIDs)
 	}
-	for _, id := range expiredIDs {
-		state, err := c.Status(ctx, id)
-		if err != nil || state.State != client.StateExited || state.Error == "" {
-			t.Fatalf("unreconciled expired run %s: %+v %v", id, state, err)
+	emit(map[string]any{"event": "observation_horizon", "until": observeUntil})
+	checkExpired := func(phase string) {
+		t.Helper()
+		failedExpired, unknownExpired = 0, 0
+		for i, id := range expiredIDs {
+			state, err := c.Status(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Terminal classification need not resolve execution uncertainty.
+			unknown := state.State == "RunStateUnreconciled" || strings.Contains(state.Error, "outcome unknown")
+			emit(map[string]any{"event": "expired_run", "phase": phase, "id": id, "executor": state.ExecutorID,
+				"state": state.State, "error": state.Error, "outcome_unknown": unknown})
+			if state.ExecutorID != ids[i] {
+				t.Fatal("expired run changed executor", id, state)
+			}
+			switch {
+			case state.State == client.StateExited && state.Error != "":
+				failedExpired++
+			case state.State == "RunStateUnreconciled":
+			default:
+				t.Fatal("unexpected expired run outcome", id, state)
+			}
+			if unknown {
+				unknownExpired++
+			}
 		}
-		reconciled++
+		if failedExpired < 1 || unknownExpired > 1 {
+			t.Fatal("expired outcome bounds exceeded", failedExpired, unknownExpired)
+		}
 	}
+	checkExpired("after_refusal")
 	for i := range ids {
 		data, err := os.ReadFile(filepath.Join(work, fmt.Sprintf("executor-%d", i), "daemon.log"))
 		if err != nil || !strings.Contains(string(data), "TESLA key chain exhausted") {
 			t.Fatalf("executor %d did not report actual expiry: %v", i, err)
 		}
 	}
-	for time.Now().Before(lastExpiry.Add(10 * time.Second)) {
+	for time.Now().Before(observeUntil) {
 		sample()
 		select {
 		case <-ctx.Done():
@@ -460,6 +504,7 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		case <-tick.C:
 		}
 	}
+	checkExpired("after_window")
 	for i := range ids {
 		select {
 		case result := <-results[i]:

@@ -27,7 +27,13 @@ jobs:
         with:
           name: schedule-soak-${{ github.sha }}-${{ github.run_attempt }}
           path: |
-            .cache/ci/soak/
+            .cache/ci/soak/cleanup.json
+            .cache/ci/soak/run.*/commands.txt
+            .cache/ci/soak/run.*/package.log
+            .cache/ci/soak/run.*/install.log
+            .cache/ci/soak/run.*/verify.json
+            .cache/ci/soak/run.*/tests.json
+            .cache/ci/soak/run.*/observations.jsonl
             .cache/ci/ci-image-evidence/
           include-hidden-files: true
           if-no-files-found: error
