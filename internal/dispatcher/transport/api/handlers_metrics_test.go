@@ -33,7 +33,7 @@ func TestMetricsRequireOperator(t *testing.T) {
 	if status != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/plain; version=0.0.4") || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("operator metrics: status=%d headers=%v body=%s", status, response.Header, body)
 	}
-	if !strings.Contains(string(body), "debuglet_process_rss_bytes ") || !strings.Contains(string(body), `debuglet_observation_available{observation="output_complete",reason="unsupported"} 0`) {
+	if !strings.Contains(string(body), `debuglet_observation_available{observation="process_rss_bytes",`) || !strings.Contains(string(body), `debuglet_observation_available{observation="output_complete",reason="unsupported"} 0`) {
 		t.Fatalf("missing host or unavailable observation: %s", body)
 	}
 	if strings.Contains(string(body), account.ID) || strings.Contains(string(body), token) {
