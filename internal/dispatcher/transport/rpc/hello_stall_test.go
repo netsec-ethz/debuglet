@@ -234,7 +234,7 @@ func TestBidiSilentReverseHelloEndsRegistration(t *testing.T) {
 				if elapsed < helloDeadline-500*time.Millisecond || elapsed > helloDeadline+time.Second {
 					t.Fatalf("registration ended after %v, want the %v Hello deadline", elapsed, helloDeadline)
 				}
-				t.Logf("logged cause: %q", assertRegistrationCause(t, s, "hello: "+context.DeadlineExceeded.Error()))
+				t.Logf("logged cause: %q", assertRegistrationCause(t, s, "hello: "+context.DeadlineExceeded.Error(), "hello: "+codes.DeadlineExceeded.String()))
 				assertNoRegistration(t, s)
 			})
 		}
