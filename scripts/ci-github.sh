@@ -91,7 +91,7 @@ docker run --rm --init --pull=never --name "$name" \
         case "$1" in
             fmt) python3 -m unittest -v tools/test_ci_fmt.py; make ci-fmt ;;
             generate) bash scripts/ci-generate.sh check ;;
-            race) python3 -m unittest -v tools/test_check_race_evidence.py; make ci-race ;;
+            race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
             *) make "ci-$1" ;;
         esac
     ' -- "$lane" "$profile" "$(id -u):$(id -g)"
