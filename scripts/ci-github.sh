@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 lane=${1:-}
 case "$lane" in
-    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel) ;;
+    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|offline) ;;
     *) echo "unknown CI lane: $lane" >&2; exit 2 ;;
 esac
 
@@ -15,7 +15,7 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
         echo 'CI requires the official repository and a GitHub-hosted Linux X64 VM.' >&2; exit 1;
     }
     case "${GITHUB_EVENT_NAME:-}:${GITHUB_REF:-}" in
-        push:refs/heads/main|\
+        push:refs/heads/main|schedule:refs/heads/main|\
         workflow_dispatch:refs/heads/*) ;;
         pull_request:refs/pull/*/merge)
             [[ ${GITHUB_REF:-} =~ ^refs/pull/[0-9]+/merge$ &&
@@ -54,9 +54,23 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
 fi
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 name="debuglet-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$lane-$$"
+prepare_name="$name-modules"
 cleanup() {
     local status=$?
-    docker rm --force "$name" >/dev/null 2>&1 || true
+    if [[ $lane == faults ]]; then
+        mkdir -p .cache/ci/faults
+        docker rm --force "$name" "$prepare_name" >/dev/null 2>&1 || true
+        if remaining=$(docker container ls --all --format '{{.Names}}') &&
+            ! grep -Fxq -e "$name" -e "$prepare_name" <<< "$remaining"; then
+            printf '{"container":"%s","preparation_container":"%s","removed":true,"test_status":%s}\n' \
+                "$name" "$prepare_name" "$status" > .cache/ci/faults/cleanup.json
+        else
+            echo 'fault-suite container cleanup could not be verified' >&2
+            status=1
+        fi
+    else
+        docker rm --force "$name" >/dev/null 2>&1 || true
+    fi
     exit "$status"
 }
 trap cleanup EXIT
@@ -68,9 +82,17 @@ trap 'exit 143' TERM
 forward=()
 for key in GITHUB_ACTIONS GITHUB_EVENT_NAME GITHUB_REPOSITORY GITHUB_REF GITHUB_BASE_REF \
     GITHUB_REF_PROTECTED GITHUB_SHA GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_JOB \
-    GITHUB_SERVER_URL RUNNER_NAME RUNNER_ENVIRONMENT RUNNER_OS RUNNER_ARCH; do
+    GITHUB_SERVER_URL CI_SCAN_BASE RUNNER_NAME RUNNER_ENVIRONMENT RUNNER_OS RUNNER_ARCH; do
     [[ -z ${!key+x} ]] || forward+=(--env "$key")
 done
+# Fetch dependencies before the fault fixtures enter their no-network boundary.
+if [[ $lane == faults ]]; then
+    docker run --rm --init --pull=never --name "$prepare_name" \
+        --mount "type=bind,source=$PWD,target=/workspace,readonly" \
+        --mount type=volume,source=debuglet-ci-go-mod,target=/go/pkg/mod \
+        --workdir /workspace --env GOTOOLCHAIN=local "$image" go mod download
+    options+=(--network none --cpus 4 --memory 4g --pids-limit 512 --env DEBUGLET_FAULT_ISOLATED=1)
+fi
 docker run --rm --init --pull=never --name "$name" \
     --mount "type=bind,source=$PWD,target=/workspace" \
     --mount type=volume,source=debuglet-ci-go-mod,target=/go/pkg/mod \
@@ -92,6 +114,15 @@ docker run --rm --init --pull=never --name "$name" \
             fmt) python3 -m unittest -v tools/test_ci_fmt.py; make ci-fmt ;;
             generate) bash scripts/ci-generate.sh check ;;
             race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
+            secrets) python3 -m unittest -v tools/test_ci_security.py; bash "scripts/ci-$1.sh" ;;
+            faults) bash scripts/ci-faults.sh ;;
+            offline)
+                mkdir -p .cache/ci/offline-evidence
+                . scripts/ci-install-candidate.sh
+                install_candidate "$PWD/.cache/ci/offline-install" .cache/ci/offline-evidence/install.log \
+                    .cache/ci/packages > .cache/ci/offline-evidence/verify.json
+                printf "%s\n" "$version" > .cache/ci/offline-version.txt
+                ;;
             *) make "ci-$1" ;;
         esac
     ' -- "$lane" "$profile" "$(id -u):$(id -g)"
