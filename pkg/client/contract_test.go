@@ -28,6 +28,20 @@ func TestClientAnnouncesContractVersionOnEveryRequest(t *testing.T) {
 	}
 }
 
+func TestExistingSDKOperationsStillReachVersion13(t *testing.T) {
+	f := newFakeServer(t, "")
+	f.handle("GET /executors", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Debuglet-API-Version") != "1.3" {
+			jsonHandler(http.StatusBadRequest, `{"code":"unsupported_api_version","message":"server implements 1.3"}`)(w, r)
+			return
+		}
+		jsonHandler(http.StatusOK, fixtureNodes)(w, r)
+	})
+	if _, err := f.client(t, Options{}).Nodes(testContext(t)); err != nil {
+		t.Fatalf("existing SDK operation rejected by a 1.3 server: %v", err)
+	}
+}
+
 // A dispatcher written before the contract was versioned answers with the
 // original body. It must keep working, with the new identities empty.
 func TestVersionFromDispatcherWithoutContractVersioning(t *testing.T) {
