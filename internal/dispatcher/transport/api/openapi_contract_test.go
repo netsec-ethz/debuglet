@@ -59,8 +59,8 @@ func TestContractDocumentIdentifiesTheImplementedVersion(t *testing.T) {
 	if version, _ := info["version"].(string); version != apispec.Version {
 		t.Fatalf("info.version = %q, want %q", version, apispec.Version)
 	}
-	if client.APIVersion != apispec.Version {
-		t.Fatalf("the SDK announces contract version %q, the server implements %q", client.APIVersion, apispec.Version)
+	if !supportedAPIVersion(client.APIVersion) {
+		t.Fatalf("the SDK requires contract version %q, which this server (%q) does not support", client.APIVersion, apispec.Version)
 	}
 	if openapi, _ := c.root["openapi"].(string); !strings.HasPrefix(openapi, "3.") {
 		t.Fatalf("openapi = %q, want an OpenAPI 3 document", openapi)
@@ -167,7 +167,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 	t.Run("accepted requirements reach the handler", func(t *testing.T) {
 		// An absent or blank header states no requirement, which is what every
 		// client written before the contract was versioned sends.
-		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3"} {
+		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4"} {
 			headers := map[string]string{}
 			if required != "absent" {
 				headers[apispec.VersionHeader] = required
@@ -189,7 +189,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 		// None of these is a substring of the implemented version, so a
 		// message naming that version cannot be mistaken for an echo of the
 		// value the caller sent.
-		for _, required := range []string{"4", "2.0", "0.9", "1.4", "one", "1.0.0", "-1", "1.0; drop"} {
+		for _, required := range []string{"9", "2.0", "0.9", "1.5", "one", "1.0.0", "-1", "1.0; drop"} {
 			rec := oaServe(f.e, http.MethodPut, "/user", []byte(`{"name":"x"}`),
 				map[string]string{apispec.VersionHeader: required})
 			if rec.Code != http.StatusBadRequest {
@@ -351,6 +351,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeLiveness, nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeReadiness, nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeHealth, nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/metrics", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github/callback", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip?ip=127.0.0.1&n=5", nil)

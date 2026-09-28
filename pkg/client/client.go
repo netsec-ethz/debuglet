@@ -31,9 +31,9 @@ const (
 )
 
 const (
-	// APIVersion is the dispatcher HTTP contract version this SDK is written
-	// against, as major.minor. It is announced on every request so that a
-	// server implementing an incompatible contract rejects the request
+	// APIVersion is the minimum dispatcher HTTP contract version required by
+	// this SDK's operations, as major.minor. It is announced on every request
+	// so a server implementing an incompatible contract rejects the request
 	// explicitly instead of answering a shape the client cannot read. A server
 	// written before the contract was versioned ignores the header.
 	APIVersion = "1.3"

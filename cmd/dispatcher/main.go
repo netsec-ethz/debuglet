@@ -437,6 +437,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	// cookie's Secure attribute comes from this daemon's own transport, never
 	// from a request header, for the reason recorded at the Serve call below.
 	handler := api.NewHandler(manager, db, logger,
+		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
 		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),
 		api.GitHubOAuth(api.GitHubOAuthConfig{

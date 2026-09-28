@@ -699,6 +699,7 @@ type authRoutePolicy struct {
 // It is the one place the expected policy is written down, and both the
 // runtime test below and the contract test compare against it.
 var authAccessMatrix = map[string]authRoutePolicy{
+	"GET /metrics":                        {anonymous: http.StatusUnauthorized, target: "/metrics"},
 	"GET /version":                        {anonymous: http.StatusOK, target: "/version", public: true},
 	"GET /openapi.yaml":                   {anonymous: http.StatusOK, target: "/openapi.yaml", public: true},
 	"POST /auth/login":                    {anonymous: http.StatusUnauthorized, target: "/auth/login", body: []byte(`{"account_key":""}`), public: true},

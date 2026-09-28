@@ -46,6 +46,11 @@ Health endpoints are public:
 | `/readyz` | Dispatcher can admit new work. |
 | `/health` | Expanded readiness observations. |
 
+`GET /metrics` requires an operator account (or the explicit local development
+profile) and exports aggregate gauges in Prometheus text format. See
+[operational metrics](operations/metrics.md) for authentication, units, unavailable
+observations and collection limits.
+
 The OpenAPI document contains the complete status-code and schema reference. Deployment authentication and transport security are covered in the [project Wiki](https://github.com/netsec-ethz/debuglet/wiki).
 
 ## Run states
