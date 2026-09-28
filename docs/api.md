@@ -28,7 +28,11 @@ Clients may send `Debuglet-API-Version: major.minor`. Within one API major versi
 
 ## Errors and health
 
-API failures use `{"code": "…", "message": "…"}`. Programmatic clients should branch on `code`, not the human-readable message. Health endpoints are public:
+API failures use `{"code": "…", "message": "…"}`. Programmatic clients should branch on `code`, not the human-readable message.
+
+A `message` contains only fixed text written for that failure, a value from your own request repeated back and cut to at most 64 bytes (with `...` marking the cut and control characters replaced by spaces), or, in the `error` field of a run's state and logs, the workload error recorded for that run, cut to 512 bytes and marked with `...`, with control characters replaced by spaces. It never contains database, runtime or transport diagnostics, and never a credential: no session token, CSRF token, account key, recovery code or payment `auth_key`, whether valid or rejected. Failures inside the dispatcher answer `internal_error` with a fixed message; their cause is written to the dispatcher's log as a Warn entry `request failed` with the route, the status, the code and the underlying error. There is no API route that returns these details: an operator reads them in the daemon log.
+
+Health endpoints are public:
 
 | Endpoint | Meaning |
 | --- | --- |

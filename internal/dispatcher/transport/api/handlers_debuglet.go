@@ -127,10 +127,16 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted, "capacity exceeded", err)
 		}
 		// A policy admission refuses on its numbers is a rejected request, not
-		// a failure of the server. Its message names the field and carries no
+		// a failure of the server. Its message names the field, or a registered
+		// executor that lacks what the policy asks for, and carries no other
 		// caller-supplied text, so it is reported as it is.
 		if errors.Is(err, dispatcher.ErrInvalidPolicy) {
 			return apiErrorFrom(http.StatusBadRequest, CodeInvalidPolicy, err.Error(), err)
+		}
+		// An executor that left between the intent and the submission is a
+		// rejected request too; which one is in the log.
+		if errors.Is(err, dispatcher.ErrUnknownExecutor) {
+			return apiErrorFrom(http.StatusBadRequest, CodeUnknownExecutor, "the executor is not registered or not available", err)
 		}
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to initialize debuglets", err)
 	} else {

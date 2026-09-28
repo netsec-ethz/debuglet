@@ -103,6 +103,13 @@ func ccNewFixture(t *testing.T) *ccFixture {
 
 func ccNewFixtureWith(t *testing.T, options ...Option) *ccFixture {
 	t.Helper()
+	return ccNewFixtureLogged(t, zap.NewNop(), options...)
+}
+
+// ccNewFixtureLogged is ccNewFixtureWith with the dispatcher, the payment
+// handler and the API logging to logger.
+func ccNewFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *ccFixture {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -119,7 +126,6 @@ func ccNewFixtureWith(t *testing.T, options ...Option) *ccFixture {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	logger := zap.NewNop()
 	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "cc-version", time.Minute, time.Minute, ph)
 	if err != nil {
