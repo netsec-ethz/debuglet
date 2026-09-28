@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/connections"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -43,27 +44,27 @@ type RoleOptions struct {
 // pins the installed version that created the directory, so a payload the
 // databases were never served by cannot silently adopt them.
 type RoleState struct {
-	SchemaVersion int        `json:"schema_version"`
-	Version       string     `json:"version"`
-	SourceSHA     string     `json:"source_sha"`
-	Identity      string     `json:"identity"`
-	Role          SchemaRole `json:"role"`
+	SchemaVersion int               `json:"schema_version"`
+	Version       string            `json:"version"`
+	SourceSHA     string            `json:"source_sha"`
+	Identity      string            `json:"identity"`
+	Role          storagecheck.Role `json:"role"`
 	// EarlierIdentity is the key earlier builds wrote the identity under. It
 	// is read when the file carries no identity value and is never written.
 	EarlierIdentity string `json:"executor_id,omitempty"`
 }
 
 func DispatcherUp(ctx context.Context, assets Assets, options RoleOptions) error {
-	return upRole(ctx, DispatcherSchema, assets, options, productionDependencies(), localStartupTimeout)
+	return upRole(ctx, storagecheck.Dispatcher, assets, options, productionDependencies(), localStartupTimeout)
 }
 
 func ExecutorUp(ctx context.Context, assets Assets, options RoleOptions) error {
-	return upRole(ctx, ExecutorSchema, assets, options, productionDependencies(), localStartupTimeout)
+	return upRole(ctx, storagecheck.Executor, assets, options, productionDependencies(), localStartupTimeout)
 }
 
 // Each role owns only its own process, state lock and readiness file. Joining
 // an executor never starts or stops the dispatcher it connects to.
-func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOptions, deps dependencies, startupTimeout time.Duration) (err error) {
+func upRole(ctx context.Context, role storagecheck.Role, assets Assets, options RoleOptions, deps dependencies, startupTimeout time.Duration) (err error) {
 	options.Logs, err = options.Logs.defaults()
 	if err != nil {
 		return err
@@ -77,7 +78,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 			err = nil
 		}
 	}()
-	if role != DispatcherSchema && role != ExecutorSchema {
+	if role != storagecheck.Dispatcher && role != storagecheck.Executor {
 		return errors.New("unknown local service role")
 	}
 	if err := connections.ValidateName(options.Name); err != nil {
@@ -96,7 +97,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		}
 		return ctx.Err()
 	}
-	if role == ExecutorSchema {
+	if role == storagecheck.Executor {
 		if err := validateRoleEndpoint(options.Dispatcher.Endpoint); err != nil {
 			return err
 		}
@@ -127,7 +128,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 	}
 	// The dispatcher is contacted only after the local state is known to be
 	// usable, so a local refusal does not depend on a dispatcher answering.
-	if role == ExecutorSchema {
+	if role == storagecheck.Executor {
 		// Always refresh the metadata: cached profile ports are conveniences,
 		// not authority to connect to an old or different control service.
 		profile, err := connections.Discover(startupCtx, options.Dispatcher.Endpoint)
@@ -186,7 +187,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 	}
 	config := dispatcherConfiguration(assets.Manifest.Version, dbPath)
 	executable := assets.Dispatcher
-	if role == DispatcherSchema {
+	if role == storagecheck.Dispatcher {
 		config["server"].(map[string]any)["http_port"] = options.Port
 		config["server"].(map[string]any)["grpc_port"] = options.GRPCPort
 	} else {
@@ -213,7 +214,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 	}
 	watchChild(watchCtx, &watcher, string(role), child, cancelWork)
 	id := ""
-	if role == ExecutorSchema {
+	if role == storagecheck.Executor {
 		id = state.Identity
 	}
 	record, err := awaitReady(startupCtx, filepath.Join(dir, "child-ready.json"), child.PID(), id)
@@ -221,7 +222,7 @@ func upRole(ctx context.Context, role SchemaRole, assets Assets, options RoleOpt
 		return fmt.Errorf("%s readiness (see %s): %w", role, logPath, err)
 	}
 	ready := RoleEnvironment{State: "ready", Role: string(role), Name: options.Name, StateDir: dir, Endpoint: options.Dispatcher.Endpoint}
-	if role == DispatcherSchema {
+	if role == storagecheck.Dispatcher {
 		ready.Endpoint = "http://" + record.HTTPAddr
 		ready.GRPCAddress, ready.YamuxAddress = record.GRPCAddr, record.HTTPAddr
 	} else {
@@ -265,11 +266,11 @@ func validateRoleEndpoint(endpoint string) error {
 // EnsureRoleState reads, or on first use creates, the persistent identity of
 // a role state directory. The caller owns the mode-0700 directory and keeps it
 // under its own control for the duration of the call.
-func EnsureRoleState(dir string, role SchemaRole, manifest Manifest) (RoleState, error) {
+func EnsureRoleState(dir string, role storagecheck.Role, manifest Manifest) (RoleState, error) {
 	return readRoleState(dir, role, manifest)
 }
 
-func readRoleState(dir string, role SchemaRole, manifest Manifest) (RoleState, error) {
+func readRoleState(dir string, role storagecheck.Role, manifest Manifest) (RoleState, error) {
 	path := filepath.Join(dir, "role-state.json")
 	data, err := readRegularFile(path, readyLimit)
 	if err == nil {

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"golang.org/x/sys/unix"
 )
 
@@ -47,7 +48,7 @@ func TestBackupDiskFullPreservesPrevious(t *testing.T) {
 	before := backupFiles(t, first)
 	// Source data stays on the ordinary test filesystem. Only this dedicated
 	// volume fills, during the actual backup copy, after a good backup exists.
-	db := openSchemaDB(t, RoleDatabase(source, ExecutorSchema))
+	db := openSchemaDB(t, RoleDatabase(source, storagecheck.Executor))
 	if _, err := db.Exec("CREATE TABLE storage_pressure(data BLOB); INSERT INTO storage_pressure VALUES(zeroblob(?))", int64(fs.Blocks)*fs.Bsize+4096); err != nil {
 		t.Fatal(err)
 	}

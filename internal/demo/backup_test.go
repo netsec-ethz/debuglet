@@ -8,6 +8,7 @@ package demo
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -24,6 +25,7 @@ import (
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -31,7 +33,7 @@ func backupFixture(t *testing.T, layout string) (string, Manifest) {
 	t.Helper()
 	dir := privateSchemaDir(t)
 	m := Manifest{Version: "v0.1.0", SourceSHA: strings.Repeat("a", 40)}
-	roles := []SchemaRole{DispatcherSchema, ExecutorSchema}
+	roles := []storagecheck.Role{storagecheck.Dispatcher, storagecheck.Executor}
 	var id string
 	if layout == "local" {
 		state, err := readLocalState(dir, m)
@@ -40,7 +42,7 @@ func backupFixture(t *testing.T, layout string) (string, Manifest) {
 		}
 		id = state.ExecutorID
 	} else {
-		roles = []SchemaRole{SchemaRole(layout)}
+		roles = []storagecheck.Role{storagecheck.Role(layout)}
 		state, err := readRoleState(dir, roles[0], m)
 		if err != nil {
 			t.Fatal(err)
@@ -49,11 +51,11 @@ func backupFixture(t *testing.T, layout string) (string, Manifest) {
 	}
 	for _, role := range roles {
 		db := RoleDatabase(dir, role)
-		if err := BootstrapFresh(t.Context(), role, db); err != nil {
+		if err := storagecheck.BootstrapFresh(t.Context(), role, db); err != nil {
 			t.Fatal(err)
 		}
 		config := dispatcherConfiguration(m.Version, db)
-		if role == ExecutorSchema {
+		if role == storagecheck.Executor {
 			config = executorConfiguration(m.Version, id, db, readiness.Record{GRPCAddr: "127.0.0.1:9001", HTTPAddr: "127.0.0.1:9000"})
 		}
 		name := "service.toml"
@@ -75,7 +77,7 @@ func TestBackupRestoreOfflineState(t *testing.T) {
 		t.Run(layout, func(t *testing.T) {
 			source, m := backupFixture(t, layout)
 			if layout != "dispatcher" {
-				seedBackupRuns(t, RoleDatabase(source, ExecutorSchema))
+				seedBackupRuns(t, RoleDatabase(source, storagecheck.Executor))
 			}
 			parent := privateSchemaDir(t)
 			backup, restored := filepath.Join(parent, "snapshot"), filepath.Join(parent, "restored")
@@ -107,7 +109,7 @@ func TestBackupRestoreOfflineState(t *testing.T) {
 				}
 			}
 			if layout != "dispatcher" {
-				assertBackupRuns(t, RoleDatabase(restored, ExecutorSchema))
+				assertBackupRuns(t, RoleDatabase(restored, storagecheck.Executor))
 			}
 			for _, role := range manifest.Roles {
 				if role.SchemaVersion <= 0 {
@@ -130,7 +132,7 @@ func TestBackupRestoreOfflineState(t *testing.T) {
 // files into a separate fixture models a stopped process that retained its WAL.
 func TestBackupIncludesOfflineWALWithoutChangingSource(t *testing.T) {
 	source, m := backupFixture(t, "executor")
-	original := RoleDatabase(source, ExecutorSchema)
+	original := RoleDatabase(source, storagecheck.Executor)
 	db, err := sqlitedb.Open(original)
 	if err != nil {
 		t.Fatal(err)
@@ -151,11 +153,11 @@ func TestBackupIncludesOfflineWALWithoutChangingSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if info, err := os.Stat(RoleDatabase(offline, ExecutorSchema) + "-wal"); err != nil || info.Size() == 0 {
+	if info, err := os.Stat(RoleDatabase(offline, storagecheck.Executor) + "-wal"); err != nil || info.Size() == 0 {
 		t.Fatalf("no real WAL: %v", err)
 	}
 	// Rebase only the copied fixture config, keeping the committed WAL untouched.
-	if _, err := backupConfig(offline, "", "executor", BackupRole{Role: ExecutorSchema, Identity: readBackupIdentity(t, source, m)}, offline, m.Version); err != nil {
+	if _, err := backupConfig(offline, "", "executor", BackupRole{Role: storagecheck.Executor, Identity: readBackupIdentity(t, source, m)}, offline, m.Version); err != nil {
 		t.Fatal(err)
 	}
 	before := backupFiles(t, offline)
@@ -173,7 +175,7 @@ func TestBackupIncludesOfflineWALWithoutChangingSource(t *testing.T) {
 	if _, err := RestoreState(t.Context(), RestoreOptions{BackupDir: backup, StateDir: restored, Package: m}); err != nil {
 		t.Fatal(err)
 	}
-	check := openSchemaDB(t, RoleDatabase(restored, ExecutorSchema))
+	check := openSchemaDB(t, RoleDatabase(restored, storagecheck.Executor))
 	defer check.Close()
 	var count int
 	if err := check.QueryRow("SELECT count(*) FROM tesla_chains WHERE generation=1").Scan(&count); err != nil || count != 1 {
@@ -194,7 +196,7 @@ func TestBackupRefusesUnownedOrIncompleteShutdown(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "identity changed":
-				state, err := readRoleState(source, DispatcherSchema, m)
+				state, err := readRoleState(source, storagecheck.Dispatcher, m)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -235,7 +237,7 @@ func TestBackupRefusesUnownedOrIncompleteShutdown(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "linked database":
-				original := RoleDatabase(source, DispatcherSchema)
+				original := RoleDatabase(source, storagecheck.Dispatcher)
 				target := filepath.Join(privateSchemaDir(t), "db")
 				if err := os.Rename(original, target); err != nil {
 					t.Fatal(err)
@@ -268,7 +270,7 @@ func TestRestoreRejectsDamageBeforePublication(t *testing.T) {
 			restored := filepath.Join(parent, "restored")
 			switch kind {
 			case "corrupt":
-				writeSchemaFile(t, RoleDatabase(backup, ExecutorSchema), "corrupt")
+				writeSchemaFile(t, RoleDatabase(backup, storagecheck.Executor), "corrupt")
 			case "missing":
 				if err := os.Remove(filepath.Join(backup, "service.toml")); err != nil {
 					t.Fatal(err)
@@ -276,14 +278,14 @@ func TestRestoreRejectsDamageBeforePublication(t *testing.T) {
 			case "extra":
 				writeSchemaFile(t, filepath.Join(backup, "executor.sqlite-wal"), "unexpected journal")
 			case "schema":
-				db := openSchemaDB(t, RoleDatabase(backup, ExecutorSchema))
+				db := openSchemaDB(t, RoleDatabase(backup, storagecheck.Executor))
 				if _, err := db.Exec("INSERT INTO goose_db_version(version_id,is_applied) VALUES(999,1)"); err != nil {
 					t.Fatal(err)
 				}
 				if err := db.Close(); err != nil {
 					t.Fatal(err)
 				}
-				manifest.Files["executor.sqlite"], err = hashBackupFile(t.Context(), RoleDatabase(backup, ExecutorSchema))
+				manifest.Files["executor.sqlite"], err = hashBackupFile(t.Context(), RoleDatabase(backup, storagecheck.Executor))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -376,7 +378,7 @@ func TestBackupCanceledPreservesPrevious(t *testing.T) {
 	}
 	before := backupFiles(t, first)
 	// A large real database makes cancellation observe copying in progress.
-	db := openSchemaDB(t, RoleDatabase(source, ExecutorSchema))
+	db := openSchemaDB(t, RoleDatabase(source, storagecheck.Executor))
 	if _, err := db.Exec("CREATE TABLE cancellation_payload(data BLOB); INSERT INTO cancellation_payload VALUES(zeroblob(67108864))"); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +483,7 @@ func assertBackupRuns(t *testing.T, path string) {
 }
 func readBackupIdentity(t *testing.T, dir string, m Manifest) string {
 	t.Helper()
-	state, err := readRoleState(dir, ExecutorSchema, m)
+	state, err := readRoleState(dir, storagecheck.Executor, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,4 +560,30 @@ func TestBackupReceiptRequiresJoinedForegroundShutdown(t *testing.T) {
 			}
 		})
 	}
+}
+
+func privateSchemaDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func writeSchemaFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openSchemaDB(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sqlitedb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }

@@ -9,6 +9,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"path/filepath"
 	"strings"
 	"time"
@@ -49,8 +50,8 @@ const (
 // path is absolute inside Root, so a staging root and the real root differ in
 // exactly one value and nothing else about the contract changes.
 type Profile struct {
-	Role demo.SchemaRole `json:"role"`
-	Name string          `json:"name"`
+	Role storagecheck.Role `json:"role"`
+	Name string            `json:"name"`
 	// Root is the filesystem prefix every path below is derived from.
 	Root string `json:"root"`
 	// Unit is the service-manager unit this instance owns.
@@ -99,7 +100,7 @@ type Profile struct {
 // Request is what an operator asks for. Everything else in a Profile is
 // derived, so two installs of the same request produce the same unit.
 type Request struct {
-	Role demo.SchemaRole
+	Role storagecheck.Role
 	Name string
 	// Root prefixes every managed path. Empty means the real root.
 	Root string
@@ -126,7 +127,7 @@ const (
 // UnitName returns the unit one role instance owns. A separate unit per
 // instance keeps every operation on exactly one service: an install, a stop or
 // an uninstall of one role never names, reloads or restarts another.
-func UnitName(role demo.SchemaRole, name string) string {
+func UnitName(role storagecheck.Role, name string) string {
 	return fmt.Sprintf("debuglet-%s-%s.service", role, name)
 }
 
@@ -158,7 +159,7 @@ func Resolve(request Request, assets demo.Assets) (Profile, error) {
 	}
 	p.User, p.Group = user, group
 	p.Version, p.SourceSHA, p.PayloadRoot = assets.Manifest.Version, assets.Manifest.SourceSHA, assets.Root
-	if request.Role == demo.DispatcherSchema {
+	if request.Role == storagecheck.Dispatcher {
 		p.Executable = assets.Dispatcher
 		p.HTTPPort, p.GRPCPort = request.HTTPPort, request.GRPCPort
 		if p.HTTPPort == 0 {
@@ -206,9 +207,9 @@ func UnitDirectory(root string) string {
 // check an installed record against it: the record says which version and
 // account an instance was installed with, and it is never allowed to say where
 // the instance lives.
-func DerivePaths(root string, role demo.SchemaRole, name string) (Profile, error) {
+func DerivePaths(root string, role storagecheck.Role, name string) (Profile, error) {
 	var p Profile
-	if role != demo.DispatcherSchema && role != demo.ExecutorSchema {
+	if role != storagecheck.Dispatcher && role != storagecheck.Executor {
 		return p, errors.New("managed services support the dispatcher and executor roles only")
 	}
 	if err := connections.ValidateName(name); err != nil {
@@ -231,7 +232,7 @@ func DerivePaths(root string, role demo.SchemaRole, name string) (Profile, error
 	p.ConfigPath = filepath.Join(p.StateDir, "service.toml")
 	p.DatabasePath = demo.RoleDatabase(p.StateDir, role)
 	p.ReadyFile = filepath.Join(p.RuntimeDir, "ready.json")
-	if role == demo.DispatcherSchema {
+	if role == storagecheck.Dispatcher {
 		p.MaintenanceFile = filepath.Join(AdministrationDirectory(root), fmt.Sprintf("%s-%s.maintenance", role, name))
 	}
 	return p, nil
@@ -262,14 +263,14 @@ func AdministrationDirectory(root string) string {
 }
 
 // RecordPath is the installed record of one instance.
-func RecordPath(root string, role demo.SchemaRole, name string) string {
+func RecordPath(root string, role storagecheck.Role, name string) string {
 	return filepath.Join(AdministrationDirectory(root), fmt.Sprintf("%s-%s.json", role, name))
 }
 
 // StateDirectory is where a role instance keeps its persistent state. It holds
 // only what the daemon itself serves: its database, its role identity and its
 // generated configuration.
-func StateDirectory(root string, role demo.SchemaRole, name string) string {
+func StateDirectory(root string, role storagecheck.Role, name string) string {
 	if root == "" {
 		root = string(filepath.Separator)
 	}

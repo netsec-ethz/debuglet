@@ -9,6 +9,7 @@ import (
 	dispatcherconfig "github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/pelletier/go-toml/v2"
 	"io"
 	"log"
@@ -57,7 +58,7 @@ func (s *local) launch(path string, args []string, daemon bool) (*ownedChild, er
 }
 func (s *local) StartDispatcher(ctx context.Context) (string, error) {
 	db := filepath.Join(s.dir, "dispatcher.sqlite")
-	if err := demo.BootstrapFresh(ctx, demo.DispatcherSchema, db); err != nil {
+	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Dispatcher, db); err != nil {
 		return "", err
 	}
 	// This harness drives the candidate as an ordinary client and holds no
@@ -143,7 +144,7 @@ func localExecutorConfiguration(executorID, version, db string, record readiness
 
 func (s *local) StartExecutor(ctx context.Context) error {
 	db := filepath.Join(s.dir, "executor.sqlite")
-	if err := demo.BootstrapFresh(ctx, demo.ExecutorSchema, db); err != nil {
+	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Executor, db); err != nil {
 		return err
 	}
 	cfg := localExecutorConfiguration(s.opts.Manifest.ExecutorID, s.opts.Assets.Manifest.Version, db, s.record)

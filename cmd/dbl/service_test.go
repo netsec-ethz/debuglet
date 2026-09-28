@@ -13,6 +13,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // recordingManager is the command's view of a service manager: enough to check
@@ -189,7 +190,7 @@ func TestServiceInstallReportsTheInstalledContract(t *testing.T) {
 
 	// Once the running process has published its readiness record, status
 	// reports it ready and exits 0.
-	paths, err := service.DerivePaths(root, demo.DispatcherSchema, "local")
+	paths, err := service.DerivePaths(root, storagecheck.Dispatcher, "local")
 	if err != nil {
 		t.Fatal(err)
 	}

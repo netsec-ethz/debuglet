@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -182,14 +183,14 @@ func newSupervisorFixture(t *testing.T, mode string) *supervisorFixture {
 			}
 			return f.assets, nil
 		},
-		bootstrap: func(ctx context.Context, role SchemaRole, path string) error {
+		bootstrap: func(ctx context.Context, role storagecheck.Role, path string) error {
 			f.dir = filepath.Dir(path)
 			if mode == "bootstrap failure" {
 				return errors.New("bootstrap sentinel")
 			}
 			return os.WriteFile(path, nil, 0600)
 		},
-		checkSchema: func(ctx context.Context, role SchemaRole, path string) error {
+		checkSchema: func(ctx context.Context, role storagecheck.Role, path string) error {
 			if mode == "unsupported schema" {
 				return fmt.Errorf("%s schema sentinel", role)
 			}

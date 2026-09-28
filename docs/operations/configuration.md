@@ -16,11 +16,19 @@ Daemons never migrate a database at startup. Back up the dispatcher database, us
 
 ### Creating a database
 
-A daemon never creates its database either: `database.path` must name an existing file that holds the packaged schema, or the daemon refuses to start. There are three ways to create one.
+A normal daemon start requires `database.path` to name an existing, supported database. To create a schema without starting any service, use the installed daemon's explicit initialization command as the service account:
 
-- A deployment: `make deploy-seed-db` writes schema-only databases to `deploy/dist`, and deploying the host installs the matching one when the host has none yet (see [deploy/README.md](../../deploy/README.md)).
-- A hand-installed host: start a fresh local service with the installed `dbl`, stop it once it is ready, and copy its database to `database.path`, owned by the service account. For a dispatcher, `dbl dispatcher up --state-dir DIR --port 0 --grpc-port 0` leaves `DIR/dispatcher.sqlite`; for an executor, `dbl up --state-dir DIR --port 0` leaves `DIR/executor.sqlite`. This is what `deploy/docker/seed-state.sh` does for the local container rig.
-- A source checkout: `make upgrade` applies the migrations to `.data/dispatcher.db` and `.data/executor.db` with goose.
+```sh
+mkdir -m 700 /path/to/new-state
+debuglet-dispatcher -init-database /path/to/new-state/dispatcher.db
+# On an executor host, use debuglet-executor with the executor database path.
+```
+
+The parent must be a real mode-0700 directory owned by that account. Initialization creates a mode-0600 database exclusively and refuses an existing database or SQLite companion file without changing it. It takes an explicit path, reads no runtime configuration, and cannot be combined with other flags. Set the daemon configuration's `database.path` to that file afterward.
+
+Local `dbl` services and the Docker seed service use the same implementation. For Ansible, run `make deploy-build deploy-seed-db`; seed generation uses the daemons from that verified payload, and the roles install a seed only when the host has no database yet. See [deploy/README.md](../../deploy/README.md).
+
+The former goose CLI `make upgrade` and `make downgrade` targets are removed. Use the daemon commands below for explicit upgrades. Rollback means stopping the service and restoring the pre-upgrade database and its matching executable/configuration; it is not an automatic down migration. Never run an older binary against a newer database unless its schema policy explicitly accepts it.
 
 ### Upgrading a database
 

@@ -3,7 +3,8 @@
 // serves requests or restores work. The check never migrates or repairs a
 // database: an incompatible file is refused with the action its operator has
 // to take. Upgrade applies the packaged migrations only when an operator runs
-// it explicitly.
+// it explicitly. BootstrapFresh creates only new, private databases from those
+// same packaged migrations.
 package storagecheck
 
 import (
@@ -16,7 +17,7 @@ import (
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 )
 
-// Role names one of the two databases a local environment keeps.
+// Role names a dispatcher or executor database.
 type Role string
 
 const (

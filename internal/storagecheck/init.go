@@ -1,4 +1,4 @@
-package demo
+package storagecheck
 
 import (
 	"context"
@@ -12,44 +12,22 @@ import (
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
-	"github.com/netsec-ethz/debuglet/internal/storagecheck"
-)
-
-type SchemaRole string
-
-const (
-	DispatcherSchema SchemaRole = "dispatcher"
-	ExecutorSchema   SchemaRole = "executor"
 )
 
 // BootstrapFresh applies the canonical migrations to a new, private database.
 // The caller must own the mode-0700 parent and keep it exclusively under its
 // control until this function returns. Existing databases are never upgraded.
-func BootstrapFresh(ctx context.Context, role SchemaRole, path string) error {
+func BootstrapFresh(ctx context.Context, role Role, path string) error {
 	var migrations fs.FS
 	switch role {
-	case DispatcherSchema:
+	case Dispatcher:
 		migrations = dispatcherdb.MigrationFS()
-	case ExecutorSchema:
+	case Executor:
 		migrations = executordb.MigrationFS()
 	default:
-		return fmt.Errorf("unknown demo schema role %q", role)
+		return fmt.Errorf("unknown database role %q", role)
 	}
 	return bootstrapFresh(ctx, path, migrations)
-}
-
-// CheckSchema verifies an existing database against the schema versions this
-// package's services support. Local services never upgrade a database in
-// place, so an unsupported one is reported instead of being migrated.
-func CheckSchema(ctx context.Context, role SchemaRole, path string) error {
-	switch role {
-	case DispatcherSchema:
-		return storagecheck.Check(ctx, storagecheck.Dispatcher, path)
-	case ExecutorSchema:
-		return storagecheck.Check(ctx, storagecheck.Executor, path)
-	default:
-		return fmt.Errorf("unknown demo schema role %q", role)
-	}
 }
 
 func bootstrapFresh(ctx context.Context, path string, migrations fs.FS) (err error) {

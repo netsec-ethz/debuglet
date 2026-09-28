@@ -72,8 +72,8 @@ func (p Policy) locate(path string) (string, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w: %s database %q does not exist; create it from the packaged schema first: "+
 			"a deployment seeds it (make deploy-seed-db, then deploy this host again), and a hand-installed host "+
-			"copies the database a fresh, stopped local service created (%s); see docs/operations/configuration.md",
-			ErrAbsent, p.Role, absolute, p.seedCommand())
+			"runs debuglet-%s -init-database PATH as its service account in an owned mode-0700 directory; see docs/operations/configuration.md",
+			ErrAbsent, p.Role, absolute, p.Role)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, absolute, err)
@@ -190,15 +190,6 @@ func (p Policy) verifyTables(ctx context.Context, db *sql.DB, path string, versi
 // dropsData reports whether upgrading from version drops the recorded runs.
 func (p Policy) dropsData(version int64) bool {
 	return version < p.DropsBelow
-}
-
-// seedCommand names the local service whose fresh database this role's
-// daemon accepts.
-func (p Policy) seedCommand() string {
-	if p.Role == Executor {
-		return "dbl up --state-dir DIR --port 0"
-	}
-	return "dbl dispatcher up --state-dir DIR --port 0 --grpc-port 0"
 }
 
 func (p Policy) supported() string {

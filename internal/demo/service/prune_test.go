@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/internal/artifact"
-	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 func packageFixture(t *testing.T, prefix, version, component string) string {
@@ -77,7 +77,7 @@ func TestPruneInactiveVerifiedPackage(t *testing.T) {
 				proc := t.TempDir()
 				switch mode {
 				case "retained role":
-					p, err := DerivePaths(f.root, demo.ExecutorSchema, "worker")
+					p, err := DerivePaths(f.root, storagecheck.Executor, "worker")
 					if err != nil {
 						t.Fatal(err)
 					}

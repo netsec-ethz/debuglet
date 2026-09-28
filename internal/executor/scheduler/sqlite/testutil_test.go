@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // newTestStorage builds the backend with guards that always commit, which is
@@ -36,7 +36,7 @@ func newBootstrappedDatabase(t *testing.T) string {
 	path := filepath.Join(dir, "executor.sqlite")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := demo.BootstrapFresh(ctx, demo.ExecutorSchema, path); err != nil {
+	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Executor, path); err != nil {
 		t.Fatal(err)
 	}
 	return path

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // Unit renders the service-manager unit of one profile. The text is a pure
@@ -30,7 +30,7 @@ func Unit(p Profile) (string, error) {
 			return "", err
 		}
 	}
-	if p.Role == demo.DispatcherSchema {
+	if p.Role == storagecheck.Dispatcher {
 		if err := unitSafePath(p.MaintenanceFile); err != nil {
 			return "", err
 		}
@@ -53,7 +53,7 @@ func Unit(p Profile) (string, error) {
 	fmt.Fprintf(&b, "ExecStart=%s -config %s -ready-file %s\n", p.Executable, p.ConfigPath, p.ReadyFile)
 	fmt.Fprintf(&b, "WorkingDirectory=%s\n", p.StateDir)
 	fmt.Fprintf(&b, "Environment=LANG=C LC_ALL=C TZ=UTC\n")
-	if p.Role == demo.DispatcherSchema {
+	if p.Role == storagecheck.Dispatcher {
 		// The maintenance switch is a file in the administration
 		// directory, which this account may read and not write: stopping
 		// admission needs no network route, no credential and no restart,
@@ -66,7 +66,7 @@ func Unit(p Profile) (string, error) {
 	// restarted after a failure, an executor after any exit at all, because
 	// an executor that ends for any reason should come back. Neither undoes
 	// a deliberate stop, which is what a drain relies on.
-	if p.Role == demo.DispatcherSchema {
+	if p.Role == storagecheck.Dispatcher {
 		fmt.Fprintf(&b, "Restart=on-failure\n")
 		fmt.Fprintf(&b, "RestartSec=5\n")
 	} else {

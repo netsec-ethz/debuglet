@@ -46,8 +46,6 @@ ARG COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION
 ARG COLLECTION_LIBRARY_INVENTORY_FILTERING_SHA256
 ARG REQUIREMENTS_SHA256
 ARG COLLECTIONS_SHA256
-ARG GOOSE_VERSION
-ARG GOOSE_SHA256
 
 ENV ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -94,17 +92,6 @@ RUN set -eu; \
 		"community-library_inventory_filtering_v1-${COLLECTION_LIBRARY_INVENTORY_FILTERING_VERSION}.tar.gz"; \
 	rm -rf /tmp/collections
 
-# goose writes the schema-only databases a deployment installs, so it is an
-# input of the provisioner like the rest and is verified against its pinned
-# digest before it is kept. The interpreter already in the image fetches it,
-# so the image needs no download tool of its own.
-RUN set -eu; \
-	python -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "/usr/local/bin/goose")' \
-		"https://github.com/pressly/goose/releases/download/v${GOOSE_VERSION}/goose_linux_x86_64"; \
-	printf '%s  /usr/local/bin/goose\n' "$GOOSE_SHA256" | sha256sum -c -; \
-	chmod 0755 /usr/local/bin/goose; \
-	goose --version
-
 # The provisioner's identity, read by deploy/ansible/preflight-provisioner.yml
 # and recorded in the deployment record on every managed host.
 RUN set -eu; \
@@ -117,9 +104,7 @@ RUN set -eu; \
 	printf '  "openssh_client_version": "%s",\n' "$OPENSSH_CLIENT_VERSION" >>/etc/debuglet/provisioner.json; \
 	printf '  "ansible_core_version": "%s",\n' "$ANSIBLE_CORE_VERSION" >>/etc/debuglet/provisioner.json; \
 	printf '  "requirements_sha256": "%s",\n' "$REQUIREMENTS_SHA256" >>/etc/debuglet/provisioner.json; \
-	printf '  "collections_sha256": "%s",\n' "$COLLECTIONS_SHA256" >>/etc/debuglet/provisioner.json; \
-	printf '  "goose_version": "%s",\n' "$GOOSE_VERSION" >>/etc/debuglet/provisioner.json; \
-	printf '  "goose_sha256": "%s"\n' "$GOOSE_SHA256" >>/etc/debuglet/provisioner.json; \
+	printf '  "collections_sha256": "%s"\n' "$COLLECTIONS_SHA256" >>/etc/debuglet/provisioner.json; \
 	printf '}\n' >>/etc/debuglet/provisioner.json; \
 	chmod 0444 /etc/debuglet/provisioner.json
 

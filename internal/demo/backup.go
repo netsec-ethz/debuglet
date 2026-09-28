@@ -45,9 +45,9 @@ type RestoreOptions struct {
 	Package             Manifest
 }
 type BackupRole struct {
-	Role          SchemaRole `json:"role"`
-	Identity      string     `json:"identity"`
-	SchemaVersion int64      `json:"schema_version"`
+	Role          storagecheck.Role `json:"role"`
+	Identity      string            `json:"identity"`
+	SchemaVersion int64             `json:"schema_version"`
 }
 type BackupManifest struct {
 	SchemaVersion int                      `json:"schema_version"`
@@ -265,7 +265,7 @@ func backupInventory(dir string, m Manifest) (string, []BackupRole, []string, er
 			return "", nil, nil, errors.New("state has both local and role metadata")
 		}
 		state, err := readLocalState(dir, m)
-		return "local", []BackupRole{{Role: DispatcherSchema}, {Role: ExecutorSchema, Identity: state.ExecutorID}}, []string{"local-state.json", "dispatcher.toml", "executor.toml", "dispatcher.sqlite", "executor.sqlite"}, err
+		return "local", []BackupRole{{Role: storagecheck.Dispatcher}, {Role: storagecheck.Executor, Identity: state.ExecutorID}}, []string{"local-state.json", "dispatcher.toml", "executor.toml", "dispatcher.sqlite", "executor.sqlite"}, err
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, nil, err
 	}
@@ -273,7 +273,7 @@ func backupInventory(dir string, m Manifest) (string, []BackupRole, []string, er
 	if err := readBackupJSON(filepath.Join(dir, "role-state.json"), &state); err != nil {
 		return "", nil, nil, err
 	}
-	if state.Role != DispatcherSchema && state.Role != ExecutorSchema {
+	if state.Role != storagecheck.Dispatcher && state.Role != storagecheck.Executor {
 		return "", nil, nil, errors.New("unknown backup role")
 	}
 	state, err := readRoleState(dir, state.Role, m)
@@ -295,7 +295,7 @@ func backupConfig(dir, originalDir, layout string, role BackupRole, destination,
 		return nil, err
 	}
 	var dbPath string
-	if role.Role == DispatcherSchema {
+	if role.Role == storagecheck.Dispatcher {
 		cfg, _, e := dispatcherconfig.DecodeConfig(data)
 		if e != nil {
 			return nil, fmt.Errorf("invalid backup dispatcher configuration: %w", e)
@@ -336,7 +336,7 @@ func backupConfig(dir, originalDir, layout string, role BackupRole, destination,
 	return data, err
 }
 
-func checkBackupDB(ctx context.Context, path string, role SchemaRole) (version int64, err error) {
+func checkBackupDB(ctx context.Context, path string, role storagecheck.Role) (version int64, err error) {
 	db, err := sqlitedb.Open(path)
 	if err != nil {
 		return 0, err

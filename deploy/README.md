@@ -95,9 +95,9 @@ port to run a second rig beside it.
 
 A daemon opens the database its configuration names and never creates the
 schema, so the databases have to exist before the first start. The `seed`
-service does that with the packaged CLI in the image itself — it applies the
-packaged migrations to a private state directory and copies the result into
-the volumes — so no migration tool, Go toolchain or network is involved:
+service invokes each packaged daemon with `-init-database PATH` directly in
+its private volume directory. No service, migration tool, Go toolchain or
+network is involved:
 
 ```sh
 docker compose build
@@ -105,10 +105,9 @@ docker compose --profile seed run --rm seed
 docker compose up -d
 ```
 
-Each database holds the packaged schema and its migration record, and
-nothing a running service wrote: the services that create them are stopped
-before anything is recorded in them, and the dispatcher's comes from a
-dispatcher no executor ever registered with.
+Each database holds only the packaged schema and its migration record.
+Initialization starts no listeners and records no accounts, runs or executor
+registrations.
 Repeating the seed step is safe: a database that already exists is kept, so a
 rebuild or a restart never discards recorded runs. `docker compose down -v`
 removes the volumes and starts the rig from nothing.
@@ -217,19 +216,19 @@ its own activation links, so updating dev cannot switch prod's executable.
 Redeploying the same release installs nothing again.
 
 `make deploy-seed-db` writes the schema-only SQLite databases the roles
-install alongside them, running goose in the pinned provisioner so the tool
-that wrote a host's schema is as identified as everything else a deployment
-ships. Neither `deploy/dist/` nor `deploy/certs/` is
-committed.
+install alongside them. It runs the already-built payload's daemon commands
+with `-init-database PATH`, after checking its installed manifest matches the
+release in `deploy/dist`. Run `make deploy-build` first; an image from another
+release is refused. Neither `deploy/dist/` nor `deploy/certs/` is committed.
 
 ## The provisioner
 
 Deployment runs from a provisioner built only from pinned inputs, so the tools
 that change a host are as identified as the payload they install.
 [`provisioner.env`](provisioner.env) pins them: the base image by digest, the
-Ansible version, the collections with the digest of each artifact, the digest
-of each dependency manifest, and goose by the digest of the binary the image
-installs.
+Ansible version, the collections with the digest of each artifact, and the
+digest of each dependency manifest. Database initialization and upgrades use
+the packaged daemons, so the provisioner needs no separate migration tool.
 [`ansible/requirements.txt`](ansible/requirements.txt) is the complete
 resolved Python set, installed with hash checking;
 [`ansible/requirements.yml`](ansible/requirements.yml) pins the collections.
