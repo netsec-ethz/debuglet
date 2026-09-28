@@ -268,8 +268,8 @@ func TestAbsentStorageIsDistinguished(t *testing.T) {
 		role  Role
 		local string
 	}{
-		{role: Dispatcher, local: "dbl dispatcher up --state-dir DIR --port 0 --grpc-port 0"},
-		{role: Executor, local: "dbl up --state-dir DIR --port 0"},
+		{role: Dispatcher, local: "debuglet-dispatcher -init-database PATH"},
+		{role: Executor, local: "debuglet-executor -init-database PATH"},
 	} {
 		path := filepath.Join(dir, string(tc.role)+".sqlite")
 		err := Check(context.Background(), tc.role, path)

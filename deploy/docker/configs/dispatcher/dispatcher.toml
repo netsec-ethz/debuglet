@@ -51,7 +51,7 @@ keystore_path = ""
 
 # The daemon opens this database and does not create its schema. The compose
 # service keeps it on its own named volume, outside the read-only
-# configuration mount; `deploy/docker/seed-state.sh` creates it. See
+# configuration mount; the compose seed service creates it. See
 # deploy/README.md.
 [database]
 path = "/var/lib/debuglet/dispatcher.db"

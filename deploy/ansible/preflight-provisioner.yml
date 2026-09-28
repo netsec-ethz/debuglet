@@ -45,10 +45,6 @@
           {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_REQUIREMENTS_SHA256=(.+)$', '\1') | first | default('')) | trim }}
         pinned_collections_sha256: >-
           {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_PROVISIONER_COLLECTIONS_SHA256=(.+)$', '\1') | first | default('')) | trim }}
-        pinned_goose_version: >-
-          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_GOOSE_VERSION=(.+)$', '\1') | first | default('')) | trim }}
-        pinned_goose_sha256: >-
-          {{ (provisioner_pins | regex_search('(?m)^DEBUGLET_GOOSE_SHA256=(.+)$', '\1') | first | default('')) | trim }}
 
     - name: Require a complete set of pinned values
       ansible.builtin.assert:
@@ -59,12 +55,10 @@
           - pinned_openssh_client_version | length > 0
           - pinned_requirements_sha256 is match('^[0-9a-f]{64}$')
           - pinned_collections_sha256 is match('^[0-9a-f]{64}$')
-          - pinned_goose_version | length > 0
-          - pinned_goose_sha256 is match('^[0-9a-f]{64}$')
         fail_msg: >-
           {{ provisioner_pins_file }} does not pin the provisioner completely.
           It must name the Ansible version, the base image digest, the digest
-          of each dependency manifest, and the migration tool with its digest.
+          of each dependency manifest.
         quiet: true
 
     # A manifest changed after the provisioner was built describes
@@ -135,8 +129,6 @@
           - provisioner_record.ansible_core_version == pinned_ansible_core
           - provisioner_record.requirements_sha256 == pinned_requirements_sha256
           - provisioner_record.collections_sha256 == pinned_collections_sha256
-          - provisioner_record.goose_version | default('') == pinned_goose_version
-          - provisioner_record.goose_sha256 | default('') == pinned_goose_sha256
         fail_msg: >-
           The running provisioner was built from different inputs than
           {{ provisioner_pins_file }} pins. Rebuild it with
