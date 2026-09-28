@@ -432,8 +432,26 @@ func strictCLIDocument(data []byte, out any) error {
 			return errors.New("invalid nodes JSON")
 		}
 		for _, node := range nodes {
-			if _, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, nil, map[string]bool{"tesla_anchor_key": true}); err != nil {
+			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities"}, map[string]bool{"tesla_anchor_key": true})
+			if err != nil {
 				return err
+			}
+			if observation, present := fields["capabilities"]; present {
+				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, nil, map[string]bool{"advertised_capacity_bps": true})
+				if err != nil {
+					return err
+				}
+				// Go decodes a null array item into an empty string; the CLI
+				// emits only string items, or an empty array if none were reported.
+				var protocols []*string
+				if json.Unmarshal(capability["protocols"], &protocols) != nil {
+					return errors.New("invalid capability protocols")
+				}
+				for _, protocol := range protocols {
+					if protocol == nil {
+						return errors.New("invalid capability protocols")
+					}
+				}
 			}
 		}
 	case *statusDocument:

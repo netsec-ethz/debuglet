@@ -57,6 +57,10 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.LastSeen = seen
 		}
 		exec.Ready = true
+		if req.Capabilities != nil && !seen.Before(exec.capabilityObserved) {
+			exec.Capabilities = capabilitiesFromReport(req.Capabilities, seen)
+			exec.capabilityObserved = seen
+		}
 		anchor = bytes.Clone(exec.TeslaAnchorKey)
 	} else {
 		d.mu.Unlock()

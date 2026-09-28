@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,7 +18,10 @@ import (
 
 const (
 	nodesUsage = `Usage:
-  dbl nodes
+  dbl nodes [--protocol NAME ...] [--enforcement ebpf|fallback] [--min-capacity-bps N]
+
+Filters return ready matching executors only. Unknown capability reports do not
+match. Capacity means advertised total bandwidth, not free admission capacity.
 
 Lists the dispatcher's registered executors. JSON output is always an array.
 `
@@ -44,17 +49,28 @@ Options:
 
 func nodesCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	fs := newCommandFlagSet("nodes")
+	var filter client.ExecutorFilter
+	capabilityFlags(fs, &filter)
 	if code, ok := parseCommandFlags(fs, args, nodesUsage, stdout, stderr); !ok {
 		return code
 	}
 	if fs.NArg() > 0 {
 		return usageError("dbl nodes", nodesUsage, stderr, "unexpected arguments %q", fs.Args())
 	}
+	if err := filter.Validate(); err != nil {
+		return usageError("dbl nodes", nodesUsage, stderr, "%v", err)
+	}
 	c, code, ok := connect("dbl nodes", options, false, stderr)
 	if !ok {
 		return code
 	}
-	nodes, err := c.Nodes(ctx)
+	var nodes []client.Node
+	var err error
+	if filter.Empty() {
+		nodes, err = c.Nodes(ctx)
+	} else {
+		nodes, err = c.DiscoverExecutors(ctx, filter)
+	}
 	if err != nil {
 		return reportFailure(ctx, "dbl nodes", stderr, err)
 	}
@@ -63,13 +79,23 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY")
+		fmt.Fprintln(tw, "ID\tREADY\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS")
 		for _, n := range nodes {
 			lastSeen := "-"
 			if n.LastSeen > 0 {
 				lastSeen = time.Unix(n.LastSeen, 0).UTC().Format(time.RFC3339)
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%d\t%s\n", n.ID, n.Ready, lastSeen, n.Version, n.PricePerBw, n.Currency)
+			protocols, enforcement, capacity := "unknown", "unknown", "unknown"
+			if report := n.Capabilities; report != nil && report.SchemaVersion == 1 {
+				protocols = strings.Join(report.Protocols, ",")
+				if report.EnforcementMode != "" {
+					enforcement = report.EnforcementMode
+				}
+				if report.AdvertisedCapacityBPS != nil {
+					capacity = strconv.FormatInt(*report.AdvertisedCapacityBPS, 10)
+				}
+			}
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", n.ID, n.Ready, lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity)
 		}
 		return tw.Flush()
 	})
