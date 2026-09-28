@@ -1987,7 +1987,7 @@ components:
       properties:
         state:
           type: string
-          description: "Opaque run state. RunStateExited is terminal. RunStateUnreconciled means the dispatcher failed the submission the run belongs to and its executor refused the cancellation; the run may still execute, its outcome is recorded when the executor reports it, and nothing is replayed."
+          description: "Opaque run state. RunStateExited is terminal. RunStateUnreconciled means the dispatcher failed the submission the run belongs to and could not confirm the run's cancellation, because the executor refused it or it was not delivered; the run may still execute, a later report from its executor supersedes the state, and nothing is replayed. A RunStateUploading or RunStateUploaded that no longer changes is of the same uncertain outcome. Any run with a stored control binding that is not terminal about two minutes after the end of its reserved window (start plus timeout plus a ten-second grace) is classified as RunStateExited with the error 'outcome unknown: ...'; a run recorded without a binding keeps its stored state; no success is ever inferred."
         error:
           type: string
           description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Empty when the run has not failed."
@@ -2004,7 +2004,7 @@ components:
       properties:
         state:
           type: string
-          description: "Opaque run state at the time of the query."
+          description: "Opaque run state at the time of the query, with the meaning described for DebugletStateResponse.state: RunStateUnreconciled, or a RunStateUploading or RunStateUploaded that no longer changes, is of uncertain outcome, and a run with a stored control binding that is not terminal about two minutes after the end of its reserved window is classified as RunStateExited with the error 'outcome unknown: ...'."
         error:
           type: string
           description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Absent when empty."

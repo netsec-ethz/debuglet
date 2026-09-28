@@ -45,9 +45,11 @@ const (
 	RunStateUploading
 	RunStateUploaded
 	RunStateExited
-	// RunStateUnreconciled marks a run of a failed submission whose executor
-	// refused its cancellation. The run may still execute; a later state or
-	// exit report from the executor supersedes it.
+	// RunStateUnreconciled marks a run of a failed submission whose
+	// cancellation the dispatcher could not confirm: the executor refused it
+	// or it was not delivered. The run may still execute; a later state or
+	// exit report from the executor supersedes it. A run still unreconciled
+	// when its window ends is classified with outcome unknown.
 	RunStateUnreconciled
 )
 

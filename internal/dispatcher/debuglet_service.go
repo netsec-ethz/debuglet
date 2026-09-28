@@ -172,22 +172,20 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			// The original mutation stays live even when a sibling's failure or a
 			// retirement canceled its execution context, so cleanup uses its own
 			// bounded context and the client this upload captured. A run whose
-			// executor refused the cancellation keeps its reservation and is
-			// marked unreconciled; nothing is retried. A cancellation that never
-			// reached the executor, because no client was captured or the call
-			// failed in transport, is only logged and leaves the row as it is.
+			// cancellation is not confirmed, because the executor refused it,
+			// the call failed in transport or no client was captured, keeps
+			// its reservation and is marked unreconciled; nothing is retried.
+			// Its executor's later report supersedes the mark, and a run still
+			// unfinished when its window ends is classified with outcome
+			// unknown, see sweepEndedWindows.
 			err := d.abortCaptured(cleanupCtx, selected[i].mutation, selected[i].client, id, reason)
 			if err == nil {
-				continue
-			}
-			if !errors.Is(err, ErrAbortRefused) {
-				d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(err))
 				continue
 			}
 			// An executor that refused the run's own upload and does not know
 			// it at the cancellation holds no such run: it takes the terminal
 			// path of an acknowledged cancellation.
-			if status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
+			if errors.Is(err, ErrAbortRefused) && status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
 				if _, err := d.OnDebugletExit(cleanupCtx, selected[i].mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
 					d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)))
 				}
@@ -615,9 +613,9 @@ func uploadRefused(err error) bool {
 }
 
 // markUnreconciled records that a run of a failed submission may still execute
-// because its executor refused the cancellation. The guarded update leaves a
-// run the executor already advanced or finished as it is, and the executor's
-// later reports supersede the mark.
+// because the dispatcher could not confirm its cancellation. The guarded update
+// leaves a run the executor already advanced or finished as it is, and the
+// executor's later reports supersede the mark.
 func (d *Dispatcher) markUnreconciled(ctx context.Context, owner *rpc.SessionOwner, id uuid.UUID) {
 	if _, err := database.New(d.db).UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
 		State:                 models.RunStateUnreconciled,
@@ -629,7 +627,7 @@ func (d *Dispatcher) markUnreconciled(ctx context.Context, owner *rpc.SessionOwn
 		SessionID:             owner.Binding().SessionID,
 	}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			d.logger.Debug("Debuglet advanced before its refused cancellation was recorded", zap.String("debugletID", id.String()))
+			d.logger.Debug("Debuglet advanced before its unconfirmed cancellation was recorded", zap.String("debugletID", id.String()))
 			return
 		}
 		d.logger.Error("Failed to mark debuglet unreconciled", zap.String("debugletID", id.String()), zap.Error(err))

@@ -42,6 +42,11 @@ changes; the linked API and deployment documentation contains operational detail
   not registered or no longer available at admission, and `400 invalid_policy`
   when the policy requires ICMP or a listener the executor cannot serve; these
   answered `500 internal_error` before.
+- Classify a run that is still not terminal about two minutes after the end
+  of its reserved window as `RunStateExited` with an `outcome unknown` error,
+  releasing its reservation once. A cancellation the dispatcher could not
+  deliver marks the run `RunStateUnreconciled`, and restart no longer reserves
+  capacity for runs whose window already ended. `docs/api.md` describes states.
 
 ## [0.2.0] - 2026-09-27
 

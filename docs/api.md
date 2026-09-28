@@ -47,3 +47,16 @@ Health endpoints are public:
 | `/health` | Expanded readiness observations. |
 
 The OpenAPI document contains the complete status-code and schema reference. Deployment authentication and transport security are covered in the [project Wiki](https://github.com/netsec-ethz/debuglet/wiki).
+
+## Run states
+
+`GET /debuglet/{id}/state` and `GET /debuglet/{id}/logs` report a run's `state` as an opaque string. An owner can observe:
+
+| State | Meaning |
+| --- | --- |
+| `RunStateUploading`, `RunStateUploaded` | The dispatcher is handing the run to its executor, or has done so. |
+| `RunStateInitializing`, `RunStateStarted` | The executor reported that the run is being prepared or is executing. |
+| `RunStateUnreconciled` | The submission the run belongs to failed and the dispatcher could not confirm the run's cancellation: the executor refused it or it was not delivered. The run may still execute. |
+| `RunStateExited` | Terminal. `error` is empty for a successful run. |
+
+A later report from the executor supersedes `RunStateUnreconciled`, as it does any earlier state. A run that is not terminal about two minutes after the end of its reserved window (its start plus its timeout plus a ten-second grace) is classified as `RunStateExited` with an `error` that starts with `outcome unknown:`; this also covers a `RunStateUploading` or `RunStateUploaded` that no longer changes, for example because the control session of its executor ended before the run started. A run recorded before control bindings were stored has no binding; it is neither cancellable nor classified and keeps its stored state. Nothing is replayed, and no success is ever inferred: only the executor's own report records one.

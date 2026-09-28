@@ -13,6 +13,11 @@ OFFSET ?;
 SELECT * FROM debuglets
 WHERE end_time > ?;
 
+-- name: ListUnfinishedDebugletsEndBefore :many
+SELECT * FROM debuglets
+WHERE state <> sqlc.arg(exited_state) AND end_time < sqlc.arg(end_time)
+  AND dispatcher_incarnation <> '' AND session_id <> '';
+
 -- name: GetDebugletByUUID :one
 SELECT * FROM debuglets
 WHERE uuid = ?;

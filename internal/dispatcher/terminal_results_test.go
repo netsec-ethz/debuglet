@@ -296,9 +296,10 @@ func (f *tgFixture) spec(t *testing.T, floor bitrate.Bitrate) models.DebugletSpe
 // RPC (admission, row, executor history, scheduler reservation) and then
 // applies the guarded Uploaded write a successful upload performs. It lets
 // the callback subtests run without the peer transport.
-func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate) tgDebuglet {
+func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate, addresses ...string) tgDebuglet {
 	t.Helper()
 	spec := f.spec(t, floor)
+	spec.Policy.Addresses = addresses
 	id := uuid.New()
 	mutation := effectTestMutation(t, f.d, tgExecutorID)
 	defer mutation.Finish()
