@@ -26,7 +26,7 @@ The installer verifies the release files before writing them. It requires a POSI
 On an unsupported host, use a Linux amd64 machine and run `dbl` there to
 connect to your dispatcher. Do not run the Linux installer directly on macOS
 or Windows. A source build alone does not establish platform support. See
-[Versions and compatibility](docs/versions.md) for the tested combinations
+[Versions and compatibility](docs/versions.md) for the support policy
 and the limits of those checks.
 
 ## Next steps
