@@ -21,6 +21,10 @@ func TestCorrelationIdentifiers(t *testing.T) {
 	if Identifier("executor-1") != "executor-1" || Identifier("") != "unknown" || Identifier("line\nbreak") == Identifier("line\rbreak") {
 		t.Fatal("lost identifier distinction")
 	}
+	rendered := Identifier(strings.Repeat("x", 129))
+	if Identifier(rendered) == rendered || Identifier("unknown") == Identifier("") {
+		t.Fatal("literal identifier aliases rendered namespace")
+	}
 	ctx := context.Background()
 	if RequestID(ctx) != "unknown" {
 		t.Fatal("absent request identity invented")

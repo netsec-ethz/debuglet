@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
@@ -34,7 +35,7 @@ func Identifier(value string) string {
 	if value == "" {
 		return "unknown"
 	}
-	safe := len(value) <= 128
+	safe := len(value) <= 128 && value != "unknown" && !strings.HasPrefix(value, "sha256:")
 	for i := 0; safe && i < len(value); i++ {
 		safe = value[i] >= 0x21 && value[i] <= 0x7e
 	}

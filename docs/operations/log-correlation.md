@@ -29,10 +29,11 @@ identifiers. Retirement does not claim joined cleanup. A reconnect uses a new
 session; match the full binding when investigating an interrupted run.
 Non-secret identifiers longer than 128 bytes or containing whitespace or
 non-ASCII characters appear as `sha256:` followed by their digest, consistently
-on both sides. This bounds fields without confusing distinct identifier
+on both sides. Literal `unknown` or `sha256:`-prefixed IDs also use a digest,
+so they cannot impersonate those rendered values. This bounds fields without confusing distinct identifier
 prefixes. Credentials and raw provider subjects are never correlation fields.
 
 These events use the daemon logger. CLI JSON receipts and readiness stay on
 stdout; daemon diagnostics and guest output remain separate. Existing private
-error diagnostics may contain operational details, so apply the documented
-[retention policy](../../SECURITY.md) and restrict access to daemon logs.
+error diagnostics may contain operational details, so restrict access to daemon
+logs and follow the [security policy](../../SECURITY.md).
