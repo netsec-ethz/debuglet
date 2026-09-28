@@ -18,6 +18,8 @@ const dispatcherUpUsage = `Usage:
 Start a local dispatcher and save its connection. Keep this terminal open.
 State, database and configuration are managed automatically. Ctrl-C stops only
 this dispatcher and retains results. Use port 0 to select an available port.
+Daemon logs: --log-max-bytes (default 10485760), --log-files (default 3),
+--log-max-age (default 168h). Retention runs on write and restart.
 `
 
 const executorUpUsage = `Usage:
@@ -26,6 +28,8 @@ const executorUpUsage = `Usage:
 Start an executor on the selected local dispatcher. State, database and identity
 are managed automatically. Ctrl-C stops only this executor. The selected server
 must publish local connection metadata; no internal port configuration is needed.
+Daemon logs: --log-max-bytes (default 10485760), --log-files (default 3),
+--log-max-age (default 168h). Retention runs on write and restart.
 `
 
 type roleUpDependencies struct {
@@ -52,6 +56,7 @@ func roleUpCommand(ctx context.Context, args []string, options globalOptions, st
 	var selected string
 	fs.StringVar(&local.Name, "name", defaultName, "name for this local service")
 	fs.StringVar(&local.StateDir, "state-dir", "", "override the automatically managed state directory")
+	logFlags(fs, &local.Logs)
 	if dispatcher {
 		fs.IntVar(&local.Port, "port", 9000, "loopback HTTP port (0 chooses an available port)")
 		fs.IntVar(&local.GRPCPort, "grpc-port", 9001, "loopback control port (0 chooses an available port)")
@@ -152,4 +157,10 @@ func roleDispatcher(options globalOptions, selected string) (connections.Profile
 
 func roleShellWord(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func logFlags(fs *flag.FlagSet, options *demo.LogOptions) {
+	fs.Int64Var(&options.MaxBytes, "log-max-bytes", 0, "maximum bytes per daemon log (default 10485760; at most 104857600)")
+	fs.IntVar(&options.Files, "log-files", 0, "retained daemon log files including the active file (default 3; at most 16)")
+	fs.DurationVar(&options.MaxAge, "log-max-age", 0, "daemon log age limit, applied on write and restart (default 168h; at most 720h)")
 }

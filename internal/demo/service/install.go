@@ -98,14 +98,15 @@ type Report struct {
 	Ready bool `json:"ready"`
 	// Joined reports a daemon that finished its own shutdown. It is the
 	// only thing that permits deleting, upgrading or rebuilding state.
-	Joined     bool   `json:"joined,omitempty"`
-	Enabled    bool   `json:"enabled"`
-	Active     string `json:"active,omitempty"`
-	MainPID    int    `json:"main_pid,omitempty"`
-	ExecutorID string `json:"executor_id,omitempty"`
-	Endpoint   string `json:"endpoint,omitempty"`
-	StateDir   string `json:"state_dir,omitempty"`
-	UnitPath   string `json:"unit_path,omitempty"`
+	Joined      bool   `json:"joined,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Active      string `json:"active,omitempty"`
+	MainPID     int    `json:"main_pid,omitempty"`
+	ExecutorID  string `json:"executor_id,omitempty"`
+	Endpoint    string `json:"endpoint,omitempty"`
+	StateDir    string `json:"state_dir,omitempty"`
+	UnitPath    string `json:"unit_path,omitempty"`
+	PackagePath string `json:"package_path,omitempty"`
 	// Changed lists what this operation actually altered on disk or in the
 	// service manager. A repeated identical install changes nothing.
 	Changed []string `json:"changed,omitempty"`
@@ -624,6 +625,9 @@ func (i *Installer) Status(ctx context.Context, role demo.SchemaRole, name strin
 func (i *Installer) Uninstall(ctx context.Context, role demo.SchemaRole, name string, purge bool) (Report, error) {
 	p, report, err := i.load(ctx, "uninstall", role, name)
 	if err != nil {
+		return report, err
+	}
+	if err := i.verifyRemoval(ctx, p); err != nil {
 		return report, err
 	}
 	stopped, joined, err := i.stopAndVerify(ctx, p, &report)

@@ -919,3 +919,88 @@ func TestOwnershipRefusesASecondNameForAFileOutside(t *testing.T) {
 		t.Fatalf("the file behind the second name was changed: %v %v", info, err)
 	}
 }
+
+func TestUninstallRefusesAReplacedUnit(t *testing.T) {
+	for _, replacement := range []string{"changed content", "symlink"} {
+		t.Run(replacement, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+				t.Fatal(err)
+			}
+			unit := filepath.Join(UnitDirectory(f.root), UnitName(demo.ExecutorSchema, "worker"))
+			if err := os.Remove(unit); err != nil {
+				t.Fatal(err)
+			}
+			const foreign = "[Service]\nExecStart=/opt/unrelated-service\n"
+			if replacement == "symlink" {
+				target := filepath.Join(f.root, "foreign.service")
+				if err := os.WriteFile(target, []byte(foreign), 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, unit); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(unit, []byte(foreign), 0644); err != nil {
+				t.Fatal(err)
+			}
+			before := len(f.manager.recorded())
+			if _, err := f.installer.Uninstall(t.Context(), demo.ExecutorSchema, "worker", true); err == nil {
+				t.Fatal("removed a replacement unit")
+			}
+			if got := f.manager.recorded()[before:]; len(got) != 0 {
+				t.Fatalf("touched manager for unowned unit: %v", got)
+			}
+			if got, err := os.ReadFile(unit); err != nil || string(got) != foreign {
+				t.Fatalf("changed replacement: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestUninstallLeavesDispatcherRunning(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.install(demo.DispatcherSchema, "local", true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.install(demo.ExecutorSchema, "worker", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.installer.Uninstall(t.Context(), demo.ExecutorSchema, "worker", false); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := f.installer.Status(t.Context(), demo.DispatcherSchema, "local"); err != nil || !report.Ready {
+		t.Fatalf("dispatcher changed: %+v, %v", report, err)
+	}
+	reinstalled, err := f.install(demo.ExecutorSchema, "worker", true)
+	if err != nil || reinstalled.ExecutorID != first.ExecutorID {
+		t.Fatalf("reinstall failed to reuse retained identity: %+v, %v", reinstalled, err)
+	}
+}
+
+func TestPurgeRefusesStateDirectorySymlink(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+		t.Fatal(err)
+	}
+	path := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	retained := path + "-retained"
+	if err := os.Rename(path, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(retained, path); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.manager.recorded())
+	if _, err := f.installer.Uninstall(t.Context(), demo.ExecutorSchema, "worker", true); err == nil {
+		t.Fatal("purged through a state directory alias")
+	}
+	for _, call := range f.manager.recorded()[before:] {
+		if !strings.HasPrefix(call, "state ") {
+			t.Fatalf("refusal mutated manager: %s", call)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(retained, "executor.sqlite")); err != nil {
+		t.Fatal("removed aliased data", err)
+	}
+}
