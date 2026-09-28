@@ -925,10 +925,10 @@ func TestUninstallRefusesAReplacedUnit(t *testing.T) {
 	for _, replacement := range []string{"changed content", "symlink"} {
 		t.Run(replacement, func(t *testing.T) {
 			f := newFixture(t)
-			if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+			if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 				t.Fatal(err)
 			}
-			unit := filepath.Join(UnitDirectory(f.root), UnitName(demo.ExecutorSchema, "worker"))
+			unit := filepath.Join(UnitDirectory(f.root), UnitName(storagecheck.Executor, "worker"))
 			if err := os.Remove(unit); err != nil {
 				t.Fatal(err)
 			}
@@ -945,7 +945,7 @@ func TestUninstallRefusesAReplacedUnit(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := len(f.manager.recorded())
-			if _, err := f.installer.Uninstall(t.Context(), demo.ExecutorSchema, "worker", true); err == nil {
+			if _, err := f.installer.Uninstall(t.Context(), storagecheck.Executor, "worker", true); err == nil {
 				t.Fatal("removed a replacement unit")
 			}
 			if got := f.manager.recorded()[before:]; len(got) != 0 {
@@ -960,20 +960,20 @@ func TestUninstallRefusesAReplacedUnit(t *testing.T) {
 
 func TestUninstallLeavesDispatcherRunning(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.DispatcherSchema, "local", true); err != nil {
+	if _, err := f.install(storagecheck.Dispatcher, "local", true); err != nil {
 		t.Fatal(err)
 	}
-	first, err := f.install(demo.ExecutorSchema, "worker", true)
+	first, err := f.install(storagecheck.Executor, "worker", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.installer.Uninstall(t.Context(), demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.installer.Uninstall(t.Context(), storagecheck.Executor, "worker", false); err != nil {
 		t.Fatal(err)
 	}
-	if report, err := f.installer.Status(t.Context(), demo.DispatcherSchema, "local"); err != nil || !report.Ready {
+	if report, err := f.installer.Status(t.Context(), storagecheck.Dispatcher, "local"); err != nil || !report.Ready {
 		t.Fatalf("dispatcher changed: %+v, %v", report, err)
 	}
-	reinstalled, err := f.install(demo.ExecutorSchema, "worker", true)
+	reinstalled, err := f.install(storagecheck.Executor, "worker", true)
 	if err != nil || reinstalled.ExecutorID != first.ExecutorID {
 		t.Fatalf("reinstall failed to reuse retained identity: %+v, %v", reinstalled, err)
 	}
@@ -981,10 +981,10 @@ func TestUninstallLeavesDispatcherRunning(t *testing.T) {
 
 func TestPurgeRefusesStateDirectorySymlink(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 		t.Fatal(err)
 	}
-	path := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	path := StateDirectory(f.root, storagecheck.Executor, "worker")
 	retained := path + "-retained"
 	if err := os.Rename(path, retained); err != nil {
 		t.Fatal(err)
@@ -993,7 +993,7 @@ func TestPurgeRefusesStateDirectorySymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(f.manager.recorded())
-	if _, err := f.installer.Uninstall(t.Context(), demo.ExecutorSchema, "worker", true); err == nil {
+	if _, err := f.installer.Uninstall(t.Context(), storagecheck.Executor, "worker", true); err == nil {
 		t.Fatal("purged through a state directory alias")
 	}
 	for _, call := range f.manager.recorded()[before:] {

@@ -21,6 +21,7 @@ import (
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -160,7 +161,7 @@ func TestInstalledBackupRestore(t *testing.T) {
 	t.Logf("installed backup/restore retained identities, completed output and queued/started/terminal rows; new control binding completed fresh TEST in %s", recoveryElapsed)
 }
 
-func backupDB(t *testing.T, state string, role demo.SchemaRole) *sql.DB {
+func backupDB(t *testing.T, state string, role storagecheck.Role) *sql.DB {
 	t.Helper()
 	db, err := sqlitedb.Open(demo.RoleDatabase(state, role))
 	if err != nil {
@@ -171,7 +172,7 @@ func backupDB(t *testing.T, state string, role demo.SchemaRole) *sql.DB {
 
 func storedBinding(t *testing.T, state string, id uuid.UUID) controlsession.Binding {
 	t.Helper()
-	db := backupDB(t, state, demo.DispatcherSchema)
+	db := backupDB(t, state, storagecheck.Dispatcher)
 	defer db.Close()
 	row, err := dispatcherdb.New(db).GetDebugletIdentityByUUID(t.Context(), id)
 	binding := controlsession.Binding{Incarnation: row.DispatcherIncarnation, SessionID: row.SessionID}
@@ -189,7 +190,7 @@ type retainedFixture struct {
 
 func seedRetained(t *testing.T, state string, binding controlsession.Binding, wasm []byte) retainedFixture {
 	t.Helper()
-	db := backupDB(t, state, demo.ExecutorSchema)
+	db := backupDB(t, state, storagecheck.Executor)
 	defer db.Close()
 	q := executordb.New(db)
 	fixture := retainedFixture{}
@@ -228,7 +229,7 @@ func seedRetained(t *testing.T, state string, binding controlsession.Binding, wa
 
 func assertRetained(t *testing.T, state string, fixture retainedFixture) {
 	t.Helper()
-	db := backupDB(t, state, demo.ExecutorSchema)
+	db := backupDB(t, state, storagecheck.Executor)
 	defer db.Close()
 	q := executordb.New(db)
 	for _, before := range fixture.runs {

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 func TestServiceInvalidatesForegroundBackupReceipt(t *testing.T) {
@@ -23,10 +24,10 @@ func TestServiceInvalidatesForegroundBackupReceipt(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				f := newFixture(t)
-				if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+				if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 					t.Fatal(err)
 				}
-				marker := filepath.Join(StateDirectory(f.root, demo.ExecutorSchema, "worker"), demo.OfflineStateFile)
+				marker := filepath.Join(StateDirectory(f.root, storagecheck.Executor, "worker"), demo.OfflineStateFile)
 				if blocked {
 					if err := os.Mkdir(marker, 0700); err != nil {
 						t.Fatal(err)
@@ -40,9 +41,9 @@ func TestServiceInvalidatesForegroundBackupReceipt(t *testing.T) {
 				before := len(f.manager.recorded())
 				var err error
 				if action == "install" {
-					_, err = f.install(demo.ExecutorSchema, "worker", true)
+					_, err = f.install(storagecheck.Executor, "worker", true)
 				} else {
-					_, err = f.installer.Start(context.Background(), demo.ExecutorSchema, "worker")
+					_, err = f.installer.Start(context.Background(), storagecheck.Executor, "worker")
 				}
 				if blocked {
 					if err == nil {
