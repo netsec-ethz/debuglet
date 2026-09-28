@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 lane=${1:-}
 case "$lane" in
-    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline|vulnerabilities|image-vulnerabilities) ;;
+    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|evaluation|offline|vulnerabilities|image-vulnerabilities) ;;
     *) echo "unknown CI lane: $lane" >&2; exit 2 ;;
 esac
 
@@ -52,6 +52,7 @@ profile=base
 options=()
 case "$lane" in
     local|kernel) image=$DEBUGLET_CI_TOOLS_IMAGE; profile=$lane ;;
+    evaluation) image=$DEBUGLET_CI_TOOLS_IMAGE; profile=local ;;
 esac
 if [[ $lane == kernel ]]; then
     options+=(--cap-add BPF --cap-add NET_ADMIN --cap-add NET_RAW --cap-add PERFMON --cap-add SYS_RESOURCE)
@@ -75,8 +76,9 @@ name="debuglet-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$lane-$$"
 prepare_name="$name-modules"
 cleanup() {
     local status=$?
-    if [[ $lane == faults || $lane == soak ]]; then
+    if [[ $lane == faults || $lane == soak || $lane == evaluation ]]; then
         mkdir -p ".cache/ci/$lane"
+        rm -f ".cache/ci/$lane/cleanup.json"
         docker rm --force "$name" "$prepare_name" >/dev/null 2>&1 || true
         if remaining=$(docker container ls --all --format '{{.Names}}') &&
             ! grep -Fxq -e "$name" -e "$prepare_name" <<< "$remaining"; then
@@ -104,13 +106,15 @@ for key in GITHUB_ACTIONS GITHUB_EVENT_NAME GITHUB_REPOSITORY GITHUB_REF GITHUB_
     [[ -z ${!key+x} ]] || forward+=(--env "$key")
 done
 # Fetch dependencies before local fixtures enter their no-network boundary.
-if [[ $lane == faults || $lane == soak ]]; then
+if [[ $lane == faults || $lane == soak || $lane == evaluation ]]; then
     docker run --rm --init --pull=never --name "$prepare_name" \
         --mount "type=bind,source=$PWD,target=/workspace,readonly" \
         --mount type=volume,source=debuglet-ci-go-mod,target=/go/pkg/mod \
         --workdir /workspace --env GOTOOLCHAIN=local "$image" go mod download
     options+=(--network none --cpus 4 --memory 4g --pids-limit 512)
-    if [[ $lane == faults ]]; then
+    if [[ $lane == evaluation ]]; then
+        options+=(--cap-add NET_ADMIN --env DEBUGLET_EVALUATION_ISOLATED=1)
+    elif [[ $lane == faults ]]; then
         options+=(--env DEBUGLET_FAULT_ISOLATED=1)
     else
         options+=(--env DEBUGLET_SOAK_ISOLATED=1)
@@ -142,6 +146,7 @@ docker run --rm --init --pull=never --name "$name" \
             image-vulnerabilities) python3 -m unittest -v tools/test_ci_image_vulnerabilities.py; bash scripts/ci-image-vulnerabilities.sh scan ;;
             faults) bash scripts/ci-faults.sh ;;
             soak) bash scripts/ci-soak.sh ;;
+            evaluation) bash scripts/ci-evaluation.sh ;;
             offline)
                 mkdir -p .cache/ci/offline-evidence
                 . scripts/ci-install-candidate.sh
