@@ -19,13 +19,13 @@ import (
 	"io"
 	"maps"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -172,6 +172,12 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, mutation *rpc.Mutation
 	return &pb.DebugletStateResponse{}, nil
 }
 
+// OnDebugletAllocate charges the admitted policy of a run on its destinations
+// and sends the recomputed shares to every executor holding them. The
+// executor that allocated keeps its own outcome: a share that does not reach
+// it or a sibling is logged with the executor that missed it and does not
+// fail the allocation; the recipient that missed the update is corrected by
+// the next update on that destination or by its session end.
 func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutation, req *pb.DebugletAllocateRequest) (*pb.DebugletAllocateResponse, error) {
 	if req.GetExecutorId() == "" {
 		return nil, status.Error(codes.PermissionDenied, "executor identity does not match session")
@@ -521,6 +527,9 @@ type fairshareRecipient struct {
 	mutation *rpc.Mutation
 	client   rpc.BoundExecutorClient
 	updates  []*pb.DestinationLimit
+	// wait and done order the deliveries to one executor; see
+	// executorEntry.bandwidthTail. Both are nil without a registry entry.
+	wait, done chan struct{}
 }
 type fairshareWork struct {
 	d          *Dispatcher
@@ -571,20 +580,26 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		var recipient *rpc.SessionOwner
 		var ticket *rpc.Mutation
 		var admitErr error
+		entry := d.executors[id]
 		if owner != nil && id == owner.ExecutorID() {
 			recipient = owner
 			ticket, admitErr = work.origin.Fork(ctx)
-		} else if entry := d.executors[id]; entry != nil && !d.closed {
+		} else if entry != nil && !d.closed {
 			recipient = entry.owner
 			ticket, admitErr = recipient.AdmitMutation(ctx)
 		} else {
 			admitErr = rpc.ErrSessionUnavailable
 		}
 		if admitErr != nil {
-			work.err = errors.Join(work.err, admitErr)
+			work.err = errors.Join(work.err, fmt.Errorf("executor %s: %w", id, admitErr))
 			continue
 		}
-		work.recipients = append(work.recipients, fairshareRecipient{owner: recipient, mutation: ticket, updates: updates})
+		r := fairshareRecipient{owner: recipient, mutation: ticket, updates: updates}
+		if entry != nil {
+			r.wait, r.done = entry.bandwidthTail, make(chan struct{})
+			entry.bandwidthTail = r.done
+		}
+		work.recipients = append(work.recipients, r)
 	}
 	d.mu.Unlock()
 	// No map-lock nesting and no later executor-ID lookup. A retired exact
@@ -593,7 +608,7 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		r := &work.recipients[i]
 		client, ok := d.Bidi.GetClientFor(r.owner)
 		if !ok {
-			work.err = errors.Join(work.err, status.Error(codes.FailedPrecondition, "fairshare recipient is unavailable"))
+			work.err = errors.Join(work.err, fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), status.Error(codes.FailedPrecondition, "fairshare recipient is unavailable")))
 			continue
 		}
 		r.client = client
@@ -601,6 +616,22 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 	return work, nil
 }
 
+// send delivers each recipient's updates in a goroutine of its own. A
+// recipient holding a ticket first waits until the delivery captured before it
+// to the same executor ended, or its own context ended, so an executor
+// receives the updates in the order the destination changes were made and
+// applies the newest last. Its ticket is released when its delivery ends:
+// delivered, refused, skipped for lack of a client, or cut off by the context.
+// A failed or late older delivery thus delays the next one at most until its
+// own bound and never suppresses it, and one executor's failure does not
+// cancel the delivery to another. Every failure names its executor.
+//
+// The order does not survive a cut-off: a delivery whose call ends at its
+// bound while the executor is still processing it releases its ticket before
+// its share is applied, so that older share can be applied after its
+// successor's and stay in force until the next update on the destination or
+// the end of the session. The updates carry no version the executor could
+// compare, so this bound remains.
 func (work *fairshareWork) send(ctx context.Context) error {
 	if work.origin != nil {
 		defer work.origin.Finish()
@@ -608,22 +639,43 @@ func (work *fairshareWork) send(ctx context.Context) error {
 	for _, r := range work.recipients {
 		defer r.mutation.Finish()
 	}
-	g, subCtx := errgroup.WithContext(ctx)
-	for _, r := range work.recipients {
-		if r.client == nil {
+	var g sync.WaitGroup
+	errs := make([]error, len(work.recipients))
+	for i, r := range work.recipients {
+		if r.client == nil && r.done == nil {
 			continue
 		}
-		for _, update := range r.updates {
-			work.d.logger.Debug("New fairshared update", zap.String("executorID", r.owner.ExecutorID()), zap.String("newLimit", bitrate.Bitrate(update.BitsLimit).String()))
+		if r.client != nil {
+			for _, update := range r.updates {
+				work.d.logger.Debug("New fairshared update", zap.String("executorID", r.owner.ExecutorID()), zap.String("newLimit", bitrate.Bitrate(update.BitsLimit).String()))
+			}
 		}
-		g.Go(func() error {
-			callCtx, finish := mutationCallContext(subCtx, r.mutation)
+		g.Go(func() {
+			if r.done != nil {
+				defer close(r.done)
+			}
+			callCtx, finish := mutationCallContext(ctx, r.mutation)
 			defer finish()
-			_, err := r.client.Bandwidth(callCtx, &pb.BandwidthRequest{Limits: r.updates})
-			return err
+			if r.wait != nil {
+				select {
+				case <-r.wait:
+				case <-callCtx.Done():
+					if r.client != nil {
+						errs[i] = fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), callCtx.Err())
+					}
+					return
+				}
+			}
+			if r.client == nil {
+				return // Reported at capture.
+			}
+			if _, err := r.client.Bandwidth(callCtx, &pb.BandwidthRequest{Limits: r.updates}); err != nil {
+				errs[i] = fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), err)
+			}
 		})
 	}
-	return errors.Join(work.err, g.Wait())
+	g.Wait()
+	return errors.Join(work.err, errors.Join(errs...))
 }
 
 func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, dests []string) error {

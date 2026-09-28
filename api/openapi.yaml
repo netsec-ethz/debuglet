@@ -1271,7 +1271,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: "The limit is below the floors charged to active allocations on the destination (capacity_exhausted). These floors do not include future scheduler reservations whose runs have not allocated bandwidth yet. Nothing was recorded or pushed; the runs keep their floors, and the limit can be lowered once they release them."
+          description: "The limit is below the floors admitted on the destination, charged to active allocations or reserved by the scheduler for admitted runs (capacity_exhausted). Nothing was recorded or pushed; the runs keep their floors, and the limit can be lowered once they release them."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."

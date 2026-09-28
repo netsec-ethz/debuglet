@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
@@ -105,7 +107,7 @@ func TestDestinationLimitBelowTheFloorsAnswersConflict(t *testing.T) {
 
 	before := len(dlBandwidths(f.peer))
 	body := patch("limit below the floors", ccFloorBW-1, http.StatusConflict)
-	if envelope := envelopeOf(t, "limit below the floors", body); envelope.Code != CodeCapacityExhausted || envelope.Message != "limit is below the floors charged to active allocations on the destination" {
+	if envelope := envelopeOf(t, "limit below the floors", body); envelope.Code != CodeCapacityExhausted || envelope.Message != "limit is below the floors admitted on the destination, active or reserved" {
 		t.Fatalf("limit below the floors answered %+v", envelope)
 	}
 	if pushed := dlBandwidths(f.peer)[before:]; len(pushed) != 0 {
@@ -115,4 +117,46 @@ func TestDestinationLimitBelowTheFloorsAnswersConflict(t *testing.T) {
 	if pushed := dlBandwidths(f.peer)[before:]; len(pushed) != 1 {
 		t.Fatalf("a limit equal to the floors sent %d updates, want 1", len(pushed))
 	}
+}
+
+// TestDestinationLimitBelowTheReservedFloorsAnswersConflict states that PATCH
+// /destination refuses a limit below the floor reserved for a run admitted to
+// start later, before it allocated anything, with the same 409 envelope, and
+// applies a limit equal to that floor.
+func TestDestinationLimitBelowTheReservedFloorsAnswersConflict(t *testing.T) {
+	f := ccNewFixture(t)
+	contract := oaContract(t)
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	const destination = "127.0.0.1"
+	patch := func(what string, limit int64, want int) []byte {
+		t.Helper()
+		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit})
+		wfExpect(t, what, status, want, body)
+		oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
+		return body
+	}
+	patch("unheld destination", 10*ccFloorBW, http.StatusNoContent)
+
+	f.peer.setUploadHook(nil)
+	request := ccRequest(nil)
+	later := time.Now().Add(time.Hour).Unix()
+	request.StartTimestamp = &later
+	batch, err := client.Prepare([]client.Request{request})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	ctx, cancel := f.requestCtx()
+	defer cancel()
+	if _, err := f.client(f.root.URL, false).SubmitTEST(ctx, batch); err != nil {
+		t.Fatalf("SubmitTEST: %v", err)
+	}
+
+	body := patch("limit below the reserved floors", ccFloorBW-1, http.StatusConflict)
+	if envelope := envelopeOf(t, "limit below the reserved floors", body); envelope.Code != CodeCapacityExhausted || envelope.Message != "limit is below the floors admitted on the destination, active or reserved" {
+		t.Fatalf("limit below the reserved floors answered %+v", envelope)
+	}
+	if pushed := dlBandwidths(f.peer); len(pushed) != 0 {
+		t.Fatalf("a refused limit sent %v", pushed)
+	}
+	patch("limit equal to the reserved floors", ccFloorBW, http.StatusNoContent)
 }
