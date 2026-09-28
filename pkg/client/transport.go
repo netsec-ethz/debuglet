@@ -54,6 +54,10 @@ func (c *Client) protocolErr(method, route, msg string) error {
 // the response body and returns the bounded body bytes when the status is the
 // expected one. Any other status becomes an *HTTPError. Nothing is retried.
 func (c *Client) do(ctx context.Context, method, route string, query url.Values, body []byte, want int, secrets ...string) ([]byte, error) {
+	return c.doWithLimit(ctx, method, route, query, body, want, maxSuccessBody, secrets...)
+}
+
+func (c *Client) doWithLimit(ctx context.Context, method, route string, query url.Values, body []byte, want int, successLimit int64, secrets ...string) ([]byte, error) {
 	if c == nil || c.http == nil {
 		return nil, errors.New("client: Client must be created with New")
 	}
@@ -112,12 +116,12 @@ func (c *Client) do(ctx context.Context, method, route string, query url.Values,
 	if want == http.StatusNoContent {
 		return nil, nil
 	}
-	data, exceeded, readErr := readBounded(resp.Body, maxSuccessBody)
+	data, exceeded, readErr := readBounded(resp.Body, successLimit)
 	if readErr != nil {
 		return nil, wrapTransport(ctx, method, path, fmt.Errorf("reading response body: %w", readErr), secrets...)
 	}
 	if exceeded {
-		return nil, &protocolError{method: method, path: path, msg: "response body exceeds 4 MiB"}
+		return nil, &protocolError{method: method, path: path, msg: fmt.Sprintf("response body exceeds %d MiB", successLimit>>20)}
 	}
 	return data, nil
 }

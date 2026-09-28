@@ -844,3 +844,41 @@ func TestUpgradeRefusesWhatCheckRefuses(t *testing.T) {
 		})
 	}
 }
+
+func TestDispatcherRequiresAdmissionProvenanceSchema(t *testing.T) {
+	ctx := context.Background()
+	path := fixture(t, Dispatcher, 10)
+	before := digest(t, path)
+	if err := Check(ctx, Dispatcher, path); !errors.Is(err, ErrOutdated) || !strings.Contains(err.Error(), "-upgrade-database") {
+		t.Fatalf("schema without provenance must require explicit upgrade: %v", err)
+	}
+	unchanged(t, path, before)
+	if got := schemaVersionOf(t, path); got != 10 {
+		t.Fatalf("refusal migrated schema to %d", got)
+	}
+	policy, err := PolicyFor(Dispatcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version, err := Upgrade(ctx, Dispatcher, path); err != nil || version != policy.Current {
+		t.Fatalf("upgrade to provenance schema: version=%d, err=%v", version, err)
+	}
+	before = digest(t, path)
+	if err := Check(ctx, Dispatcher, path); err != nil {
+		t.Fatalf("upgraded provenance schema refused: %v", err)
+	}
+	unchanged(t, path, before)
+
+	modify(t, path, "DROP TABLE debuglet_provenance")
+	before = digest(t, path)
+	if err := Check(ctx, Dispatcher, path); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("missing provenance table accepted: %v", err)
+	}
+	unchanged(t, path, before)
+	modify(t, path, "CREATE TABLE debuglet_provenance (debuglet_id INTEGER PRIMARY KEY)")
+	before = digest(t, path)
+	if err := Check(ctx, Dispatcher, path); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("missing provenance document column accepted: %v", err)
+	}
+	unchanged(t, path, before)
+}

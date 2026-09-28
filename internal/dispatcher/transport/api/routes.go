@@ -130,6 +130,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/debuglet/:id/logs", h.GetDebugletLogs)
 	e.GET("/debuglet/:id/state", h.GetDebugletState)
 	e.GET("/debuglet/:id/recovery", h.GetDebugletRecovery)
+	e.GET("/debuglet/:id/result", h.GetDebugletResult)
 	e.DELETE("/debuglet", h.DeleteDebuglet)
 	// executor
 	e.GET("/executors", h.GetExecutors)

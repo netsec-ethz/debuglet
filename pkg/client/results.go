@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 ETH Zurich
+
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
+)
+
+type Result = wire.Result
+
+// Export reads one result snapshot without waiting for execution or output to
+// finish. An unknown outcome or incomplete output remains a successful export.
+func (c *Client) Export(ctx context.Context, id string) (Result, error) {
+	if err := validateJobID(id); err != nil {
+		return Result{}, err
+	}
+	route := routeDebuglet + "/" + id + "/result"
+	data, err := c.doWithLimit(ctx, http.MethodGet, route, nil, nil, http.StatusOK, wire.MaxResultBytes)
+	if err != nil {
+		return Result{}, err
+	}
+	doc, err := ReadResult(bytes.NewReader(data))
+	if err != nil {
+		return Result{}, c.protocolErr(http.MethodGet, route, err.Error())
+	}
+	if doc.RunID != id {
+		return Result{}, c.protocolErr(http.MethodGet, route, "result belongs to another run")
+	}
+	return doc, nil
+}
+
+// ReadResult reads a saved export without a dispatcher or credentials. It
+// validates format, bounds and consistency, not the authenticity of its author
+// or the truth of measurements. No network requests are made.
+func ReadResult(r io.Reader) (Result, error) {
+	data, exceeded, err := readBounded(r, wire.MaxResultBytes)
+	if err != nil {
+		return Result{}, fmt.Errorf("read result: %w", err)
+	}
+	if exceeded {
+		return Result{}, errors.New("result exceeds 32 MiB")
+	}
+	var doc Result
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return Result{}, errors.New("malformed result JSON")
+	}
+	if err := validateResult(doc); err != nil {
+		return Result{}, err
+	}
+	return doc, nil
+}
+
+func validateResult(doc Result) error {
+	bad := func() error { return errors.New("inconsistent result document") }
+	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion {
+		return errors.New("unsupported result format or version")
+	}
+	if !resultUUID(doc.RunID) || strings.TrimSpace(doc.ExecutorID) == "" || strings.TrimSpace(doc.Outcome.State) == "" || doc.Timing.ObservedAt.IsZero() {
+		return bad()
+	}
+	if doc.Attempt != nil && !resultBinding(*doc.Attempt) {
+		return bad()
+	}
+	if t := doc.Timing; (t.ScheduledStart == nil) != (t.ReservedUntil == nil) || t.ScheduledStart != nil && (!t.ReservedUntil.After(*t.ScheduledStart) || t.ScheduledStart.IsZero()) || t.ClockUncertaintyNS != nil && *t.ClockUncertaintyNS < 0 || t.StartedAt != nil && t.StartedAt.IsZero() || t.FinishedAt != nil && t.FinishedAt.IsZero() {
+		return bad()
+	}
+	if doc.Timing.StartedAt != nil && doc.Timing.FinishedAt != nil && doc.Timing.FinishedAt.Before(*doc.Timing.StartedAt) {
+		return bad()
+	}
+	attribution := "unknown"
+	if p := doc.Provenance; p != nil {
+		if doc.Attempt == nil || p.RunID != doc.RunID || p.ExecutorID != doc.ExecutorID || p.Attempt != *doc.Attempt || p.AdmittedAt.IsZero() || !resultSHA256(p.WorkloadSHA256) || p.Arguments == nil || p.HostPolicy != "unknown" {
+			return bad()
+		}
+		if p.AdmittedPolicy.FloorBW < 0 || p.AdmittedPolicy.CeilBW < p.AdmittedPolicy.FloorBW || p.AdmittedPolicy.TimeoutMS <= 0 {
+			return bad()
+		}
+		attribution = "unenrolled_session"
+		if p.CertificateSHA256 != nil {
+			if !resultSHA256(*p.CertificateSHA256) {
+				return bad()
+			}
+			attribution = "enrolled_at_admission"
+		}
+		for _, value := range []*string{p.ExecutorSoftware, p.DispatcherSoftware, p.DispatcherRevision} {
+			if value != nil && strings.TrimSpace(*value) == "" {
+				return bad()
+			}
+		}
+	}
+	if doc.Verification.Attribution != attribution || doc.Verification.PacketEvidence != "unverified" || doc.Verification.MeasurementTruth != "unverified" {
+		return bad()
+	}
+	var last int64
+	for _, entry := range doc.Output.Entries {
+		if entry.ID <= last {
+			return bad()
+		}
+		if _, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err != nil {
+			return bad()
+		}
+		last = entry.ID
+	}
+	if doc.Output.Status.State == "" {
+		return bad()
+	}
+	if err := validateOutput(LogPage{After: last, Logs: doc.Output.Entries, Output: doc.Output.Status}); err != nil {
+		return bad()
+	}
+	if state := doc.Output.Status.State; state == "complete" || state == "truncated" {
+		if *doc.Output.Status.FinalCursor != last {
+			return bad()
+		}
+	}
+	return nil
+}
+
+func resultUUID(value string) bool { return isCanonicalUUID(value) && !isNilUUID(value) }
+func resultBinding(binding ControlBinding) bool {
+	return resultUUID(binding.DispatcherIncarnation) && resultUUID(binding.SessionID)
+}
+func resultSHA256(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32 && strings.ToLower(value) == value
+}
