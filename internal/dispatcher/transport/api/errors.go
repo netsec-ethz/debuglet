@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"go.uber.org/zap"
 )
 
@@ -144,6 +145,7 @@ func (h *Handler) errorHandler(err error, c echo.Context) {
 	status, body, internal := errorEnvelope(err)
 	if internal != nil && h.logger != nil {
 		h.logger.Warn("request failed",
+			zap.String("request_id", daemonlog.RequestID(c.Request().Context())),
 			zap.String("route", c.Path()),
 			zap.Int("status", status),
 			zap.String("code", body.Code),

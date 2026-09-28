@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
@@ -91,7 +92,6 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	if err := rpc.CheckPayloadBinding(req.GetControlBinding(), binding); err != nil {
 		return nil, err
 	}
-	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("transaction_id", req.GetTransactionId()))
 
 	id, ok := ids.ParseCanonical(req.GetId())
 	if !ok {
@@ -138,6 +138,7 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 		return nil, err
 	}
 
+	e.logger.Info("Run accepted", daemonlog.RunFields(ctx, id, e.cfg.Identity.ExecutorID, binding)...)
 	return &pb.UploadResponse{}, nil
 }
 
@@ -146,7 +147,6 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 		return nil, err
 	}
 	debugletID := req.GetDebugletId()
-	e.logger.Debug("Abort received", zap.String("debugletID", debugletID))
 
 	id, ok := ids.ParseCanonical(debugletID)
 	if !ok {
@@ -167,6 +167,7 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 	if !existed {
 		return nil, status.Error(codes.NotFound, "debuglet not found")
 	}
+	e.logger.Info("Run cancellation joined", daemonlog.RunFields(ctx, id, e.cfg.Identity.ExecutorID, binding)...)
 	return &pb.AbortResponse{}, nil
 }
 

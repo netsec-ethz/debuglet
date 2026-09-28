@@ -205,6 +205,7 @@ func TestInstalledRoles(t *testing.T) {
 	report.FirstRun = first
 	original := awaitOutput(t, ctx, c, first, hello+"first-role\n")
 	assertCLILogs(t, cli(clientConfig, "logs", first), original)
+	assertRunCorrelation(t, ctx, c, d, e, filepath.Join(root, "share", "debuglet", "hello.wasm"))
 
 	goPath := os.Getenv("GO")
 	if goPath == "" {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"sync"
@@ -211,8 +212,9 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		return commitErr
 	}
 	if old != nil && old.owner != owner {
-		d.logger.Info("Executor control session ended", zap.String("executor_id", record.ID), zap.String("session_id", old.owner.Binding().SessionID), zap.String("reason", "replaced"))
+		d.logger.Info("Executor control session ended", append(daemonlog.SessionFields(record.ID, old.owner.Binding()), zap.String("reason", "replaced"))...)
 	}
+	d.logger.Info("Executor control session registered", daemonlog.SessionFields(record.ID, owner.Binding())...)
 	if startExpiry != nil {
 		go d.runExpiry(startExpiry)
 	}
@@ -367,7 +369,7 @@ func (d *Dispatcher) expireOwner(owner *rpc.SessionOwner) bool {
 	}
 	delete(d.executors, owner.ExecutorID())
 	d.mu.Unlock()
-	d.logger.Info("Executor control session ended", zap.String("executor_id", owner.ExecutorID()), zap.String("session_id", owner.Binding().SessionID), zap.String("reason", "lease expired"))
+	d.logger.Info("Executor control session ended", append(daemonlog.SessionFields(owner.ExecutorID(), owner.Binding()), zap.String("reason", "lease expired"))...)
 	d.Bidi.RemoveClient(owner)
 	return true
 }
