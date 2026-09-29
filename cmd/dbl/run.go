@@ -250,6 +250,9 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 			id = ""
 		}
 		node, err := c.SelectExecutor(ctx, id, o.filter)
+		if errors.Is(err, client.ErrNoMatchingExecutor) && id == "" && o.filter.Empty() {
+			err = errNoReadyExecutor
+		}
 		if err != nil {
 			return reportFailure(ctx, "dbl run: discover executor", stderr, err)
 		}
@@ -351,3 +354,7 @@ func waitForExit(ctx context.Context, status func(context.Context) (client.State
 		}
 	}
 }
+
+// errNoReadyExecutor keeps the first-run hint for an unfiltered selection:
+// with no filters, the likely cause is that no executor has started yet.
+var errNoReadyExecutor = errors.New("no executor is ready; start one with dbl up or sudo dbl service start --role executor --name NAME, then check dbl nodes (a newly started executor needs a few seconds)")

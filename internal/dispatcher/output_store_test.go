@@ -340,6 +340,26 @@ func TestDurableOutputEmptyFramesAndOversizedInput(t *testing.T) {
 	}
 }
 
+// An upgrade charges output that is already stored. With the default, disabled
+// account and node caps, that history must not refuse new work.
+func TestDurableOutputDefaultLimitsIgnoreRetainedHistory(t *testing.T) {
+	d := newTerminalPeerDispatcher(t)
+	if _, err := d.db.ExecContext(t.Context(), "UPDATE output_node_usage SET charged_bytes = ?", int64(1)<<40); err != nil {
+		t.Fatal(err)
+	}
+	outputTestRun(t, d, outputTestWriter(), nil)
+	limits := config.DefaultOutputConfig()
+	limits.NodeBytes = 1 << 30
+	full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge)
+	if err != nil || full {
+		t.Fatalf("default caps refused admission: full=%v err=%v", full, err)
+	}
+	d.outputLimits = limits
+	if full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge); err != nil || !full {
+		t.Fatalf("explicit node cap ignored: full=%v err=%v", full, err)
+	}
+}
+
 func TestDurableOutputAdmissionChargeRollsBack(t *testing.T) {
 	d := newTerminalPeerDispatcher(t)
 	writer := outputTestWriter()
@@ -439,5 +459,38 @@ func TestDurableOutputAccountQuotaUsesStoredOwnership(t *testing.T) {
 	}
 	if aliceUsage.ChargedBytes != limits.AccountBytes || bobUsage.ChargedBytes != pb.OutputRunCharge+pb.OutputFrameCharge+1 {
 		t.Fatalf("wrong account charges: %+v %+v", aliceUsage, bobUsage)
+	}
+}
+
+// A session end finalizes output that no later session could continue, and
+// leaves enrolled output resumable. Committed prefixes stay as stored.
+func TestSessionEndInterruptsOnlyUnresumableOutput(t *testing.T) {
+	d := newTerminalPeerDispatcher(t)
+	ctx := t.Context()
+	unenrolled := outputTestWriter()
+	unenrolled.fingerprint = ""
+	enrolled := outputTestWriter()
+	enrolled.binding, enrolled.original = unenrolled.binding, unenrolled.original
+	other := outputTestWriter()
+	other.fingerprint = ""
+	stranded := outputTestRun(t, d, unenrolled, nil)
+	resumable := outputTestRun(t, d, enrolled, nil)
+	elsewhere := outputTestRun(t, d, other, nil)
+	if _, err := d.storeOutput(ctx, unenrolled, stranded, &pb.DebugletOutput{Sequence: 1, Timestamp: timestamppb.Now(), Output: []byte("kept")}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	d.interruptUnresumableOutput(unenrolled.binding)
+	d.interruptUnresumableOutput(unenrolled.binding)
+
+	q := database.New(d.db)
+	row, err := q.GetDebugletOutput(ctx, stranded)
+	if err != nil || !row.FinalSequence.Valid || row.FinalSequence.Int64 != 1 || row.Status != "truncated" || row.Reason != pb.OutputReasonExecutorInterrupted {
+		t.Fatalf("unenrolled output after session end=%+v err=%v", row, err)
+	}
+	for name, id := range map[string]uuid.UUID{"enrolled": resumable, "other session": elsewhere} {
+		if row, err := q.GetDebugletOutput(ctx, id); err != nil || row.FinalSequence.Valid {
+			t.Fatalf("%s output finalized: %+v err=%v", name, row, err)
+		}
 	}
 }

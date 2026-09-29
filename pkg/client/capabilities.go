@@ -78,6 +78,9 @@ func (c *Client) DiscoverExecutors(ctx context.Context, filter ExecutorFilter) (
 	return matched, nil
 }
 
+// ErrNoMatchingExecutor reports that no ready executor satisfies a selection.
+var ErrNoMatchingExecutor = errors.New("no ready executor matches; check dbl nodes and the requested capability filters")
+
 // SelectExecutor returns one ready match, optionally restricted to an explicit
 // ID. Zero or ambiguous matches are errors. This method never submits work.
 func (c *Client) SelectExecutor(ctx context.Context, id string, filter ExecutorFilter) (Node, error) {
@@ -96,7 +99,7 @@ func (c *Client) SelectExecutor(ctx context.Context, id string, filter ExecutorF
 		selected = &nodes[i]
 	}
 	if selected == nil {
-		return Node{}, errors.New("no ready executor matches; check dbl nodes and the requested capability filters")
+		return Node{}, ErrNoMatchingExecutor
 	}
 	return *selected, nil
 }

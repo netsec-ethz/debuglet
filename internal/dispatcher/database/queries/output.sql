@@ -51,3 +51,12 @@ WHERE debuglet_id = sqlc.arg(debuglet_id) AND final_sequence IS NULL AND committ
 UPDATE debuglet_output SET byte_count = byte_count + sqlc.arg(bytes), frame_count = frame_count + 1,
     last_log_id = sqlc.arg(log_id)
 WHERE debuglet_id = sqlc.arg(debuglet_id) AND output_version = 0 AND final_sequence IS NULL;
+
+-- name: InterruptUnresumableOutput :execrows
+-- Output bound to an ended session can continue only over an enrolled
+-- credential. Legacy and unenrolled output therefore ends at its committed prefix.
+UPDATE debuglet_output SET final_sequence = committed_sequence, final_cursor = last_log_id,
+    status = 'truncated', reason = 'executor_interrupted'
+WHERE final_sequence IS NULL AND (output_version = 0 OR owner_fingerprint = '')
+  AND debuglet_id IN (SELECT id FROM debuglets
+                      WHERE dispatcher_incarnation = sqlc.arg(dispatcher_incarnation) AND session_id = sqlc.arg(session_id));
