@@ -33,6 +33,7 @@ Aliases: dbl dispatchers (saved connections), dbl executors (registered executor
 
 const executorUsage = `Usage:
   dbl executor up [--name worker] [--dispatcher NAME|URL] [--state-dir DIR]
+  dbl executor join --dispatcher URL --executor ID --state-dir DIR
   dbl executor list
 
 list queries executors registered with the selected dispatcher (alias: dbl nodes).
@@ -140,6 +141,8 @@ func dispatcherCommand(ctx context.Context, args []string, options globalOptions
 func executorCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "join":
+			return executorJoinCommand(ctx, args[1:], options, stdout, stderr)
 		case "up":
 			return executorUpCommand(ctx, args[1:], options, stdout, stderr)
 		case "list":
@@ -149,5 +152,5 @@ func executorCommand(ctx context.Context, args []string, options globalOptions, 
 			return exitOK
 		}
 	}
-	return usageError("dbl executor", executorUsage, stderr, "expected up or list")
+	return usageError("dbl executor", executorUsage, stderr, "expected up, join or list")
 }

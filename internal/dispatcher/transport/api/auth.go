@@ -50,8 +50,7 @@ const (
 
 // Account roles. A role is a property of the account, never of the request.
 const (
-	// RoleUser is an ordinary submitter: it reaches its own runs and nothing
-	// else.
+	// RoleUser is an ordinary account: it reaches its own runs and machines.
 	RoleUser = "user"
 	// RoleOperator additionally reaches the dispatcher-wide administration
 	// operations listed in docs/api.md. No HTTP route grants this role; it is
