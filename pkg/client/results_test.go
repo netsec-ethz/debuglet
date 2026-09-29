@@ -69,6 +69,21 @@ func TestResultRejectsInconsistentRecords(t *testing.T) {
 		{"invalid entry", func(r *Result) { r.Output.Entries = []LogEntry{{ID: 0, Timestamp: "not-a-time"}} }},
 		{"cross node provenance", func(r *Result) { setResultAdmission(r); r.Provenance.ExecutorID = "another-node" }},
 		{"cross attempt provenance", func(r *Result) { setResultAdmission(r); r.Provenance.Attempt.SessionID = fixtureID }},
+		{"1.0 exit code", func(r *Result) { code := int64(0); r.Outcome.ExitCode = &code }},
+		{"1.0 start time", func(r *Result) { at := r.Timing.ObservedAt; r.Timing.StartedAt = &at }},
+		{"1.0 finish time", func(r *Result) { at := r.Timing.ObservedAt; r.Timing.FinishedAt = &at }},
+		{"1.0 clock bound", func(r *Result) { bound := int64(1); r.Timing.ClockUncertaintyNS = &bound }},
+		{"malformed enrolled fingerprint", func(r *Result) {
+			setResultAdmission(r)
+			fingerprint := "sha256:" + strings.Repeat("a", 64)
+			r.Provenance.CertificateSHA256 = &fingerprint
+			r.Verification.Attribution = "enrolled_at_admission"
+		}},
+		{"enrolled fingerprint without enrolled attribution", func(r *Result) {
+			setResultAdmission(r)
+			fingerprint := strings.Repeat("b", 64)
+			r.Provenance.CertificateSHA256 = &fingerprint
+		}},
 		{"cross run provenance", func(r *Result) {
 			setResultAdmission(r)
 			r.Provenance.RunID = "9a8ddf26-205a-48a4-8c93-42e384f1e611"
@@ -142,6 +157,27 @@ func setResultAdmission(r *Result) {
 	r.Attempt = &ControlBinding{DispatcherIncarnation: fixtureID, SessionID: "9a8ddf26-205a-48a4-8c93-42e384f1e611"}
 	r.Provenance = &wire.ResultProvenance{RunID: r.RunID, ExecutorID: r.ExecutorID, Attempt: *r.Attempt, AdmittedAt: r.Timing.ObservedAt, WorkloadSHA256: strings.Repeat("a", 64), Arguments: []string{}, AdmittedPolicy: Policy{TimeoutMS: 1}, HostPolicy: "unknown"}
 	r.Verification.Attribution = "unenrolled_session"
+}
+
+// An admission from an enrolled executor carries its certificate fingerprint
+// and is attributed to that enrollment, not to an unenrolled session.
+func TestResultAcceptsEnrolledAttribution(t *testing.T) {
+	doc := resultFixture(t)
+	setResultAdmission(&doc)
+	fingerprint := strings.Repeat("c", 64)
+	doc.Provenance.CertificateSHA256 = &fingerprint
+	doc.Verification.Attribution = "enrolled_at_admission"
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := ReadResult(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Verification.Attribution != "enrolled_at_admission" || read.Provenance.CertificateSHA256 == nil || *read.Provenance.CertificateSHA256 != fingerprint {
+		t.Fatalf("enrolled attribution not preserved: %+v", read)
+	}
 }
 
 func TestResultPreservesIncompleteAndAdmissionFacts(t *testing.T) {

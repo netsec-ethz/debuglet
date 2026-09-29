@@ -13,7 +13,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	"go.uber.org/zap"
 )
 
 func TestResultExportPreservesAdmissionAndIncompleteOutput(t *testing.T) {
@@ -96,7 +99,13 @@ func TestResultExportBoundsAndOwnership(t *testing.T) {
 }
 
 func TestResultAdmissionRollsBackOnCapacityRefusal(t *testing.T) {
-	f := ccNewFixture(t)
+	// Node and account caps are opt-in; this operator set a node cap.
+	peer := &cpPeer{id: ccExecutorID, price: ccPricePerBwS, currency: "TEST"}
+	f := ccNewFixtureConfigured(t, zap.NewNop(), peer, func(d *dispatcher.Dispatcher) error {
+		limits := config.DefaultOutputConfig()
+		limits.NodeBytes = 1 << 30
+		return d.ConfigureOutputLimits(limits)
+	}, LocalDevelopment(true))
 	if _, err := f.db.ExecContext(f.ctx, "UPDATE output_node_usage SET charged_bytes = ? WHERE singleton = 1", int64(1)<<40); err != nil {
 		t.Fatal(err)
 	}
