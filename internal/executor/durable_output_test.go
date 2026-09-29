@@ -384,12 +384,6 @@ func TestDurableOutputRestartsOverTLSInBoundedPasses(t *testing.T) {
 		}
 		return pb.NewDispatcherServiceClient(conn), nil
 	}
-	if err := e.deliverOutput(t.Context(), current, retained); err != nil {
-		t.Fatal(err)
-	}
-	if calls.Load() != 0 {
-		t.Fatal("insecure profile resumed a different binding")
-	}
 	e.cfg.TLS.Disable = false
 	if err := e.deliverOutput(t.Context(), current, retained); err != nil {
 		t.Fatal(err)
@@ -407,5 +401,33 @@ func TestDurableOutputRestartsOverTLSInBoundedPasses(t *testing.T) {
 	retained, err = e.output.Get(t.Context(), id)
 	if err != nil || !retained.EndAcknowledged || retained.QueuedFrames != 0 || received.Load() != outputPassFrames+2 {
 		t.Fatalf("restart tail not acknowledged: %+v %v", retained, err)
+	}
+
+	// A plaintext profile has no credential that could resume another binding,
+	// so it never contacts the dispatcher and releases its local copy instead.
+	plain := uuid.New()
+	if err := e.output.Admit(t.Context(), plain, original, pb.OutputVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.output.Append(t.Context(), plain, time.Now().UTC(), []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.output.Finish(t.Context(), plain, pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE, ""); err != nil {
+		t.Fatal(err)
+	}
+	unsent, err := e.output.Get(t.Context(), plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := calls.Load()
+	e.cfg.TLS.Disable = true
+	if err := e.deliverOutput(t.Context(), current, unsent); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != before {
+		t.Fatal("insecure profile resumed a different binding")
+	}
+	if released, err := e.output.Get(t.Context(), plain); err != nil || !released.EndAcknowledged || released.QueuedFrames != 0 {
+		t.Fatalf("plaintext output kept its spool: %+v %v", released, err)
 	}
 }

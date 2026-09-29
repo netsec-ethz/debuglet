@@ -51,3 +51,7 @@ UPDATE output_runs SET acknowledged_sequence = sqlc.arg(acknowledged_sequence),
 UPDATE output_runs SET receipt_sequence = sqlc.arg(sequence), receipt_reason = sqlc.arg(reason),
     acknowledged_sequence = sqlc.arg(sequence), queued_bytes = 0, queued_frames = 0,
     end_acknowledged = TRUE WHERE run_id = sqlc.arg(run_id);
+
+-- name: AbandonOutputRun :exec
+UPDATE output_runs SET queued_bytes = 0, queued_frames = 0, end_acknowledged = TRUE
+WHERE run_id = ? AND NOT end_acknowledged;

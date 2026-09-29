@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
@@ -17,6 +18,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -340,4 +342,22 @@ func outputReceipt(row database.GetDebugletOutputRow) *pb.DebugletStreamResponse
 		receipt.End = &pb.DebugletOutputEnd{LastSequence: row.FinalSequence.Int64, Status: state, Reason: row.Reason}
 	}
 	return receipt
+}
+
+// interruptUnresumableOutput finalizes output that no later session may
+// continue. The transport has closed, so no frame of this session can still
+// commit; the recorded prefix stays readable and followers see a final cursor.
+func (d *Dispatcher) interruptUnresumableOutput(binding controlsession.Binding) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	interrupted, err := database.New(d.db).InterruptUnresumableOutput(ctx, database.InterruptUnresumableOutputParams{
+		DispatcherIncarnation: binding.Incarnation, SessionID: binding.SessionID,
+	})
+	if err != nil {
+		d.logger.Warn("Unresumable output remains pending", zap.String("session_id", binding.SessionID), zap.Error(err))
+		return
+	}
+	if interrupted > 0 {
+		d.logger.Info("Output of an ended session was finalized as interrupted", zap.String("session_id", binding.SessionID), zap.Int64("runs", interrupted))
+	}
 }

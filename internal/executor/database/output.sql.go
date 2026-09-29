@@ -10,6 +10,16 @@ import (
 	"database/sql"
 )
 
+const abandonOutputRun = `-- name: AbandonOutputRun :exec
+UPDATE output_runs SET queued_bytes = 0, queued_frames = 0, end_acknowledged = TRUE
+WHERE run_id = ? AND NOT end_acknowledged
+`
+
+func (q *Queries) AbandonOutputRun(ctx context.Context, runID string) error {
+	_, err := q.db.ExecContext(ctx, abandonOutputRun, runID)
+	return err
+}
+
 const acceptOutputTruncation = `-- name: AcceptOutputTruncation :exec
 UPDATE output_runs SET receipt_sequence = ?1, receipt_reason = ?2,
     acknowledged_sequence = ?1, queued_bytes = 0, queued_frames = 0,

@@ -461,3 +461,36 @@ func TestDurableOutputAccountQuotaUsesStoredOwnership(t *testing.T) {
 		t.Fatalf("wrong account charges: %+v %+v", aliceUsage, bobUsage)
 	}
 }
+
+// A session end finalizes output that no later session could continue, and
+// leaves enrolled output resumable. Committed prefixes stay as stored.
+func TestSessionEndInterruptsOnlyUnresumableOutput(t *testing.T) {
+	d := newTerminalPeerDispatcher(t)
+	ctx := t.Context()
+	unenrolled := outputTestWriter()
+	unenrolled.fingerprint = ""
+	enrolled := outputTestWriter()
+	enrolled.binding, enrolled.original = unenrolled.binding, unenrolled.original
+	other := outputTestWriter()
+	other.fingerprint = ""
+	stranded := outputTestRun(t, d, unenrolled, nil)
+	resumable := outputTestRun(t, d, enrolled, nil)
+	elsewhere := outputTestRun(t, d, other, nil)
+	if _, err := d.storeOutput(ctx, unenrolled, stranded, &pb.DebugletOutput{Sequence: 1, Timestamp: timestamppb.Now(), Output: []byte("kept")}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	d.interruptUnresumableOutput(unenrolled.binding)
+	d.interruptUnresumableOutput(unenrolled.binding)
+
+	q := database.New(d.db)
+	row, err := q.GetDebugletOutput(ctx, stranded)
+	if err != nil || !row.FinalSequence.Valid || row.FinalSequence.Int64 != 1 || row.Status != "truncated" || row.Reason != pb.OutputReasonExecutorInterrupted {
+		t.Fatalf("unenrolled output after session end=%+v err=%v", row, err)
+	}
+	for name, id := range map[string]uuid.UUID{"enrolled": resumable, "other session": elsewhere} {
+		if row, err := q.GetDebugletOutput(ctx, id); err != nil || row.FinalSequence.Valid {
+			t.Fatalf("%s output finalized: %+v err=%v", name, row, err)
+		}
+	}
+}

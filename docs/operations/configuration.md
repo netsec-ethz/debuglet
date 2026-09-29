@@ -18,7 +18,7 @@ The spool budget charges payload plus 64 bytes per frame and 256 bytes per retai
 
 The dispatcher's `[output]` section bounds each run with `run_bytes` (8 MiB) and `run_frames` (16,384). Its `account_bytes` and `node_bytes` caps are off by default (`0`): the dispatcher does not yet delete retained output, so those charges only grow, and an upgrade counts output that is already stored. Set them only as a hard lifetime ceiling; reaching one refuses new submissions with `service_unavailable`.
 
-Durable output requires both peers to negotiate output version 1. Retained output may resume over a new control session only with the same still-enrolled TLS certificate and original run binding. Plaintext local sessions cannot resume output across control bindings. Workloads themselves are never restarted, and output completion remains separate from the guest's exit status.
+Durable output requires both peers to negotiate output version 1. Retained output may resume over a new control session only with the same still-enrolled TLS certificate and original run binding. Plaintext local sessions and executors without an enrolled certificate cannot resume output across control bindings: when such a session ends, the dispatcher finalizes that output as `truncated` with reason `executor_interrupted` at its committed prefix, and the executor releases its local copy. Workloads themselves are never restarted, and output completion remains separate from the guest's exit status.
 
 ## State and upgrades
 

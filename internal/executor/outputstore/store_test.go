@@ -340,3 +340,36 @@ func TestSpoolEmptyEndAndCanceledAdmission(t *testing.T) {
 		t.Fatalf("canceled admission persisted: %v", err)
 	}
 }
+
+// Abandoning an unresumable run releases its whole spool charge once, and an
+// open run cannot be abandoned while its producer may still write.
+func TestSpoolAbandonReleasesUnresumableRun(t *testing.T) {
+	limits := DefaultLimits()
+	limits.Runs = 1
+	s, db, _ := fixture(t, limits)
+	ctx := t.Context()
+	id := admit(t, s)
+	appendFrame(t, s, id, "undeliverable")
+	if err := s.Abandon(ctx, id); !errors.Is(err, ErrAcknowledgement) {
+		t.Fatalf("abandoned open run: %v", err)
+	}
+	if _, err := s.Finish(ctx, id, pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE, ""); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.Abandon(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	used, err := database.New(db).GetOutputUsage(ctx)
+	if err != nil || used != 0 {
+		t.Fatalf("usage after abandon=%d %v", used, err)
+	}
+	if frames, err := s.Frames(ctx, id, 0, 64); err != nil || len(frames) != 0 {
+		t.Fatalf("frames after abandon=%v %v", frames, err)
+	}
+	if pending, err := s.Pending(ctx, "", 10); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after abandon=%v %v", pending, err)
+	}
+	admit(t, s)
+}
