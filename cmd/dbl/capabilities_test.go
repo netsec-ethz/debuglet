@@ -98,14 +98,21 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 3 || strings.Join(strings.Fields(lines[0])[2:8], " ") != "ADMISSION NAME LOCATION NETWORK ISD_AS LISTENERS" {
+	if len(lines) != 3 || strings.Join(strings.Fields(lines[0])[2:6], " ") != "NAME LOCATION ISD_AS LAST_SEEN" {
 		t.Fatalf("table: %q", stdout)
 	}
-	if fields := strings.Fields(lines[1]); fields[0] != "old" || fields[2] != "unknown" || fields[3] != "-" || fields[4] != "-" || fields[6] != "unknown" || fields[7] != "unknown" {
+	if fields := strings.Fields(lines[1]); fields[0] != "old" || fields[2] != "-" || fields[3] != "-" || fields[4] != "unknown" {
 		t.Fatalf("legacy row: %q", lines[1])
 	}
-	if !strings.Contains(lines[2], "maintenance  ETH lab  Zurich,CH  -        1-ff00:0:110  udp,scion") {
+	if !strings.Contains(lines[2], "ETH lab  Zurich,CH  1-ff00:0:110") {
 		t.Fatalf("vantage row: %q", lines[2])
+	}
+	// The default table stays compact; admission, network and listeners are
+	// in --output json only.
+	for _, hidden := range []string{"ADMISSION", "NETWORK", "LISTENERS", "maintenance", "udp,scion"} {
+		if strings.Contains(stdout, hidden) {
+			t.Fatalf("default table shows %q: %q", hidden, stdout)
+		}
 	}
 	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "nodes", "--isd-as", "1-ff00:0:0110")
 	assertCode(t, code, exitOK, stdout, stderr)

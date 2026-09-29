@@ -88,13 +88,17 @@ func TestVantageMetadataCrossesControlHTTPAndSDK(t *testing.T) {
 		t.Fatalf("admitted display: %+v", v.Display)
 	}
 
-	// A malformed report clears the observation instead of keeping it.
+	// A malformed report clears the observation instead of keeping it, and
+	// neither hides the executor nor clears the capabilities sent beside it.
 	if _, err := f.peer.direct.Heartbeat(f.ctx, &pb.HeartbeatRequest{ExecutorId: ccExecutorID,
+		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}},
 		VantagePoint: &pb.VantagePointReport{SchemaVersion: 1, ScionIsdAs: "1-0"}}); err != nil {
 		t.Fatal(err)
 	}
 	if node := list(); node.SCIONISDAS != (wire.ObservedString{}) || node.Listeners.Value != nil {
 		t.Fatalf("malformed report kept: %+v", node)
+	} else if !node.Ready || node.Admission != wire.AdmissionReady || node.Capabilities == nil || !reflect.DeepEqual(node.Capabilities.Protocols, []string{"tcp"}) {
+		t.Fatalf("malformed vantage report affected the executor: %+v", node)
 	}
 
 	path := filepath.Join(t.TempDir(), "maintenance")

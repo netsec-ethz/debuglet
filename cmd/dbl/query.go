@@ -24,8 +24,9 @@ const (
 
 Filters return ready matching executors only. Unknown capability reports and an
 unknown ISD-AS do not match. Capacity means advertised total bandwidth, not free
-admission capacity. NAME, LOCATION and NETWORK are the dispatcher operator's
-labels; ISD_AS and LISTENERS are the executor's own reports.
+admission capacity. NAME and LOCATION are the dispatcher operator's labels;
+ISD_AS is the executor's own report. --output json also carries admission, the
+operator's network label and the reported listener transports.
 
 Lists the dispatcher's registered executors. JSON output is always an array.
 `
@@ -86,7 +87,7 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tADMISSION\tNAME\tLOCATION\tNETWORK\tISD_AS\tLISTENERS\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS")
+		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS")
 		for _, n := range nodes {
 			lastSeen := "-"
 			if n.LastSeen > 0 {
@@ -102,8 +103,8 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 					capacity = strconv.FormatInt(*report.AdvertisedCapacityBPS, 10)
 				}
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", n.ID, n.Ready, orUnknown(n.Admission),
-				labelText(n.Display.DisplayName), nodeLocation(n.Display), labelText(n.Display.Network), observedText(n.SCIONISDAS), listenersText(n.Listeners),
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
+				labelText(n.Display.DisplayName), nodeLocation(n.Display), observedText(n.SCIONISDAS),
 				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity)
 		}
 		return tw.Flush()
@@ -136,16 +137,6 @@ func observedText(value wire.ObservedString) string {
 		return "unknown"
 	}
 	return *value.Value
-}
-
-func listenersText(value wire.ObservedList) string {
-	switch {
-	case value.Value == nil:
-		return "unknown"
-	case len(value.Value) == 0:
-		return "-"
-	}
-	return strings.Join(value.Value, ",")
 }
 
 // statusDocument is `status`'s JSON: the State plus the queried ID.

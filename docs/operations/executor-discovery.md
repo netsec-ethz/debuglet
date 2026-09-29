@@ -56,9 +56,11 @@ observation does not establish an external path or remote deployment.
 
 ## Vantage-point metadata
 
-API 1.10 adds four fields to each `GET /executors` entry. Every value names its
+API 1.9 adds four fields to each `GET /executors` entry. Every value names its
 `source`: `operator` for dispatcher configuration, `executor-reported` for the
-executor's own claims. No label means verified.
+executor's own claims. No label means verified. The
+[vantage-point design note](../vantage-points.md) records the provenance model,
+privacy rules and the remaining delivery steps.
 
 - `admission`: `offline` until the current control session has sent a
   heartbeat, `maintenance` while the dispatcher's maintenance switch stops

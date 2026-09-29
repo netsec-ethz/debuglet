@@ -34,7 +34,7 @@ A `TEST` intent has no payment backend: its transaction row is the intent, writt
 
 ## Executor listing
 
-API 1.10 adds `admission`, operator `display` metadata, the executor-reported `scion_isd_as` and `listeners` to `GET /executors`. Each value carries a source label; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata).
+API 1.9 also adds `admission`, operator `display` metadata, the executor-reported `scion_isd_as` and `listeners` to `GET /executors`. Each value carries a source label; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata).
 
 ## Recovery inspection
 

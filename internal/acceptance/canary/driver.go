@@ -483,7 +483,7 @@ func strictCLIDocument(data []byte, out any) error {
 	return nil
 }
 
-// The API 1.10 node fields keep their documented shape: each value travels
+// The API 1.9 node fields keep their documented shape: each value travels
 // with its source label, and observations with their receipt time.
 func checkNodeVantage(fields map[string]json.RawMessage) error {
 	if raw, present := fields["display"]; present {

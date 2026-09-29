@@ -24,7 +24,7 @@ changes; the linked API and deployment documentation contains operational detail
   Exports are written as 1.1; `client.ReadResult` and `dbl` still read 1.0 files
   and reject a 1.0 file carrying a vantage point. Older readers reject 1.1
   exports. See `docs/results.md`.
-- API 1.10: `GET /executors` reports `admission` (`ready`, `maintenance`,
+- API 1.9: `GET /executors` reports `admission` (`ready`, `maintenance`,
   `offline`), operator display metadata (`display_name`, `city`, `country`,
   `network`) from new optional `[executors."<id>"]` dispatcher configuration
   tables, and the executor-reported SCION ISD-AS and listener transports, each

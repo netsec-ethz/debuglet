@@ -1,11 +1,13 @@
 # Vantage-point metadata
 
 This note records how Debuglet will collect, store and expose an executor's
-network, location, platform and reachability context. It is a design, not a
-description of current behaviour. Today executors report only schema-1
-[capabilities](operations/executor-discovery.md) and the dispatcher keeps the
-control connection's source IP; no location is inferred. Keep this note in step
-with the code as each step below lands.
+network, location, platform and reachability context. It is a design; steps 1
+and 2 of the delivery order below have landed. Today results record an
+admission-time vantage point, executors report schema-1
+[capabilities](operations/executor-discovery.md), their SCION ISD-AS and
+listener transports, and operators may label executors with a display name,
+city, country and network. No location is inferred. Keep this note in step with
+the code as each step below lands.
 
 ## Provenance
 
@@ -75,8 +77,9 @@ executor view. The admission snapshot keeps the last report and marks it
 
 ## Delivery order
 
-1. Admission snapshot in result format 1.1 (#241).
-2. SCION ISD-AS and operator display metadata (#213, part of #237).
+1. Admission snapshot in result format 1.1 (#241). Done in #336.
+2. SCION ISD-AS and operator display metadata (#213, part of #237). Done in
+   #338; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata).
 3. ICMP, platform and clock probes (#240).
 4. Offline MMDB ASN and geolocation (#237, #238).
 5. Connect-back listener reachability and admission refusal (#239 part 1).
