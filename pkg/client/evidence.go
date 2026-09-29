@@ -139,10 +139,12 @@ type EvidenceKey struct {
 
 // EvidenceCandidate is one run a lookup named.
 type EvidenceCandidate struct {
-	ExecutorID       string           `json:"executor_id"`
-	RunID            string           `json:"run_id"`
-	ActiveFrom       time.Time        `json:"active_from"`
-	ActiveTo         time.Time        `json:"active_to"`
+	ExecutorID string    `json:"executor_id"`
+	RunID      string    `json:"run_id"`
+	ActiveFrom time.Time `json:"active_from"`
+	ActiveTo   time.Time `json:"active_to"`
+	// IPSource is observed or advertised (see AttributionCandidate).
+	IPSource         string           `json:"ip_source,omitempty"`
 	Schedule         EvidenceSchedule `json:"schedule"`
 	DisclosedThrough int64            `json:"disclosed_through"`
 }

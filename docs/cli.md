@@ -168,6 +168,42 @@ left unchanged. Report statuses are `pass`, `failure`, `unavailable` and
 `not_checked`; failures or unavailable checks exit 1. `not_checked` is not a
 successful verification.
 
+### Verify captured probes
+
+```sh
+dbl --dispatcher research verify capture.pcap --evidence evidence.json
+dbl verify evidence.json
+```
+
+`verify` tells the recipient of probes which Debuglet run, if any, sent them.
+It needs no account: it reads the dispatcher's public attribution history,
+checks the tags on this machine and never uploads packets. It prints one line
+per group of packets (one source address in one 10-second epoch, by default)
+and then what each verdict means and what to do next:
+
+```
+verified     run 6f1c2b1d…  executor exec-zrh-1  192.0.2.4  2026-09-29T09:02Z  40 packets  via offline
+pending      198.51.100.4  2026-09-29T10:20Z  5 packets  until 2026-09-29T10:36Z
+
+2 groups: 1 verified, 1 pending (45 packets, tag spec debuglet-tag-v1, checked offline against the history of https://dispatcher.example).
+- verified (offline): packets carry valid tags of run 6f1c2b1d-4c8e-4a6f-9d3b-2e1c4a57aaaa on executor exec-zrh-1.
+  Offline verification proves this only if the packets were captured before their keys were disclosed (…). …
+- pending: the keys of 1 group are not disclosed yet. Retry after 10:36 UTC (2026-09-29), or keep an evidence bundle now with --evidence.
+```
+
+Keys are disclosed about 15 minutes after use, so a fresh capture is
+`pending`; run the command again after the time it names. `invalid` means the
+packets were not sent by the named address's runs (`no_run`: no run was
+active; `tag_mismatch`: the tags do not match); `missing` means the
+dispatcher no longer keeps history for that time and proves nothing either
+way; `unsupported` names what cannot be checked (IPv6, fragments, a snap
+length below 64 bytes, a legacy executor). `--output json` prints the full
+report. `--at TIME` takes TIME as the capture time of every packet.
+`--evidence FILE` writes a bundle that `dbl verify FILE` checks again later
+without the capture or the dispatcher. Exit status: 0 all verified, 1 error,
+2 some invalid, 3 otherwise inconclusive. The default timeout is 5 minutes.
+See [probe verification](verification.md).
+
 ## Command groups
 
 | Goal | Commands |
@@ -177,6 +213,7 @@ successful verification.
 | Manage credentials | `login`, `logout`, `whoami` |
 | Submit work | `validate`, `run`, `cancel` |
 | Read results | `nodes`, `status`, `logs`, `recovery` |
+| Verify received probes | `verify` |
 | Manage system services | `service`, `drain` |
 | Inspect versions | `version` |
 | Inspect local setup | `config`, `doctor` |
@@ -194,7 +231,7 @@ For example: `dbl --dispatcher research logs --after 10 --limit 100 ID`.
 | `--endpoint URL` | One-off endpoint; does not use a saved connection's credential. Use a saved connection for login. |
 | `--config FILE` | Connections file; Linux defaults to `$XDG_CONFIG_HOME/debuglet/config.json` or `$HOME/.config/debuglet/config.json`. |
 | `--output human\|json` | `human`; use `json` for scripts. |
-| `--timeout DURATION` | Whole-command deadline: normally `30s`, `60s` for `demo`, and `5m` for `service`/`drain`. Foreground `up`, `dispatcher up` and `executor up` have no whole-command deadline unless supplied. |
+| `--timeout DURATION` | Whole-command deadline: normally `30s`, `60s` for `demo`, and `5m` for `service`/`drain`/`verify`. Foreground `up`, `dispatcher up` and `executor up` have no whole-command deadline unless supplied. |
 
 ### Submit and read measurements
 

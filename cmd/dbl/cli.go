@@ -70,6 +70,8 @@ Commands:
   logs [--after N] [--limit N] [--follow] ID
                                         read stored guest output
   cancel [--status] ID                  cancel a run or inspect its cancellation
+  verify CAPTURE|EVIDENCE [--at TIME] [--offline] [--output text|json]
+      [--evidence FILE]                 check which run sent captured probes
   version [--server]                    print client (and server) version
 
 Global options must precede the command; command options precede positionals.

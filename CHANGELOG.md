@@ -35,6 +35,23 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- `dbl verify` and `client.Verify`: offline probe verification (#73,
+  `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
+  and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and
+  1 000 000 packets and rejects malformed or truncated captures. Packets are
+  grouped by source address and epoch and checked against the public
+  attribution history (API 1.11) without an account and without uploading
+  them; each group is `verified`, `invalid`, `pending` (with the disclosure
+  time to retry after), `missing` or `unsupported`, with a machine reason,
+  match and non-match counts, a false-match bound and ambiguity reported.
+  Tag spec section 6 applies: epochs t and t-1 only, d < 2 and legacy
+  (tag_spec 0) chains refused, and no key that could have been public at
+  capture time plus 1 s. Work is capped (1 000 000 tag computations, 1024
+  lookups, one hash walk per chain). `--evidence` writes a format-1 evidence
+  bundle, which `dbl verify evidence.json` and `client.VerifyEvidence` check
+  again offline. Exit status 0 verified, 1 error, 2 invalid, 3 inconclusive.
+  The pure tag functions moved to `pkg/tagspec`, which the taggers and the
+  verifier share; tests cross-check the shared vectors with `verify_pcap.py`.
 - API 1.10: account-owned executor enrollment and `dbl executor join`, with
   optional systemd installation that preserves the enrolled identity. Enrollment
   stays disabled until configured. This build requires dispatcher schema 13,
