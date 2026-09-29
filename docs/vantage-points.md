@@ -9,11 +9,13 @@ with the code as each step below lands.
 
 ## Provenance
 
-Every field carries a `source` and an `observed_at` time:
+Every field carries a `source`. Observations that expire, such as capability
+and probe reports, also carry an `observed_at` time; other values are as of
+admission:
 
 | Source | Meaning |
 | --- | --- |
-| `operator` | Set in the executor or dispatcher configuration. |
+| `operator` | Set by the operator in the dispatcher configuration. Values from an executor's own configuration, such as `public_host`, arrive over the control connection and are `executor-reported`, since the dispatcher cannot tell them from measurements. |
 | `executor-reported` | Measured or introspected by the executor itself. |
 | `dispatcher-observed` | Seen directly by the dispatcher: the control connection's remote IP and, later, the result of a connect-back reachability test. |
 | `database:<name>@<version>` | Looked up by the dispatcher in an offline database, keyed on a dispatcher-observed or advertised address. The version comes from the database file's own metadata. |
@@ -67,8 +69,9 @@ dispatcher then publishes no automatic location for it.
 Metadata is collected at registration and on every reconnect. Executor probe
 results (ICMP, platform, clock, SCION, egress) use the existing capability
 cadence: reported at most every 30 seconds on the heartbeat and expired after
-90 seconds without a new report. Expired values become unknown rather than
-being reused.
+90 seconds without a new report. Expired values become unknown in the live
+executor view. The admission snapshot keeps the last report and marks it
+`stale`, so a result shows what the dispatcher knew and how old it was.
 
 ## Delivery order
 
