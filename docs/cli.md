@@ -200,8 +200,12 @@ way; `unsupported` names what cannot be checked (IPv6, fragments, a snap
 length below 64 bytes, a legacy executor). `--output json` prints the full
 report. `--at TIME` takes TIME as the capture time of every packet.
 `--evidence FILE` writes a bundle that `dbl verify FILE` checks again later
-without the capture or the dispatcher. Exit status: 0 all verified, 1 error,
-2 some invalid, 3 otherwise inconclusive. The default timeout is 5 minutes.
+without the capture or the dispatcher. `--source ADDRESS[/BITS],…` checks
+only the packets from those addresses: every other address costs history
+lookups (one per second of its traffic without a run), and one check makes
+at most 1024. Exit status: 0 all verified, 1 error (usage errors included:
+unlike other commands, `dbl verify` never exits 2 for one), 2 some invalid,
+3 otherwise inconclusive, 124 timed out. The default timeout is 5 minutes.
 See [probe verification](verification.md).
 
 ## Command groups

@@ -364,43 +364,80 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 		groups = append(groups, v.finish(g))
 	}
 
-	// Pass 1: form the groups of every source, one lookup per group.
-	sources := make([]netip.Addr, 0, len(bySource))
-	for a := range bySource {
-		sources = append(sources, a)
+	// Pass 1: form the groups of every source, one lookup per group. The
+	// lookups go round-robin over the sources, busiest first, so that every
+	// source gets its first lookup before any source gets its second: over
+	// the lookup cap, the addresses left unchecked are the tails of sources
+	// without a run (one lookup per second each), not whole probe sources.
+	type sourceQueue struct {
+		addr netip.Addr
+		idx  []int
 	}
-	slices.SortFunc(sources, func(a, b netip.Addr) int { return a.Compare(b) })
+	queues := make([]*sourceQueue, 0, len(bySource))
+	for a, idx := range bySource {
+		sort.SliceStable(idx, func(x, y int) bool { return v.times[idx[x]].Before(v.times[idx[y]]) })
+		queues = append(queues, &sourceQueue{addr: a, idx: idx})
+	}
+	slices.SortFunc(queues, func(a, b *sourceQueue) int {
+		if len(a.idx) != len(b.idx) {
+			return len(b.idx) - len(a.idx)
+		}
+		return a.addr.Compare(b.addr)
+	})
 	var pending []pendingGroup
-	for _, addr := range sources {
-		idx := bySource[addr]
-		sort.SliceStable(idx, func(a, b int) bool { return v.times[idx[a]].Before(v.times[idx[b]]) })
-		for len(idx) > 0 {
+	var capped []*sourceQueue
+	for active := queues; len(active) > 0; {
+		var next []*sourceQueue
+		for _, q := range active {
 			if len(v.lookups) >= maxVerifyLookups {
-				pending = append(pending, pendingGroup{source: addr.String(), indices: idx, lookup: -1,
-					decided: &VerifyGroup{Verdict: VerdictUnsupported, Reason: ReasonWorkCap,
-						Detail: fmt.Sprintf("more than %d history lookups would be needed; filter the capture to the probe traffic", maxVerifyLookups)}})
-				break
+				capped = append(capped, q)
+				continue
 			}
-			at := v.times[idx[0]]
-			answer, err := src.candidates(ctx, addr, at)
+			at := v.times[q.idx[0]]
+			answer, err := src.candidates(ctx, q.addr, at)
 			if err != nil {
 				return VerifyReport{}, err
 			}
-			answer.IP, answer.At = addr.String(), at.UTC()
+			answer.IP, answer.At = q.addr.String(), at.UTC()
 			v.lookups = append(v.lookups, answer)
 			li := len(v.lookups) - 1
-			end, epoch := at.Add(noRunWindow), int64(0)
+			// The answer names the runs active within one epoch of at, so
+			// it covers the packets up to the end of the current epoch of
+			// every run it names (the shortest one first). Without a run
+			// it covers a second, the shortest epoch.
+			end, epoch, found := at.Add(noRunWindow), int64(0), false
 			for _, c := range answer.Candidates {
-				if c.Schedule.EpochSeconds > 0 && c.Schedule.EpochSeconds <= 1<<20 {
-					epoch = c.Schedule.epochOf(at)
-					end = c.Schedule.epochStart(epoch + 1)
-					break
+				if c.Schedule.EpochSeconds <= 0 || c.Schedule.EpochSeconds > 1<<20 {
+					continue
+				}
+				e := c.Schedule.epochOf(at)
+				if ce := c.Schedule.epochStart(e + 1); !found || ce.Before(end) {
+					end = ce
+				}
+				if !found {
+					epoch, found = e, true
 				}
 			}
-			n := sort.Search(len(idx), func(k int) bool { return !v.times[idx[k]].Before(end) })
+			n := sort.Search(len(q.idx), func(k int) bool { return !v.times[q.idx[k]].Before(end) })
 			n = max(n, 1)
-			pending = append(pending, pendingGroup{source: addr.String(), indices: idx[:n:n], lookup: li, epoch: epoch})
-			idx = idx[n:]
+			pending = append(pending, pendingGroup{source: q.addr.String(), indices: q.idx[:n:n], lookup: li, epoch: epoch})
+			if q.idx = q.idx[n:]; len(q.idx) > 0 {
+				next = append(next, q)
+			}
+		}
+		active = next
+	}
+	if len(capped) > 0 {
+		unchecked := 0
+		for _, q := range capped {
+			unchecked += len(q.idx)
+		}
+		detail := fmt.Sprintf("the capture needs more than %d history lookups (one per source address and epoch, one per second for an address without a run); "+
+			"%d packets of %d addresses were not checked. Filter the capture to the probe traffic, for example with dbl verify --source ADDRESS or tcpdump -w probe.pcap src host ADDRESS",
+			maxVerifyLookups, unchecked, len(capped))
+		for _, q := range capped {
+			pending = append(pending, pendingGroup{source: q.addr.String(), indices: q.idx, lookup: -1,
+				decided: &VerifyGroup{Verdict: VerdictUnsupported, Reason: ReasonWorkCap, Detail: detail}})
 		}
 	}
 

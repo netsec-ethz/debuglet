@@ -47,9 +47,12 @@ changes; the linked API and deployment documentation contains operational detail
   Tag spec section 6 applies: epochs t and t-1 only, d < 2 and legacy
   (tag_spec 0) chains refused, and no key that could have been public at
   capture time plus 1 s. Work is capped (1 000 000 tag computations, 1024
-  lookups, one hash walk per chain). `--evidence` writes a format-1 evidence
+  lookups, one hash walk per chain); `--source` restricts a capture to the
+  probe addresses before any lookup. `--evidence` writes a format-1 evidence
   bundle, which `dbl verify evidence.json` and `client.VerifyEvidence` check
-  again offline. Exit status 0 verified, 1 error, 2 invalid, 3 inconclusive.
+  again offline; its schedules are not authenticated until #71(b). Exit
+  status 0 verified, 1 error (including usage errors), 2 invalid, 3
+  inconclusive, 124 timeout.
   The pure tag functions moved to `pkg/tagspec`, which the taggers and the
   verifier share; tests cross-check the shared vectors with `verify_pcap.py`.
 - API 1.10: account-owned executor enrollment and `dbl executor join`, with

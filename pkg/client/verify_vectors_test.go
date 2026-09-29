@@ -206,3 +206,87 @@ print(json.dumps(out))
 		}
 	}
 }
+
+// TestVerifyKeyPublicMatchesVerifyPcap cross-checks the key-public rule with
+// tools/verify_pcap.py at its boundary: a packet tagged in epoch s and
+// captured in epoch s+1 is checked under k_s only while the capture time plus
+// the clock tolerance (1 s) is before k_s's disclosure less the dispatcher's
+// 5 s skew allowance, t0 + (s+d)·I − 5 s.
+func TestVerifyKeyPublicMatchesVerifyPcap(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	vc := loadVectorCapture(t)
+	root := filepath.Dir(filepath.Dir(tagvectors.Path(t)))
+	var tagged []byte
+	for i, v := range vc.file.Vectors {
+		if v.Name == "udp_base" {
+			tagged = vc.frames[i].ip
+		}
+	}
+	if tagged == nil {
+		t.Fatal("no udp_base vector")
+	}
+	s := vc.file.Chain.SigningEpoch
+	// Epochs are 10 s and d = 2: k_s may be public from t0 + (s+2)·10 s − 5 s,
+	// 5 s into epoch s+1, so the last capture time it covers is before 4 s.
+	offsets := []time.Duration{3500 * time.Millisecond, 4*time.Second - time.Microsecond, 4 * time.Second, 6 * time.Second}
+	want := []string{"match", "match", ReasonKeyPublic, ReasonKeyPublic}
+	dir := t.TempDir()
+	var paths []string
+	var captures [][]byte
+	for i, off := range offsets {
+		data := writePcap(linkTypeEthernet, true, false, []testFrame{{at: vc.chain.at(s+1, off), ip: tagged}})
+		path := filepath.Join(dir, fmt.Sprintf("boundary-%d.pcap", i))
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths, captures = append(paths, path), append(captures, data)
+	}
+	disclosed := int64(len(vc.chain.keys) - 2)
+	tesla, _ := json.Marshal(map[string]any{
+		"anchor_key": base64.StdEncoding.EncodeToString(vc.chain.keys[0]), "anchor_timestamp_ns": testT0.UnixNano(),
+		"epoch_seconds": 10, "disclosure_delay_epochs": 2, "disclosed_epoch": disclosed,
+		"disclosed_key": base64.StdEncoding.EncodeToString(vc.chain.keys[disclosed]),
+	})
+	pathsJSON, _ := json.Marshal(paths)
+	script := fmt.Sprintf(`
+import json, sys
+sys.path.insert(0, %q)
+import verify_pcap as vp
+tesla = json.loads(%q)
+out = []
+for path in json.loads(%q):
+    (p,) = vp.read_capture(path)
+    matched, why = vp.verify_packet(p, tesla, [%q])
+    if matched:
+        out.append("match")
+    elif why.startswith("no candidate key was still secret"):
+        out.append("key_public")
+    else:
+        out.append("mismatch: " + why)
+print(json.dumps(out))
+`, filepath.Join(root, "tools"), string(tesla), string(pathsJSON), vc.file.MeasurementID)
+	cmd := exec.Command(python, "-c", script)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("verify_pcap.py: %v\n%s", err, stderr.String())
+	}
+	var py []string
+	if err := json.Unmarshal(raw, &py); err != nil || len(py) != len(offsets) {
+		t.Fatalf("verify_pcap.py output %q: %v", raw, err)
+	}
+	for i, data := range captures {
+		pkts, err := ReadCapture(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := outcomes(runOffline(t, vc.source(), pkts, VerifyOptions{}), 1)[0]
+		if got != want[i] || py[i] != want[i] {
+			t.Errorf("captured %s into epoch %d: Go %s, verify_pcap.py %s, want %s", offsets[i], s+1, got, py[i], want[i])
+		}
+	}
+}

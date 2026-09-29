@@ -231,3 +231,58 @@ func writeFile(t *testing.T, content string) string {
 	}
 	return path
 }
+
+func TestVerifyCommandSourceFilter(t *testing.T) {
+	v := newVerifyFixture(t)
+	capture := writeCapture(t, verifyPacket{v.at(100), v.probe(probeSrc, 100, 1)},
+		verifyPacket{v.at(100), v.probe(otherSrc, -1, 1)}, verifyPacket{v.at(101), v.probe(otherSrc, -1, 2)})
+	code, out, errout := runCLI(context.Background(), "--endpoint", v.endpoint(), "verify", capture, "--source", "192.0.2.7,203.0.113.0/24")
+	assertCode(t, code, verifyExitVerified, out, errout)
+	if !strings.Contains(out, "1 group: 1 verified (1 packet") || !strings.Contains(out, "Skipped 2 packets not from --source 192.0.2.7,203.0.113.0/24") {
+		t.Fatalf("output:\n%s", out)
+	}
+	for _, r := range v.requests {
+		if strings.Contains(r.Path, "192.0.2.99") || strings.Contains(r.Query, "192.0.2.99") {
+			t.Fatalf("looked up a filtered address: %s %s", r.Path, r.Query)
+		}
+	}
+	code, out, errout = runCLI(context.Background(), "--endpoint", v.endpoint(), "verify", capture, "--source", "198.51.100.1")
+	assertCode(t, code, verifyExitError, out, errout)
+	if !strings.Contains(errout, "no packets from --source 198.51.100.1 (3 packets skipped)") {
+		t.Fatalf("stderr: %s", errout)
+	}
+	code, out, errout = runCLI(context.Background(), "verify", capture, "--source", "not-an-address")
+	assertCode(t, code, verifyExitError, out, errout)
+}
+
+// Exit code 2 of dbl verify means an invalid group, so no usage error may
+// exit 2, and a timeout exits 124 as for every command.
+func TestVerifyCommandExitCodesDoNotCollide(t *testing.T) {
+	for name, args := range map[string][]string{
+		"unknown global flag": {"--no-such-flag", "verify", "x.pcap"},
+		"bad global output":   {"--output", "yaml", "verify", "x.pcap"},
+		"bad global timeout":  {"--timeout", "-1s", "verify", "x.pcap"},
+		"endpoint and name":   {"--endpoint", "http://127.0.0.1:1", "--dispatcher", "lab", "verify", "x.pcap"},
+		"bad endpoint":        {"--endpoint", "ftp://example.test", "verify", writeCapture(t, verifyPacket{time.Now(), make([]byte, 40)})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, out, errout := runCLI(context.Background(), args...)
+			assertCode(t, code, verifyExitError, out, errout)
+		})
+	}
+	t.Run("timeout", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /attribution/candidates", func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+		f := newFixture(t, mux)
+		pkt := make([]byte, 40)
+		pkt[0], pkt[9] = 0x45, 17
+		binary.BigEndian.PutUint16(pkt[2:], 40)
+		copy(pkt[12:], probeSrc[:])
+		code, out, errout := runCLI(context.Background(), "--endpoint", f.endpoint(), "--timeout", "200ms", "verify",
+			writeCapture(t, verifyPacket{time.Now(), pkt}))
+		assertCode(t, code, exitDeadline, out, errout)
+		if !strings.Contains(errout, "--source") {
+			t.Fatalf("stderr: %s", errout)
+		}
+	})
+}

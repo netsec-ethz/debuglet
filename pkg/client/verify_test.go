@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,6 +365,30 @@ func TestVerifyGroupsBySourceAndEpoch(t *testing.T) {
 	}
 }
 
+// A lookup names the runs active within one epoch of its time, so a group
+// ends with the shortest epoch of the runs it names: a run of that schedule
+// that starts later is found by the next lookup.
+func TestVerifyGroupEndsWithShortestEpoch(t *testing.T) {
+	long := newTestChain("exec-long", 1, 1000, 2)
+	long.sched.EpochSeconds = 60
+	short := newTestChain("exec-short", 2, 1000, 2)
+	first := long.at(10, time.Second) // epoch 60 of short
+	runC := "6f1c2b1d-4c8e-4a6f-9d3b-2e1c4a57cccc"
+	src := &fakeSource{runs: []fakeRun{
+		{ip: srcA, run: runA, chain: long, from: testT0, to: testNow},
+		{ip: srcA, run: runB, chain: short, from: testT0, to: testNow},
+		{ip: srcA, run: runC, chain: short, from: first.Add(15 * time.Second), to: testNow},
+	}}
+	pkts := []CapturedPacket{
+		{Data: long.tag(10, runA, probe(srcA, 60, 1)), CapturedAt: first},
+		{Data: short.tag(62, runC, probe(srcA, 60, 2)), CapturedAt: first.Add(20 * time.Second)},
+	}
+	rep := runOffline(t, src, pkts, VerifyOptions{})
+	if rep.Counts.Verified != 2 || src.lookups != 2 {
+		t.Fatalf("%d lookups, groups %+v", src.lookups, rep.Groups)
+	}
+}
+
 func TestVerifyWorkCaps(t *testing.T) {
 	chain := newTestChain("exec-zrh-1", 1, 1000, 2)
 	t.Run("lookups", func(t *testing.T) {
@@ -379,6 +404,26 @@ func TestVerifyWorkCaps(t *testing.T) {
 		}
 		if g := rep.Groups[len(rep.Groups)-1]; g.Reason != ReasonWorkCap {
 			t.Fatalf("last group %+v", g)
+		}
+	})
+	t.Run("lookups favour every source", func(t *testing.T) {
+		// A busy address without a run needs a lookup per second; it must
+		// not use up the lookups before the probe source has its first.
+		noisy := netip.MustParseAddr("10.0.0.1")
+		src := &fakeSource{runs: []fakeRun{{ip: srcA, run: runA, chain: chain, from: testT0, to: testNow}}}
+		var pkts []CapturedPacket
+		for i := range maxVerifyLookups + 10 {
+			pkts = append(pkts, CapturedPacket{Data: probe(noisy, 60, byte(i)), CapturedAt: chain.at(10, time.Duration(i)*time.Second)})
+		}
+		pkts = append(pkts, CapturedPacket{Data: chain.tag(300, runA, probe(srcA, 60, 1)), CapturedAt: chain.at(300, time.Second)})
+		rep := runOffline(t, src, pkts, VerifyOptions{})
+		if src.lookups != maxVerifyLookups || rep.Counts.Verified != 1 || rep.Counts.Unsupported != 1 {
+			t.Fatalf("%d lookups, counts %+v", src.lookups, rep.Counts)
+		}
+		g := rep.Groups[len(rep.Groups)-1]
+		if g.Reason != ReasonWorkCap || g.Source != noisy.String() || len(g.Packets) != 11 ||
+			!strings.Contains(g.Detail, "--source") || !strings.Contains(g.Detail, "11 packets of 1 addresses") {
+			t.Fatalf("capped group %+v", g)
 		}
 	})
 	t.Run("tag computations", func(t *testing.T) {

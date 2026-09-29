@@ -10,7 +10,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,7 +21,7 @@ import (
 
 const verifyUsage = `Usage:
   dbl verify CAPTURE|EVIDENCE.json [--at TIME] [--offline] [--output text|json]
-             [--evidence FILE]
+             [--evidence FILE] [--source ADDRESS[/BITS],...]
 
 Checks which Debuglet run, if any, sent the packets of a pcap or pcapng
 capture. Packets are grouped by source address and epoch; each group is
@@ -39,12 +41,18 @@ Options:
   --output FORMAT   text (default) or json
   --evidence FILE   write an evidence bundle that repeats the check without
                     the capture or the dispatcher
+  --source LIST     check only packets from these addresses or prefixes
+                    (comma-separated, repeatable); other packets are skipped
+                    before any lookup. Use it on captures with unrelated
+                    traffic: each other address costs a history lookup per
+                    second of traffic, and one check makes at most 1024
 
 Passing an evidence bundle instead of a capture checks it again, offline.
 
-Exit status: 0 every group verified; 1 usage, read or network error;
-2 some group invalid; 3 none invalid, but some pending, missing or
-unsupported.
+Exit status: 0 every group verified; 1 usage, read or network error
+(including usage errors in the global options: 2 is never a usage error
+here); 2 some group invalid; 3 none invalid, but some pending, missing or
+unsupported; 124 the command timed out; 130 interrupted.
 `
 
 // Exit codes of dbl verify (docs/verification.md#command).
@@ -62,7 +70,18 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 	const name = "dbl verify"
 	var at, output, evidencePath string
 	var offline bool
+	var sources []netip.Prefix
 	fs := newCommandFlagSet("verify")
+	fs.Func("source", "", func(value string) error {
+		for _, item := range strings.Split(value, ",") {
+			p, err := parseSourcePrefix(strings.TrimSpace(item))
+			if err != nil {
+				return err
+			}
+			sources = append(sources, p)
+		}
+		return nil
+	})
 	fs.StringVar(&at, "at", "", "")
 	fs.BoolVar(&offline, "offline", false, "")
 	fs.StringVar(&output, "output", "", "")
@@ -115,9 +134,10 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 	}
 	var rep client.VerifyReport
 	var bundle *client.Evidence
+	skipped := 0
 	if client.IsEvidence(data[:min(len(data), 64)]) {
-		if at != "" || evidencePath != "" {
-			return usage("--at and --evidence apply to a capture, not to an evidence bundle")
+		if at != "" || evidencePath != "" || len(sources) > 0 {
+			return usage("--at, --evidence and --source apply to a capture, not to an evidence bundle")
 		}
 		ev, err := client.ReadEvidence(bytes.NewReader(data))
 		if err != nil {
@@ -136,6 +156,11 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 		if len(pkts) == 0 {
 			return fail("%s holds no IP packets", positional[0])
 		}
+		if len(sources) > 0 {
+			if pkts, skipped = filterSources(pkts, sources); len(pkts) == 0 {
+				return fail("%s holds no packets from --source %s (%s skipped)", positional[0], prefixList(sources), plural(skipped, "packet"))
+			}
+		}
 		// The attribution routes are public: no credential is read or sent.
 		c, _, _, ok := connectProfileWithoutCredential(name, options, stderr)
 		if !ok {
@@ -148,7 +173,8 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 				return verifyExitError
 			}
 			if ctx.Err() != nil {
-				return fail("stopped before every group was checked: %v", err)
+				fmt.Fprintf(stderr, "%s: stopped before every group was checked; filter the capture with --source to check fewer addresses\n", name)
+				return reportFailure(ctx, name, stderr, err)
 			}
 			return fail("%v", err)
 		}
@@ -165,7 +191,7 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 		if err := writeJSON(stdout, rep); err != nil {
 			return fail("%v", err)
 		}
-	} else if err := writeVerifyText(stdout, rep, bundle, evidencePath); err != nil {
+	} else if err := writeVerifyText(stdout, rep, bundle, evidencePath, skipped, sources); err != nil {
 		return fail("%v", err)
 	}
 	switch {
@@ -175,6 +201,59 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 		return verifyExitInconclusive
 	}
 	return verifyExitVerified
+}
+
+// parseSourcePrefix parses an address or a prefix of --source.
+func parseSourcePrefix(s string) (netip.Prefix, error) {
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("invalid --source %q: want an IP address or prefix", s)
+		}
+		return p.Masked(), nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("invalid --source %q: want an IP address or prefix", s)
+	}
+	a = a.WithZone("").Unmap()
+	return netip.PrefixFrom(a, a.BitLen()), nil
+}
+
+// filterSources keeps the packets whose IP source address is in one of the
+// prefixes, and counts the others.
+func filterSources(pkts []client.CapturedPacket, sources []netip.Prefix) ([]client.CapturedPacket, int) {
+	kept := make([]client.CapturedPacket, 0, len(pkts))
+	for _, p := range pkts {
+		addr, ok := packetSource(p.Data)
+		if ok && slices.ContainsFunc(sources, func(s netip.Prefix) bool { return s.Contains(addr) }) {
+			kept = append(kept, p)
+		}
+	}
+	return kept, len(pkts) - len(kept)
+}
+
+// packetSource is the source address of an IPv4 or IPv6 packet.
+func packetSource(data []byte) (netip.Addr, bool) {
+	switch {
+	case len(data) >= 20 && data[0]>>4 == 4:
+		return netip.AddrFrom4([4]byte(data[12:16])), true
+	case len(data) >= 40 && data[0]>>4 == 6:
+		return netip.AddrFrom16([16]byte(data[8:24])).Unmap(), true
+	}
+	return netip.Addr{}, false
+}
+
+func prefixList(sources []netip.Prefix) string {
+	parts := make([]string, len(sources))
+	for i, s := range sources {
+		if s.IsSingleIP() {
+			parts[i] = s.Addr().String()
+		} else {
+			parts[i] = s.String()
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 // parseInterspersed parses flags given before or after the positional
@@ -314,7 +393,7 @@ func nextStep(g client.VerifyGroup) string {
 	case client.ReasonTagMismatch:
 		return "invalid (tag_mismatch): some packets carry no valid tag of any run active from their address. They were not sent by Debuglet, or were changed on the way (NAT, segmentation offload); capture with GRO/LRO off."
 	case client.ReasonNoRun:
-		return "invalid (no_run): no Debuglet run was active from these addresses at that time, so Debuglet did not send those packets. Filter the capture to the probe traffic you want to check (for example tcpdump src host ADDRESS)."
+		return "invalid (no_run): no Debuglet run was active from these addresses at that time, so Debuglet did not send those packets. Filter the capture to the probe traffic you want to check with --source ADDRESS."
 	case client.ReasonMixedRuns:
 		return "invalid (mixed_runs): packets of one address and epoch carry tags of different runs; verify each destination's traffic separately."
 	case client.ReasonNotDisclosed:
@@ -326,7 +405,7 @@ func nextStep(g client.VerifyGroup) string {
 	case client.ReasonAmbiguous:
 		return "unsupported (ambiguous): several runs reproduce every tag; capture more packets of the flow."
 	case client.ReasonWorkCap:
-		return "unsupported (work cap): the capture needs more work than one verification allows; split it or filter it to the probe traffic."
+		return "unsupported (work cap): the capture needs more work than one verification allows (at most 1024 history lookups: one per address and epoch, one per second for an address without a run). Filter it to the probe traffic with --source ADDRESS, or split it."
 	}
 	if g.Verdict == client.VerdictUnsupported {
 		return fmt.Sprintf("unsupported (%s): %s.", g.Reason, strings.TrimSuffix(g.Detail, "."))
@@ -334,7 +413,7 @@ func nextStep(g client.VerifyGroup) string {
 	return ""
 }
 
-func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Evidence, evidencePath string) error {
+func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Evidence, evidencePath string, skipped int, sources []netip.Prefix) error {
 	var b strings.Builder
 	if bundle != nil {
 		fmt.Fprintf(&b, "Evidence bundle created %s by %s %s: the packet digest matches, every key hashes to its chain anchor, and the recorded verdicts recompute.\n\n",
@@ -360,6 +439,9 @@ func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Eviden
 	}
 	fmt.Fprintf(&b, "\n%s: %s (%s, tag spec %s, checked %s).\n",
 		plural(len(rep.Groups), "group"), strings.Join(parts, ", "), plural(rep.Packets, "packet"), rep.TagSpec, source)
+	if skipped > 0 {
+		fmt.Fprintf(&b, "Skipped %s not from --source %s.\n", plural(skipped, "packet"), prefixList(sources))
+	}
 	if rep.At != nil {
 		fmt.Fprintf(&b, "Every packet was taken as captured at %s (--at).\n", rep.At.UTC().Format(time.RFC3339))
 	}

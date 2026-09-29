@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -71,7 +72,7 @@ Commands:
                                         read stored guest output
   cancel [--status] ID                  cancel a run or inspect its cancellation
   verify CAPTURE|EVIDENCE [--at TIME] [--offline] [--output text|json]
-      [--evidence FILE]                 check which run sent captured probes
+      [--evidence FILE] [--source LIST] check which run sent captured probes
   version [--server]                    print client (and server) version
 
 Global options must precede the command; command options precede positionals.
@@ -97,7 +98,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stderr, "dbl: %v\n", err)
 		fmt.Fprint(stderr, usageText)
-		return exitUsage
+		return globalUsageExit(args)
 	}
 	var dispatcherSet, configSet bool
 	fs.Visit(func(f *flag.Flag) {
@@ -119,6 +120,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	command := fs.Arg(0)
 	commandArgs := fs.Args()[1:]
+	usageExit := commandUsageExit(command)
 
 	if !options.TimeoutSet {
 		options.Timeout = defaultCommandTimeout(command, commandArgs...)
@@ -126,27 +128,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	switch {
 	case options.Output != outputHuman && options.Output != outputJSON:
 		fmt.Fprintf(stderr, "dbl: invalid --output %q: want human or json\n", options.Output)
-		return exitUsage
+		return usageExit
 	case options.Timeout <= 0 && (options.TimeoutSet || defaultCommandTimeout(command, commandArgs...) != 0):
 		fmt.Fprintf(stderr, "dbl: invalid --timeout %s: must be positive\n", options.Timeout)
-		return exitUsage
+		return usageExit
 	case strings.TrimSpace(options.Endpoint) == "":
 		fmt.Fprintln(stderr, "dbl: --endpoint must not be blank")
-		return exitUsage
+		return usageExit
 	case options.EndpointSet && dispatcherSet:
 		fmt.Fprintln(stderr, "dbl: --endpoint and --dispatcher cannot be used together")
-		return exitUsage
+		return usageExit
 	case dispatcherSet && strings.TrimSpace(options.Dispatcher) == "":
 		fmt.Fprintln(stderr, "dbl: --dispatcher must not be blank")
-		return exitUsage
+		return usageExit
 	case configSet && strings.TrimSpace(options.ConfigPath) == "":
 		fmt.Fprintln(stderr, "dbl: --config must not be blank")
-		return exitUsage
+		return usageExit
 	}
 	if dispatcherSet {
 		if err := connections.ValidateName(options.Dispatcher); err != nil {
 			fmt.Fprintf(stderr, "dbl: --dispatcher: %v\n", err)
-			return exitUsage
+			return usageExit
 		}
 	}
 
@@ -156,6 +158,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		defer cancel()
 	}
 	return dispatch(ctx, command, commandArgs, options, stdout, stderr)
+}
+
+// commandUsageExit is the exit code of a usage error of a command. dbl verify
+// reports usage errors as 1, since its exit code 2 means an invalid group
+// (docs/verification.md#command).
+func commandUsageExit(command string) int {
+	if command == "verify" {
+		return verifyExitError
+	}
+	return exitUsage
+}
+
+// globalUsageExit is the exit code of a global option that does not parse,
+// before the command is known: a command line naming verify gets verify's.
+func globalUsageExit(args []string) int {
+	if slices.Contains(args, "verify") {
+		return verifyExitError
+	}
+	return exitUsage
 }
 
 // newCommandFlagSet returns a FlagSet whose own diagnostics are suppressed;

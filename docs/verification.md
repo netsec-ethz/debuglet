@@ -54,7 +54,7 @@ shows that the executor confirmed the tags while only it held the key.
 
 ```sh
 dbl verify <capture.pcap|pcapng|evidence.json> [--at <time>] [--offline]
-           [--output text|json] [--evidence <file>]
+           [--output text|json] [--evidence <file>] [--source <address|prefix>,…]
 ```
 
 - No account or login is needed, and no credential is sent. The dispatcher is
@@ -67,6 +67,14 @@ dbl verify <capture.pcap|pcapng|evidence.json> [--at <time>] [--offline]
   timestamps (for example for a capture whose clock is known to be wrong).
 - `--evidence` writes the evidence bundle. Passing a bundle instead of a
   capture checks it again offline, together with its receipt.
+- `--source` checks only the packets from the given addresses or prefixes and
+  skips the rest before any lookup. A lookup covers one address for one epoch
+  of the runs it names, but an address without a run needs a lookup per
+  second of its traffic (the shortest epoch), so unrelated traffic in a
+  capture costs lookups at the dispatcher's rate limit. Lookups go
+  round-robin over the addresses, busiest first, so every address gets its
+  first lookup before any gets its second; over the [cap](#limits) the
+  remaining packets are `unsupported: work_cap`, naming `--source`.
 
 Text output has one line per group, grouped by run:
 
@@ -88,9 +96,10 @@ evidence bundle was written.
 | Code | Meaning |
 | --- | --- |
 | 0 | Every group is `verified`. |
-| 1 | Usage, read or network error; nothing is concluded. |
+| 1 | Usage, read or network error; nothing is concluded. Usage errors, including those in the global options, exit 1 here, not 2 as for other commands, so that 2 always means `invalid`. |
 | 2 | At least one group is `invalid`. |
 | 3 | No group is `invalid`, but at least one is `pending`, `missing` or `unsupported`. |
+| 124, 130 | The command timed out or was interrupted, as for every command; nothing is concluded. |
 
 The website's verify page follows the same flow and output. It parses the
 capture in the browser and uses the same endpoints, categories and bundle
@@ -223,8 +232,15 @@ check used, so `dbl verify evidence.json` and `client.VerifyEvidence` repeat
 the whole check without the capture or the dispatcher: they check the digest,
 walk every chain's keys to its `k0`, recompute every group from the packets,
 lookups and keys as of `created_at`, and fail when a recorded group differs.
-The lookups and schedules remain the dispatcher's claims; once #71(b) lands,
-the schedule also carries the operator signature. `api_version` is the API
+The lookups and schedules remain the dispatcher's claims, and until #71(b)
+nothing in the bundle authenticates them: the chain walk ties every key to
+the recorded `k0`, but `k0` and the other schedule fields (`t0_unix_ns`,
+`epoch_seconds`, `disclosure_delay_epochs`, `chain_length`, `tag_spec`) and
+the lookups can be edited consistently. A larger `disclosure_delay_epochs`,
+for example, turns a `key_public` group into a `verified` one that still
+recomputes. A bundle therefore shows that its record is self-consistent,
+not that the dispatcher said it; check the schedule against the dispatcher
+(or, after #71(b), the operator signature) before relying on it. `api_version` is the API
 version the client requires. With `--at`, `at` records the override and the
 packets carry it as `captured_at`.
 
@@ -235,7 +251,7 @@ packets carry it as `captured_at`.
 | Capture read by the CLI and SDK | 64 MiB, 1 000 000 packets | Bounded memory; larger captures are rejected, not truncated |
 | Tag computations per `Verify` | 1 000 000 (packets × candidates × 2 epochs) | Bounded CPU; groups beyond the cap are `unsupported` |
 | Hash walk per chain | At most `chain_length`, done once per chain and cached; at most 2²⁴ SHA-256 steps per `Verify` | Keys are checked against `k0` without an unbounded walk |
-| Lookups per `Verify` | 1024 candidate lookups (one per group; packets of an address without a run form a group per second), 256 key pages | Bounded requests; groups beyond are `unsupported: work_cap` |
+| Lookups per `Verify` | 1024 candidate lookups (one per group: an address and the shortest epoch of the runs the lookup names, or a second for an address without a run; round-robin over addresses, busiest first), 256 key pages | Bounded requests at the dispatcher's rate limit (about 10 per second, so the cap takes under two minutes); groups beyond are `unsupported: work_cap` |
 | Evidence bundle | 256 MiB | |
 | Candidates per lookup | 32 | Larger answers are `unsupported: too many candidates` |
 | Keys per page | 1024 epochs | |
