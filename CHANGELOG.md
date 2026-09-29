@@ -102,7 +102,10 @@ changes; the linked API and deployment documentation contains operational detail
   offset, TTL, IP options and the ICMP, TCP or UDP checksum, so tags survive
   routing and checksum offload. The input is the first min(64, Total Length)
   bytes. The taggers set DF on every tagged packet and leave IPv4 fragments,
-  and malformed or short packets, untagged. Upgrade every executor and
+  and malformed or short packets, untagged. The kernel tagger acts only on
+  packets the kernel classifies as IPv4, so an IPv6 or ARP frame whose
+  destination MAC starts with the nibble 4 is no longer mistaken for a raw
+  IPv4 header and rewritten. Upgrade every executor and
   verifier together; mixed-version fleets are not supported.
 - Executor capability reports carry `tagging.tag_spec` (`debuglet-tag-v1`),
   shown by `GET /executors` and recorded in a result's

@@ -123,6 +123,13 @@ int debuglet_tag(struct __sk_buff *skb) {
     if (map_key == 0)
         return TCX_NEXT;
 
+    // Only IPv4 is tagged. The kernel's protocol, not the first nibble at
+    // skb->data, decides: on an Ethernet device an IPv6 or ARP frame whose
+    // destination MAC starts with 4 would otherwise be read as a raw IPv4
+    // header and rewritten.
+    if (skb->protocol != bpf_htons(ETH_P_IP))
+        return TCX_NEXT;
+
     // 2. Perform map lookup only for marked packets
     struct ak_entry *ak = bpf_map_lookup_elem(&ak_map, &map_key);
     if (!ak)

@@ -23,10 +23,15 @@ import (
 // of testdata/tag-vectors-v1.json, the vectors of the independent Python
 // reference, and requires the exact tagged packet: tag in the IP ID, DF set
 // and the incrementally updated header checksum. A packet v1 does not tag must
-// leave the program unchanged.
+// leave the program unchanged, including an IPv6 frame whose destination MAC
+// starts with the nibble 4, as a random locally administered MAC does one
+// time in sixteen: it must not be mistaken for a raw IPv4 header.
 func TestKernelTagVectorsV1(t *testing.T) {
 	f := tagvectors.Load(t)
 	if err := rlimit.RemoveMemlock(); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skipf("skipping test: insufficient privileges for eBPF: %v", err)
+		}
 		t.Fatalf("remove memlock: %v", err)
 	}
 	var objs taggerObjects
@@ -52,7 +57,15 @@ func TestKernelTagVectorsV1(t *testing.T) {
 			want = tagvectors.Hex(t, v.TaggedPacketHex)
 		}
 		frame := make([]byte, 14+len(pkt))
-		binary.BigEndian.PutUint16(frame[12:14], 0x0800)
+		// Read as a raw IPv4 header these MACs (the source under the 00:00:0c
+		// OUI) give IHL 6, Total Length 48 and no fragment bits.
+		copy(frame[0:6], []byte{0x46, 0x00, 0x00, 0x30, 0x00, 0x00})
+		copy(frame[6:12], []byte{0x00, 0x00, 0x0c, 0x00, 0x00, 0x01})
+		etherType := uint16(0x0800)
+		if len(pkt) > 0 && pkt[0]>>4 == 6 {
+			etherType = 0x86DD
+		}
+		binary.BigEndian.PutUint16(frame[12:14], etherType)
 		copy(frame[14:], pkt)
 		out := make([]byte, len(frame))
 		if _, err := objs.DebugletTag.Run(&ebpf.RunOptions{
@@ -61,6 +74,9 @@ func TestKernelTagVectorsV1(t *testing.T) {
 			Context: skbContext{Mark: mark},
 		}); err != nil {
 			t.Fatalf("%s: run tagger.c: %v", v.Name, err)
+		}
+		if !bytes.Equal(out[:14], frame[:14]) {
+			t.Errorf("%s: kernel changed the Ethernet header\n got %s\nwant %s", v.Name, hex.EncodeToString(out[:14]), hex.EncodeToString(frame[:14]))
 		}
 		if got := out[14:]; !bytes.Equal(got, want) {
 			t.Errorf("%s: kernel output\n got %s\nwant %s", v.Name, hex.EncodeToString(got), hex.EncodeToString(want))

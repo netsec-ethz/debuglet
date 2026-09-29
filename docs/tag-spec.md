@@ -38,6 +38,8 @@ It does not show:
   without affecting the tag.
 - **Correctness of a measurement conclusion, or destination consent.** A tag
   attributes a packet to a run; it says nothing about what the run measured.
+- **Freshness.** A tagged packet can be recorded and replayed while its key
+  is still secret, and the copy verifies; the tag carries no sequence number.
 - **Uniqueness.** A 16-bit tag collides by chance (§7). A single matching
   packet is weak evidence; a verifier SHOULD aggregate over several packets.
 
@@ -140,7 +142,10 @@ header checksum. The kernel tagger updates it incrementally for the 4-byte
 word at offset 4; the pure-Go tagger recomputes it; both yield the RFC 791
 checksum of the tagged header. Setting DF keeps a tagged packet from being
 fragmented in the network, which would destroy the tag (fragments are not
-covered, §3). The input is computed before DF is set and does not contain
+covered, §3). The cost is that a tagged packet larger than the path MTU is
+dropped by the router with an ICMP "fragmentation needed" instead of being
+fragmented; the sender's later packets to that destination are then
+fragmented locally, before the tagger, and go out untagged. The input is computed before DF is set and does not contain
 bytes 6–7, so a middlebox that clears DF does not break the tag.
 
 A packet that is not covered is forwarded unchanged: in particular a fragment
@@ -160,8 +165,13 @@ For a captured IPv4 packet with receive time *r* (by the verifier's clock):
 1. Compute the input (§3). An uncovered packet is reported *unsupported* with
    its reason, never as a failed match.
 2. Let *t* = ⌊(*r* − anchor_timestamp) / *I*⌋. The candidate epochs are *t*
-   and *t* − 1, excluding epoch 0 and any epoch whose key is not yet
-   disclosed. *t* − 1 is needed because a packet sent at the end of epoch
+   and *t* − 1, excluding epoch 0, any epoch whose key is not yet disclosed,
+   and any epoch *e* whose key may already have been public at *r*: with the
+   executor's disclosure delay *d* (at least 2 epochs; a verifier MUST refuse
+   an executor that reports less or none), that is when *r* plus the
+   verifier's bound on its own clock lag reaches
+   anchor_timestamp + (*e* + *d*)·*I* less the dispatcher's allowance for
+   executor clock lead. *t* − 1 is needed because a packet sent at the end of epoch
    *t* − 1 arrives in *t*, and because the kernel tagger switches keys at a
    refresh shortly after the boundary. A verifier MAY add further epochs to
    tolerate a bounded clock offset between sender and receiver; each one
@@ -196,6 +206,10 @@ P_false = 1 − (1 − 2^−16)^(N·E)  ≤  N·E / 65536
 | 100 | 3.1 × 10<sup>−3</sup> | 4.6 × 10<sup>−3</sup> |
 
 Over a capture of many unrelated packets a few false matches are expected.
+The same arithmetic applies to an attacker: sending one packet with each of
+the 2<sup>16</sup> Identification values makes one of them verify with
+certainty, so a count of matching packets from a source is only meaningful
+together with the number of non-matching packets from it.
 The probability that *k* independent unrelated packets all match the same
 candidate *M* is at most (*E* · 2<sup>−16</sup>)<sup>k</sup>, times *N* over
 all candidates: for *N* = 10, *E* = 2 and *k* = 3 that is below
