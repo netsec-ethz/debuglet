@@ -90,12 +90,17 @@ func (d *Dispatcher) outputStorageFull(ctx context.Context, q *database.Queries,
 	if err != nil {
 		return false, err
 	}
-	return exceedsOutputLimit(account.ChargedBytes, charge, d.outputLimits.AccountBytes) ||
-		exceedsOutputLimit(node.ChargedBytes, charge, d.outputLimits.NodeBytes), nil
+	return exceedsOptionalLimit(account.ChargedBytes, charge, d.outputLimits.AccountBytes) ||
+		exceedsOptionalLimit(node.ChargedBytes, charge, d.outputLimits.NodeBytes), nil
 }
 
 func exceedsOutputLimit(used, added, limit int64) bool {
 	return used > limit || added > limit-used
+}
+
+// exceedsOptionalLimit treats a zero account or node cap as disabled.
+func exceedsOptionalLimit(used, added, limit int64) bool {
+	return limit > 0 && exceedsOutputLimit(used, added, limit)
 }
 
 func chargeOutput(ctx context.Context, q *database.Queries, accountID, bytes, frames int64) error {

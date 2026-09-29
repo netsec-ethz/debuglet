@@ -340,6 +340,26 @@ func TestDurableOutputEmptyFramesAndOversizedInput(t *testing.T) {
 	}
 }
 
+// An upgrade charges output that is already stored. With the default, disabled
+// account and node caps, that history must not refuse new work.
+func TestDurableOutputDefaultLimitsIgnoreRetainedHistory(t *testing.T) {
+	d := newTerminalPeerDispatcher(t)
+	if _, err := d.db.ExecContext(t.Context(), "UPDATE output_node_usage SET charged_bytes = ?", int64(1)<<40); err != nil {
+		t.Fatal(err)
+	}
+	outputTestRun(t, d, outputTestWriter(), nil)
+	limits := config.DefaultOutputConfig()
+	limits.NodeBytes = 1 << 30
+	full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge)
+	if err != nil || full {
+		t.Fatalf("default caps refused admission: full=%v err=%v", full, err)
+	}
+	d.outputLimits = limits
+	if full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge); err != nil || !full {
+		t.Fatalf("explicit node cap ignored: full=%v err=%v", full, err)
+	}
+}
+
 func TestDurableOutputAdmissionChargeRollsBack(t *testing.T) {
 	d := newTerminalPeerDispatcher(t)
 	writer := outputTestWriter()
