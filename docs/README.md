@@ -17,6 +17,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 
 - [Architecture](architecture.md) — components, trust boundaries, protocol flow, and storage.
 - [Vantage-point metadata](vantage-points.md) — design for network, location and reachability context with provenance.
+- [Probe verification](verification.md) — design for how a probe recipient verifies which run sent a packet.
 
 ## Operate a deployment
 
