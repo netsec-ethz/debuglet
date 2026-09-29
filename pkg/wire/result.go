@@ -65,6 +65,18 @@ type VantagePoint struct {
 	Capabilities  VantageCapabilities `json:"capabilities"`
 	SourceIP      LabelledString      `json:"source_ip"`
 	PublicHost    LabelledString      `json:"public_host"`
+	// Added within schema 1; absent in earlier 1.1 files, which means null.
+	SCIONISDAS LabelledObservation `json:"scion_isd_as"`
+	Display    ExecutorDisplay     `json:"display"`
+}
+
+// LabelledObservation is an expiring value as known at admission: Stale says
+// it had outlived its lifetime. All fields are null together.
+type LabelledObservation struct {
+	Value      *string    `json:"value"`
+	Source     *string    `json:"source"`
+	ObservedAt *time.Time `json:"observed_at"`
+	Stale      *bool      `json:"stale"`
 }
 
 type LabelledString struct {

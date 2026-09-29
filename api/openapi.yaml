@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.9"
+  version: "1.10"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -2678,6 +2678,20 @@ components:
           type: string
         ready:
           type: boolean
+          description: "True once the current control session has sent a heartbeat."
+        admission:
+          type: string
+          enum:
+            - ready
+            - maintenance
+            - offline
+          description: "Added in API 1.10. offline: no heartbeat on the current control session yet; maintenance: the dispatcher operator stopped submission admission; ready otherwise. Executors whose control session ended are not listed. Normal admission still decides each submission. Absent from older dispatchers."
+        display:
+          $ref: "#/components/schemas/ExecutorDisplay"
+        scion_isd_as:
+          $ref: "#/components/schemas/ObservedString"
+        listeners:
+          $ref: "#/components/schemas/ObservedList"
         last_seen:
           type: integer
           format: int64
@@ -2706,6 +2720,70 @@ components:
           type: string
         capabilities:
           $ref: "#/components/schemas/ExecutorCapabilities"
+    ExecutorDisplay:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - city
+        - country
+        - network
+      properties:
+        display_name:
+          $ref: "#/components/schemas/ResultLabelledString"
+        city:
+          $ref: "#/components/schemas/ResultLabelledString"
+        country:
+          $ref: "#/components/schemas/ResultLabelledString"
+        network:
+          $ref: "#/components/schemas/ResultLabelledString"
+      description: "Added in API 1.10. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Country is an ISO 3166-1 alpha-2 code; location is never finer than city and is never inferred. Unconfigured values are null. Not verified against the executor."
+    ObservedString:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+        - source
+        - observed_at
+      properties:
+        value:
+          type: string
+          nullable: true
+          description: "Canonical SCION ISD-AS reported by the executor from its SCION daemon, such as 1-ff00:0:110. Null when unknown, including older executors, SCION disabled by the operator and reports older than 90 s."
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Dispatcher receipt time of the report in Unix seconds."
+      description: "Added in API 1.10. All fields are null together."
+    ObservedList:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+        - source
+        - observed_at
+      properties:
+        value:
+          type: array
+          nullable: true
+          items:
+            type: string
+            enum:
+              - tcp
+              - udp
+              - scion
+          description: "Transports on which the executor reports it can open run listeners: tcp and udp need the operator's inbound and transport switches plus public_host and public_ports; scion needs the SCION switch and a local SCION observation. Neither the address nor external reachability is reported or tested. Null when unknown; empty when none."
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Dispatcher receipt time of the report in Unix seconds."
+      description: "Added in API 1.10. All fields are null together."
     ExecutorList:
       type: array
       nullable: true
@@ -3116,6 +3194,10 @@ components:
           $ref: "#/components/schemas/ResultLabelledString"
         public_host:
           $ref: "#/components/schemas/ResultLabelledString"
+        scion_isd_as:
+          $ref: "#/components/schemas/ResultLabelledObservation"
+        display:
+          $ref: "#/components/schemas/ExecutorDisplay"
       description: "Added in format 1.1. Where the run was to execute, as known at admission. Each value names its source; no label means verified. Null for runs admitted before format 1.1, and always absent from 1.0 files."
       nullable: true
     ResultSourceLabel:
@@ -3139,6 +3221,31 @@ components:
           description: "Null when not recorded; never guessed."
         source:
           $ref: "#/components/schemas/ResultSourceLabel"
+    ResultLabelledObservation:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "value"
+        - "source"
+        - "observed_at"
+        - "stale"
+      properties:
+        value:
+          type: "string"
+          nullable: true
+          description: "Executor-reported canonical SCION ISD-AS at admission; null when there was none."
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+          description: "Dispatcher receipt time of the report."
+        stale:
+          type: "boolean"
+          nullable: true
+          description: "True when the report had outlived its 90 s lifetime at admission."
+      description: "Added within vantage_point schema 1 (API 1.10); a 1.1 file written before it omits the field, which reads as null. All fields are null together."
     ResultVantageCapabilities:
       type: "object"
       additionalProperties: false

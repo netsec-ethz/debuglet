@@ -432,8 +432,11 @@ func strictCLIDocument(data []byte, out any) error {
 			return errors.New("invalid nodes JSON")
 		}
 		for _, node := range nodes {
-			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities"}, map[string]bool{"tesla_anchor_key": true})
+			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities", "admission", "display", "scion_isd_as", "listeners"}, map[string]bool{"tesla_anchor_key": true})
 			if err != nil {
+				return err
+			}
+			if err := checkNodeVantage(fields); err != nil {
 				return err
 			}
 			if observation, present := fields["capabilities"]; present {
@@ -476,6 +479,30 @@ func strictCLIDocument(data []byte, out any) error {
 		}
 	default:
 		return errors.New("unsupported CLI document")
+	}
+	return nil
+}
+
+// The API 1.10 node fields keep their documented shape: each value travels
+// with its source label, and observations with their receipt time.
+func checkNodeVantage(fields map[string]json.RawMessage) error {
+	if raw, present := fields["display"]; present {
+		display, err := strictFields(raw, []string{"display_name", "city", "country", "network"}, nil, nil)
+		if err != nil {
+			return err
+		}
+		for _, label := range display {
+			if _, err := strictFields(label, []string{"value", "source"}, nil, map[string]bool{"value": true, "source": true}); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range []string{"scion_isd_as", "listeners"} {
+		if raw, present := fields[key]; present {
+			if _, err := strictFields(raw, []string{"value", "source", "observed_at"}, nil, map[string]bool{"value": true, "source": true, "observed_at": true}); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

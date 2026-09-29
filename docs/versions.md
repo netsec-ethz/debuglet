@@ -20,3 +20,5 @@ Document an API deprecation in OpenAPI and the API guide while the old field or 
 A package version does not imply compatibility across every interface or platform. The project is a trusted-environment alpha; a passing CI run does not establish remote-deployment or untrusted-workload support.
 
 API 1.9 adds optional durable cancellation inspection. Dispatcher schema 12 stores one cancellation request per run; upgrade explicitly before starting this build. The executor schema and Abort wire protocol are unchanged. Cancellation is never automatically replayed after restart, and requests never acquire a replacement session's authority.
+
+API 1.10 adds executor admission state, operator display metadata and the executor-reported SCION ISD-AS and listeners to `GET /executors`. The control protocol gains an optional `VantagePointReport` without a version change: an older executor leaves these fields unknown, and an older dispatcher ignores the report.

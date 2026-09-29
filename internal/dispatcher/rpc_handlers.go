@@ -60,6 +60,10 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.Capabilities = capabilitiesFromReport(req.Capabilities, seen)
 			exec.capabilityObserved = seen
 		}
+		if req.VantagePoint != nil && !seen.Before(exec.vantageObserved) {
+			exec.vantage = vantageFromReport(req.VantagePoint)
+			exec.vantageObserved = seen
+		}
 		anchor = bytes.Clone(exec.TeslaAnchorKey)
 	} else {
 		d.mu.Unlock()

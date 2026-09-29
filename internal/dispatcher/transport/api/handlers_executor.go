@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 
 	"github.com/google/uuid"
@@ -19,9 +20,16 @@ import (
 // GET /executors
 func (h *Handler) GetExecutors(c echo.Context) error {
 	executors := h.dispatcher.ListExecutors()
+	// The maintenance switch is dispatcher-wide; read it once per listing.
+	paused := dispatcher.AdmissionPaused() != nil
 	var resp []ExecutorResponse
 	for _, e := range executors {
+		isdAS, listeners := e.Vantage()
 		resp = append(resp, ExecutorResponse{
+			Admission:              e.Admission(paused),
+			Display:                e.Display(),
+			SCIONISDAS:             isdAS,
+			Listeners:              listeners,
 			ID:                     e.ID,
 			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,

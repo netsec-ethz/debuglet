@@ -83,3 +83,41 @@ func TestCapabilitySelectionCarriesICMPIntoSubmission(t *testing.T) {
 		t.Fatalf("filtered nodes: %s %v", stdout, err)
 	}
 }
+
+func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /executors", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"old","ready":true},
+{"id":"lab","ready":true,"admission":"maintenance",
+ "display":{"display_name":{"value":"ETH lab","source":"operator"},"city":{"value":"Zurich","source":"operator"},"country":{"value":"CH","source":"operator"},"network":{"value":null,"source":null}},
+ "scion_isd_as":{"value":"1-ff00:0:110","source":"executor-reported","observed_at":1},
+ "listeners":{"value":["udp","scion"],"source":"executor-reported","observed_at":1}}]`))
+	})
+	fx := newFixture(t, mux)
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
+	assertCode(t, code, exitOK, stdout, stderr)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 3 || strings.Join(strings.Fields(lines[0])[2:8], " ") != "ADMISSION NAME LOCATION NETWORK ISD_AS LISTENERS" {
+		t.Fatalf("table: %q", stdout)
+	}
+	if fields := strings.Fields(lines[1]); fields[0] != "old" || fields[2] != "unknown" || fields[3] != "-" || fields[4] != "-" || fields[6] != "unknown" || fields[7] != "unknown" {
+		t.Fatalf("legacy row: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "maintenance  ETH lab  Zurich,CH  -        1-ff00:0:110  udp,scion") {
+		t.Fatalf("vantage row: %q", lines[2])
+	}
+	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "nodes", "--isd-as", "1-ff00:0:0110")
+	assertCode(t, code, exitOK, stdout, stderr)
+	var nodes []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &nodes); err != nil || len(nodes) != 1 || nodes[0].ID != "lab" {
+		t.Fatalf("filtered nodes: %s %v", stdout, err)
+	}
+	requests := fx.total()
+	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes", "--isd-as", "1-0")
+	if code == exitOK || !strings.Contains(stderr, "ISD-AS") || fx.total() != requests {
+		t.Fatalf("invalid filter: %d %q %q", code, stdout, stderr)
+	}
+}

@@ -24,6 +24,15 @@ changes; the linked API and deployment documentation contains operational detail
   Exports are written as 1.1; `client.ReadResult` and `dbl` still read 1.0 files
   and reject a 1.0 file carrying a vantage point. Older readers reject 1.1
   exports. See `docs/results.md`.
+- API 1.10: `GET /executors` reports `admission` (`ready`, `maintenance`,
+  `offline`), operator display metadata (`display_name`, `city`, `country`,
+  `network`) from new optional `[executors."<id>"]` dispatcher configuration
+  tables, and the executor-reported SCION ISD-AS and listener transports, each
+  with a source label. Executors send them in a new `VantagePointReport` beside
+  the capability report. `provenance.vantage_point` gains `scion_isd_as` and
+  `display` within schema 1; earlier 1.1 files remain valid. `dbl nodes` shows
+  the new columns, and `dbl nodes`, `dbl run` and `ExecutorFilter.ISDAS` filter
+  by ISD-AS. See `docs/operations/executor-discovery.md`.
 
 ### Changed
 - `install.sh` prints the `export PATH=...` line to use when the installed

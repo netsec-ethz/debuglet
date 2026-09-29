@@ -277,3 +277,48 @@ func TestResultRejectsInvalidVantagePoint(t *testing.T) {
 		t.Fatalf("1.0 file with provenance: %v", err)
 	}
 }
+
+// The ISD-AS and display fields were added within vantage_point schema 1: the
+// fixture, written before them, still reads with both null, and a file that
+// carries them round-trips and is validated.
+func TestResultVantagePointISDASAndDisplay(t *testing.T) {
+	label := func(s string) *string { return &s }
+	doc := currentResultFixture(t)
+	v := doc.Provenance.VantagePoint
+	if v.SCIONISDAS != (wire.LabelledObservation{}) || v.Display != (wire.ExecutorDisplay{}) {
+		t.Fatalf("earlier 1.1 file: %+v", v)
+	}
+	observed, stale := time.Date(2026, 9, 28, 11, 58, 40, 0, time.UTC), true
+	with := func(t *testing.T) Result {
+		doc := currentResultFixture(t)
+		doc.Provenance.VantagePoint.SCIONISDAS = wire.LabelledObservation{Value: label("1-ff00:0:110"), Source: label(wire.SourceExecutorReported), ObservedAt: &observed, Stale: &stale}
+		doc.Provenance.VantagePoint.Display.Country = wire.LabelledString{Value: label("CH"), Source: label(wire.SourceOperator)}
+		return doc
+	}
+	doc = with(t)
+	data, _ := json.Marshal(doc)
+	if again, err := ReadResult(bytes.NewReader(data)); err != nil || !reflect.DeepEqual(again, doc) {
+		t.Fatalf("roundtrip: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*wire.VantagePoint)
+	}{
+		{"non-canonical isd-as", func(v *wire.VantagePoint) { v.SCIONISDAS.Value = label("1-ff00:0:0110") }},
+		{"wildcard isd-as", func(v *wire.VantagePoint) { v.SCIONISDAS.Value = label("1-0") }},
+		{"undated isd-as", func(v *wire.VantagePoint) { v.SCIONISDAS.ObservedAt = nil }},
+		{"isd-as without staleness", func(v *wire.VantagePoint) { v.SCIONISDAS.Stale = nil }},
+		{"orphan isd-as source", func(v *wire.VantagePoint) { v.SCIONISDAS.Value = nil }},
+		{"verified display", func(v *wire.VantagePoint) { v.Display.Country.Source = label("verified") }},
+		{"display without source", func(v *wire.VantagePoint) { v.Display.City.Value = label("Zurich") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := with(t)
+			tc.change(doc.Provenance.VantagePoint)
+			data, _ := json.Marshal(doc)
+			if _, err := ReadResult(bytes.NewReader(data)); err == nil {
+				t.Fatal("accepted invalid vantage point")
+			}
+		})
+	}
+}

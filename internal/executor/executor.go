@@ -344,12 +344,14 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 				e.logger.Log(level, msg, fields...)
 			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
+			capabilities, vantage := e.capabilityReport(ctx, false)
 			req := &protocol.HeartbeatRequest{
 				ExecutorId:    e.cfg.Identity.ExecutorID,
 				TimestampNs:   now.UnixNano(),
 				TeslaKeyEpoch: epoch,
 				TeslaKey:      key,
-				Capabilities:  e.capabilityReport(ctx, false),
+				Capabilities:  capabilities,
+				VantagePoint:  vantage,
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))
