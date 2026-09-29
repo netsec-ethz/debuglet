@@ -20,9 +20,9 @@ var fixedSeed = bytes.Repeat([]byte{0xAA}, 32)
 func newTestTagger(t *testing.T) *Tagger {
 	t.Helper()
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: time.Now().Add(-10 * time.Second),
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       time.Now().Add(-10 * time.Second),
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
@@ -89,9 +89,9 @@ func TestTagPacketSetsIPID(t *testing.T) {
 // epoch) always produce the same IPID.
 func TestTagPacketDeterminism(t *testing.T) {
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: time.Now().Add(-10 * time.Second),
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       time.Now().Add(-10 * time.Second),
 	})
 	tgr := New(ks, testMeasurementID)
 
@@ -148,9 +148,9 @@ func TestAccountabilityRoundTrip(t *testing.T) {
 	// in epoch 1, making the key index predictable.
 	now := time.Now()
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: now.Add(-10 * time.Second),
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       now.Add(-10 * time.Second),
 	})
 	tgr := New(ks, testMeasurementID)
 
@@ -184,9 +184,9 @@ func TestAccountabilityRoundTrip(t *testing.T) {
 func TestTagPacketMatchesKernelComputation(t *testing.T) {
 	now := time.Now()
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: time.Hour,
-		Epoch: now.Add(-time.Hour),
+		Seed:        fixedSeed,
+		EpochLength: time.Hour,
+		Epoch:       now.Add(-time.Hour),
 	})
 	tgr := New(ks, testMeasurementID)
 	for _, payloadLen := range []int{0, 1, 8, 13, 44, 45, 100, 1400} {
@@ -226,9 +226,9 @@ func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 	delay := 100 * time.Millisecond
 	now := time.Now()
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: delay,
-		Epoch: now,
+		Seed:        fixedSeed,
+		EpochLength: delay,
+		Epoch:       now,
 	})
 
 	payload := []byte("delayed disclosure payload")
@@ -277,9 +277,9 @@ func TestAccountabilityRealDelayedDisclosure(t *testing.T) {
 func TestAccountabilityTamperedPacket(t *testing.T) {
 	now := time.Now()
 	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: now.Add(-10 * time.Second),
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       now.Add(-10 * time.Second),
 	})
 	tgr := New(ks, testMeasurementID)
 

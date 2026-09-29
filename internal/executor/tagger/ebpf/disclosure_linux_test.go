@@ -31,7 +31,7 @@ func disclosureSchedule(t *testing.T, length int64, lead time.Duration) *tesla.K
 	ks, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:        make([]byte, 32),
 		ChainLength: length,
-		Delay:       disclosureDelay,
+		EpochLength: disclosureDelay,
 		Epoch:       time.Now().Add(lead - 2*disclosureDelay),
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ func disclosureSlotEpoch(t *testing.T, bt *BPFTagger) (int64, bool) {
 	}
 	cfg := bt.schedule.Config()
 	for e := int64(1); e < cfg.ChainLength; e++ {
-		if want, ok, _ := akEntryAt(bt.schedule, bt.measureID, cfg.Epoch.Add(time.Duration(e)*cfg.Delay)); ok && want == entry {
+		if want, ok, _ := akEntryAt(bt.schedule, bt.measureID, cfg.Epoch.Add(time.Duration(e)*cfg.EpochLength)); ok && want == entry {
 			return e, true
 		}
 	}
@@ -117,7 +117,7 @@ type disclosureSample struct {
 func disclosureCheckBoundary(t *testing.T, ks *tesla.KeySchedule, samples []disclosureSample, e int64) {
 	t.Helper()
 	cfg := ks.Config()
-	boundary := cfg.Epoch.Add(time.Duration(e) * cfg.Delay)
+	boundary := cfg.Epoch.Add(time.Duration(e) * cfg.EpochLength)
 	want := e
 	if e >= cfg.ChainLength {
 		want = -1

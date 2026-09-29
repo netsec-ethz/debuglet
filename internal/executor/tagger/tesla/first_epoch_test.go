@@ -120,9 +120,9 @@ func TestFirstSigningKeyDisclosedAfterItsEpoch(t *testing.T) {
 // past signs immediately.
 func TestDelayedStartHasUsableKey(t *testing.T) {
 	ks, err := NewKeySchedule(Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: time.Now().Add(-time.Hour),
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       time.Now().Add(-time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)

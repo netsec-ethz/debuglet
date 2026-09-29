@@ -139,14 +139,14 @@ func startChain(ctx context.Context, db *sql.DB, cfg config.TeslaConfig) (*tesla
 			return nil, fmt.Errorf("derive TESLA chain %d: %w", generation, err)
 		}
 	}
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, Delay: time.Duration(cfg.Delay) * time.Second, ChainLength: cfg.ChainLength})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, EpochLength: time.Duration(cfg.Delay) * time.Second, ChainLength: cfg.ChainLength})
 	if err != nil {
 		return nil, fmt.Errorf("create TESLA schedule: %w", err)
 	}
 	chain := schedule.Config()
 	if err := queries.CreateTeslaChain(ctx, executordb.CreateTeslaChainParams{
 		Generation: generation, Anchor: schedule.Anchor(), EpochBase: chain.Epoch.UTC(),
-		DelayNs: int64(chain.Delay), ChainLength: chain.ChainLength, CreatedAt: time.Now().UTC(),
+		DelayNs: int64(chain.EpochLength), ChainLength: chain.ChainLength, CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		return nil, fmt.Errorf("record TESLA chain %d (a recorded anchor would reuse disclosed keys): %w", generation, err)
 	}

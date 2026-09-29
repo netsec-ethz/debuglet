@@ -335,7 +335,7 @@ func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsession.Binding) {
 	interval := 30 * time.Second
-	if disclosureInterval := e.teslaSchedule.Config().Delay / 2; disclosureInterval < interval {
+	if disclosureInterval := e.teslaSchedule.Config().EpochLength / 2; disclosureInterval < interval {
 		interval = disclosureInterval
 	}
 	e.logger.Info("Starting heartbeat loop", zap.Duration("interval", interval))

@@ -29,7 +29,7 @@ func refreshTagger(t *testing.T, epoch time.Time) (*BPFTagger, *observer.Observe
 	ks, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:        bytes.Repeat([]byte{0x3C}, 32),
 		ChainLength: 1 << 10,
-		Delay:       refreshDelay,
+		EpochLength: refreshDelay,
 		Epoch:       epoch,
 	})
 	if err != nil {
@@ -208,7 +208,7 @@ func TestDisclosureNeverNamesInstalledKey(t *testing.T) {
 		{name: "failed_refresh", failFrom: 3 * refreshDelay, failUntil: 9 * refreshDelay / 2, next: func(_ *tesla.KeySchedule, now time.Time) time.Time { return now.Add(refreshDelay / 3) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 6, Delay: refreshDelay, Epoch: refreshStart})
+			ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 6, EpochLength: refreshDelay, Epoch: refreshStart})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -336,7 +336,7 @@ func TestRefreshWaitRetriesFailedUpdates(t *testing.T) {
 // failed removal at Expiry is retried, and once it succeeds the hold is
 // released, the last key is disclosed and the loop idles.
 func TestKeyRefreshRetriesFailedUpdates(t *testing.T) {
-	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 4, Delay: refreshDelay, Epoch: refreshStart})
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 4, EpochLength: refreshDelay, Epoch: refreshStart})
 	if err != nil {
 		t.Fatal(err)
 	}

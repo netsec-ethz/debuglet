@@ -28,7 +28,7 @@ import (
 
 func taggingSchedule(t *testing.T) *tesla.KeySchedule {
 	t.Helper()
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x73}, 32), Delay: 10 * time.Second, ChainLength: 64})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x73}, 32), EpochLength: 10 * time.Second, ChainLength: 64})
 	if err != nil {
 		t.Fatal(err)
 	}

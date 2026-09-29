@@ -15,7 +15,7 @@ import (
 func TestExhaustedChainHasNoSigningKey(t *testing.T) {
 	delay := time.Second
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	ks, err := NewKeySchedule(Config{Seed: fixedSeed, ChainLength: 3, Delay: delay, Epoch: start})
+	ks, err := NewKeySchedule(Config{Seed: fixedSeed, ChainLength: 3, EpochLength: delay, Epoch: start})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}

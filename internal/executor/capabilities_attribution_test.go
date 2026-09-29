@@ -47,7 +47,7 @@ func (h *attributionHolder) set(epoch int64, last time.Time, err error) {
 func TestCapabilityReportsAttributionFromEpochOne(t *testing.T) {
 	e := newFixtureExecutor(t, fixtureConfig(), nil, newFixtureMemoryStorage(t))
 	const delay = 200 * time.Millisecond
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("attribution epoch"), ChainLength: 64, Delay: delay, Epoch: time.Now()})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("attribution epoch"), ChainLength: 64, EpochLength: delay, Epoch: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestCapabilityReportsAttributionFromEpochOne(t *testing.T) {
 func TestCapabilityReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
 	e := newFixtureExecutor(t, fixtureConfig(), nil, newFixtureMemoryStorage(t))
 	const delay = time.Second
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("attribution refresh"), ChainLength: 1 << 16, Delay: delay, Epoch: time.Now().Add(-time.Hour)})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("attribution refresh"), ChainLength: 1 << 16, EpochLength: delay, Epoch: time.Now().Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -169,7 +169,7 @@ func startGuest(t *testing.T, wasm []byte, opts hostOptions) *guestRun {
 	id := uuid.New()
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:        bytes.Repeat([]byte{0x42}, 32),
-		Delay:       time.Second,
+		EpochLength: time.Second,
 		ChainLength: 64,
 	})
 	if err != nil {

@@ -23,7 +23,7 @@ import (
 // exhaustedSchedule returns a chain that ran out an hour ago.
 func exhaustedSchedule(t *testing.T) *tesla.KeySchedule {
 	t.Helper()
-	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("exhausted chain fixture"), ChainLength: 3, Delay: time.Second, Epoch: time.Now().Add(-time.Hour)})
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("exhausted chain fixture"), ChainLength: 3, EpochLength: time.Second, Epoch: time.Now().Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestUploadRefusedOnExhaustedChain(t *testing.T) {
 // nothing while it holds.
 func TestChainReportLogsEachConditionOnce(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("report fixture"), ChainLength: 180, Delay: time.Minute, Epoch: start})
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("report fixture"), ChainLength: 180, EpochLength: time.Minute, Epoch: start})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestChainReportOncePerNode(t *testing.T) {
 		}
 	})
 	// A short epoch keeps the heartbeat interval short; the chain ran out long ago.
-	node.schedule, err = tesla.NewKeySchedule(tesla.Config{Seed: []byte("report per node"), ChainLength: 3, Delay: 100 * time.Millisecond, Epoch: time.Now().Add(-time.Hour)})
+	node.schedule, err = tesla.NewKeySchedule(tesla.Config{Seed: []byte("report per node"), ChainLength: 3, EpochLength: 100 * time.Millisecond, Epoch: time.Now().Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

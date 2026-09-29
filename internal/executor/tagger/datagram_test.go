@@ -28,7 +28,7 @@ func onesComplementSum(sum uint32, b []byte) uint32 {
 // tag the verifier accepts for the packet as it leaves.
 func TestBuiltUDPPacketIsValidAndTagged(t *testing.T) {
 	now := time.Now()
-	ks, _ := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, Delay: time.Hour, Epoch: now.Add(-time.Hour)})
+	ks, _ := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, EpochLength: time.Hour, Epoch: now.Add(-time.Hour)})
 	src, dst := net.IPv4(192, 0, 2, 10), net.IPv4(198, 51, 100, 7)
 	for _, n := range []int{0, 1, 7, 64, 1200} {
 		payload := make([]byte, n)
@@ -87,7 +87,7 @@ func TestWrapDatagramRefusesOtherConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	ks, _ := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, Delay: time.Hour})
+	ks, _ := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, EpochLength: time.Hour})
 	if wrapped, err := New(ks, testMeasurementID).WrapDatagram(conn); wrapped != nil || err == nil {
 		t.Fatalf("a TCP connection was wrapped: %v, %v", wrapped, err)
 	}

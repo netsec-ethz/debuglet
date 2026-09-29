@@ -45,7 +45,7 @@ func TestDebugletConstructorFallbackCleanup(t *testing.T) {
 			name = "failed_rollback"
 		}
 		t.Run(name, func(t *testing.T) {
-			schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x71}, 32), Delay: time.Second, ChainLength: 64})
+			schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x71}, 32), EpochLength: time.Second, ChainLength: 64})
 			if err != nil {
 				t.Fatal(err)
 			}

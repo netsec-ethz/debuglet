@@ -39,7 +39,7 @@ func disclosureSchedule(t *testing.T, length int64) (*KeySchedule, func(epoch in
 	t.Helper()
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	const delay = 10 * time.Second
-	ks, err := NewKeySchedule(Config{Seed: bytes.Repeat([]byte{0x5A}, 32), ChainLength: length, Delay: delay, Epoch: start})
+	ks, err := NewKeySchedule(Config{Seed: bytes.Repeat([]byte{0x5A}, 32), ChainLength: length, EpochLength: delay, Epoch: start})
 	if err != nil {
 		t.Fatal(err)
 	}

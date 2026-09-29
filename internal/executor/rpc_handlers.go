@@ -69,7 +69,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		// address here would only be a hint, so leave it empty.
 		SourceIp:               "",
 		PublicHost:             publicHost,
-		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
+		TeslaDelaySec:          int64(e.teslaSchedule.Config().EpochLength.Seconds()),
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
 		// ICMP is advertised only when the operator's network policy leaves it

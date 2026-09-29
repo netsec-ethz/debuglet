@@ -24,7 +24,7 @@ func newTestSchedule(t *testing.T, delay time.Duration) *KeySchedule {
 	ks, err := NewKeySchedule(Config{
 		Seed:        fixedSeed,
 		ChainLength: 100, // small chain for fast tests
-		Delay:       delay,
+		EpochLength: delay,
 		Epoch:       epoch,
 	})
 	if err != nil {

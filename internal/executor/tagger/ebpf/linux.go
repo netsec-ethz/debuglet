@@ -295,7 +295,7 @@ func (bt *BPFTagger) refreshTimer(lastErr error) (<-chan time.Time, func()) {
 // Expiry on, retries continue while the slot may still hold a key. Otherwise no
 // key is ever installed again and false means no update is due.
 func refreshWait(schedule *tesla.KeySchedule, now time.Time, failed, holding bool) (time.Duration, bool) {
-	retry := schedule.Config().Delay / 2
+	retry := schedule.Config().EpochLength / 2
 	next, ok := nextBoundary(schedule, now)
 	switch {
 	case ok && failed:
@@ -316,7 +316,7 @@ func nextBoundary(schedule *tesla.KeySchedule, now time.Time) (time.Time, bool) 
 		return time.Time{}, false
 	}
 	cfg := schedule.Config()
-	return cfg.Epoch.Add(time.Duration(schedule.EpochOf(now)+1) * cfg.Delay), true
+	return cfg.Epoch.Add(time.Duration(schedule.EpochOf(now)+1) * cfg.EpochLength), true
 }
 
 // initializeRefresh runs before the constructor publishes bt. The tagger
