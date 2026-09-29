@@ -11,6 +11,14 @@ changes; the linked API and deployment documentation contains operational detail
 ## [Unreleased]
 
 ### Added
+- Executor capability reports carry an `attribution` state, shown by
+  `GET /executors` and in the new `ATTRIBUTION` column of `dbl nodes`:
+  `available`, or `unavailable` with `epoch_zero`, `chain_exhausted`,
+  `refresh_failing` or `disclosure_held`, plus the installed epoch, the last
+  successful kernel key refresh, a short refresh error and since when
+  disclosure is held. The field is additive within capability schema 1; older
+  executors report none, which means unknown. A changed reason is reported on
+  the next heartbeat. See `docs/operations/executor-discovery.md`.
 - `debuglet-dispatcher -check-database` and `debuglet-executor -check-database`
   report read-only whether the configured database is current for the build
   (exit 0), needs the upgrade (3) or needs an upgrade that drops the recorded

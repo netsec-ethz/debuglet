@@ -5,7 +5,10 @@ package dispatcher
 
 import (
 	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
@@ -35,8 +38,81 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 		}
 		protocols = append(protocols, protocol)
 	}
-	return &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: observed.Unix(),
+	out := &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: observed.Unix(),
 		Protocols: protocols, EnforcementMode: report.GetEnforcementMode()}
+	if report.Attribution != nil {
+		if out.Attribution = attributionFromReport(report.Attribution, observed); out.Attribution == nil {
+			return nil
+		}
+	}
+	return out
+}
+
+// Attribution report bounds. An age beyond maxReportedAge cannot come from a
+// schedule this build creates and would overflow the derived times.
+const (
+	maxRefreshError = 128
+	maxReportedAge  = 10 * 365 * 24 * time.Hour
+)
+
+// attributionFromReport validates the attribution state and converts its ages
+// to times on the dispatcher's clock. Nil means malformed, which clears the
+// whole report: an availability claim that cannot be interpreted must not be
+// shown next to positive capabilities. The reason must agree with the facts it
+// names, so an unavailable report always says why.
+func attributionFromReport(report *pb.AttributionState, observed time.Time) *wire.AttributionState {
+	switch report.GetState() {
+	case "available":
+		if report.GetReason() != "" {
+			return nil
+		}
+	case "unavailable":
+		switch report.GetReason() {
+		case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held":
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
+	epoch := report.GetEpoch()
+	if epoch < 0 || (report.InstalledEpoch != nil && (*report.InstalledEpoch < 0 || *report.InstalledEpoch > epoch)) {
+		return nil
+	}
+	refreshError := report.GetRefreshError()
+	if len(refreshError) > maxRefreshError || !utf8.ValidString(refreshError) ||
+		strings.ContainsFunc(refreshError, unicode.IsControl) {
+		return nil
+	}
+	if (report.GetReason() == "refresh_failing" && refreshError == "") ||
+		(report.GetReason() == "disclosure_held" && report.DisclosureHeldMs == nil) {
+		return nil
+	}
+	at := func(age *int64) (*int64, bool) {
+		if age == nil {
+			return nil, true
+		}
+		if *age < 0 || *age > maxReportedAge.Milliseconds() {
+			return nil, false
+		}
+		unix := observed.Add(-time.Duration(*age) * time.Millisecond).Unix()
+		return &unix, true
+	}
+	lastRefresh, ok := at(report.LastRefreshAgeMs)
+	if !ok {
+		return nil
+	}
+	heldSince, ok := at(report.DisclosureHeldMs)
+	if !ok {
+		return nil
+	}
+	out := &wire.AttributionState{State: report.GetState(), Reason: report.GetReason(), Epoch: epoch,
+		LastRefreshAt: lastRefresh, RefreshError: refreshError, DisclosureHeldSince: heldSince}
+	if report.InstalledEpoch != nil {
+		installed := *report.InstalledEpoch
+		out.InstalledEpoch = &installed
+	}
+	return out
 }
 
 // Caller holds the registry lock. Unlike capabilitySnapshot this keeps a report
@@ -63,6 +139,10 @@ func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapab
 	}
 	out := *entry.Capabilities
 	out.Protocols = slices.Clone(out.Protocols)
+	if out.Attribution != nil {
+		attribution := *out.Attribution
+		out.Attribution = &attribution
+	}
 	if len(out.Protocols) == 0 {
 		out.Protocols = []string{}
 	}
