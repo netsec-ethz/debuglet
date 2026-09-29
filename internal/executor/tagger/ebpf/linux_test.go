@@ -24,8 +24,8 @@ import (
 
 func TestBPFLinuxLoad(t *testing.T) {
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  make([]byte, 32),
-		Delay: 10 * time.Second,
+		Seed:        make([]byte, 32),
+		EpochLength: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
@@ -84,14 +84,17 @@ func TestTaggerCloseJoinsRefreshBeforeResourceRelease(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
 	var updates atomic.Int32
-	var timerStops atomic.Int32
+	var timerStarts, timerStops atomic.Int32
 	if err := bt.initializeRefresh(func() error {
 		if updates.Add(1) > 1 {
 			close(entered)
 			<-release
 		}
 		return nil
-	}, func() (<-chan time.Time, func()) { return ticks, func() { timerStops.Add(1) } }); err != nil {
+	}, func(error) (<-chan time.Time, func()) {
+		timerStarts.Add(1)
+		return ticks, func() { timerStops.Add(1) }
+	}); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -122,8 +125,9 @@ func TestTaggerCloseJoinsRefreshBeforeResourceRelease(t *testing.T) {
 	}
 	unblock()
 	waitRefresh(t, done)
-	if first.calls.Load() != 1 || second.calls.Load() != 1 || timerStops.Load() != 1 {
-		t.Fatalf("release counts=%d,%d timer=%d", first.calls.Load(), second.calls.Load(), timerStops.Load())
+	// Every timer the loop started is stopped, the one it waited on at Close too.
+	if first.calls.Load() != 1 || second.calls.Load() != 1 || timerStops.Load() < 1 || timerStops.Load() != timerStarts.Load() {
+		t.Fatalf("release counts=%d,%d timers stopped=%d of %d", first.calls.Load(), second.calls.Load(), timerStops.Load(), timerStarts.Load())
 	}
 	if err := bt.Close(); !errors.Is(err, sentinel) {
 		t.Fatalf("repeat Close=%v", err)
@@ -138,8 +142,8 @@ func TestTaggerInitialUpdateFailureDoesNotWaitForUnstartedRefresh(t *testing.T) 
 	var got error
 	go func() {
 		defer close(done)
-		got = bt.initializeRefresh(func() error { return initErr }, func() (<-chan time.Time, func()) {
-			t.Error("ticker created after initial failure")
+		got = bt.initializeRefresh(func() error { return initErr }, func(error) (<-chan time.Time, func()) {
+			t.Error("timer created after initial failure")
 			return make(chan time.Time), func() {}
 		})
 	}()

@@ -6,9 +6,11 @@ package wire
 import "time"
 
 const (
-	ResultFormat   = "debuglet-result"
-	ResultVersion  = "1.0"
-	MaxResultBytes = 32 << 20
+	ResultFormat  = "debuglet-result"
+	ResultVersion = "1.1"
+	// ResultVersion10 files predate vantage_point and remain readable.
+	ResultVersion10 = "1.0"
+	MaxResultBytes  = 32 << 20
 )
 
 // Result is a portable snapshot, not proof that a measurement is true. Missing
@@ -44,6 +46,78 @@ type ResultProvenance struct {
 	DispatcherSoftware *string        `json:"dispatcher_software"`
 	DispatcherRevision *string        `json:"dispatcher_revision"`
 	CertificateSHA256  *string        `json:"certificate_sha256"`
+	VantagePoint       *VantagePoint  `json:"vantage_point"`
+}
+
+// Source labels name who asserted a value. None of them means verified: an
+// executor claim stays executor-reported however plausible it looks.
+const (
+	SourceOperator           = "operator"
+	SourceExecutorReported   = "executor-reported"
+	SourceDispatcherObserved = "dispatcher-observed"
+)
+
+// VantagePoint is the admission-time view of where a run executes. It carries
+// its own schema version so later facts (ASN, geolocation, reachability) are
+// additive. A value that was not recorded is null together with its source.
+type VantagePoint struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Capabilities  VantageCapabilities `json:"capabilities"`
+	SourceIP      LabelledString      `json:"source_ip"`
+	PublicHost    LabelledString      `json:"public_host"`
+	// Added within schema 1; absent in earlier 1.1 files, which means null.
+	SCIONISDAS LabelledObservation `json:"scion_isd_as"`
+	Display    ExecutorDisplay     `json:"display"`
+	// Added within schema 1 with the executor probes; absent means null.
+	// Platform is host detail, recorded here because a result is visible only
+	// to the run's owner and operators.
+	Clock    LabelledReport[ClockReport]  `json:"clock"`
+	Platform LabelledReport[HostPlatform] `json:"platform"`
+}
+
+// LabelledReport is an expiring report as known at admission, like
+// LabelledObservation. All fields are null together.
+type LabelledReport[T any] struct {
+	Value      *T         `json:"value"`
+	Source     *string    `json:"source"`
+	ObservedAt *time.Time `json:"observed_at"`
+	Stale      *bool      `json:"stale"`
+}
+
+// LabelledObservation is an expiring value as known at admission: Stale says
+// it had outlived its lifetime. All fields are null together.
+type LabelledObservation struct {
+	Value      *string    `json:"value"`
+	Source     *string    `json:"source"`
+	ObservedAt *time.Time `json:"observed_at"`
+	Stale      *bool      `json:"stale"`
+}
+
+type LabelledString struct {
+	Value  *string `json:"value"`
+	Source *string `json:"source"`
+}
+
+// VantageCapabilities keeps the last validated capability report even when it
+// had outlived its lifetime at admission; Stale says so. ObservedAt is the
+// dispatcher's receipt time of that report.
+type VantageCapabilities struct {
+	Value      *CapabilityReport `json:"value"`
+	Source     *string           `json:"source"`
+	ObservedAt *time.Time        `json:"observed_at"`
+	Stale      *bool             `json:"stale"`
+}
+
+type CapabilityReport struct {
+	SchemaVersion   int      `json:"schema_version"`
+	Protocols       []string `json:"protocols"`
+	EnforcementMode string   `json:"enforcement_mode"`
+	// Tagging is the report's tagging mode; null when the report had none.
+	// Additive within result format 1.1.
+	Tagging *TaggingMode `json:"tagging"`
+	// Added within vantage_point schema 1; absent in earlier files.
+	EnforcementReason string      `json:"enforcement_reason"`
+	ICMP              *ProbeState `json:"icmp"`
 }
 
 type ResultOutcome struct {

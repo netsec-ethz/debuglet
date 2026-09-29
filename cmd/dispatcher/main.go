@@ -246,6 +246,9 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	if err := d.ConfigureOutputLimits(cfg.Output); err != nil {
 		return fmt.Errorf("configure output limits: %w", err)
 	}
+	if err := d.ConfigureExecutorDisplay(cfg.Executors); err != nil {
+		return fmt.Errorf("configure executor display metadata: %w", err)
+	}
 	// An executor ID is bound to a node credential only where the listeners
 	// actually verify one; with no client certificate there is nothing to bind.
 	if security != nil && security.RequireClientIdentity {

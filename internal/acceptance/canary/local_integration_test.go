@@ -164,7 +164,7 @@ observe:
 					if e != nil || toml.Unmarshal(configBytes, &cfg) != nil {
 						t.Fatal("bounded daemon config observation failed")
 					}
-					if record.ExecutorID != manifest.ExecutorID || cfg.Identity.ExecutorID != manifest.ExecutorID || cfg.Identity.Version != assets.Manifest.Version || cfg.Tesla.Delay != 2 || cfg.Network.PacketCounter != "fallback" || !cfg.Network.DisableSCIONEnvironment || cfg.Network.PublicHost != "" || cfg.Network.PublicPorts != "" {
+					if record.ExecutorID != manifest.ExecutorID || cfg.Identity.ExecutorID != manifest.ExecutorID || cfg.Identity.Version != assets.Manifest.Version || cfg.Tesla.EpochSeconds != 2 || cfg.Network.PacketCounter != "fallback" || !cfg.Network.DisableSCIONEnvironment || cfg.Network.PublicHost != "" || cfg.Network.PublicPorts != "" {
 						t.Error("executor config/readiness mismatch")
 						continue
 					}

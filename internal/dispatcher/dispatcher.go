@@ -60,6 +60,7 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	db           *sql.DB
 	outputLimits config.OutputConfig
+	display      map[string]config.ExecutorDisplay
 
 	closed             bool
 	restored           bool // set under mu once a RestoreScheduler call has succeeded

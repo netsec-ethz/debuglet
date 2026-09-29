@@ -46,10 +46,12 @@ max_debuglets = 20
 
 [tesla]
 # Empty seed: the executor generates its own key schedule at startup. A
-# chain length of 0 is derived from the delay so the chain covers the default
-# horizon of seven days of rig uptime.
+# chain length of 0 is derived from the epoch length so the chain covers the
+# default horizon of seven days of rig uptime. A disclosure delay of 0 derives
+# about 15 minutes (900 one-second epochs): tags become verifiable then.
 seed = ""
-delay = 1
+epoch_seconds = 1
+disclosure_delay_epochs = 0
 chain_length = 0
 
 [network]

@@ -16,6 +16,7 @@ func capabilityFlags(fs *flag.FlagSet, filter *client.ExecutorFilter) {
 		return nil
 	})
 	fs.StringVar(&filter.EnforcementMode, "enforcement", "", "actual packet counter: ebpf or fallback")
+	fs.StringVar(&filter.ISDAS, "isd-as", "", "executor-reported SCION ISD-AS, e.g. 1-ff00:0:110")
 	fs.Func("min-capacity-bps", "minimum advertised total bandwidth", func(value string) error {
 		minimum, err := strconv.ParseInt(value, 10, 64)
 		if err == nil {

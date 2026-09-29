@@ -32,6 +32,23 @@ type ExecutorConfig struct {
 	Database    DatabaseConfig
 	Pricing     PricingConfig
 	Output      OutputConfig
+	Clock       ClockConfig
+}
+
+// ClockConfig bounds the kernel's estimated clock error the executor accepts
+// before it reports its clock readiness as degraded. Readiness is reported,
+// not enforced: a degraded clock does not stop admission.
+type ClockConfig struct {
+	MaxErrorMS int64 `toml:"max_error_ms"`
+}
+
+// MaxErrorBound is the configured bound as a duration; zero selects
+// DefaultClockMaxErrorMS.
+func (cfg ClockConfig) MaxErrorBound() time.Duration {
+	if cfg.MaxErrorMS == 0 {
+		return DefaultClockMaxErrorMS * time.Millisecond
+	}
+	return time.Duration(cfg.MaxErrorMS) * time.Millisecond
 }
 
 type IdentityConfig struct {
@@ -61,14 +78,33 @@ type ResourcesConfig struct {
 }
 
 type TeslaConfig struct {
-	Seed  string `toml:"seed"`
-	Delay int64  `toml:"delay"` // epoch duration, in seconds
+	Seed string `toml:"seed"`
+	// EpochSeconds is the epoch length I in seconds: each chain key signs
+	// for one epoch. Zero keeps tesla.DefaultEpochLength.
+	EpochSeconds int64 `toml:"epoch_seconds"`
+	// Delay is the deprecated name of EpochSeconds, read when EpochSeconds is
+	// unset. It never was a disclosure delay; see DisclosureDelayEpochs.
+	Delay int64 `toml:"delay"`
+	// DisclosureDelayEpochs is the disclosure delay d: the key of epoch i is
+	// disclosed once epoch i+d starts. Zero derives the smallest d whose
+	// d·EpochSeconds covers tesla.DefaultDisclosureWindow; an explicit value
+	// must be at least tesla.MinDisclosureDelay.
+	DisclosureDelayEpochs int64 `toml:"disclosure_delay_epochs"`
 	// ChainLength is the number of epochs the hash chain covers. Zero
-	// derives it from Delay so the chain lasts tesla.DefaultChainHorizon.
+	// derives it from EpochSeconds so the chain lasts tesla.DefaultChainHorizon.
 	// The schedule stops advancing once the chain runs out, and packets
 	// tagged after that point can never be verified, so this must exceed
 	// the executor's expected uptime between restarts.
 	ChainLength int64 `toml:"chain_length"`
+}
+
+// EpochLength returns the configured epoch length, zero for the default. It
+// reads the deprecated delay key only when epoch_seconds is unset.
+func (c TeslaConfig) EpochLength() time.Duration {
+	if c.EpochSeconds != 0 {
+		return time.Duration(c.EpochSeconds) * time.Second
+	}
+	return time.Duration(c.Delay) * time.Second
 }
 
 type NetworkConfig struct {
@@ -180,6 +216,10 @@ const DefaultConfigPath = "/etc/debuglet/executor/executor.toml"
 const (
 	DefaultLogLevel     = "info"
 	DefaultMaxDebuglets = 100
+	// DefaultClockMaxErrorMS matches hostprobe.DefaultClockErrorBound.
+	DefaultClockMaxErrorMS = 100
+	// MaxClockMaxErrorMS is one minute, well beyond any disciplined clock.
+	MaxClockMaxErrorMS = 60_000
 )
 
 // MaxChainLength bounds an explicitly configured TESLA chain. It matches one
@@ -187,6 +227,24 @@ const (
 // executor derives on its own, and keeps the precomputed chain in memory
 // bounded. Zero still derives the length from the epoch duration.
 const MaxChainLength = int64(tesla.DefaultChainHorizon / time.Second)
+
+// MaxEpochSeconds bounds the epoch length: one day, so the default chain
+// still covers a week of epochs.
+const MaxEpochSeconds = int64(24 * time.Hour / time.Second)
+
+// MaxDisclosureWindow bounds d·I, the time a key stays secret after its
+// epoch. Beyond the default chain horizon every key of a default chain would
+// be disclosed only after it expired.
+const MaxDisclosureWindow = tesla.DefaultChainHorizon
+
+// MinDisclosureMargin bounds (d−1)·I from below, the time the key of a
+// packet's previous epoch stays secret after the packet's epoch ends. A
+// verifier refuses a key the dispatcher may have accepted, which it does up to
+// 5 seconds early (clockSkew in internal/dispatcher/tag), before the capture
+// time plus its own clock tolerance (1 second by default in
+// tools/verify_pcap.py). A smaller margin makes tags of whole epochs
+// unverifiable: at one-second epochs, d = 2 verifies nothing.
+const MinDisclosureMargin = 10 * time.Second
 
 // maxInterfaceName is the kernel limit for a network interface name.
 const maxInterfaceName = 15
@@ -220,6 +278,9 @@ func loadConfig(path string, defaultInterface func() (*net.Interface, error)) (*
 	if (cfg.Network.PublicHost == "") != (cfg.Network.PublicPorts == "") {
 		log.Println("Warning: both public_host and public_ports must be set for TCP/UDP listeners; listening is disabled")
 	}
+	if cfg.Tesla.Delay != 0 {
+		log.Println("Warning: tesla.delay is deprecated; it is the epoch length and is now named tesla.epoch_seconds (the disclosure delay is tesla.disclosure_delay_epochs)")
+	}
 	if cfg.Network.PacketCounter != "fallback" && cfg.Network.Interface == "" {
 		iface, err := defaultInterface()
 		if err == nil {
@@ -248,6 +309,9 @@ func DecodeConfig(data []byte) (*ExecutorConfig, configcheck.Document, error) {
 	}
 	if !document.Set("resources", "max_debuglets") {
 		cfg.Resources.MaxDebuglets = DefaultMaxDebuglets
+	}
+	if !document.Set("clock", "max_error_ms") {
+		cfg.Clock.MaxErrorMS = DefaultClockMaxErrorMS
 	}
 	if cfg.Dispatcher.YamuxAddr == "" {
 		cfg.Dispatcher.YamuxAddr = cfg.Dispatcher.Addr
@@ -295,6 +359,10 @@ func (cfg *ExecutorConfig) Validate() error {
 	if err := cfg.Output.Validate(); err != nil {
 		return err
 	}
+	// Zero selects the default, as for the output limits.
+	if cfg.Clock.MaxErrorMS < 0 || cfg.Clock.MaxErrorMS > MaxClockMaxErrorMS {
+		return fmt.Errorf("clock.max_error_ms must be between 0 (default) and %d, got %d", MaxClockMaxErrorMS, cfg.Clock.MaxErrorMS)
+	}
 	return cfg.validatePricing()
 }
 
@@ -311,8 +379,31 @@ func (cfg *ExecutorConfig) validateResources() error {
 // validateTesla checks the boundaries of the configured numbers. Whether a
 // schedule is long enough for the expected uptime remains a TESLA question.
 func (cfg *ExecutorConfig) validateTesla() error {
-	if err := configcheck.Seconds("tesla.delay", cfg.Tesla.Delay); err != nil {
-		return err
+	for _, field := range []struct {
+		name  string
+		value int64
+	}{{"tesla.epoch_seconds", cfg.Tesla.EpochSeconds}, {"tesla.delay", cfg.Tesla.Delay}} {
+		if field.value < 0 || field.value > MaxEpochSeconds {
+			return fmt.Errorf("%s must be between 0 (the default of %d seconds) and %d seconds, got %d",
+				field.name, int64(tesla.DefaultEpochLength/time.Second), MaxEpochSeconds, field.value)
+		}
+	}
+	if cfg.Tesla.EpochSeconds != 0 && cfg.Tesla.Delay != 0 {
+		return errors.New("tesla.delay is the deprecated name of tesla.epoch_seconds; set only tesla.epoch_seconds")
+	}
+	epoch := cfg.Tesla.EpochLength()
+	if epoch == 0 {
+		epoch = tesla.DefaultEpochLength
+	}
+	maxDelay := int64(MaxDisclosureWindow / epoch)
+	if d := cfg.Tesla.DisclosureDelayEpochs; d != 0 && (d < tesla.MinDisclosureDelay || d > maxDelay) {
+		return fmt.Errorf("tesla.disclosure_delay_epochs must be 0 (derive the smallest delay covering %d seconds) or between %d and %d epochs (%d seconds in all at %d-second epochs), got %d",
+			int64(tesla.DefaultDisclosureWindow/time.Second), tesla.MinDisclosureDelay, maxDelay, int64(MaxDisclosureWindow/time.Second), int64(epoch/time.Second), d)
+	}
+	if d := cfg.Tesla.DisclosureDelayEpochs; d != 0 && time.Duration(d-1)*epoch < MinDisclosureMargin {
+		minDelay := 1 + int64((MinDisclosureMargin+epoch-1)/epoch)
+		return fmt.Errorf("tesla.disclosure_delay_epochs must be at least %d at %d-second epochs, so the key of a packet's previous epoch stays secret for %d seconds after the packet's epoch (clock skew allowance plus verifier tolerance), got %d",
+			minDelay, int64(epoch/time.Second), int64(MinDisclosureMargin/time.Second), d)
 	}
 	if cfg.Tesla.ChainLength < 0 || cfg.Tesla.ChainLength > MaxChainLength {
 		return fmt.Errorf("tesla.chain_length must be between 0 and %d epochs, got %d", MaxChainLength, cfg.Tesla.ChainLength)

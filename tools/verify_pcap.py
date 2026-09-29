@@ -25,17 +25,22 @@ Workflow
 2. For each unique source IP call GET /executors/by-ip?ip=<ip>[&n=<n>]
    to obtain the executor ID and the candidate debuglet (measurement) IDs.
 3. Call GET /executors/<id>/tesla to obtain:
-      anchor_key            – k_0 (base64), used for chain consistency checks
-      anchor_timestamp_ns   – t_0, when epoch 0 started
-      delay_sec             – epoch duration I
-      disclosed_epoch       – tau, the latest epoch whose key is published
-      disclosed_key         – k_tau (base64)
+      anchor_key              – k_0 (base64), used for chain consistency checks
+      anchor_timestamp_ns     – t_0, when epoch 0 started
+      epoch_seconds           – epoch length I (delay_sec on older dispatchers)
+      disclosure_delay_epochs – d, the key of epoch e is disclosed from t_0 + (e+d)*I
+      disclosed_epoch         – tau, the latest epoch whose key is published
+      disclosed_key           – k_tau (base64)
+   A schedule with d < 2 (or none reported) is refused: see Disclosure timing.
 4. For each IPv4 packet:
-   a. Compute the epoch t from the packet timestamp. Epoch 0 has no signing
-      key: k_0 is the public anchor, so the executor never tags with it and
-      epoch 0 is never a candidate; a packet from epoch 0 that matches no
-      later epoch is reported as carrying no attribution tag.
-   b. Derive k_t = H^(tau-t)(k_tau)   [hash forward in the backward chain].
+   a. Compute the epoch t from the packet timestamp. The candidates are t and
+      t-1 only. Epoch 0 has no signing key: k_0 is the public anchor, so the
+      executor never tags with it and epoch 0 is never a candidate; a packet
+      from epoch 0 that matches no later epoch is reported as carrying no
+      attribution tag.
+   b. For each candidate e, derive k_e = H^(tau-e)(k_tau) [hash forward in
+      the backward chain], but only if k_e was still secret when the packet
+      was captured (see Disclosure timing).
    c. Verify chain consistency: H^t(k_t) == k_0.
    d. For each candidate debuglet ID derive the per-measurement key:
           ak = HKDF-SHA256(secret=k_t, info=debuglet_id)
@@ -43,16 +48,39 @@ Workflow
       eBPF tagger and the pure-Go fallback compute alike.
 5. Report which debuglet IDs verified for each packet.
 
+Disclosure timing
+-----------------
+TESLA's safety condition: a key may attribute a packet only if the key was
+still secret when the packet was captured; anyone who has seen k_e can forge
+tags for epoch e. The executor discloses k_e no earlier than the start of
+epoch e+d, and the dispatcher rejects any disclosure before that (allowing
+DISPATCHER_CLOCK_SKEW_S of executor clock lead). So k_e was secret until
+    D_e = t_0 + (e+d)*I - DISPATCHER_CLOCK_SKEW_S
+and a candidate epoch e is used only when capture_time + tolerance < D_e,
+where tolerance (--clock-tolerance) bounds how far the capture host's clock
+may lag true time. Candidate t-1 absorbs an executor clock that lags the
+capture clock by up to one epoch; with d = 1 its key would already be public
+during epoch t, so d must be at least 2, and d*I must exceed the tolerance
+plus clock skew by a wide margin. The executor clock must not lead the capture
+clock: epoch t+1 is not a candidate.
+
+A key is also published no earlier than the first executor heartbeat after
+every kernel tagger has moved off it, so disclosure lags t_0 + (e+d)*I by up
+to one heartbeat interval, and longer while a refresh fails. "Not disclosed
+yet" therefore means retry later, not that the packet failed to verify.
+
 Usage
 -----
     python3 tools/verify_pcap.py --pcap capture.pcap \\
-        [--server http://localhost:9000] [--n 20] [--no-verify-tls]
+        [--server http://localhost:9000] [--n 20] [--no-verify-tls] \\
+        [--clock-tolerance 1.0]
 
 Dependencies: none beyond the Python 3.9+ standard library.
 """
 
 import argparse
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -421,6 +449,29 @@ class DispatcherClient:
 # Verification logic
 # ---------------------------------------------------------------------------
 
+# The shortest disclosure delay d, in epochs, this tool accepts. Candidate
+# epoch t-1 is tried for a packet of epoch t; with d = 1 its key is already
+# public during epoch t. Matches tesla.MinDisclosureDelay.
+MIN_DISCLOSURE_DELAY = 2
+
+# The executor clock lead over the dispatcher's that the dispatcher tolerates
+# when it bounds a disclosure (clockSkew in internal/dispatcher/tag). A key
+# may therefore have been accepted this much before its scheduled time.
+DISPATCHER_CLOCK_SKEW_S = 5
+
+# Default bound on how far the capture host's clock may lag true time.
+DEFAULT_CLOCK_TOLERANCE_S = 1.0
+
+
+def epoch_seconds(tesla: dict) -> int:
+    """The epoch length I; older dispatchers name it only delay_sec."""
+    return int(tesla.get("epoch_seconds", tesla.get("delay_sec", 0)))
+
+
+def secret_until_ns(epoch: int, anchor_ns: int, delay_ns: int, d: int) -> int:
+    """The earliest instant the key of epoch could have become public."""
+    return anchor_ns + (epoch + d) * delay_ns - DISPATCHER_CLOCK_SKEW_S * 1_000_000_000
+
 
 def epoch_of(ts_ns: int, anchor_ns: int, delay_ns: int) -> int:
     """Epoch index containing ts_ns, matching KeySchedule.epochOf."""
@@ -430,16 +481,23 @@ def epoch_of(ts_ns: int, anchor_ns: int, delay_ns: int) -> int:
     return elapsed // delay_ns
 
 
-def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
+def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list,
+                  tolerance_ns: int = int(DEFAULT_CLOCK_TOLERANCE_S * 1_000_000_000)):
     """Verify one packet.
 
     Returns (matches, reason): matches is [(debuglet_id, epoch, tagger)] for
     every ID whose tag reproduces, and reason explains an empty result.
+    tolerance_ns bounds how far the capture clock may lag true time.
     """
     anchor_ns = int(tesla["anchor_timestamp_ns"])
-    delay_ns = int(tesla["delay_sec"]) * 1_000_000_000
+    delay_ns = epoch_seconds(tesla) * 1_000_000_000
     if delay_ns <= 0:
         return [], "the executor reports a zero-length epoch"
+    d = int(tesla.get("disclosure_delay_epochs") or 0)
+    if d < MIN_DISCLOSURE_DELAY:
+        return [], (f"the executor's disclosure delay is {d or 'not reported'}"
+                    f"{' epochs' if d else ''}; at least {MIN_DISCLOSURE_DELAY} are "
+                    f"needed, since otherwise a disclosed key could forge its tags")
 
     disclosed_epoch = int(tesla["disclosed_epoch"])
     disclosed_key_b64 = tesla.get("disclosed_key") or ""
@@ -460,9 +518,12 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
     pkt_epoch = epoch_of(pkt.ts_ns, anchor_ns, delay_ns)
     if pkt_epoch > disclosed_epoch:
         gap = pkt_epoch - disclosed_epoch
-        if gap <= 2:
-            return [], (f"the key for epoch {pkt_epoch} is not disclosed yet — "
-                        f"retry in about {gap * int(tesla['delay_sec'])}s")
+        if gap <= d + 1:
+            due_ns = anchor_ns + (pkt_epoch + d) * delay_ns
+            due = datetime.datetime.fromtimestamp(due_ns / 1e9, datetime.timezone.utc)
+            return [], (f"the key for epoch {pkt_epoch} is not disclosed yet — it is "
+                        f"due at {due.isoformat(timespec='seconds')} ({due_ns} ns), "
+                        f"{d} epochs after its own")
         return [], (f"no key is disclosed for epoch {pkt_epoch} (latest is "
                     f"{disclosed_epoch}); the executor restarted after the capture, "
                     f"or its key schedule ran out")
@@ -474,11 +535,16 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
 
     matched = []
     seen = set()
-    # Tolerate one epoch of clock skew between the capture host and the
-    # executor in either direction. Epoch 0 is never a candidate: a tag
-    # derived from the public anchor k_0 proves nothing.
-    for epoch in (pkt_epoch, pkt_epoch - 1, pkt_epoch + 1):
+    too_late = False
+    # Tolerate an executor clock up to one epoch behind the capture clock.
+    # Epoch 0 is never a candidate: a tag derived from the public anchor k_0
+    # proves nothing. A key that may have been public when the packet was
+    # captured proves nothing either.
+    for epoch in (pkt_epoch, pkt_epoch - 1):
         if epoch < 1 or epoch > disclosed_epoch:
+            continue
+        if pkt.ts_ns + tolerance_ns >= secret_until_ns(epoch, anchor_ns, delay_ns, d):
+            too_late = True
             continue
         chain_key = hash_chain_forward(disclosed_key, disclosed_epoch - epoch)
         for mid in debuglet_ids:
@@ -492,6 +558,9 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list):
         if pkt_epoch < 1:
             return [], ("no signing key in epoch 0: packets sent during the "
                         "executor's first epoch carry no attribution tag")
+        if too_late:
+            return [], ("no candidate key was still secret when the packet was "
+                        "captured, so its tag cannot be attributed")
         return [], "no recent debuglet on this executor produces this tag"
     return matched, ""
 
@@ -523,7 +592,18 @@ def main():
         action="store_true",
         help="Disable TLS certificate verification (for local testing)",
     )
+    parser.add_argument(
+        "--clock-tolerance",
+        type=float,
+        default=DEFAULT_CLOCK_TOLERANCE_S,
+        help="Seconds the capture host's clock may lag true time; a key is used "
+        "only if it was still secret at capture time plus this "
+        f"(default: {DEFAULT_CLOCK_TOLERANCE_S})",
+    )
     args = parser.parse_args()
+    if args.clock_tolerance < 0:
+        parser.error("--clock-tolerance must not be negative")
+    tolerance_ns = int(args.clock_tolerance * 1_000_000_000)
 
     client = DispatcherClient(args.server, verify_tls=not args.no_verify_tls)
 
@@ -560,7 +640,8 @@ def main():
         info_by_ip[src] = (tesla_info, ids)
         print(
             f"  [{src}] executor={exec_id}  "
-            f"delay={tesla_info['delay_sec']}s  "
+            f"epoch={epoch_seconds(tesla_info)}s  "
+            f"disclosure_delay={tesla_info.get('disclosure_delay_epochs', 0)} epochs  "
             f"disclosed_epoch={tesla_info.get('disclosed_epoch', '—')}  "
             f"debuglets={ids}"
         )
@@ -580,14 +661,14 @@ def main():
             continue
         tesla, ids = info
         total += 1
-        matched, reason = verify_packet(pkt, tesla, ids)
+        matched, reason = verify_packet(pkt, tesla, ids, tolerance_ns)
         if matched:
             verified += 1
 
         epoch = epoch_of(
             pkt.ts_ns,
             int(tesla["anchor_timestamp_ns"]),
-            int(tesla["delay_sec"]) * 1_000_000_000,
+            epoch_seconds(tesla) * 1_000_000_000,
         )
         matched_str = (
             ", ".join(f"{m} (epoch {e}, {t})" for m, e, t in matched)

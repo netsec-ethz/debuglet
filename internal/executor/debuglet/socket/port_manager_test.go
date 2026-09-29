@@ -4,9 +4,12 @@
 package socket
 
 import (
+	"errors"
 	"net"
 	"reflect"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -109,12 +112,12 @@ func TestPortManagerListenTCPDistinctPorts(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	lis1, got1, addr1, err := s.ListenTCP()
+	lis1, got1, addr1, err := s.ListenTCP(nil)
 	if err != nil {
 		t.Fatalf("ListenTCP: %v", err)
 	}
 	defer lis1.Close()
-	lis2, got2, _, err := s.ListenTCP()
+	lis2, got2, _, err := s.ListenTCP(nil)
 	if err != nil {
 		t.Fatalf("ListenTCP: %v", err)
 	}
@@ -135,14 +138,14 @@ func TestPortManagerListenTCPReleaseReusesPort(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	lis1, got1, _, err := s.ListenTCP()
+	lis1, got1, _, err := s.ListenTCP(nil)
 	if err != nil {
 		t.Fatalf("ListenTCP: %v", err)
 	}
 	lis1.Close()
 	s.Release(got1)
 
-	lis2, got2, _, err := s.ListenTCP()
+	lis2, got2, _, err := s.ListenTCP(nil)
 	if err != nil {
 		t.Fatalf("ListenTCP after Release: %v", err)
 	}
@@ -160,13 +163,13 @@ func TestPortManagerListenTCPExhausted(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	lis, _, _, err := s.ListenTCP()
+	lis, _, _, err := s.ListenTCP(nil)
 	if err != nil {
 		t.Fatalf("ListenTCP: %v", err)
 	}
 	defer lis.Close()
 
-	if _, _, _, err := s.ListenTCP(); err == nil {
+	if _, _, _, err := s.ListenTCP(nil); err == nil {
 		t.Fatal("ListenTCP should error when all ports are taken")
 	}
 }
@@ -178,12 +181,12 @@ func TestPortManagerListenUDPDistinctPorts(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	conn1, got1, addr1, err := s.ListenUDP()
+	conn1, got1, addr1, err := s.ListenUDP(nil)
 	if err != nil {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	defer conn1.Close()
-	conn2, got2, _, err := s.ListenUDP()
+	conn2, got2, _, err := s.ListenUDP(nil)
 	if err != nil {
 		t.Fatalf("ListenUDP: %v", err)
 	}
@@ -204,14 +207,14 @@ func TestPortManagerListenUDPReleaseReusesPort(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	conn1, got1, _, err := s.ListenUDP()
+	conn1, got1, _, err := s.ListenUDP(nil)
 	if err != nil {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	conn1.Close()
 	s.Release(got1)
 
-	conn2, got2, _, err := s.ListenUDP()
+	conn2, got2, _, err := s.ListenUDP(nil)
 	if err != nil {
 		t.Fatalf("ListenUDP after Release: %v", err)
 	}
@@ -229,13 +232,13 @@ func TestPortManagerListenUDPExhausted(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	conn, _, _, err := s.ListenUDP()
+	conn, _, _, err := s.ListenUDP(nil)
 	if err != nil {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	defer conn.Close()
 
-	if _, _, _, err := s.ListenUDP(); err == nil {
+	if _, _, _, err := s.ListenUDP(nil); err == nil {
 		t.Fatal("ListenUDP should error when all ports are taken")
 	}
 }
@@ -247,13 +250,199 @@ func TestPortManagerCrossProtocolSharedPool(t *testing.T) {
 		t.Fatalf("NewPortManager: %v", err)
 	}
 
-	lis, got, _, err := s.ListenTCP()
+	lis, got, _, err := s.ListenTCP(nil)
 	if err != nil {
 		t.Fatalf("ListenTCP: %v", err)
 	}
 	defer lis.Close()
 
-	if _, _, _, err := s.ListenUDP(); err == nil {
+	if _, _, _, err := s.ListenUDP(nil); err == nil {
 		t.Fatalf("ListenUDP must not hand out port %d already allocated to TCP", got)
 	}
+}
+
+// pmControl counts the sockets a listen control is called for and refuses
+// them with fail. It requires every TCP listener socket to be plain TCP.
+type pmControl struct {
+	t     *testing.T
+	calls int
+	fail  error
+}
+
+func (c *pmControl) control(network, _ string, raw syscall.RawConn) error {
+	c.calls++
+	if strings.HasPrefix(network, "tcp") {
+		var proto int
+		var known bool
+		var protoErr error
+		if err := raw.Control(func(fd uintptr) {
+			proto, known, protoErr = socketProtocol(int(fd))
+		}); err != nil {
+			protoErr = err
+		}
+		if protoErr != nil || (known && proto != syscall.IPPROTO_TCP) {
+			c.t.Errorf("listener socket protocol = %d, %v; want plain TCP (%d)", proto, protoErr, syscall.IPPROTO_TCP)
+		}
+	}
+	return c.fail
+}
+
+// pmFreePorts returns two distinct ports that are free for both TCP and UDP,
+// in ascending order.
+func pmFreePorts(t *testing.T) (int, int) {
+	t.Helper()
+	var ports []int
+	for len(ports) < 2 {
+		p := freePort(t)
+		if len(ports) == 1 && ports[0] == p {
+			continue
+		}
+		conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: p})
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		ports = append(ports, p)
+	}
+	return min(ports[0], ports[1]), max(ports[0], ports[1])
+}
+
+func TestPortManagerListenControlBusyPortMovesOn(t *testing.T) {
+	// The pool is tried in ascending order: the lower port is the busy one.
+	lo, hi := pmFreePorts(t)
+	busyTCP, err := net.Listen("tcp", ":"+strconv.Itoa(lo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busyTCP.Close()
+	busyUDP, err := net.ListenPacket("udp", ":"+strconv.Itoa(lo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busyUDP.Close()
+	s, err := NewPortManager("203.0.113.10", strconv.Itoa(lo)+","+strconv.Itoa(hi))
+	if err != nil {
+		t.Fatalf("NewPortManager: %v", err)
+	}
+
+	tcp := &pmControl{t: t}
+	lis, got, _, err := s.ListenTCP(tcp.control)
+	if err != nil {
+		t.Fatalf("ListenTCP with %d busy: %v", lo, err)
+	}
+	defer lis.Close()
+	if got != hi {
+		t.Fatalf("ListenTCP port = %d, want %d after %d is in use", got, hi, lo)
+	}
+	if tcp.calls != 2 {
+		t.Errorf("TCP control calls = %d, want one per socket tried (2)", tcp.calls)
+	}
+	s.Release(got)
+	lis.Close()
+
+	udp := &pmControl{t: t}
+	conn, got, _, err := s.ListenUDP(udp.control)
+	if err != nil {
+		t.Fatalf("ListenUDP with %d busy: %v", lo, err)
+	}
+	defer conn.Close()
+	if got != hi {
+		t.Fatalf("ListenUDP port = %d, want %d after %d is in use", got, hi, lo)
+	}
+	if udp.calls != 2 {
+		t.Errorf("UDP control calls = %d, want one per socket tried (2)", udp.calls)
+	}
+}
+
+func TestPortManagerListenControlRefusalStops(t *testing.T) {
+	refused := errors.New("socket refused")
+	lo, hi := pmFreePorts(t)
+	s, err := NewPortManager("203.0.113.10", strconv.Itoa(lo)+","+strconv.Itoa(hi))
+	if err != nil {
+		t.Fatalf("NewPortManager: %v", err)
+	}
+
+	tcp := &pmControl{t: t, fail: refused}
+	if lis, got, _, err := s.ListenTCP(tcp.control); !errors.Is(err, refused) {
+		if lis != nil {
+			lis.Close()
+		}
+		t.Fatalf("ListenTCP = port %d, %v; want the control's refusal", got, err)
+	}
+	if tcp.calls != 1 {
+		t.Errorf("TCP control calls = %d, want 1: a refused socket must not move on to the next port", tcp.calls)
+	}
+	udp := &pmControl{t: t, fail: refused}
+	if conn, got, _, err := s.ListenUDP(udp.control); !errors.Is(err, refused) {
+		if conn != nil {
+			conn.Close()
+		}
+		t.Fatalf("ListenUDP = port %d, %v; want the control's refusal", got, err)
+	}
+	if udp.calls != 1 {
+		t.Errorf("UDP control calls = %d, want 1: a refused socket must not move on to the next port", udp.calls)
+	}
+
+	// Nothing was allocated and the refused sockets are closed: the lower port
+	// binds again, for either protocol, and then the higher one.
+	lis, got, _, err := s.ListenTCP(nil)
+	if err != nil {
+		t.Fatalf("ListenTCP after refusals: %v", err)
+	}
+	if got != lo {
+		t.Errorf("ListenTCP after refusals = port %d, want %d (allocated or left bound by a refusal)", got, lo)
+	}
+	lis.Close()
+	s.Release(got)
+	conn, got, _, err := s.ListenUDP(nil)
+	if err != nil {
+		t.Fatalf("ListenUDP after refusals: %v", err)
+	}
+	defer conn.Close()
+	if got != lo {
+		t.Errorf("ListenUDP after refusals = port %d, want %d (allocated or left bound by a refusal)", got, lo)
+	}
+	lis, got, _, err = s.ListenTCP(nil)
+	if err != nil {
+		t.Fatalf("second ListenTCP after refusals: %v", err)
+	}
+	defer lis.Close()
+	if got != hi {
+		t.Errorf("second ListenTCP after refusals = port %d, want %d", got, hi)
+	}
+}
+
+// The IPv4-only listeners of a run that refuses IPv6 bind the IPv4 wildcard,
+// so an IPv6 peer cannot reach them.
+func TestPortManagerIPv4OnlyListeners(t *testing.T) {
+	s, err := NewPortManager("203.0.113.10", strconv.Itoa(freePort(t))+","+strconv.Itoa(freePort(t)))
+	if err != nil {
+		t.Fatalf("NewPortManager: %v", err)
+	}
+	var none *PortManager
+	if s.PublicHost() != "203.0.113.10" || none.PublicHost() != "" {
+		t.Fatal("PublicHost")
+	}
+	lis, tcpPort, _, err := s.ListenTCP4(nil)
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer lis.Close()
+	conn, udpPort, _, err := s.ListenUDP4(nil)
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+	if ip := lis.Addr().(*net.TCPAddr).IP; ip.To4() == nil {
+		t.Errorf("ListenTCP4 bound %v", ip)
+	}
+	if ip := conn.LocalAddr().(*net.UDPAddr).IP; ip.To4() == nil {
+		t.Errorf("ListenUDP4 bound %v", ip)
+	}
+	if c, err := net.Dial("tcp6", "[::1]:"+strconv.Itoa(tcpPort)); err == nil {
+		c.Close()
+		t.Error("an IPv6 peer reached the IPv4-only listener")
+	}
+	s.Release(tcpPort)
+	s.Release(udpPort)
 }

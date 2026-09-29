@@ -5,7 +5,10 @@ package dispatcher
 
 import (
 	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
@@ -35,8 +38,171 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 		}
 		protocols = append(protocols, protocol)
 	}
-	return &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: observed.Unix(),
+	out := &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: observed.Unix(),
 		Protocols: protocols, EnforcementMode: report.GetEnforcementMode()}
+	if report.Attribution != nil {
+		out.Attribution = attributionFromReport(report.Attribution, observed)
+	}
+	out.EnforcementReason = enforcementReason(out.EnforcementMode, report.GetEnforcementReason())
+	if report.Icmp != nil {
+		out.ICMP = icmpFromReport(report.Icmp, slices.Contains(protocols, "icmp"))
+	}
+	if report.Tagging != nil {
+		out.Tagging = taggingFromReport(report.Tagging)
+	}
+	return out
+}
+
+// A malformed reason leaves the reason unknown and keeps the mode.
+func enforcementReason(mode, reason string) string {
+	switch reason {
+	case "configured", "no_interface", "not_permitted", "unsupported", "attach_failed":
+		if mode == "fallback" {
+			return reason
+		}
+	}
+	return ""
+}
+
+// icmpFromReport keeps a probe state that agrees with the reported protocols;
+// anything else leaves the ICMP state unknown without touching the protocols.
+func icmpFromReport(report *pb.ProbeState, advertised bool) *wire.ProbeState {
+	switch report.GetState() {
+	case "available":
+		if report.GetReason() != "" || !advertised {
+			return nil
+		}
+	case "unavailable":
+		switch report.GetReason() {
+		case "disabled", "not_permitted", "ping_socket_only", "unsupported":
+		default:
+			return nil
+		}
+		if advertised {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return &wire.ProbeState{State: report.GetState(), Reason: report.GetReason()}
+}
+
+// taggingFromReport validates the tagging mode. Nil means malformed, which
+// leaves tagging unknown while the rest of the report stands, as for
+// attribution. Each family carries one of the modes this schema defines.
+func taggingFromReport(report *pb.TaggingMode) *wire.TaggingMode {
+	for _, mode := range []string{report.GetIpv4(), report.GetIpv6(), report.GetScion()} {
+		switch mode {
+		case wire.TaggingEBPF, wire.TaggingUserspace, wire.TaggingNone:
+		default:
+			return nil
+		}
+	}
+	return &wire.TaggingMode{IPv4: report.GetIpv4(), IPv6: report.GetIpv6(), SCION: report.GetScion()}
+}
+
+// cloneTagging copies a tagging mode, so a snapshot never shares the
+// registry's value.
+func cloneTagging(tagging *wire.TaggingMode) *wire.TaggingMode {
+	if tagging == nil {
+		return nil
+	}
+	out := *tagging
+	return &out
+}
+
+// Attribution report bounds. An age beyond maxReportedAge cannot come from a
+// schedule this build creates and would overflow the derived times.
+const (
+	maxRefreshError = 128
+	maxReportedAge  = 10 * 365 * 24 * time.Hour
+)
+
+// attributionFromReport validates the attribution state and converts its ages
+// to times on the dispatcher's clock. Nil means malformed, which leaves
+// attribution unknown, as for an executor that predates it, while the rest of
+// the report stands: null never claims availability, and a bad attribution
+// field must not hide the node's protocols from discovery. The reason must
+// agree with the facts it names, so an unavailable report always says why.
+func attributionFromReport(report *pb.AttributionState, observed time.Time) *wire.AttributionState {
+	switch report.GetState() {
+	case "available":
+		if report.GetReason() != "" {
+			return nil
+		}
+	case "unavailable":
+		switch report.GetReason() {
+		case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held":
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
+	epoch := report.GetEpoch()
+	if epoch < 0 || (report.InstalledEpoch != nil && (*report.InstalledEpoch < 0 || *report.InstalledEpoch > epoch)) {
+		return nil
+	}
+	refreshError := report.GetRefreshError()
+	if len(refreshError) > maxRefreshError || !utf8.ValidString(refreshError) ||
+		strings.ContainsFunc(refreshError, unicode.IsControl) {
+		return nil
+	}
+	if (report.GetReason() == "refresh_failing" && refreshError == "") ||
+		(report.GetReason() == "disclosure_held" && report.DisclosureHeldMs == nil) {
+		return nil
+	}
+	at := func(age *int64) (*int64, bool) {
+		if age == nil {
+			return nil, true
+		}
+		if *age < 0 || *age > maxReportedAge.Milliseconds() {
+			return nil, false
+		}
+		unix := observed.Add(-time.Duration(*age) * time.Millisecond).Unix()
+		return &unix, true
+	}
+	lastRefresh, ok := at(report.LastRefreshAgeMs)
+	if !ok {
+		return nil
+	}
+	heldSince, ok := at(report.DisclosureHeldMs)
+	if !ok {
+		return nil
+	}
+	out := &wire.AttributionState{State: report.GetState(), Reason: report.GetReason(), Epoch: epoch,
+		LastRefreshAt: lastRefresh, RefreshError: refreshError, DisclosureHeldSince: heldSince}
+	if report.InstalledEpoch != nil {
+		installed := *report.InstalledEpoch
+		out.InstalledEpoch = &installed
+	}
+	return out
+}
+
+// Caller holds the registry lock. Unlike capabilitySnapshot this keeps a report
+// past its lifetime and says it was stale, because a result records what the
+// dispatcher knew at admission rather than filtering on it.
+func admissionCapabilities(entry *executorEntry, now time.Time) wire.VantageCapabilities {
+	if entry.Capabilities == nil {
+		return wire.VantageCapabilities{}
+	}
+	source, observed := wire.SourceExecutorReported, entry.capabilityObserved.UTC()
+	stale := now.Before(entry.capabilityObserved) || now.Sub(entry.capabilityObserved) >= capabilityLifetime
+	return wire.VantageCapabilities{
+		Value: &wire.CapabilityReport{SchemaVersion: int(entry.Capabilities.SchemaVersion),
+			Protocols: append([]string{}, entry.Capabilities.Protocols...), EnforcementMode: entry.Capabilities.EnforcementMode,
+			EnforcementReason: entry.Capabilities.EnforcementReason, ICMP: cloneProbe(entry.Capabilities.ICMP),
+			Tagging: cloneTagging(entry.Capabilities.Tagging)},
+		Source: &source, ObservedAt: &observed, Stale: &stale,
+	}
+}
+
+func cloneProbe(p *wire.ProbeState) *wire.ProbeState {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	return &out
 }
 
 // Caller holds the registry lock. Capacity belongs to the current registration
@@ -47,6 +213,12 @@ func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapab
 	}
 	out := *entry.Capabilities
 	out.Protocols = slices.Clone(out.Protocols)
+	if out.Attribution != nil {
+		attribution := *out.Attribution
+		out.Attribution = &attribution
+	}
+	out.ICMP = cloneProbe(out.ICMP)
+	out.Tagging = cloneTagging(out.Tagging)
 	if len(out.Protocols) == 0 {
 		out.Protocols = []string{}
 	}

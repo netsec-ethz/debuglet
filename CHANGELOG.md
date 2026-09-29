@@ -10,14 +10,109 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Security
+- The TESLA disclosure delay is configurable and at least two epochs.
+  Previously the key of epoch i was disclosed shortly after epoch i+1 began,
+  while verifiers accepted epochs t-1, t and t+1 for a packet of epoch t.
+  Anyone who had seen k_i could therefore forge tags that verify for packets
+  they timestamp in epoch i+1.
+  - The executor now discloses k_i at the start of epoch i+d.
+    `[tesla] disclosure_delay_epochs` sets d; 0 derives the smallest d
+    covering 15 minutes (90 epochs at the default 10-second epoch), and an
+    explicit value below 2, or with less than 10 s of margin
+    ((d − 1) × epoch length), is refused. The installed-key hold still applies.
+  - A restart starts a new chain, so the keys of the last d epochs before it
+    are never disclosed and those packets cannot be verified; the chain
+    exhaustion log names `final_disclosure_at`, the time after which a
+    restart loses nothing.
+  - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
+    skew) and logs the executor once as misbehaving. An executor that does
+    not report d is treated as d = 1.
+  - `tools/verify_pcap.py` tries only epochs t and t-1. It refuses a
+    schedule with d < 2 or without d, and a key that could have been public
+    at capture time plus `--clock-tolerance`.
+  - The browser verifier in debuglet-website needs the same change.
+  - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
+
 ### Added
+- Executor capability reports carry an `attribution` state, shown by
+  `GET /executors` and in the new `ATTRIBUTION` column of `dbl nodes`:
+  `available`, or `unavailable` with `epoch_zero`, `chain_exhausted`,
+  `refresh_failing` or `disclosure_held`, plus the installed epoch, the last
+  successful kernel key refresh, a short refresh error and since when
+  disclosure is held. The field is additive within capability schema 1; older
+  executors report none, which means unknown. A changed reason is reported on
+  the next heartbeat. See `docs/operations/executor-discovery.md`.
+- Executor capability reports carry a `tagging` mode per address family and
+  for SCION, e.g. `{"ipv4": "ebpf", "ipv6": "none", "scion": "none"}`
+  (`ebpf`, `userspace` or `none`), shown by `GET /executors` and recorded in
+  the result's `provenance.vantage_point` capability snapshot. The field is
+  additive within capability schema 1 and result format 1.1; `null` means
+  unknown. It is the node's capability, the mode a run is set up to get, not a
+  per-run measurement. See `docs/operations/executor-discovery.md#tagging-mode`.
 - `debuglet-dispatcher -check-database` and `debuglet-executor -check-database`
   report read-only whether the configured database is current for the build
   (exit 0), needs the upgrade (3) or needs an upgrade that drops the recorded
   runs and their logs (4). `-upgrade-database` refuses such an upgrade unless
   `-accept-data-loss` is given. Both modes name the absolute database path.
+- Portable result format 1.1: admission records `provenance.vantage_point`,
+  the executor's capability report (with its receipt time and whether it was
+  stale), the control connection's source IP and the executor's `public_host`.
+  Every value carries a `source` label (`operator`, `executor-reported`,
+  `dispatcher-observed`); none means verified, and unrecorded values are null.
+  Exports are written as 1.1; `client.ReadResult` and `dbl` still read 1.0 files
+  and reject a 1.0 file carrying a vantage point. Older readers reject 1.1
+  exports. See `docs/results.md`.
+- API 1.9: `GET /executors` reports `admission` (`ready`, `maintenance`,
+  `offline`), operator display metadata (`display_name`, `city`, `country`,
+  `network`) from new optional `[executors."<id>"]` dispatcher configuration
+  tables, and the executor-reported SCION ISD-AS and listener transports, each
+  with a source label. Executors send them in a new `VantagePointReport` beside
+  the capability report. `provenance.vantage_point` gains `scion_isd_as` and
+  `display` within schema 1; earlier 1.1 files remain valid. `dbl nodes` shows
+  the new columns, and `dbl nodes`, `dbl run` and `ExecutorFilter.ISDAS` filter
+  by ISD-AS. See `docs/operations/executor-discovery.md`.
+- Executors probe their host at startup and with every capability report.
+  `capabilities.icmp` reports whether a raw ICMPv4 socket opens (`available`,
+  or `unavailable` with `disabled`, `not_permitted`, `ping_socket_only` or
+  `unsupported`); the probe is repeated instead of cached for the process
+  lifetime, and `network.policy.icmp = false` still switches ICMP off.
+  `capabilities.enforcement_reason` says why the fallback counter is used.
+  A new `clock` field in `GET /executors` reports the kernel clock state
+  (`synced`, `unsynced`, `unknown`) and its error estimates read with
+  `adjtimex`, graded `degraded` above the new executor setting
+  `clock.max_error_ms` (default 100 ms). The host platform (OS, architecture,
+  kernel, CPUs, memory, build version) is operator-only: it is never listed and
+  is recorded only in result provenance. `provenance.vantage_point` gains
+  `clock` and `platform`, and its capability report gains `icmp` and
+  `enforcement_reason`, all within schema 1 and labelled `executor-reported`.
+  `timing.clock_uncertainty_ns` stays null.
+- `dbl doctor` checks the kernel clock against the executor's
+  `clock.max_error_ms` instead of reporting `clock: not_checked`: synchronized within the bound passes; unsynced or
+  above the bound stays `not_checked` with the reason (the executor admits
+  runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
 
 ### Changed
+- The executor's `[tesla] delay` key is renamed `epoch_seconds`: it always was
+  the epoch length, not a delay. `delay` is still read when `epoch_seconds`
+  is unset, with a deprecation warning; setting both is an error. The
+  Ansible variable `tesla_delay` is likewise `tesla_epoch_seconds`, and
+  `tesla_disclosure_delay_epochs` is new. Configuration errors name the field
+  and its allowed range.
+- The executor hello carries `tesla_disclosure_delay_epochs` (protocol field
+  20). `GET /executors/:id/tesla` adds `epoch_seconds` (`delay_sec`, with
+  the same value, is deprecated), `disclosure_delay_epochs`,
+  `disclosure_delay_seconds`, `next_disclosure_epoch` and
+  `next_disclosure_at_ns`. The change is additive within API 1.9.
+- A run whose packets the eBPF tagger attributes refuses IPv6 destinations and
+  peers instead of sending them untagged, and binds its TCP and UDP listeners
+  to IPv4 only; a dual-stack name is dialled on its IPv4 addresses. Such a
+  node with an IPv6 `public_host` literal refuses TCP and UDP listeners and
+  does not advertise them. The guest
+  sees `denied`, and a failed run reports `destination refused: IPv6 not tagged
+  on this executor`. Runs with the pure-Go tagger keep IPv6. SCION traffic
+  stays permitted and is reported untagged (`tagging.scion = none`), since its
+  sockets cannot be marked.
 - `install.sh` prints the `export PATH=...` line to use when the installed
   `bin` directory is not on `PATH`.
 - Lead the README with a published installation and organize versioned
@@ -38,6 +133,13 @@ changes; the linked API and deployment documentation contains operational detail
   host-name rules documented in `docs/operations/configuration.md`.
 
 ### Fixed
+- A TESLA key is disclosed only after every kernel tagger has moved off it,
+  including the last key at the end of the chain. The kernel key refresh runs
+  at each epoch boundary instead of every half epoch; a delayed or failed
+  refresh delays disclosure instead of leaving a disclosed key installed.
+- The executor reports "TESLA key chain nearly exhausted" and "TESLA key
+  chain exhausted" once per process; a reconnected control session no longer
+  repeats them.
 - Answer `400 unknown_executor` when a submission names an executor that is
   not registered or no longer available at admission, and `400 invalid_policy`
   when the policy requires ICMP or a listener the executor cannot serve; these
@@ -54,6 +156,16 @@ changes; the linked API and deployment documentation contains operational detail
 - Refuse a destination limit below the floors reserved for admitted runs
   whose window lies ahead, not only below the floors of active allocations
   (`PATCH /destination` answers 409 `capacity_exhausted`).
+- Verify each TESLA key an executor discloses on its heartbeat against its
+  chain anchor before storing it, hashing forward from the last verified key.
+  A key that does not verify, lies ahead of the chain's registered schedule
+  or more than one week of epochs past it, or
+  differs from the key stored for its epoch is dropped and logged once per
+  chain; an older epoch is ignored. The heartbeat itself still succeeds.
+- Listener sockets of a run are marked for packet attribution before they
+  bind and listen, so a SYN-ACK and every accepted connection carry the
+  run's mark; a refused mark fails the listener instead of trying the next
+  port.
 
 ## [0.2.0] - 2026-09-27
 

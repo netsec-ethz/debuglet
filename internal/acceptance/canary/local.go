@@ -121,7 +121,7 @@ func (s *local) startProxy(ctx context.Context, upstream string) (string, error)
 // Keep the canary's disclosure cadence while using the local TEST profile.
 func localExecutorConfiguration(executorID, version, db string, record readiness.Record) map[string]any {
 	cfg := demo.ExecutorConfiguration(version, executorID, db, record)
-	cfg["tesla"].(map[string]any)["delay"] = 2
+	cfg["tesla"].(map[string]any)["epoch_seconds"] = 2
 	cfg["tesla"].(map[string]any)["chain_length"] = 3600
 	return cfg
 }

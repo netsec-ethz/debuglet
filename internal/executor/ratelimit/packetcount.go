@@ -12,6 +12,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/fallback"
 	"net"
+	"os"
+	"syscall"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -68,7 +70,42 @@ func newPacketCount(iface *net.Interface, logger *zap.Logger, newBPF func(*net.I
 	if err2 != nil {
 		return nil, fmt.Errorf("failed to initialize packet count: %w: %w", err, err2)
 	}
+	fc.SetReason(fallbackReason(iface, err))
 	return fc, nil
+}
+
+// Fallback reasons. FallbackConfigured is decided by the configuration, which
+// this package does not see; the executor reports it.
+const (
+	FallbackConfigured   = "configured"
+	FallbackNoInterface  = "no_interface"
+	FallbackNotPermitted = "not_permitted"
+	FallbackUnsupported  = "unsupported"
+	FallbackAttachFailed = "attach_failed"
+)
+
+// fallbackReason names why the eBPF counter was not used, as a short stable
+// word; the log keeps the full error.
+func fallbackReason(iface *net.Interface, err error) string {
+	switch {
+	case iface == nil:
+		return FallbackNoInterface
+	case errors.Is(err, os.ErrPermission):
+		return FallbackNotPermitted
+	case errors.Is(err, errors.ErrUnsupported), errors.Is(err, syscall.ENOTSUP), errors.Is(err, syscall.EOPNOTSUPP):
+		return FallbackUnsupported
+	default:
+		return FallbackAttachFailed
+	}
+}
+
+// FallbackReason is why pc stands in for eBPF, or empty when pc is not a
+// fallback counter or its reason is unknown.
+func FallbackReason(pc PacketCount) string {
+	if reasoned, ok := pc.(interface{ Reason() string }); ok && pc.Type() == "fallback" {
+		return reasoned.Reason()
+	}
+	return ""
 }
 
 // getDefaultInterface determines the default interface used when connecting to the internet

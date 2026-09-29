@@ -191,7 +191,7 @@ func TestInstalledOutput(t *testing.T) {
 			"identity":    map[string]any{"executor_id": executorID},
 			"dispatcher":  map[string]any{"addr": listener.Addr().String(), "yamux_addr": d.ready.HTTPAddr},
 			"credentials": map[string]any{"ca_cert": ca.CertFile, "client_cert": identity.CertFile, "client_key": identity.KeyFile, "enrollment_token": token},
-			"resources":   map[string]any{"capacity": 1000000000, "max_debuglets": 4}, "tesla": map[string]any{"delay": 30},
+			"resources":   map[string]any{"capacity": 1000000000, "max_debuglets": 4}, "tesla": map[string]any{"epoch_seconds": 30},
 			"network": map[string]any{"packet_counter": "fallback", "disable_scion_environment": true, "policy": map[string]any{"local_targets": true}},
 			"logging": map[string]any{"log_level": "error", "json_logs": true}, "database": map[string]any{"path": executorPath},
 			"pricing": map[string]any{"price_per_bw_s": 1, "currency": "TEST"},

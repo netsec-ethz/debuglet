@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -30,13 +31,20 @@ type RegisteredExecutor struct {
 	Ready    bool
 	LastSeen time.Time
 
-	TeslaDelay           time.Duration
+	TeslaDelay           time.Duration // the epoch length I (historical name)
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte // k_0, the public chain anchor
+	// TeslaDisclosureDelay is d in epochs: the key of epoch i is disclosed
+	// from the start of epoch i+d. Zero means the executor predates it and
+	// disclosed after one epoch.
+	TeslaDisclosureDelay int64
 
 	ICMPEnabled        bool
 	Capabilities       *wire.ExecutorCapabilities
 	capabilityObserved time.Time
+	vantage            *vantageReport
+	vantageObserved    time.Time
+	display            config.ExecutorDisplay
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -47,8 +55,10 @@ type RegisteredExecutor struct {
 	SuiWallet   string
 	capacity    bitrate.Bitrate
 
-	sourceIp   string
-	publicHost *string
+	sourceIp string
+	// sourceIPObserved is false when sourceIp is the executor's own hello claim.
+	sourceIPObserved bool
+	publicHost       *string
 }
 
 // PublicHost returns the executor's public host (IP or domain) at which
@@ -178,7 +188,8 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	if err := callCtx.Err(); err != nil {
 		return err
 	}
-	if sourceIP == "" {
+	observedIP := sourceIP != ""
+	if !observedIP {
 		sourceIP = hello.GetSourceIp()
 	}
 	record := &RegisteredExecutor{
@@ -186,9 +197,10 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		TeslaDelay:           time.Duration(hello.GetTeslaDelaySec()) * time.Second,
 		TeslaAnchorTimestamp: time.Unix(0, hello.GetTeslaAnchorTimestampNs()),
 		TeslaAnchorKey:       append([]byte(nil), hello.GetTeslaAnchorKey()...),
+		TeslaDisclosureDelay: hello.GetTeslaDisclosureDelayEpochs(),
 		ICMPEnabled:          hello.GetIcmpEnabled(), PricePerBwS: hello.GetPricePerBwS(),
 		Currency: hello.GetCurrency(), SuiWallet: hello.GetSuiWallet(),
-		sourceIp: sourceIP, history: &debugletHistory{},
+		sourceIp: sourceIP, sourceIPObserved: observedIP, history: &debugletHistory{},
 	}
 	if host := hello.GetPublicHost(); host != "" {
 		record.publicHost = &host
@@ -197,11 +209,14 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	record.LastSeen = d.now()
 	record.Capabilities = capabilitiesFromReport(hello.GetCapabilities(), record.LastSeen)
 	record.capabilityObserved = record.LastSeen
+	record.vantage = vantageFromReport(hello.GetVantagePoint())
+	record.vantageObserved = record.LastSeen
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return ErrDispatcherClosed
 	}
+	record.display = d.display[record.ID]
 	old := d.executors[record.ID]
 	if old != nil {
 		record.history = cloneHistory(old.history)
@@ -250,6 +265,9 @@ func cloneHistory(history *debugletHistory) *debugletHistory {
 func snapshotLocked(entry *executorEntry, now time.Time) RegisteredExecutor {
 	out := *entry.RegisteredExecutor
 	out.Capabilities = capabilitySnapshot(entry, now)
+	if vantageExpired(entry.vantageObserved, now) {
+		out.vantage = nil
+	}
 	out.TeslaAnchorKey = append([]byte(nil), out.TeslaAnchorKey...)
 	out.history = cloneHistory(entry.history)
 	if entry.publicHost != nil {

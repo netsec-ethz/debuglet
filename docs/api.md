@@ -32,6 +32,10 @@ An order is priced from its executor's `price_per_bw`, the price per bit per sec
 
 A `TEST` intent has no payment backend: its transaction row is the intent, written in one database transaction together with its orders and, when the caller is an account, its owner, and it counts as paid on creation. The transaction records the total of its batch as its price and `TEST` as its currency, and every order records its own price and `TEST`; these amounts are bookkeeping only and move no funds. A `TEST` transaction recorded by a version older than 0.2.0-rc.2 carries the price 0 and an empty currency: it remains spendable as before, its amount can be read as the sum of its order rows, and nothing on the `TEST` path reads those two fields. `USDC` is the only chain method the HTTP API admits, and it is refused with `payments_disabled` while blockchain payments are disabled; this section describes `TEST`.
 
+## Executor listing
+
+API 1.9 also adds `admission`, operator `display` metadata, the executor-reported `scion_isd_as` and `listeners` to `GET /executors`. Each value carries a source label; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata). It also adds the executor's host probes: `capabilities.icmp`, `capabilities.enforcement_reason` and `clock`. Host platform detail is operator-only and is never listed; it appears only in result provenance ([host probes](operations/executor-discovery.md#host-probes)).
+
 ## Recovery inspection
 
 `GET /debuglet/{id}/recovery` inspects a known run without changing its state, reservations or payments. It reports stored outcome, control availability and at most one dated executor observation separately. See [recovery inspection](operations/recovery-inspection.md) for classifications and nullable provenance. The route was added in API 1.5.

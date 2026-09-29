@@ -10,14 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
 	"github.com/netsec-ethz/debuglet/internal/executor/platform"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
@@ -70,6 +73,7 @@ type Debuglet struct {
 	env *wasm.WasmEnv
 
 	transactionID string
+	tagging       tagger.Mode
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
@@ -85,10 +89,12 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	var constructorCleanup error
+	mode := tagger.Untagged
 	if iface != nil && runtime.GOOS == "linux" {
 		if bt, err := newBPF(logger, iface, schedule, []byte(debugletID.String())); err == nil {
 			logger.Info("Using eBPF packet tagger", zap.String("interface", iface.Name), zap.String("attachment", bt.Attachment))
 			pktTagger = bt
+			mode.IPv4 = tagger.ModeEBPF
 		} else {
 			constructorCleanup = cleanup.Released(err)
 			logger.Warn("Failed to initialize BPF tagger, falling back to pure-Go", zap.Error(err))
@@ -102,6 +108,10 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 		logger.Warn("No eBPF tagger available: UDP and ICMP to IPv4 destinations are tagged in user space when raw sockets are permitted (CAP_NET_RAW); TCP and TLS packets will NOT carry attribution tags",
 			zap.Bool("interface_configured", iface != nil), zap.String("goos", runtime.GOOS))
 		pktTagger = tagger.New(schedule, []byte(debugletID.String()))
+		mode.IPv4 = UserspaceTagging()
+	}
+	if mode.RefusesIPv6() {
+		logger.Info("IPv6 destinations and peers are refused and listeners bound to IPv4 only: the eBPF tagger tags IPv4 only")
 	}
 
 	env := wasm.WasmEnv{
@@ -113,6 +123,7 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 			ListenTCP:   policy.ListenTCP,
 			ListenUDP:   policy.ListenUDP,
 			ListenSCION: policy.ListenSCION,
+			RefuseIPv6:  mode.RefusesIPv6(),
 		}),
 		Limiter:     limiter,
 		Accountant:  ratelimit.NewAccountant(limiter, debugletID),
@@ -134,8 +145,37 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 		createdAt:     time.Now(),
 		env:           &env,
 		transactionID: transactionID,
+		tagging:       mode,
 	}
 }
+
+// UserspaceTagging is the IPv4 mode the pure-Go tagger gives a run on this
+// host: userspace where it can send tagged datagrams through raw sockets
+// (Linux with CAP_NET_RAW), none elsewhere.
+func UserspaceTagging() string {
+	if runtime.GOOS == "linux" && netpolicy.ICMPPermitted() == nil {
+		return tagger.ModeUserspace
+	}
+	return tagger.ModeNone
+}
+
+// ExpectedTagging is the mode a run on this node is set up to get: the
+// kernel tagger where the eBPF packet counter loaded on the interface, since
+// the tagger attaches to the same interface the same way, otherwise the
+// pure-Go tagger. A run whose kernel tagger then fails to load falls back to
+// the pure-Go tagger; Tagging reports what it actually got.
+func ExpectedTagging(iface *net.Interface, counter string) tagger.Mode {
+	mode := tagger.Untagged
+	if iface != nil && runtime.GOOS == "linux" && counter == "ebpf" {
+		mode.IPv4 = tagger.ModeEBPF
+	} else {
+		mode.IPv4 = UserspaceTagging()
+	}
+	return mode
+}
+
+// Tagging is this run's effective tagging mode, fixed when it was created.
+func (d *Debuglet) Tagging() tagger.Mode { return d.tagging }
 
 // InitRuntime starts the network servers and compiles and instantiates the WASM
 // module. It must be called exactly once before Run.
@@ -159,6 +199,39 @@ type StartServersReq struct {
 	SCION bool
 }
 
+// markListener returns the listen control that puts a listening socket under
+// the run's packet attribution before it is bound, so its first handshake
+// reply or datagram is already marked and accepted connections inherit the
+// mark. Without a tagger there is nothing to mark.
+func markListener(tg tagger.TaggerInterface) func(network, address string, c syscall.RawConn) error {
+	if tg == nil {
+		return nil
+	}
+	return func(_, _ string, c syscall.RawConn) error { return hostconn.MarkSocket(c, tg) }
+}
+
+// checkListenerFamily refuses a listener of a run that refuses IPv6 when the
+// public host it would be advertised under is an IPv6 address: the listener
+// is bound to IPv4 only, so peers could not reach it there, and anything it
+// answered them with would leave untagged.
+func (d *Debuglet) checkListenerFamily() error {
+	if !d.env.Net.RefusesIPv6() {
+		return nil
+	}
+	host := d.env.PortManager.PublicHost()
+	if IPv6PublicHost(host) {
+		return fmt.Errorf("%w: listener: public host %s is an IPv6 address and this executor's kernel tagger tags IPv4 only", netpolicy.ErrUntagged, host)
+	}
+	return nil
+}
+
+// IPv6PublicHost reports whether host is an IPv6 literal (IPv4-mapped counts
+// as IPv4), under which a run that refuses IPv6 cannot offer a listener.
+func IPv6PublicHost(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	return err == nil && !netpolicy.Normalize(addr).Is4()
+}
+
 // startServers starts the network listeners required by this debuglet instance.
 // Currently only the SCION/UDP listener is active; TCP and plain UDP are
 // reserved for future use.
@@ -180,7 +253,14 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if !d.env.PortManager.Enabled() {
 			return fmt.Errorf("startServers: TCP listener requested but not enabled (public_host/public_ports not configured)")
 		}
-		lis, port, addr, err := d.env.PortManager.ListenTCP()
+		if err := d.checkListenerFamily(); err != nil {
+			return fmt.Errorf("startServers: TCP listener: %w", err)
+		}
+		listen := d.env.PortManager.ListenTCP
+		if d.env.Net.RefusesIPv6() {
+			listen = d.env.PortManager.ListenTCP4
+		}
+		lis, port, addr, err := listen(markListener(d.env.Tagger))
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
 		}
@@ -197,7 +277,14 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if !d.env.PortManager.Enabled() {
 			return fmt.Errorf("startServers: UDP listener requested but not enabled (public_host/public_ports not configured)")
 		}
-		conn, port, addr, err := d.env.PortManager.ListenUDP()
+		if err := d.checkListenerFamily(); err != nil {
+			return fmt.Errorf("startServers: UDP listener: %w", err)
+		}
+		listen := d.env.PortManager.ListenUDP
+		if d.env.Net.RefusesIPv6() {
+			listen = d.env.PortManager.ListenUDP4
+		}
+		conn, port, addr, err := listen(markListener(d.env.Tagger))
 		if err != nil {
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
 		}

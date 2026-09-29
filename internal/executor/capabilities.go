@@ -5,48 +5,93 @@ package executor
 
 import (
 	"context"
+	"math"
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/hostprobe"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"github.com/scionproto/scion/pkg/addr"
 	"github.com/scionproto/scion/pkg/daemon"
 	"github.com/scionproto/scion/pkg/snet/addrutil"
+	"go.uber.org/zap"
 )
 
 // A heartbeat may run much faster than this interval for TESLA disclosure. Send
 // only newly collected observations; resending a cached positive would renew its
-// dispatcher expiry without probing whether it is still available.
-func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.ExecutorCapabilities {
+// dispatcher expiry without probing whether it is still available. A changed
+// attribution reason is sent on the next heartbeat regardless, so a failing key
+// refresh is not advertised as available until the interval ends. A changed
+// tagging mode is likewise sent on the next heartbeat. Both reports come from
+// the same probe and are sent, or omitted, together.
+func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
 	now := time.Now()
+	attribution := attributionReport(e.teslaSchedule, now)
+	tagging := e.tagging()
 	e.capabilityMu.Lock()
-	if !initial && now.Before(e.capabilityNext) {
+	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason && tagging == e.capabilityTagging {
 		e.capabilityMu.Unlock()
-		return nil
+		return nil, nil
 	}
 	e.capabilityNext = now.Add(30 * time.Second)
+	e.capabilityReason = attribution.GetReason()
 	e.capabilityMu.Unlock()
 
-	report := &pb.ExecutorCapabilities{SchemaVersion: 1}
 	policy := e.cfg.Network.Policy.Spec()
+	icmp := icmpReport(policy.ICMP, netpolicy.RefreshICMP)
+	// The userspace tagger needs the same raw sockets, so the tagging mode is
+	// read again after the probe refreshed that answer; otherwise one report
+	// could carry a fresh ICMP state beside a tagging mode from the last one.
+	tagging = e.tagging()
+	e.capabilityMu.Lock()
+	e.capabilityTagging = tagging
+	e.capabilityMu.Unlock()
+
+	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
+		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION}}
+	vantage := &pb.VantagePointReport{SchemaVersion: 1, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	for _, transport := range []struct {
 		name    string
 		enabled bool
 	}{
 		{"tcp", policy.TCP}, {"tls", policy.TLS}, {"udp", policy.UDP},
-		{"icmp", policy.ICMP && netpolicy.ICMPPermitted() == nil},
+		{"icmp", report.Icmp.GetState() == "available"},
 	} {
 		if transport.enabled {
 			report.Protocols = append(report.Protocols, transport.name)
 		}
 	}
+	// TCP and UDP listeners need the inbound switch, the transport and both
+	// public_host and public_ports; the address itself is not reported here.
+	// A node whose runs refuse IPv6 cannot offer them under an IPv6 public
+	// host: the run refuses such a listener.
+	inbound := policy.Inbound && e.portManager.Enabled() &&
+		!(tagging.RefusesIPv6() && debuglet.IPv6PublicHost(e.portManager.PublicHost()))
+	if inbound && policy.TCP {
+		vantage.Listeners = append(vantage.Listeners, "tcp")
+	}
+	if inbound && policy.UDP {
+		vantage.Listeners = append(vantage.Listeners, "udp")
+	}
 	if e.packetCount != nil {
 		switch mode := e.packetCount.Type(); mode {
-		case "ebpf", "fallback":
+		case "ebpf":
 			report.EnforcementMode = mode
+		case "fallback":
+			report.EnforcementMode = mode
+			report.EnforcementReason = ratelimit.FallbackReason(e.packetCount)
+			if e.cfg.Network.PacketCounter == "fallback" {
+				report.EnforcementReason = ratelimit.FallbackConfigured
+			}
 		}
 	}
 	if policy.SCION {
@@ -55,47 +100,171 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.Execu
 			budget = 500 * time.Millisecond
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, budget)
-		if scionAvailable(probeCtx) {
-			report.Protocols = append(report.Protocols, "scion")
-		}
+		ia, available := scionProbe(probeCtx)
 		cancel()
+		if !ia.IsWildcard() {
+			vantage.ScionIsdAs = ia.String()
+		}
+		if available {
+			report.Protocols = append(report.Protocols, "scion")
+			if policy.Inbound {
+				vantage.Listeners = append(vantage.Listeners, "scion")
+			}
+		}
 	}
-	return report
+	return report, vantage
+}
+
+// icmpReport probes raw ICMPv4 sockets unless the operator switched ICMP off,
+// in which case no socket is opened. The probe also refreshes the answer guest
+// admission uses.
+func icmpReport(enabled bool, probe func() (string, error)) *pb.ProbeState {
+	if !enabled {
+		return &pb.ProbeState{State: "unavailable", Reason: netpolicy.ICMPDisabled}
+	}
+	if reason, err := probe(); err != nil {
+		if reason == "" {
+			reason = netpolicy.ICMPUnsupported
+		}
+		return &pb.ProbeState{State: "unavailable", Reason: reason}
+	}
+	return &pb.ProbeState{State: "available"}
+}
+
+// clockReport reads the kernel clock against the configured bound and logs a
+// change of its degraded reason once.
+func (e *Executor) clockReport() *pb.ClockState {
+	c := hostprobe.ReadClock(e.cfg.Clock.MaxErrorBound())
+	e.capabilityMu.Lock()
+	changed := c.Reason != e.clockReason
+	e.clockReason = c.Reason
+	e.capabilityMu.Unlock()
+	if changed && e.logger != nil {
+		if c.Reason != "" {
+			e.logger.Warn("Clock readiness degraded", zap.String("reason", c.Reason), zap.String("state", c.State), zap.Duration("bound", c.Bound))
+		} else {
+			e.logger.Info("Clock readiness restored", zap.String("state", c.State))
+		}
+	}
+	return clockState(c)
+}
+
+func clockState(c hostprobe.Clock) *pb.ClockState {
+	out := &pb.ClockState{State: c.State, ErrorBoundNs: c.Bound.Nanoseconds(), Readiness: c.Readiness, Reason: c.Reason}
+	if c.EstimatedError != nil {
+		ns := c.EstimatedError.Nanoseconds()
+		out.EstimatedErrorNs = &ns
+	}
+	if c.MaxError != nil {
+		ns := c.MaxError.Nanoseconds()
+		out.MaxErrorNs = &ns
+	}
+	return out
+}
+
+func platformReport(p hostprobe.Platform) *pb.HostPlatform {
+	out := &pb.HostPlatform{Os: p.OS, Arch: p.Arch, KernelRelease: p.KernelRelease, BuildVersion: p.BuildVersion}
+	if p.CPUs > 0 && p.CPUs <= math.MaxUint32 {
+		out.Cpus = uint32(p.CPUs)
+	}
+	if p.MemoryBytes > 0 {
+		memory := p.MemoryBytes
+		out.MemoryBytes = &memory
+	}
+	return out
+}
+
+// tagging is this node's tagging capability: the mode a run on it is set up
+// to get, which depends on the node (interface, eBPF counter, raw-socket
+// permission) and not on any one run. It does not follow individual runs, so
+// the capability snapshot a result keeps from admission describes the node,
+// never a previous run. A run whose kernel tagger then fails to load falls
+// back to the pure-Go tagger and logs so; that per-run fallback is not
+// reported.
+func (e *Executor) tagging() tagger.Mode {
+	counter := ""
+	if e.packetCount != nil {
+		counter = e.packetCount.Type()
+	}
+	return debuglet.ExpectedTagging(e.iface, counter)
+}
+
+// maxRefreshError bounds the refresh error text a report carries; the
+// dispatcher refuses a longer one.
+const maxRefreshError = 128
+
+// attributionReport converts the schedule's state into the report. A refresh
+// error is cut to maxRefreshError bytes on a rune boundary; the executor log
+// keeps the full text. Nil without a schedule, which leaves attribution unknown.
+func attributionReport(schedule *tesla.KeySchedule, now time.Time) *pb.AttributionState {
+	if schedule == nil {
+		return nil
+	}
+	a := schedule.Attribution(now)
+	out := &pb.AttributionState{State: "available", Reason: a.Reason, Epoch: a.Epoch}
+	if a.Reason != "" {
+		out.State = "unavailable"
+	}
+	if a.Installed {
+		out.InstalledEpoch = &a.InstalledEpoch
+	}
+	if !a.LastInstall.IsZero() {
+		age := max(now.Sub(a.LastInstall), 0).Milliseconds()
+		out.LastRefreshAgeMs = &age
+	}
+	if a.RefreshErr != nil {
+		text := strings.ToValidUTF8(a.RefreshErr.Error(), "?")
+		for len(text) > maxRefreshError {
+			_, size := utf8.DecodeLastRuneInString(text)
+			text = text[:len(text)-size]
+		}
+		if text == "" {
+			text = "unknown error"
+		}
+		out.RefreshError = text
+	}
+	if !a.HeldSince.IsZero() {
+		held := max(now.Sub(a.HeldSince), 0).Milliseconds()
+		out.DisclosureHeldMs = &held
+	}
+	return out
 }
 
 // Probe the configured daemon and local route only. The execution helper also
 // accepts hostnames, but its DNS resolution is not context bounded. Such names
 // therefore remain unknown to discovery; this probe never resolves or sends a
-// packet to a destination. No runtime lock is held while probing.
-func scionAvailable(ctx context.Context) bool {
+// packet to a destination. No runtime lock is held while probing. The local
+// ISD-AS is returned whenever the daemon names one, even if no local route to
+// its control service is found.
+func scionProbe(ctx context.Context) (addr.IA, bool) {
 	target := os.Getenv("SCION_DAEMON_ADDRESS")
 	endpoint, err := netip.ParseAddrPort(target)
 	if err != nil || endpoint.Port() == 0 {
-		return false
+		return 0, false
 	}
 	connector, err := daemon.NewService(target).Connect(ctx)
 	if err != nil {
-		return false
+		return 0, false
 	}
 	defer connector.Close()
 	info, err := connector.ASInfo(ctx, 0)
 	if err != nil || info.IA == 0 {
-		return false
+		return 0, false
 	}
 	services, err := connector.SVCInfo(ctx, []addr.SVC{addr.SvcCS})
 	if err != nil {
-		return false
+		return info.IA, false
 	}
 	for _, service := range services[addr.SvcCS] {
 		if ctx.Err() != nil {
-			return false
+			return info.IA, false
 		}
 		endpoint, err := netip.ParseAddrPort(service)
 		if err == nil && endpoint.Port() != 0 {
 			if _, err := addrutil.ResolveLocal(net.IP(endpoint.Addr().AsSlice())); err == nil {
-				return true
+				return info.IA, true
 			}
 		}
 	}
-	return false
+	return info.IA, false
 }

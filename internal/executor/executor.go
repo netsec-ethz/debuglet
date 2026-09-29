@@ -42,6 +42,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/tlsfiles"
@@ -62,9 +63,18 @@ import (
 type Executor struct {
 	capabilityMu   sync.Mutex
 	capabilityNext time.Time
-	cfg            config.ExecutorConfig
-	teslaSchedule  *tesla.KeySchedule
-	logger         *zap.Logger
+	// capabilityReason is the attribution reason of the last report sent.
+	capabilityReason string
+	// capabilityTagging is the tagging mode of the last report sent.
+	capabilityTagging tagger.Mode
+	// clockReason is the clock readiness reason last logged.
+	clockReason   string
+	cfg           config.ExecutorConfig
+	teslaSchedule *tesla.KeySchedule
+	// chainReport is the node's, so each end-of-chain line is logged once per
+	// process rather than once per control session.
+	chainReport *chainReport
+	logger      *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
@@ -121,7 +131,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule,
+	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
 		packetCount: node.packetCount, iface: node.iface, portManager: ports,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
@@ -295,7 +305,9 @@ func (e *Executor) announceResourcesWith(ctx context.Context, announce, wait fun
 
 // chainReport decides what the heartbeat loop logs about the end of the key
 // chain. Each condition is reported on the first tick that observes it and
-// never again while it holds, so a short epoch does not repeat the line.
+// never again while it holds, so a short epoch does not repeat the line. The
+// node keeps one for all its sessions; sessions never overlap, so only one
+// heartbeat loop uses it at a time.
 type chainReport struct {
 	nearly, exhausted bool
 }
@@ -308,8 +320,8 @@ func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level
 	case schedule.Exhausted(now):
 		if !r.exhausted {
 			r.exhausted = true
-			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; restart the executor or raise tesla.chain_length",
-				[]zap.Field{zap.Time("expired_at", expiry)}
+			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; raise tesla.chain_length and restart the executor after final_disclosure_at, since a restart before then never discloses the keys of the chain's last epochs",
+				[]zap.Field{zap.Time("expired_at", expiry), zap.Time("final_disclosure_at", schedule.FinalDisclosure())}
 		}
 	case expiry.Sub(now) < time.Hour:
 		if !r.nearly {
@@ -323,29 +335,30 @@ func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level
 
 func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsession.Binding) {
 	interval := 30 * time.Second
-	if disclosureInterval := e.teslaSchedule.Config().Delay / 2; disclosureInterval < interval {
+	if disclosureInterval := e.teslaSchedule.Config().EpochLength / 2; disclosureInterval < interval {
 		interval = disclosureInterval
 	}
 	e.logger.Info("Starting heartbeat loop", zap.Duration("interval", interval))
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	var report chainReport
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			now := time.Now()
-			if level, msg, fields := report.observe(e.teslaSchedule, now); msg != "" {
+			if level, msg, fields := e.chainReport.observe(e.teslaSchedule, now); msg != "" {
 				e.logger.Log(level, msg, fields...)
 			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
+			capabilities, vantage := e.capabilityReport(ctx, false)
 			req := &protocol.HeartbeatRequest{
 				ExecutorId:    e.cfg.Identity.ExecutorID,
 				TimestampNs:   now.UnixNano(),
 				TeslaKeyEpoch: epoch,
 				TeslaKey:      key,
-				Capabilities:  e.capabilityReport(ctx, false),
+				Capabilities:  capabilities,
+				VantagePoint:  vantage,
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))

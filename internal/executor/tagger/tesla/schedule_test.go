@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,10 +23,11 @@ func newTestSchedule(t *testing.T, delay time.Duration) *KeySchedule {
 	t.Helper()
 	epoch := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	ks, err := NewKeySchedule(Config{
-		Seed:        fixedSeed,
-		ChainLength: 100, // small chain for fast tests
-		Delay:       delay,
-		Epoch:       epoch,
+		Seed:            fixedSeed,
+		ChainLength:     100, // small chain for fast tests
+		EpochLength:     delay,
+		DisclosureDelay: MinDisclosureDelay,
+		Epoch:           epoch,
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
@@ -294,42 +296,63 @@ func TestCurrentKeyAdvances(t *testing.T) {
 	}
 }
 
-// TestDisclosedKey ensures the correct epoch is returned.
+// TestDisclosedKey ensures the correct epoch is returned with d = 2.
 func TestDisclosedKey(t *testing.T) {
 	delay := time.Second
 	ks := newTestSchedule(t, delay)
 	anchor := ks.cfg.Epoch
 
-	// At start (epoch 0), no key is disclosable yet.
-	_, _, ok := ks.DisclosedKey(anchor)
-	if ok {
-		t.Error("expected no disclosable key at epoch 0")
+	// In epochs 0 and 1 no key is disclosable yet.
+	for _, at := range []time.Time{anchor, anchor.Add(delay), anchor.Add(2*delay - time.Nanosecond)} {
+		if _, _, ok := ks.DisclosedKey(at); ok {
+			t.Errorf("expected no disclosable key at %s", at.Sub(anchor))
+		}
 	}
 
-	// At epoch 1 (anchor + 1*delay), the key for epoch 0 should be disclosable.
-	idx, key, ok := ks.DisclosedKey(anchor.Add(delay))
-	if !ok {
-		t.Error("expected disclosable key (epoch 0) at epoch 1")
-	}
-	if idx != 0 {
-		t.Errorf("expected disclosable epoch 0, got %d", idx)
-	}
-	expected0 := ks.keyForEpoch(0)
-	if !bytes.Equal(key, expected0) {
-		t.Errorf("disclosed key mismatch: got %x, want %x", key, expected0)
+	// At epoch 2 the key for epoch 0 is disclosable.
+	idx, key, ok := ks.DisclosedKey(anchor.Add(2 * delay))
+	if !ok || idx != 0 || !bytes.Equal(key, ks.keyForEpoch(0)) {
+		t.Errorf("DisclosedKey(epoch 2) = %d, %x, %v; want 0, k_0", idx, key, ok)
 	}
 
-	// At epoch 3 (anchor + 3*delay), the key for epoch 2 should be disclosable.
-	idx, key, ok = ks.DisclosedKey(anchor.Add(3 * delay))
-	if !ok {
-		t.Error("expected disclosable key at epoch 3")
+	// At epoch 5 the key for epoch 3 is disclosable.
+	idx, key, ok = ks.DisclosedKey(anchor.Add(5 * delay))
+	if !ok || idx != 3 || !bytes.Equal(key, ks.keyForEpoch(3)) {
+		t.Errorf("DisclosedKey(epoch 5) = %d, %x, %v; want 3, k_3", idx, key, ok)
 	}
-	if idx != 2 {
-		t.Errorf("expected disclosable epoch 2, got %d", idx)
+}
+
+// TestDisclosureDelayDefaultsAndBounds checks the derived default, which
+// covers DefaultDisclosureWindow, and that a delay below two epochs is
+// refused.
+func TestDisclosureDelayDefaultsAndBounds(t *testing.T) {
+	for _, tc := range []struct {
+		epoch time.Duration
+		want  int64
+	}{
+		{0, 90},
+		{10 * time.Second, 90},
+		{time.Second, 900},
+		{7 * time.Second, 129},
+		{30 * time.Second, 30},
+		{10 * time.Minute, MinDisclosureDelay},
+		{time.Hour, MinDisclosureDelay},
+	} {
+		if got := DefaultDisclosureDelay(tc.epoch); got != tc.want {
+			t.Errorf("DefaultDisclosureDelay(%s) = %d; want %d", tc.epoch, got, tc.want)
+		}
 	}
-	expected2 := ks.keyForEpoch(2)
-	if !bytes.Equal(key, expected2) {
-		t.Errorf("disclosed key mismatch: got %x, want %x", key, expected2)
+	ks, err := NewKeySchedule(Config{Seed: fixedSeed, ChainLength: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := ks.Config(); cfg.EpochLength != DefaultEpochLength || cfg.DisclosureDelay != 90 || ks.DisclosureDelay() != 90 {
+		t.Errorf("defaults: epoch %s, d %d; want %s and 90", cfg.EpochLength, cfg.DisclosureDelay, DefaultEpochLength)
+	}
+	for _, d := range []int64{1, -1} {
+		if _, err := NewKeySchedule(Config{Seed: fixedSeed, ChainLength: 8, DisclosureDelay: d}); err == nil || !strings.Contains(err.Error(), "at least 2 epochs") {
+			t.Errorf("DisclosureDelay %d: err = %v; want a refusal naming the minimum", d, err)
+		}
 	}
 }
 

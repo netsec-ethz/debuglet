@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -19,9 +21,17 @@ import (
 // GET /executors
 func (h *Handler) GetExecutors(c echo.Context) error {
 	executors := h.dispatcher.ListExecutors()
+	// The maintenance switch is dispatcher-wide; read it once per listing.
+	paused := dispatcher.AdmissionPaused() != nil
 	var resp []ExecutorResponse
 	for _, e := range executors {
+		isdAS, listeners := e.Vantage()
 		resp = append(resp, ExecutorResponse{
+			Admission:              e.Admission(paused),
+			Display:                e.Display(),
+			SCIONISDAS:             isdAS,
+			Listeners:              listeners,
+			Clock:                  e.Clock(),
 			ID:                     e.ID,
 			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,
@@ -131,10 +141,14 @@ func (h *Handler) GetExecutorTesla(c echo.Context) error {
 		return apiError(http.StatusNotFound, CodeNotFound, "executor not found: "+echoed(id))
 	}
 
+	epochSeconds := int64(exec.TeslaDelay.Seconds())
 	resp := ExecutorTeslaResponse{
-		ExecutorID:        exec.ID,
-		AnchorTimestampNs: exec.TeslaAnchorTimestamp.UnixNano(),
-		DelaySec:          int64(exec.TeslaDelay.Seconds()),
+		ExecutorID:             exec.ID,
+		AnchorTimestampNs:      exec.TeslaAnchorTimestamp.UnixNano(),
+		DelaySec:               epochSeconds,
+		EpochSeconds:           epochSeconds,
+		DisclosureDelayEpochs:  exec.TeslaDisclosureDelay,
+		DisclosureDelaySeconds: exec.TeslaDisclosureDelay * epochSeconds,
 	}
 	if len(exec.TeslaAnchorKey) > 0 {
 		resp.AnchorKey = base64.StdEncoding.EncodeToString(exec.TeslaAnchorKey)
@@ -144,6 +158,11 @@ func (h *Handler) GetExecutorTesla(c echo.Context) error {
 	if epoch, key, ok := h.dispatcher.GetKeyStore().LatestDisclosed(id, exec.TeslaAnchorKey); ok {
 		resp.DisclosedEpoch = epoch
 		resp.DisclosedKey = base64.StdEncoding.EncodeToString(key)
+	}
+	resp.NextDisclosureEpoch = resp.DisclosedEpoch + 1
+	chain := tag.Chain{Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay, DisclosureDelay: exec.TeslaDisclosureDelay}
+	if at, ok := chain.DisclosableAt(resp.NextDisclosureEpoch); ok {
+		resp.NextDisclosureAtNs = at.UnixNano()
 	}
 
 	return c.JSON(http.StatusOK, resp)

@@ -10,7 +10,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
-	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
@@ -59,22 +58,26 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	if e.cfg.Network.PublicHost != "" {
 		publicHost = &e.cfg.Network.PublicHost
 	}
+	capabilities, vantage := e.capabilityReport(ctx, true)
 	resp := &pb.HelloResponse{
 		ExecutorId:   e.cfg.Identity.ExecutorID,
 		Version:      e.cfg.Identity.Version,
-		Capabilities: e.capabilityReport(ctx, true),
+		Capabilities: capabilities,
+		VantagePoint: vantage,
 		// The dispatcher records the address it observes on the control
 		// connection, which is what probe recipients see. Reporting an
 		// address here would only be a hint, so leave it empty.
-		SourceIp:               "",
-		PublicHost:             publicHost,
-		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
-		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
-		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
+		SourceIp:                   "",
+		PublicHost:                 publicHost,
+		TeslaDelaySec:              int64(e.teslaSchedule.Config().EpochLength.Seconds()),
+		TeslaAnchorTimestampNs:     e.teslaSchedule.Config().Epoch.UnixNano(),
+		TeslaAnchorKey:             e.teslaSchedule.Anchor(),
+		TeslaDisclosureDelayEpochs: e.teslaSchedule.DisclosureDelay(),
 		// ICMP is advertised only when the operator's network policy leaves it
-		// enabled and this process can actually open the raw socket the
-		// transport needs; the packet counter says nothing about either.
-		IcmpEnabled: e.cfg.Network.Policy.Spec().ICMP && netpolicy.ICMPPermitted() == nil,
+		// enabled and the probe of this hello's capability report opened the
+		// raw socket the transport needs; the packet counter says nothing
+		// about either.
+		IcmpEnabled: capabilities.GetIcmp().GetState() == "available",
 		PricePerBwS: e.cfg.Pricing.PricePerBwS,
 		Currency:    e.cfg.Pricing.Currency,
 		SuiWallet:   &e.cfg.Pricing.SuiWallet,

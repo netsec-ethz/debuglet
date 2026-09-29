@@ -89,8 +89,18 @@ type FallbackCount struct {
 	destinations destinations.Resolved
 	attached     map[debugletKey]int
 
+	// reason says why eBPF is not in use; set once before the counter is shared.
+	reason string
+
 	mu sync.RWMutex
 }
+
+// SetReason records why this counter stands in for eBPF. It is called once,
+// by the constructor that chose the fallback, before the counter is shared.
+func (f *FallbackCount) SetReason(reason string) { f.reason = reason }
+
+// Reason is the recorded reason, or empty when unknown.
+func (f *FallbackCount) Reason() string { return f.reason }
 
 func NewFallbackCount() (*FallbackCount, error) {
 	return &FallbackCount{

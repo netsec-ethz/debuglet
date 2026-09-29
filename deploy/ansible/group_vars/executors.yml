@@ -47,10 +47,16 @@ executor_version: "{{ deploy_version }}"
 executor_capacity: 1_000_000_000
 executor_max_debuglets: 20
 
-# TESLA epoch duration in seconds.
-tesla_delay: 10
+# TESLA epoch length in seconds: each chain key signs for one epoch. An
+# inventory that still sets the deprecated tesla_delay keeps that value.
+tesla_epoch_seconds: 10
 
-# Number of epochs the TESLA hash chain covers. 0 derives it from tesla_delay
+# TESLA disclosure delay in epochs: the key of epoch i is disclosed once epoch
+# i+d starts. 0 derives the smallest d covering 15 minutes (90 epochs at 10 s);
+# an explicit value must be at least 2. See docs/operations/configuration.md.
+tesla_disclosure_delay_epochs: 0
+
+# Number of epochs the TESLA hash chain covers. 0 derives it from tesla_epoch_seconds
 # so the chain lasts 7 days (tesla.DefaultChainHorizon). Once the chain runs
 # out the executor keeps tagging with a key it never discloses, and those
 # packets can no longer be verified — so this has to outlast the executor's

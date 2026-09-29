@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/scionproto/scion/pkg/addr"
 	sdpb "github.com/scionproto/scion/pkg/proto/daemon"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
@@ -29,7 +30,7 @@ func (d *capabilityDaemon) AS(ctx context.Context, _ *sdpb.ASRequest) (*sdpb.ASR
 		<-ctx.Done()
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
-	return &sdpb.ASResponse{IsdAs: 1, Mtu: 1500}, nil
+	return &sdpb.ASResponse{IsdAs: uint64(addr.MustIAFrom(1, 0xff00_0000_0110)), Mtu: 1500}, nil
 }
 func (*capabilityDaemon) Services(context.Context, *sdpb.ServicesRequest) (*sdpb.ServicesResponse, error) {
 	return &sdpb.ServicesResponse{Services: map[string]*sdpb.ListService{"cs": {Services: []*sdpb.Service{{Uri: "127.0.0.1:30254"}}}}}, nil
@@ -51,6 +52,7 @@ func TestCapabilityReportsUseLocalRuntimeObservations(t *testing.T) {
 	plainConfig, scionConfig := fixtureConfig(), fixtureConfig()
 	plainConfig.Network.Policy.ICMP = &disabled
 	scionConfig.Network.Policy.SCION = &enabled
+	scionConfig.Network.PublicHost, scionConfig.Network.PublicPorts = "127.0.0.1", "40000-40010"
 	// Both acquire actual fallback counters; configuration alone is not the
 	// source of the reported enforcement mode.
 	plain := newFixtureExecutor(t, plainConfig, nil, newFixtureMemoryStorage(t))
@@ -66,9 +68,17 @@ func TestCapabilityReportsUseLocalRuntimeObservations(t *testing.T) {
 	if !slices.Contains(s.Capabilities.Protocols, "scion") || slices.Contains(s.Capabilities.Protocols, "icmp") != (netpolicy.ICMPPermitted() == nil) {
 		t.Fatalf("local observations not reflected: %v", s.Capabilities)
 	}
+	// The ISD-AS comes from the daemon; listeners need public_host and
+	// public_ports, which the plain executor lacks.
+	if v := s.GetVantagePoint(); v.GetSchemaVersion() != 1 || v.GetScionIsdAs() != "1-ff00:0:110" || !slices.Equal(v.GetListeners(), []string{"tcp", "udp", "scion"}) {
+		t.Fatalf("vantage report: %v", v)
+	}
+	if v := p.GetVantagePoint(); v.GetSchemaVersion() != 1 || v.GetScionIsdAs() != "" || len(v.GetListeners()) != 0 {
+		t.Fatalf("plain vantage report: %v", v)
+	}
 	calls := daemon.calls.Load()
 	for i := 0; i < 20; i++ {
-		if scion.capabilityReport(t.Context(), false) != nil {
+		if caps, vantage := scion.capabilityReport(t.Context(), false); caps != nil || vantage != nil {
 			t.Fatal("frequent heartbeat renewed a cached observation")
 		}
 	}
@@ -79,19 +89,19 @@ func TestCapabilityReportsUseLocalRuntimeObservations(t *testing.T) {
 	daemon.blocked.Store(true)
 	scion.capabilityNext = time.Time{} // Expire the existing throttle without a 30s sleep.
 	began := time.Now()
-	report := scion.capabilityReport(t.Context(), false)
+	report, vantage := scion.capabilityReport(t.Context(), false)
 	if elapsed := time.Since(began); elapsed > time.Second {
 		t.Fatalf("SCION probe blocked heartbeat for %s", elapsed)
 	}
-	if report == nil || slices.Contains(report.Protocols, "scion") {
+	if report == nil || slices.Contains(report.Protocols, "scion") || vantage.GetScionIsdAs() != "" || slices.Contains(vantage.GetListeners(), "scion") {
 		t.Fatal("unresponsive daemon remained positive")
 	}
-	if scion.capabilityReport(t.Context(), false) != nil {
+	if caps, _ := scion.capabilityReport(t.Context(), false); caps != nil {
 		t.Fatal("slow probe was immediately repeated")
 	}
 
 	t.Setenv("SCION_DAEMON_ADDRESS", "localhost:30255")
-	if scionAvailable(t.Context()) {
+	if _, available := scionProbe(t.Context()); available {
 		t.Fatal("hostname unexpectedly passed literal-only discovery")
 	}
 }

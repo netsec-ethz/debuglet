@@ -26,7 +26,7 @@ message HelloResponse {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
   string source_ip = 3; // Source IP for packet attribution
-  int64 tesla_delay_sec = 4; // TESLA epoch delay in seconds
+  int64 tesla_delay_sec = 4; // TESLA epoch length I in seconds (historical name; not the disclosure delay)
   int64 tesla_anchor_timestamp_ns = 5; // Reference wall-clock time for epoch 0
   bytes tesla_anchor_key = 6; // Public anchor k_0 = H^L(seed); used to verify disclosed keys
   bool icmp_enabled = 7; // Whether the executor can handle ICMP packets
@@ -43,6 +43,11 @@ message HelloResponse {
   optional string enrollment_token = 16;
   uint32 output_version = 17;
   ExecutorCapabilities capabilities = 18; // Optional additive discovery observation.
+  VantagePointReport vantage_point = 19; // Optional; sent with capabilities.
+  // TESLA disclosure delay d: the key of epoch i is disclosed once epoch i+d
+  // starts, at tesla_anchor_timestamp_ns + (i+d)*tesla_delay_sec. At least 2;
+  // zero from an executor that predates it, which disclosed after one epoch.
+  int64 tesla_disclosure_delay_epochs = 20;
 }
 
 message DebugletPolicy {
@@ -96,6 +101,7 @@ message HeartbeatRequest {
   int64 tesla_key_epoch = 3;
   bytes tesla_key = 4;
   ExecutorCapabilities capabilities = 5; // Absent means no new observation.
+  VantagePointReport vantage_point = 6; // Absent means no new observation.
 }
 message HeartbeatResponse {}
 
@@ -270,4 +276,79 @@ message ExecutorCapabilities {
   uint32 schema_version = 1;
   repeated string protocols = 2;
   string enforcement_mode = 3; // Actual packet counter: ebpf or fallback; empty unknown.
+  // Additive within schema version 1: absent from older executors, which
+  // leaves attribution unknown.
+  AttributionState attribution = 4;
+  // Additive within schema version 1: absent from older executors, which
+  // leaves the tagging mode unknown.
+  TaggingMode tagging = 5;
+  // Additive within schema version 1; empty or absent is unknown.
+  // Why the counter is fallback: configured, no_interface, not_permitted,
+  // unsupported or attach_failed. Empty when enforcement_mode is ebpf.
+  string enforcement_reason = 6;
+  ProbeState icmp = 7; // Raw ICMPv4 socket probe of this process.
+}
+
+// A local probe outcome. Opening a socket sends nothing.
+message ProbeState {
+  string state = 1;  // available or unavailable.
+  string reason = 2; // Empty when available; disabled, not_permitted, ping_socket_only or unsupported.
+}
+
+// How the packets of a run on this executor are tagged, per address family
+// and for SCION: ebpf (the kernel tagger, every packet of a marked socket),
+// userspace (the pure-Go tagger, IPv4 UDP and ICMP datagrams only) or none.
+// It is the node's capability, the mode a run on this executor is set up to
+// get, not the mode of any particular run. IPv6 and SCION are none in this
+// build.
+message TaggingMode {
+  string ipv4 = 1;
+  string ipv6 = 2;
+  string scion = 3;
+}
+
+// Whether packets tagged now can be attributed once their TESLA key is
+// disclosed, and the kernel key-refresh state that decides it. Ages are
+// measured on the executor's clock when the report was built.
+message AttributionState {
+  string state = 1;  // available or unavailable.
+  string reason = 2; // Empty when available; epoch_zero, chain_exhausted, refresh_failing or disclosure_held.
+  int64 epoch = 3;   // Current key-schedule epoch.
+  optional int64 installed_epoch = 4;     // Oldest epoch a kernel tagger slot may still sign with; absent when none holds a key.
+  optional int64 last_refresh_age_ms = 5; // Since the oldest last successful kernel key install; absent without one.
+  string refresh_error = 6;               // Short error of a failing kernel key refresh, at most 128 bytes; empty when none fails.
+  optional int64 disclosure_held_ms = 7;  // How long an installed key has held disclosure back; absent when not held.
+}
+
+// Executor-reported network context, a versioned sibling of
+// ExecutorCapabilities on the same cadence. Every field is a claim of the
+// executor; the dispatcher never labels it verified.
+message VantagePointReport {
+  uint32 schema_version = 1;
+  string scion_isd_as = 2; // Local ISD-AS from the SCION daemon; empty unknown.
+  repeated string listeners = 3; // Listener transports it can open: tcp, udp, scion.
+  // Additive within schema version 1; absent is unknown. The dispatcher
+  // clears a malformed field alone and keeps the rest of the report.
+  ClockState clock = 4;
+  HostPlatform platform = 5; // Operator only; never in the public executor listing.
+}
+
+// The kernel clock discipline as read by adjtimex without changing it.
+message ClockState {
+  string state = 1;                      // synced, unsynced or unknown.
+  optional int64 estimated_error_ns = 2; // Kernel esterror; absent unknown.
+  optional int64 max_error_ns = 3;       // Kernel maxerror; absent unknown.
+  int64 error_bound_ns = 4;              // The operator's configured bound on estimated_error_ns.
+  string readiness = 5;                  // ready, degraded or unknown.
+  string reason = 6;                     // Empty unless degraded: unsynced or error_exceeds_bound.
+}
+
+// Host platform facts. Empty or zero fields are unknown.
+message HostPlatform {
+  string os = 1;             // Go GOOS.
+  string arch = 2;           // Go GOARCH.
+  string kernel_release = 3; // uname release.
+  uint32 cpus = 4;           // Logical CPUs usable by the process.
+  optional uint64 memory_bytes = 5; // Total physical memory.
+  string build_version = 6;  // Executor build version.
 }

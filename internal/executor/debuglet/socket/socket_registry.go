@@ -246,11 +246,13 @@ func dialSCION(ctx context.Context, addr string, sugar *zap.SugaredLogger, pktTa
 	}
 	// pan opens the socket inside DialUDP and exposes neither it nor a hook
 	// to set socket options on it, so a SCION socket cannot be marked: its
-	// packets are not attributed to the run by the eBPF tagger. The gap is
-	// reported once per process rather than skipped silently.
+	// packets are not attributed to the run by the eBPF tagger. SCION is
+	// therefore labelled untagged rather than refused: the capability report
+	// and the result's vantage point carry tagging.scion = none. The gap is
+	// also logged once per process rather than skipped silently.
 	if pktTagger != nil {
 		unmarkedSCION.Do(func() {
-			sugar.Warnw("SCION sockets cannot be marked; their packets are not attributed to the run", "udpAddr", udpAddr)
+			sugar.Warnw("SCION sockets cannot be marked; their packets are not attributed to the run (tagging.scion = none)", "udpAddr", udpAddr)
 		})
 	}
 	return &SCIONConn{Conn: &conn, Selector: selector}, nil

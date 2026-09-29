@@ -21,11 +21,13 @@ result, err = client.ReadResult(file)
 
 `GET /debuglet/{id}/result` is available from HTTP API 1.8. Access follows the
 same ownership rules as logs. The standalone file identifies itself with
-`"format":"debuglet-result"` and `"version":"1.0"`; this file version is
-independent of the HTTP API version. The reader rejects unsupported file versions,
-malformed records and inconsistent run, node or attempt identities. Version 1.0
-is the first portable format; its retained fixture provides the compatibility
-baseline for future readers.
+`"format":"debuglet-result"` and `"version":"1.1"`; this file version is
+independent of the HTTP API version. The reader accepts versions 1.0 and 1.1 and
+rejects other versions, malformed records and inconsistent run, node or attempt
+identities. Version 1.1 adds `provenance.vantage_point` and nothing else; a 1.0
+file that carries one is rejected, so a 1.0 file keeps its original meaning. The
+retained `v1.0.json` and `v1.1.json` fixtures are the compatibility baseline.
+Readers from before 1.1 reject 1.1 exports as an unsupported version.
 
 ## What the record means
 
@@ -38,15 +40,56 @@ baseline for future readers.
   written with admission in the same database transaction. Current node metadata
   never replaces these facts. Runs admitted before this record existed have
   `provenance: null`.
+- `provenance.vantage_point` (format 1.1) records where the run was to execute,
+  as the dispatcher knew it at admission: the executor's last validated
+  capability report (protocols, enforcement mode, its schema version and its
+  [tagging mode](operations/executor-discovery.md#tagging-mode), which is
+  `null` when the report had none), the
+  dispatcher's receipt time of that report as `observed_at`, and `stale: true`
+  when the report had outlived its 90 s lifetime; the source IP of the control
+  connection; and the executor's configured `public_host`. It is `null` for runs
+  admitted before 1.1. The object has its own `schema_version` (1); later facts
+  such as ASN, geolocation or reachability are added as new fields. The tagging
+  mode is the executor's reported node capability at admission, the mode the
+  run was set up to get, not a measurement of the run's packets (a run whose
+  kernel tagger failed to load ran with the pure-Go tagger); a file without it reads as
+  unknown, and readers keep tagging values they do not know.
+- Within schema 1, `vantage_point` also records `scion_isd_as`, the executor's
+  last reported SCION ISD-AS with `observed_at` and `stale` like capabilities,
+  and `display`, the operator's `display_name`, `city`, `country` and `network`
+  for that executor. 1.1 files written before these fields omit them; readers
+  treat an omitted field as `null`, and readers without them ignore it, so every
+  1.1 file stays valid.
+- Also within schema 1, the executor's host probes: `capabilities.value.icmp`
+  (`{state, reason}` of its raw ICMPv4 socket probe) and
+  `capabilities.value.enforcement_reason` (why the `fallback` counter is used);
+  `clock`, the kernel clock `state`, `estimated_error_ns`, `max_error_ns`,
+  `error_bound_ns`, `readiness` and `reason`; and `platform`, the host's `os`,
+  `arch`, `kernel_release`, `cpus`, `memory_bytes` and `build_version`. `clock`
+  and `platform` carry `source`, `observed_at` and `stale` like `scion_isd_as`.
+  Platform detail is operator-only elsewhere and appears here because a result
+  is readable only by its owner and operators. Earlier files omit these fields,
+  which reads as `null` (or an empty reason).
+- Each vantage-point value names its `source`: `operator`,
+  `executor-reported` or `dispatcher-observed` (`database:<name>@<version>` is
+  reserved for later lookups). Capabilities, `scion_isd_as`, `clock`,
+  `platform` and `public_host` are `executor-reported`; `display` values are `operator`. `source_ip` is `dispatcher-observed` when taken from the
+  connection, and `executor-reported` when the dispatcher fell back to the
+  address in the executor's hello. No label means verified: an executor claim
+  remains a claim. A value that was not recorded is `null` together with its
+  source; it is never guessed or filled from current node metadata.
 - `admitted_policy` is the accepted request. `host_policy: "unknown"` explicitly
   says actual host enforcement was not measured. An enrolled identity does not
   establish that a measurement is true.
 - `outcome` preserves the stored workload state and bounded error classification.
-  `exit_code` is always null in format 1.0, which does not record it. An exited workload
+  `exit_code` is always null in formats 1.0 and 1.1, which do not record it. An exited workload
   must not be interpreted as exit code zero.
 - `timing.scheduled_start` and `reserved_until` are the reserved window, not
   measured execution times. Actual start, finish and clock uncertainty are always
-  null in format 1.0; the reader rejects a 1.0 file that sets them. `observed_at` is the dispatcher time of the export snapshot;
+  null in formats 1.0 and 1.1; the reader rejects a file that sets them. The
+  kernel error estimate in `vantage_point.clock` is the executor's report at
+  admission, not a bound on any run timestamp, so it does not fill
+  `clock_uncertainty_ns`. `observed_at` is the dispatcher time of the export snapshot;
   nanosecond timestamp representation is not a clock accuracy claim.
 - `output.entries` contains every retained entry, in ID order, with exact bytes
   encoded as base64. `output.status` distinguishes `unknown`, `pending`,

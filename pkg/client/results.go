@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func ReadResult(r io.Reader) (Result, error) {
 
 func validateResult(doc Result) error {
 	bad := func() error { return errors.New("inconsistent result document") }
-	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion {
+	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion && doc.Version != wire.ResultVersion10 {
 		return errors.New("unsupported result format or version")
 	}
 	if !resultUUID(doc.RunID) || strings.TrimSpace(doc.ExecutorID) == "" || strings.TrimSpace(doc.Outcome.State) == "" || doc.Timing.ObservedAt.IsZero() {
@@ -76,8 +77,8 @@ func validateResult(doc Result) error {
 	if t := doc.Timing; (t.ScheduledStart == nil) != (t.ReservedUntil == nil) || t.ScheduledStart != nil && (!t.ReservedUntil.After(*t.ScheduledStart) || t.ScheduledStart.IsZero()) {
 		return bad()
 	}
-	// Format 1.0 records none of these facts. They stay null so that a later
-	// minor version can fill them without changing what a 1.0 file means.
+	// Formats 1.0 and 1.1 record none of these facts. They stay null so that a
+	// later minor version can fill them without changing what an older file means.
 	if doc.Outcome.ExitCode != nil || doc.Timing.StartedAt != nil || doc.Timing.FinishedAt != nil || doc.Timing.ClockUncertaintyNS != nil {
 		return bad()
 	}
@@ -100,6 +101,11 @@ func validateResult(doc Result) error {
 			if value != nil && strings.TrimSpace(*value) == "" {
 				return bad()
 			}
+		}
+		// Format 1.0 predates vantage_point; a 1.0 file carrying one would
+		// change what an existing 1.0 file means.
+		if v := p.VantagePoint; v != nil && (doc.Version == wire.ResultVersion10 || !validVantagePoint(*v)) {
+			return bad()
 		}
 	}
 	if doc.Verification.Attribution != attribution || doc.Verification.PacketEvidence != "unverified" || doc.Verification.MeasurementTruth != "unverified" {
@@ -127,6 +133,91 @@ func validateResult(doc Result) error {
 		}
 	}
 	return nil
+}
+
+// A value and its source are recorded together or not at all, and a source is
+// one of the defined labels; no label asserts verification.
+func validVantagePoint(v wire.VantagePoint) bool {
+	source := func(value *string) bool {
+		return value != nil && (*value == wire.SourceOperator || *value == wire.SourceExecutorReported || *value == wire.SourceDispatcherObserved)
+	}
+	d := v.Display
+	for _, field := range []wire.LabelledString{v.SourceIP, v.PublicHost, d.DisplayName, d.City, d.Country, d.Network} {
+		if (field.Value == nil) != (field.Source == nil) || field.Value != nil && (strings.TrimSpace(*field.Value) == "" || !source(field.Source)) {
+			return false
+		}
+	}
+	// Added within schema 1: an earlier 1.1 file omits it, which reads as null.
+	if ia := v.SCIONISDAS; ia.Value == nil {
+		if ia.Source != nil || ia.ObservedAt != nil || ia.Stale != nil {
+			return false
+		}
+	} else if canonical, ok := wire.CanonicalISDAS(*ia.Value); !ok || canonical != *ia.Value || !source(ia.Source) || ia.ObservedAt == nil || ia.ObservedAt.IsZero() || ia.Stale == nil {
+		return false
+	}
+	// Added within schema 1 with the executor probes; omitted reads as null.
+	if !validReport(v.Clock, source, validClock) || !validReport(v.Platform, source, func(wire.HostPlatform) bool { return true }) {
+		return false
+	}
+	c := v.Capabilities
+	if c.Value == nil {
+		return v.SchemaVersion == 1 && c.Source == nil && c.ObservedAt == nil && c.Stale == nil
+	}
+	if !source(c.Source) || c.ObservedAt == nil || c.ObservedAt.IsZero() || c.Stale == nil || c.Value.SchemaVersion != 1 || c.Value.Protocols == nil {
+		return false
+	}
+	switch c.Value.EnforcementMode {
+	case "", "ebpf", "fallback":
+	default:
+		return false
+	}
+	switch c.Value.EnforcementReason {
+	case "":
+	case "configured", "no_interface", "not_permitted", "unsupported", "attach_failed":
+		if c.Value.EnforcementMode != "fallback" {
+			return false
+		}
+	default:
+		return false
+	}
+	if p := c.Value.ICMP; p != nil {
+		switch {
+		case p.State == "available" && p.Reason == "":
+		case p.State == "unavailable" && slices.Contains([]string{"disabled", "not_permitted", "ping_socket_only", "unsupported"}, p.Reason):
+		default:
+			return false
+		}
+	}
+	return v.SchemaVersion == 1
+}
+
+// validReport requires an expiring report and its labels together or not at
+// all, and a valid value.
+func validReport[T any](r wire.LabelledReport[T], source func(*string) bool, valid func(T) bool) bool {
+	if r.Value == nil {
+		return r.Source == nil && r.ObservedAt == nil && r.Stale == nil
+	}
+	return source(r.Source) && r.ObservedAt != nil && !r.ObservedAt.IsZero() && r.Stale != nil && valid(*r.Value)
+}
+
+func validClock(c wire.ClockReport) bool {
+	switch c.State {
+	case "synced", "unsynced", "unknown":
+	default:
+		return false
+	}
+	switch {
+	case c.Readiness == "degraded" && (c.Reason == "unsynced" || c.Reason == "error_exceeds_bound"):
+	case (c.Readiness == "ready" || c.Readiness == "unknown") && c.Reason == "":
+	default:
+		return false
+	}
+	for _, ns := range []*int64{c.EstimatedErrorNS, c.MaxErrorNS} {
+		if ns != nil && *ns < 0 {
+			return false
+		}
+	}
+	return c.ErrorBoundNS > 0
 }
 
 func resultUUID(value string) bool { return isCanonicalUUID(value) && !isNilUUID(value) }

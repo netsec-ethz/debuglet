@@ -38,7 +38,7 @@ CI_RACE_PACKAGE_PARALLEL ?= 2
 .PHONY: ci-test ci-vet ci-fmt ci-race ci-build ci-kernel ci-package ci-demo ci-compatibility ci-local
 
 ci-test:
-	python3 -m unittest -v tools/test_make_targets.py tools/test_ci_github.py
+	python3 -m unittest -v tools/test_make_targets.py tools/test_ci_github.py tools/test_verify_pcap.py
 	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-test.sh $(CI_PACKAGES)
 
 ci-vet:

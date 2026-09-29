@@ -47,6 +47,8 @@ type Node struct {
 	active       *Session
 	closeOnce    sync.Once
 	closeErr     error
+	// chainReport outlives sessions so the end of the chain is reported once.
+	chainReport chainReport
 }
 
 // NewNode records the TESLA chain this start uses in db before it acquires the
@@ -117,7 +119,8 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	}
 	n := &Node{cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
-	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()))
+	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()),
+		zap.Duration("TESLA_epoch_length", schedule.Config().EpochLength), zap.Int64("TESLA_disclosure_delay_epochs", schedule.DisclosureDelay()))
 	return n, nil
 }
 
@@ -137,14 +140,14 @@ func startChain(ctx context.Context, db *sql.DB, cfg config.TeslaConfig) (*tesla
 			return nil, fmt.Errorf("derive TESLA chain %d: %w", generation, err)
 		}
 	}
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, Delay: time.Duration(cfg.Delay) * time.Second, ChainLength: cfg.ChainLength})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, EpochLength: cfg.EpochLength(), DisclosureDelay: cfg.DisclosureDelayEpochs, ChainLength: cfg.ChainLength})
 	if err != nil {
 		return nil, fmt.Errorf("create TESLA schedule: %w", err)
 	}
 	chain := schedule.Config()
 	if err := queries.CreateTeslaChain(ctx, executordb.CreateTeslaChainParams{
 		Generation: generation, Anchor: schedule.Anchor(), EpochBase: chain.Epoch.UTC(),
-		DelayNs: int64(chain.Delay), ChainLength: chain.ChainLength, CreatedAt: time.Now().UTC(),
+		DelayNs: int64(chain.EpochLength), ChainLength: chain.ChainLength, CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		return nil, fmt.Errorf("record TESLA chain %d (a recorded anchor would reuse disclosed keys): %w", generation, err)
 	}

@@ -47,3 +47,35 @@ func TestDiscoveryRequiresPositiveFreshServerObservations(t *testing.T) {
 		t.Fatal("invalid filter reached the server")
 	}
 }
+
+func TestDiscoveryFiltersByReportedISDAS(t *testing.T) {
+	ia := func(s string) wire.ObservedString { return wire.ObservedString{Value: &s} }
+	nodes := []Node{
+		{ID: "unknown", Ready: true},
+		{ID: "other", Ready: true, SCIONISDAS: ia("1-ff00:0:111")},
+		{ID: "match", Ready: true, SCIONISDAS: ia("1-ff00:0:110"), Capabilities: &wire.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"scion"}}},
+		{ID: "offline", Ready: false, SCIONISDAS: ia("1-ff00:0:110")},
+	}
+	f := newFakeServer(t, "")
+	f.handle("GET /executors", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(nodes) })
+	c := f.client(t, Options{})
+	// An equivalent spelling selects the same executor, alone or combined
+	// with a capability filter.
+	for _, filter := range []ExecutorFilter{{ISDAS: "1-ff00:0:0110"}, {ISDAS: "1-ff00:0:110", Protocols: []string{"scion"}}} {
+		if selected, err := c.SelectExecutor(t.Context(), "", filter); err != nil || selected.ID != "match" {
+			t.Fatalf("%+v: %v %v", filter, selected, err)
+		}
+	}
+	if _, err := c.SelectExecutor(t.Context(), "", ExecutorFilter{ISDAS: "1-ff00:0:110", Protocols: []string{"icmp"}}); err == nil {
+		t.Fatal("ISD-AS bypassed a capability filter")
+	}
+	if matched, err := c.DiscoverExecutors(t.Context(), ExecutorFilter{ISDAS: "2-1"}); err != nil || len(matched) != 0 {
+		t.Fatalf("unknown ISD-AS matched: %v %v", matched, err)
+	}
+	before := len(f.requests())
+	for _, bad := range []string{"1-0", "ff00:0:110", "1-ff00:0:110 "} {
+		if _, err := c.DiscoverExecutors(t.Context(), ExecutorFilter{ISDAS: bad}); err == nil || len(f.requests()) != before {
+			t.Fatalf("invalid ISD-AS filter %q reached the server", bad)
+		}
+	}
+}
