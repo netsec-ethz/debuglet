@@ -31,6 +31,7 @@ type ExecutorConfig struct {
 	Credentials CredentialConfig
 	Database    DatabaseConfig
 	Pricing     PricingConfig
+	Output      OutputConfig
 }
 
 type IdentityConfig struct {
@@ -289,6 +290,9 @@ func (cfg *ExecutorConfig) Validate() error {
 		return err
 	}
 	if err := cfg.validateCredentials(); err != nil {
+		return err
+	}
+	if err := cfg.Output.Validate(); err != nil {
 		return err
 	}
 	return cfg.validatePricing()

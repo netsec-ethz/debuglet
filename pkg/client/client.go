@@ -381,7 +381,42 @@ func (c *Client) Logs(ctx context.Context, id string, options LogOptions) (LogPa
 		return LogPage{}, c.protocolErr(http.MethodGet, route,
 			fmt.Sprintf("page cursor %d does not equal last entry id %d", page.After, previous))
 	}
+	if page.Output.State == "" {
+		page.Output.State = "unknown"
+	}
+	if err := validateOutput(page); err != nil {
+		return LogPage{}, c.protocolErr(http.MethodGet, route, err.Error())
+	}
 	return page, nil
+}
+
+// validateOutput checks recognized finality states without assigning meaning to
+// future states. Cursors beyond the end are valid for empty resumed pages.
+func validateOutput(page LogPage) error {
+	o := page.Output
+	switch o.State {
+	case "unknown", "pending":
+		if o.FinalCursor != nil || o.LossReason != "" {
+			return errors.New("nonfinal output has a final cursor or loss reason")
+		}
+	case "complete", "truncated":
+		if o.FinalCursor == nil || *o.FinalCursor < 0 {
+			return errors.New("final output lacks a nonnegative final cursor")
+		}
+		if o.State == "complete" && o.LossReason != "" {
+			return errors.New("complete output has a loss reason")
+		}
+		if o.State == "truncated" && (strings.TrimSpace(o.LossReason) == "" || len(o.LossReason) > 64) {
+			return errors.New("truncated output lacks a bounded loss reason")
+		}
+		if len(page.Logs) > 0 && page.Logs[len(page.Logs)-1].ID > *o.FinalCursor {
+			return errors.New("log entry exceeds the final output cursor")
+		}
+		if page.After < *o.FinalCursor && !page.HasMore {
+			return errors.New("final output page omits its remaining committed prefix")
+		}
+	}
+	return nil
 }
 
 // Cancel asks the dispatcher to abort a debuglet on the given executor. A nil

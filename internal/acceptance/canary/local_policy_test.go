@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
+	dispatcherconfig "github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 )
@@ -67,5 +68,21 @@ func TestLocalConfigurationReachesTheTargetItStarts(t *testing.T) {
 	}
 	if err := operator.CheckAddr(netip.MustParseAddr("127.0.0.1")); err != nil {
 		t.Fatalf("the configured executor cannot reach the target this check starts: %v", err)
+	}
+}
+
+func TestLocalDispatcherConfigurationIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	cfg := localDispatcherConfiguration("v0.0.1-test", filepath.Join(dir, "dispatcher.sqlite"))
+	path := filepath.Join(dir, "dispatcher.toml")
+	if err := demo.WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := dispatcherconfig.LoadConfig(path)
+	if err != nil {
+		t.Fatalf("installed dispatcher would reject the generated configuration: %v", err)
+	}
+	if loaded.Output != dispatcherconfig.DefaultOutputConfig() || !loaded.Server.LocalDevelopment || !loaded.TLS.Disable || !loaded.Sui.Disabled {
+		t.Fatal("generated dispatcher config lost local profile or output limits")
 	}
 }

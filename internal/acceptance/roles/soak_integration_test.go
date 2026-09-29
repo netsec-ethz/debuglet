@@ -173,6 +173,7 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		Server: dispatcherconfig.ServerConfig{BindHost: "127.0.0.1", LocalDevelopment: true, Version: assets.Manifest.Version},
 		TLS:    dispatcherconfig.TLSConfig{Disable: true}, Sui: dispatcherconfig.SuiConfig{Disabled: true},
 		Scheduler: dispatcherconfig.SchedulerConfig{ExecutorTimeout: 10, SchedulerGranularityMs: 100},
+		Output:    dispatcherconfig.DefaultOutputConfig(),
 		Database:  dispatcherconfig.DatabaseConfig{Path: dbPath}, Logging: dispatcherconfig.LoggingConfig{LogLevel: "info", JSONLogs: true}})
 	c := sdk(t, "http://"+d.HTTPAddr)
 	ids := []string{uuid.NewString(), uuid.NewString()}

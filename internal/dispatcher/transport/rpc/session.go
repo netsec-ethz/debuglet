@@ -54,18 +54,20 @@ const (
 // SessionOwner identifies one local callback-session lifetime. It must not be
 // copied or reused after retirement. It is not a wire identity or credential.
 type SessionOwner struct {
-	executorID       string
-	binding          controlsession.Binding
-	mu               sync.Mutex
-	state            atomic.Uint32
-	registered       chan struct{}
-	done             chan struct{}
-	mutations        uint64 // all live/finishing ordinary and setup references; mu
-	mutationsDrained chan struct{}
-	lease            controlsession.LeaseTiming
-	deadline         time.Time        // receiver-local monotonic deadline; mu
-	sequence         uint64           // last committed renewal; mu
-	now              func() time.Time // construction-fixed clock
+	executorID            string
+	outputVersion         uint32
+	credentialFingerprint string
+	binding               controlsession.Binding
+	mu                    sync.Mutex
+	state                 atomic.Uint32
+	registered            chan struct{}
+	done                  chan struct{}
+	mutations             uint64 // all live/finishing ordinary and setup references; mu
+	mutationsDrained      chan struct{}
+	lease                 controlsession.LeaseTiming
+	deadline              time.Time        // receiver-local monotonic deadline; mu
+	sequence              uint64           // last committed renewal; mu
+	now                   func() time.Time // construction-fixed clock
 }
 
 // NewSessionOwner returns a fresh active, not-yet-registered owner.
@@ -103,6 +105,13 @@ func NewSessionOwnerWithClock(executorID string, binding controlsession.Binding,
 
 func (s *SessionOwner) ExecutorID() string              { return s.executorID }
 func (s *SessionOwner) Binding() controlsession.Binding { return s.binding }
+
+// OutputVersion is the output protocol negotiated before this owner was published.
+func (s *SessionOwner) OutputVersion() uint32 { return s.outputVersion }
+
+// CredentialFingerprint identifies the verified, enrolled peer at admission.
+// It is empty for sessions without enforced node enrollment.
+func (s *SessionOwner) CredentialFingerprint() string { return s.credentialFingerprint }
 
 // MutationsDrained closes once this owner is retired and every mutation admitted
 // on it, forks included, has finished. A waiter's timeout releases no ownership.

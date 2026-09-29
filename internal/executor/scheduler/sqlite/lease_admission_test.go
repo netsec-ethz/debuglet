@@ -26,7 +26,7 @@ func admissionShutdown(t *testing.T, storage *SqliteStorage) {
 func TestSQLiteStrictAdmissionRequiresBothGuards(t *testing.T) {
 	// A nil DB is deliberate: constructor refusal must precede database access.
 	for _, a := range []scheduler.Admission{{}, {Insert: admissionPass}, {Start: admissionPass}} {
-		if s, err := NewStorage(nil, storageTestEligibility, a); err == nil || s != nil {
+		if s, err := NewStorage(nil, nil, storageTestEligibility, a); err == nil || s != nil {
 			t.Fatalf("incomplete strict admission accepted: storage=%v error=%v", s, err)
 		}
 	}
@@ -36,7 +36,7 @@ func TestSQLiteLeaseRefusalPrecedesPersistence(t *testing.T) {
 	db := newSchedulerTestDB(t)
 	refused := errors.New("lease admission refused")
 	var guards atomic.Int32
-	storage, err := NewStorage(db, storageTestEligibility, scheduler.Admission{
+	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{
 		Insert: func(binding controlsession.Binding, _ func()) error {
 			guards.Add(1)
 			if binding != storageTestBinding() {
@@ -74,7 +74,7 @@ func TestSQLiteLeaseExpiryAfterPersistenceRetainsAcceptedRow(t *testing.T) {
 		commit()
 		return nil
 	}
-	storage, err := NewStorage(db, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard})
+	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestSQLiteCancelledInsideAdmissionHasNoReservation(t *testing.T) {
 	db := newSchedulerTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	storage, err := NewStorage(db, storageTestEligibility, scheduler.Admission{
+	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{
 		Insert: func(_ controlsession.Binding, commit func()) error { cancel(); commit(); return nil }, Start: admissionPass,
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestSQLiteReservedWriteSurvivesLeaseLossAndShutdown(t *testing.T) {
 		commit()
 		return nil
 	}
-	storage, err := NewStorage(db, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard})
+	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard})
 	if err != nil {
 		t.Fatal(err)
 	}

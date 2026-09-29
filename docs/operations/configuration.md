@@ -8,7 +8,17 @@ A networked dispatcher needs a SQLite database path, reachable HTTP and gRPC lis
 
 ## Executor
 
-An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
+An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
+
+### Executor output limits
+
+The optional `[output]` section uses the defaults shown in the [executor example](../../configs/executor/executor.toml): 8 MiB and 65,536 frames emitted per run, 64 MiB queued per executor, 65,536 retained run records, and 1 MiB/s per run with a 64 KiB burst. Zero selects the default. Stdout and stderr share one ordered writer, 16 KiB chunks and a 256 KiB accepted queue. Rate limits apply backpressure; a total-byte or storage limit cancels that guest and marks its accepted output prefix as truncated.
+
+The spool budget charges payload plus 64 bytes per frame and 256 bytes per retained run; it is a logical quota, not an upper bound on SQLite file size or WAL space. Acknowledged payload is released, and a run whose end the dispatcher acknowledged no longer counts against `retained_runs` or the per-run charge. No age-based deletion occurs. Existing data above a lowered cap remains readable; new admission can fail until capacity is raised or an explicit retention policy is applied. A storage write failure can make executor output admission unavailable until restart; a failed finality write stays pending.
+
+The dispatcher's `[output]` section bounds each run with `run_bytes` (8 MiB) and `run_frames` (16,384). Its `account_bytes` and `node_bytes` caps are off by default (`0`): the dispatcher does not yet delete retained output, so those charges only grow, and an upgrade counts output that is already stored. Set them only as a hard lifetime ceiling; reaching one refuses new submissions with `service_unavailable`.
+
+Durable output requires both peers to negotiate output version 1. Retained output may resume over a new control session only with the same still-enrolled TLS certificate and original run binding. Plaintext local sessions and executors without an enrolled certificate cannot resume output across control bindings: when such a session ends, the dispatcher finalizes that output as `truncated` with reason `executor_interrupted` at its committed prefix, and the executor releases its local copy. Workloads themselves are never restarted, and output completion remains separate from the guest's exit status.
 
 ## State and upgrades
 

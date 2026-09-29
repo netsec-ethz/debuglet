@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
@@ -50,13 +51,14 @@ type Dispatcher struct {
 	version     string
 	incarnation string
 
-	executors   map[string]*executorEntry
-	leaseTiming controlsession.LeaseTiming
-	keystore    *tag.KeyStore
-	logger      *zap.Logger
-	Bidi        *rpc.BidiServer
-	mu          sync.RWMutex
-	db          *sql.DB
+	executors    map[string]*executorEntry
+	leaseTiming  controlsession.LeaseTiming
+	keystore     *tag.KeyStore
+	logger       *zap.Logger
+	Bidi         *rpc.BidiServer
+	mu           sync.RWMutex
+	db           *sql.DB
+	outputLimits config.OutputConfig
 
 	closed             bool
 	restored           bool      // set under mu once a RestoreScheduler call has succeeded
@@ -99,6 +101,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		keystore:        tag.NewKeyStore(),
 		logger:          l,
 		db:              db,
+		outputLimits:    config.DefaultOutputConfig(),
 		destinations:    resource.NewDestinations(bitrate.Gigabit),
 		Payment:         paymentHandler,
 		scheduler:       schedule.New(granularity),

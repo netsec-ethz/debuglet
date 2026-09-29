@@ -115,6 +115,13 @@ func ccNewFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *cc
 
 func ccNewFixturePeer(t *testing.T, logger *zap.Logger, peer *cpPeer, options ...Option) *ccFixture {
 	t.Helper()
+	return ccNewFixtureConfigured(t, logger, peer, nil, options...)
+}
+
+// ccNewFixtureConfigured applies configure before the executor peer registers,
+// when dispatcher settings such as output limits can still change.
+func ccNewFixtureConfigured(t *testing.T, logger *zap.Logger, peer *cpPeer, configure func(*dispatcher.Dispatcher) error, options ...Option) *ccFixture {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -137,6 +144,11 @@ func ccNewFixturePeer(t *testing.T, logger *zap.Logger, peer *cpPeer, options ..
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	if configure != nil {
+		if err := configure(d); err != nil {
+			t.Fatal(err)
+		}
+	}
 	stop, err := startClientPeer(ctx, d, ccCapacity, peer)
 	if err != nil {
 		t.Fatalf("startClientPeer: %v", err)
@@ -447,8 +459,8 @@ func TestClientHTTPContract(t *testing.T) {
 		}
 
 		code, stdout, stderr := f.runCLI("--endpoint", f.root.URL, "--output", "json", "logs", "--follow", "--limit", "1", sub.IDs[0])
-		if code != 0 {
-			t.Fatalf("dbl logs --follow exit %d: %s", code, stderr)
+		if code != 1 || !bytes.Contains(stderr, []byte("completeness is unknown")) {
+			t.Fatalf("legacy dbl logs --follow exit %d: %s", code, stderr)
 		}
 		var pages []client.LogPage
 		scanner := bufio.NewScanner(bytes.NewReader(stdout))

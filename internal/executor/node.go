@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
@@ -31,18 +33,20 @@ var (
 // Node retains the resource identity which must survive network reconnects.
 // Its one session reservation is lifecycle ownership, never lease authority.
 type Node struct {
-	cfg         config.ExecutorConfig
-	logger      *zap.Logger
-	schedule    *tesla.KeySchedule
-	packetCount ratelimit.PacketCount
-	iface       *net.Interface
-	opts        rpc.BidiOptions
-	newBidi     func(rpc.BidiOptions, rpc.ExecutorState) (*rpc.BidiClient, error)
-	mu          sync.Mutex
-	closed      bool
-	active      *Session
-	closeOnce   sync.Once
-	closeErr    error
+	cfg          config.ExecutorConfig
+	logger       *zap.Logger
+	schedule     *tesla.KeySchedule
+	packetCount  ratelimit.PacketCount
+	iface        *net.Interface
+	output       *outputstore.Store
+	outputFailed atomic.Bool
+	opts         rpc.BidiOptions
+	newBidi      func(rpc.BidiOptions, rpc.ExecutorState) (*rpc.BidiClient, error)
+	mu           sync.Mutex
+	closed       bool
+	active       *Session
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 // NewNode records the TESLA chain this start uses in db before it acquires the
@@ -66,6 +70,19 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	// Validate fallible configuration before acquiring the daemon counter.
 	if _, err := socket.NewPortManager(cfg.Network.PublicHost, cfg.Network.PublicPorts); err != nil {
 		return nil, sessionEnd(controlsession.LocalFailure, fmt.Errorf("invalid public_ports: %w", err))
+	}
+	if err := cfg.Output.Validate(); err != nil {
+		return nil, sessionEnd(controlsession.LocalFailure, err)
+	}
+	output, err := outputstore.New(db, cfg.Output.Limits())
+	if err != nil {
+		return nil, sessionEnd(controlsession.LocalFailure, err)
+	}
+	restoreCtx, restoreDone := context.WithTimeout(context.Background(), scheduler.CleanupTimeout)
+	err = output.InterruptOpen(restoreCtx)
+	restoreDone()
+	if err != nil {
+		return nil, sessionEnd(controlsession.LocalFailure, err)
 	}
 	var iface *net.Interface
 	if cfg.Network.PacketCounter != "fallback" && cfg.Network.Interface != "" {
@@ -98,7 +115,7 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if pc == nil {
 		return nil, sessionEnd(controlsession.LocalFailure, errors.New("packet counter constructor returned nil"))
 	}
-	n := &Node{cfg: *cfg, logger: logger, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
+	n := &Node{cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()))
 	return n, nil
@@ -192,7 +209,7 @@ func NewSession(node *Node, db *sql.DB) (*Session, error) {
 			return s.executor.Bidi.CommitUpload(binding, commit)
 		}
 	}
-	storage, err := sqlite.NewStorage(db, func(controlsession.Binding) bool { return false }, scheduler.Admission{Insert: guard(false), Start: guard(true)})
+	storage, err := sqlite.NewStorage(db, node.output, func(controlsession.Binding) bool { return false }, scheduler.Admission{Insert: guard(false), Start: guard(true)})
 	if err != nil {
 		node.release(s)
 		return nil, sessionEnd(controlsession.LocalFailure, err)

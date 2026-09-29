@@ -102,6 +102,23 @@ The old key and recovery code no longer work. A lost response can leave recovery
 completed without delivering the new credentials: do not blindly retry the
 old code; retain the response file, if any, and contact the dispatcher operator.
 
+### Follow stored output
+
+```sh
+dbl logs --follow ID
+dbl logs --follow --after LAST_CURSOR ID
+```
+
+Following succeeds only after draining the declared complete output cursor,
+which can arrive before or after the workload exits. A truncated prefix is
+printed before exiting 1 with its loss reason. Historical output or an older
+server has unknown completeness: following drains a terminal run's available
+pages, then exits 1 instead of claiming the stream is complete. Pending output
+continues polling after workload exit; use the global `--timeout` to bound the
+wait. Plain `dbl logs ID` remains a single successful page read, regardless of
+finality. JSON pages include `output`; human progress goes to stderr and guest
+bytes remain unchanged on stdout.
+
 ### Inspect the saved account
 
 ```sh
@@ -184,7 +201,7 @@ For example: `dbl --dispatcher research logs --after 10 --limit 100 ID`.
 | `run -- ARGS...` | Pass the remaining arguments to the guest. |
 | `logs --after N` | `0`; read entries after this cursor. |
 | `logs --limit N` | `0` selects server default `100`; explicit page size is `1..1000`. |
-| `logs --follow` | Read pages until a terminal page has been drained; it is not a proof that no later output can arrive. |
+| `logs --follow` | Drain the declared final output cursor; complete output succeeds, while truncated or historical unknown output exits 1. Pending output waits until the command timeout. |
 
 Keep the submission's run ID. `status ID` reads the reported outcome and `logs ID`
 reads output; `cancel ID` requests cancellation. The server's [API contract](api.md)

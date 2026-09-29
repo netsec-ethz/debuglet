@@ -36,6 +36,22 @@ A `TEST` intent has no payment backend: its transaction row is the intent, writt
 
 `GET /debuglet/{id}/recovery` inspects a known run without changing its state, reservations or payments. It reports stored outcome, control availability and at most one dated executor observation separately. See [recovery inspection](operations/recovery-inspection.md) for classifications and nullable provenance. The route was added in API 1.5.
 
+## Output completeness
+
+API 1.6 adds `output` to each log page: `state`, nullable `final_cursor`, and
+`loss_reason`. Logs, output metadata and workload state describe one database
+snapshot. `pending` means output delivery can continue even after the workload
+exits. `complete` or `truncated` declares an immutable final cursor; zero means
+empty output. Drain through that cursor, including all pages, before finishing.
+`has_more` only describes page fullness and does not establish finality.
+
+`truncated` preserves the accepted prefix and reports a fixed loss reason:
+`output_limit`, `spool_limit`, `storage_limit`, `executor_interrupted`, or
+`producer_failed`. It never inserts synthetic output for missing bytes.
+Historical output is `unknown`; older servers omit the metadata. Neither case,
+nor an unknown future state, proves completeness. Workload success and output
+completeness are separate results.
+
 ## Errors and health
 
 API failures use `{"code": "…", "message": "…"}`. Programmatic clients should branch on `code`, not the human-readable message.

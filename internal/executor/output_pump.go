@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"golang.org/x/time/rate"
 	"io"
 
 	"github.com/google/uuid"
@@ -14,13 +15,24 @@ import (
 // One worker owns every Send (including identification), CloseSend and Recv.
 // Run owns closing Input; before Run starts cancellation also releases the pump.
 type outputPump struct {
-	Input  chan<- []byte
-	cancel context.CancelFunc
-	done   chan struct{}
-	err    error // published by done
+	Input        chan<- []byte
+	cancel       context.CancelFunc
+	done         chan struct{}
+	err          error // published by done
+	producerDone chan struct{}
+	producerErr  error // published by producerDone
 }
 
 func (p *outputPump) Cancel() { p.cancel() }
+
+// producerFinished is called after Run (or failed setup) returned. A durable
+// pump then drains its bounded accepted queue before recording finality.
+func (p *outputPump) producerFinished(err error) {
+	if p.producerDone != nil {
+		p.producerErr = err
+		close(p.producerDone)
+	}
+}
 
 func (p *outputPump) Wait(ctx context.Context) error {
 	select {
@@ -48,7 +60,9 @@ func (e *Executor) propagateOutputToStream(op *debugletOperation, id uuid.UUID, 
 		cancel()
 		return nil, fmt.Errorf("open debuglet output stream: %w", err)
 	}
-	input := make(chan []byte, 1024)
+	input := make(chan []byte, outputQueueFrames)
+	bytesPerSecond, burst := e.cfg.Output.Rate()
+	limiter := rate.NewLimiter(rate.Limit(bytesPerSecond), burst)
 	p := &outputPump{Input: input, cancel: cancel, done: make(chan struct{})}
 	identified := make(chan error, 1)
 	go func() {
@@ -85,6 +99,10 @@ func (e *Executor) propagateOutputToStream(op *debugletOperation, id uuid.UUID, 
 							return
 						}
 					}
+				}
+				if err := limiter.WaitN(ctx, len(out)); err != nil {
+					fail(err)
+					return
 				}
 				if err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: &pb.DebugletOutput{Output: out, Timestamp: timestamppb.Now()}}}); err != nil {
 					fail(fmt.Errorf("send debuglet output: %w", err))

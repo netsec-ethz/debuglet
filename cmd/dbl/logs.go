@@ -14,7 +14,7 @@ const logsUsage = `Usage:
 Options:
   --after N     cursor: return entries with IDs greater than N (>= 0)
   --limit N     entries per page, 1..1000 (0 selects the server default 100)
-  --follow      keep draining pages until the debuglet has exited
+  --follow      drain to the declared final output cursor
 
 Human output writes the exact guest bytes to stdout and cursor/state
 information to stderr; JSON output prints one LogPage per line.
@@ -61,10 +61,8 @@ func parseLogsOptions(args []string, stdout, stderr io.Writer) (logsOptions, int
 // server.
 type logFetcher func(ctx context.Context, options client.LogOptions) (client.LogPage, error)
 
-// followLogs drains pages while has_more and polls every pollInterval until an
-// observed terminal page has been drained. A full terminal page may report
-// has_more with no later data, so the empty page after it is permitted and ends
-// the follow. emit is called once per page.
+// followLogs drains the declared output prefix. Workload exit alone cannot
+// prove output completeness; a legacy terminal page yields an incomplete error.
 func followLogs(ctx context.Context, fetch logFetcher, start, limit int64, emit func(client.LogPage) error) error {
 	cursor := start
 	for {
@@ -78,11 +76,22 @@ func followLogs(ctx context.Context, fetch logFetcher, start, limit int64, emit 
 		if len(page.Logs) > 0 {
 			cursor = page.After
 		}
+		switch page.Output.State {
+		case "complete", "truncated":
+			if page.Output.FinalCursor != nil && cursor >= *page.Output.FinalCursor {
+				if page.Output.State == "truncated" {
+					return &client.IncompleteOutputError{Output: page.Output}
+				}
+				return nil
+			}
+		case "pending":
+		default:
+			if page.State == client.StateExited && !page.HasMore {
+				return &client.IncompleteOutputError{Output: page.Output}
+			}
+		}
 		if page.HasMore {
 			continue
-		}
-		if page.State == client.StateExited {
-			return nil
 		}
 		if err := sleepContext(ctx, pollInterval); err != nil {
 			return err
@@ -94,10 +103,11 @@ func followLogs(ctx context.Context, fetch logFetcher, start, limit int64, emit 
 // exact guest bytes to stdout and progress to stderr; JSON mode writes one
 // LogPage per line to stdout and nothing to stderr.
 type logEmitter struct {
-	output    string
-	stdout    io.Writer
-	stderr    io.Writer
-	lastState string
+	output     string
+	stdout     io.Writer
+	stderr     io.Writer
+	lastState  string
+	lastOutput string
 }
 
 func (e *logEmitter) emit(page client.LogPage) error {
@@ -109,9 +119,17 @@ func (e *logEmitter) emit(page client.LogPage) error {
 			return fmt.Errorf("write output: %w", err)
 		}
 	}
-	if len(page.Logs) > 0 || page.State != e.lastState {
+	if len(page.Logs) > 0 || page.State != e.lastState || page.Output.State != e.lastOutput {
 		e.lastState = page.State
-		fmt.Fprintf(e.stderr, "dbl logs: state=%s after=%d entries=%d has_more=%t", page.State, page.After, len(page.Logs), page.HasMore)
+		e.lastOutput = page.Output.State
+		fmt.Fprintf(e.stderr, "dbl logs: state=%q after=%d entries=%d has_more=%t", page.State, page.After, len(page.Logs), page.HasMore)
+		fmt.Fprintf(e.stderr, " output=%q", page.Output.State)
+		if page.Output.FinalCursor != nil {
+			fmt.Fprintf(e.stderr, " final_cursor=%d", *page.Output.FinalCursor)
+		}
+		if page.Output.LossReason != "" {
+			fmt.Fprintf(e.stderr, " loss_reason=%q", page.Output.LossReason)
+		}
 		if page.Error != "" {
 			fmt.Fprintf(e.stderr, " error=%q", page.Error)
 		}

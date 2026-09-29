@@ -56,6 +56,7 @@ type BidiClient struct {
 	invocations         sync.WaitGroup
 	control             *controlrpc.Credentials
 	armed               bool
+	outputOffer         uint32
 	hello               *pb.HelloResponse
 	helloErr            error
 	helloDone           chan struct{}

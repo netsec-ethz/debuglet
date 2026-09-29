@@ -20,6 +20,7 @@ message HelloRequest {
   string session_id = 3;
   bytes session_token = 4; // Private offer token; never persist or log.
   int64 lease_duration_ms = 5; // Strict v3 control lease; receiver clocks only.
+  uint32 output_version = 6;
 }
 message HelloResponse {
   string executor_id = 1; // Unique ID for this executor instance
@@ -40,6 +41,7 @@ message HelloResponse {
   // Single-use enrollment credential, presented only until this node's
   // certificate is bound to its executor ID. Never persist or log it.
   optional string enrollment_token = 16;
+  uint32 output_version = 17;
 }
 
 message DebugletPolicy {
@@ -137,21 +139,37 @@ message DebugletExitResponse {}
 message DebugletIdent {
   string debuglet_id = 1;
   string executor_id = 2;
+  ControlBinding original_binding = 3;
 }
 message DebugletOutput {
   bytes output = 1;
   google.protobuf.Timestamp timestamp = 2;
+  int64 sequence = 3;
+}
+enum DebugletOutputStatus {
+  DEBUGLET_OUTPUT_STATUS_UNSPECIFIED = 0;
+  DEBUGLET_OUTPUT_STATUS_COMPLETE = 1;
+  DEBUGLET_OUTPUT_STATUS_TRUNCATED = 2;
+}
+message DebugletOutputEnd {
+  int64 last_sequence = 1;
+  DebugletOutputStatus status = 2;
+  string reason = 3;
 }
 message DebugletStreamRequest {
   oneof msg {
     DebugletIdent ident = 1;
     DebugletOutput output = 2;
+    DebugletOutputEnd end = 3;
   }
 }
 
 // ================ DISPATCHER -> DEBUGLET ====================
 
-message DebugletStreamResponse {}
+message DebugletStreamResponse {
+  int64 committed_sequence = 1;
+  DebugletOutputEnd end = 2;
+}
 
 // Nonsecret immutable run ownership. The bearer token stays in transport state.
 message ControlBinding {

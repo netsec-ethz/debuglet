@@ -102,6 +102,9 @@ type LogOptions struct {
 // LogPage is one page of guest output.
 type LogPage = wire.LogPage[[]byte]
 
+// OutputStatus records output finality; missing metadata from older servers is unknown.
+type OutputStatus = wire.OutputStatus
+
 // LogEntry is one stored output chunk. Output holds the exact guest bytes;
 // Timestamp is the server's opaque string.
 type LogEntry = wire.LogEntry[[]byte]

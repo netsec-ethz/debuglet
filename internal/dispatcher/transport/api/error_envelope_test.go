@@ -202,11 +202,15 @@ func TestMissingRunAnswersWithATypedEnvelope(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			f := modeNewFixture(t)
 			if strings.HasSuffix(route, "/logs") {
+				f.mock.ExpectBegin()
 				f.mock.ExpectQuery(logsPaginationListQuery).
 					WithArgs(id, int64(0), int64(100)).
-					WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output"}))
+					WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}))
 			}
 			f.mock.ExpectQuery(logsPaginationGetQuery).WithArgs(id).WillReturnError(sql.ErrNoRows)
+			if strings.HasSuffix(route, "/logs") {
+				f.mock.ExpectRollback()
+			}
 
 			rec := oaServe(f.e, http.MethodGet, route, nil, nil)
 			assertEnvelope(t, route, rec, http.StatusNotFound, CodeNotFound, "debuglet not found")
