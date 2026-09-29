@@ -9,7 +9,8 @@ SELECT * FROM output_runs WHERE run_id = sqlc.arg(run_id);
 SELECT * FROM output_runs WHERE NOT end_acknowledged AND run_id > ? ORDER BY run_id LIMIT ?;
 
 -- name: CountOutputRuns :one
-SELECT COUNT(*) FROM output_runs;
+-- A run whose end the dispatcher acknowledged holds no further spool capacity.
+SELECT COUNT(*) FROM output_runs WHERE NOT end_acknowledged;
 
 -- name: GetOutputUsage :one
 SELECT charged_bytes FROM output_usage WHERE singleton = 1;

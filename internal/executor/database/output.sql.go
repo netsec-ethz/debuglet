@@ -78,9 +78,10 @@ func (q *Queries) AdvanceOutputRun(ctx context.Context, arg AdvanceOutputRunPara
 }
 
 const countOutputRuns = `-- name: CountOutputRuns :one
-SELECT COUNT(*) FROM output_runs
+SELECT COUNT(*) FROM output_runs WHERE NOT end_acknowledged
 `
 
+// A run whose end the dispatcher acknowledged holds no further spool capacity.
 func (q *Queries) CountOutputRuns(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countOutputRuns)
 	var count int64

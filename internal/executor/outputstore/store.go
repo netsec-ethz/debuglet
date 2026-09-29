@@ -303,7 +303,13 @@ func (s *Store) Acknowledge(ctx context.Context, id uuid.UUID, sequence int64, e
 	if err := q.AcknowledgeOutputRun(ctx, database.AcknowledgeOutputRunParams{RunID: id.String(), AcknowledgedSequence: sequence, Bytes: count.ByteCount, Frames: count.FrameCount, EndAcknowledged: r.EndAcknowledged || end != nil}); err != nil {
 		return err
 	}
-	if err := q.AddOutputUsage(ctx, -count.ByteCount-count.FrameCount*pb.OutputFrameCharge); err != nil {
+	released := count.ByteCount + count.FrameCount*pb.OutputFrameCharge
+	if end != nil && !r.EndAcknowledged {
+		// The dispatcher now holds the durable end, so the run's admission
+		// charge returns with its last frames.
+		released += pb.OutputRunCharge
+	}
+	if err := q.AddOutputUsage(ctx, -released); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -345,7 +351,7 @@ func (s *Store) AcceptTruncation(ctx context.Context, id uuid.UUID, end *pb.Debu
 	if err := q.DeleteAcknowledgedOutput(ctx, database.DeleteAcknowledgedOutputParams{RunID: id.String(), Sequence: r.LastSequence}); err != nil {
 		return err
 	}
-	if err := q.AddOutputUsage(ctx, -r.QueuedBytes-r.QueuedFrames*pb.OutputFrameCharge); err != nil {
+	if err := q.AddOutputUsage(ctx, -r.QueuedBytes-r.QueuedFrames*pb.OutputFrameCharge-pb.OutputRunCharge); err != nil {
 		return err
 	}
 	return tx.Commit()
