@@ -62,8 +62,10 @@ import (
 type Executor struct {
 	capabilityMu   sync.Mutex
 	capabilityNext time.Time
-	cfg            config.ExecutorConfig
-	teslaSchedule  *tesla.KeySchedule
+	// capabilityReason is the attribution reason of the last report sent.
+	capabilityReason string
+	cfg              config.ExecutorConfig
+	teslaSchedule    *tesla.KeySchedule
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
 	chainReport *chainReport

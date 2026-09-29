@@ -59,6 +59,13 @@
 // plus the refresh time, or longer while a refresh fails. A verifier waits for
 // the key rather than treating a missing one as a failure; its tolerance for
 // clock skew between the tag and the epoch it is checked against is unchanged.
+//
+// # Attribution
+//
+// Attribution reports whether packets tagged now can be attributed: not in
+// epoch 0 or from Expiry, not while a holder's latest refresh failed, and not
+// once an installed key has held disclosure back for longer than one epoch.
+// The executor sends it in its capability report.
 package tesla
 
 import (
@@ -225,6 +232,102 @@ func (ks *KeySchedule) UnregisterInstalled(h InstalledKeyHolder) {
 	ks.holdersMu.Lock()
 	defer ks.holdersMu.Unlock()
 	delete(ks.holders, h)
+}
+
+// RefreshReporter is an InstalledKeyHolder that also reports its refresh: the
+// time of its last successful key install, zero before one, and the error of
+// its latest attempt, nil after a success.
+type RefreshReporter interface {
+	LastRefresh() (installed time.Time, err error)
+}
+
+// Reasons why packets tagged now cannot be attributed. They are the fixed
+// vocabulary of the executor capability report.
+const (
+	// UnattributableEpochZero: k_0 is public, so nothing sent in epoch 0, or
+	// before Epoch, is tagged with a secret key.
+	UnattributableEpochZero = "epoch_zero"
+	// UnattributableChainExhausted: from Expiry no key signs.
+	UnattributableChainExhausted = "chain_exhausted"
+	// UnattributableRefreshFailing: a kernel tagger's latest key refresh
+	// failed, so its slot is empty or may still hold a previous epoch's key.
+	UnattributableRefreshFailing = "refresh_failing"
+	// UnattributableDisclosureHeld: an installed key has held disclosure back
+	// for longer than MaxDisclosureHold, so the keys of new tags stay withheld.
+	UnattributableDisclosureHeld = "disclosure_held"
+)
+
+// Attribution is whether packets tagged at one instant can be attributed once
+// their key is disclosed, with the kernel refresh state that decides it.
+type Attribution struct {
+	Epoch int64
+	// Reason is empty when attribution is available, otherwise one of the
+	// Unattributable constants; the first that applies in their order wins.
+	Reason string
+	// InstalledEpoch is the oldest epoch a registered holder may still sign
+	// with; it is meaningful only when Installed.
+	InstalledEpoch int64
+	Installed      bool
+	// LastInstall is the oldest last successful install among the holders
+	// that report one, and zero when none does.
+	LastInstall time.Time
+	// RefreshErr is the latest error of a failing holder, nil when none fails.
+	RefreshErr error
+	// HeldSince is when the installed key started holding disclosure back, the
+	// end of InstalledEpoch; zero when disclosure is not held.
+	HeldSince time.Time
+}
+
+// MaxDisclosureHold bounds how long an installed key may hold disclosure back
+// before attribution is reported unavailable. One epoch covers the boundary
+// refresh and its first retry at Delay/2; the hold at every boundary until the
+// refresh lands is ordinary and stays well inside it.
+func (ks *KeySchedule) MaxDisclosureHold() time.Duration { return ks.cfg.Delay }
+
+// Attribution reports the state at now. Without a registered holder only the
+// epoch decides it, which is also the pure-Go tagger's case.
+func (ks *KeySchedule) Attribution(now time.Time) Attribution {
+	a := Attribution{Epoch: ks.epochOf(now)}
+	var failingSince time.Time
+	ks.holdersMu.Lock()
+	for h := range ks.holders {
+		if epoch, installed := h.InstalledEpoch(); installed && (!a.Installed || epoch < a.InstalledEpoch) {
+			a.InstalledEpoch, a.Installed = epoch, true
+		}
+		r, ok := h.(RefreshReporter)
+		if !ok {
+			continue
+		}
+		last, err := r.LastRefresh()
+		if !last.IsZero() && (a.LastInstall.IsZero() || last.Before(a.LastInstall)) {
+			a.LastInstall = last
+		}
+		// Of several failing holders, name the one that has failed longest.
+		if err != nil && (a.RefreshErr == nil || last.Before(failingSince)) {
+			a.RefreshErr, failingSince = err, last
+		}
+	}
+	ks.holdersMu.Unlock()
+	// A boundary refresh that lands after the caller read now installs the
+	// next epoch's key; report it as now's epoch, since a report never names
+	// an installed epoch later than its own.
+	if a.Installed && a.InstalledEpoch > a.Epoch {
+		a.InstalledEpoch = a.Epoch
+	}
+	if a.Installed && a.InstalledEpoch < a.Epoch {
+		a.HeldSince = ks.cfg.Epoch.Add(time.Duration(a.InstalledEpoch+1) * ks.cfg.Delay)
+	}
+	switch {
+	case a.Epoch >= ks.cfg.ChainLength:
+		a.Reason = UnattributableChainExhausted
+	case a.Epoch < 1:
+		a.Reason = UnattributableEpochZero
+	case a.RefreshErr != nil:
+		a.Reason = UnattributableRefreshFailing
+	case !a.HeldSince.IsZero() && now.Sub(a.HeldSince) > ks.MaxDisclosureHold():
+		a.Reason = UnattributableDisclosureHeld
+	}
+	return a
 }
 
 // EpochOf returns the epoch that contains t: 0 before Epoch, and at most L.

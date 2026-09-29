@@ -28,7 +28,26 @@ func TestCapabilitiesCrossBoundControlHTTPAndSDK(t *testing.T) {
 	if err != nil || selected.ID != ccExecutorID || selected.Capabilities == nil || selected.Capabilities.AdvertisedCapacityBPS == nil || *selected.Capabilities.AdvertisedCapacityBPS != int64(ccCapacity) {
 		t.Fatalf("bound control report did not reach HTTP/SDK discovery: %+v %v", selected, err)
 	}
+	if selected.Capabilities.Attribution != nil {
+		t.Fatal("report without attribution state claimed one")
+	}
 	rec := httptest.NewRecorder()
+	f.root.Config.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/executors", nil).WithContext(f.ctx))
+	oaCheckResponse(t, oaContract(t), http.MethodGet, "/executors", rec.Code, rec.Body.Bytes())
+	installed, age, held := int64(6), int64(3000), int64(15000)
+	_, err = f.peer.direct.Heartbeat(f.ctx, &pb.HeartbeatRequest{ExecutorId: ccExecutorID,
+		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp", "icmp"}, EnforcementMode: "fallback",
+			Attribution: &pb.AttributionState{State: "unavailable", Reason: "refresh_failing", Epoch: 7, InstalledEpoch: &installed,
+				LastRefreshAgeMs: &age, RefreshError: "stale key remains installed", DisclosureHeldMs: &held}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err = c.SelectExecutor(f.ctx, "", filter)
+	if err != nil || selected.Capabilities.Attribution == nil || selected.Capabilities.Attribution.Reason != "refresh_failing" ||
+		*selected.Capabilities.Attribution.InstalledEpoch != installed || selected.Capabilities.Attribution.DisclosureHeldSince == nil {
+		t.Fatalf("attribution state did not reach HTTP/SDK discovery: %+v %v", selected.Capabilities, err)
+	}
+	rec = httptest.NewRecorder()
 	f.root.Config.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/executors", nil).WithContext(f.ctx))
 	oaCheckResponse(t, oaContract(t), http.MethodGet, "/executors", rec.Code, rec.Body.Bytes())
 	observed := selected.Capabilities.ObservedAt
