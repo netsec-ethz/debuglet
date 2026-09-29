@@ -57,6 +57,7 @@ always `unknown`, never a guessed value.
 | Location, at most city and country | Public |
 | Measurement capabilities | Public |
 | Host platform (OS, kernel, architecture, CPU, memory, clock detail) | Operator only |
+| Control-connection source IP and advertised public host | Operator, and the run's owner through its result provenance |
 
 Location is never finer than city. An executor can opt out of location; the
 dispatcher then publishes no automatic location for it.
