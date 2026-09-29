@@ -33,7 +33,7 @@ const (
 
 const (
 	routeAttributionCandidates = "attribution/candidates"
-	routeAttributionKeys       = "attribution/keys"
+	routeDisclosures           = "attribution/keys"
 
 	// Limits of the attribution routes (docs/verification.md).
 	maxAttributionCandidates = 32
@@ -98,12 +98,12 @@ func (c *Client) AttributionKeys(ctx context.Context, executorID, chainID string
 		query.Set("to_epoch", strconv.FormatInt(toEpoch, 10))
 		last = min(last, toEpoch)
 	}
-	data, err := c.do(ctx, http.MethodGet, routeAttributionKeys, query, nil, http.StatusOK)
+	data, err := c.do(ctx, http.MethodGet, routeDisclosures, query, nil, http.StatusOK)
 	if err != nil {
 		return AttributionKeys{}, err
 	}
 	var doc AttributionKeys
-	if err := c.decode(http.MethodGet, routeAttributionKeys, data, &doc); err != nil {
+	if err := c.decode(http.MethodGet, routeDisclosures, data, &doc); err != nil {
 		return AttributionKeys{}, err
 	}
 	valid := doc.ExecutorID == executorID && doc.ChainID == chainID && doc.Keys != nil
@@ -116,7 +116,7 @@ func (c *Client) AttributionKeys(ctx context.Context, executorID, chainID string
 		valid = valid && *doc.NextEpoch == last+1
 	}
 	if !valid {
-		return AttributionKeys{}, c.protocolErr(http.MethodGet, routeAttributionKeys, "inconsistent attribution key page")
+		return AttributionKeys{}, c.protocolErr(http.MethodGet, routeDisclosures, "inconsistent attribution key page")
 	}
 	return doc, nil
 }

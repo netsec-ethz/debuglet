@@ -28,7 +28,7 @@ import (
 // of a run.
 const (
 	routeAttributionCandidates = "/attribution/candidates"
-	routeAttributionKeys       = "/attribution/keys"
+	routeDisclosures           = "/attribution/keys"
 )
 
 // Limits of the attribution routes.

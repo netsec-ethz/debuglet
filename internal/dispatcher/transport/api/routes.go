@@ -157,7 +157,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/executor-enrollment", h.PostExecutorEnrollment)
 	// attribution
 	e.GET(routeAttributionCandidates, h.GetAttributionCandidates)
-	e.GET(routeAttributionKeys, h.GetAttributionKeys)
+	e.GET(routeDisclosures, h.GetAttributionKeys)
 	// destination
 	e.PATCH("/destination", h.PatchDestinationLimit)
 	// payment
