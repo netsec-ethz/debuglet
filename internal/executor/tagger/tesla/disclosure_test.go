@@ -118,3 +118,42 @@ func TestLastKeyDisclosedAfterRelease(t *testing.T) {
 	ks.UnregisterInstalled(stuck)
 	wantDisclosed(t, ks, ks.Expiry().Add(24*time.Hour), length-1)
 }
+
+// TestDisclosureAtEpochZeroIsNothingOrPublicAnchor pins the floor of
+// DisclosedKey. Within epoch 0, and before Epoch, nothing is disclosed
+// (ok=false) whatever is installed. Later, a holder on epoch 0 or 1 caps the
+// result at (0, k_0, ok=true): k_0 is the public anchor and never signs, so
+// naming it discloses nothing a verifier did not already have.
+func TestDisclosureAtEpochZeroIsNothingOrPublicAnchor(t *testing.T) {
+	ks, at := disclosureSchedule(t, 8)
+	if ks.CurrentKey(at(0)) != nil {
+		t.Fatal("k_0 signs in epoch 0; disclosing it would not be harmless")
+	}
+	h := &fakeHolder{}
+	ks.RegisterInstalled(h)
+
+	for _, held := range []bool{false, true} {
+		if held {
+			h.hold(1)
+		}
+		for _, when := range []time.Time{at(0).Add(-time.Hour), at(0), at(1).Add(-time.Nanosecond)} {
+			if idx, key, ok := ks.DisclosedKey(when); ok || idx != 0 || key != nil {
+				t.Fatalf("DisclosedKey(%s, held=%v) = %d, %x, %v; want 0, nil, false",
+					when.Sub(at(0)), held, idx, key, ok)
+			}
+		}
+	}
+
+	for _, epoch := range []int64{0, 1} {
+		h.hold(epoch)
+		for _, when := range []time.Time{at(1), at(3), ks.Expiry()} {
+			idx, key, ok := ks.DisclosedKey(when)
+			if !ok || idx != 0 || !bytes.Equal(key, ks.Anchor()) {
+				t.Fatalf("DisclosedKey(%s, holder on %d) = %d, %x, %v; want 0, anchor, true",
+					when.Sub(at(0)), epoch, idx, key, ok)
+			}
+		}
+	}
+	h.release()
+	wantDisclosed(t, ks, at(3), 2)
+}
