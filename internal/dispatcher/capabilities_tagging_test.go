@@ -35,6 +35,19 @@ func TestCapabilityTaggingValidation(t *testing.T) {
 			t.Errorf("valid %v: %+v", valid, got)
 		}
 	}
+	for spec, want := range map[string]string{
+		"debuglet-tag-v1":       "debuglet-tag-v1",
+		"debuglet-tag-v2":       "debuglet-tag-v2",
+		"":                      "",
+		"Debuglet-Tag-V1":       "",
+		"v1; drop table":        "",
+		strings.Repeat("a", 65): "",
+	} {
+		got := capabilitiesFromReport(report(&pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none", TagSpec: spec}), observed)
+		if got == nil || got.Tagging == nil || got.Tagging.TagSpec != want || got.Tagging.IPv4 != "ebpf" {
+			t.Errorf("tag spec %q: %+v, want %q with the modes kept", spec, got.Tagging, want)
+		}
+	}
 	for name, invalid := range map[string]*pb.TaggingMode{
 		"empty":         {},
 		"missing ipv6":  {Ipv4: "ebpf", Scion: "none"},
@@ -56,10 +69,10 @@ func TestCapabilityTaggingSnapshots(t *testing.T) {
 	observed := time.Unix(1700000000, 0)
 	entry := &executorEntry{RegisteredExecutor: &RegisteredExecutor{
 		Capabilities: capabilitiesFromReport(&pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}, EnforcementMode: "ebpf",
-			Tagging: &pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none"}}, observed),
+			Tagging: &pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none", TagSpec: wire.TagSpecV1}}, observed),
 		capabilityObserved: observed,
 	}}
-	want := wire.TaggingMode{IPv4: "ebpf", IPv6: "none", SCION: "none"}
+	want := wire.TaggingMode{IPv4: "ebpf", IPv6: "none", SCION: "none", TagSpec: wire.TagSpecV1}
 	snapshot := capabilitySnapshot(entry, observed.Add(time.Second))
 	admitted := admissionVantagePoint(entry, observed.Add(time.Second))
 	if snapshot == nil || snapshot.Tagging == nil || *snapshot.Tagging != want {
@@ -76,7 +89,7 @@ func TestCapabilityTaggingSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(document), `"tagging":{"ipv4":"ebpf","ipv6":"none","scion":"none"}`) {
+	if !strings.Contains(string(document), `"tagging":{"ipv4":"ebpf","ipv6":"none","scion":"none","tag_spec":"debuglet-tag-v1"}`) {
 		t.Fatalf("vantage point document: %s", document)
 	}
 

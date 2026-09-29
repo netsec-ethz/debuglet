@@ -2424,10 +2424,15 @@ func (x *ProbeState) GetReason() string {
 // get, not the mode of any particular run. IPv6 and SCION are none in this
 // build.
 type TaggingMode struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ipv4          string                 `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
-	Ipv6          string                 `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
-	Scion         string                 `protobuf:"bytes,3,opt,name=scion,proto3" json:"scion,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ipv4  string                 `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
+	Ipv6  string                 `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
+	Scion string                 `protobuf:"bytes,3,opt,name=scion,proto3" json:"scion,omitempty"`
+	// Additive: the packet-tag specification of every tagged family,
+	// debuglet-tag-v1 in this build (docs/tag-spec.md). Empty is unknown,
+	// including executors that predate it; it is set even when no family is
+	// tagged.
+	TagSpec       string `protobuf:"bytes,4,opt,name=tag_spec,json=tagSpec,proto3" json:"tag_spec,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2479,6 +2484,13 @@ func (x *TaggingMode) GetIpv6() string {
 func (x *TaggingMode) GetScion() string {
 	if x != nil {
 		return x.Scion
+	}
+	return ""
+}
+
+func (x *TaggingMode) GetTagSpec() string {
+	if x != nil {
+		return x.TagSpec
 	}
 	return ""
 }
@@ -3013,11 +3025,12 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\n" +
 	"ProbeState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"K\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"f\n" +
 	"\vTaggingMode\x12\x12\n" +
 	"\x04ipv4\x18\x01 \x01(\tR\x04ipv4\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x14\n" +
-	"\x05scion\x18\x03 \x01(\tR\x05scion\"\xd3\x02\n" +
+	"\x05scion\x18\x03 \x01(\tR\x05scion\x12\x19\n" +
+	"\btag_spec\x18\x04 \x01(\tR\atagSpec\"\xd3\x02\n" +
 	"\x10AttributionState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x14\n" +

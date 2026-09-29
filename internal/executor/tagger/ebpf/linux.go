@@ -14,10 +14,10 @@
 //     authentication key (ak) at each epoch boundary, and reports the epoch
 //     whose key the map may still hold to the key schedule, which withholds
 //     that key from disclosure.
-//   - The eBPF program reads ak from the map, runs SipHash-2-4 over the packet,
-//     and writes the 16-bit result into the IPv4 IPID field.
-//   - The Linux kernel's BPF_F_RECOMPUTE_CSUM flag causes the checksum to be
-//     updated in-place, so no userspace checksum fix is needed.
+//   - The eBPF program reads ak from the map, computes the debuglet-tag-v1
+//     tag (docs/tag-spec.md, tesla.TagSpec) over the packet's canonical input,
+//     writes it into the IPv4 IPID field and sets DF, updating the header
+//     checksum incrementally with bpf_l3_csum_replace.
 //
 // # Performance comparison
 //

@@ -35,12 +35,15 @@
 //
 // # Authentication Tag
 //
-// The authentication tag written into the IPv4 IPID field is:
+// The authentication tag written into the IPv4 IPID field follows the
+// versioned tag specification TagSpec (docs/tag-spec.md):
 //
-//	tag = SipHash-2-4(k0 || k1 = ak[0:16], packet[0:64])[0:2]   (16-bit truncation)
+//	tag = SipHash-2-4(ak[0:16], canonical(packet)) mod 2^16
 //
-// with the packet's IPID and checksum fields zeroed. The eBPF tagger (tagger.c)
-// and the pure-Go fallback compute it identically; see ComputeTag.
+// where canonical takes the first min(64, total length) bytes and zeroes the
+// fields a router, NAT or checksum offload rewrites. The eBPF tagger
+// (tagger.c) and the pure-Go fallback compute it identically; see HashInput
+// and PacketTag.
 //
 // # Disclosure
 //
@@ -72,7 +75,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"sync"
@@ -512,135 +514,4 @@ func ChainSeed(seed []byte, generation int64) ([]byte, error) {
 		return nil, fmt.Errorf("tesla: HKDF failed: %w", err)
 	}
 	return tail, nil
-}
-
-// siphash24 computes SipHash-2-4.
-func siphash24(k0, k1 uint64, data []byte) uint64 {
-	v0 := k0 ^ 0x736f6d6570736575
-	v1 := k1 ^ 0x646f72616e646f6d
-	v2 := k0 ^ 0x6c7967656e657261
-	v3 := k1 ^ 0x7465646279746573
-
-	blocks := len(data) / 8
-	if blocks > 8 { // match tagger.c 64-byte limit
-		blocks = 8
-	}
-
-	for i := 0; i < blocks; i++ {
-		m := binary.LittleEndian.Uint64(data[i*8 : i*8+8])
-		v3 ^= m
-		for j := 0; j < 2; j++ {
-			v0 += v1
-			v1 = (v1 << 13) | (v1 >> 51)
-			v1 ^= v0
-			v0 = (v0 << 32) | (v0 >> 32)
-			v2 += v3
-			v3 = (v3 << 16) | (v3 >> 48)
-			v3 ^= v2
-			v0 += v3
-			v3 = (v3 << 21) | (v3 >> 43)
-			v3 ^= v0
-			v2 += v1
-			v1 = (v1 << 17) | (v1 >> 47)
-			v1 ^= v2
-			v2 = (v2 << 32) | (v2 >> 32)
-		}
-		v0 ^= m
-	}
-
-	b := uint64(len(data)) << 56
-	if len(data) > 64 {
-		b = 64 << 56
-	}
-	v3 ^= b
-	for j := 0; j < 2; j++ {
-		v0 += v1
-		v1 = (v1 << 13) | (v1 >> 51)
-		v1 ^= v0
-		v0 = (v0 << 32) | (v0 >> 32)
-		v2 += v3
-		v3 = (v3 << 16) | (v3 >> 48)
-		v3 ^= v2
-		v0 += v3
-		v3 = (v3 << 21) | (v3 >> 43)
-		v3 ^= v0
-		v2 += v1
-		v1 = (v1 << 17) | (v1 >> 47)
-		v1 ^= v2
-		v2 = (v2 << 32) | (v2 >> 32)
-	}
-	v0 ^= b
-	v2 ^= 0xff
-	for j := 0; j < 4; j++ {
-		v0 += v1
-		v1 = (v1 << 13) | (v1 >> 51)
-		v1 ^= v0
-		v0 = (v0 << 32) | (v0 >> 32)
-		v2 += v3
-		v3 = (v3 << 16) | (v3 >> 48)
-		v3 ^= v2
-		v0 += v3
-		v3 = (v3 << 21) | (v3 >> 43)
-		v3 ^= v0
-		v2 += v1
-		v1 = (v1 << 17) | (v1 >> 47)
-		v1 ^= v2
-		v2 = (v2 << 32) | (v2 >> 32)
-	}
-	return v0 ^ v1 ^ v2 ^ v3
-}
-
-// ComputeTag computes the 16-bit attribution tag both taggers write into the
-// IPv4 Identification field: SipHash-2-4 keyed with ak over at most the first
-// 64 bytes of the packet, as tagger.c computes it in the kernel. It does not
-// canonicalize the packet; the caller zeroes the mutable header fields.
-func ComputeTag(ak, payload []byte) (uint16, error) {
-	if len(ak) < 16 {
-		return 0, fmt.Errorf("tesla: ak too short")
-	}
-	k0 := binary.LittleEndian.Uint64(ak[0:8])
-	k1 := binary.LittleEndian.Uint64(ak[8:16])
-
-	hashLength := len(payload)
-	if hashLength > 64 {
-		hashLength = 64
-	}
-
-	hash := siphash24(k0, k1, payload[:hashLength])
-	return uint16(hash & 0xFFFF), nil
-}
-
-// ComputeTagForPacket derives ak from the chain key at time t and then
-// computes the tag over payload. It fails while no chain key is usable.
-func (ks *KeySchedule) ComputeTagForPacket(t time.Time, measurementID, payload []byte) (uint16, error) {
-	ak, err := ks.currentAK(t, measurementID)
-	if err != nil {
-		return 0, err
-	}
-	return ComputeTag(ak, payload)
-}
-
-// VerifyTag checks whether tag matches the expected tag for the packet at a
-// given epoch, given the disclosed key for that epoch and the measurement ID.
-// A packet that begins with an IPv4 header has its IPID and checksum fields
-// zeroed before hashing, as both taggers do.
-func VerifyTag(disclosedKey []byte, epoch int64, measurementID, packet []byte, tag uint16) (bool, error) {
-	if len(packet) >= 20 && (packet[0]>>4) == 4 {
-		pkt := make([]byte, len(packet))
-		copy(pkt, packet)
-		pkt[4] = 0 // IPID
-		pkt[5] = 0
-		pkt[10] = 0 // IPv4 checksum
-		pkt[11] = 0
-		packet = pkt
-	}
-	ak, err := DeriveAK(disclosedKey, measurementID)
-	if err != nil {
-		return false, err
-	}
-	expected, err := ComputeTag(ak, packet)
-	if err != nil {
-		return false, err
-	}
-	return expected == tag, nil
 }

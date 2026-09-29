@@ -17,7 +17,7 @@ func TestNoSigningKeyBeforeEpochOne(t *testing.T) {
 	ks := newTestSchedule(t, delay)
 	start := ks.Config().Epoch
 	anchor := ks.Anchor()
-	payload := []byte("first epoch payload")
+	payload := testIPv4([]byte("first epoch payload"))
 
 	for _, at := range []time.Time{start.Add(-time.Nanosecond), start, start.Add(delay - time.Nanosecond)} {
 		if k := ks.CurrentKey(at); k != nil {
@@ -56,14 +56,14 @@ func TestAnchorCannotProduceAcceptedTag(t *testing.T) {
 	delay := time.Second
 	ks := newTestSchedule(t, delay)
 	start := ks.Config().Epoch
-	payload := []byte("anchor forgery payload")
+	payload := testIPv4([]byte("anchor forgery payload"))
 
 	forgedAK, err := DeriveAK(ks.Anchor(), testMeasurementID)
 	if err != nil {
 		t.Fatalf("DeriveAK(anchor): %v", err)
 	}
-	forged, _ := ComputeTag(forgedAK, payload)
-	forgedBPF, _ := ComputeTag(forgedAK, payload)
+	forged, _ := PacketTag(forgedAK, payload)
+	forgedBPF, _ := PacketTag(forgedAK, payload)
 
 	if tag, err := ks.ComputeTagForPacket(start, testMeasurementID, payload); err == nil && tag == forged {
 		t.Error("the tag emitted in epoch 0 is computable from the public anchor")
@@ -132,7 +132,7 @@ func TestDelayedStartHasUsableKey(t *testing.T) {
 	if k == nil || bytes.Equal(k, ks.Anchor()) {
 		t.Fatalf("CurrentKey one hour after Epoch = %x; want a non-anchor key", k)
 	}
-	if _, err := ks.ComputeTagForPacket(now, testMeasurementID, []byte("late start")); err != nil {
+	if _, err := ks.ComputeTagForPacket(now, testMeasurementID, testIPv4([]byte("late start"))); err != nil {
 		t.Errorf("ComputeTagForPacket one hour after Epoch: %v", err)
 	}
 }
