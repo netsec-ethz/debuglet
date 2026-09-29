@@ -44,14 +44,21 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	}
 	e.capabilityNext = now.Add(30 * time.Second)
 	e.capabilityReason = attribution.GetReason()
+	e.capabilityMu.Unlock()
+
+	policy := e.cfg.Network.Policy.Spec()
+	icmp := icmpReport(policy.ICMP, netpolicy.RefreshICMP)
+	// The userspace tagger needs the same raw sockets, so the tagging mode is
+	// read again after the probe refreshed that answer; otherwise one report
+	// could carry a fresh ICMP state beside a tagging mode from the last one.
+	tagging = e.tagging()
+	e.capabilityMu.Lock()
 	e.capabilityTagging = tagging
 	e.capabilityMu.Unlock()
 
-	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution,
+	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
 		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION}}
 	vantage := &pb.VantagePointReport{SchemaVersion: 1, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
-	policy := e.cfg.Network.Policy.Spec()
-	report.Icmp = icmpReport(policy.ICMP, netpolicy.RefreshICMP)
 	for _, transport := range []struct {
 		name    string
 		enabled bool

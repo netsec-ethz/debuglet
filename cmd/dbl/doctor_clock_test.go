@@ -21,8 +21,8 @@ func TestDoctorClockCheck(t *testing.T) {
 		detail string
 	}{
 		{"ready", hostprobe.Clock{State: hostprobe.ClockSynced, EstimatedError: &small, Bound: 100 * time.Millisecond, Readiness: hostprobe.ReadinessReady}, "pass", "within the 100ms bound"},
-		{"unsynced", hostprobe.Clock{State: hostprobe.ClockUnsynced, Bound: 100 * time.Millisecond, Readiness: hostprobe.ReadinessDegraded, Reason: hostprobe.ReasonUnsynced}, "failure", "not synchronized"},
-		{"exceeds", hostprobe.Clock{State: hostprobe.ClockSynced, EstimatedError: &large, Bound: 100 * time.Millisecond, Readiness: hostprobe.ReadinessDegraded, Reason: hostprobe.ReasonErrorExceedsBound}, "failure", "300ms exceeds the 100ms bound"},
+		{"unsynced", hostprobe.Clock{State: hostprobe.ClockUnsynced, Bound: 100 * time.Millisecond, Readiness: hostprobe.ReadinessDegraded, Reason: hostprobe.ReasonUnsynced}, "not_checked", "not synchronized"},
+		{"exceeds", hostprobe.Clock{State: hostprobe.ClockSynced, EstimatedError: &large, Bound: 100 * time.Millisecond, Readiness: hostprobe.ReadinessDegraded, Reason: hostprobe.ReasonErrorExceedsBound}, "not_checked", "300ms exceeds the 100ms bound"},
 		{"unknown", hostprobe.Clock{State: hostprobe.ClockUnknown, Bound: 100 * time.Millisecond, Readiness: hostprobe.ReadinessUnknown}, "not_checked", "unavailable on this platform"},
 	} {
 		check := clockCheck(tc.clock)

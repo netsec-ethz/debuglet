@@ -122,10 +122,13 @@ func clockCheck(c hostprobe.Clock) doctorCheck {
 	case hostprobe.ReadinessReady:
 		return doctorCheck{"clock", "pass", fmt.Sprintf("kernel clock is synchronized; estimated error %v within the %v bound", *c.EstimatedError, c.Bound), ""}
 	case hostprobe.ReadinessDegraded:
+		// Inconclusive rather than a failure: the executor reports degraded
+		// readiness but still admits runs, and development hosts and VMs
+		// often run without a time daemon. As for BTF, the detail says why.
 		if c.Reason == hostprobe.ReasonUnsynced {
-			return doctorCheck{"clock", "failure", "kernel clock is not synchronized", "run a time daemon such as chrony or systemd-timesyncd and wait for it to synchronize"}
+			return doctorCheck{"clock", "not_checked", "kernel clock is not synchronized; the executor would report degraded clock readiness", "run a time daemon such as chrony or systemd-timesyncd and wait for it to synchronize"}
 		}
-		return doctorCheck{"clock", "failure", fmt.Sprintf("kernel estimated clock error %v exceeds the %v bound", *c.EstimatedError, c.Bound), "check the time daemon's sources, or raise clock.max_error_ms deliberately"}
+		return doctorCheck{"clock", "not_checked", fmt.Sprintf("kernel estimated clock error %v exceeds the %v bound; the executor would report degraded clock readiness", *c.EstimatedError, c.Bound), "check the time daemon's sources, or raise clock.max_error_ms deliberately"}
 	default:
 		return doctorCheck{"clock", "not_checked", "kernel clock state is unavailable on this platform; local UTC time is " + time.Now().UTC().Format(time.RFC3339), "verify host clock synchronization; no external time source was queried"}
 	}

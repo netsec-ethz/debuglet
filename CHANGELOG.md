@@ -64,8 +64,9 @@ changes; the linked API and deployment documentation contains operational detail
   `enforcement_reason`, all within schema 1 and labelled `executor-reported`.
   `timing.clock_uncertainty_ns` stays null.
 - `dbl doctor` checks the kernel clock against the executor's
-  `clock.max_error_ms` instead of reporting `clock: not_checked`: unsynced or
-  above the bound is a failure; non-Linux hosts remain `not_checked`.
+  `clock.max_error_ms` instead of reporting `clock: not_checked`: synchronized within the bound passes; unsynced or
+  above the bound stays `not_checked` with the reason (the executor admits
+  runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
 
 ### Changed
 - A run whose packets the eBPF tagger attributes refuses IPv6 destinations and
