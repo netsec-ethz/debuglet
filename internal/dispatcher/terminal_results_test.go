@@ -838,11 +838,9 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(d.Close)
-			mock.ExpectBegin()
 			mock.ExpectQuery(tgCompleteQuery).
 				WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
 				WillReturnError(sql.ErrNoRows)
-			mock.ExpectRollback()
 			mock.ExpectQuery(tgOwnedGetQuery).
 				WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
 				WillReturnRows(sqlmock.NewRows(tgDebugletColumns).AddRow(

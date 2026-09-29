@@ -552,7 +552,9 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 				return err
 			}
 		}
-		return d.finishTerminalCleanup(ctx, id)
+		// Release by run identity, a no-op if the winner already did.
+		d.releaseTerminal(run)
+		return nil
 	}
 	if !record.AcknowledgedAt.Valid {
 		if err := d.failCancellation(ctx, run.ID, "original_binding_unavailable"); err != nil {
@@ -574,7 +576,7 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 func (d *Dispatcher) recordCancellationResult(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
 	msg := reason
 	queries := database.New(d.db)
-	deb, err := d.completeTerminal(ctx, database.CompleteDebugletParams{
+	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
 		ExitedState:           models.RunStateExited,
 		Error:                 terminalError(-1, &msg),
 		Uuid:                  id,
@@ -598,11 +600,15 @@ func (d *Dispatcher) recordCancellationResult(ctx context.Context, identity data
 		if existing.State != models.RunStateExited {
 			return fmt.Errorf("cancellation of debuglet '%s' was rejected although it is in state %s", id.String(), existing.State.String())
 		}
-		return d.finishTerminalCleanup(ctx, id)
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
+		return nil
 	}
 	d.logger.Info("Recorded cancellation of a debuglet", daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID})...)
 	d.settleTerminalPayment(ctx, &deb, -1)
-	return d.finishTerminalCleanup(ctx, id)
+	d.releaseTerminal(deb)
+	return nil
 }
 
 func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, client rpc.BoundExecutorClient, id uuid.UUID, reason string) error {
@@ -624,7 +630,9 @@ func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, 
 				return err
 			}
 		}
-		return d.finishTerminalCleanup(ctx, id)
+		// Release by run identity, a no-op if the winner already did.
+		d.releaseTerminal(run)
+		return nil
 	}
 	reason = record.Reason
 	if !record.AcknowledgedAt.Valid {

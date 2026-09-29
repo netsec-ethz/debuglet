@@ -71,7 +71,6 @@ func PolicyFor(role Role) (Policy, error) {
 			"transactions":       nil,
 		}, Tables: map[string][]string{
 			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure"},
-			"debuglet_terminal_cleanup":  {"debuglet_id"},
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
 			"debuglet_provenance":        {"debuglet_id", "document"},

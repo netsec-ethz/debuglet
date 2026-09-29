@@ -44,7 +44,6 @@ func TestBootstrapFresh(t *testing.T) {
 					"debuglet_logs":              "id debuglet_id timestamp output source_sequence",
 					"debuglet_output":            "debuglet_id output_version owner_fingerprint account_id committed_sequence byte_count frame_count last_log_id final_sequence final_cursor status reason",
 					"debuglet_cancellations":     "debuglet_id request_id reason requested_at attempted_at acknowledged_at failure",
-					"debuglet_terminal_cleanup":  "debuglet_id",
 					"debuglet_provenance":        "debuglet_id document",
 					"output_account_usage":       "account_id charged_bytes frame_count",
 					"output_node_usage":          "singleton charged_bytes frame_count",
