@@ -12,7 +12,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -319,10 +318,11 @@ func terminalLine(message string) string {
 	return line.String()
 }
 
-// OnDebugletExit handles the exit of a debuglet, cleaning up its state and notifying any connected log streams.
-// It is safe to call multiple times: CompleteDebuglet is the sole terminal writer and its guard admits exactly
-// one winner per debuglet. Only that winner runs the payment decision, destination removal, scheduler release
-// and fairshare update; later callbacks for a terminal row acknowledge with no effects.
+// OnDebugletExit selects one immutable terminal result. Only its winner handles
+// payment and fairshare notification. Winner and duplicates release the run's
+// resources by run identity, so a duplicate completes a release an earlier
+// delivery did not reach without repeating payment or subtracting another
+// run's reservation.
 func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation, req *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing exit request")
@@ -368,11 +368,14 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 		if existing.State != models.RunStateExited {
 			return nil, fmt.Errorf("exit of debuglet '%s' was rejected although it is in state %s", debugletID, existing.State.String())
 		}
-		d.logger.Debug("Duplicate debuglet exit ignored", zap.String("debugletID", debugletID))
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
 		return &pb.DebugletExitResponse{}, nil
 	}
 
-	d.settleTerminal(ctx, &deb, exitCode)
+	d.settleTerminalPayment(ctx, &deb, exitCode)
+	d.releaseTerminal(deb)
 	// Reserve the origin continuation and every exact recipient before this
 	// callback returns; the detached deadline releases no mutation of its own.
 	notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -706,22 +709,9 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, de
 	return work.send(ctx)
 }
 
-func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.Time, use bitrate.Bitrate) {
-	r := schedule.Request{
-		Executor:    executor,
-		Destination: dest,
-		From:        from,
-		To:          to,
-		Use:         use,
-	}
-	d.scheduler.Remove(r)
-}
-
-// settleTerminal runs the effects of a won terminal write, exactly once, for
-// the winner, using the returned row. The payment decision stays exit-code
-// based (also for zero exit with an error); effect failures are logged and
-// never retried by duplicates.
-func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet, exitCode int32) {
+// settleTerminalPayment preserves the winner's exit-code-based payment decision.
+// Resource release is separate and never retries payment effects.
+func (d *Dispatcher) settleTerminalPayment(ctx context.Context, deb *database.Debuglet, exitCode int32) {
 	switch exitCode {
 	case 0:
 		//credit executor
@@ -736,23 +726,4 @@ func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet,
 			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
 		}
 	}
-
-	floor := bitrate.Bitrate(deb.Usage)
-
-	d.mu.Lock()
-	for _, dest := range deb.Addresses {
-		// The release subtracts the recorded allocation of this run, so a
-		// destination that was never allocated or already released is a no-op.
-		d.destinations.Remove(deb.Uuid, dest)
-	}
-
-	// Restore skipped old windows ending at or before restoredAt. Removing
-	// one would subtract another run's floor in shared rounded buckets. Runs
-	// admitted in this incarnation keep their own reservation even if the
-	// wall clock later moves behind the restore time.
-	if deb.DispatcherIncarnation == d.incarnation || deb.EndTime.Time.After(d.restoredAt) {
-		d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
-	}
-
-	d.mu.Unlock()
 }

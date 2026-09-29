@@ -329,7 +329,7 @@ func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate, addresses ..
 		t.Fatalf("create debuglet: %v", err)
 	}
 	f.d.executors[spec.ExecutorID].AppendDebugletID(id)
-	f.d.scheduler.Submit(*r)
+	f.d.reserveFloor(id, *r)
 	f.d.mu.Unlock()
 
 	row, err := f.q.UpdateDebugletState(f.ctx, database.UpdateDebugletStateParams{

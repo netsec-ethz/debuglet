@@ -81,14 +81,15 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 		})
 		if errors.Is(err, sql.ErrNoRows) {
 			d.logger.Debug("Debuglet finished before its window was classified", zap.String("debugletID", run.Uuid.String()))
-			continue
-		}
-		if err != nil {
+		} else if err != nil {
 			d.logger.Error("Failed to classify debuglet whose window has ended", zap.String("debugletID", run.Uuid.String()), zap.Error(err))
 			continue
+		} else {
+			d.logger.Info("Classified debuglet with outcome unknown at the end of its window", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))
+			d.settleTerminalPayment(ctx, &deb, -1)
 		}
-		d.logger.Info("Classified debuglet with outcome unknown at the end of its window", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))
-		d.settleTerminal(ctx, &deb, -1)
+		// Release by run identity also when another writer won.
+		d.releaseTerminal(run)
 	}
 	return now
 }

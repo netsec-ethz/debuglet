@@ -44,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -61,8 +62,7 @@ type Dispatcher struct {
 	outputLimits config.OutputConfig
 
 	closed             bool
-	restored           bool      // set under mu once a RestoreScheduler call has succeeded
-	restoredAt         time.Time // the clock of that call; windows ending by then were not reserved
+	restored           bool // set under mu once a RestoreScheduler call has succeeded
 	closeOnce          sync.Once
 	registrations      map[*registrationOperation]struct{}
 	registrationWG     sync.WaitGroup
@@ -75,6 +75,7 @@ type Dispatcher struct {
 	destinations *resource.DestinationsUsage
 	Payment      *payments.PaymentHandler
 	scheduler    *schedule.JobScheduler
+	reservations map[uuid.UUID]schedule.Request
 }
 
 func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity time.Duration, paymentHandler *payments.PaymentHandler) (*Dispatcher, error) {
@@ -105,6 +106,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		destinations:    resource.NewDestinations(bitrate.Gigabit),
 		Payment:         paymentHandler,
 		scheduler:       schedule.New(granularity),
+		reservations:    make(map[uuid.UUID]schedule.Request),
 	}
 
 	d.initializeEarnings = func(ctx context.Context, exec *RegisteredExecutor) {
@@ -127,12 +129,12 @@ func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming
 
 // RestoreScheduler reserves again, when the dispatcher starts, the floors of
 // the stored runs whose window has not ended, so that admission counts them as
-// the previous dispatcher did. A run whose stored state is exited released its
-// floor when it finished and reserves nothing; every other run, pending or of
+// the previous dispatcher did. A run whose stored state is exited reserves
+// nothing: every resource a terminal release frees is held in memory only, so
+// a restart leaves nothing of it to release. Every other run, pending or of
 // uncertain outcome, keeps its reservation until its window ends. A run whose
-// window ended less than expiredWindowGrace ago is logged and not reserved.
-// Terminal settlement must also skip its scheduler release: rounded buckets
-// can overlap a newly admitted window even when the actual windows do not.
+// window ended less than expiredWindowGrace ago is logged and not reserved. Release uses run identity, so a skipped reservation
+// cannot subtract another run's floor in overlapping rounded buckets.
 //
 // A restored run bound to a previous dispatcher lifetime is logged as a
 // warning with its ID: its control session ended with that lifetime, so it
@@ -188,7 +190,7 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 			d.logger.Warn("Restored debuglet belongs to a previous dispatcher lifetime; its control session has ended and it will not execute; cancelling it releases its reservation",
 				zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID), zap.Time("from", deb.StartTime.Time), zap.Time("to", deb.EndTime.Time))
 		}
-		d.scheduler.Submit(schedule.Request{
+		d.reserveFloor(deb.Uuid, schedule.Request{
 			Executor:    deb.ExecutorID,
 			From:        deb.StartTime.Time,
 			To:          deb.EndTime.Time,
@@ -197,7 +199,6 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 		})
 	}
 	d.restored = true
-	d.restoredAt = now
 	if !d.closed && d.expiryDone == nil {
 		d.expiryDone = make(chan struct{})
 		startExpiry = d.expiryDone

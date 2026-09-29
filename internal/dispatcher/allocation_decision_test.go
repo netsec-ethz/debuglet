@@ -521,6 +521,7 @@ func TestAdmissionAndRestoreChargeRepeatedDestinationsOnce(t *testing.T) {
 	// Rebuild from the stored, still-repeated address list.
 	f.d.mu.Lock()
 	f.d.scheduler = schedule.New(time.Minute)
+	clear(f.d.reservations)
 	f.d.mu.Unlock()
 	if err := f.d.RestoreScheduler(f.ctx); err != nil {
 		t.Fatalf("restore reservations: %v", err)

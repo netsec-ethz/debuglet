@@ -68,7 +68,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	var sreqs []schedule.Request
 	rollbackReservations := func() {
 		for i := len(sreqs) - 1; i >= 0; i-- {
-			d.scheduler.Remove(sreqs[i])
+			d.releaseFloor(debugletIDS[i])
 		}
 		sreqs = nil
 	}
@@ -92,7 +92,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			selected[i] = &submissionOwner{owner: entry.owner, mutation: mutation, entry: entry}
 			debugletIDS[i] = uuid.New()
 			sreqs = append(sreqs, *r)
-			d.scheduler.Submit(*r)
+			d.reserveFloor(debugletIDS[i], *r)
 		}
 	}
 
@@ -584,10 +584,14 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 		if existing.State != models.RunStateExited {
 			return fmt.Errorf("cancellation of debuglet '%s' was rejected although it is in state %s", id.String(), existing.State.String())
 		}
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
 		return nil
 	}
 	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", append(daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID}), zap.String("executor_outcome", "unknown"))...)
-	d.settleTerminal(ctx, &deb, -1)
+	d.settleTerminalPayment(ctx, &deb, -1)
+	d.releaseTerminal(deb)
 	return nil
 }
 

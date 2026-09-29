@@ -108,7 +108,8 @@ func TestCurrentReservationReleasesAfterClockRollback(t *testing.T) {
 	for _, terminal := range []string{"report", "sweep"} {
 		t.Run(terminal, func(t *testing.T) {
 			loop := newWELoop()
-			loop.set(time.Now().Add(2 * time.Hour))
+			restoredAt := time.Now().Add(2 * time.Hour)
+			loop.set(restoredAt)
 			f := newFBFixture(t, &fbPeer{tgPeer: &tgPeer{}, answer: map[string]error{}}, loop.install)
 			if err := f.d.RestoreScheduler(f.ctx); err != nil {
 				t.Fatal(err)
@@ -117,7 +118,7 @@ func TestCurrentReservationReleasesAfterClockRollback(t *testing.T) {
 			// still owns its floor even though its end precedes restoredAt.
 			loop.set(f.start.Add(-time.Minute))
 			run := f.seedDirect(t, tgFloorA, "192.0.2.77")
-			if run.row.DispatcherIncarnation != f.d.incarnation || run.row.EndTime.Time.After(f.d.restoredAt) {
+			if run.row.DispatcherIncarnation != f.d.incarnation || run.row.EndTime.Time.After(restoredAt) {
 				t.Fatal("fixture must admit a current-incarnation run ending before restore time")
 			}
 			tgAssertReserved(t, f, run, tgFloorA)
