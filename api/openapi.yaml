@@ -2660,6 +2660,8 @@ components:
           $ref: "#/components/schemas/ICMPProbe"
         attribution:
           $ref: "#/components/schemas/ExecutorAttribution"
+        tagging:
+          $ref: "#/components/schemas/ExecutorTagging"
         advertised_capacity_bps:
           type: integer
           format: int64
@@ -2819,6 +2821,36 @@ components:
           format: int64
           nullable: true
           description: "When an installed key started holding disclosure back, the end of its epoch; null when not held. A hold until the refresh at each epoch boundary is ordinary."
+    ExecutorTagging:
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: "Executor-reported packet tagging per address family and for SCION: the node's capability, the mode a run on this executor is set up to get (ebpf where the eBPF packet counter loaded on the configured interface), not the mode of any particular run. A run whose kernel tagger fails to load falls back to the pure-Go tagger without changing this report. ebpf is the kernel tagger, which tags every packet of a marked socket; userspace is the pure-Go tagger, which tags IPv4 UDP and ICMP datagrams only and leaves TCP and TLS untagged; none is untagged. A run whose IPv4 mode is ebpf refuses IPv6 destinations and peers and binds its listeners to IPv4 only; SCION traffic is always untagged. Absent or null means unknown, including executors and dispatchers that predate it and a malformed report of it. An executor claim, not a verification. Clients must tolerate values not listed here."
+      required:
+        - ipv4
+        - ipv6
+        - scion
+      properties:
+        ipv4:
+          type: string
+          enum:
+            - ebpf
+            - userspace
+            - none
+        ipv6:
+          type: string
+          enum:
+            - ebpf
+            - userspace
+            - none
+          description: "none in this API version: no tagger tags IPv6 yet."
+        scion:
+          type: string
+          enum:
+            - ebpf
+            - userspace
+            - none
+          description: "none in this API version: SCION sockets cannot be marked, so SCION traffic is untagged."
     ExecutorResponse:
       type: object
       additionalProperties: false
@@ -3530,11 +3562,13 @@ components:
                 - ""
                 - "ebpf"
                 - "fallback"
+            tagging:
+              $ref: "#/components/schemas/ExecutorTagging"
             enforcement_reason:
               $ref: "#/components/schemas/EnforcementReason"
             icmp:
               $ref: "#/components/schemas/ICMPProbe"
-          description: "Last validated executor capability report at admission; null when there was none. enforcement_reason and icmp were added within vantage_point schema 1 (API 1.9); earlier files omit them, which reads as empty and null."
+          description: "Last validated executor capability report at admission; null when there was none. Its tagging is the executor's reported node capability at admission, the tagging the run was set up to get, not a measurement of the run's packets; it is absent or null when the report had none. enforcement_reason and icmp were added within vantage_point schema 1 (API 1.9); earlier files omit them, which reads as empty and null."
         source:
           $ref: "#/components/schemas/ResultSourceLabel"
         observed_at:

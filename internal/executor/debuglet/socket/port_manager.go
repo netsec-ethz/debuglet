@@ -135,12 +135,31 @@ func listenConfig(control func(network, address string, c syscall.RawConn) error
 // when not nil, runs on the socket before it is bound and listening, so a
 // setting it applies covers the listener's first handshake reply. It returns an
 // error when no free port is available or when control refused the socket; in
-// both cases no port is allocated and no socket is left open.
+// both cases no port is allocated and no socket is left open. The listener is
+// dual-stack.
 func (s *PortManager) ListenTCP(control func(network, address string, c syscall.RawConn) error) (*net.TCPListener, int, string, error) {
+	return s.listenTCP("tcp", control)
+}
+
+// ListenTCP4 is ListenTCP bound to IPv4 only, for a run that must not accept
+// IPv6 peers: its handshake replies and segments to them would leave untagged.
+func (s *PortManager) ListenTCP4(control func(network, address string, c syscall.RawConn) error) (*net.TCPListener, int, string, error) {
+	return s.listenTCP("tcp4", control)
+}
+
+// PublicHost is the configured public host listeners are advertised under.
+func (s *PortManager) PublicHost() string {
+	if s == nil {
+		return ""
+	}
+	return s.publicAddr
+}
+
+func (s *PortManager) listenTCP(network string, control func(network, address string, c syscall.RawConn) error) (*net.TCPListener, int, string, error) {
 	lc := listenConfig(control)
 	var lis *net.TCPListener
 	port, addr, err := s.allocate(func(p int) (int, error) {
-		l, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort("", strconv.Itoa(p)))
+		l, err := lc.Listen(context.Background(), network, net.JoinHostPort("", strconv.Itoa(p)))
 		if err != nil {
 			return 0, err
 		}
@@ -166,12 +185,22 @@ func (s *PortManager) ListenTCP(control func(network, address string, c syscall.
 // when not nil, runs on the socket before it is bound, so a setting it applies
 // covers the first datagram. It returns an error when no free port is
 // available or when control refused the socket; in both cases no port is
-// allocated and no socket is left open.
+// allocated and no socket is left open. The socket is dual-stack.
 func (s *PortManager) ListenUDP(control func(network, address string, c syscall.RawConn) error) (*net.UDPConn, int, string, error) {
+	return s.listenUDP("udp", control)
+}
+
+// ListenUDP4 is ListenUDP bound to IPv4 only, for a run that must not
+// exchange datagrams with IPv6 peers.
+func (s *PortManager) ListenUDP4(control func(network, address string, c syscall.RawConn) error) (*net.UDPConn, int, string, error) {
+	return s.listenUDP("udp4", control)
+}
+
+func (s *PortManager) listenUDP(network string, control func(network, address string, c syscall.RawConn) error) (*net.UDPConn, int, string, error) {
 	lc := listenConfig(control)
 	var conn *net.UDPConn
 	port, addr, err := s.allocate(func(p int) (int, error) {
-		l, err := lc.ListenPacket(context.Background(), "udp", net.JoinHostPort("", strconv.Itoa(p)))
+		l, err := lc.ListenPacket(context.Background(), network, net.JoinHostPort("", strconv.Itoa(p)))
 		if err != nil {
 			return 0, err
 		}

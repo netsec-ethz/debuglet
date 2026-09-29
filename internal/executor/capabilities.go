@@ -13,8 +13,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/hostprobe"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -28,21 +30,25 @@ import (
 // only newly collected observations; resending a cached positive would renew its
 // dispatcher expiry without probing whether it is still available. A changed
 // attribution reason is sent on the next heartbeat regardless, so a failing key
-// refresh is not advertised as available until the interval ends. Both reports
-// come from the same probe and are sent, or omitted, together.
+// refresh is not advertised as available until the interval ends. A changed
+// tagging mode is likewise sent on the next heartbeat. Both reports come from
+// the same probe and are sent, or omitted, together.
 func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
 	now := time.Now()
 	attribution := attributionReport(e.teslaSchedule, now)
+	tagging := e.tagging()
 	e.capabilityMu.Lock()
-	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason {
+	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason && tagging == e.capabilityTagging {
 		e.capabilityMu.Unlock()
 		return nil, nil
 	}
 	e.capabilityNext = now.Add(30 * time.Second)
 	e.capabilityReason = attribution.GetReason()
+	e.capabilityTagging = tagging
 	e.capabilityMu.Unlock()
 
-	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution}
+	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution,
+		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION}}
 	vantage := &pb.VantagePointReport{SchemaVersion: 1, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	policy := e.cfg.Network.Policy.Spec()
 	report.Icmp = icmpReport(policy.ICMP, netpolicy.RefreshICMP)
@@ -59,7 +65,10 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	}
 	// TCP and UDP listeners need the inbound switch, the transport and both
 	// public_host and public_ports; the address itself is not reported here.
-	inbound := policy.Inbound && e.portManager.Enabled()
+	// A node whose runs refuse IPv6 cannot offer them under an IPv6 public
+	// host: the run refuses such a listener.
+	inbound := policy.Inbound && e.portManager.Enabled() &&
+		!(tagging.RefusesIPv6() && debuglet.IPv6PublicHost(e.portManager.PublicHost()))
 	if inbound && policy.TCP {
 		vantage.Listeners = append(vantage.Listeners, "tcp")
 	}
@@ -156,6 +165,21 @@ func platformReport(p hostprobe.Platform) *pb.HostPlatform {
 		out.MemoryBytes = &memory
 	}
 	return out
+}
+
+// tagging is this node's tagging capability: the mode a run on it is set up
+// to get, which depends on the node (interface, eBPF counter, raw-socket
+// permission) and not on any one run. It does not follow individual runs, so
+// the capability snapshot a result keeps from admission describes the node,
+// never a previous run. A run whose kernel tagger then fails to load falls
+// back to the pure-Go tagger and logs so; that per-run fallback is not
+// reported.
+func (e *Executor) tagging() tagger.Mode {
+	counter := ""
+	if e.packetCount != nil {
+		counter = e.packetCount.Type()
+	}
+	return debuglet.ExpectedTagging(e.iface, counter)
 }
 
 // maxRefreshError bounds the refresh error text a report carries; the

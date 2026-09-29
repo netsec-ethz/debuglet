@@ -275,17 +275,32 @@ message ExecutorCapabilities {
   // Additive within schema version 1: absent from older executors, which
   // leaves attribution unknown.
   AttributionState attribution = 4;
+  // Additive within schema version 1: absent from older executors, which
+  // leaves the tagging mode unknown.
+  TaggingMode tagging = 5;
   // Additive within schema version 1; empty or absent is unknown.
   // Why the counter is fallback: configured, no_interface, not_permitted,
   // unsupported or attach_failed. Empty when enforcement_mode is ebpf.
-  string enforcement_reason = 5;
-  ProbeState icmp = 6; // Raw ICMPv4 socket probe of this process.
+  string enforcement_reason = 6;
+  ProbeState icmp = 7; // Raw ICMPv4 socket probe of this process.
 }
 
 // A local probe outcome. Opening a socket sends nothing.
 message ProbeState {
   string state = 1;  // available or unavailable.
   string reason = 2; // Empty when available; disabled, not_permitted, ping_socket_only or unsupported.
+}
+
+// How the packets of a run on this executor are tagged, per address family
+// and for SCION: ebpf (the kernel tagger, every packet of a marked socket),
+// userspace (the pure-Go tagger, IPv4 UDP and ICMP datagrams only) or none.
+// It is the node's capability, the mode a run on this executor is set up to
+// get, not the mode of any particular run. IPv6 and SCION are none in this
+// build.
+message TaggingMode {
+  string ipv4 = 1;
+  string ipv6 = 2;
+  string scion = 3;
 }
 
 // Whether packets tagged now can be attributed once their TESLA key is

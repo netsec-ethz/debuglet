@@ -42,6 +42,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/tlsfiles"
@@ -64,6 +65,8 @@ type Executor struct {
 	capabilityNext time.Time
 	// capabilityReason is the attribution reason of the last report sent.
 	capabilityReason string
+	// capabilityTagging is the tagging mode of the last report sent.
+	capabilityTagging tagger.Mode
 	// clockReason is the clock readiness reason last logged.
 	clockReason   string
 	cfg           config.ExecutorConfig

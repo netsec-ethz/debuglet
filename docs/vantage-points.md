@@ -44,7 +44,9 @@ table: re-registration replaces the observation. The durable record is the
 immutable admission-time [provenance](results.md#what-the-record-means)
 snapshot, which gains `provenance.vantage_point` in result format 1.1. Results
 therefore keep the context that was in effect when the run was admitted, even
-after the executor moves or is removed.
+after the executor moves or is removed. The snapshot's capability report
+includes the executor's [tagging mode](operations/executor-discovery.md#tagging-mode)
+per address family and for SCION, `null` when the report had none.
 
 ## Geolocation and ASN
 

@@ -70,6 +70,11 @@ var (
 	ErrDenied = errors.New("denied by the operator network policy")
 	// ErrNotInPolicy is an address the job did not declare.
 	ErrNotInPolicy = errors.New("outside the job's destination policy")
+	// ErrUntagged is traffic the run's tagger cannot attribute: an IPv6
+	// destination, peer or listener address of a run whose kernel tagger tags
+	// IPv4 only. It is refused rather than sent without the attribution the
+	// run expects.
+	ErrUntagged = errors.New("not tagged on this executor")
 )
 
 // Spec is the operator policy as the configuration file writes it. It is

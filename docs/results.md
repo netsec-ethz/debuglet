@@ -42,12 +42,18 @@ Readers from before 1.1 reject 1.1 exports as an unsupported version.
   `provenance: null`.
 - `provenance.vantage_point` (format 1.1) records where the run was to execute,
   as the dispatcher knew it at admission: the executor's last validated
-  capability report (protocols, enforcement mode, its schema version), the
+  capability report (protocols, enforcement mode, its schema version and its
+  [tagging mode](operations/executor-discovery.md#tagging-mode), which is
+  `null` when the report had none), the
   dispatcher's receipt time of that report as `observed_at`, and `stale: true`
   when the report had outlived its 90 s lifetime; the source IP of the control
   connection; and the executor's configured `public_host`. It is `null` for runs
   admitted before 1.1. The object has its own `schema_version` (1); later facts
-  such as ASN, geolocation or reachability are added as new fields.
+  such as ASN, geolocation or reachability are added as new fields. The tagging
+  mode is the executor's reported node capability at admission, the mode the
+  run was set up to get, not a measurement of the run's packets (a run whose
+  kernel tagger failed to load ran with the pure-Go tagger); a file without it reads as
+  unknown, and readers keep tagging values they do not know.
 - Within schema 1, `vantage_point` also records `scion_isd_as`, the executor's
   last reported SCION ISD-AS with `observed_at` and `stale` like capabilities,
   and `display`, the operator's `display_name`, `city`, `country` and `network`

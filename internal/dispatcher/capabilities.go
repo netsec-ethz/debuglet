@@ -47,6 +47,9 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 	if report.Icmp != nil {
 		out.ICMP = icmpFromReport(report.Icmp, slices.Contains(protocols, "icmp"))
 	}
+	if report.Tagging != nil {
+		out.Tagging = taggingFromReport(report.Tagging)
+	}
 	return out
 }
 
@@ -82,6 +85,30 @@ func icmpFromReport(report *pb.ProbeState, advertised bool) *wire.ProbeState {
 		return nil
 	}
 	return &wire.ProbeState{State: report.GetState(), Reason: report.GetReason()}
+}
+
+// taggingFromReport validates the tagging mode. Nil means malformed, which
+// leaves tagging unknown while the rest of the report stands, as for
+// attribution. Each family carries one of the modes this schema defines.
+func taggingFromReport(report *pb.TaggingMode) *wire.TaggingMode {
+	for _, mode := range []string{report.GetIpv4(), report.GetIpv6(), report.GetScion()} {
+		switch mode {
+		case wire.TaggingEBPF, wire.TaggingUserspace, wire.TaggingNone:
+		default:
+			return nil
+		}
+	}
+	return &wire.TaggingMode{IPv4: report.GetIpv4(), IPv6: report.GetIpv6(), SCION: report.GetScion()}
+}
+
+// cloneTagging copies a tagging mode, so a snapshot never shares the
+// registry's value.
+func cloneTagging(tagging *wire.TaggingMode) *wire.TaggingMode {
+	if tagging == nil {
+		return nil
+	}
+	out := *tagging
+	return &out
 }
 
 // Attribution report bounds. An age beyond maxReportedAge cannot come from a
@@ -164,7 +191,8 @@ func admissionCapabilities(entry *executorEntry, now time.Time) wire.VantageCapa
 	return wire.VantageCapabilities{
 		Value: &wire.CapabilityReport{SchemaVersion: int(entry.Capabilities.SchemaVersion),
 			Protocols: append([]string{}, entry.Capabilities.Protocols...), EnforcementMode: entry.Capabilities.EnforcementMode,
-			EnforcementReason: entry.Capabilities.EnforcementReason, ICMP: cloneProbe(entry.Capabilities.ICMP)},
+			EnforcementReason: entry.Capabilities.EnforcementReason, ICMP: cloneProbe(entry.Capabilities.ICMP),
+			Tagging: cloneTagging(entry.Capabilities.Tagging)},
 		Source: &source, ObservedAt: &observed, Stale: &stale,
 	}
 }
@@ -190,6 +218,7 @@ func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapab
 		out.Attribution = &attribution
 	}
 	out.ICMP = cloneProbe(out.ICMP)
+	out.Tagging = cloneTagging(out.Tagging)
 	if len(out.Protocols) == 0 {
 		out.Protocols = []string{}
 	}
