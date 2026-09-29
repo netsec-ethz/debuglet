@@ -71,7 +71,7 @@ func cancellationEngine(t *testing.T, data []byte) (*debuglet.Debuglet, <-chan s
 	t.Helper()
 	logger := zap.NewNop()
 	id := uuid.New()
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x71}, 32), Delay: time.Second, ChainLength: 64})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x71}, 32), EpochLength: time.Second, ChainLength: 64})
 	if err != nil {
 		t.Fatal(err)
 	}

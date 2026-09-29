@@ -143,7 +143,7 @@ func captureVerifies(t *testing.T, ks *tesla.KeySchedule, now time.Time, measure
 // mark. An unmarked connection is the control.
 func TestCaptureTCPTagsVerifyAtReceiver(t *testing.T) {
 	now := time.Now()
-	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: captureSeed, Delay: time.Hour, Epoch: now.Add(-time.Hour)})
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: captureSeed, EpochLength: time.Hour, Epoch: now.Add(-time.Hour)})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}

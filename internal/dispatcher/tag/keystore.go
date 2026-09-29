@@ -30,35 +30,63 @@ const clockSkew = 5 * time.Second
 
 // Chain names the key chain a disclosure belongs to: its public anchor k_0 and
 // the schedule the executor registered with it. Epoch i starts at
-// Start + i*Interval. A zero Interval means the schedule is unknown; only the
-// absolute walk bound then limits a disclosure's epoch.
+// Start + i*Interval, and its key may be disclosed from the start of epoch
+// i+DisclosureDelay. A zero Interval means the schedule is unknown; only the
+// absolute walk bound then limits a disclosure's epoch. A zero
+// DisclosureDelay is an executor that predates it and discloses after one
+// epoch.
 type Chain struct {
-	Anchor   []byte
-	Start    time.Time
-	Interval time.Duration
+	Anchor          []byte
+	Start           time.Time
+	Interval        time.Duration
+	DisclosureDelay int64
+}
+
+// disclosureDelay returns d, one epoch for an executor that reported none.
+func (c Chain) disclosureDelay() int64 {
+	if c.DisclosureDelay <= 0 {
+		return 1
+	}
+	return c.DisclosureDelay
 }
 
 // maxEpoch returns the highest epoch a disclosure received at now may carry:
-// the epoch in progress at now, allowing for clockSkew, plus one epoch.
-// An honest executor discloses one epoch behind its current one.
+// the epoch in progress at now, allowing for clockSkew, less the disclosure
+// delay d. An honest executor discloses k_i no earlier than the start of
+// epoch i+d, so a later epoch is an early disclosure. ok is false while the
+// schedule is unknown; a negative result means nothing is disclosable yet.
 func (c Chain) maxEpoch(now time.Time) (int64, bool) {
 	if c.Interval <= 0 {
 		return 0, false
 	}
 	elapsed := now.Add(clockSkew).Sub(c.Start)
 	if elapsed < 0 {
-		elapsed = 0
+		return -1, true
 	}
-	return int64(elapsed/c.Interval) + 1, true
+	return int64(elapsed/c.Interval) - c.disclosureDelay(), true
+}
+
+// DisclosableAt returns when the key of epoch i may first be disclosed: the
+// start of epoch i+d. ok is false while the schedule is unknown.
+func (c Chain) DisclosableAt(epoch int64) (time.Time, bool) {
+	if c.Interval <= 0 {
+		return time.Time{}, false
+	}
+	return c.Start.Add(time.Duration(epoch+c.disclosureDelay()) * c.Interval), true
 }
 
 // RejectedError reports a disclosure that was not stored because it does not
 // extend its chain. First is set for the first rejection on that chain, so a
-// caller can log a misbehaving executor once rather than on every heartbeat.
+// caller can log a misbehaving executor once rather than on every heartbeat;
+// early disclosures count separately, so the first is logged even after
+// another rejection. Early is set when the key was disclosed before its schedule allows: that is
+// evidence of a misbehaving executor, since anyone who saw the key could forge
+// tags for packets verifiers still attribute to its epoch.
 type RejectedError struct {
 	Epoch  int64
 	Reason string
 	First  bool
+	Early  bool
 }
 
 func (e *RejectedError) Error() string {
@@ -74,8 +102,9 @@ type chainKeys struct {
 	// can answer in O(1) without scanning; zero means none yet.
 	latest int64
 
-	// rejected records that a disclosure of this chain was rejected.
-	rejected bool
+	// rejected records that a disclosure of this chain was rejected, and
+	// rejectedEarly that one was rejected as early; each is logged once.
+	rejected, rejectedEarly bool
 }
 
 // KeyStore stores disclosed TESLA keys for retroactive packet verification.
@@ -129,7 +158,7 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 	if stored, ok := c.keys[epoch]; ok {
 		defer ks.mu.Unlock()
 		if !bytes.Equal(stored, key) {
-			return c.reject(epoch, "conflicts with the key stored for this epoch")
+			return c.reject(epoch, "conflicts with the key stored for this epoch", false)
 		}
 		return nil
 	}
@@ -145,7 +174,7 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 
 	// Hash outside the lock; a key that extends any verified key of the chain
 	// is authentic, so a disclosure stored meanwhile does not invalidate this.
-	reason := ""
+	reason, early := "", false
 	maxEpoch, scheduled := chain.maxEpoch(now)
 	switch {
 	case len(anchor) == 0:
@@ -153,7 +182,10 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 	case epoch < 0:
 		reason = "negative epoch"
 	case scheduled && epoch > maxEpoch:
-		reason = fmt.Sprintf("ahead of wall-clock time, which allows at most epoch %d", maxEpoch)
+		early = true
+		at, _ := chain.DisclosableAt(epoch)
+		reason = fmt.Sprintf("disclosed before its schedule allows: epoch %d is disclosable from %s (disclosure delay %d epochs), and wall-clock time allows at most epoch %d",
+			epoch, at.UTC().Format(time.RFC3339), chain.disclosureDelay(), maxEpoch)
 	case epoch-base > maxVerifyWalk:
 		reason = fmt.Sprintf("%d epochs past the last verified key exceeds the bound of %d", epoch-base, maxVerifyWalk)
 	default:
@@ -166,11 +198,11 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	if reason != "" {
-		return c.reject(epoch, reason)
+		return c.reject(epoch, reason, early)
 	}
 	if stored, ok := c.keys[epoch]; ok {
 		if !bytes.Equal(stored, key) {
-			return c.reject(epoch, "conflicts with the key stored for this epoch")
+			return c.reject(epoch, "conflicts with the key stored for this epoch", false)
 		}
 		return nil
 	}
@@ -187,10 +219,14 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 }
 
 // reject records a rejected disclosure of c and returns its error.
-func (c *chainKeys) reject(epoch int64, reason string) error {
-	first := !c.rejected
-	c.rejected = true
-	return &RejectedError{Epoch: epoch, Reason: reason, First: first}
+func (c *chainKeys) reject(epoch int64, reason string, early bool) error {
+	flag := &c.rejected
+	if early {
+		flag = &c.rejectedEarly
+	}
+	first := !*flag
+	*flag = true
+	return &RejectedError{Epoch: epoch, Reason: reason, First: first, Early: early}
 }
 
 // Get retrieves a key disclosed on the chain with the given anchor.

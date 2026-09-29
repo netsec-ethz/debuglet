@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The sections an executor configuration must set, kept separate so a test can
@@ -66,8 +67,17 @@ func TestRejectsUnsupportedOrMalformedFields(t *testing.T) {
 		{"explicit zero debuglets", identitySection + dispatcherSection + "[resources]\ncapacity=1000\nmax_debuglets=0\n" + databaseSection + tlsSection, "resources.max_debuglets must be positive"},
 		{"negative debuglets", identitySection + dispatcherSection + "[resources]\ncapacity=1000\nmax_debuglets=-4\n" + databaseSection + tlsSection, "resources.max_debuglets must be positive"},
 		{"missing database path", identitySection + dispatcherSection + resourcesSection + tlsSection, "database.path is required"},
-		{"negative TESLA delay", baseSections + "[tesla]\ndelay=-1\n", "tesla.delay must not be negative"},
-		{"TESLA delay overflow", baseSections + "[tesla]\ndelay=9223372036854775807\n", "tesla.delay must be at most"},
+		{"negative TESLA epoch", baseSections + "[tesla]\nepoch_seconds=-1\n", "tesla.epoch_seconds must be between 0 (the default of 10 seconds) and 86400 seconds, got -1"},
+		{"TESLA epoch beyond a day", baseSections + "[tesla]\nepoch_seconds=86401\n", "tesla.epoch_seconds must be between 0 (the default of 10 seconds) and 86400 seconds, got 86401"},
+		{"negative deprecated TESLA delay", baseSections + "[tesla]\ndelay=-1\n", "tesla.delay must be between 0"},
+		{"TESLA delay overflow", baseSections + "[tesla]\ndelay=9223372036854775807\n", "tesla.delay must be between 0"},
+		{"TESLA epoch under both names", baseSections + "[tesla]\ndelay=5\nepoch_seconds=5\n", "tesla.delay is the deprecated name of tesla.epoch_seconds; set only tesla.epoch_seconds"},
+		{"TESLA disclosure after one epoch", baseSections + "[tesla]\ndisclosure_delay_epochs=1\n", "tesla.disclosure_delay_epochs must be 0 (derive the smallest delay covering 900 seconds) or between 2 and 60480 epochs (604800 seconds in all at 10-second epochs), got 1"},
+		{"TESLA disclosure margin below the skew allowance", baseSections + "[tesla]\nepoch_seconds=1\ndisclosure_delay_epochs=2\n", "tesla.disclosure_delay_epochs must be at least 11 at 1-second epochs, so the key of a packet's previous epoch stays secret for 10 seconds after the packet's epoch (clock skew allowance plus verifier tolerance), got 2"},
+		{"TESLA disclosure margin one epoch short", baseSections + "[tesla]\nepoch_seconds=3\ndisclosure_delay_epochs=4\n", "must be at least 5 at 3-second epochs"},
+		{"negative TESLA disclosure delay", baseSections + "[tesla]\ndisclosure_delay_epochs=-2\n", "tesla.disclosure_delay_epochs must be 0"},
+		{"TESLA disclosure beyond the horizon", baseSections + "[tesla]\nepoch_seconds=60\ndisclosure_delay_epochs=10081\n", "or between 2 and 10080 epochs (604800 seconds in all at 60-second epochs), got 10081"},
+		{"TESLA disclosure beyond the horizon by the deprecated key", baseSections + "[tesla]\ndelay=60\ndisclosure_delay_epochs=10081\n", "between 2 and 10080 epochs"},
 		{"negative chain length", baseSections + "[tesla]\nchain_length=-1\n", "tesla.chain_length must be between"},
 		{"chain length beyond the horizon", baseSections + "[tesla]\nchain_length=604801\n", "tesla.chain_length must be between"},
 		{"unknown packet counter", baseSections + "[network]\npacket_counter='ebpf'\n", "network.packet_counter"},
@@ -110,8 +120,34 @@ func TestOmittedKeysKeepDocumentedDefaults(t *testing.T) {
 		t.Fatalf("yamux default: %+v", cfg.Dispatcher)
 	}
 	// Zero keeps the derived chain length; it is not a missing value.
-	if cfg.Tesla.ChainLength != 0 || cfg.Tesla.Delay != 0 {
+	if cfg.Tesla.ChainLength != 0 || cfg.Tesla.EpochSeconds != 0 || cfg.Tesla.Delay != 0 || cfg.Tesla.DisclosureDelayEpochs != 0 || cfg.Tesla.EpochLength() != 0 {
 		t.Fatalf("TESLA defaults: %+v", cfg.Tesla)
+	}
+}
+
+// TestTeslaEpochKeys reads the epoch length from epoch_seconds, or from the
+// deprecated delay key when only that is set, and keeps the disclosure delay.
+func TestTeslaEpochKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		epoch      time.Duration
+		d          int64
+	}{
+		{"epoch_seconds", "[tesla]\nepoch_seconds=30\ndisclosure_delay_epochs=2\n", 30 * time.Second, 2},
+		{"deprecated delay", "[tesla]\ndelay=2\n", 2 * time.Second, 0},
+		{"two epochs at ten seconds", "[tesla]\ndisclosure_delay_epochs=2\n", 0, 2},
+		{"margin reached at one-second epochs", "[tesla]\nepoch_seconds=1\ndisclosure_delay_epochs=11\n", time.Second, 11},
+		{"disclosure delay at the horizon", "[tesla]\nepoch_seconds=60\ndisclosure_delay_epochs=10080\n", time.Minute, 10080},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _, err := load(t, baseSections+tc.body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Tesla.EpochLength() != tc.epoch || cfg.Tesla.DisclosureDelayEpochs != tc.d {
+				t.Fatalf("TESLA = %+v; want epoch %s, d %d", cfg.Tesla, tc.epoch, tc.d)
+			}
+		})
 	}
 }
 

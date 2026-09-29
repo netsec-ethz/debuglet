@@ -25,9 +25,9 @@ func firstEpochPacket() []byte {
 func firstEpochSchedule(t *testing.T, epoch time.Time) *tesla.KeySchedule {
 	t.Helper()
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: epoch,
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       epoch,
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)

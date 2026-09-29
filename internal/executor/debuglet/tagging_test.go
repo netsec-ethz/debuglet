@@ -51,7 +51,7 @@ func TestExpectedTagging(t *testing.T) {
 // keeps IPv6: nothing it sends is labelled attributable, and its mode says
 // which IPv4 packets are tagged.
 func TestUserspaceRunKeepsIPv6(t *testing.T) {
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x72}, 32), Delay: time.Second, ChainLength: 64})
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x72}, 32), EpochLength: time.Second, ChainLength: 64})
 	if err != nil {
 		t.Fatal(err)
 	}

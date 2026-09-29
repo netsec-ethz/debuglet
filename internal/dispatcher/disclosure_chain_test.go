@@ -118,12 +118,15 @@ func TestHeartbeatDropsForgedDisclosures(t *testing.T) {
 }
 
 // TestHeartbeatBoundsDisclosuresByRegisteredSchedule checks that the heartbeat
-// handler applies the schedule the executor registered: a disclosure ahead of
-// the dispatcher's clock is dropped, the one due now is stored.
+// handler applies the schedule the executor registered, disclosure delay
+// included: a disclosure before its epoch plus d is dropped and reported once
+// as an early disclosure, the one due now is stored.
 func TestHeartbeatBoundsDisclosuresByRegisteredSchedule(t *testing.T) {
 	d, _, _ := newRegistryFixture(t)
+	core, logs := observer.New(zapcore.WarnLevel)
+	d.logger = zap.New(core)
 	start := time.Unix(1_700_000_000, 0)
-	d.now = func() time.Time { return start.Add(50 * time.Second) }
+	d.now = func() time.Time { return start.Add(105 * time.Second) }
 	const id = "scheduled"
 	tail := bytes.Repeat([]byte{0x3D}, 32)
 	owner := registryOwner(t, id)
@@ -131,6 +134,7 @@ func TestHeartbeatBoundsDisclosuresByRegisteredSchedule(t *testing.T) {
 	hello.TeslaAnchorKey = chainKey(tail, 0)
 	hello.TeslaAnchorTimestampNs = start.UnixNano()
 	hello.TeslaDelaySec = 20
+	hello.TeslaDisclosureDelayEpochs = 2
 	if err := registryRegisterWithSetup(context.Background(), d, owner, hello, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
@@ -147,14 +151,18 @@ func TestHeartbeatBoundsDisclosuresByRegisteredSchedule(t *testing.T) {
 		}
 	}
 
-	// With 20s epochs, start+50s is epoch 2: the bound is epoch 3, so the
-	// genuine k_5 is ahead of the clock and dropped.
+	// With 20s epochs, start+105s (110s with the skew allowance) is epoch 5
+	// and d = 2 allows at most k_3: the genuine k_5 and k_4 are early.
 	heartbeat(5, tail)
+	heartbeat(4, chainKey(tail, 4))
 	if _, _, ok := d.keystore.LatestDisclosed(id, hello.TeslaAnchorKey); ok {
 		t.Fatal("a disclosure ahead of the registered schedule was stored")
 	}
-	heartbeat(2, chainKey(tail, 2))
-	if epoch, _, ok := d.keystore.LatestDisclosed(id, hello.TeslaAnchorKey); !ok || epoch != 2 {
-		t.Fatalf("latest disclosure = (%d, %v); want epoch 2", epoch, ok)
+	if n := logs.FilterMessage("Executor disclosed a TESLA key early; it is misbehaving").FilterLevelExact(zapcore.ErrorLevel).Len(); n != 1 {
+		t.Fatalf("early disclosures logged %d times; want once", n)
+	}
+	heartbeat(3, chainKey(tail, 3))
+	if epoch, _, ok := d.keystore.LatestDisclosed(id, hello.TeslaAnchorKey); !ok || epoch != 3 {
+		t.Fatalf("latest disclosure = (%d, %v); want epoch 3", epoch, ok)
 	}
 }

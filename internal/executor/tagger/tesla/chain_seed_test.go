@@ -22,7 +22,7 @@ func TestChainSeedGivesEachGenerationItsOwnChain(t *testing.T) {
 		if len(tail) != keySize {
 			t.Fatalf("tail is %d bytes, want %d", len(tail), keySize)
 		}
-		ks, err := NewKeySchedule(Config{Seed: tail, Delay: time.Second, ChainLength: 8})
+		ks, err := NewKeySchedule(Config{Seed: tail, EpochLength: time.Second, ChainLength: 8})
 		if err != nil {
 			t.Fatal(err)
 		}
