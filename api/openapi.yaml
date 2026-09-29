@@ -2980,7 +2980,7 @@ components:
           type: "integer"
           format: "int64"
           nullable: true
-          description: "Null when an exit code was not recorded. Exited state alone does not establish exit code zero."
+          description: "Always null in format 1.0, which does not record exit codes. Exited state alone does not establish exit code zero."
     ResultTiming:
       type: "object"
       additionalProperties: false
@@ -3009,18 +3009,18 @@ components:
         started_at:
           type: "string"
           format: "date-time"
-          description: "Actual start when recorded; currently null."
+          description: "Actual start; always null in format 1.0."
           nullable: true
         finished_at:
           type: "string"
           format: "date-time"
-          description: "Actual finish when recorded; currently null."
+          description: "Actual finish; always null in format 1.0."
           nullable: true
         clock_uncertainty_ns:
           type: "integer"
           format: "int64"
           nullable: true
-          description: "Measured clock-error bound, not timestamp resolution; currently null."
+          description: "Measured clock-error bound, not timestamp resolution; always null in format 1.0."
           minimum: 0
     ResultOutput:
       type: "object"
