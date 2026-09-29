@@ -8,8 +8,67 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
+
+// Admission records a stale report as stale rather than dropping it, labels a
+// hello-supplied source IP as the executor's claim, and leaves absent facts null.
+func TestAdmissionVantagePointLabels(t *testing.T) {
+	observed := time.Unix(1700000000, 0)
+	host := "vantage.example"
+	entry := &executorEntry{RegisteredExecutor: &RegisteredExecutor{
+		Capabilities:       &wire.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}, EnforcementMode: "fallback"},
+		capabilityObserved: observed, sourceIp: "192.0.2.9", publicHost: &host,
+	}}
+	v := admissionVantagePoint(entry, observed.Add(capabilityLifetime))
+	if got := v.Capabilities; got.Value == nil || !*got.Stale || !got.ObservedAt.Equal(observed) || *got.Source != wire.SourceExecutorReported {
+		t.Fatalf("stale report: %+v", got)
+	}
+	if *v.SourceIP.Source != wire.SourceExecutorReported || *v.PublicHost.Value != host || *v.PublicHost.Source != wire.SourceExecutorReported {
+		t.Fatalf("labels: %+v", v)
+	}
+	entry.Capabilities.Protocols[0] = "changed"
+	if v.Capabilities.Value.Protocols[0] != "tcp" {
+		t.Fatal("snapshot aliases the registry")
+	}
+	if fresh := admissionVantagePoint(entry, observed.Add(time.Second)); *fresh.Capabilities.Stale {
+		t.Fatal("fresh report marked stale")
+	}
+	entry.sourceIPObserved = true
+	if v := admissionVantagePoint(entry, observed); *v.SourceIP.Source != wire.SourceDispatcherObserved {
+		t.Fatalf("observed ip: %+v", v.SourceIP)
+	}
+	empty := admissionVantagePoint(&executorEntry{RegisteredExecutor: &RegisteredExecutor{}}, observed)
+	if empty.SchemaVersion != 1 || empty.Capabilities != (wire.VantageCapabilities{}) || empty.SourceIP != (wire.LabelledString{}) || empty.PublicHost != (wire.LabelledString{}) {
+		t.Fatalf("invented facts: %+v", empty)
+	}
+}
+
+// Registration decides the source-IP label: the connection's address is the
+// dispatcher's observation, the hello's address only the executor's claim.
+func TestRegistrationLabelsVantageSourceIP(t *testing.T) {
+	d, _, _ := newRegistryFixture(t)
+	for _, tc := range []struct {
+		id, connection, want, source string
+	}{
+		{"observed", "198.51.100.4", "198.51.100.4", wire.SourceDispatcherObserved},
+		{"claimed", "", "203.0.113.8", wire.SourceExecutorReported},
+	} {
+		if err := registryRegisterWithSetup(t.Context(), d, registryOwner(t, tc.id), registryHello(tc.id), tc.connection); err != nil {
+			t.Fatal(err)
+		}
+		d.mu.Lock()
+		v := admissionVantagePoint(d.executors[tc.id], d.now())
+		d.mu.Unlock()
+		if ip := v.SourceIP; ip.Value == nil || *ip.Value != tc.want || *ip.Source != tc.source {
+			t.Fatalf("%s: source ip %+v", tc.id, ip)
+		}
+		if host := v.PublicHost; host.Value == nil || *host.Source != wire.SourceExecutorReported {
+			t.Fatalf("%s: public host %+v", tc.id, host)
+		}
+	}
+}
 
 func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 	d, _, _ := newRegistryFixture(t)

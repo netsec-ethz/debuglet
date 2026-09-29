@@ -16,6 +16,14 @@ changes; the linked API and deployment documentation contains operational detail
   (exit 0), needs the upgrade (3) or needs an upgrade that drops the recorded
   runs and their logs (4). `-upgrade-database` refuses such an upgrade unless
   `-accept-data-loss` is given. Both modes name the absolute database path.
+- Portable result format 1.1: admission records `provenance.vantage_point`,
+  the executor's capability report (with its receipt time and whether it was
+  stale), the control connection's source IP and the executor's `public_host`.
+  Every value carries a `source` label (`operator`, `executor-reported`,
+  `dispatcher-observed`); none means verified, and unrecorded values are null.
+  Exports are written as 1.1; `client.ReadResult` and `dbl` still read 1.0 files
+  and reject a 1.0 file carrying a vantage point. Older readers reject 1.1
+  exports. See `docs/results.md`.
 
 ### Changed
 - `install.sh` prints the `export PATH=...` line to use when the installed

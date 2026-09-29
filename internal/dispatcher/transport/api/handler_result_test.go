@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 )
 
@@ -67,6 +70,44 @@ func TestResultExportPreservesAdmissionAndIncompleteOutput(t *testing.T) {
 	legacy, err := c.Export(f.ctx, sub.IDs[0])
 	if err != nil || legacy.Provenance != nil || legacy.Verification.Attribution != "unknown" {
 		t.Fatalf("legacy provenance invented: %+v, %v", legacy, err)
+	}
+}
+
+// The vantage point is fixed at admission: a later capability report reaches
+// later runs only, and a run admitted without a report keeps nulls.
+func TestResultVantagePointSnapshotAtAdmission(t *testing.T) {
+	f := ccNewFixture(t)
+	c := f.client(f.root.URL, false)
+	export := func(id string) *wire.VantagePoint {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		f.root.Config.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debuglet/"+id+"/result", nil).WithContext(f.ctx))
+		oaCheckResponse(t, oaContract(t), http.MethodGet, "/debuglet/"+id+"/result", rec.Code, rec.Body.Bytes())
+		doc, err := c.Export(f.ctx, id)
+		if err != nil || doc.Version != wire.ResultVersion || doc.Provenance == nil || doc.Provenance.VantagePoint == nil {
+			t.Fatalf("export: %+v, %v", doc, err)
+		}
+		return doc.Provenance.VantagePoint
+	}
+	before := f.submit(c, nil).IDs[0]
+	v := export(before)
+	if v.Capabilities != (wire.VantageCapabilities{}) || v.PublicHost != (wire.LabelledString{}) {
+		t.Fatalf("invented vantage facts: %+v", v)
+	}
+	if v.SourceIP.Value == nil || *v.SourceIP.Value != "127.0.0.1" || *v.SourceIP.Source != wire.SourceDispatcherObserved {
+		t.Fatalf("source ip: %+v", v.SourceIP)
+	}
+	if _, err := f.peer.direct.Heartbeat(f.ctx, &pb.HeartbeatRequest{ExecutorId: ccExecutorID,
+		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"udp", "scion"}, EnforcementMode: "ebpf"}}); err != nil {
+		t.Fatal(err)
+	}
+	after := export(f.submit(c, nil).IDs[0])
+	if got := after.Capabilities; got.Value == nil || !reflect.DeepEqual(got.Value.Protocols, []string{"udp", "scion"}) || got.Value.EnforcementMode != "ebpf" ||
+		*got.Source != wire.SourceExecutorReported || got.Stale == nil || *got.Stale || got.ObservedAt == nil {
+		t.Fatalf("admitted capabilities: %+v", got)
+	}
+	if v := export(before); v.Capabilities != (wire.VantageCapabilities{}) {
+		t.Fatalf("current report rewrote an admitted run: %+v", v.Capabilities)
 	}
 }
 

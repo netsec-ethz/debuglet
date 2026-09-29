@@ -64,7 +64,7 @@ func ReadResult(r io.Reader) (Result, error) {
 
 func validateResult(doc Result) error {
 	bad := func() error { return errors.New("inconsistent result document") }
-	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion {
+	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion && doc.Version != wire.ResultVersion10 {
 		return errors.New("unsupported result format or version")
 	}
 	if !resultUUID(doc.RunID) || strings.TrimSpace(doc.ExecutorID) == "" || strings.TrimSpace(doc.Outcome.State) == "" || doc.Timing.ObservedAt.IsZero() {
@@ -76,8 +76,8 @@ func validateResult(doc Result) error {
 	if t := doc.Timing; (t.ScheduledStart == nil) != (t.ReservedUntil == nil) || t.ScheduledStart != nil && (!t.ReservedUntil.After(*t.ScheduledStart) || t.ScheduledStart.IsZero()) {
 		return bad()
 	}
-	// Format 1.0 records none of these facts. They stay null so that a later
-	// minor version can fill them without changing what a 1.0 file means.
+	// Formats 1.0 and 1.1 record none of these facts. They stay null so that a
+	// later minor version can fill them without changing what an older file means.
 	if doc.Outcome.ExitCode != nil || doc.Timing.StartedAt != nil || doc.Timing.FinishedAt != nil || doc.Timing.ClockUncertaintyNS != nil {
 		return bad()
 	}
@@ -100,6 +100,11 @@ func validateResult(doc Result) error {
 			if value != nil && strings.TrimSpace(*value) == "" {
 				return bad()
 			}
+		}
+		// Format 1.0 predates vantage_point; a 1.0 file carrying one would
+		// change what an existing 1.0 file means.
+		if v := p.VantagePoint; v != nil && (doc.Version == wire.ResultVersion10 || !validVantagePoint(*v)) {
+			return bad()
 		}
 	}
 	if doc.Verification.Attribution != attribution || doc.Verification.PacketEvidence != "unverified" || doc.Verification.MeasurementTruth != "unverified" {
@@ -127,6 +132,32 @@ func validateResult(doc Result) error {
 		}
 	}
 	return nil
+}
+
+// A value and its source are recorded together or not at all, and a source is
+// one of the defined labels; no label asserts verification.
+func validVantagePoint(v wire.VantagePoint) bool {
+	source := func(value *string) bool {
+		return value != nil && (*value == wire.SourceOperator || *value == wire.SourceExecutorReported || *value == wire.SourceDispatcherObserved)
+	}
+	for _, field := range []wire.LabelledString{v.SourceIP, v.PublicHost} {
+		if (field.Value == nil) != (field.Source == nil) || field.Value != nil && (strings.TrimSpace(*field.Value) == "" || !source(field.Source)) {
+			return false
+		}
+	}
+	c := v.Capabilities
+	if c.Value == nil {
+		return v.SchemaVersion == 1 && c.Source == nil && c.ObservedAt == nil && c.Stale == nil
+	}
+	if !source(c.Source) || c.ObservedAt == nil || c.ObservedAt.IsZero() || c.Stale == nil || c.Value.SchemaVersion != 1 || c.Value.Protocols == nil {
+		return false
+	}
+	switch c.Value.EnforcementMode {
+	case "", "ebpf", "fallback":
+	default:
+		return false
+	}
+	return v.SchemaVersion == 1
 }
 
 func resultUUID(value string) bool { return isCanonicalUUID(value) && !isNilUUID(value) }

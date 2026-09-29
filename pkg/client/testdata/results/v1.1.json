@@ -1,0 +1,36 @@
+{
+  "format": "debuglet-result",
+  "version": "1.1",
+  "run_id": "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0",
+  "executor_id": "fixture-executor",
+  "attempt": {"dispatcher_incarnation": "3f1c2b7e-9d4a-4c1e-8b6f-2a5d7e9c0b14", "session_id": "9a8ddf26-205a-48a4-8c93-42e384f1e611"},
+  "provenance": {
+    "run_id": "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0",
+    "executor_id": "fixture-executor",
+    "attempt": {"dispatcher_incarnation": "3f1c2b7e-9d4a-4c1e-8b6f-2a5d7e9c0b14", "session_id": "9a8ddf26-205a-48a4-8c93-42e384f1e611"},
+    "admitted_at": "2026-09-28T11:59:00Z",
+    "workload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "arguments": ["--target", "192.0.2.1"],
+    "admitted_policy": {"floor_bw": 1000, "ceil_bw": 5000, "timeout_ms": 20000, "addresses": ["192.0.2.1"], "require_icmp": true, "listen_udp": false, "listen_tcp": false, "listen_scion": false},
+    "host_policy": "unknown",
+    "executor_software": "debuglet-executor 1.8.0",
+    "dispatcher_software": "debuglet-dispatcher 1.8.0",
+    "dispatcher_revision": null,
+    "certificate_sha256": null,
+    "vantage_point": {
+      "schema_version": 1,
+      "capabilities": {
+        "value": {"schema_version": 1, "protocols": ["tcp", "udp", "icmp"], "enforcement_mode": "ebpf"},
+        "source": "executor-reported",
+        "observed_at": "2026-09-28T11:58:40Z",
+        "stale": false
+      },
+      "source_ip": {"value": "198.51.100.7", "source": "dispatcher-observed"},
+      "public_host": {"value": null, "source": null}
+    }
+  },
+  "outcome": {"state": "RunStateExited", "error": "", "exit_code": null},
+  "timing": {"observed_at": "2026-09-28T12:00:00Z", "scheduled_start": "2026-09-28T11:59:00Z", "reserved_until": "2026-09-28T11:59:30Z", "started_at": null, "finished_at": null, "clock_uncertainty_ns": null},
+  "output": {"status": {"state": "complete", "final_cursor": 1, "loss_reason": ""}, "entries": [{"id": 1, "timestamp": "2026-09-28T11:59:10Z", "output": "cHJvYmUgMSBvawo="}]},
+  "verification": {"attribution": "unenrolled_session", "packet_evidence": "unverified", "measurement_truth": "unverified"}
+}
