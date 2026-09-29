@@ -32,6 +32,56 @@ setup, pass a private file with `--token-file FILE`, then remove that token file
 **Connected** means the dispatcher currently considers the machine ready. These
 states do not certify its geographic location, measurement results or uptime.
 
+## Run persistently on Linux
+
+For a Linux amd64 machine with systemd, download the full package, `install.sh`
+and `SHA256SUMS` recommended by the service operator. Use this sequence for a
+**new enrollment**, replacing the package version, dispatcher URL and executor
+ID with the supplied values:
+
+```sh
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR
+sudo sh ./install.sh --archive "./debuglet-${DEBUGLET_VERSION}-linux-amd64.tar.gz" \
+  --checksums ./SHA256SUMS --version "$DEBUGLET_VERSION" --prefix /usr/local
+# Create this account once; omit useradd if debuglet already exists.
+sudo useradd --system --user-group --home-dir /var/lib/debuglet --shell /usr/sbin/nologin debuglet
+sudo install -d -m 0755 /var/lib/debuglet /var/lib/debuglet/executors
+sudo /usr/local/bin/dbl executor join --dispatcher https://debuglet.example/api \
+  --executor YOUR-EXECUTOR-ID --state-dir /var/lib/debuglet/executors/worker
+# Paste the setup token at the hidden prompt. Do not start a foreground daemon.
+sudo /usr/local/bin/dbl service install --role executor --name worker \
+  --enrolled-state /var/lib/debuglet/executors/worker
+sudo /usr/local/bin/dbl service status --role executor --name worker
+sudo journalctl -u debuglet-executor-worker.service -n 50 --no-pager
+```
+
+Administrator privileges are needed for these setup commands. The executor
+itself runs as `debuglet`, with no capabilities and no new privileges. The parent
+directories must remain traversable by that account. Installation enables the
+existing managed unit at boot and starts it; readiness is confirmed from the
+daemon's own record. The service manager restarts it after an unexpected exit.
+
+The installer adopts only the exact directory for the selected name:
+`/var/lib/debuglet/executors/NAME`. It keeps `service.toml`, `executor.sqlite`,
+the private key and both certificate files in place. It validates the existing
+TLS identity and database without regenerating them or disabling TLS. Reinstall
+the same package with the same `--enrolled-state` option; omitting that option
+cannot replace an enrolled configuration with a local profile.
+
+Stop any foreground executor before adoption and keep it stopped throughout
+installation. The installer refuses an observed executor using the same
+identity, configuration or database. This check does not serialize simultaneous
+administrator launches. After adoption, use service commands to run this state.
+Existing enrollments in another directory remain usable with their printed
+foreground command; this installer does not move them or rewrite their paths.
+
+For maintenance, use `sudo dbl drain --role executor --name worker` and
+`sudo dbl drain --role executor --name worker --resume`. Normal service uninstall
+keeps the identity and database for recovery. See [managed services](services.md)
+for stopping, removal and package handling. Back up an enrolled executor by
+stopping it cleanly and preserving its entire private state directory; the
+foreground TEST backup command does not include enrolled credentials.
+
 ## Restart and recovery
 
 Keep the generated state directory. Restarting with the same configuration,

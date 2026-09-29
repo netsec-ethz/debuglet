@@ -24,6 +24,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
+	"github.com/netsec-ethz/debuglet/internal/demo/service"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"golang.org/x/term"
 )
@@ -40,6 +41,8 @@ The token is read without echo from the terminal, or from standard input or
 DIR must not exist. The command creates private identity, configuration and
 storage files, then prints the command to start the executor. It does not
 start a service or configure payments. Keep DIR for subsequent restarts.
+For a persistent Linux system service, follow docs/operations/executor-onboarding.md
+and enroll directly into /var/lib/debuglet/executors/NAME before service install.
 `
 
 type executorJoinResponse struct {
@@ -118,11 +121,19 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	if err := joinExecutor(ctx, client, joinURL, *id, statePath, token); err != nil {
 		return reportFailure(ctx, "dbl executor join", stderr, err)
 	}
-	config := filepath.Join(statePath, "executor.toml")
+	config := filepath.Join(statePath, "service.toml")
 	command := roleShellWord(executorBinary) + " -config " + roleShellWord(config)
+	managed := ""
+	if name := filepath.Base(statePath); statePath == service.StateDirectory("/", storagecheck.Executor, name) {
+		managed = "sudo " + roleShellWord(executable) + " service install --role executor --name " + roleShellWord(name) + " --enrolled-state " + roleShellWord(statePath)
+	}
 	return emitReported(ctx, "dbl executor join", options.Output, stdout, stderr, map[string]string{
-		"executor_id": *id, "config": config, "start_command": command,
+		"executor_id": *id, "config": config, "start_command": command, "service_command": managed,
 	}, func(w io.Writer) error {
+		if managed != "" {
+			_, err := fmt.Fprintf(w, "Executor %s enrolled. Identity and storage saved in %s.\n\nInstall and start the system service (requires an existing debuglet service account):\n  %s\n\nThe console shows Connected after the executor connects. Keep this state and do not enroll again.\n", *id, statePath, managed)
+			return err
+		}
 		_, err := fmt.Fprintf(w, "Executor %s enrolled. Identity and storage saved in %s.\n\nStart the executor:\n  %s\n\nKeep this terminal open. The console shows Connected after the executor connects.\nReuse this command after restarting; do not enroll again.\n", *id, statePath, command)
 		return err
 	})
@@ -261,7 +272,7 @@ func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state,
 	if err := writeJoinFile(filepath.Join(state, "executor.key"), keyPEM); err != nil {
 		return err
 	}
-	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Executor, filepath.Join(state, "executor.db")); err != nil {
+	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Executor, filepath.Join(state, "executor.sqlite")); err != nil {
 		return err
 	}
 	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: id}}, key)
@@ -306,7 +317,7 @@ func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state,
 			}
 		}
 	}
-	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"executor.toml", executorJoinConfig(id, state, result)}} {
+	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result)}} {
 		if err := writeJoinFile(filepath.Join(state, file.name), []byte(file.data)); err != nil {
 			return err
 		}
@@ -398,5 +409,5 @@ log_level = "info"
 price_per_bw_s = 1
 currency = "TEST"
 `, id, buildinfo.Version, result.GRPCAddress, result.YamuxAddress,
-		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.db"))
+		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"))
 }

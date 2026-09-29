@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/demo/service"
 	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
@@ -35,6 +36,84 @@ type joinFixture struct {
 	tokenFile      string
 	executorBinary string
 	requests       atomic.Int32
+}
+
+func TestExecutorJoinAdoptsManagedServiceWithoutReplacingState(t *testing.T) {
+	fixture := newJoinFixture(t, nil)
+	root := t.TempDir()
+	state := service.StateDirectory(root, storagecheck.Executor, "worker")
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), fixture.args(state), &stdout, &stderr); code != exitOK {
+		t.Fatalf("join exit %d: %s", code, stderr.String())
+	}
+	original := map[string][]byte{}
+	for _, name := range []string{"service.toml", "executor.sqlite", "executor.key", "executor.crt", "ca.crt"} {
+		data, err := os.ReadFile(filepath.Join(state, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		original[name] = data
+	}
+	manager := newRecordingManager()
+	deps := serviceTestDependencies(t, manager, root)
+	deps.lookup = func(string, string) (service.Account, error) { return service.Account{UID: 4242, GID: 4343}, nil }
+	install := func(args ...string) int {
+		stdout.Reset()
+		stderr.Reset()
+		return serviceCommandWith(context.Background(), args, globalOptions{Output: outputJSON}, &stdout, &stderr, deps)
+	}
+	args := []string{"install", "--role", "executor", "--enrolled-state", state, "--start=false"}
+	for attempt := 0; attempt < 2; attempt++ {
+		if code := install(args...); code != exitOK {
+			t.Fatalf("install %d exit %d: %s", attempt, code, stderr.String())
+		}
+		var report service.Report
+		if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.ExecutorID != joinExecutorID || !report.Enabled || report.Ready {
+			t.Fatalf("unexpected service report: %+v", report)
+		}
+		if attempt == 1 && len(report.Changed) != 0 {
+			t.Fatalf("repeat install changed service: %+v", report)
+		}
+	}
+	record, err := service.ReadRecord(root, storagecheck.Executor, "worker")
+	if err != nil || !record.Enrolled || record.ExecutorID != joinExecutorID || record.DispatcherGRPC != "dispatcher.example:9001" {
+		t.Fatalf("enrolled record: %+v, %v", record, err)
+	}
+	unit, err := os.ReadFile(record.UnitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"User=debuglet\n", "Group=debuglet\n", "NoNewPrivileges=yes\n", "CapabilityBoundingSet=\n", "Restart=always\n", "-config " + filepath.Join(state, "service.toml")} {
+		if !strings.Contains(string(unit), expected) {
+			t.Errorf("unit missing %q", expected)
+		}
+	}
+	if code := install("install", "--role", "executor", "--start=false"); code != exitFailure || !strings.Contains(stderr.String(), "installation mode differs") {
+		t.Fatalf("plain reinstall exit %d: %s", code, stderr.String())
+	}
+	for name, want := range original {
+		got, err := os.ReadFile(filepath.Join(state, name))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("adoption changed %s: %v", name, err)
+		}
+	}
+	changed := bytes.ReplaceAll(original["service.toml"], []byte(joinExecutorID), []byte("00000000-1111-2222-3333-444444444444"))
+	if err := os.WriteFile(record.ConfigPath, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := install(args...); code != exitFailure || !strings.Contains(stderr.String(), "changed executor identity") {
+		t.Fatalf("changed identity exit %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(record.ConfigPath, original["service.toml"], 0600); err != nil {
+		t.Fatal(err)
+	}
+	deps.lookup = func(string, string) (service.Account, error) { return service.Account{UID: 0, GID: 0}, nil }
+	if code := install(args...); code != exitFailure || !strings.Contains(stderr.String(), "unprivileged") {
+		t.Fatalf("root account exit %d: %s", code, stderr.String())
+	}
 }
 
 func newJoinFixture(t *testing.T, alter func(*executorJoinResponse)) *joinFixture {
@@ -147,10 +226,10 @@ func TestExecutorJoinWritesUsablePrivateIdentity(t *testing.T) {
 	if strings.Contains(stdout.String()+stderr.String(), fixSecret) {
 		t.Fatal("printed enrollment token")
 	}
-	if !strings.Contains(stdout.String(), roleShellWord(fixture.executorBinary)+" -config "+roleShellWord(filepath.Join(state, "executor.toml"))) {
+	if !strings.Contains(stdout.String(), roleShellWord(fixture.executorBinary)+" -config "+roleShellWord(filepath.Join(state, "service.toml"))) {
 		t.Fatalf("missing start command: %s", stdout.String())
 	}
-	for _, name := range []string{"", "executor.key", "executor.crt", "ca.crt", "executor.toml", "executor.db"} {
+	for _, name := range []string{"", "executor.key", "executor.crt", "ca.crt", "service.toml", "executor.sqlite"} {
 		info, err := os.Stat(filepath.Join(state, name))
 		if err != nil {
 			t.Fatal(err)
@@ -163,7 +242,7 @@ func TestExecutorJoinWritesUsablePrivateIdentity(t *testing.T) {
 			t.Errorf("%s mode %o, want %o", name, info.Mode().Perm(), want)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(state, "executor.toml"))
+	data, err := os.ReadFile(filepath.Join(state, "service.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +307,7 @@ func TestExecutorJoinRejectsInvalidCertificateResponse(t *testing.T) {
 			if code := run(context.Background(), fixture.args(state), &stdout, &stderr); code != exitFailure {
 				t.Fatalf("exit=%d", code)
 			}
-			if _, err := os.Stat(filepath.Join(state, "executor.toml")); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(state, "service.toml")); !os.IsNotExist(err) {
 				t.Fatalf("config written for invalid response: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(state, "executor.key")); err != nil {

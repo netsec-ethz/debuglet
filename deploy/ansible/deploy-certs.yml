@@ -46,10 +46,23 @@
     # either way so that turning it on is a configuration change alone.
     - name: Deploy the authority for client certificates
       ansible.builtin.copy:
-        src: "{{ certs_dir }}/ca.crt"
+        src: "{{ dispatcher_tls_ca_source }}"
         dest: "{{ dispatcher_tls_ca_file }}"
         owner: "{{ debuglet_user }}"
         mode: "0644"
+
+    - name: Deploy the dedicated executor enrollment issuer
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ config_dir }}/dispatcher/{{ item.name }}"
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0600"
+      loop:
+        - { src: "{{ dispatcher_executor_onboarding_ca_cert }}", name: enrollment-ca.crt }
+        - { src: "{{ dispatcher_executor_onboarding_ca_key }}", name: enrollment-ca.key }
+      no_log: true
+      when: dispatcher_executor_onboarding_enabled | bool
 
     - name: Inspect the dispatcher unit
       ansible.builtin.stat:

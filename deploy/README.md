@@ -36,9 +36,9 @@ daemon refuses on anything but a loopback listener.
 
 TLS material belongs to the deployment profile, where the dispatcher serves
 its own listeners and every executor verifies them; the local rig keeps its
-control channel on loopback and needs none. Transport security is being
-reworked, so the two keys that only the reworked daemons read are rendered
-only when they are set — see [Transport security](#transport-security).
+control channel on loopback and needs none. Optional mutual TLS and
+self-service enrollment are described under
+[Transport security](#transport-security).
 
 ## Container images
 
@@ -550,6 +550,52 @@ executor reaches over loopback on the same machine, which is what the local
 TEST rig does. The preflight refuses `executor_disable_tls` for any other
 `dispatcher_addr`, and refuses an executor that verifies TLS while the
 dispatcher serves none.
+
+### Self-service executor enrollment
+
+Enrollment through the console is disabled by default. It requires a release
+with API 1.10, an explicitly upgraded dispatcher database, native TLS on both
+control endpoints, and certificates for every existing executor before enabling
+`dispatcher_require_client_cert`. The browser API may have its own HTTPS proxy;
+that proxy does not replace the native control listeners.
+
+Preprovision a dedicated intermediate issuer certificate chain and matching
+private key on the deployment controller. Keep the key owner-only (`chmod 600`)
+and outside Git. Never use the deployment root CA or server private key as the
+enrollment issuer. In your private environment variables, set:
+
+```yaml
+dispatcher_require_client_cert: true
+dispatcher_executor_onboarding_enabled: true
+dispatcher_executor_onboarding_ca_cert: /secure/enrollment-issuer.crt
+dispatcher_executor_onboarding_ca_key: /secure/enrollment-issuer.key
+dispatcher_executor_onboarding_dispatcher_url: https://debuglet.example/api
+dispatcher_executor_onboarding_grpc_address: control.example:9001
+dispatcher_executor_onboarding_yamux_address: control.example:9000
+dispatcher_tls_ca_source: /secure/dispatcher-trust.crt
+```
+
+The public trust bundle must contain the authorities for the dispatcher server
+certificate and for current executor certificates, including the new issuer.
+It is copied verbatim to `dispatcher_tls_ca_file` and is also returned to newly
+enrolled executors to verify the native control endpoints. Their public host
+names must match the server certificate. By default, the bundle source remains
+`certs_dir/ca.crt`; the root private key is never installed on the dispatcher.
+
+Pass the same private variables to `preflight.yml`, `deploy-certs.yml`, and the
+normal deployment. Preflight checks the explicit endpoints and issuer. Then
+`deploy-certs.yml` copies the issuer into the dispatcher configuration directory
+as `enrollment-ca.crt` and `enrollment-ca.key`, both mode 0600 and owned by the
+service account. The normal deployment renders the opt-in configuration. No
+issuer is generated or installed when enrollment is disabled.
+
+Operators must plan certificate rotation: retain overlapping trust for existing
+executors, and redistribute server trust when necessary. Existing executor trust
+files do not update automatically. Enrollment certificates last at most 90 days;
+renewal and issuer rotation are explicit operations. Turning enrollment off
+stops new signups but retains installed keys and existing executor identities.
+See [Executor onboarding](../docs/operations/executor-onboarding.md) for the
+operator installation flow and its limits. Payments remain disabled.
 
 ### Checking the playbooks
 

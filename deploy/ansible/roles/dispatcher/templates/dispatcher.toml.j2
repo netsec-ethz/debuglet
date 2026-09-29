@@ -33,6 +33,16 @@ ca_file = "{{ dispatcher_tls_ca_file }}"
 require_client_cert = {{ dispatcher_require_client_cert | bool | lower }}
 {% endif %}
 
+{% if dispatcher_executor_onboarding_enabled | bool %}
+[executor_onboarding]
+enabled = true
+ca_cert = "{{ config_dir }}/dispatcher/enrollment-ca.crt"
+ca_key = "{{ config_dir }}/dispatcher/enrollment-ca.key"
+dispatcher_url = {{ dispatcher_executor_onboarding_dispatcher_url | to_json }}
+grpc_address = {{ dispatcher_executor_onboarding_grpc_address | to_json }}
+yamux_address = {{ dispatcher_executor_onboarding_yamux_address | to_json }}
+{% endif %}
+
 [sui]
 disabled = {{ dispatcher_sui_disabled | bool | lower }}
 network = "{{ dispatcher_sui_network }}"
