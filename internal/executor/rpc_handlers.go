@@ -67,11 +67,12 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		// The dispatcher records the address it observes on the control
 		// connection, which is what probe recipients see. Reporting an
 		// address here would only be a hint, so leave it empty.
-		SourceIp:               "",
-		PublicHost:             publicHost,
-		TeslaDelaySec:          int64(e.teslaSchedule.Config().Delay.Seconds()),
-		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
-		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
+		SourceIp:                   "",
+		PublicHost:                 publicHost,
+		TeslaDelaySec:              int64(e.teslaSchedule.Config().EpochLength.Seconds()),
+		TeslaAnchorTimestampNs:     e.teslaSchedule.Config().Epoch.UnixNano(),
+		TeslaAnchorKey:             e.teslaSchedule.Anchor(),
+		TeslaDisclosureDelayEpochs: e.teslaSchedule.DisclosureDelay(),
 		// ICMP is advertised only when the operator's network policy leaves it
 		// enabled and the probe of this hello's capability report opened the
 		// raw socket the transport needs; the packet counter says nothing

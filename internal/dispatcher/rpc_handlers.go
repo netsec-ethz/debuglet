@@ -65,7 +65,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.vantage = vantageFromReport(req.VantagePoint)
 			exec.vantageObserved = seen
 		}
-		chain = tag.Chain{Anchor: bytes.Clone(exec.TeslaAnchorKey), Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay}
+		chain = tag.Chain{Anchor: bytes.Clone(exec.TeslaAnchorKey), Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay, DisclosureDelay: exec.TeslaDisclosureDelay}
 	} else {
 		d.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "executor session is unavailable")
@@ -84,7 +84,12 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 	err = d.keystore.Store(execID, chain, seen, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
 	var rejected *tag.RejectedError
 	if errors.As(err, &rejected) {
-		if rejected.First {
+		switch {
+		case rejected.First && rejected.Early:
+			// A key published before its schedule allows lets anyone forge
+			// tags that verifiers still attribute to this executor.
+			d.logger.Error("Executor disclosed a TESLA key early; it is misbehaving", zap.String("executor_id", execID), zap.Error(err))
+		case rejected.First:
 			d.logger.Warn("Rejected disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
 		}
 	} else if err != nil {

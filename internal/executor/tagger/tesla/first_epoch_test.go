@@ -96,8 +96,8 @@ func TestAnchorCannotProduceAcceptedTag(t *testing.T) {
 	}
 }
 
-// TestFirstSigningKeyDisclosedAfterItsEpoch checks that the disclosure
-// boundary is unchanged: k_1 is disclosed only once epoch 1 has ended.
+// TestFirstSigningKeyDisclosedAfterItsEpoch checks that k_1 is disclosed only
+// once epoch 1+d has started (d = 2 in newTestSchedule).
 func TestFirstSigningKeyDisclosedAfterItsEpoch(t *testing.T) {
 	delay := time.Second
 	ks := newTestSchedule(t, delay)
@@ -105,14 +105,17 @@ func TestFirstSigningKeyDisclosedAfterItsEpoch(t *testing.T) {
 	k0, _ := ks.KeyAtEpoch(0)
 	k1, _ := ks.KeyAtEpoch(1)
 
-	if idx, key, ok := ks.DisclosedKey(start.Add(delay)); !ok || idx != 0 || !bytes.Equal(key, k0) {
-		t.Errorf("DisclosedKey(epoch 1) = %d, %x, %v; want 0, k_0", idx, key, ok)
+	if _, _, ok := ks.DisclosedKey(start.Add(2*delay - time.Nanosecond)); ok {
+		t.Error("DisclosedKey(end of epoch 1) disclosed a key before epoch d")
 	}
-	if idx, key, ok := ks.DisclosedKey(start.Add(2*delay - time.Nanosecond)); !ok || idx != 0 || !bytes.Equal(key, k0) {
-		t.Errorf("DisclosedKey(end of epoch 1) = %d, %x, %v; want 0, k_0", idx, key, ok)
+	if idx, key, ok := ks.DisclosedKey(start.Add(2 * delay)); !ok || idx != 0 || !bytes.Equal(key, k0) {
+		t.Errorf("DisclosedKey(epoch 2) = %d, %x, %v; want 0, k_0", idx, key, ok)
 	}
-	if idx, key, ok := ks.DisclosedKey(start.Add(2 * delay)); !ok || idx != 1 || !bytes.Equal(key, k1) {
-		t.Errorf("DisclosedKey(epoch 2) = %d, %x, %v; want 1, k_1", idx, key, ok)
+	if idx, key, ok := ks.DisclosedKey(start.Add(3*delay - time.Nanosecond)); !ok || idx != 0 || !bytes.Equal(key, k0) {
+		t.Errorf("DisclosedKey(end of epoch 2) = %d, %x, %v; want 0, k_0", idx, key, ok)
+	}
+	if idx, key, ok := ks.DisclosedKey(start.Add(3 * delay)); !ok || idx != 1 || !bytes.Equal(key, k1) {
+		t.Errorf("DisclosedKey(epoch 3) = %d, %x, %v; want 1, k_1", idx, key, ok)
 	}
 }
 
@@ -120,9 +123,9 @@ func TestFirstSigningKeyDisclosedAfterItsEpoch(t *testing.T) {
 // past signs immediately.
 func TestDelayedStartHasUsableKey(t *testing.T) {
 	ks, err := NewKeySchedule(Config{
-		Seed:  fixedSeed,
-		Delay: 10 * time.Second,
-		Epoch: time.Now().Add(-time.Hour),
+		Seed:        fixedSeed,
+		EpochLength: 10 * time.Second,
+		Epoch:       time.Now().Add(-time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)

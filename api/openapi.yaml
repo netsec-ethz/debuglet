@@ -3009,8 +3009,13 @@ components:
         - anchor_key
         - anchor_timestamp_ns
         - delay_sec
+        - epoch_seconds
+        - disclosure_delay_epochs
+        - disclosure_delay_seconds
         - disclosed_epoch
         - disclosed_key
+        - next_disclosure_epoch
+        - next_disclosure_at_ns
       properties:
         executor_id:
           type: string
@@ -3025,7 +3030,20 @@ components:
         delay_sec:
           type: integer
           format: int64
-          description: "Epoch duration in seconds."
+          deprecated: true
+          description: "Deprecated name of epoch_seconds, with the same value. It is the epoch length, not the disclosure delay."
+        epoch_seconds:
+          type: integer
+          format: int64
+          description: "Epoch length I in seconds. Epoch t starts at anchor_timestamp_ns + t * epoch_seconds."
+        disclosure_delay_epochs:
+          type: integer
+          format: int64
+          description: "Disclosure delay d in epochs: the key of epoch t is disclosed no earlier than the start of epoch t + d, which the dispatcher enforces. At least 2; 0 for an executor that predates it, which disclosed after one epoch and whose tags a verifier must not accept."
+        disclosure_delay_seconds:
+          type: integer
+          format: int64
+          description: "disclosure_delay_epochs * epoch_seconds. A verifier accepts the key of a packet's epoch t or t - 1 only while it was still secret at the capture time, allowing for clock skew."
         disclosed_epoch:
           type: integer
           format: int64
@@ -3034,6 +3052,14 @@ components:
           type: string
           format: byte
           description: "Base64-encoded latest disclosed key that verified against the chain anchor. Empty when none has verified."
+        next_disclosure_epoch:
+          type: integer
+          format: int64
+          description: "disclosed_epoch + 1, the epoch whose key is disclosed next."
+        next_disclosure_at_ns:
+          type: integer
+          format: int64
+          description: "Earliest Unix nanoseconds the key of next_disclosure_epoch may be disclosed, anchor_timestamp_ns + (next_disclosure_epoch + d) * epoch_seconds with d = 1 for an executor that reported none; 0 when the schedule is unknown. Disclosure follows on the next executor heartbeat."
     DestinationLimitRequest:
       type: object
       additionalProperties: false

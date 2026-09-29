@@ -11,11 +11,12 @@ import (
 
 // TestExhaustedChainHasNoSigningKey checks the end of the chain: k_L is never
 // disclosed, so epoch L and every later instant have no signing key, while
-// k_{L-1} is still disclosed and verifies against the anchor.
+// k_{L-1} is still disclosed, d epochs after its own, and verifies against
+// the anchor.
 func TestExhaustedChainHasNoSigningKey(t *testing.T) {
 	delay := time.Second
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	ks, err := NewKeySchedule(Config{Seed: fixedSeed, ChainLength: 3, Delay: delay, Epoch: start})
+	ks, err := NewKeySchedule(Config{Seed: fixedSeed, ChainLength: 3, EpochLength: delay, DisclosureDelay: 2, Epoch: start})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}
@@ -42,6 +43,20 @@ func TestExhaustedChainHasNoSigningKey(t *testing.T) {
 		if _, err := ks.ComputeTagForPacket(at(epoch), testMeasurementID, payload); err == nil {
 			t.Errorf("ComputeTagForPacket(epoch %d) succeeded on an exhausted chain", epoch)
 		}
+	}
+	// k_2 is due at the start of epoch 2+d = 4, after Expiry, and stays the
+	// disclosed key from then on. FinalDisclosure names that instant, before
+	// which a restart would lose k_2.
+	if !ks.FinalDisclosure().Equal(at(4)) {
+		t.Errorf("FinalDisclosure() = %s; want the start of epoch 4", ks.FinalDisclosure())
+	}
+	if idx, _, _ := ks.DisclosedKey(ks.FinalDisclosure().Add(-time.Nanosecond)); idx != 1 {
+		t.Errorf("DisclosedKey just before FinalDisclosure = %d; want 1", idx)
+	}
+	if idx, _, ok := ks.DisclosedKey(at(3)); !ok || idx != 1 {
+		t.Errorf("DisclosedKey(epoch 3) = (%d, %v); want (1, true)", idx, ok)
+	}
+	for _, epoch := range []int64{4, 100} {
 		idx, key, ok := ks.DisclosedKey(at(epoch))
 		if !ok || idx != 2 || !bytes.Equal(key, k2) {
 			t.Errorf("DisclosedKey(epoch %d) = (%d, %x, %v); want (2, k_2, true)", epoch, idx, key, ok)

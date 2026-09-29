@@ -14,6 +14,55 @@ An executor needs a stable `identity.executor_id`, a private SQLite database, di
 
 The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. It does not refuse admission. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
 
+### Executor TESLA key schedule
+
+The `[tesla]` section sets the key schedule that attribution tags are made
+with. Each chain key k_i signs the packets of one epoch i, and is published
+d epochs later so that anyone can verify the tags afterwards.
+
+| Key | Unit | Default | Allowed |
+| --- | --- | --- | --- |
+| `epoch_seconds` | seconds | 10 (0 selects it) | 0–86,400 |
+| `disclosure_delay_epochs` | epochs | 0: the smallest d with d × `epoch_seconds` ≥ 15 minutes (90 at 10 s, 30 at 30 s) | 0, or at least 2 and with (d − 1) × `epoch_seconds` ≥ 10 s, up to 7 days' worth of epochs |
+| `chain_length` | epochs | 0: 7 days of epochs | 0–604,800 |
+| `seed` | text | empty: random | any |
+
+`delay` is the deprecated name of `epoch_seconds`. It is still read when
+`epoch_seconds` is unset, the executor logs a warning when it is used, and
+setting both is an error. Despite its name it was never the disclosure delay.
+
+The disclosure delay is a security parameter. A verifier accepts a tag
+captured in epoch t with the key of epoch t or t−1, the second to absorb an
+executor clock that is up to one epoch behind. The key k_i is published at the
+start of epoch i + d. The dispatcher rejects an earlier disclosure and logs it
+once as a misbehaving executor. With d = 1, k_{t−1} would already be public
+during epoch t, and anyone who had fetched it could forge tags that verify for
+packets they timestamp in epoch t. A delay of at least two epochs is
+therefore enforced. The margin (d − 1) × `epoch_seconds` must exceed the
+verifier's clock tolerance plus the skew between the executor, the dispatcher
+and the capture host; an explicit delay is refused below 10 seconds of margin
+(the dispatcher's 5-second skew allowance plus the verifier's tolerance), so
+at 1-second epochs d is at least 11. The 15-minute default is in the range the
+TRACER design uses, far beyond that bound. Tags become verifiable once the
+delay has elapsed.
+
+The keys live only in the running executor, and every start builds a new
+chain. The keys of the last d epochs before a restart are therefore never
+disclosed, and packets tagged in them (the last 15 minutes by default) can
+never be verified. Stop an executor only once its last attributed packets are
+d epochs old. When the chain runs out, the executor logs
+`final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
+disclosed; restart it after that time.
+
+A kernel tagger holds a key back further while its refresh fails, so a key is
+never disclosed while an installed copy can still sign. `GET
+/executors/:id/tesla` publishes `epoch_seconds`, `disclosure_delay_epochs`,
+`disclosure_delay_seconds` and the time the next key is due
+(`next_disclosure_at_ns`). A verifier does not have to derive them.
+[`tools/verify_pcap.py`](../../tools/verify_pcap.py) refuses a schedule with d
+< 2, and refuses a key that could have been public when the packet was
+captured.
+
 ### Executor output limits
 
 The optional `[output]` section uses the defaults shown in the [executor example](../../configs/executor/executor.toml): 8 MiB and 65,536 frames emitted per run, 64 MiB queued per executor, 65,536 retained run records, and 1 MiB/s per run with a 64 KiB burst. Zero selects the default. Stdout and stderr share one ordered writer, 16 KiB chunks and a 256 KiB accepted queue. Rate limits apply backpressure; a total-byte or storage limit cancels that guest and marks its accepted output prefix as truncated.

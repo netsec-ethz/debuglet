@@ -178,7 +178,7 @@ func TestTagVectorsFirstSigningEpoch(t *testing.T) {
 	ks, err := NewKeySchedule(Config{
 		Seed:        tagvectors.Hex(t, f.Chain.TailHex),
 		ChainLength: f.Chain.ChainLength,
-		Delay:       delay,
+		EpochLength: delay,
 		Epoch:       start,
 	})
 	if err != nil {

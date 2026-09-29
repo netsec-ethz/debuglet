@@ -268,7 +268,7 @@ type HelloResponse struct {
 	ExecutorId             string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`                                          // Unique ID for this executor instance
 	Version                string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                  // Optional: software version or capabilities
 	SourceIp               string                 `protobuf:"bytes,3,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`                                                // Source IP for packet attribution
-	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch delay in seconds
+	TeslaDelaySec          int64                  `protobuf:"varint,4,opt,name=tesla_delay_sec,json=teslaDelaySec,proto3" json:"tesla_delay_sec,omitempty"`                              // TESLA epoch length I in seconds (historical name; not the disclosure delay)
 	TeslaAnchorTimestampNs int64                  `protobuf:"varint,5,opt,name=tesla_anchor_timestamp_ns,json=teslaAnchorTimestampNs,proto3" json:"tesla_anchor_timestamp_ns,omitempty"` // Reference wall-clock time for epoch 0
 	TeslaAnchorKey         []byte                 `protobuf:"bytes,6,opt,name=tesla_anchor_key,json=teslaAnchorKey,proto3" json:"tesla_anchor_key,omitempty"`                            // Public anchor k_0 = H^L(seed); used to verify disclosed keys
 	IcmpEnabled            bool                   `protobuf:"varint,7,opt,name=icmp_enabled,json=icmpEnabled,proto3" json:"icmp_enabled,omitempty"`                                      // Whether the executor can handle ICMP packets
@@ -286,8 +286,12 @@ type HelloResponse struct {
 	OutputVersion   uint32                `protobuf:"varint,17,opt,name=output_version,json=outputVersion,proto3" json:"output_version,omitempty"`
 	Capabilities    *ExecutorCapabilities `protobuf:"bytes,18,opt,name=capabilities,proto3" json:"capabilities,omitempty"`                     // Optional additive discovery observation.
 	VantagePoint    *VantagePointReport   `protobuf:"bytes,19,opt,name=vantage_point,json=vantagePoint,proto3" json:"vantage_point,omitempty"` // Optional; sent with capabilities.
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// TESLA disclosure delay d: the key of epoch i is disclosed once epoch i+d
+	// starts, at tesla_anchor_timestamp_ns + (i+d)*tesla_delay_sec. At least 2;
+	// zero from an executor that predates it, which disclosed after one epoch.
+	TeslaDisclosureDelayEpochs int64 `protobuf:"varint,20,opt,name=tesla_disclosure_delay_epochs,json=teslaDisclosureDelayEpochs,proto3" json:"tesla_disclosure_delay_epochs,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *HelloResponse) Reset() {
@@ -451,6 +455,13 @@ func (x *HelloResponse) GetVantagePoint() *VantagePointReport {
 		return x.VantagePoint
 	}
 	return nil
+}
+
+func (x *HelloResponse) GetTeslaDisclosureDelayEpochs() int64 {
+	if x != nil {
+		return x.TeslaDisclosureDelayEpochs
+	}
+	return 0
 }
 
 type DebugletPolicy struct {
@@ -2853,7 +2864,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12#\n" +
 	"\rsession_token\x18\x04 \x01(\fR\fsessionToken\x12*\n" +
 	"\x11lease_duration_ms\x18\x05 \x01(\x03R\x0fleaseDurationMs\x12%\n" +
-	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\xf1\x06\n" +
+	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\xb4\a\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -2878,7 +2889,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x10enrollment_token\x18\x10 \x01(\tH\x02R\x0fenrollmentToken\x88\x01\x01\x12%\n" +
 	"\x0eoutput_version\x18\x11 \x01(\rR\routputVersion\x12K\n" +
 	"\fcapabilities\x18\x12 \x01(\v2'.debuglet.protocol.ExecutorCapabilitiesR\fcapabilities\x12J\n" +
-	"\rvantage_point\x18\x13 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePointB\x0e\n" +
+	"\rvantage_point\x18\x13 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\x12A\n" +
+	"\x1dtesla_disclosure_delay_epochs\x18\x14 \x01(\x03R\x1ateslaDisclosureDelayEpochsB\x0e\n" +
 	"\f_public_hostB\r\n" +
 	"\v_sui_walletB\x13\n" +
 	"\x11_enrollment_token\"\x85\x02\n" +

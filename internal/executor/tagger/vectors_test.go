@@ -21,7 +21,7 @@ func vectorSchedule(t *testing.T, f *tagvectors.File) *tesla.KeySchedule {
 	ks, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:        tagvectors.Hex(t, f.Chain.TailHex),
 		ChainLength: f.Chain.ChainLength,
-		Delay:       delay,
+		EpochLength: delay,
 		Epoch:       time.Now().Add(-time.Duration(f.Chain.SigningEpoch)*delay - delay/2),
 	})
 	if err != nil {

@@ -12,10 +12,11 @@
 //	k_0 = H^L(k_L)          (public anchor, published at setup)
 //	k_i = H(k_{i+1})        (each key is the hash of the next one)
 //
-// The executor uses key k_i during epoch i (1 ≤ i < L) and discloses it after a
-// configurable disclosure delay d has elapsed. Because k_0 is public, epoch 0
-// has no signing key: nothing is tagged before epoch 1 starts. Because k_L is
-// never disclosed, nothing is tagged from epoch L on either. A verifier who
+// The executor uses key k_i during epoch i (1 ≤ i < L) and discloses it once
+// the disclosure delay of d ≥ 2 epochs has elapsed, at the start of epoch i+d
+// (see Disclosure). Because k_0 is public, epoch 0 has no signing key: nothing
+// is tagged before epoch 1 starts. Because k_L is never disclosed, nothing is
+// tagged from epoch L on either. A verifier who
 // has buffered packets from epoch i can verify them once k_i is published by
 // checking:
 //
@@ -47,21 +48,32 @@
 //
 // # Disclosure
 //
-// A key is disclosed no earlier than the first heartbeat after every kernel
-// tagger of the chain has moved off it. Each eBPF tagger registers with the
-// schedule as an InstalledKeyHolder and reports the epoch whose key its map
+// k_i is disclosed no earlier than the start of epoch i+d, where the
+// disclosure delay d (Config.DisclosureDelay) is at least MinDisclosureDelay
+// epochs. This is TESLA's safety condition: a verifier accepts k_i only for
+// packets it received before k_i could have been disclosed, and it tries the
+// packet's epoch t and its predecessor t-1 to absorb clock skew. With d = 1,
+// k_{t-1} would be public during epoch t, so anyone who saw it could forge
+// tags that verify for packets timestamped in epoch t. With d ≥ 2 the key of
+// every candidate epoch is still secret while its packets are in flight; the
+// margin (d-1)·I must exceed the verifier's clock tolerance plus the skew
+// between the executor, the dispatcher and the capture host.
+//
+// A key is also disclosed no earlier than the first heartbeat after every
+// kernel tagger of the chain has moved off it. Each eBPF tagger registers with
+// the schedule as an InstalledKeyHolder and reports the epoch whose key its map
 // slot may still hold; DisclosedKey never names that epoch or a later one. The
 // kernel taggers refresh their key at each epoch boundary, so in the ordinary
-// case k_i is disclosed on the first heartbeat of epoch i+1 after the refresh.
-// A delayed or failed refresh delays disclosure instead of leaving a disclosed
-// key installed. At the end of the chain k_{L-1} follows the same rule: it is
-// disclosed once every tagger has removed it at Expiry. The pure-Go tagger
+// case the taggers have moved off k_i long before epoch i+d, and a delayed or
+// failed refresh delays disclosure instead of leaving a disclosed key
+// installed. At the end of the chain k_{L-1} follows the same rules: it is
+// disclosed from the start of epoch L-1+d, once every tagger has removed it at
+// Expiry. The pure-Go tagger
 // reads CurrentKey for every packet and holds no key.
 //
-// Disclosure therefore lags the epoch boundary by up to one heartbeat interval
-// plus the refresh time, or longer while a refresh fails. A verifier waits for
-// the key rather than treating a missing one as a failure; its tolerance for
-// clock skew between the tag and the epoch it is checked against is unchanged.
+// Disclosure therefore lags the start of epoch i+d by up to one heartbeat
+// interval, or longer while a refresh fails. A verifier waits for the key
+// rather than treating a missing one as a failure.
 //
 // # Attribution
 //
@@ -84,14 +96,41 @@ import (
 )
 
 // DefaultChainHorizon is the uptime a default-sized chain covers. The
-// default ChainLength is DefaultChainHorizon/Delay, so a longer epoch gives
+// default ChainLength is DefaultChainHorizon/EpochLength, so a longer epoch gives
 // a shorter chain rather than a shorter usable lifetime.
 const DefaultChainHorizon = 7 * 24 * time.Hour
 
-// maxDefaultChainLength caps the derived default so a very short Delay cannot
+// maxDefaultChainLength caps the derived default so a very short epoch cannot
 // allocate an unreasonable amount of memory. Keys are 32 bytes each, so this
 // bound is ~19 MiB.
 const maxDefaultChainLength = 604800
+
+// DefaultEpochLength is the epoch length I of a schedule that names none.
+const DefaultEpochLength = 10 * time.Second
+
+// MinDisclosureDelay is the shortest disclosure delay d, in epochs, a schedule
+// accepts. A verifier tries a packet's epoch t and t-1; with d = 1 the key of
+// t-1 is already public during epoch t (see Disclosure).
+const MinDisclosureDelay = 2
+
+// DefaultDisclosureWindow is the wall-clock time a default disclosure delay
+// covers: d defaults to the smallest number of epochs, and at least
+// MinDisclosureDelay, whose length reaches it. Fifteen minutes is in the
+// range TRACER uses (10 to 30 minutes), far beyond any verifier tolerance or
+// disciplined clock skew, and still short enough that a result's tags become
+// verifiable soon after the run. At the default epoch length of 10 seconds it
+// is d = 90.
+const DefaultDisclosureWindow = 15 * time.Minute
+
+// DefaultDisclosureDelay returns the disclosure delay, in epochs, of a
+// schedule with the given epoch length that names none.
+func DefaultDisclosureDelay(epochLength time.Duration) int64 {
+	if epochLength <= 0 {
+		epochLength = DefaultEpochLength
+	}
+	d := int64((DefaultDisclosureWindow + epochLength - 1) / epochLength)
+	return max(d, MinDisclosureDelay)
+}
 
 // keySize is the length in bytes of one chain key (SHA-256 output).
 const keySize = sha256.Size
@@ -108,17 +147,22 @@ type Config struct {
 	// schedule. The keys k_0 … k_L are generated; k_0 is the public
 	// anchor and k_L is derived from the seed.
 	//
-	// If zero, it is derived from Delay so that the chain covers
+	// If zero, it is derived from EpochLength so that the chain covers
 	// DefaultChainHorizon of uptime. Sizing this from a wall-clock horizon
 	// matters: k_L is never disclosed, so the last signing epoch is L-1 and
 	// from the start of epoch L (Expiry) the schedule has no signing key and
 	// nothing is tagged.
 	ChainLength int64
 
-	// Delay is the interval duration I (one epoch). A key disclosed after
-	// the disclosure delay d (expressed as a number of epochs) has elapsed.
-	// Defaults to 10 seconds.
-	Delay time.Duration
+	// EpochLength is the interval duration I of one epoch. Defaults to
+	// DefaultEpochLength.
+	EpochLength time.Duration
+
+	// DisclosureDelay d is the number of epochs after which a key is
+	// disclosed: k_i is disclosed once epoch i+d has started. Zero derives
+	// DefaultDisclosureDelay(EpochLength); otherwise it must be at least
+	// MinDisclosureDelay.
+	DisclosureDelay int64
 
 	// Epoch is the reference wall-clock time that anchors epoch 0.
 	// Defaults to the time NewKeySchedule is called.
@@ -129,14 +173,14 @@ type Config struct {
 //
 // Keys are indexed by epoch number t where t ∈ [0, L]:
 //
-//	epoch t covers the time interval [Epoch + t*Delay, Epoch + (t+1)*Delay).
+//	epoch t covers the time interval [Epoch + t*I, Epoch + (t+1)*I).
 //
 // The chain direction is backward: k_0 is the public anchor and k_L is the
 // private seed tail. Key k_t is used during epoch t and disclosed after the
 // disclosure delay d has elapsed (i.e., once epoch t+d has started).
 //
 // k_0 is public from setup, so it never signs: epoch 0, and any instant before
-// Epoch, has no usable signing key. The first usable key is k_1 at Epoch+Delay
+// Epoch, has no usable signing key. The first usable key is k_1 at Epoch+I
 // and the last is k_{L-1}; from Expiry, the start of epoch L, no key signs.
 //
 // The set of registered InstalledKeyHolders is the one mutable part; every
@@ -167,8 +211,10 @@ type KeySchedule struct {
 // If cfg.Seed is empty a cryptographically random 32-byte seed is generated.
 // A seed that is not exactly 32 bytes long is folded through SHA-256 so that
 // k_L is always one key wide.
-// If cfg.Delay is zero it defaults to 10 seconds.
-// If cfg.ChainLength is zero it is derived from Delay (see DefaultChainHorizon).
+// If cfg.EpochLength is zero it defaults to DefaultEpochLength.
+// If cfg.DisclosureDelay is zero it defaults to DefaultDisclosureDelay; a
+// delay below MinDisclosureDelay is refused.
+// If cfg.ChainLength is zero it is derived from EpochLength (see DefaultChainHorizon).
 func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 	if len(cfg.Seed) == 0 {
 		cfg.Seed = make([]byte, 32)
@@ -176,11 +222,17 @@ func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 			return nil, fmt.Errorf("tesla: failed to generate seed: %w", err)
 		}
 	}
-	if cfg.Delay <= 0 {
-		cfg.Delay = 10 * time.Second
+	if cfg.EpochLength <= 0 {
+		cfg.EpochLength = DefaultEpochLength
+	}
+	if cfg.DisclosureDelay == 0 {
+		cfg.DisclosureDelay = DefaultDisclosureDelay(cfg.EpochLength)
+	}
+	if cfg.DisclosureDelay < MinDisclosureDelay {
+		return nil, fmt.Errorf("tesla: disclosure delay must be at least %d epochs, got %d", MinDisclosureDelay, cfg.DisclosureDelay)
 	}
 	if cfg.ChainLength <= 0 {
-		cfg.ChainLength = min(int64(DefaultChainHorizon/cfg.Delay), maxDefaultChainLength)
+		cfg.ChainLength = min(int64(DefaultChainHorizon/cfg.EpochLength), maxDefaultChainLength)
 	}
 	if cfg.Epoch.IsZero() {
 		cfg.Epoch = time.Now()
@@ -282,9 +334,9 @@ type Attribution struct {
 
 // MaxDisclosureHold bounds how long an installed key may hold disclosure back
 // before attribution is reported unavailable. One epoch covers the boundary
-// refresh and its first retry at Delay/2; the hold at every boundary until the
+// refresh and its first retry at EpochLength/2; the hold at every boundary until the
 // refresh lands is ordinary and stays well inside it.
-func (ks *KeySchedule) MaxDisclosureHold() time.Duration { return ks.cfg.Delay }
+func (ks *KeySchedule) MaxDisclosureHold() time.Duration { return ks.cfg.EpochLength }
 
 // Attribution reports the state at now. Without a registered holder only the
 // epoch decides it, which is also the pure-Go tagger's case.
@@ -317,7 +369,7 @@ func (ks *KeySchedule) Attribution(now time.Time) Attribution {
 		a.InstalledEpoch = a.Epoch
 	}
 	if a.Installed && a.InstalledEpoch < a.Epoch {
-		a.HeldSince = ks.cfg.Epoch.Add(time.Duration(a.InstalledEpoch+1) * ks.cfg.Delay)
+		a.HeldSince = ks.cfg.Epoch.Add(time.Duration(a.InstalledEpoch+1) * ks.cfg.EpochLength)
 	}
 	switch {
 	case a.Epoch >= ks.cfg.ChainLength:
@@ -360,7 +412,16 @@ func (ks *KeySchedule) Exhausted(t time.Time) bool {
 
 // Expiry returns the wall-clock time at which the chain runs out.
 func (ks *KeySchedule) Expiry() time.Time {
-	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength) * ks.cfg.Delay)
+	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength) * ks.cfg.EpochLength)
+}
+
+// FinalDisclosure returns when the last signing key k_{L-1} becomes
+// disclosable: the start of epoch L-1+d, d-1 epochs after Expiry. Keys live
+// only in this schedule, so a restart before then starts a new chain and the
+// keys of the old chain's last undisclosed epochs are never published; the
+// packets they tagged cannot be verified.
+func (ks *KeySchedule) FinalDisclosure() time.Time {
+	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength-1+ks.cfg.DisclosureDelay) * ks.cfg.EpochLength)
 }
 
 // epochOf returns the epoch index for a given wall-clock time.
@@ -369,7 +430,7 @@ func (ks *KeySchedule) epochOf(t time.Time) int64 {
 	if elapsed < 0 {
 		return 0
 	}
-	e := int64(elapsed / ks.cfg.Delay)
+	e := int64(elapsed / ks.cfg.EpochLength)
 	if e > ks.cfg.ChainLength {
 		e = ks.cfg.ChainLength
 	}
@@ -411,23 +472,29 @@ func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, err
 }
 
 // DisclosedKey returns the epoch index and key that should be disclosed at
-// time t. A key for epoch τ is disclosed once d disclosure-delay epochs have
-// elapsed after τ. With d=1, the key for epoch (current−1) is disclosed when
-// epoch current starts.
+// time t. The key for epoch τ is disclosed once the disclosure delay of d
+// epochs has elapsed after τ: at the start of epoch τ+d, so at time t the
+// disclosed epoch is epoch(t)−d.
 //
-// If t is still within epoch 0 (no key is disclosable yet), ok is false. From
-// epoch L on the disclosed key stays k_{L-1}, the last signing key; k_L is
-// never disclosed.
+// Before epoch d has started (no key is disclosable yet), ok is false. The
+// disclosed key stops at k_{L-1}, the last signing key, once epoch L−1+d has
+// started, even though the chain was exhausted at epoch L; k_L is never
+// disclosed.
 //
 // A registered holder that may still sign with k_e caps the result at e-1, so
 // a key is never disclosed while an installed copy of it can tag packets.
 func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bool) {
-	current := ks.epochOf(t)
-	if current < 1 {
+	// The wall-clock epoch, not capped at L, so the last keys are still
+	// disclosed d epochs after their own.
+	elapsed := t.Sub(ks.cfg.Epoch)
+	if elapsed < 0 {
 		return 0, nil, false
 	}
-	// Disclose the key one epoch behind the current one (disclosure delay d=1).
-	disclosable := current - 1
+	current := int64(elapsed / ks.cfg.EpochLength)
+	if current < ks.cfg.DisclosureDelay {
+		return 0, nil, false
+	}
+	disclosable := min(current-ks.cfg.DisclosureDelay, ks.cfg.ChainLength-1)
 	ks.holdersMu.Lock()
 	for h := range ks.holders {
 		if epoch, installed := h.InstalledEpoch(); installed && epoch-1 < disclosable {
@@ -437,6 +504,10 @@ func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bo
 	ks.holdersMu.Unlock()
 	return disclosable, ks.keyForEpoch(disclosable), true
 }
+
+// DisclosureDelay returns d, the number of epochs after which a key is
+// disclosed.
+func (ks *KeySchedule) DisclosureDelay() int64 { return ks.cfg.DisclosureDelay }
 
 // KeyAtEpoch returns the chain key for the given epoch index.
 func (ks *KeySchedule) KeyAtEpoch(epoch int64) ([]byte, error) {

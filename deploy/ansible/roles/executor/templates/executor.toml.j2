@@ -37,7 +37,8 @@ max_debuglets = {{ executor_max_debuglets }}
 
 [tesla]
 seed = "{{ executor_tesla_seed }}"
-delay = {{ tesla_delay }}
+epoch_seconds = {{ tesla_delay if tesla_delay is defined else tesla_epoch_seconds }}
+disclosure_delay_epochs = {{ tesla_disclosure_delay_epochs }}
 chain_length = {{ tesla_chain_length }}
 
 [network]

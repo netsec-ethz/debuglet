@@ -33,9 +33,9 @@ type skbContext struct {
 func TestKernelTagMatchesGoTagger(t *testing.T) {
 	// The long delay keeps the kernel and the Go tagger in the same epoch.
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  make([]byte, 32),
-		Delay: time.Hour,
-		Epoch: time.Now().Add(-time.Hour),
+		Seed:        make([]byte, 32),
+		EpochLength: time.Hour,
+		Epoch:       time.Now().Add(-time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)

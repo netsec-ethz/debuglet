@@ -38,7 +38,8 @@ max_error_ms = 100  # estimated kernel clock error above which clock readiness i
 
 [tesla]
 seed = ""                                  # optional; empty auto-generates
-delay = 30
+epoch_seconds = 30                         # epoch length I; formerly "delay"
+# disclosure_delay_epochs = 0              # d; 0 derives about 15 minutes (30 epochs here), at least 2
 
 [network]
 # interface = "veth-host"
