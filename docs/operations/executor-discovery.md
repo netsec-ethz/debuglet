@@ -70,6 +70,60 @@ executor reported.
 A change of reason is sent on the next heartbeat rather than waiting for the
 30 second report interval. The executor log keeps the full refresh error.
 
+## Tagging mode
+
+The `tagging` object in `capabilities` reports which of a run's packets carry
+attribution tags, per address family and for SCION:
+
+```json
+"tagging": {"ipv4": "ebpf", "ipv6": "none", "scion": "none"}
+```
+
+| Mode | Meaning |
+| --- | --- |
+| `ebpf` | The kernel tagger on TC egress tags every packet of the run's marked sockets: TCP, TLS, UDP and ICMP, handshakes and listener replies included. |
+| `userspace` | The pure-Go tagger, used where the eBPF tagger does not load: UDP and ICMP datagrams to IPv4 destinations are sent through a raw socket and tagged; TCP and TLS segments are untagged. It needs Linux and `CAP_NET_RAW`. |
+| `none` | Untagged. |
+
+`ipv6` and `scion` are always `none` in this version. The report gives the mode
+of the executor's latest run in the current control session, or, before any
+run, the mode a run is set up to get: `ebpf` where the eBPF packet counter
+loaded on the configured interface. A run whose kernel tagger then fails to
+load falls back to the pure-Go tagger and logs a warning, and the next report
+says so; a changed mode is sent on the next heartbeat. `tagging` is `null` or
+absent for executors and dispatchers that predate it, and for a malformed
+report of it, which means unknown. It is an executor claim, not a verification
+of tags at a receiver, and it is not a discovery filter. The admission snapshot
+in a [result](../results.md) keeps the mode reported at admission.
+
+**IPv6 on eBPF-tagged runs is refused.** The kernel tagger rewrites the IPv4
+identification field and has no IPv6 counterpart yet, so an IPv6 packet from a
+run that expects attribution would leave silently untagged. A run whose IPv4
+mode is `ebpf` therefore:
+
+- refuses an IPv6 destination on `tcp`, `tls` and `udp` before a socket is
+  created. The guest sees the `denied` I/O status, and a run that fails on it
+  reports `destination refused: IPv6 not tagged on this executor`. A name that
+  resolves to both families is dialled on its IPv4 addresses only; a name with
+  IPv6 addresses only is refused. IPv4-mapped IPv6 addresses count as IPv4.
+  ICMP remains IPv4 only for every run.
+- binds its TCP and UDP listeners to IPv4 only (`0.0.0.0`) instead of
+  dual-stack, so no IPv6 peer can reach them, and refuses an inbound IPv6 peer
+  should one arrive. A listener is refused when the executor's `public_host`
+  is an IPv6 literal, since it could not be reached there.
+
+A run with the pure-Go tagger (`userspace` or `none`) does not expect its
+streams to be attributed and keeps IPv6 and dual-stack listeners; its IPv6
+packets are untagged, as its TCP packets are. Tagging IPv6 (in a Destination
+Options header) is later work.
+
+**SCION traffic is labelled untagged, not refused.** The SCION library opens
+its sockets internally and offers no hook to set the socket mark, so the eBPF
+tagger cannot attribute them. Refusing SCION would remove the transport from
+every eBPF node, so the executor reports `scion: none`, which the result's
+admission snapshot keeps, and logs a warning once per process when a tagged run
+dials SCION. Treat SCION measurements as unattributed.
+
 TCP/TLS/UDP observations reflect the operator's transport switches. ICMP also
 requires a successful process-local raw-socket probe. SCION requires the operator
 switch plus a responsive configured SCION daemon and a local route observation.

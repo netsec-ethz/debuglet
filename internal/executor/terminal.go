@@ -145,6 +145,8 @@ func publicOutcome(outcome error) string {
 		text = "destination refused: " + netpolicy.ErrDenied.Error()
 	case errors.Is(outcome, netpolicy.ErrTransportUnavailable):
 		text = "destination refused: " + netpolicy.ErrTransportUnavailable.Error()
+	case errors.Is(outcome, netpolicy.ErrUntagged):
+		text = "destination refused: IPv6 " + netpolicy.ErrUntagged.Error()
 	case errors.As(outcome, &compile):
 		text = "module does not compile: " + compile.Err.Error()
 	case errors.Is(outcome, context.Canceled):

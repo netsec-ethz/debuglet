@@ -42,6 +42,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/tlsfiles"
@@ -64,8 +65,13 @@ type Executor struct {
 	capabilityNext time.Time
 	// capabilityReason is the attribution reason of the last report sent.
 	capabilityReason string
-	cfg              config.ExecutorConfig
-	teslaSchedule    *tesla.KeySchedule
+	// capabilityTagging is the tagging mode of the last report sent.
+	capabilityTagging tagger.Mode
+	// lastTagging is the tagging mode of the latest run created in this
+	// session; nil before the first, when the report predicts it instead.
+	lastTagging   atomic.Pointer[tagger.Mode]
+	cfg           config.ExecutorConfig
+	teslaSchedule *tesla.KeySchedule
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
 	chainReport *chainReport

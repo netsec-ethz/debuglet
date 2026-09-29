@@ -86,6 +86,9 @@ type CapabilityReport struct {
 	SchemaVersion   int      `json:"schema_version"`
 	Protocols       []string `json:"protocols"`
 	EnforcementMode string   `json:"enforcement_mode"`
+	// Tagging is the report's tagging mode; null when the report had none.
+	// Additive within result format 1.1.
+	Tagging *TaggingMode `json:"tagging"`
 }
 
 type ResultOutcome struct {

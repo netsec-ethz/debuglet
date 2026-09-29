@@ -79,6 +79,8 @@ func TestPublicOutcomeClassification(t *testing.T) {
 			"destination refused: outside the job's destination policy", []string{"203.0.113.9"}},
 		{"unavailable transport", refusedHostCall(fmt.Errorf("%w: icmp is disabled by the operator network policy", netpolicy.ErrTransportUnavailable)),
 			"destination refused: transport unavailable", []string{"icmp"}},
+		{"untagged IPv6", refusedHostCall(fmt.Errorf("%w: tcp: 2001:db8::9 is an IPv6 address and this executor's kernel tagger tags IPv4 only", netpolicy.ErrUntagged)),
+			"destination refused: IPv6 not tagged on this executor", []string{"2001:db8::9"}},
 		{"module that does not compile", uncompiled("invalid magic number"), "module does not compile: invalid magic number", nil},
 		{"long compile detail", uncompiled(longDetail), ("module does not compile: " + longDetail)[:256] + "...", nil},
 		{"compile detail cut on a rune boundary", uncompiled(splitDetail), "module does not compile: " + strings.Repeat("x", 230) + "...", nil},

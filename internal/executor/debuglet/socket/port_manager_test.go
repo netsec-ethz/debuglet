@@ -411,3 +411,38 @@ func TestPortManagerListenControlRefusalStops(t *testing.T) {
 		t.Errorf("second ListenTCP after refusals = port %d, want %d", got, hi)
 	}
 }
+
+// The IPv4-only listeners of a run that refuses IPv6 bind the IPv4 wildcard,
+// so an IPv6 peer cannot reach them.
+func TestPortManagerIPv4OnlyListeners(t *testing.T) {
+	s, err := NewPortManager("203.0.113.10", strconv.Itoa(freePort(t))+","+strconv.Itoa(freePort(t)))
+	if err != nil {
+		t.Fatalf("NewPortManager: %v", err)
+	}
+	var none *PortManager
+	if s.PublicHost() != "203.0.113.10" || none.PublicHost() != "" {
+		t.Fatal("PublicHost")
+	}
+	lis, tcpPort, _, err := s.ListenTCP4(nil)
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer lis.Close()
+	conn, udpPort, _, err := s.ListenUDP4(nil)
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+	if ip := lis.Addr().(*net.TCPAddr).IP; ip.To4() == nil {
+		t.Errorf("ListenTCP4 bound %v", ip)
+	}
+	if ip := conn.LocalAddr().(*net.UDPAddr).IP; ip.To4() == nil {
+		t.Errorf("ListenUDP4 bound %v", ip)
+	}
+	if c, err := net.Dial("tcp6", "[::1]:"+strconv.Itoa(tcpPort)); err == nil {
+		c.Close()
+		t.Error("an IPv6 peer reached the IPv4-only listener")
+	}
+	s.Release(tcpPort)
+	s.Release(udpPort)
+}

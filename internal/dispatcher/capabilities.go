@@ -43,7 +43,34 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 	if report.Attribution != nil {
 		out.Attribution = attributionFromReport(report.Attribution, observed)
 	}
+	if report.Tagging != nil {
+		out.Tagging = taggingFromReport(report.Tagging)
+	}
 	return out
+}
+
+// taggingFromReport validates the tagging mode. Nil means malformed, which
+// leaves tagging unknown while the rest of the report stands, as for
+// attribution. Each family carries one of the modes this schema defines.
+func taggingFromReport(report *pb.TaggingMode) *wire.TaggingMode {
+	for _, mode := range []string{report.GetIpv4(), report.GetIpv6(), report.GetScion()} {
+		switch mode {
+		case wire.TaggingEBPF, wire.TaggingUserspace, wire.TaggingNone:
+		default:
+			return nil
+		}
+	}
+	return &wire.TaggingMode{IPv4: report.GetIpv4(), IPv6: report.GetIpv6(), SCION: report.GetScion()}
+}
+
+// cloneTagging copies a tagging mode, so a snapshot never shares the
+// registry's value.
+func cloneTagging(tagging *wire.TaggingMode) *wire.TaggingMode {
+	if tagging == nil {
+		return nil
+	}
+	out := *tagging
+	return &out
 }
 
 // Attribution report bounds. An age beyond maxReportedAge cannot come from a
@@ -125,7 +152,8 @@ func admissionCapabilities(entry *executorEntry, now time.Time) wire.VantageCapa
 	stale := now.Before(entry.capabilityObserved) || now.Sub(entry.capabilityObserved) >= capabilityLifetime
 	return wire.VantageCapabilities{
 		Value: &wire.CapabilityReport{SchemaVersion: int(entry.Capabilities.SchemaVersion),
-			Protocols: append([]string{}, entry.Capabilities.Protocols...), EnforcementMode: entry.Capabilities.EnforcementMode},
+			Protocols: append([]string{}, entry.Capabilities.Protocols...), EnforcementMode: entry.Capabilities.EnforcementMode,
+			Tagging: cloneTagging(entry.Capabilities.Tagging)},
 		Source: &source, ObservedAt: &observed, Stale: &stale,
 	}
 }
@@ -142,6 +170,7 @@ func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapab
 		attribution := *out.Attribution
 		out.Attribution = &attribution
 	}
+	out.Tagging = cloneTagging(out.Tagging)
 	if len(out.Protocols) == 0 {
 		out.Protocols = []string{}
 	}

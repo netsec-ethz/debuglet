@@ -12,7 +12,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"github.com/scionproto/scion/pkg/addr"
@@ -24,20 +26,24 @@ import (
 // only newly collected observations; resending a cached positive would renew its
 // dispatcher expiry without probing whether it is still available. A changed
 // attribution reason is sent on the next heartbeat regardless, so a failing key
-// refresh is not advertised as available until the interval ends.
+// refresh is not advertised as available until the interval ends. A changed
+// tagging mode is likewise sent on the next heartbeat.
 func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.ExecutorCapabilities {
 	now := time.Now()
 	attribution := attributionReport(e.teslaSchedule, now)
+	tagging := e.tagging()
 	e.capabilityMu.Lock()
-	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason {
+	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason && tagging == e.capabilityTagging {
 		e.capabilityMu.Unlock()
 		return nil
 	}
 	e.capabilityNext = now.Add(30 * time.Second)
 	e.capabilityReason = attribution.GetReason()
+	e.capabilityTagging = tagging
 	e.capabilityMu.Unlock()
 
-	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution}
+	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution,
+		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION}}
 	policy := e.cfg.Network.Policy.Spec()
 	for _, transport := range []struct {
 		name    string
@@ -68,6 +74,19 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.Execu
 		cancel()
 	}
 	return report
+}
+
+// tagging is the mode of this session's latest run, or before any run the
+// mode a run on this node is set up to get.
+func (e *Executor) tagging() tagger.Mode {
+	if mode := e.lastTagging.Load(); mode != nil {
+		return *mode
+	}
+	counter := ""
+	if e.packetCount != nil {
+		counter = e.packetCount.Type()
+	}
+	return debuglet.ExpectedTagging(e.iface, counter)
 }
 
 // maxRefreshError bounds the refresh error text a report carries; the

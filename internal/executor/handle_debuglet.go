@@ -10,6 +10,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"time"
 
@@ -152,6 +153,10 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, op *debugletOperation) 
 	}
 	if deb == nil {
 		return nil, errors.New("debuglet runtime factory returned nil")
+	}
+	if tagged, ok := deb.(interface{ Tagging() tagger.Mode }); ok {
+		mode := tagged.Tagging()
+		e.lastTagging.Store(&mode)
 	}
 	// Finish local registration before cancellation may remove its limiter
 	// entry. Every partial registration then closes through the same runtime.

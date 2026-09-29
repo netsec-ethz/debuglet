@@ -2256,7 +2256,10 @@ type ExecutorCapabilities struct {
 	EnforcementMode string                 `protobuf:"bytes,3,opt,name=enforcement_mode,json=enforcementMode,proto3" json:"enforcement_mode,omitempty"` // Actual packet counter: ebpf or fallback; empty unknown.
 	// Additive within schema version 1: absent from older executors, which
 	// leaves attribution unknown.
-	Attribution   *AttributionState `protobuf:"bytes,4,opt,name=attribution,proto3" json:"attribution,omitempty"`
+	Attribution *AttributionState `protobuf:"bytes,4,opt,name=attribution,proto3" json:"attribution,omitempty"`
+	// Additive within schema version 1: absent from older executors, which
+	// leaves the tagging mode unknown.
+	Tagging       *TaggingMode `protobuf:"bytes,5,opt,name=tagging,proto3" json:"tagging,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2319,6 +2322,78 @@ func (x *ExecutorCapabilities) GetAttribution() *AttributionState {
 	return nil
 }
 
+func (x *ExecutorCapabilities) GetTagging() *TaggingMode {
+	if x != nil {
+		return x.Tagging
+	}
+	return nil
+}
+
+// How the packets of a run on this executor are tagged, per address family
+// and for SCION: ebpf (the kernel tagger, every packet of a marked socket),
+// userspace (the pure-Go tagger, IPv4 UDP and ICMP datagrams only) or none.
+// It is the mode of the executor's latest run, or before any run the mode a
+// run is set up to get. IPv6 and SCION are none in this build.
+type TaggingMode struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ipv4          string                 `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
+	Ipv6          string                 `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
+	Scion         string                 `protobuf:"bytes,3,opt,name=scion,proto3" json:"scion,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaggingMode) Reset() {
+	*x = TaggingMode{}
+	mi := &file_protocol_protocol_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaggingMode) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaggingMode) ProtoMessage() {}
+
+func (x *TaggingMode) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaggingMode.ProtoReflect.Descriptor instead.
+func (*TaggingMode) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *TaggingMode) GetIpv4() string {
+	if x != nil {
+		return x.Ipv4
+	}
+	return ""
+}
+
+func (x *TaggingMode) GetIpv6() string {
+	if x != nil {
+		return x.Ipv6
+	}
+	return ""
+}
+
+func (x *TaggingMode) GetScion() string {
+	if x != nil {
+		return x.Scion
+	}
+	return ""
+}
+
 // Whether packets tagged now can be attributed once their TESLA key is
 // disclosed, and the kernel key-refresh state that decides it. Ages are
 // measured on the executor's clock when the report was built.
@@ -2337,7 +2412,7 @@ type AttributionState struct {
 
 func (x *AttributionState) Reset() {
 	*x = AttributionState{}
-	mi := &file_protocol_protocol_proto_msgTypes[36]
+	mi := &file_protocol_protocol_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2349,7 +2424,7 @@ func (x *AttributionState) String() string {
 func (*AttributionState) ProtoMessage() {}
 
 func (x *AttributionState) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[36]
+	mi := &file_protocol_protocol_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2362,7 +2437,7 @@ func (x *AttributionState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributionState.ProtoReflect.Descriptor instead.
 func (*AttributionState) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{36}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *AttributionState) GetState() string {
@@ -2584,12 +2659,17 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x1aInspectRetainedRunResponse\x12<\n" +
 	"\x06status\x18\x01 \x01(\x0e2$.debuglet.protocol.RetainedRunStatusR\x06status\x125\n" +
 	"\x03run\x18\x02 \x01(\v2\x1e.debuglet.protocol.RetainedRunH\x00R\x03run\x88\x01\x01B\x06\n" +
-	"\x04_run\"\xcd\x01\n" +
+	"\x04_run\"\x87\x02\n" +
 	"\x14ExecutorCapabilities\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x1c\n" +
 	"\tprotocols\x18\x02 \x03(\tR\tprotocols\x12)\n" +
 	"\x10enforcement_mode\x18\x03 \x01(\tR\x0fenforcementMode\x12E\n" +
-	"\vattribution\x18\x04 \x01(\v2#.debuglet.protocol.AttributionStateR\vattribution\"\xd3\x02\n" +
+	"\vattribution\x18\x04 \x01(\v2#.debuglet.protocol.AttributionStateR\vattribution\x128\n" +
+	"\atagging\x18\x05 \x01(\v2\x1e.debuglet.protocol.TaggingModeR\atagging\"K\n" +
+	"\vTaggingMode\x12\x12\n" +
+	"\x04ipv4\x18\x01 \x01(\tR\x04ipv4\x12\x12\n" +
+	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x14\n" +
+	"\x05scion\x18\x03 \x01(\tR\x05scion\"\xd3\x02\n" +
 	"\x10AttributionState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x14\n" +
@@ -2645,7 +2725,7 @@ func file_protocol_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_protocol_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
 var file_protocol_protocol_proto_goTypes = []any{
 	(RunState)(0),                      // 0: debuglet.protocol.RunState
 	(DebugletOutputStatus)(0),          // 1: debuglet.protocol.DebugletOutputStatus
@@ -2686,12 +2766,13 @@ var file_protocol_protocol_proto_goTypes = []any{
 	(*InspectRetainedRunRequest)(nil),  // 36: debuglet.protocol.InspectRetainedRunRequest
 	(*InspectRetainedRunResponse)(nil), // 37: debuglet.protocol.InspectRetainedRunResponse
 	(*ExecutorCapabilities)(nil),       // 38: debuglet.protocol.ExecutorCapabilities
-	(*AttributionState)(nil),           // 39: debuglet.protocol.AttributionState
-	(*timestamppb.Timestamp)(nil),      // 40: google.protobuf.Timestamp
+	(*TaggingMode)(nil),                // 39: debuglet.protocol.TaggingMode
+	(*AttributionState)(nil),           // 40: debuglet.protocol.AttributionState
+	(*timestamppb.Timestamp)(nil),      // 41: google.protobuf.Timestamp
 }
 var file_protocol_protocol_proto_depIdxs = []int32{
 	38, // 0: debuglet.protocol.HelloResponse.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
-	40, // 1: debuglet.protocol.UploadRequest.start_time:type_name -> google.protobuf.Timestamp
+	41, // 1: debuglet.protocol.UploadRequest.start_time:type_name -> google.protobuf.Timestamp
 	5,  // 2: debuglet.protocol.UploadRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
 	28, // 3: debuglet.protocol.UploadRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
 	10, // 4: debuglet.protocol.BandwidthRequest.limits:type_name -> debuglet.protocol.DestinationLimit
@@ -2700,52 +2781,53 @@ var file_protocol_protocol_proto_depIdxs = []int32{
 	5,  // 7: debuglet.protocol.DebugletAllocateRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
 	10, // 8: debuglet.protocol.DebugletAllocateResponse.allocated_limits:type_name -> debuglet.protocol.DestinationLimit
 	28, // 9: debuglet.protocol.DebugletIdent.original_binding:type_name -> debuglet.protocol.ControlBinding
-	40, // 10: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
+	41, // 10: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
 	1,  // 11: debuglet.protocol.DebugletOutputEnd.status:type_name -> debuglet.protocol.DebugletOutputStatus
 	23, // 12: debuglet.protocol.DebugletStreamRequest.ident:type_name -> debuglet.protocol.DebugletIdent
 	24, // 13: debuglet.protocol.DebugletStreamRequest.output:type_name -> debuglet.protocol.DebugletOutput
 	25, // 14: debuglet.protocol.DebugletStreamRequest.end:type_name -> debuglet.protocol.DebugletOutputEnd
 	25, // 15: debuglet.protocol.DebugletStreamResponse.end:type_name -> debuglet.protocol.DebugletOutputEnd
 	28, // 16: debuglet.protocol.RetainedRun.original_binding:type_name -> debuglet.protocol.ControlBinding
-	40, // 17: debuglet.protocol.RetainedRun.started_at:type_name -> google.protobuf.Timestamp
-	40, // 18: debuglet.protocol.RetainedRun.start_time:type_name -> google.protobuf.Timestamp
+	41, // 17: debuglet.protocol.RetainedRun.started_at:type_name -> google.protobuf.Timestamp
+	41, // 18: debuglet.protocol.RetainedRun.start_time:type_name -> google.protobuf.Timestamp
 	28, // 19: debuglet.protocol.InspectRetainedRunRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
 	2,  // 20: debuglet.protocol.InspectRetainedRunResponse.status:type_name -> debuglet.protocol.RetainedRunStatus
 	35, // 21: debuglet.protocol.InspectRetainedRunResponse.run:type_name -> debuglet.protocol.RetainedRun
-	39, // 22: debuglet.protocol.ExecutorCapabilities.attribution:type_name -> debuglet.protocol.AttributionState
-	13, // 23: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
-	15, // 24: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
-	17, // 25: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
-	19, // 26: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
-	21, // 27: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
-	26, // 28: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
-	29, // 29: debuglet.protocol.DispatcherService.BindSession:input_type -> debuglet.protocol.BindSessionRequest
-	31, // 30: debuglet.protocol.DispatcherService.RenewLease:input_type -> debuglet.protocol.RenewLeaseRequest
-	3,  // 31: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
-	6,  // 32: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
-	8,  // 33: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
-	11, // 34: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
-	33, // 35: debuglet.protocol.ExecutorService.ProbeSession:input_type -> debuglet.protocol.ProbeSessionRequest
-	36, // 36: debuglet.protocol.ExecutorService.InspectRetainedRun:input_type -> debuglet.protocol.InspectRetainedRunRequest
-	14, // 37: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
-	16, // 38: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
-	18, // 39: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
-	20, // 40: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
-	22, // 41: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
-	27, // 42: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
-	30, // 43: debuglet.protocol.DispatcherService.BindSession:output_type -> debuglet.protocol.BindSessionResponse
-	32, // 44: debuglet.protocol.DispatcherService.RenewLease:output_type -> debuglet.protocol.RenewLeaseResponse
-	4,  // 45: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
-	7,  // 46: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
-	9,  // 47: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
-	12, // 48: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
-	34, // 49: debuglet.protocol.ExecutorService.ProbeSession:output_type -> debuglet.protocol.ProbeSessionResponse
-	37, // 50: debuglet.protocol.ExecutorService.InspectRetainedRun:output_type -> debuglet.protocol.InspectRetainedRunResponse
-	37, // [37:51] is the sub-list for method output_type
-	23, // [23:37] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	40, // 22: debuglet.protocol.ExecutorCapabilities.attribution:type_name -> debuglet.protocol.AttributionState
+	39, // 23: debuglet.protocol.ExecutorCapabilities.tagging:type_name -> debuglet.protocol.TaggingMode
+	13, // 24: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
+	15, // 25: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
+	17, // 26: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
+	19, // 27: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
+	21, // 28: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
+	26, // 29: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
+	29, // 30: debuglet.protocol.DispatcherService.BindSession:input_type -> debuglet.protocol.BindSessionRequest
+	31, // 31: debuglet.protocol.DispatcherService.RenewLease:input_type -> debuglet.protocol.RenewLeaseRequest
+	3,  // 32: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
+	6,  // 33: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
+	8,  // 34: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
+	11, // 35: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
+	33, // 36: debuglet.protocol.ExecutorService.ProbeSession:input_type -> debuglet.protocol.ProbeSessionRequest
+	36, // 37: debuglet.protocol.ExecutorService.InspectRetainedRun:input_type -> debuglet.protocol.InspectRetainedRunRequest
+	14, // 38: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
+	16, // 39: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
+	18, // 40: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
+	20, // 41: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
+	22, // 42: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
+	27, // 43: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
+	30, // 44: debuglet.protocol.DispatcherService.BindSession:output_type -> debuglet.protocol.BindSessionResponse
+	32, // 45: debuglet.protocol.DispatcherService.RenewLease:output_type -> debuglet.protocol.RenewLeaseResponse
+	4,  // 46: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
+	7,  // 47: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
+	9,  // 48: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
+	12, // 49: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
+	34, // 50: debuglet.protocol.ExecutorService.ProbeSession:output_type -> debuglet.protocol.ProbeSessionResponse
+	37, // 51: debuglet.protocol.ExecutorService.InspectRetainedRun:output_type -> debuglet.protocol.InspectRetainedRunResponse
+	38, // [38:52] is the sub-list for method output_type
+	24, // [24:38] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
@@ -2763,14 +2845,14 @@ func file_protocol_protocol_proto_init() {
 	}
 	file_protocol_protocol_proto_msgTypes[32].OneofWrappers = []any{}
 	file_protocol_protocol_proto_msgTypes[34].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[36].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[37].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocol_protocol_proto_rawDesc), len(file_protocol_protocol_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   37,
+			NumMessages:   38,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

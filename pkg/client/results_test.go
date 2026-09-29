@@ -277,3 +277,27 @@ func TestResultRejectsInvalidVantagePoint(t *testing.T) {
 		t.Fatalf("1.0 file with provenance: %v", err)
 	}
 }
+
+// The capability report's tagging mode is additive within format 1.1: a file
+// without it (the fixture) reads as unknown, a file with it keeps it, and a
+// mode this reader does not know is kept rather than refused.
+func TestResultVantagePointTagging(t *testing.T) {
+	doc := currentResultFixture(t)
+	if doc.Provenance.VantagePoint.Capabilities.Value.Tagging != nil {
+		t.Fatal("tagging invented for a report without it")
+	}
+	for _, tagging := range []wire.TaggingMode{
+		{IPv4: wire.TaggingEBPF, IPv6: wire.TaggingNone, SCION: wire.TaggingNone},
+		{IPv4: wire.TaggingEBPF, IPv6: "destination-options", SCION: wire.TaggingNone},
+	} {
+		doc.Provenance.VantagePoint.Capabilities.Value.Tagging = &tagging
+		data, _ := json.Marshal(doc)
+		read, err := ReadResult(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("%+v: %v", tagging, err)
+		}
+		if got := read.Provenance.VantagePoint.Capabilities.Value.Tagging; got == nil || *got != tagging {
+			t.Fatalf("tagging %+v read as %+v", tagging, got)
+		}
+	}
+}
