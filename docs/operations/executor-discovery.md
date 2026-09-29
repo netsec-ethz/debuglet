@@ -48,6 +48,7 @@ tags now can be attributed once their TESLA key is disclosed. `dbl nodes` shows
 it in the `ATTRIBUTION` column as `available`, `unavailable(REASON)` or
 `unknown`; `--output json` carries every field. It is `null` or absent for
 executors and dispatchers that predate it, which means unknown, not available.
+A malformed attribution state is also `null`; the rest of the report stands.
 It is an executor claim, not a verification, and it is not a discovery filter.
 
 | `reason` | Meaning |

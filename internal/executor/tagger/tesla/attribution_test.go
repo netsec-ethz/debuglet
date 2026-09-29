@@ -107,3 +107,18 @@ func TestAttributionReportsRefreshFailureAndHold(t *testing.T) {
 		t.Fatalf("released: %+v", a)
 	}
 }
+
+// TestAttributionClampsRefreshAheadOfNow covers a boundary refresh that lands
+// between the caller reading now and the holders being read: the holder
+// already reports the next epoch, which the report must not name, since the
+// dispatcher refuses an installed epoch later than the current one.
+func TestAttributionClampsRefreshAheadOfNow(t *testing.T) {
+	ks, at := disclosureSchedule(t, 1<<10)
+	h := &fakeHolder{}
+	ks.RegisterInstalled(h)
+	h.hold(5)
+	a := ks.Attribution(at(5).Add(-time.Millisecond))
+	if a.Epoch != 4 || !a.Installed || a.InstalledEpoch != 4 || !a.HeldSince.IsZero() || a.Reason != "" {
+		t.Fatalf("refresh ahead of now: %+v", a)
+	}
+}

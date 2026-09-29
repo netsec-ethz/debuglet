@@ -2666,7 +2666,7 @@ components:
       type: object
       nullable: true
       additionalProperties: false
-      description: "Executor-reported TESLA attribution state: whether packets it tags now can be attributed once their key is disclosed. Absent or null means unknown, including executors and dispatchers that predate it. Available is an executor claim, not a verification. Times are the dispatcher receipt time minus an executor-reported age, in Unix seconds."
+      description: "Executor-reported TESLA attribution state: whether packets it tags now can be attributed once their key is disclosed. Absent or null means unknown, including executors and dispatchers that predate it and a malformed report of it. Available is an executor claim, not a verification. Times are the dispatcher receipt time minus an executor-reported age, in Unix seconds."
       required:
         - state
         - reason

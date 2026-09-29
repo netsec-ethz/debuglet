@@ -41,9 +41,7 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 	out := &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: observed.Unix(),
 		Protocols: protocols, EnforcementMode: report.GetEnforcementMode()}
 	if report.Attribution != nil {
-		if out.Attribution = attributionFromReport(report.Attribution, observed); out.Attribution == nil {
-			return nil
-		}
+		out.Attribution = attributionFromReport(report.Attribution, observed)
 	}
 	return out
 }
@@ -56,10 +54,11 @@ const (
 )
 
 // attributionFromReport validates the attribution state and converts its ages
-// to times on the dispatcher's clock. Nil means malformed, which clears the
-// whole report: an availability claim that cannot be interpreted must not be
-// shown next to positive capabilities. The reason must agree with the facts it
-// names, so an unavailable report always says why.
+// to times on the dispatcher's clock. Nil means malformed, which leaves
+// attribution unknown, as for an executor that predates it, while the rest of
+// the report stands: null never claims availability, and a bad attribution
+// field must not hide the node's protocols from discovery. The reason must
+// agree with the facts it names, so an unavailable report always says why.
 func attributionFromReport(report *pb.AttributionState, observed time.Time) *wire.AttributionState {
 	switch report.GetState() {
 	case "available":

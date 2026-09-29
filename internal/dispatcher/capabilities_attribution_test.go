@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +15,8 @@ import (
 func i64(v int64) *int64 { return &v }
 
 // A valid attribution state is converted to dispatcher-clock times; a report
-// without one keeps attribution unknown; any malformed state clears the whole
-// report, like a malformed protocol list.
+// without one keeps attribution unknown; a malformed state leaves attribution
+// unknown too and keeps the rest of the report.
 func TestCapabilityAttributionValidation(t *testing.T) {
 	observed := time.Unix(1700000000, 0)
 	report := func(a *pb.AttributionState) *pb.ExecutorCapabilities {
@@ -62,8 +63,9 @@ func TestCapabilityAttributionValidation(t *testing.T) {
 		"invalid utf-8 error":     {State: "unavailable", Reason: "refresh_failing", Epoch: 2, RefreshError: "\xff"},
 		"control in error":        {State: "unavailable", Reason: "refresh_failing", Epoch: 2, RefreshError: "a\nb"},
 	} {
-		if got := capabilitiesFromReport(report(invalid), observed); got != nil {
-			t.Errorf("%s accepted: %+v", name, got)
+		got := capabilitiesFromReport(report(invalid), observed)
+		if got == nil || got.Attribution != nil || !slices.Equal(got.Protocols, []string{"tcp"}) || got.EnforcementMode != "ebpf" {
+			t.Errorf("%s: %+v, want the report without attribution", name, got)
 		}
 	}
 }

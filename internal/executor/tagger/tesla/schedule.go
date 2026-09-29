@@ -308,6 +308,12 @@ func (ks *KeySchedule) Attribution(now time.Time) Attribution {
 		}
 	}
 	ks.holdersMu.Unlock()
+	// A boundary refresh that lands after the caller read now installs the
+	// next epoch's key; report it as now's epoch, since a report never names
+	// an installed epoch later than its own.
+	if a.Installed && a.InstalledEpoch > a.Epoch {
+		a.InstalledEpoch = a.Epoch
+	}
 	if a.Installed && a.InstalledEpoch < a.Epoch {
 		a.HeldSince = ks.cfg.Epoch.Add(time.Duration(a.InstalledEpoch+1) * ks.cfg.Delay)
 	}
