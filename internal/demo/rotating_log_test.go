@@ -48,6 +48,55 @@ func TestDaemonLogRotationAndRestart(t *testing.T) {
 	}
 }
 
+func TestDaemonLogRotationKeepsDescriptors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "executor.log")
+	if err := os.WriteFile(filepath.Join(dir, "unrelated"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	openFiles := func() int {
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	log, err := newRotatingLog(path, LogOptions{MaxBytes: 8, Files: 3, MaxAge: time.Hour}, cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	// The first rotation warms any lazily opened runtime descriptors, so the
+	// baseline holds only the root and the live file.
+	if _, err := log.Write(bytes.Repeat([]byte{'w'}, 16)); err != nil {
+		t.Fatal(err)
+	}
+	before := openFiles()
+	for rotation := 0; rotation < 500; rotation++ {
+		if n, err := log.Write(bytes.Repeat([]byte{byte('a' + rotation%26)}, 8)); n != 8 || err != nil {
+			t.Fatalf("rotation %d: %d, %v", rotation, n, err)
+		}
+	}
+	if after := openFiles(); after > before+2 {
+		t.Fatalf("rotation leaked descriptors: %d before, %d after", before, after)
+	}
+	if _, err := io.WriteString(log, "live"); err != nil || ctx.Err() != nil {
+		t.Fatalf("live writer lost: %v, %v", err, context.Cause(ctx))
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "live" {
+		t.Fatalf("live file: %q, %v", got, err)
+	}
+	files, err := filepath.Glob(path + "*")
+	if err != nil || len(files) != 3 {
+		t.Fatalf("retained files: %v, %v", files, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "unrelated")); err != nil || string(got) != "keep" {
+		t.Fatalf("unrelated state changed: %q, %v", got, err)
+	}
+}
+
 func TestDaemonLogRetentionChanges(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dispatcher.log")
