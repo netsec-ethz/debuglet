@@ -269,3 +269,26 @@ func (q *Queries) GetSequencedDebugletLog(ctx context.Context, arg GetSequencedD
 	)
 	return i, err
 }
+
+const interruptUnresumableOutput = `-- name: InterruptUnresumableOutput :execrows
+UPDATE debuglet_output SET final_sequence = committed_sequence, final_cursor = last_log_id,
+    status = 'truncated', reason = 'executor_interrupted'
+WHERE final_sequence IS NULL AND (output_version = 0 OR owner_fingerprint = '')
+  AND debuglet_id IN (SELECT id FROM debuglets
+                      WHERE dispatcher_incarnation = ?1 AND session_id = ?2)
+`
+
+type InterruptUnresumableOutputParams struct {
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+// Output bound to an ended session can continue only over an enrolled
+// credential. Legacy and unenrolled output therefore ends at its committed prefix.
+func (q *Queries) InterruptUnresumableOutput(ctx context.Context, arg InterruptUnresumableOutputParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, interruptUnresumableOutput, arg.DispatcherIncarnation, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

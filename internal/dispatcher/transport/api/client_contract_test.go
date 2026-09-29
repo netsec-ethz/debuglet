@@ -115,6 +115,13 @@ func ccNewFixtureLogged(t *testing.T, logger *zap.Logger, options ...Option) *cc
 
 func ccNewFixturePeer(t *testing.T, logger *zap.Logger, peer *cpPeer, options ...Option) *ccFixture {
 	t.Helper()
+	return ccNewFixtureConfigured(t, logger, peer, nil, options...)
+}
+
+// ccNewFixtureConfigured applies configure before the executor peer registers,
+// when dispatcher settings such as output limits can still change.
+func ccNewFixtureConfigured(t *testing.T, logger *zap.Logger, peer *cpPeer, configure func(*dispatcher.Dispatcher) error, options ...Option) *ccFixture {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -137,6 +144,11 @@ func ccNewFixturePeer(t *testing.T, logger *zap.Logger, peer *cpPeer, options ..
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	if configure != nil {
+		if err := configure(d); err != nil {
+			t.Fatal(err)
+		}
+	}
 	stop, err := startClientPeer(ctx, d, ccCapacity, peer)
 	if err != nil {
 		t.Fatalf("startClientPeer: %v", err)

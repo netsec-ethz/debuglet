@@ -18,6 +18,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -325,9 +327,16 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 // enrollment; the immutable original binding still identifies the output.
 func (e *Executor) deliverOutput(ctx context.Context, current controlsession.Binding, run outputstore.Run) error {
 	if e.cfg.TLS.Disable && run.Binding != current {
-		return nil
+		// Plaintext sessions carry no credential that could resume the output.
+		return e.output.Abandon(ctx, run.ID)
 	}
 	stream, receipt, err := e.openOutput(ctx, current, run.Binding, run.ID)
+	if run.Binding != current && status.Code(err) == codes.PermissionDenied {
+		// Only an enrolled credential may resume output of an ended session.
+		// The dispatcher has finalized this output as interrupted.
+		e.logger.Info("Output cannot resume over this session; releasing local copy", zap.String("debugletID", run.ID.String()), zap.Error(err))
+		return e.output.Abandon(ctx, run.ID)
+	}
 	if err != nil {
 		return err
 	}

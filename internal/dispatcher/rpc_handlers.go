@@ -122,6 +122,7 @@ func (d *Dispatcher) OnExecutorDisconnected(owner *rpc.SessionOwner) {
 	if removed {
 		d.logger.Info("Executor control session ended", zap.String("executor_id", owner.ExecutorID()), zap.String("session_id", owner.Binding().SessionID), zap.String("reason", "transport closed"))
 	}
+	d.interruptUnresumableOutput(owner.Binding())
 }
 
 // ============================================================
