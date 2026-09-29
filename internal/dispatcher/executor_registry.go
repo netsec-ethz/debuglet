@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"sync"
 	"time"
@@ -32,7 +34,9 @@ type RegisteredExecutor struct {
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte // k_0, the public chain anchor
 
-	ICMPEnabled bool
+	ICMPEnabled        bool
+	Capabilities       *wire.ExecutorCapabilities
+	capabilityObserved time.Time
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -110,6 +114,16 @@ func (e *RegisteredExecutor) AppendDebugletID(id uuid.UUID) {
 type executorEntry struct {
 	*RegisteredExecutor
 	owner *rpc.SessionOwner
+	// bandwidthTail is the done channel of the last bandwidth delivery
+	// captured for this executor, nil before the first. Each capture, under
+	// d.mu and in the order of the destination changes, waits for the
+	// previous tail and becomes the new one, so deliveries reach the executor
+	// in capture order and the newest share is applied last. A delivery always
+	// closes its channel when it ends, however it ends; one cut off at its
+	// bound while the executor still processes it closes the channel before
+	// its share is applied, so that share may land after its successor's and
+	// stay until the next update on the destination or the session end.
+	bandwidthTail chan struct{}
 }
 
 type registrationOperation struct{ cancel context.CancelFunc }
@@ -181,6 +195,8 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	}
 	d.initializeEarnings(callCtx, record)
 	record.LastSeen = d.now()
+	record.Capabilities = capabilitiesFromReport(hello.GetCapabilities(), record.LastSeen)
+	record.capabilityObserved = record.LastSeen
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -211,8 +227,9 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		return commitErr
 	}
 	if old != nil && old.owner != owner {
-		d.logger.Info("Executor control session ended", zap.String("executor_id", record.ID), zap.String("session_id", old.owner.Binding().SessionID), zap.String("reason", "replaced"))
+		d.logger.Info("Executor control session ended", append(daemonlog.SessionFields(record.ID, old.owner.Binding()), zap.String("reason", "replaced"))...)
 	}
+	d.logger.Info("Executor control session registered", daemonlog.SessionFields(record.ID, owner.Binding())...)
 	if startExpiry != nil {
 		go d.runExpiry(startExpiry)
 	}
@@ -230,8 +247,9 @@ func cloneHistory(history *debugletHistory) *debugletHistory {
 }
 
 // snapshotLocked copies data only; no used mutex or live history is copied.
-func snapshotLocked(entry *executorEntry) RegisteredExecutor {
+func snapshotLocked(entry *executorEntry, now time.Time) RegisteredExecutor {
 	out := *entry.RegisteredExecutor
+	out.Capabilities = capabilitySnapshot(entry, now)
 	out.TeslaAnchorKey = append([]byte(nil), out.TeslaAnchorKey...)
 	out.history = cloneHistory(entry.history)
 	if entry.publicHost != nil {
@@ -264,7 +282,7 @@ func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
 	if best == nil {
 		return RegisteredExecutor{}, false
 	}
-	return snapshotLocked(best), true
+	return snapshotLocked(best, d.now()), true
 }
 
 func (d *Dispatcher) ListExecutors() []RegisteredExecutor {
@@ -276,7 +294,7 @@ func (d *Dispatcher) ListExecutors() []RegisteredExecutor {
 	}
 	for _, entry := range d.executors {
 		if entry.owner.Available() {
-			out = append(out, snapshotLocked(entry))
+			out = append(out, snapshotLocked(entry, d.now()))
 		}
 	}
 	return out
@@ -307,7 +325,7 @@ func (d *Dispatcher) GetExecutor(id string) (*RegisteredExecutor, bool) {
 	if d.closed || !exists || !entry.owner.Available() {
 		return nil, false
 	}
-	out := snapshotLocked(entry)
+	out := snapshotLocked(entry, d.now())
 	return &out, true
 }
 
@@ -319,10 +337,13 @@ type realExpiryTicker struct{ *time.Ticker }
 
 func (t realExpiryTicker) C() <-chan time.Time { return t.Ticker.C }
 
+// runExpiry is the sole expiry loop: on each tick it retires the owners whose
+// lease has run out and then classifies the runs whose window has ended.
 func (d *Dispatcher) runExpiry(done chan struct{}) {
 	defer close(done)
 	ticker := d.newExpiryTicker(d.leaseTiming.WatchdogInterval)
 	defer ticker.Stop()
+	var lastSweep time.Time
 	for {
 		select {
 		case <-d.expiryStop:
@@ -331,6 +352,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 			for _, owner := range d.expiryCandidates() {
 				d.expireOwner(owner)
 			}
+			lastSweep = d.sweepEndedWindows(lastSweep)
 		}
 	}
 }
@@ -363,7 +385,7 @@ func (d *Dispatcher) expireOwner(owner *rpc.SessionOwner) bool {
 	}
 	delete(d.executors, owner.ExecutorID())
 	d.mu.Unlock()
-	d.logger.Info("Executor control session ended", zap.String("executor_id", owner.ExecutorID()), zap.String("session_id", owner.Binding().SessionID), zap.String("reason", "lease expired"))
+	d.logger.Info("Executor control session ended", append(daemonlog.SessionFields(owner.ExecutorID(), owner.Binding()), zap.String("reason", "lease expired"))...)
 	d.Bidi.RemoveClient(owner)
 	return true
 }

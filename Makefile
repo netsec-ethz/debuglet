@@ -75,11 +75,6 @@ ci-local:
 ci-kernel:
 	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-kernel.sh
 
-# Goose command (installed via mise, see mise.toml) — avoid `go run
-# .../goose@version`, which rebuilds goose from source on every invocation
-# since it's not mise's already-installed binary.
-GOOSE ?= goose
-
 # --------------------------------------------------------------------
 # Toolchains for building debuglet WASM samples (override as needed).
 # Go needs nothing extra. The others are only required to build their
@@ -208,18 +203,6 @@ memory-view:
 	$(GO) tool pprof -http=:8080 '$(MEMORY_PROFILE)'
 
 # --------------------------------------------------------------------
-# Database
-# --------------------------------------------------------------------
-upgrade:
-	mkdir -p .data
-	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations $(GOOSE) sqlite3 .data/dispatcher.db up
-	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations $(GOOSE) sqlite3 .data/executor.db up
-
-downgrade:
-	GOOSE_MIGRATION_DIR=./internal/dispatcher/database/migrations $(GOOSE) sqlite3 .data/dispatcher.db down
-	GOOSE_MIGRATION_DIR=./internal/executor/database/migrations $(GOOSE) sqlite3 .data/executor.db down
-
-# --------------------------------------------------------------------
 # Docker orchestration
 # --------------------------------------------------------------------
 docker-build:
@@ -282,27 +265,9 @@ deploy-build:
 	chmod +x deploy/scripts/build-linux.sh
 	deploy/scripts/build-linux.sh
 
-# Generate schema-only executor/dispatcher SQLite DBs → deploy/dist/*-seed.db.
-# The ansible roles install these on first deploy only (they never overwrite
-# an existing DB, so persisted state survives redeploys). Not committed to
-# git: deploy/dist/ is gitignored and these are regenerated from the
-# migrations directories on every build, same as the binaries in this
-# directory.
-#
-# goose runs in the pinned provisioner, which is the only tool version a
-# deployment is allowed to have used: the databases go to every managed host,
-# so the migration tool that wrote them is pinned like the rest. deploy/dist is
-# the one directory the container may write to.
-DEPLOY_GOOSE = DEBUGLET_PROVISIONER_WRITE_DIR=$(CURDIR)/deploy/dist \
-	DEBUGLET_PROVISIONER_AS_CALLER=1 deploy/scripts/provisioner.sh goose
+# The built payload's daemon commands create the schemas Ansible installs.
 deploy-seed-db:
-	mkdir -p deploy/dist
-	rm -f deploy/dist/executor-seed.db
-	$(DEPLOY_GOOSE) -dir /repository/internal/executor/database/migrations \
-		sqlite3 /output/executor-seed.db up
-	rm -f deploy/dist/dispatcher-seed.db
-	$(DEPLOY_GOOSE) -dir /repository/internal/dispatcher/database/migrations \
-		sqlite3 /output/dispatcher-seed.db up
+	deploy/scripts/seed-databases.sh
 
 # Generate CA + dispatcher + executor TLS certs → deploy/certs/, then install
 # them. The deployment controller reads the dispatcher address, any additional

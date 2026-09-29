@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/connections"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // TestLocalStartupRefusesUnsupportedSchema keeps a local environment from
@@ -33,7 +34,7 @@ func TestRoleStartupRefusesUnsupportedSchema(t *testing.T) {
 	f := newSupervisorFixture(t, "unsupported schema")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	err := upRole(ctx, DispatcherSchema, f.assets, RoleOptions{Name: "service", StateDir: filepath.Join(t.TempDir(), "service"),
+	err := upRole(ctx, storagecheck.Dispatcher, f.assets, RoleOptions{Name: "service", StateDir: filepath.Join(t.TempDir(), "service"),
 		Dispatcher: connections.Profile{Endpoint: f.server.URL},
 		Ready:      func(RoleEnvironment) error { t.Error("role reported readiness"); return nil }}, f.deps, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "dispatcher database: dispatcher schema sentinel") {

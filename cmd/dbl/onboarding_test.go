@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/pkg/client"
@@ -14,10 +15,12 @@ func TestRunAutoExecutor(t *testing.T) {
 		name     string
 		nodes    []client.Node
 		wantCode int
+		hint     string
 	}{
-		{"sole ready", []client.Node{{ID: "offline"}, {ID: fixExecutor, Ready: true}}, exitOK},
-		{"none ready", []client.Node{{ID: fixExecutor}}, exitFailure},
-		{"ambiguous", []client.Node{{ID: fixExecutor, Ready: true}, {ID: "second", Ready: true}}, exitFailure},
+		{"sole ready", []client.Node{{ID: "offline"}, {ID: fixExecutor, Ready: true}}, exitOK, ""},
+		// With no filters, the first-run hint says how to start an executor.
+		{"none ready", []client.Node{{ID: fixExecutor}}, exitFailure, "start one with dbl up"},
+		{"ambiguous", []client.Node{{ID: fixExecutor, Ready: true}, {ID: "second", Ready: true}}, exitFailure, "choose --executor ID"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mux := http.NewServeMux()
@@ -28,6 +31,9 @@ func TestRunAutoExecutor(t *testing.T) {
 			code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "run", "--wasm", wasmFile(t))
 			assertCode(t, code, tc.wantCode, stdout, stderr)
 			if tc.wantCode != exitOK {
+				if !strings.Contains(stderr, tc.hint) {
+					t.Fatalf("stderr %q lacks %q", stderr, tc.hint)
+				}
 				if fx.count("PUT", "/") != 0 {
 					t.Fatal("ambiguous/unready selection attempted submission")
 				}

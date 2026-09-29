@@ -16,7 +16,7 @@ import (
 func TestGeneratedConfigurationsLoad(t *testing.T) {
 	dir := t.TempDir()
 	dispatcherPath := filepath.Join(dir, "dispatcher.toml")
-	if err := writeConfig(dispatcherPath, dispatcherConfiguration("test-version", filepath.Join(dir, "dispatcher.sqlite"))); err != nil {
+	if err := WriteConfig(dispatcherPath, DispatcherConfiguration("test-version", filepath.Join(dir, "dispatcher.sqlite"))); err != nil {
 		t.Fatalf("write dispatcher configuration: %v", err)
 	}
 	dispatcher, err := dispatcherconfig.LoadConfig(dispatcherPath)
@@ -39,9 +39,9 @@ func TestGeneratedConfigurationsLoad(t *testing.T) {
 	for name, chainLength := range map[string]any{"combined": int64(0), "role": 0} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "executor.toml")
-			config := executorConfiguration("test-version", "84b8f75e-a779-465a-8ce3-54b04ac15ef2", filepath.Join(dir, "executor.sqlite"), record)
+			config := ExecutorConfiguration("test-version", "84b8f75e-a779-465a-8ce3-54b04ac15ef2", filepath.Join(dir, "executor.sqlite"), record)
 			config["tesla"].(map[string]any)["chain_length"] = chainLength
-			if err := writeConfig(path, config); err != nil {
+			if err := WriteConfig(path, config); err != nil {
 				t.Fatalf("write executor configuration: %v", err)
 			}
 			executor, err := executorconfig.LoadConfig(path)

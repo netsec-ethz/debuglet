@@ -22,11 +22,24 @@ flowchart LR
 
 ## Measurement flow
 
-1. A client submits a debuglet to the dispatcher.
-2. The dispatcher validates its policy and capacity, then sends it to a ready executor.
-3. The executor stores and schedules the job, then runs the WebAssembly program.
-4. The executor streams output and the terminal result to the dispatcher.
-5. The client reads the stored state and logs through the API.
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant D as Dispatcher
+    participant E as Executor
+    participant S as Executor scheduler
+    C->>D: Create TEST intent and submit debuglet
+    D->>D: Validate policy and reserve capacity
+    D->>E: Upload over authenticated reverse control path
+    E->>S: Store and schedule accepted work
+    S->>E: Start WebAssembly program
+    E->>D: Output and observed terminal result
+    C->>D: Read stored state and logs
+```
+
+This is the successful TEST flow, not a payment settlement or replay protocol.
+A lost connection can leave the executor's outcome unknown; reconnecting does
+not resume an interrupted run. See [executor recovery](operations/executor-recovery.md).
 
 Executors initiate their connections to the dispatcher. Each active executor session needs both control paths to be healthy, which avoids exposing a public control port on the executor.
 
@@ -37,4 +50,4 @@ Executors initiate their connections to the dispatcher. Each active executor ses
 - Debuglets use [`pkg/debuglet`](debuglets.md).
 - The dispatcher/executor control protocol is defined in [`protocol/protocol.proto`](../protocol/protocol.proto).
 
-For deployment topology, recovery, and operational guidance, use the [project Wiki](https://github.com/netsec-ethz/debuglet/wiki).
+For deployment topology and operation, use [Across-host deployment](operations/remote-deployment.md), [Managed services](operations/services.md), and [Executor recovery](operations/executor-recovery.md).

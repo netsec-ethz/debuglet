@@ -285,7 +285,7 @@ Thing:
 		{
 			name:      "a format nothing parses",
 			operation: scThingResponse,
-			want:      []string{"components.schemas.Thing.properties.when", `format date-time is not implemented for type "string"`},
+			want:      []string{"components.schemas.Thing.properties.when", `format email is not implemented for type "string"`},
 			body:      `{"when":"not a timestamp"}`,
 			schemas: `
 Thing:
@@ -294,7 +294,7 @@ Thing:
   properties:
     when:
       type: string
-      format: "date-time"`,
+      format: "email"`,
 		},
 		{
 			name:      "an object whose additionalProperties is a schema",

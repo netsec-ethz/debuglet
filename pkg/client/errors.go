@@ -130,3 +130,16 @@ func IsTransportError(err error) bool {
 	var transportErr *transportError
 	return errors.As(err, &transportErr)
 }
+
+// IncompleteOutputError means the available prefix was drained without proof
+// of complete output. It says nothing about the workload's success or failure.
+type IncompleteOutputError struct {
+	Output OutputStatus
+}
+
+func (e *IncompleteOutputError) Error() string {
+	if e.Output.State == "truncated" {
+		return fmt.Sprintf("debuglet output is truncated: %q", e.Output.LossReason)
+	}
+	return "debuglet output completeness is unknown"
+}

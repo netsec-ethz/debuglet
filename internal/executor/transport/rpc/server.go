@@ -41,7 +41,7 @@ func (s *server) Hello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRespo
 		return nil, controlrpc.Unavailable()
 	}
 	if b.control != nil {
-		same := b.control.Matches(credentials) && b.lease == timing
+		same := b.control.Matches(credentials) && b.lease == timing && b.outputOffer == in.GetOutputVersion()
 		b.mu.Unlock()
 		if !same {
 			return nil, controlrpc.Unavailable()
@@ -60,9 +60,10 @@ func (s *server) Hello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRespo
 	}
 	b.control = &credentials
 	b.lease = timing
+	b.outputOffer = in.GetOutputVersion()
 	b.mu.Unlock()
 	// The session token stays here; only the binding reaches the state below.
-	profileReq := &pb.HelloRequest{ControlVersion: controlsession.ProtocolVersion, DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID, LeaseDurationMs: timing.Duration.Milliseconds()}
+	profileReq := &pb.HelloRequest{ControlVersion: controlsession.ProtocolVersion, DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID, LeaseDurationMs: timing.Duration.Milliseconds(), OutputVersion: in.GetOutputVersion()}
 	out, err := s.state.OnHello(ctx, profileReq)
 	b.mu.Lock()
 	defer b.mu.Unlock()

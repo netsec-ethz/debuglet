@@ -35,12 +35,24 @@ func assertCancelledWithoutSession(t *testing.T, f *tgFixture, run tgDebuglet) {
 	tgAssertRow(t, f.row(t, run.id), models.RunStateExited, tgText(deadCancelError))
 	tgAssertReserved(t, f, run, 0)
 	tgAssertOrder(t, f, run, models.Outstanding)
+	request, err := f.d.Cancellation(f.ctx, run.id)
+	if err != nil || request.Disposition != "unresolved" || request.Reason != "original_binding_unavailable" || request.AcknowledgedAt != nil || request.AttemptedAt != nil {
+		t.Fatalf("local terminal claimed remote evidence: %+v, %v", request, err)
+	}
+	if request.OriginalBinding == nil || request.OriginalBinding.SessionID != run.row.SessionID {
+		t.Fatalf("request acquired replacement binding: %+v", request)
+	}
 
 	before := f.snapshot(t)
 	if err := f.abort(t, run.id, "cancelled via API"); err != nil {
 		t.Fatalf("second cancellation: %v", err)
 	}
 	tgAssertSnapshot(t, f, before, "second cancellation")
+	repeated, err := f.d.Cancellation(f.ctx, run.id)
+	if err != nil || repeated.RequestID != request.RequestID || repeated.Disposition != "unresolved" {
+		t.Fatalf("repeat changed request: %+v, %v", repeated, err)
+	}
+
 	tgAssertReserved(t, f, run, 0)
 	if err := f.exit(t, run.id, 0, nil); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("exit through the current session after the cancellation: got %v, want %s", err, codes.PermissionDenied)

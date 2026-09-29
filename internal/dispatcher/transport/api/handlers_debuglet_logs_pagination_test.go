@@ -22,8 +22,9 @@ import (
 const logsPaginationID = "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0"
 
 var (
-	logsPaginationListQuery = regexp.QuoteMeta(
-		"SELECT debuglet_logs.id, debuglet_logs.debuglet_id, debuglet_logs.timestamp, debuglet_logs.output FROM debuglet_logs INNER JOIN debuglets ON debuglet_logs.debuglet_id = debuglets.id WHERE uuid = ? AND debuglet_logs.id > ? ORDER BY debuglet_logs.id ASC LIMIT ?",
+	logsPaginationOutputQuery = `SELECT (.+) FROM debuglet_output o JOIN debuglets d ON d.id = o.debuglet_id WHERE d.uuid = \?`
+	logsPaginationListQuery   = regexp.QuoteMeta(
+		"SELECT debuglet_logs.id, debuglet_logs.debuglet_id, debuglet_logs.timestamp, debuglet_logs.output, debuglet_logs.source_sequence FROM debuglet_logs INNER JOIN debuglets ON debuglet_logs.debuglet_id = debuglets.id WHERE uuid = ? AND debuglet_logs.id > ? ORDER BY debuglet_logs.id ASC LIMIT ?",
 	)
 	logsPaginationGetQuery = regexp.QuoteMeta(
 		"SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets WHERE uuid = ?",
@@ -115,12 +116,15 @@ func TestGetDebugletLogsPaginationDefaultsAndBounds(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e, mock := newLogsPaginationServer(t)
+			mock.ExpectBegin()
 			mock.ExpectQuery(logsPaginationListQuery).
 				WithArgs(id, tt.wantAfter, tt.wantLimit).
-				WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output"}))
+				WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}))
 			mock.ExpectQuery(logsPaginationGetQuery).
 				WithArgs(id).
 				WillReturnRows(debugletPaginationRow(id))
+			mock.ExpectQuery(logsPaginationOutputQuery).WithArgs(id).WillReturnError(sql.ErrNoRows)
+			mock.ExpectCommit()
 
 			rec := serveLogsPaginationRequest(e, tt.query)
 			if rec.Code != http.StatusOK {
@@ -130,7 +134,7 @@ func TestGetDebugletLogsPaginationDefaultsAndBounds(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 				t.Fatalf("decode response: %v", err)
 			}
-			if response.After != tt.wantAfter || response.State != "RunStateExited" || response.HasMore {
+			if response.After != tt.wantAfter || response.State != "RunStateExited" || response.HasMore || response.Output.State != "unknown" {
 				t.Fatalf("unexpected response: %+v", response)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
@@ -144,13 +148,16 @@ func TestGetDebugletLogsPreservesValidPaginationAndOpaqueOutput(t *testing.T) {
 	e, mock := newLogsPaginationServer(t)
 	id := uuid.MustParse(logsPaginationID)
 	wantOutput := []byte{0x00, 0xff, '\n'}
+	mock.ExpectBegin()
 	mock.ExpectQuery(logsPaginationListQuery).
 		WithArgs(id, int64(7), int64(2)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output"}).
-			AddRow(int64(8), int64(1), time.Date(2026, 9, 10, 8, 30, 0, 0, time.UTC), wantOutput))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}).
+			AddRow(int64(8), int64(1), time.Date(2026, 9, 10, 8, 30, 0, 0, time.UTC), wantOutput, nil))
 	mock.ExpectQuery(logsPaginationGetQuery).
 		WithArgs(id).
 		WillReturnRows(debugletPaginationRow(id))
+	mock.ExpectQuery(logsPaginationOutputQuery).WithArgs(id).WillReturnError(sql.ErrNoRows)
+	mock.ExpectCommit()
 
 	rec := serveLogsPaginationRequest(e, "?after=7&limit=2")
 	if rec.Code != http.StatusOK {

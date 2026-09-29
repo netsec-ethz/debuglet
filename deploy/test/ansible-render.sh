@@ -114,6 +114,12 @@ printf '%s\n' 'dispatcher.fixture.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF
 	'executor.fixture.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXT' \
 	>"$work/known_hosts"
 
+# OAuth stays enabled in the rendered production profile. These credentials
+# belong only to this offline fixture; no provider is contacted.
+printf '%s\n' 'GITHUB_OAUTH_CLIENT_ID=fixture-client' \
+	'GITHUB_OAUTH_CLIENT_SECRET=fixture-secret' >"$work/github-oauth.env"
+chmod 0600 "$work/github-oauth.env"
+
 # The inventory carries the host layout only. Everything a role would write to
 # a managed host is redirected with extra variables, which outrank both the
 # inventory and the playbooks' own group_vars, so this run cannot touch a real
@@ -137,6 +143,7 @@ ansible_python_interpreter: "{{ ansible_playbook_python }}"
 known_hosts_file: $work/known_hosts
 dispatcher_addr: dispatcher.fixture.invalid
 dispatcher_base_url: api.fixture.invalid
+dispatcher_github_oauth_env_file: $work/github-oauth.env
 dispatcher_grpc_port: 19001
 dispatcher_http_port: 19000
 deploy_version: fixture-1.2.3

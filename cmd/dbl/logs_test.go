@@ -25,7 +25,11 @@ func logPage(state string, after int64, hasMore bool, entries ...any) map[string
 			"output":    base64.StdEncoding.EncodeToString(entries[i+1].([]byte)),
 		})
 	}
-	return map[string]any{"state": state, "error": "", "after": after, "logs": logs, "has_more": hasMore}
+	output := client.OutputStatus{State: "pending"}
+	if state == client.StateExited && !hasMore {
+		output = client.OutputStatus{State: "complete", FinalCursor: &after}
+	}
+	return map[string]any{"state": state, "error": "", "after": after, "logs": logs, "has_more": hasMore, "output": output}
 }
 
 // logScript serves successive pages keyed by request number; the last page
@@ -85,7 +89,7 @@ func TestCLILogFollow(t *testing.T) {
 		if stdout != string(append(append([]byte{}, bin1...), bin2...)) {
 			t.Fatalf("human stdout %q is not the exact guest bytes", stdout)
 		}
-		if !strings.Contains(stderr, "after=2") || !strings.Contains(stderr, "state=RunStateStarted") || !strings.Contains(stderr, "has_more=true") {
+		if !strings.Contains(stderr, "after=2") || !strings.Contains(stderr, `state="RunStateStarted"`) || !strings.Contains(stderr, "has_more=true") {
 			t.Fatalf("cursor/state info missing from stderr: %q", stderr)
 		}
 		if count.Load() != 1 {
@@ -214,8 +218,8 @@ func TestCLILogFollow(t *testing.T) {
 		fetch, requests := fakePages(
 			client.LogPage{State: "RunStateStarted", After: 2, HasMore: true, Logs: []client.LogEntry{entry(1, "a"), entry(2, "b")}},
 			client.LogPage{State: "RunStateStarted", After: 2},
-			client.LogPage{State: client.StateExited, After: 3, HasMore: true, Logs: []client.LogEntry{entry(3, "c")}},
-			client.LogPage{State: client.StateExited, After: 3},
+			client.LogPage{State: client.StateExited, Output: client.OutputStatus{State: "pending"}, After: 3, HasMore: true, Logs: []client.LogEntry{entry(3, "c")}},
+			client.LogPage{State: client.StateExited, Output: finalOutput("complete", 3, ""), After: 3},
 		)
 		var emitted []client.LogPage
 		emit := func(p client.LogPage) error { emitted = append(emitted, p); return nil }
@@ -271,4 +275,84 @@ func TestCLILogFollow(t *testing.T) {
 			t.Fatalf("%d cancellations sent by logs", n)
 		}
 	})
+}
+
+func finalOutput(state string, cursor int64, reason string) client.OutputStatus {
+	return client.OutputStatus{State: state, FinalCursor: &cursor, LossReason: reason}
+}
+
+func TestFollowOutputFinality(t *testing.T) {
+	shortPoll(t)
+	pending := client.OutputStatus{State: "pending"}
+	for _, tc := range []struct {
+		name       string
+		start      int64
+		pages      []client.LogPage
+		incomplete bool
+		want       string
+	}{
+		{name: "terminal before tail and delayed final marker", pages: []client.LogPage{
+			{State: client.StateExited, Output: pending},
+			{State: client.StateExited, Output: pending, After: 1, Logs: []client.LogEntry{entry(1, "tail")}},
+			{State: client.StateExited, Output: finalOutput("complete", 1, ""), After: 1},
+		}, want: "tail"},
+		{name: "empty complete before terminal", pages: []client.LogPage{{State: "RunStateStarted", Output: finalOutput("complete", 0, "")}}},
+		{name: "exact full final page", pages: []client.LogPage{{State: "RunStateStarted", Output: finalOutput("complete", 1, ""), After: 1, HasMore: true, Logs: []client.LogEntry{entry(1, "x")}}}, want: "x"},
+		{name: "resumed follower", start: 1, pages: []client.LogPage{{State: "RunStateStarted", Output: finalOutput("complete", 2, ""), After: 2, Logs: []client.LogEntry{entry(2, "b")}}}, want: "b"},
+		{name: "resume past final cursor", start: 4, pages: []client.LogPage{{State: client.StateExited, Output: finalOutput("complete", 2, ""), After: 4}}},
+		{name: "truncation drains all pages", incomplete: true, pages: []client.LogPage{
+			{State: "RunStateStarted", Output: finalOutput("truncated", 2, "output_limit"), After: 1, HasMore: true, Logs: []client.LogEntry{entry(1, "a")}},
+			{State: "RunStateStarted", Output: finalOutput("truncated", 2, "output_limit"), After: 2, Logs: []client.LogEntry{entry(2, "b")}},
+		}, want: "ab"},
+		{name: "legacy terminal is incomplete after draining", incomplete: true, pages: []client.LogPage{
+			{State: client.StateExited, After: 1, HasMore: true, Logs: []client.LogEntry{entry(1, "legacy")}},
+			{State: client.StateExited, After: 1},
+		}, want: "legacy"},
+		{name: "future finality cannot claim success", incomplete: true, pages: []client.LogPage{{State: client.StateExited, Output: finalOutput("archived", 0, "future_reason")}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fetch, requests := fakePages(tc.pages...)
+			var output strings.Builder
+			err := followLogs(context.Background(), fetch, tc.start, 1, func(p client.LogPage) error {
+				for _, e := range p.Logs {
+					output.Write(e.Output)
+				}
+				return nil
+			})
+			var incomplete *client.IncompleteOutputError
+			if tc.incomplete {
+				if !errors.As(err, &incomplete) || incomplete.Output.State != tc.pages[len(tc.pages)-1].Output.State {
+					t.Fatalf("incomplete result: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != tc.want || len(*requests) != len(tc.pages) {
+				t.Fatalf("output=%q requests=%d; want %q, %d", output.String(), len(*requests), tc.want, len(tc.pages))
+			}
+		})
+	}
+}
+
+func TestCLILegacyFollowDoesNotClaimComplete(t *testing.T) {
+	page := logPage(client.StateExited, 1, false, 1, []byte("retained"))
+	delete(page, "output")
+	fx, _ := logScript(t, page)
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "logs", "--follow", fixJobID)
+	assertCode(t, code, exitFailure, stdout, stderr)
+	if stdout != "retained" || !strings.Contains(stderr, "completeness is unknown") {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestCLILogProgressQuotesFutureStates(t *testing.T) {
+	state := "future\n\x1b[31m"
+	page := logPage(state, 0, false)
+	page["output"] = client.OutputStatus{State: state}
+	fx, _ := logScript(t, page)
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "logs", fixJobID)
+	assertCode(t, code, exitOK, stdout, stderr)
+	if strings.Contains(stderr, state) || !strings.Contains(stderr, `output="future\n\x1b[31m"`) || !strings.Contains(stderr, `state="future\n\x1b[31m"`) {
+		t.Fatalf("unquoted states: %q", stderr)
+	}
 }

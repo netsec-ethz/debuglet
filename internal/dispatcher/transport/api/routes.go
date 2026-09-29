@@ -44,7 +44,8 @@ type Handler struct {
 	cookieSecure bool
 	githubOAuth  GitHubOAuthConfig
 	// health holds the last health observation. See handlers_health.go.
-	health healthMemo
+	health  healthMemo
+	metrics metricsMemo
 }
 
 type GitHubOAuthConfig struct {
@@ -117,6 +118,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET(routeLiveness, h.GetLiveness)
 	e.GET(routeReadiness, h.GetReadiness)
 	e.GET(routeHealth, h.GetHealth)
+	e.GET("/metrics", h.GetMetrics)
 	// session
 	e.POST("/auth/login", h.PostLogin)
 	e.POST("/auth/logout", h.PostLogout)
@@ -127,6 +129,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.PUT("/debuglet", h.PutDebuglets)
 	e.GET("/debuglet/:id/logs", h.GetDebugletLogs)
 	e.GET("/debuglet/:id/state", h.GetDebugletState)
+	e.GET("/debuglet/:id/recovery", h.GetDebugletRecovery)
+	e.GET("/debuglet/:id/cancellation", h.GetDebugletCancellation)
+	e.GET("/debuglet/:id/result", h.GetDebugletResult)
 	e.DELETE("/debuglet", h.DeleteDebuglet)
 	// executor
 	e.GET("/executors", h.GetExecutors)

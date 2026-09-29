@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 func TestLocalEnvironmentRestart(t *testing.T) {
@@ -22,7 +24,7 @@ func TestLocalEnvironmentRestart(t *testing.T) {
 		f.dir = dir
 		bootstraps := 0
 		bootstrap := f.deps.bootstrap
-		f.deps.bootstrap = func(ctx context.Context, role SchemaRole, path string) error {
+		f.deps.bootstrap = func(ctx context.Context, role storagecheck.Role, path string) error {
 			bootstraps++
 			return bootstrap(ctx, role, path)
 		}
@@ -90,7 +92,7 @@ func TestLocalEnvironmentLockAndVersion(t *testing.T) {
 	defer cancel()
 	err := up(ctx, f.assets, LocalOptions{StateDir: dir, Ready: func(LocalEnvironment) error {
 		second := f.deps
-		second.startChild = func(ChildSpec) (childProcess, error) {
+		second.startChild = func(ChildSpec) (ChildProcess, error) {
 			t.Error("duplicate start launched child")
 			return nil, errors.New("unexpected child")
 		}

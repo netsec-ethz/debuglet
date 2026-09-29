@@ -8,15 +8,17 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/ids"
-	"net/http"
-	"strconv"
-	"strings"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -56,7 +58,6 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 	transactionId := req.TransactionId
 	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
-	h.logger.Info("transaction_id", zap.String("id", tx.ID), zap.Int64("status", tx.Status))
 	if err != nil || tx.AuthKey != req.AuthKey {
 		return apiErrorFrom(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key", err)
 	}
@@ -123,14 +124,21 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		if errors.Is(err, dispatcher.ErrMaintenanceMode) {
 			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, err.Error(), err)
 		}
+		if errors.Is(err, dispatcher.ErrOutputCapacity) {
+			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, "output storage capacity exhausted", err)
+		}
 		if errors.Is(err, resource.ErrCapacityFull) {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted, "capacity exceeded", err)
 		}
-		// A policy admission refuses on its numbers is a rejected request, not
-		// a failure of the server. Its message names the field and carries no
-		// caller-supplied text, so it is reported as it is.
+		// Policy refusals name a numeric field or a missing capability, without
+		// repeating executor IDs or other caller-supplied text.
 		if errors.Is(err, dispatcher.ErrInvalidPolicy) {
 			return apiErrorFrom(http.StatusBadRequest, CodeInvalidPolicy, err.Error(), err)
+		}
+		// An executor that left between the intent and the submission is a
+		// rejected request too; which one is in the log.
+		if errors.Is(err, dispatcher.ErrUnknownExecutor) {
+			return apiErrorFrom(http.StatusBadRequest, CodeUnknownExecutor, "the executor is not registered or not available", err)
 		}
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to initialize debuglets", err)
 	} else {
@@ -207,7 +215,13 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	queries := database.New(h.db)
+	// Logs, workload state and finality describe one committed SQLite snapshot.
+	tx, err := h.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query logs", err)
+	}
+	defer tx.Rollback()
+	queries := database.New(tx)
 
 	dbLogs, err := queries.ListDebugletLogs(ctx, database.ListDebugletLogsParams{
 		Uuid:  id,
@@ -224,6 +238,22 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 			return apiError(http.StatusNotFound, CodeNotFound, "debuglet not found")
 		}
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query debuglet", err)
+	}
+
+	output := wire.OutputStatus{State: "unknown"}
+	stored, err := queries.GetDebugletOutput(ctx, id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query output status", err)
+	}
+	if err == nil && (stored.OutputVersion > 0 || stored.Status == "truncated") {
+		output.State = stored.Status
+		output.LossReason = stored.Reason
+		if stored.FinalCursor.Valid {
+			output.FinalCursor = &stored.FinalCursor.Int64
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to query logs", err)
 	}
 
 	var entries []DebugletLogEntry
@@ -243,6 +273,7 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 		After:   lastID,
 		Logs:    entries,
 		HasMore: int64(len(dbLogs)) == limit,
+		Output:  output,
 	})
 }
 

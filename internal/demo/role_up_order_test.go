@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/connections"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // A refusal that depends only on the local state directory is reported
@@ -27,7 +28,7 @@ func TestRoleUpReportsLocalRefusalBeforeDiscovery(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	foreign := func(t *testing.T, role SchemaRole) string {
+	foreign := func(t *testing.T, role storagecheck.Role) string {
 		dir := filepath.Join(t.TempDir(), "service")
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
@@ -41,7 +42,7 @@ func TestRoleUpReportsLocalRefusalBeforeDiscovery(t *testing.T) {
 		}
 		return dir
 	}
-	up := func(t *testing.T, role SchemaRole, dir string) error {
+	up := func(t *testing.T, role storagecheck.Role, dir string) error {
 		f := newSupervisorFixture(t, "success")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -56,13 +57,13 @@ func TestRoleUpReportsLocalRefusalBeforeDiscovery(t *testing.T) {
 	const discoveryFailure = "dispatcher connection metadata unavailable"
 	for _, tc := range []struct {
 		name string
-		role SchemaRole
+		role storagecheck.Role
 		dir  func(*testing.T) string
 		want string
 	}{
-		{"executor with another version", ExecutorSchema, func(t *testing.T) string { return foreign(t, ExecutorSchema) }, versionRefusal},
-		{"executor with a fresh directory", ExecutorSchema, func(t *testing.T) string { return filepath.Join(t.TempDir(), "service") }, discoveryFailure},
-		{"dispatcher with another version", DispatcherSchema, func(t *testing.T) string { return foreign(t, DispatcherSchema) }, versionRefusal},
+		{"executor with another version", storagecheck.Executor, func(t *testing.T) string { return foreign(t, storagecheck.Executor) }, versionRefusal},
+		{"executor with a fresh directory", storagecheck.Executor, func(t *testing.T) string { return filepath.Join(t.TempDir(), "service") }, discoveryFailure},
+		{"dispatcher with another version", storagecheck.Dispatcher, func(t *testing.T) string { return foreign(t, storagecheck.Dispatcher) }, versionRefusal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := up(t, tc.role, tc.dir(t))

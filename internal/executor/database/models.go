@@ -51,6 +51,35 @@ type DebugletLog struct {
 	Output     []byte
 }
 
+type OutputFrame struct {
+	RunID       string
+	Sequence    int64
+	TimestampNs int64
+	Output      []byte
+}
+
+type OutputRun struct {
+	RunID                 string
+	DispatcherIncarnation string
+	SessionID             string
+	OutputVersion         int64
+	LastSequence          int64
+	AcknowledgedSequence  int64
+	EmittedBytes          int64
+	QueuedBytes           int64
+	QueuedFrames          int64
+	Status                string
+	Reason                string
+	EndAcknowledged       bool
+	ReceiptSequence       sql.NullInt64
+	ReceiptReason         string
+}
+
+type OutputUsage struct {
+	Singleton    int64
+	ChargedBytes int64
+}
+
 type TeslaChain struct {
 	Generation  int64
 	Anchor      []byte

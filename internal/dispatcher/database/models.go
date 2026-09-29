@@ -28,11 +28,22 @@ type Debuglet struct {
 	SessionID             string
 }
 
+type DebugletCancellation struct {
+	DebugletID     int64
+	RequestID      string
+	Reason         string
+	RequestedAt    int64
+	AttemptedAt    sql.NullInt64
+	AcknowledgedAt sql.NullInt64
+	Failure        string
+}
+
 type DebugletLog struct {
-	ID         int64
-	DebugletID int64
-	Timestamp  models.UTCTime
-	Output     []byte
+	ID             int64
+	DebugletID     int64
+	Timestamp      models.UTCTime
+	Output         []byte
+	SourceSequence sql.NullInt64
 }
 
 type DebugletOrder struct {
@@ -44,6 +55,26 @@ type DebugletOrder struct {
 	State         int64
 	RefundAddress string
 	DebugletID    sql.NullInt64
+}
+
+type DebugletOutput struct {
+	DebugletID        int64
+	OutputVersion     int64
+	OwnerFingerprint  string
+	AccountID         int64
+	CommittedSequence int64
+	ByteCount         int64
+	FrameCount        int64
+	LastLogID         int64
+	FinalSequence     sql.NullInt64
+	FinalCursor       sql.NullInt64
+	Status            string
+	Reason            string
+}
+
+type DebugletProvenance struct {
+	DebugletID int64
+	Document   string
 }
 
 type DebugletUser struct {
@@ -80,6 +111,18 @@ type OauthIdentity struct {
 	Login     string
 	CreatedAt models.UTCTime
 	UpdatedAt models.UTCTime
+}
+
+type OutputAccountUsage struct {
+	AccountID    int64
+	ChargedBytes int64
+	FrameCount   int64
+}
+
+type OutputNodeUsage struct {
+	Singleton    int64
+	ChargedBytes int64
+	FrameCount   int64
 }
 
 type Session struct {

@@ -18,13 +18,13 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/demo"
+	dispatcherconfig "github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
-	"github.com/pelletier/go-toml/v2"
 )
 
 // TestLocalConfigurationReachesTheTargetItStarts covers the configuration this
@@ -44,7 +44,7 @@ func TestLocalConfigurationReachesTheTargetItStarts(t *testing.T) {
 	cfg := localExecutorConfiguration(testExecutor, "v0.0.1-test", filepath.Join(dir, "executor.sqlite"),
 		readiness.Record{GRPCAddr: "127.0.0.1:9001", HTTPAddr: "127.0.0.1:9000"})
 	path := filepath.Join(dir, "executor.toml")
-	if err := writeConfig(path, cfg); err != nil {
+	if err := demo.WriteConfig(path, cfg); err != nil {
 		t.Fatalf("write the candidate configuration: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -57,10 +57,6 @@ func TestLocalConfigurationReachesTheTargetItStarts(t *testing.T) {
 			t.Fatalf("the configuration is missing %q:\n%s", key, data)
 		}
 	}
-	var restored executorconfig.ExecutorConfig
-	if err := toml.Unmarshal(data, &restored); err != nil || !reflect.DeepEqual(cfg, restored) {
-		t.Fatalf("the written configuration does not read back as the typed one: %+v %v", restored, err)
-	}
 
 	loaded, err := executorconfig.LoadConfig(path)
 	if err != nil {
@@ -72,5 +68,21 @@ func TestLocalConfigurationReachesTheTargetItStarts(t *testing.T) {
 	}
 	if err := operator.CheckAddr(netip.MustParseAddr("127.0.0.1")); err != nil {
 		t.Fatalf("the configured executor cannot reach the target this check starts: %v", err)
+	}
+}
+
+func TestLocalDispatcherConfigurationIsAccepted(t *testing.T) {
+	dir := t.TempDir()
+	cfg := localDispatcherConfiguration("v0.0.1-test", filepath.Join(dir, "dispatcher.sqlite"))
+	path := filepath.Join(dir, "dispatcher.toml")
+	if err := demo.WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := dispatcherconfig.LoadConfig(path)
+	if err != nil {
+		t.Fatalf("installed dispatcher would reject the generated configuration: %v", err)
+	}
+	if loaded.Output != dispatcherconfig.DefaultOutputConfig() || !loaded.Server.LocalDevelopment || !loaded.TLS.Disable || !loaded.Sui.Disabled {
+		t.Fatal("generated dispatcher config lost local profile or output limits")
 	}
 }

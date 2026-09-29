@@ -18,6 +18,9 @@ Start a persistent local development environment in the foreground.
 State defaults to $XDG_STATE_HOME/debuglet or ~/.local/state/debuglet.
 Startup is bounded to 30 seconds. Press Ctrl-C to stop and retain results.
 Use --port 0 to let the operating system choose an available HTTP port.
+Daemon logs default to three 10 MiB files, aged out after seven days on write or
+restart. Use --log-max-bytes, --log-files and --log-max-age to lower or raise these
+limits (at most 100 MiB per file, 16 files and 720h). Measurement results are separate.
 `
 
 type upDependencies struct {
@@ -37,6 +40,7 @@ func upCommandWith(ctx context.Context, args []string, options globalOptions, st
 	var local demo.LocalOptions
 	fs.StringVar(&local.StateDir, "state-dir", "", "directory retaining local databases and executor identity")
 	fs.IntVar(&local.Port, "port", 9000, "loopback HTTP port (0 selects an available port)")
+	logFlags(fs, &local.Logs)
 	if code, ok := parseCommandFlags(fs, args, upUsage, stdout, stderr); !ok {
 		return code
 	}

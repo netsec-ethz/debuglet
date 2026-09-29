@@ -24,6 +24,15 @@ disable = true
 capacity = 1_000_000_000
 max_debuglets = 1000
 
+# Output v1 spools accepted data before delivery. Zero uses these defaults.
+[output]
+run_bytes = 8_388_608
+run_frames = 65_536
+spool_bytes = 67_108_864
+retained_runs = 65_536
+rate_bytes_per_second = 1_048_576
+burst_bytes = 65_536
+
 [tesla]
 seed = ""                                  # optional; empty auto-generates
 delay = 30

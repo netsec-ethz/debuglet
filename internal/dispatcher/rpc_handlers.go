@@ -12,20 +12,19 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"io"
 	"maps"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -57,6 +56,10 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.LastSeen = seen
 		}
 		exec.Ready = true
+		if req.Capabilities != nil && !seen.Before(exec.capabilityObserved) {
+			exec.Capabilities = capabilitiesFromReport(req.Capabilities, seen)
+			exec.capabilityObserved = seen
+		}
 		anchor = bytes.Clone(exec.TeslaAnchorKey)
 	} else {
 		d.mu.Unlock()
@@ -118,6 +121,7 @@ func (d *Dispatcher) OnExecutorDisconnected(owner *rpc.SessionOwner) {
 	if removed {
 		d.logger.Info("Executor control session ended", zap.String("executor_id", owner.ExecutorID()), zap.String("session_id", owner.Binding().SessionID), zap.String("reason", "transport closed"))
 	}
+	d.interruptUnresumableOutput(owner.Binding())
 }
 
 // ============================================================
@@ -172,6 +176,12 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, mutation *rpc.Mutation
 	return &pb.DebugletStateResponse{}, nil
 }
 
+// OnDebugletAllocate charges the admitted policy of a run on its destinations
+// and sends the recomputed shares to every executor holding them. The
+// executor that allocated keeps its own outcome: a share that does not reach
+// it or a sibling is logged with the executor that missed it and does not
+// fail the allocation; the recipient that missed the update is corrected by
+// the next update on that destination or by its session end.
 func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutation, req *pb.DebugletAllocateRequest) (*pb.DebugletAllocateResponse, error) {
 	if req.GetExecutorId() == "" {
 		return nil, status.Error(codes.PermissionDenied, "executor identity does not match session")
@@ -308,10 +318,11 @@ func terminalLine(message string) string {
 	return line.String()
 }
 
-// OnDebugletExit handles the exit of a debuglet, cleaning up its state and notifying any connected log streams.
-// It is safe to call multiple times: CompleteDebuglet is the sole terminal writer and its guard admits exactly
-// one winner per debuglet. Only that winner runs the payment decision, destination removal, scheduler release
-// and fairshare update; later callbacks for a terminal row acknowledge with no effects.
+// OnDebugletExit selects one immutable terminal result. Only its winner handles
+// payment and fairshare notification. Winner and duplicates release the run's
+// resources by run identity, so a duplicate completes a release an earlier
+// delivery did not reach without repeating payment or subtracting another
+// run's reservation.
 func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation, req *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing exit request")
@@ -357,11 +368,14 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 		if existing.State != models.RunStateExited {
 			return nil, fmt.Errorf("exit of debuglet '%s' was rejected although it is in state %s", debugletID, existing.State.String())
 		}
-		d.logger.Debug("Duplicate debuglet exit ignored", zap.String("debugletID", debugletID))
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
 		return &pb.DebugletExitResponse{}, nil
 	}
 
-	d.settleTerminal(ctx, &deb, exitCode)
+	d.settleTerminalPayment(ctx, &deb, exitCode)
+	d.releaseTerminal(deb)
 	// Reserve the origin continuation and every exact recipient before this
 	// callback returns; the detached deadline releases no mutation of its own.
 	notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -387,6 +401,7 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 	}
 	ctx := stream.Context()
 	var runID uuid.UUID
+	var writer outputWriter
 	identified := false
 	for {
 		// An idle receive holds no mutation; the transport joins this handler.
@@ -396,9 +411,7 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 		}
 		if err != nil {
 			if identified && ctx.Err() == nil && status.Code(err) != codes.Canceled {
-				// A failed output transport is no evidence of how the guest
-				// ended; its executor reports that outcome. The run keeps the
-				// state its reports give it, and only the delivery is logged.
+				// Delivery failure does not establish a guest terminal outcome.
 				d.logger.Warn("Debuglet output stream failed", zap.String("debugletID", runID.String()), zap.Error(err))
 			}
 			return err
@@ -407,44 +420,60 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 		if err != nil {
 			return status.Error(codes.FailedPrecondition, "stream session is unavailable")
 		}
-		frameErr := func() error {
+		receipt, frameErr := func() (*pb.DebugletStreamResponse, error) {
 			defer mutation.Finish()
-			frameCtx := mutation.Context()
 			switch msg := in.GetMsg().(type) {
 			case *pb.DebugletStreamRequest_Ident:
 				if identified || msg.Ident == nil {
-					return status.Error(codes.InvalidArgument, "unexpected stream identity")
+					return nil, status.Error(codes.InvalidArgument, "unexpected stream identity")
+				}
+				if msg.Ident.GetExecutorId() != "" && msg.Ident.GetExecutorId() != owner.ExecutorID() {
+					return nil, status.Error(codes.PermissionDenied, "executor identity does not match session")
 				}
 				id, err := parseRunID(msg.Ident.GetDebugletId())
 				if err != nil {
-					return err
+					return nil, err
 				}
-				if _, err := d.ownedDebuglet(frameCtx, owner, id); err != nil {
-					return err
-				}
-				runID, identified = id, true
-				return nil
-			case *pb.DebugletStreamRequest_Output:
-				if !identified || msg.Output == nil || msg.Output.GetTimestamp() == nil || msg.Output.GetTimestamp().CheckValid() != nil {
-					return status.Error(codes.InvalidArgument, "invalid stream output frame")
-				}
-				_, err := database.New(d.db).CreateDebugletLog(frameCtx, database.CreateDebugletLogParams{
-					Uuid: runID, Timestamp: models.NewUTCTime(msg.Output.GetTimestamp().AsTime()), Output: msg.Output.GetOutput(),
-					ExecutorID: owner.ExecutorID(), DispatcherIncarnation: owner.Binding().Incarnation, SessionID: owner.Binding().SessionID,
-				})
-				if errors.Is(err, sql.ErrNoRows) {
-					_, err = d.ownedDebuglet(frameCtx, owner, runID)
-				}
+				writer, err = outputWriterFor(owner, msg.Ident.GetOriginalBinding())
 				if err != nil {
-					return err
+					return nil, err
 				}
-				return nil
+				receipt, err := d.storeOutput(mutation.Context(), writer, id, nil, nil)
+				if err == nil {
+					runID, identified = id, true
+				}
+				return receipt, err
+			case *pb.DebugletStreamRequest_Output:
+				if !identified || msg.Output == nil {
+					return nil, status.Error(codes.InvalidArgument, "unexpected output frame")
+				}
+				return d.storeOutput(mutation.Context(), writer, runID, msg.Output, nil)
+			case *pb.DebugletStreamRequest_End:
+				if !identified || msg.End == nil {
+					return nil, status.Error(codes.InvalidArgument, "unexpected output end")
+				}
+				return d.storeOutput(mutation.Context(), writer, runID, nil, msg.End)
 			default:
-				return status.Error(codes.InvalidArgument, "unknown stream frame")
+				return nil, status.Error(codes.InvalidArgument, "unknown stream frame")
 			}
 		}()
 		if frameErr != nil {
-			return frameErr
+			if status.Code(frameErr) != codes.Unknown {
+				return frameErr
+			}
+			d.logger.Warn("Debuglet output storage failed", zap.String("debugletID", runID.String()), zap.Error(frameErr))
+			return status.Error(codes.Unavailable, "output storage unavailable")
+		}
+		if writer.version == pb.OutputVersion {
+			if err := stream.Send(receipt); err != nil {
+				return err
+			}
+		}
+		if receipt.End != nil {
+			if writer.version == 0 {
+				return status.Error(codes.ResourceExhausted, "output storage limit reached")
+			}
+			return nil
 		}
 	}
 }
@@ -521,6 +550,9 @@ type fairshareRecipient struct {
 	mutation *rpc.Mutation
 	client   rpc.BoundExecutorClient
 	updates  []*pb.DestinationLimit
+	// wait and done order the deliveries to one executor; see
+	// executorEntry.bandwidthTail. Both are nil without a registry entry.
+	wait, done chan struct{}
 }
 type fairshareWork struct {
 	d          *Dispatcher
@@ -571,20 +603,26 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		var recipient *rpc.SessionOwner
 		var ticket *rpc.Mutation
 		var admitErr error
+		entry := d.executors[id]
 		if owner != nil && id == owner.ExecutorID() {
 			recipient = owner
 			ticket, admitErr = work.origin.Fork(ctx)
-		} else if entry := d.executors[id]; entry != nil && !d.closed {
+		} else if entry != nil && !d.closed {
 			recipient = entry.owner
 			ticket, admitErr = recipient.AdmitMutation(ctx)
 		} else {
 			admitErr = rpc.ErrSessionUnavailable
 		}
 		if admitErr != nil {
-			work.err = errors.Join(work.err, admitErr)
+			work.err = errors.Join(work.err, fmt.Errorf("executor %s: %w", id, admitErr))
 			continue
 		}
-		work.recipients = append(work.recipients, fairshareRecipient{owner: recipient, mutation: ticket, updates: updates})
+		r := fairshareRecipient{owner: recipient, mutation: ticket, updates: updates}
+		if entry != nil {
+			r.wait, r.done = entry.bandwidthTail, make(chan struct{})
+			entry.bandwidthTail = r.done
+		}
+		work.recipients = append(work.recipients, r)
 	}
 	d.mu.Unlock()
 	// No map-lock nesting and no later executor-ID lookup. A retired exact
@@ -593,7 +631,7 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		r := &work.recipients[i]
 		client, ok := d.Bidi.GetClientFor(r.owner)
 		if !ok {
-			work.err = errors.Join(work.err, status.Error(codes.FailedPrecondition, "fairshare recipient is unavailable"))
+			work.err = errors.Join(work.err, fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), status.Error(codes.FailedPrecondition, "fairshare recipient is unavailable")))
 			continue
 		}
 		r.client = client
@@ -601,6 +639,22 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 	return work, nil
 }
 
+// send delivers each recipient's updates in a goroutine of its own. A
+// recipient holding a ticket first waits until the delivery captured before it
+// to the same executor ended, or its own context ended, so an executor
+// receives the updates in the order the destination changes were made and
+// applies the newest last. Its ticket is released when its delivery ends:
+// delivered, refused, skipped for lack of a client, or cut off by the context.
+// A failed or late older delivery thus delays the next one at most until its
+// own bound and never suppresses it, and one executor's failure does not
+// cancel the delivery to another. Every failure names its executor.
+//
+// The order does not survive a cut-off: a delivery whose call ends at its
+// bound while the executor is still processing it releases its ticket before
+// its share is applied, so that older share can be applied after its
+// successor's and stay in force until the next update on the destination or
+// the end of the session. The updates carry no version the executor could
+// compare, so this bound remains.
 func (work *fairshareWork) send(ctx context.Context) error {
 	if work.origin != nil {
 		defer work.origin.Finish()
@@ -608,22 +662,43 @@ func (work *fairshareWork) send(ctx context.Context) error {
 	for _, r := range work.recipients {
 		defer r.mutation.Finish()
 	}
-	g, subCtx := errgroup.WithContext(ctx)
-	for _, r := range work.recipients {
-		if r.client == nil {
+	var g sync.WaitGroup
+	errs := make([]error, len(work.recipients))
+	for i, r := range work.recipients {
+		if r.client == nil && r.done == nil {
 			continue
 		}
-		for _, update := range r.updates {
-			work.d.logger.Debug("New fairshared update", zap.String("executorID", r.owner.ExecutorID()), zap.String("newLimit", bitrate.Bitrate(update.BitsLimit).String()))
+		if r.client != nil {
+			for _, update := range r.updates {
+				work.d.logger.Debug("New fairshared update", zap.String("executorID", r.owner.ExecutorID()), zap.String("newLimit", bitrate.Bitrate(update.BitsLimit).String()))
+			}
 		}
-		g.Go(func() error {
-			callCtx, finish := mutationCallContext(subCtx, r.mutation)
+		g.Go(func() {
+			if r.done != nil {
+				defer close(r.done)
+			}
+			callCtx, finish := mutationCallContext(ctx, r.mutation)
 			defer finish()
-			_, err := r.client.Bandwidth(callCtx, &pb.BandwidthRequest{Limits: r.updates})
-			return err
+			if r.wait != nil {
+				select {
+				case <-r.wait:
+				case <-callCtx.Done():
+					if r.client != nil {
+						errs[i] = fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), callCtx.Err())
+					}
+					return
+				}
+			}
+			if r.client == nil {
+				return // Reported at capture.
+			}
+			if _, err := r.client.Bandwidth(callCtx, &pb.BandwidthRequest{Limits: r.updates}); err != nil {
+				errs[i] = fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), err)
+			}
 		})
 	}
-	return errors.Join(work.err, g.Wait())
+	g.Wait()
+	return errors.Join(work.err, errors.Join(errs...))
 }
 
 func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, dests []string) error {
@@ -634,22 +709,9 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, de
 	return work.send(ctx)
 }
 
-func (d *Dispatcher) releaseFloor(executor string, dest []string, from, to time.Time, use bitrate.Bitrate) {
-	r := schedule.Request{
-		Executor:    executor,
-		Destination: dest,
-		From:        from,
-		To:          to,
-		Use:         use,
-	}
-	d.scheduler.Remove(r)
-}
-
-// settleTerminal runs the effects of a won terminal write, exactly once, for
-// the winner, using the returned row. The payment decision stays exit-code
-// based (also for zero exit with an error); effect failures are logged and
-// never retried by duplicates.
-func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet, exitCode int32) {
+// settleTerminalPayment preserves the winner's exit-code-based payment decision.
+// Resource release is separate and never retries payment effects.
+func (d *Dispatcher) settleTerminalPayment(ctx context.Context, deb *database.Debuglet, exitCode int32) {
 	switch exitCode {
 	case 0:
 		//credit executor
@@ -664,17 +726,4 @@ func (d *Dispatcher) settleTerminal(ctx context.Context, deb *database.Debuglet,
 			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
 		}
 	}
-
-	floor := bitrate.Bitrate(deb.Usage)
-
-	d.mu.Lock()
-	for _, dest := range deb.Addresses {
-		// The release subtracts the recorded allocation of this run, so a
-		// destination that was never allocated or already released is a no-op.
-		d.destinations.Remove(deb.Uuid, dest)
-	}
-
-	d.releaseFloor(deb.ExecutorID, deb.Addresses, deb.StartTime.Time, deb.EndTime.Time, floor)
-
-	d.mu.Unlock()
 }

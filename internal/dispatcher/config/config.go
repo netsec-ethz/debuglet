@@ -21,6 +21,7 @@ type DispatcherConfig struct {
 	Sui         SuiConfig         `toml:"sui"`
 	CORS        CORSConfig        `toml:"cors"`
 	GitHubOAuth GitHubOAuthConfig `toml:"github_oauth"`
+	Output      OutputConfig      `toml:"output"`
 }
 
 type GitHubOAuthConfig struct {
@@ -127,10 +128,18 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
+	cfg, _, err := DecodeConfig(data)
+	return cfg, err
+}
+
+// DecodeConfig applies the startup defaults and validation without reading
+// files or discovering host resources. The document identifies supplied keys.
+func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) {
 	var cfg DispatcherConfig
+	cfg.Output = DefaultOutputConfig()
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
-		return nil, err
+		return nil, document, err
 	}
 	if !document.Set("scheduler", "executor_timeout") {
 		cfg.Scheduler.ExecutorTimeout = DefaultExecutorTimeout
@@ -142,15 +151,18 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 		cfg.Server.Version = DefaultVersion
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, document, err
 	}
-	return &cfg, nil
+	return &cfg, document, nil
 }
 
 // Validate reports the first unusable configuration field. Defaults for omitted
 // keys are applied by LoadConfig before this runs, so every value seen here is
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
+	if err := cfg.Output.Validate(); err != nil {
+		return err
+	}
 	if cfg.Server.BindHost != "" {
 		// An empty bind host keeps the documented "all interfaces" binding.
 		if err := configcheck.Host("server.bind_host", cfg.Server.BindHost); err != nil {

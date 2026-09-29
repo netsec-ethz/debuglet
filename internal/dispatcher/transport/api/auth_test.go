@@ -699,6 +699,7 @@ type authRoutePolicy struct {
 // It is the one place the expected policy is written down, and both the
 // runtime test below and the contract test compare against it.
 var authAccessMatrix = map[string]authRoutePolicy{
+	"GET /metrics":                        {anonymous: http.StatusUnauthorized, target: "/metrics"},
 	"GET /version":                        {anonymous: http.StatusOK, target: "/version", public: true},
 	"GET /openapi.yaml":                   {anonymous: http.StatusOK, target: "/openapi.yaml", public: true},
 	"POST /auth/login":                    {anonymous: http.StatusUnauthorized, target: "/auth/login", body: []byte(`{"account_key":""}`), public: true},
@@ -708,6 +709,9 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"GET /auth/github/callback":           {anonymous: http.StatusNotFound, target: "/auth/github/callback", public: true},
 	"PUT /debuglet":                       {anonymous: http.StatusUnauthorized, target: "/debuglet", body: []byte(`{"debuglets":[{"order_id":0,"executor_id":"` + ccExecutorID + `","wasm":"","policy":{"floor_bw":0,"ceil_bw":0,"timeout_ms":1000}}],"transaction_id":"none","auth_key":""}`)},
 	"GET /debuglet/:id/logs":              {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/logs"},
+	"GET /debuglet/:id/recovery":          {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/recovery"},
+	"GET /debuglet/:id/cancellation":      {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/cancellation"},
+	"GET /debuglet/:id/result":            {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/result"},
 	"GET /debuglet/:id/state":             {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/state"},
 	"DELETE /debuglet":                    {anonymous: http.StatusUnauthorized, target: "/debuglet", body: []byte(`{"debuglet_id":"` + authSampleID + `","executor_id":"` + ccExecutorID + `"}`)},
 	"GET /executors":                      {anonymous: http.StatusOK, target: "/executors", public: true},

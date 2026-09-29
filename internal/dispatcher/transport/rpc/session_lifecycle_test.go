@@ -457,14 +457,15 @@ func (s *lifecycleState) OnResources(context.Context, *Mutation, *pb.ResourcesRe
 
 type lifecyclePeer struct {
 	executorrpc.ExecutorState
-	id, version string
-	token       string // Enrollment token this peer presents in its Hello.
-	hello       func(context.Context) error
-	aborts      atomic.Int32
-	uploads     atomic.Int32
-	bandwidths  atomic.Int32
-	upload      func(context.Context, controlsession.Binding, *pb.UploadRequest) error
-	bandwidth   func(context.Context) error
+	id, version   string
+	outputVersion uint32
+	token         string // Enrollment token this peer presents in its Hello.
+	hello         func(context.Context) error
+	aborts        atomic.Int32
+	uploads       atomic.Int32
+	bandwidths    atomic.Int32
+	upload        func(context.Context, controlsession.Binding, *pb.UploadRequest) error
+	bandwidth     func(context.Context) error
 }
 
 func (p *lifecyclePeer) OnHello(ctx context.Context, _ *pb.HelloRequest) (*pb.HelloResponse, error) {
@@ -473,7 +474,7 @@ func (p *lifecyclePeer) OnHello(ctx context.Context, _ *pb.HelloRequest) (*pb.He
 			return nil, err
 		}
 	}
-	out := &pb.HelloResponse{ExecutorId: p.id, Version: p.version, SourceIp: "192.0.2.77"}
+	out := &pb.HelloResponse{ExecutorId: p.id, Version: p.version, SourceIp: "192.0.2.77", OutputVersion: p.outputVersion}
 	if p.token != "" {
 		out.EnrollmentToken = &p.token
 	}

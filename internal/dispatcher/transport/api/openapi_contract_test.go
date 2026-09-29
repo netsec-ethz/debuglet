@@ -59,8 +59,8 @@ func TestContractDocumentIdentifiesTheImplementedVersion(t *testing.T) {
 	if version, _ := info["version"].(string); version != apispec.Version {
 		t.Fatalf("info.version = %q, want %q", version, apispec.Version)
 	}
-	if client.APIVersion != apispec.Version {
-		t.Fatalf("the SDK announces contract version %q, the server implements %q", client.APIVersion, apispec.Version)
+	if !supportedAPIVersion(client.APIVersion) {
+		t.Fatalf("the SDK requires contract version %q, which this server (%q) does not support", client.APIVersion, apispec.Version)
 	}
 	if openapi, _ := c.root["openapi"].(string); !strings.HasPrefix(openapi, "3.") {
 		t.Fatalf("openapi = %q, want an OpenAPI 3 document", openapi)
@@ -167,7 +167,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 	t.Run("accepted requirements reach the handler", func(t *testing.T) {
 		// An absent or blank header states no requirement, which is what every
 		// client written before the contract was versioned sends.
-		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3"} {
+		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"} {
 			headers := map[string]string{}
 			if required != "absent" {
 				headers[apispec.VersionHeader] = required
@@ -189,7 +189,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 		// None of these is a substring of the implemented version, so a
 		// message naming that version cannot be mistaken for an echo of the
 		// value the caller sent.
-		for _, required := range []string{"4", "2.0", "0.9", "1.4", "one", "1.0.0", "-1", "1.0; drop"} {
+		for _, required := range []string{"99", "2.0", "0.9", strconv.Itoa(apispec.Major) + "." + strconv.Itoa(apispec.Minor+1), "one", "1.0.0", "-1", "1.0; drop"} {
 			rec := oaServe(f.e, http.MethodPut, "/user", []byte(`{"name":"x"}`),
 				map[string]string{apispec.VersionHeader: required})
 			if rec.Code != http.StatusBadRequest {
@@ -304,8 +304,14 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			if _, err := sdk.Status(ctx, submission.IDs[0]); err != nil {
 				t.Fatalf("Status: %v", err)
 			}
+			if _, err := sdk.Recovery(ctx, submission.IDs[0]); err != nil {
+				t.Fatalf("Recovery: %v", err)
+			}
 			if _, err := sdk.Logs(ctx, submission.IDs[0], client.LogOptions{Limit: 5}); err != nil {
 				t.Fatalf("Logs: %v", err)
+			}
+			if _, err := sdk.Export(ctx, submission.IDs[0]); err != nil {
+				t.Fatalf("Export: %v", err)
 			}
 			// A rejected lookup exercises the documented 400 and 404 shapes.
 			if _, err := sdk.Status(ctx, "00000000-0000-0000-0000-00000000dead"); err == nil {
@@ -313,6 +319,9 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			}
 			if err := sdk.Cancel(ctx, submission.IDs[0], ccExecutorID); err != nil {
 				t.Fatalf("Cancel: %v", err)
+			}
+			if _, err := sdk.Cancellation(ctx, submission.IDs[0]); err != nil {
+				t.Fatalf("Cancellation: %v", err)
 			}
 
 			// The session routes, driven through the SDK so that the documented
@@ -351,6 +360,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeLiveness, nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeReadiness, nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+routeHealth, nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/metrics", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github/callback", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip?ip=127.0.0.1&n=5", nil)

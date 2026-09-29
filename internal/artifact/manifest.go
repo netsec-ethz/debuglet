@@ -10,6 +10,7 @@ type File struct {
 // Manifest identifies one complete installation. It never hashes itself.
 type Manifest struct {
 	SchemaVersion    int             `json:"schema_version"`
+	Component        string          `json:"component,omitempty"`
 	Version          string          `json:"version"`
 	SourceSHA        string          `json:"source_sha"`
 	Dirty            bool            `json:"dirty"`

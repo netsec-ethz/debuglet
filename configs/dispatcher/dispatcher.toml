@@ -15,6 +15,18 @@ log_level = "debug"
 executor_timeout = 60
 scheduler_granularity_ms = 30000
 
+# Retained output limits. Account/node bytes include 64 bytes per stored frame
+# and 256 per run. These are logical storage charges, not filesystem-size bounds.
+# Reaching a cap refuses new storage; it does not delete retained output.
+# Retained output is never deleted yet, so account and node charges only grow:
+# 0 (the default) disables those two caps. Set them only as a hard lifetime
+# ceiling; an upgrade counts the output already stored.
+[output]
+run_bytes = 8388608
+run_frames = 16384
+account_bytes = 0
+node_bytes = 0
+
 # The executor reaches this dispatcher over loopback on the same machine, so
 # the control channel carries no TLS and these paths stay empty. `make
 # generate-certs` writes a keypair into this directory for experiments.

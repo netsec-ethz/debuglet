@@ -28,7 +28,7 @@ set -e
 # Go treats a package without tests, and one whose tests all skipped, as a
 # success; require executed tests and reject retained race reports.
 check_status=0
-python3 tools/check-race-evidence.py --evidence .cache/ci/race-tests.json \
+python3 tools/check-evidence.py --evidence .cache/ci/race-tests.json \
     --budget-seconds "${CI_RACE_BUDGET_SECONDS:-240}" "$@" || check_status=$?
 (( test_status == 0 )) || exit "$test_status"
 exit "$check_status"

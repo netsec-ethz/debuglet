@@ -3,7 +3,8 @@
 // serves requests or restores work. The check never migrates or repairs a
 // database: an incompatible file is refused with the action its operator has
 // to take. Upgrade applies the packaged migrations only when an operator runs
-// it explicitly.
+// it explicitly. BootstrapFresh creates only new, private databases from those
+// same packaged migrations.
 package storagecheck
 
 import (
@@ -16,7 +17,7 @@ import (
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 )
 
-// Role names one of the two databases a local environment keeps.
+// Role names a dispatcher or executor database.
 type Role string
 
 const (
@@ -30,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 9
-	MinimumExecutorVersion   int64 = 5
+	MinimumDispatcherVersion int64 = 12
+	MinimumExecutorVersion   int64 = 6
 )
 
 // Policy is the schema contract of one database for this build.
@@ -42,6 +43,10 @@ type Policy struct {
 	// Current is the version the packaged migrations produce. A database
 	// beyond it was written by a newer Debuglet.
 	Current int64
+	// DropsBelow is the version below which an upgrade drops the recorded
+	// runs and their logs (tables debuglets and debuglet_logs): the packaged
+	// migration that reaches it recreates both tables empty.
+	DropsBelow int64
 	// Identity lists tables, with columns, that only this role's database
 	// has and that it has carried since its first migration. They are
 	// checked before the version, so a path pointing at the other role's
@@ -61,12 +66,17 @@ func PolicyFor(role Role) (Policy, error) {
 		if err != nil {
 			return Policy{}, err
 		}
-		return Policy{Role: role, Minimum: MinimumDispatcherVersion, Current: current, Identity: map[string][]string{
+		return Policy{Role: role, Minimum: MinimumDispatcherVersion, Current: current, DropsBelow: 3, Identity: map[string][]string{
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
+			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure"},
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
-			"debuglet_logs":              {"debuglet_id", "output"},
+			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
+			"debuglet_provenance":        {"debuglet_id", "document"},
+			"debuglet_output":            {"debuglet_id", "output_version", "owner_fingerprint", "account_id", "committed_sequence", "final_sequence", "final_cursor", "status", "reason"},
+			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
+			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
 			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
 			"debuglet_users":             {"debuglet_id", "user_id"},
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
@@ -84,13 +94,16 @@ func PolicyFor(role Role) (Policy, error) {
 		if err != nil {
 			return Policy{}, err
 		}
-		return Policy{Role: role, Minimum: MinimumExecutorVersion, Current: current, Identity: map[string][]string{
+		return Policy{Role: role, Minimum: MinimumExecutorVersion, Current: current, DropsBelow: 2, Identity: map[string][]string{
 			"debuglets": {"wasm"},
 		}, Tables: map[string][]string{
 			"debuglets":      {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":  {"debuglet_id", "output"},
 			"debuglet_exits": {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
 			"tesla_chains":   {"generation", "anchor", "epoch_base", "delay_ns", "chain_length"},
+			"output_runs":    {"run_id", "dispatcher_incarnation", "session_id", "output_version", "last_sequence", "acknowledged_sequence", "emitted_bytes", "queued_bytes", "queued_frames", "status", "reason", "end_acknowledged", "receipt_sequence", "receipt_reason"},
+			"output_frames":  {"run_id", "sequence", "timestamp_ns", "output"},
+			"output_usage":   {"singleton", "charged_bytes"},
 		}}, nil
 	default:
 		return Policy{}, fmt.Errorf("unknown database role %q", role)

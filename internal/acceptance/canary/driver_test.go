@@ -9,6 +9,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/artifact"
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -156,7 +157,9 @@ func (s *scriptedSession) Execute(ctx context.Context, args []string) commandRes
 		if s.fault == "wrong_node" {
 			id = testRun
 		}
-		return doc([]client.Node{{ID: id, Ready: true, Version: s.opts.Assets.Manifest.Version, TeslaDelaySec: 2, Currency: "TEST"}})
+		return doc([]client.Node{{ID: id, Ready: true, Version: s.opts.Assets.Manifest.Version, TeslaDelaySec: 2, Currency: "TEST",
+			Capabilities: &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: 1790598500, Protocols: []string{"tcp", "udp"}, EnforcementMode: "fallback", AdvertisedCapacityBPS: ptr(int64(1_000_000))},
+		}})
 	case "run":
 		s.submissions++
 		want := []string{"run", "--wasm", s.opts.Assets.Guest, "--executor", testExecutor, "--allow", "127.0.0.1", "--duration", "1s", "--floor-bps", "64000", "--ceil-bps", "1000000", "--wait", "--", "127.0.0.1:12346", testNonce}
@@ -228,7 +231,7 @@ func (s *scriptedSession) Execute(ctx context.Context, args []string) commandRes
 	}
 }
 func scriptedDependencies(t *testing.T, opts Options, s *scriptedSession) driverDependencies {
-	return driverDependencies{validate: Validate, resolve: func(string) (demo.Assets, error) { return opts.Assets, nil }, open: func(_ Options, dir string) localSession { s.stateDir = dir; return s }, write: WriteEvidence, poll: func(context.Context) error {
+	return driverDependencies{validate: Validate, resolve: func(string) (demo.Assets, error) { return opts.Assets, nil }, open: func(_ context.Context, _ Options, dir string) localSession { s.stateDir = dir; return s }, write: WriteEvidence, poll: func(context.Context) error {
 		s.polls++
 		if s.fault == "missing_nonce" || s.fault == "registry_stays" {
 			return context.DeadlineExceeded
@@ -257,7 +260,7 @@ func TestDryRunNoEffects(t *testing.T) {
 				}
 				return a, nil
 			}
-			deps.open = func(Options, string) localSession {
+			deps.open = func(context.Context, Options, string) localSession {
 				opens++
 				t.Fatal("dry run created process/listener session")
 				return nil
@@ -355,7 +358,10 @@ func TestInvalidInputRedaction(t *testing.T) {
 		t.Fatal("invalid input reached provenance")
 		return demo.Assets{}, nil
 	}
-	deps.open = func(Options, string) localSession { t.Fatal("invalid input started runtime"); return nil }
+	deps.open = func(context.Context, Options, string) localSession {
+		t.Fatal("invalid input started runtime")
+		return nil
+	}
 	ev, err := runDriver(context.Background(), opts, deps)
 	if !errors.Is(err, errInvalidInput) {
 		t.Fatal(err)
@@ -421,5 +427,69 @@ func TestEvidencePersistenceFailureIsNotSuccess(t *testing.T) {
 	ev, err := runDriver(context.Background(), opts, deps)
 	if err == nil || ev.Outcome != "failed" || ev.Phase != "cleanup" || writes != 1 {
 		t.Fatalf("persistence failure accepted: %+v %v writes=%d", ev, err, writes)
+	}
+}
+
+func TestLogPageOutputDocumentKeepsExactFields(t *testing.T) {
+	for _, tc := range []struct {
+		name, output string
+		valid        bool
+	}{
+		{"pending", `{"state":"pending","final_cursor":null,"loss_reason":""}`, true},
+		{"complete", `{"state":"complete","final_cursor":0,"loss_reason":""}`, true},
+		{"truncated", `{"state":"truncated","final_cursor":0,"loss_reason":"output_limit"}`, true},
+		{"null", `null`, false},
+		{"missing cursor", `{"state":"pending","loss_reason":""}`, false},
+		{"null state", `{"state":null,"final_cursor":null,"loss_reason":""}`, false},
+		{"null reason", `{"state":"pending","final_cursor":null,"loss_reason":null}`, false},
+		{"case override", `{"state":"truncated","State":"complete","final_cursor":0,"loss_reason":"output_limit"}`, false},
+		{"duplicate", `{"state":"pending","state":"complete","final_cursor":0,"loss_reason":""}`, false},
+		{"unknown field", `{"state":"complete","final_cursor":0,"loss_reason":"","other":true}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{"state":"RunStateExited","error":"","after":0,"logs":[],"has_more":false,"output":` + tc.output + `}`)
+			var page client.LogPage
+			err := decodeCommand(commandResult{Started: true, Stdout: raw}, &page)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestNodeCapabilitiesDocumentKeepsExactFields(t *testing.T) {
+	const observation = `{"schema_version":1,"observed_at":1790598500,"protocols":["tcp","udp"],"enforcement_mode":"fallback","advertised_capacity_bps":1000000}`
+	field := func(value string) string { return `,"capabilities":` + value }
+	for _, tc := range []struct {
+		name, fields string
+		valid        bool
+	}{
+		{"omitted", "", true},
+		{"observed", field(observation), true},
+		{"unknown capacity", field(`{"schema_version":1,"observed_at":1790598500,"protocols":[],"enforcement_mode":"","advertised_capacity_bps":null}`), true},
+		{"null object", field(`null`), false},
+		{"wrong object type", field(`[]`), false},
+		{"missing field", field(strings.Replace(observation, `"observed_at":1790598500,`, "", 1)), false},
+		{"null schema", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":null`, 1)), false},
+		{"null time", field(strings.Replace(observation, `"observed_at":1790598500`, `"observed_at":null`, 1)), false},
+		{"null protocols", field(strings.Replace(observation, `["tcp","udp"]`, `null`, 1)), false},
+		{"null mode", field(strings.Replace(observation, `"enforcement_mode":"fallback"`, `"enforcement_mode":null`, 1)), false},
+		{"null protocol item", field(strings.Replace(observation, `["tcp","udp"]`, `["tcp",null]`, 1)), false},
+		{"wrong protocol item", field(strings.Replace(observation, `["tcp","udp"]`, `["tcp",1]`, 1)), false},
+		{"duplicate object", field(observation) + field(observation), false},
+		{"case object", `,"Capabilities":` + observation, false},
+		{"unknown node field", field(observation) + `,"other":true`, false},
+		{"duplicate nested field", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":1,"schema_version":1`, 1)), false},
+		{"case nested field", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":1,"Schema_version":1`, 1)), false},
+		{"unknown nested field", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":1,"other":true`, 1)), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`[{"id":"` + testExecutor + `","ready":true,"last_seen":1790598500,"version":"test","tesla_delay_sec":2,"tesla_anchor_timestamp_ns":0,"tesla_anchor_key":null,"price_per_bw":0,"currency":"TEST"` + tc.fields + `}]`)
+			var nodes []client.Node
+			err := decodeCommand(commandResult{Started: true, Stdout: raw}, &nodes)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t error=%v", tc.valid, err)
+			}
+		})
 	}
 }

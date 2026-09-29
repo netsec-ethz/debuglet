@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"go.uber.org/zap"
 )
 
@@ -26,12 +27,14 @@ type ErrorResponse struct {
 const (
 	// CodeInvalidRequest is a malformed or incomplete request.
 	CodeInvalidRequest = "invalid_request"
-	// CodeInvalidPolicy is a request whose debuglet policy cannot be priced or
-	// scheduled: a timeout outside 1..maxTimeoutMS milliseconds, a negative
-	// floor, a ceiling below the floor, a repeated order_id, or an order or a
-	// batch whose price overflows.
+	// CodeInvalidPolicy is a request whose debuglet policy cannot be priced,
+	// scheduled or served: a timeout outside 1..maxTimeoutMS milliseconds, a
+	// negative floor, a ceiling below the floor, a repeated order_id, an order
+	// or a batch whose price overflows, or a policy the chosen executor cannot
+	// serve (ICMP required, a listener without a public host).
 	CodeInvalidPolicy = "invalid_policy"
-	// CodeUnknownExecutor names an executor that is not registered.
+	// CodeUnknownExecutor names an executor that is not registered, or no
+	// longer available when the batch is admitted.
 	CodeUnknownExecutor = "unknown_executor"
 	// CodeIntentMismatch is a submission whose debuglets differ from the ones
 	// the payment intent was created for.
@@ -142,6 +145,7 @@ func (h *Handler) errorHandler(err error, c echo.Context) {
 	status, body, internal := errorEnvelope(err)
 	if internal != nil && h.logger != nil {
 		h.logger.Warn("request failed",
+			zap.String("request_id", daemonlog.RequestID(c.Request().Context())),
 			zap.String("route", c.Path()),
 			zap.Int("status", status),
 			zap.String("code", body.Code),

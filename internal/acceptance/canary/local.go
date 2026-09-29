@@ -6,17 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/netsec-ethz/debuglet/internal/demo"
-	dispatcherconfig "github.com/netsec-ethz/debuglet/internal/dispatcher/config"
-	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
-	"github.com/pelletier/go-toml/v2"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,9 +21,8 @@ import (
 )
 
 type ownedChild struct {
-	child   *demo.Child
+	child   demo.ChildProcess
 	capture *limitedCapture
-	daemon  bool
 }
 type local struct {
 	opts                 Options
@@ -34,7 +30,7 @@ type local struct {
 	children             []*ownedChild
 	dispatcher, executor *ownedChild
 	record               readiness.Record
-	executorStopped      bool
+	supervisor           *demo.Supervisor
 	target               *canaryTarget
 	proxy                *http.Server
 	proxyListener        net.Listener
@@ -44,35 +40,33 @@ type local struct {
 	handlers             handlerOwnership
 }
 
-func newLocalSession(opts Options, dir string) localSession { return &local{opts: opts, dir: dir} }
+func newLocalSession(ctx context.Context, opts Options, dir string) localSession {
+	return &local{opts: opts, dir: dir, supervisor: demo.NewSupervisor(ctx)}
+}
 func (s *local) launch(path string, args []string, daemon bool) (*ownedChild, error) {
 	capture := newCapture(captureLimit)
-	child, err := demo.StartChild(demo.ChildSpec{Path: path, Dir: s.dir, Args: args, Env: []string{"TMPDIR=" + s.dir, "LANG=C", "LC_ALL=C", "TZ=UTC"}, Stdout: capture.stdout(), Stderr: capture.stderr()})
+	child, err := s.supervisor.StartChild(filepath.Base(path), demo.ChildSpec{Path: path, Dir: s.dir, Args: args, Env: []string{"TMPDIR=" + s.dir, "LANG=C", "LC_ALL=C", "TZ=UTC"}, Stdout: capture.stdout(), Stderr: capture.stderr()}, daemon)
 	if err != nil {
 		return nil, err
 	}
-	owned := &ownedChild{child: child, capture: capture, daemon: daemon}
+	owned := &ownedChild{child: child, capture: capture}
 	s.children = append(s.children, owned)
 	return owned, nil
 }
+func localDispatcherConfiguration(version, db string) map[string]any {
+	cfg := demo.DispatcherConfiguration(version, db)
+	cfg["scheduler"].(map[string]any)["executor_timeout"] = 10
+	return cfg
+}
+
 func (s *local) StartDispatcher(ctx context.Context) (string, error) {
 	db := filepath.Join(s.dir, "dispatcher.sqlite")
-	if err := demo.BootstrapFresh(ctx, demo.DispatcherSchema, db); err != nil {
+	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Dispatcher, db); err != nil {
 		return "", err
 	}
-	// This harness drives the candidate as an ordinary client and holds no
-	// credential, so the dispatcher it starts has to serve the local
-	// development profile. That profile stays an explicit opt-in: the loopback,
-	// TLS-off, payments-off environment below is a precondition, not a reason
-	// to switch it on by itself.
-	cfg := dispatcherconfig.DispatcherConfig{
-		Server:    dispatcherconfig.ServerConfig{Version: s.opts.Assets.Manifest.Version, BindHost: "127.0.0.1", LocalDevelopment: true},
-		Logging:   dispatcherconfig.LoggingConfig{LogLevel: "info", JSONLogs: true},
-		Scheduler: dispatcherconfig.SchedulerConfig{ExecutorTimeout: 10, SchedulerGranularityMs: 100},
-		TLS:       dispatcherconfig.TLSConfig{Disable: true}, Database: dispatcherconfig.DatabaseConfig{Path: db}, Sui: dispatcherconfig.SuiConfig{Disabled: true},
-	}
+	cfg := localDispatcherConfiguration(s.opts.Assets.Manifest.Version, db)
 	configPath, readyPath := filepath.Join(s.dir, "dispatcher.toml"), filepath.Join(s.dir, "dispatcher-ready.json")
-	if err := writeConfig(configPath, cfg); err != nil {
+	if err := demo.WriteConfig(configPath, cfg); err != nil {
 		return "", err
 	}
 	var err error
@@ -124,31 +118,22 @@ func (s *local) startProxy(ctx context.Context, upstream string) (string, error)
 	return "http://" + lis.Addr().String() + "/api", nil
 }
 
-// localExecutorConfiguration is the configuration this check writes for the
-// installed executor. It measures against a TCP target on this machine, so the
-// executor has to be configured for local targets: the network policy denies
-// loopback unless an operator asks for it, and this is that operator asking.
-func localExecutorConfiguration(executorID, version, db string, record readiness.Record) executorconfig.ExecutorConfig {
-	localTargets := true
-	return executorconfig.ExecutorConfig{
-		Identity:   executorconfig.IdentityConfig{ExecutorID: executorID, Version: version},
-		Dispatcher: executorconfig.DispatcherConfig{Addr: record.GRPCAddr, YamuxAddr: record.HTTPAddr}, TLS: executorconfig.TLSConfig{Disable: true},
-		Resources: executorconfig.ResourcesConfig{Capacity: 1_000_000_000, MaxDebuglets: 4}, Tesla: executorconfig.TeslaConfig{Delay: 2, ChainLength: 3600},
-		Network: executorconfig.NetworkConfig{PacketCounter: "fallback", DisableSCIONEnvironment: true,
-			Policy: executorconfig.PolicyConfig{LocalTargets: &localTargets}},
-		Logging:  executorconfig.LoggingConfig{LogLevel: "info", JSONLogs: true},
-		Database: executorconfig.DatabaseConfig{Path: db}, Pricing: executorconfig.PricingConfig{PricePerBwS: 1, Currency: "TEST"},
-	}
+// Keep the canary's disclosure cadence while using the local TEST profile.
+func localExecutorConfiguration(executorID, version, db string, record readiness.Record) map[string]any {
+	cfg := demo.ExecutorConfiguration(version, executorID, db, record)
+	cfg["tesla"].(map[string]any)["delay"] = 2
+	cfg["tesla"].(map[string]any)["chain_length"] = 3600
+	return cfg
 }
 
 func (s *local) StartExecutor(ctx context.Context) error {
 	db := filepath.Join(s.dir, "executor.sqlite")
-	if err := demo.BootstrapFresh(ctx, demo.ExecutorSchema, db); err != nil {
+	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Executor, db); err != nil {
 		return err
 	}
 	cfg := localExecutorConfiguration(s.opts.Manifest.ExecutorID, s.opts.Assets.Manifest.Version, db, s.record)
 	configPath, readyPath := filepath.Join(s.dir, "executor.toml"), filepath.Join(s.dir, "executor-ready.json")
-	if err := writeConfig(configPath, cfg); err != nil {
+	if err := demo.WriteConfig(configPath, cfg); err != nil {
 		return err
 	}
 	var err error
@@ -192,7 +177,7 @@ func (s *local) Execute(ctx context.Context, args []string) commandResult {
 	// Cache group completion immediately, before a later registry poll could
 	// outlive this reaped CLI's numeric PID identity.
 	phase, end := context.WithTimeout(ctx, 250*time.Millisecond)
-	stopErr := owned.child.Stop(phase)
+	stopErr := s.supervisor.Stop(phase, owned.child)
 	end()
 	err = errors.Join(err, stopErr)
 	data, overflow := owned.capture.result()
@@ -203,12 +188,14 @@ func (s *local) Execute(ctx context.Context, args []string) commandResult {
 	return commandResult{Started: true, Stdout: data, Err: errors.Join(err, s.healthy())}
 }
 func (s *local) healthy() error {
-	for _, owned := range []*ownedChild{s.dispatcher, s.executor} {
-		if owned == nil || owned == s.executor && s.executorStopped {
-			continue
+	if s.supervisor != nil {
+		if err := s.supervisor.Healthy(); err != nil {
+			return err
 		}
-		if channelClosed(owned.child.Done()) || owned.capture.exceeded() {
-			return errors.New("owned daemon exited or exceeded diagnostics bound")
+	}
+	for _, owned := range []*ownedChild{s.dispatcher, s.executor} {
+		if owned != nil && owned.capture.exceeded() {
+			return errors.New("owned daemon exceeded diagnostics bound")
 		}
 	}
 	if s.proxyDone != nil && channelClosed(s.proxyDone) {
@@ -230,8 +217,7 @@ func (s *local) StopExecutor(ctx context.Context) error {
 	if err := s.healthy(); err != nil {
 		return err
 	}
-	s.executorStopped = true
-	err := s.executor.child.Stop(ctx)
+	err := s.supervisor.Stop(ctx, s.executor.child)
 	if !s.executor.child.CleanupComplete() {
 		err = errors.Join(err, errors.New("executor group cleanup incomplete"))
 	}
@@ -264,45 +250,15 @@ func (s *local) Cleanup(ctx context.Context) (CleanupEvidence, error) {
 		}
 	}
 	err = errors.Join(err, s.CloseTarget(ctx))
-	forced := 0
-	all := s.target == nil || channelClosed(s.target.done)
-	// Reaped CLI commands normally join immediately. Give unexpected retained
-	// descendants a small share without letting historical commands dilute the
-	// live daemon grace periods.
-	var active []*ownedChild
-	for i := len(s.children) - 1; i >= 0; i-- {
-		owned := s.children[i]
-		if !channelClosed(owned.child.Done()) {
-			active = append(active, owned)
-			continue
-		}
-		if owned.daemon && !(owned == s.executor && s.executorStopped) {
-			err = errors.Join(err, errors.New("daemon exited before cleanup"))
-		}
-		phase, end := context.WithTimeout(ctx, 250*time.Millisecond)
-		stopErr := owned.child.Stop(phase)
-		end()
-		if errors.Is(stopErr, demo.ErrForcedKill) {
-			forced++
-		}
-		if owned.daemon || !owned.child.CleanupComplete() || errors.Is(stopErr, demo.ErrForcedKill) {
-			err = errors.Join(err, stopErr)
-		}
-	}
-	for i, owned := range active {
-		phase, end := cleanupPhase(ctx, len(active)-i)
-		stopErr := owned.child.Stop(phase)
-		end()
-		if errors.Is(stopErr, demo.ErrForcedKill) {
-			forced++
-		}
+	children := demo.ProcessCleanup{Joined: true}
+	if s.supervisor != nil {
+		err = errors.Join(err, s.supervisor.Healthy())
+		var stopErr error
+		children, stopErr = s.supervisor.Close(ctx)
 		err = errors.Join(err, stopErr)
 	}
+	all := children.Joined && (s.target == nil || channelClosed(s.target.done))
 	for _, owned := range s.children {
-		if !owned.child.CleanupComplete() {
-			err = errors.Join(err, owned.child.Stop(ctx))
-		}
-		all = all && owned.child.CleanupComplete()
 		if owned.capture.exceeded() {
 			err = errors.Join(err, errors.New("child diagnostics exceeded bound"))
 		}
@@ -311,32 +267,12 @@ func (s *local) Cleanup(ctx context.Context) (CleanupEvidence, error) {
 	if !all {
 		err = errors.Join(err, errors.New("owned cleanup incomplete"))
 	}
-	result.ChildrenReaped, result.ForcedKills = ptr(all), ptr(forced)
+	result.ChildrenReaped, result.ForcedKills = ptr(all), ptr(children.ForcedKills)
 	return result, err
 }
 func cleanupPhase(ctx context.Context, parts int) (context.Context, context.CancelFunc) {
 	deadline, _ := ctx.Deadline()
 	return context.WithDeadline(ctx, time.Now().Add(time.Until(deadline)/time.Duration(parts)))
-}
-func writeConfig(path string, value any) error {
-	data, err := toml.Marshal(value)
-	if err != nil {
-		return err
-	}
-	var config map[string]any
-	if err := toml.Unmarshal(data, &config); err != nil {
-		return err
-	}
-	data, err = toml.Marshal(lowerConfigKeys(config))
-	if err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(data)
-	return errors.Join(err, f.Close())
 }
 
 // The server Serve goroutine stops before active request handlers necessarily
@@ -378,16 +314,3 @@ func (h *handlerOwnership) close() <-chan struct{} {
 	return h.done
 }
 func (h *handlerOwnership) complete() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.active == 0 }
-
-// Some executor config fields have no TOML tags. Keep using their
-// typed definitions while retaining the lowercase on-disk keys.
-func lowerConfigKeys(values map[string]any) map[string]any {
-	out := make(map[string]any, len(values))
-	for key, value := range values {
-		if nested, ok := value.(map[string]any); ok {
-			value = lowerConfigKeys(nested)
-		}
-		out[strings.ToLower(key)] = value
-	}
-	return out
-}

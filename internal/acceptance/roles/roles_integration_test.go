@@ -205,6 +205,8 @@ func TestInstalledRoles(t *testing.T) {
 	report.FirstRun = first
 	original := awaitOutput(t, ctx, c, first, hello+"first-role\n")
 	assertCLILogs(t, cli(clientConfig, "logs", first), original)
+	assertInstalledCompleteFollow(t, cli(clientConfig, "logs", "--follow", "--limit", "1", first), original)
+	assertRunCorrelation(t, ctx, c, d, e, filepath.Join(root, "share", "debuglet", "hello.wasm"))
 
 	goPath := os.Getenv("GO")
 	if goPath == "" {
@@ -230,7 +232,7 @@ func TestInstalledRoles(t *testing.T) {
 	out, diag, err = runCommand(phase, assets.CLI, work, isolatedEnvironment(work), "--config", clientConfig, "--output", "json", "run", "--sample", "hello", "--wait")
 	done()
 	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 1 || len(out) != 0 || !bytes.Contains(diag, []byte("more than one executor")) {
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || len(out) != 0 || !bytes.Contains(diag, []byte("more than one ready executor matches")) {
 		t.Fatalf("ambiguous auto selection did not fail before submission: %v; stdout=%q stderr=%q", err, out, diag)
 	}
 	explicit := submit(second.record.ExecutorID, "explicit-worker", false)
@@ -258,6 +260,7 @@ func TestInstalledRoles(t *testing.T) {
 		t.Fatal("restart changed stored output")
 	}
 	assertCLILogs(t, cli(clientConfig, "logs", first), retained)
+	assertInstalledCompleteFollow(t, cli(clientConfig, "logs", "--follow", "--limit", "1", first), retained)
 	last := submit("", "after-restart", false)
 	if last == first {
 		t.Fatal("restart reused a run UUID")

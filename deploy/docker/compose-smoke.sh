@@ -37,12 +37,9 @@ cleanup() {
 	if [ "$failed" -ne 0 ]; then
 		"${compose[@]}" logs --no-color >"$logs/services.log" 2>&1 || true
 	fi
-	# The account key, the recovery code and the session are written inside
-	# the dispatcher container. Remove them before the container is, so an
-	# interrupted run leaves no credential in one that survives.
-	"${compose[@]}" exec -T dispatcher rm -f /tmp/smoke.toml /tmp/credentials.json \
-		/tmp/smoke-key.txt /tmp/smoke-recovery.txt >/dev/null 2>&1 || true
-	"${compose[@]}" --profile seed --profile tls-edge down -v --rmi local \
+	# The tools volume holds the smoke account key, recovery code and session.
+	# Removing the fixture volumes removes those credentials as well.
+	"${compose[@]}" --profile seed --profile tools --profile tls-edge down -v --rmi local \
 		--remove-orphans >>"$logs/down.log" 2>&1 || true
 	if [ "$failed" -eq 0 ]; then
 		rm -rf -- "$logs"
@@ -63,10 +60,10 @@ api() {
 # so the compose network reaches the listeners, which is also what lets the
 # port be published, and that profile is refused unless bind_host is loopback.
 # So the rig registers its own account with the installed CLI and keeps the
-# session in the dispatcher container, where a restart leaves it in place.
+# session in the tools volume, where a daemon restart leaves it in place.
 cli() {
-	"${compose[@]}" exec -T dispatcher /opt/debuglet/bin/dbl \
-		--config /tmp/smoke.toml --output json "$@"
+	"${compose[@]}" run --rm -T --no-deps tools \
+		--config /state/smoke.toml --output json "$@"
 }
 
 # await_ready polls the published API until one executor reports ready. Both
@@ -101,11 +98,11 @@ json_string() {
 # smoke account; the credential files the CLI writes must not exist either, and
 # it refuses to overwrite them. Start from nothing.
 note "removing anything an earlier run under this name left behind"
-"${compose[@]}" --profile seed --profile tls-edge down -v --remove-orphans \
+"${compose[@]}" --profile seed --profile tools --profile tls-edge down -v --remove-orphans \
 	>"$logs/down.log" 2>&1 || true
 
 note "building the rig ($project)"
-"${compose[@]}" build dispatcher executor >"$logs/build.log" 2>&1 ||
+"${compose[@]}" build dispatcher executor tools >"$logs/build.log" 2>&1 ||
 	{ tail -40 "$logs/build.log" >&2; exit 1; }
 
 note "creating the databases with the packaged migrations"
@@ -122,8 +119,8 @@ printf 'version: %s\n' "$version"
 
 note "registering an account and logging in from inside the rig"
 cli connect "http://127.0.0.1:9000" >"$logs/connect.log"
-cli login --register smoke --account-key-file /tmp/smoke-key.txt \
-	--recovery-file /tmp/smoke-recovery.txt >"$logs/login.log"
+cli login --register smoke --account-key-file /state/smoke-key.txt \
+	--recovery-file /state/smoke-recovery.txt >"$logs/login.log"
 
 note "submitting one TEST sample from inside the rig"
 receipt=$(cli run --sample hello --duration 10s --wait)

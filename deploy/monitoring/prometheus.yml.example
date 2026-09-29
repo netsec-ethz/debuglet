@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+# Replace the dispatcher address, CA and credential paths. Keep the job name:
+# alerts.yml intentionally selects this fixed, operator-owned scrape job.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+  evaluation_interval: 15s
+rule_files:
+  - alerts.yml
+scrape_configs:
+  - job_name: debuglet-dispatcher
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/debuglet-session
+    tls_config:
+      ca_file: /etc/prometheus/certs/dispatcher-ca.pem
+    static_configs:
+      - targets: [dispatcher.example:443]
+# Configure an existing Alertmanager route for owner=debuglet-operator. This
+# example makes no contact with a notification service and contains no secret.

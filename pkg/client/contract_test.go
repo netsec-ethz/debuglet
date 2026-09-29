@@ -28,20 +28,17 @@ func TestClientAnnouncesContractVersionOnEveryRequest(t *testing.T) {
 	}
 }
 
-func TestVersionReportsSeparateIdentities(t *testing.T) {
+func TestExistingSDKOperationsStillReachVersion13(t *testing.T) {
 	f := newFakeServer(t, "")
-	f.handle("GET /version", jsonHandler(http.StatusOK,
-		`{"version":"cfg","api_version":"1.3","api_versions":["1"],"binary_version":"v0.3.1","binary_revision":"deadbeef","protocol_version":"3"}`))
-	c := f.client(t, Options{})
-
-	version, err := c.Version(testContext(t))
-	if err != nil {
-		t.Fatalf("Version: %v", err)
-	}
-	want := ServerVersion{Version: "cfg", APIVersion: APIVersion, APIVersions: []string{"1"},
-		BinaryVersion: "v0.3.1", BinaryRevision: "deadbeef", ProtocolVersion: "3"}
-	if !reflect.DeepEqual(version, want) {
-		t.Fatalf("identities were not reported separately: %+v, want %+v", version, want)
+	f.handle("GET /executors", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Debuglet-API-Version") != "1.3" {
+			jsonHandler(http.StatusBadRequest, `{"code":"unsupported_api_version","message":"server implements 1.3"}`)(w, r)
+			return
+		}
+		jsonHandler(http.StatusOK, fixtureNodes)(w, r)
+	})
+	if _, err := f.client(t, Options{}).Nodes(testContext(t)); err != nil {
+		t.Fatalf("existing SDK operation rejected by a 1.3 server: %v", err)
 	}
 }
 

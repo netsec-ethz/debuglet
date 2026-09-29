@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
@@ -66,7 +68,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	var sreqs []schedule.Request
 	rollbackReservations := func() {
 		for i := len(sreqs) - 1; i >= 0; i-- {
-			d.scheduler.Remove(sreqs[i])
+			d.releaseFloor(debugletIDS[i])
 		}
 		sreqs = nil
 	}
@@ -90,7 +92,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			selected[i] = &submissionOwner{owner: entry.owner, mutation: mutation, entry: entry}
 			debugletIDS[i] = uuid.New()
 			sreqs = append(sreqs, *r)
-			d.scheduler.Submit(*r)
+			d.reserveFloor(debugletIDS[i], *r)
 		}
 	}
 
@@ -148,6 +150,14 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 				return nil, fmt.Errorf("failed to associate debuglet with user in database: %w", err)
 			}
 		}
+		if err := d.recordProvenance(ctx, qtx, row.ID, debugletIDS[i], specs[i], selected[i]); err != nil {
+			failLocked()
+			return nil, fmt.Errorf("record admission provenance: %w", err)
+		}
+		if err := d.createOutputMetadata(ctx, qtx, debugletIDS[i], selected[i].owner.OutputVersion(), selected[i].owner.CredentialFingerprint()); err != nil {
+			failLocked()
+			return nil, fmt.Errorf("reserve output storage: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -161,6 +171,11 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 
 	d.mu.Unlock()
 	for i := range sreqs {
+		fields := daemonlog.RunFields(ctx, debugletIDS[i], specs[i].ExecutorID, selected[i].owner.Binding())
+		if userID != nil {
+			fields = append(fields, zap.String("user_id", userID.String()))
+		}
+		d.logger.Info("Run admitted", fields...)
 		g.Go(d.uploadToExecutor(subCtx, selected[i], i, debugletIDS[i], specs[i]))
 	}
 
@@ -172,28 +187,28 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			// The original mutation stays live even when a sibling's failure or a
 			// retirement canceled its execution context, so cleanup uses its own
 			// bounded context and the client this upload captured. A run whose
-			// executor refused the cancellation keeps its reservation and is
-			// marked unreconciled; nothing is retried. A cancellation that never
-			// reached the executor, because no client was captured or the call
-			// failed in transport, is only logged and leaves the row as it is.
+			// cancellation is not confirmed, because the executor refused it,
+			// the call failed in transport or no client was captured, keeps
+			// its reservation and is marked unreconciled; nothing is retried.
+			// Its executor's later report supersedes the mark, and a run still
+			// unfinished when its window ends is classified with outcome
+			// unknown, see sweepEndedWindows.
 			err := d.abortCaptured(cleanupCtx, selected[i].mutation, selected[i].client, id, reason)
 			if err == nil {
-				continue
-			}
-			if !errors.Is(err, ErrAbortRefused) {
-				d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(err))
 				continue
 			}
 			// An executor that refused the run's own upload and does not know
 			// it at the cancellation holds no such run: it takes the terminal
 			// path of an acknowledged cancellation.
-			if status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
+			if errors.Is(err, ErrAbortRefused) && status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
 				if _, err := d.OnDebugletExit(cleanupCtx, selected[i].mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
-					d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)))
+					d.logger.Error("Batch cleanup cancellation was not recorded", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", true), zap.String("cleanup_outcome", "unknown"))...)
+				} else if err := d.finishRefusedOutput(cleanupCtx, selected[i].mutation, id); err != nil {
+					d.logger.Error("Failed to finalize refused debuglet output", zap.String("debugletID", id.String()), zap.Error(err))
 				}
 				continue
 			}
-			d.logger.Error("Failed to abort debuglet", zap.String("debugletID", id.String()), zap.Error(err))
+			d.logger.Error("Batch cleanup cancellation unconfirmed", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", errors.Is(err, ErrCancellationNotRecorded)), zap.String("cleanup_outcome", "unknown"))...)
 			d.markUnreconciled(cleanupCtx, selected[i].owner, id)
 		}
 		return nil, fmt.Errorf("failed to upload debuglets: %w", err)
@@ -246,6 +261,11 @@ var (
 // the HTTP boundary reports it as an invalid policy and not as a failure of
 // the server.
 var ErrInvalidPolicy = errors.New("invalid policy")
+
+// ErrUnknownExecutor marks a submission for an executor that is not
+// registered, or no longer available, when the batch is admitted. It is a
+// rejection of the request, not a failure of the dispatcher.
+var ErrUnknownExecutor = errors.New("executor is not registered")
 
 // ErrPaymentInUse marks a submission refused where the transaction's orders
 // already carry runs, or where the dispatcher could not tell whether they do.
@@ -327,15 +347,15 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 
 	exec, exists := d.executors[spec.ExecutorID]
 	if d.closed || !exists || !exec.owner.Available() {
-		return nil, fmt.Errorf("executor '%s' not found", spec.ExecutorID)
+		return nil, fmt.Errorf("executor '%s' not found: %w", spec.ExecutorID, ErrUnknownExecutor)
 	}
 
 	if spec.Policy.RequireICMP && !exec.ICMPEnabled {
-		return nil, fmt.Errorf("executor '%s' does not support ICMP, but policy requires it", spec.ExecutorID)
+		return nil, fmt.Errorf("executor does not support ICMP, but policy requires it: %w", ErrInvalidPolicy)
 	}
 
 	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
-		return nil, fmt.Errorf("executor '%s' has no public host, but policy requires a listener", spec.ExecutorID)
+		return nil, fmt.Errorf("executor has no public host, but policy requires a listener: %w", ErrInvalidPolicy)
 	}
 
 	var from time.Time
@@ -387,7 +407,8 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 	return func() error {
 		ctx, finish := mutationCallContext(ctx, selected.mutation)
 		defer finish()
-		d.logger.Debug("Uploading to executor", zap.String("debugletID", debugletID.String()), zap.String("executorID", spec.ExecutorID))
+		fields := daemonlog.RunFields(ctx, debugletID, spec.ExecutorID, selected.owner.Binding())
+		d.logger.Debug("Uploading to executor", fields...)
 		client, ok := d.Bidi.GetClientFor(selected.owner)
 		if !ok {
 			return status.Error(codes.FailedPrecondition, "upload session is unavailable")
@@ -419,7 +440,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 			selected.uploadErr = err
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
 		}
-		d.logger.Debug("Upload successful", zap.String("debugletID", debugletID.String()), zap.String("executorID", spec.ExecutorID))
+		d.logger.Debug("Upload successful", fields...)
 
 		// Guarded ordinary update: an executor may report the exit before
 		// acknowledging the upload, and that terminal result must not be
@@ -473,6 +494,7 @@ func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debug
 		}
 		return status.Error(codes.Internal, "failed to classify debuglet ownership")
 	}
+	d.logger.Info("Cancellation requested", daemonlog.RunFields(ctx, debugletID, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID})...)
 	// Reserve the registry's current owner before the owned read. The
 	// persisted binding then rejects a same-ID replacement or another
 	// executor's run.
@@ -495,10 +517,7 @@ func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debug
 	if _, err := d.ownedDebuglet(mutation.Context(), mutation.Owner(), debugletID); err != nil {
 		return err
 	}
-	client, ok := d.Bidi.GetClientFor(mutation.Owner())
-	if !ok {
-		return status.Error(codes.FailedPrecondition, "abort session is unavailable")
-	}
+	client, _ := d.Bidi.GetClientFor(mutation.Owner())
 	return d.abortCaptured(mutation.Context(), mutation, client, debugletID, reason)
 }
 
@@ -516,27 +535,48 @@ func bindingLive(entry *executorEntry, identity database.GetDebugletIdentityByUU
 	return binding.Incarnation == identity.DispatcherIncarnation && binding.SessionID == identity.SessionID
 }
 
-// cancelUnbound records the cancellation of a run whose stored binding is not
-// the registered owner's. A binding names one session lifetime and a session
-// never resumes once its owner retired: the executor's reconnection is a new
-// session and a restarted dispatcher is a new incarnation. No Abort is sent,
-// since no session can deliver it, and the executor quarantines the run
-// instead of starting it.
-//
-// The terminal write is guarded by the stored binding, as every terminal write
-// of the run is. A retired session admits no new work; work it admitted before
-// retiring and other cancellations of the same run write through the same
-// guard, so exactly one writer wins and only the winner runs the effects.
-// They are those of a nonzero exit, except the fairshare update, which needs a
-// live mutation of the run's session; other executors keep their allocations
-// on the run's destinations until the next update.
+// cancelUnbound retains the request without delivering it to a replacement.
+// A persisted acknowledgement confirms earlier delivery; a missing one stays unknown.
 func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
-	// A row stored before bindings were recorded has none, and the guard
-	// admits no terminal write without one.
+	run, err := database.New(d.db).GetDebugletByUUID(ctx, id)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to read cancellation run: %v", err)
+	}
+	record, err := d.requestCancellation(ctx, run.ID, reason)
+	if err != nil {
+		return err
+	}
+	if run.State == models.RunStateExited {
+		if !record.AcknowledgedAt.Valid && !record.AttemptedAt.Valid && record.Failure == "" {
+			if err := d.failCancellation(ctx, run.ID, "already_terminal"); err != nil {
+				return err
+			}
+		}
+		// Release by run identity, a no-op if the winner already did.
+		d.releaseTerminal(run)
+		return nil
+	}
+	// Keep an earlier, more specific failure such as executor_refused or
+	// transport_outcome_unknown: losing the binding later does not explain it.
+	if !record.AcknowledgedAt.Valid && record.Failure == "" {
+		if err := d.failCancellation(ctx, run.ID, "original_binding_unavailable"); err != nil {
+			return err
+		}
+	}
 	if identity.DispatcherIncarnation == "" || identity.SessionID == "" {
 		return status.Error(codes.FailedPrecondition, "run has no control binding to cancel under")
 	}
-	msg := reason + unobservedCancellation
+	reason = record.Reason
+	if !record.AcknowledgedAt.Valid {
+		reason += unobservedCancellation
+	}
+	return d.recordCancellationResult(ctx, identity, id, reason)
+}
+
+// recordCancellationResult uses only the run's original binding. Terminal
+// selection and cleanup are shared with exits; payment runs only for the winner.
+func (d *Dispatcher) recordCancellationResult(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
+	msg := reason
 	queries := database.New(d.db)
 	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
 		ExitedState:           models.RunStateExited,
@@ -562,10 +602,14 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 		if existing.State != models.RunStateExited {
 			return fmt.Errorf("cancellation of debuglet '%s' was rejected although it is in state %s", id.String(), existing.State.String())
 		}
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
 		return nil
 	}
-	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", zap.String("debugletID", id.String()), zap.String("executor", identity.ExecutorID))
-	d.settleTerminal(ctx, &deb, -1)
+	d.logger.Info("Recorded cancellation of a debuglet", daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID})...)
+	d.settleTerminalPayment(ctx, &deb, -1)
+	d.releaseTerminal(deb)
 	return nil
 }
 
@@ -574,26 +618,58 @@ func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, 
 	if err != nil {
 		return err
 	}
-	if _, err := d.ownedDebuglet(ctx, owner, id); err != nil {
+	run, err := d.ownedDebuglet(ctx, owner, id)
+	if err != nil {
 		return err
 	}
-	if client == nil {
-		return status.Error(codes.FailedPrecondition, "abort session is unavailable")
+	record, err := d.requestCancellation(ctx, run.ID, reason)
+	if err != nil {
+		return err
 	}
-	if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: id.String(), Reason: reason}); err != nil {
-		switch status.Code(err) {
-		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
-			return fmt.Errorf("failed to abort debuglet: %w", err)
+	if run.State == models.RunStateExited {
+		if !record.AcknowledgedAt.Valid && !record.AttemptedAt.Valid && record.Failure == "" {
+			if err := d.failCancellation(ctx, run.ID, "already_terminal"); err != nil {
+				return err
+			}
 		}
-		return fmt.Errorf("failed to abort debuglet: %w: %w", ErrAbortRefused, err)
+		// Release by run identity, a no-op if the winner already did.
+		d.releaseTerminal(run)
+		return nil
 	}
-	// One local terminal attempt follows the remote acknowledgement, under the
-	// same live mutation. It is no durable terminal or refund guarantee, and a
-	// failed attempt is reported rather than acknowledged. A run that is
-	// already terminal keeps its result and is acknowledged.
+	reason = record.Reason
+	if !record.AcknowledgedAt.Valid {
+		if client == nil {
+			if err := d.failCancellation(ctx, run.ID, "original_binding_unavailable"); err != nil {
+				return err
+			}
+			return status.Error(codes.FailedPrecondition, "abort session is unavailable")
+		}
+		q := database.New(d.db)
+		if err := q.AttemptCancellation(ctx, database.AttemptCancellationParams{DebugletID: run.ID, AttemptedAt: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}}); err != nil {
+			return status.Errorf(codes.Internal, "failed to record cancellation attempt: %v", err)
+		}
+		if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: id.String(), Reason: reason}); err != nil {
+			failure := "executor_refused"
+			switch status.Code(err) {
+			case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+				failure = "transport_outcome_unknown"
+			}
+			if recordErr := d.failCancellation(ctx, run.ID, failure); recordErr != nil {
+				return recordErr
+			}
+			if failure == "transport_outcome_unknown" {
+				return fmt.Errorf("failed to abort debuglet: %w", err)
+			}
+			return fmt.Errorf("failed to abort debuglet: %w: %w", ErrAbortRefused, err)
+		}
+		if err := q.AcknowledgeCancellation(ctx, database.AcknowledgeCancellationParams{DebugletID: run.ID, AcknowledgedAt: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}}); err != nil {
+			return status.Errorf(codes.Internal, "failed to record cancellation acknowledgement: %v", err)
+		}
+	}
 	if _, err := d.OnDebugletExit(ctx, mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
 		return fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)
 	}
+	d.logger.Info("Cancellation recorded", daemonlog.RunFields(ctx, id, owner.ExecutorID(), owner.Binding())...)
 	return nil
 }
 
@@ -610,9 +686,9 @@ func uploadRefused(err error) bool {
 }
 
 // markUnreconciled records that a run of a failed submission may still execute
-// because its executor refused the cancellation. The guarded update leaves a
-// run the executor already advanced or finished as it is, and the executor's
-// later reports supersede the mark.
+// because the dispatcher could not confirm its cancellation. The guarded update
+// leaves a run the executor already advanced or finished as it is, and the
+// executor's later reports supersede the mark.
 func (d *Dispatcher) markUnreconciled(ctx context.Context, owner *rpc.SessionOwner, id uuid.UUID) {
 	if _, err := database.New(d.db).UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
 		State:                 models.RunStateUnreconciled,
@@ -624,7 +700,7 @@ func (d *Dispatcher) markUnreconciled(ctx context.Context, owner *rpc.SessionOwn
 		SessionID:             owner.Binding().SessionID,
 	}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			d.logger.Debug("Debuglet advanced before its refused cancellation was recorded", zap.String("debugletID", id.String()))
+			d.logger.Debug("Debuglet advanced before its unconfirmed cancellation was recorded", zap.String("debugletID", id.String()))
 			return
 		}
 		d.logger.Error("Failed to mark debuglet unreconciled", zap.String("debugletID", id.String()), zap.Error(err))

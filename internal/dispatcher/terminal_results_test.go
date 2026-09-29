@@ -296,9 +296,10 @@ func (f *tgFixture) spec(t *testing.T, floor bitrate.Bitrate) models.DebugletSpe
 // RPC (admission, row, executor history, scheduler reservation) and then
 // applies the guarded Uploaded write a successful upload performs. It lets
 // the callback subtests run without the peer transport.
-func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate) tgDebuglet {
+func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate, addresses ...string) tgDebuglet {
 	t.Helper()
 	spec := f.spec(t, floor)
+	spec.Policy.Addresses = addresses
 	id := uuid.New()
 	mutation := effectTestMutation(t, f.d, tgExecutorID)
 	defer mutation.Finish()
@@ -328,7 +329,7 @@ func (f *tgFixture) seedDirect(t *testing.T, floor bitrate.Bitrate) tgDebuglet {
 		t.Fatalf("create debuglet: %v", err)
 	}
 	f.d.executors[spec.ExecutorID].AppendDebugletID(id)
-	f.d.scheduler.Submit(*r)
+	f.d.reserveFloor(id, *r)
 	f.d.mu.Unlock()
 
 	row, err := f.q.UpdateDebugletState(f.ctx, database.UpdateDebugletStateParams{
@@ -1052,7 +1053,7 @@ func TestTerminalResultGuards(t *testing.T) {
 			tgAssertRow(t, f.row(t, a.id), models.RunStateExited, tgText("operator abort"))
 			tgAssertSnapshot(t, f, after, "duplicate abort")
 			tgAssertReserved(t, f, a, tgFloorB)
-			if aborts := peer.recordedAborts(); len(aborts) != 2 || aborts[0].GetDebugletId() != a.id.String() || aborts[0].GetReason() != "operator abort" {
+			if aborts := peer.recordedAborts(); len(aborts) != 1 || aborts[0].GetDebugletId() != a.id.String() || aborts[0].GetReason() != "operator abort" {
 				t.Fatalf("peer recorded aborts %+v", aborts)
 			}
 

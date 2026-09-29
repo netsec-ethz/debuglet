@@ -7,6 +7,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"io"
 	"net"
+	"time"
 )
 
 // SocketType identifies the transport layer of a Socket.
@@ -47,3 +48,6 @@ func (s *GenericSocket) Close() error                { return s.conn.Close() }
 func (s *GenericSocket) Type() SocketType            { return s.socketType }
 func (s *GenericSocket) Addr() string                { addr, _ := netutil.HostFromAddr(s.addr); return addr }
 func (s *GenericSocket) RemoteAddr() string          { return s.conn.RemoteAddr().String() }
+
+func (s *GenericSocket) SetReadDeadline(t time.Time) error  { return s.conn.SetReadDeadline(t) }
+func (s *GenericSocket) SetWriteDeadline(t time.Time) error { return s.conn.SetWriteDeadline(t) }

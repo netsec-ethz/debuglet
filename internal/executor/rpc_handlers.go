@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
@@ -58,8 +60,9 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		publicHost = &e.cfg.Network.PublicHost
 	}
 	resp := &pb.HelloResponse{
-		ExecutorId: e.cfg.Identity.ExecutorID,
-		Version:    e.cfg.Identity.Version,
+		ExecutorId:   e.cfg.Identity.ExecutorID,
+		Version:      e.cfg.Identity.Version,
+		Capabilities: e.capabilityReport(ctx, true),
 		// The dispatcher records the address it observes on the control
 		// connection, which is what probe recipients see. Reporting an
 		// address here would only be a hint, so leave it empty.
@@ -76,6 +79,10 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		Currency:    e.cfg.Pricing.Currency,
 		SuiWallet:   &e.cfg.Pricing.SuiWallet,
 	}
+	if e.output != nil && req.GetOutputVersion() == pb.OutputVersion {
+		resp.OutputVersion = pb.OutputVersion
+	}
+	e.outputVersion.Store(resp.OutputVersion)
 	// Presented until the dispatcher has bound this node's certificate to the
 	// executor ID; an already enrolled node sends nothing.
 	if e.cfg.Credentials.EnrollmentToken != "" {
@@ -91,7 +98,6 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	if err := rpc.CheckPayloadBinding(req.GetControlBinding(), binding); err != nil {
 		return nil, err
 	}
-	e.logger.Debug("Upload received", zap.String("id", req.GetId()), zap.String("transaction_id", req.GetTransactionId()))
 
 	id, ok := ids.ParseCanonical(req.GetId())
 	if !ok {
@@ -112,6 +118,7 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 		startTime = &tmp
 	}
 	spec := scheduler.Spec{
+		OutputVersion: e.outputVersion.Load(),
 		Binding:       binding,
 		DebugletID:    id,
 		TransactionID: req.GetTransactionId(),
@@ -134,10 +141,17 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	if e.teslaSchedule.Exhausted(time.Now()) {
 		return nil, status.Error(codes.FailedPrecondition, "TESLA key chain exhausted: this executor admits no new runs until it is restarted")
 	}
+	if e.outputFailed != nil && e.outputFailed.Load() {
+		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")
+	}
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
+		if errors.Is(err, outputstore.ErrSpoolLimit) {
+			return nil, status.Error(codes.ResourceExhausted, "executor output storage limit reached")
+		}
 		return nil, err
 	}
 
+	e.logger.Info("Run accepted", daemonlog.RunFields(ctx, id, e.cfg.Identity.ExecutorID, binding)...)
 	return &pb.UploadResponse{}, nil
 }
 
@@ -146,7 +160,6 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 		return nil, err
 	}
 	debugletID := req.GetDebugletId()
-	e.logger.Debug("Abort received", zap.String("debugletID", debugletID))
 
 	id, ok := ids.ParseCanonical(debugletID)
 	if !ok {
@@ -167,6 +180,7 @@ func (e *Executor) OnAbort(ctx context.Context, binding controlsession.Binding, 
 	if !existed {
 		return nil, status.Error(codes.NotFound, "debuglet not found")
 	}
+	e.logger.Info("Run cancellation joined", daemonlog.RunFields(ctx, id, e.cfg.Identity.ExecutorID, binding)...)
 	return &pb.AbortResponse{}, nil
 }
 

@@ -25,6 +25,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/guestio"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
@@ -309,6 +311,10 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) (er
 	if _, err := d.registerHostFunctions(rt.NewHostModuleBuilder("env")).Instantiate(ctx); err != nil {
 		return fmt.Errorf("createWASMInstance: host module instantiation: %w", err)
 	}
+	if _, err := wasm.RegisterIO(rt.NewHostModuleBuilder(guestio.Module), d.env).Instantiate(ctx); err != nil {
+		return fmt.Errorf("createWASMInstance: recoverable I/O module instantiation: %w", err)
+	}
+
 	d.mu.Lock()
 	closed := d.closed
 	d.mu.Unlock()
@@ -423,25 +429,39 @@ func (d *Debuglet) Close(ctx context.Context) error {
 	return errors.Join(d.closeErr, envErr, lateErr)
 }
 
+// ErrOutputIncomplete means a nonempty stdout/stderr suffix was refused.
+var ErrOutputIncomplete = errors.New("guest output was not fully accepted")
+
 type chanWriter struct {
 	ctx context.Context
 	ch  chan<- []byte
+	mu  sync.Mutex
+	err error
 }
 
 func (w *chanWriter) Write(p []byte) (int, error) {
-	if err := w.ctx.Err(); err != nil {
-		return 0, context.Cause(w.ctx)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	written := 0
+	for len(p) > 0 {
+		if err := w.ctx.Err(); err != nil {
+			w.err = errors.Join(ErrOutputIncomplete, context.Cause(w.ctx))
+			return written, w.err
+		}
+		n := min(len(p), pb.MaxOutputFrameBytes)
+		// Bound the allocation before copying guest memory. Stdout and stderr use
+		// this same writer, so concurrent writes cannot interleave their chunks.
+		chunk := append([]byte(nil), p[:n]...)
+		select {
+		case <-w.ctx.Done():
+			w.err = errors.Join(ErrOutputIncomplete, context.Cause(w.ctx))
+			return written, w.err
+		case w.ch <- chunk:
+			written += n
+			p = p[n:]
+		}
 	}
-	if len(p) == 0 {
-		return 0, nil
-	}
-	temp := append([]byte(nil), p...)
-	select {
-	case <-w.ctx.Done():
-		return 0, context.Cause(w.ctx)
-	case w.ch <- temp:
-		return len(p), nil
-	}
+	return written, nil
 }
 
 // Run executes the debuglet's "_start" WASM export, streams stdout/stderr
@@ -479,9 +499,9 @@ func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []strin
 	d.env.Logger.Debugw("debuglet execution finished", "duration", time.Since(start), "has_error", err != nil)
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("debuglet execution canceled: %w", context.Cause(ctx))
+			return errors.Join(fmt.Errorf("debuglet execution canceled: %w", context.Cause(ctx)), writer.err)
 		}
-		return fmt.Errorf("failed to instantiate module: %w", err)
+		return errors.Join(fmt.Errorf("failed to instantiate module: %w", err), writer.err)
 	}
 	closeErr := mod.Close(ctx)
 	d.mu.Lock()
@@ -490,8 +510,8 @@ func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []strin
 	// WASI may translate a canceled stdout Write to errno and return normally.
 	// A successful Instantiate is not proof of a successful canceled execution.
 	if ctx.Err() != nil {
-		return errors.Join(context.Cause(ctx), closeErr)
+		return errors.Join(context.Cause(ctx), closeErr, writer.err)
 	}
-	return closeErr
+	return errors.Join(closeErr, writer.err)
 
 }

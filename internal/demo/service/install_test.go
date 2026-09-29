@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -65,21 +66,21 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
-func (f *fixture) install(role demo.SchemaRole, name string, start bool) (Report, error) {
+func (f *fixture) install(role storagecheck.Role, name string, start bool) (Report, error) {
 	f.t.Helper()
 	request := Request{Role: role, Name: name}
-	if role == demo.ExecutorSchema {
+	if role == storagecheck.Executor {
 		request.DispatcherGRPC, request.DispatcherHTTP = "127.0.0.1:9001", "127.0.0.1:9000"
 	}
 	return f.installer.Install(context.Background(), request, f.assets, start, true)
 }
 
-func (f *fixture) readyFile(role demo.SchemaRole, name string) string {
+func (f *fixture) readyFile(role storagecheck.Role, name string) string {
 	f.t.Helper()
 	return filepath.Join(f.root, "run", "debuglet", string(role)+"s", name, "ready.json")
 }
 
-func (f *fixture) unitText(role demo.SchemaRole, name string) string {
+func (f *fixture) unitText(role storagecheck.Role, name string) string {
 	f.t.Helper()
 	data, err := os.ReadFile(filepath.Join(UnitDirectory(f.root), UnitName(role, name)))
 	if err != nil {
@@ -90,7 +91,7 @@ func (f *fixture) unitText(role demo.SchemaRole, name string) string {
 
 func TestInstallIsRepeatableAndStartsOnlyTheRequestedRole(t *testing.T) {
 	f := newFixture(t)
-	report, err := f.install(demo.DispatcherSchema, "local", true)
+	report, err := f.install(storagecheck.Dispatcher, "local", true)
 	if err != nil {
 		t.Fatalf("install dispatcher: %v", err)
 	}
@@ -108,8 +109,8 @@ func TestInstallIsRepeatableAndStartsOnlyTheRequestedRole(t *testing.T) {
 	// The unit has to start the verified payload of this exact version and
 	// serve the persistent state directory, or a restart would not keep the
 	// databases the installation just created.
-	unit := f.unitText(demo.DispatcherSchema, "local")
-	stateDir := StateDirectory(f.root, demo.DispatcherSchema, "local")
+	unit := f.unitText(storagecheck.Dispatcher, "local")
+	stateDir := StateDirectory(f.root, storagecheck.Dispatcher, "local")
 	for _, want := range []string{
 		filepath.Join(f.assets.Root, "bin", "debuglet-dispatcher"),
 		"-config " + filepath.Join(stateDir, "service.toml"),
@@ -137,7 +138,7 @@ func TestInstallIsRepeatableAndStartsOnlyTheRequestedRole(t *testing.T) {
 	}
 	// The installed record is not in that directory and is not handed to
 	// the account: it tells later privileged commands where to act.
-	record := RecordPath(f.root, demo.DispatcherSchema, "local")
+	record := RecordPath(f.root, storagecheck.Dispatcher, "local")
 	if strings.HasPrefix(record, stateDir) {
 		t.Fatalf("the installed record is inside the account's directory: %s", record)
 	}
@@ -151,7 +152,7 @@ func TestInstallIsRepeatableAndStartsOnlyTheRequestedRole(t *testing.T) {
 
 	// A second identical install is a complete no-op apart from reading.
 	before := f.manager.recorded()
-	again, err := f.install(demo.DispatcherSchema, "local", true)
+	again, err := f.install(storagecheck.Dispatcher, "local", true)
 	if err != nil {
 		t.Fatalf("repeat install: %v", err)
 	}
@@ -165,9 +166,9 @@ func TestInstallIsRepeatableAndStartsOnlyTheRequestedRole(t *testing.T) {
 	}
 
 	// Installing the executor starts only the executor.
-	dispatcherUnitBefore := f.unitText(demo.DispatcherSchema, "local")
+	dispatcherUnitBefore := f.unitText(storagecheck.Dispatcher, "local")
 	mark := len(f.manager.recorded())
-	executor, err := f.install(demo.ExecutorSchema, "worker", true)
+	executor, err := f.install(storagecheck.Executor, "worker", true)
 	if err != nil {
 		t.Fatalf("install executor: %v", err)
 	}
@@ -175,20 +176,20 @@ func TestInstallIsRepeatableAndStartsOnlyTheRequestedRole(t *testing.T) {
 		t.Fatalf("executor install report: %+v", executor)
 	}
 	for _, call := range f.manager.recorded()[mark:] {
-		if strings.HasSuffix(call, UnitName(demo.DispatcherSchema, "local")) && !strings.HasPrefix(call, "state ") {
+		if strings.HasSuffix(call, UnitName(storagecheck.Dispatcher, "local")) && !strings.HasPrefix(call, "state ") {
 			t.Fatalf("installing the executor acted on the dispatcher: %q", call)
 		}
 	}
-	if f.unitText(demo.DispatcherSchema, "local") != dispatcherUnitBefore {
+	if f.unitText(storagecheck.Dispatcher, "local") != dispatcherUnitBefore {
 		t.Fatal("installing the executor rewrote the dispatcher unit")
 	}
-	if state, _ := f.manager.State(context.Background(), UnitName(demo.DispatcherSchema, "local")); !state.Running() {
+	if state, _ := f.manager.State(context.Background(), UnitName(storagecheck.Dispatcher, "local")); !state.Running() {
 		t.Fatalf("the dispatcher stopped serving: %+v", state)
 	}
 }
 
 func TestInstallRefusesAnUnmanagedUnitBeforeWritingState(t *testing.T) {
-	for _, role := range []demo.SchemaRole{demo.DispatcherSchema, demo.ExecutorSchema} {
+	for _, role := range []storagecheck.Role{storagecheck.Dispatcher, storagecheck.Executor} {
 		t.Run(string(role), func(t *testing.T) {
 			f := newFixture(t)
 			unit := filepath.Join(UnitDirectory(f.root), UnitName(role, "local"))
@@ -226,25 +227,25 @@ func TestInstallRefusesAnUnmanagedUnitBeforeWritingState(t *testing.T) {
 
 func TestManagedRestartPreservesDatabaseAndIdentity(t *testing.T) {
 	f := newFixture(t)
-	first, err := f.install(demo.ExecutorSchema, "worker", true)
+	first, err := f.install(storagecheck.Executor, "worker", true)
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	stateDir := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	stateDir := StateDirectory(f.root, storagecheck.Executor, "worker")
 	database := filepath.Join(stateDir, "executor.sqlite")
 	info, err := os.Stat(database)
 	if err != nil {
 		t.Fatalf("stat database: %v", err)
 	}
-	if _, err := f.installer.Stop(context.Background(), demo.ExecutorSchema, "worker"); err != nil {
+	if _, err := f.installer.Stop(context.Background(), storagecheck.Executor, "worker"); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	// The readiness record is withdrawn by the daemon, so nothing claims a
 	// stopped executor is ready.
-	if status, err := f.installer.Status(context.Background(), demo.ExecutorSchema, "worker"); err != nil || status.Ready {
+	if status, err := f.installer.Status(context.Background(), storagecheck.Executor, "worker"); err != nil || status.Ready {
 		t.Fatalf("status after stop: %+v %v", status, err)
 	}
-	restarted, err := f.installer.Start(context.Background(), demo.ExecutorSchema, "worker")
+	restarted, err := f.installer.Start(context.Background(), storagecheck.Executor, "worker")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -280,7 +281,7 @@ func TestReadinessIsObservedNotInferred(t *testing.T) {
 	t.Run("a started process that never reports ready is not ready", func(t *testing.T) {
 		f := newFixture(t)
 		f.manager.silent = true
-		report, err := f.install(demo.DispatcherSchema, "local", true)
+		report, err := f.install(storagecheck.Dispatcher, "local", true)
 		if err == nil {
 			t.Fatal("install reported success without a readiness record")
 		}
@@ -293,7 +294,7 @@ func TestReadinessIsObservedNotInferred(t *testing.T) {
 	})
 	t.Run("a record from another process is not accepted", func(t *testing.T) {
 		f := newFixture(t)
-		if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+		if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 			t.Fatalf("install: %v", err)
 		}
 		ready := filepath.Join(f.root, "run", "debuglet", "executors", "worker", "ready.json")
@@ -313,7 +314,7 @@ func TestReadinessIsObservedNotInferred(t *testing.T) {
 		if err := os.WriteFile(ready, stale, 0600); err != nil {
 			t.Fatal(err)
 		}
-		status, err := f.installer.Status(context.Background(), demo.ExecutorSchema, "worker")
+		status, err := f.installer.Status(context.Background(), storagecheck.Executor, "worker")
 		if err != nil {
 			t.Fatalf("status: %v", err)
 		}
@@ -325,25 +326,25 @@ func TestReadinessIsObservedNotInferred(t *testing.T) {
 
 func TestUninstallKeepsStateAndPurgeNeedsAJoin(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	stateDir := StateDirectory(f.root, demo.ExecutorSchema, "worker")
-	unitPath := filepath.Join(UnitDirectory(f.root), UnitName(demo.ExecutorSchema, "worker"))
+	stateDir := StateDirectory(f.root, storagecheck.Executor, "worker")
+	unitPath := filepath.Join(UnitDirectory(f.root), UnitName(storagecheck.Executor, "worker"))
 
 	// A daemon that was killed at its stop timeout never finished its own
 	// shutdown, so nothing may be deleted on the strength of it, and the
 	// readiness record being gone says nothing: the runtime directory is
 	// removed whenever the unit stops.
 	f.manager.timedOut = true
-	report, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", true)
+	report, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", true)
 	if err == nil {
 		t.Fatal("purge succeeded without proof that the daemon released its state")
 	}
 	if report.State != "incomplete" || report.Note == "" {
 		t.Fatalf("purge report: %+v", report)
 	}
-	if _, err := os.Stat(f.readyFile(demo.ExecutorSchema, "worker")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(f.readyFile(storagecheck.Executor, "worker")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the runtime directory outlived the stop: %v", err)
 	}
 	for _, undone := range []string{"unit", "disabled", "state directory"} {
@@ -361,7 +362,7 @@ func TestUninstallKeepsStateAndPurgeNeedsAJoin(t *testing.T) {
 	// A unit that is down may always be removed and disabled: that touches
 	// no state. The state itself still needs the proof, which this daemon
 	// never gave, so it is kept.
-	unfinished, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", false)
+	unfinished, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", false)
 	if err != nil {
 		t.Fatalf("uninstall after a failed shutdown: %v", err)
 	}
@@ -374,14 +375,14 @@ func TestUninstallKeepsStateAndPurgeNeedsAJoin(t *testing.T) {
 
 	// A failed unit stays failed until it is started and stopped again, so
 	// deleting its state stays refused until a daemon actually finished.
-	if _, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", true); err == nil {
+	if _, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", true); err == nil {
 		t.Fatal("state was deleted while the last shutdown was still unfinished")
 	}
 	f.manager.timedOut = false
-	if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 		t.Fatalf("reinstall: %v", err)
 	}
-	kept, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", false)
+	kept, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", false)
 	if err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
@@ -395,14 +396,14 @@ func TestUninstallKeepsStateAndPurgeNeedsAJoin(t *testing.T) {
 		t.Fatalf("uninstall removed the database: %v", err)
 	}
 	// Uninstalling again changes nothing and still succeeds.
-	repeat, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", false)
+	repeat, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", false)
 	if err != nil {
 		t.Fatalf("repeated uninstall: %v", err)
 	}
 	if len(repeat.Changed) != 0 {
 		t.Fatalf("repeated uninstall changed %v", repeat.Changed)
 	}
-	purged, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", true)
+	purged, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", true)
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -412,7 +413,7 @@ func TestUninstallKeepsStateAndPurgeNeedsAJoin(t *testing.T) {
 	if !slicesContains(purged.Changed, "state directory") || !slicesContains(purged.Changed, "installed record") {
 		t.Fatalf("purge report: %+v", purged)
 	}
-	if _, err := os.Stat(RecordPath(f.root, demo.ExecutorSchema, "worker")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(RecordPath(f.root, storagecheck.Executor, "worker")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("purge kept the installed record: %v", err)
 	}
 }
@@ -429,12 +430,12 @@ func TestGeneratedUnitMatchesReference(t *testing.T) {
 		Manifest:   demo.Manifest{SchemaVersion: 1, Version: version, SourceSHA: testSHA},
 	}
 	for _, tc := range []struct {
-		role      demo.SchemaRole
+		role      storagecheck.Role
 		name      string
 		reference string
 	}{
-		{demo.DispatcherSchema, "local", "debuglet-dispatcher-local.service"},
-		{demo.ExecutorSchema, "worker", "debuglet-executor-worker.service"},
+		{storagecheck.Dispatcher, "local", "debuglet-dispatcher-local.service"},
+		{storagecheck.Executor, "worker", "debuglet-executor-worker.service"},
 	} {
 		t.Run(string(tc.role), func(t *testing.T) {
 			request := Request{Role: tc.role, Name: tc.name, Root: "/"}
@@ -464,12 +465,12 @@ func TestResolveRefusesProfilesItCannotHonor(t *testing.T) {
 		Manifest: demo.Manifest{Version: "1.0.0", SourceSHA: testSHA}}
 	for name, request := range map[string]Request{
 		"unknown role":        {Role: "guest", Name: "local"},
-		"invalid name":        {Role: demo.DispatcherSchema, Name: "../escape"},
-		"relative root":       {Role: demo.DispatcherSchema, Name: "local", Root: "relative"},
-		"equal ports":         {Role: demo.DispatcherSchema, Name: "local", HTTPPort: 9000, GRPCPort: 9000},
-		"remote dispatcher":   {Role: demo.ExecutorSchema, Name: "worker", DispatcherGRPC: "example.com:9001"},
-		"nonloopback address": {Role: demo.ExecutorSchema, Name: "worker", DispatcherGRPC: "192.0.2.1:9001"},
-		"invalid account":     {Role: demo.DispatcherSchema, Name: "local", User: "Root User"},
+		"invalid name":        {Role: storagecheck.Dispatcher, Name: "../escape"},
+		"relative root":       {Role: storagecheck.Dispatcher, Name: "local", Root: "relative"},
+		"equal ports":         {Role: storagecheck.Dispatcher, Name: "local", HTTPPort: 9000, GRPCPort: 9000},
+		"remote dispatcher":   {Role: storagecheck.Executor, Name: "worker", DispatcherGRPC: "example.com:9001"},
+		"nonloopback address": {Role: storagecheck.Executor, Name: "worker", DispatcherGRPC: "192.0.2.1:9001"},
+		"invalid account":     {Role: storagecheck.Dispatcher, Name: "local", User: "Root User"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Resolve(request, assets); err == nil {
@@ -482,7 +483,7 @@ func TestResolveRefusesProfilesItCannotHonor(t *testing.T) {
 	for _, root := range []string{"/home/operator/.local/lib/debuglet/1.0.0", "/root/lib/debuglet/1.0.0"} {
 		home := demo.Assets{Root: root, Dispatcher: root + "/bin/debuglet-dispatcher",
 			Manifest: demo.Manifest{Version: "1.0.0", SourceSHA: testSHA}}
-		if _, err := Resolve(Request{Role: demo.DispatcherSchema, Name: "local", Root: "/"}, home); err == nil {
+		if _, err := Resolve(Request{Role: storagecheck.Dispatcher, Name: "local", Root: "/"}, home); err == nil {
 			t.Fatalf("a payload under %s was accepted", root)
 		}
 	}
@@ -490,7 +491,7 @@ func TestResolveRefusesProfilesItCannotHonor(t *testing.T) {
 	// anything is written, rather than escaped by this renderer.
 	spaced := demo.Assets{Root: "/opt/deb uglet", Dispatcher: "/opt/deb uglet/bin/debuglet-dispatcher",
 		Manifest: demo.Manifest{Version: "1.0.0", SourceSHA: testSHA}}
-	p, err := Resolve(Request{Role: demo.DispatcherSchema, Name: "local", Root: "/"}, spaced)
+	p, err := Resolve(Request{Role: storagecheck.Dispatcher, Name: "local", Root: "/"}, spaced)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +515,7 @@ func slicesContains(values []string, want string) bool {
 // derived from the root, role and name an operator named.
 func TestARecordThatDisagreesWithItsInstanceIsRefused(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	decoy := filepath.Join(f.root, "decoy")
@@ -525,7 +526,7 @@ func TestARecordThatDisagreesWithItsInstanceIsRefused(t *testing.T) {
 	if err := os.WriteFile(decoyUnit, []byte("[Unit]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	record := RecordPath(f.root, demo.ExecutorSchema, "worker")
+	record := RecordPath(f.root, storagecheck.Executor, "worker")
 	for name, tamper := range map[string]func(map[string]any){
 		"state directory": func(fields map[string]any) { fields["state_dir"] = decoy },
 		"unit file":       func(fields map[string]any) { fields["unit_path"] = decoyUnit },
@@ -559,27 +560,27 @@ func TestARecordThatDisagreesWithItsInstanceIsRefused(t *testing.T) {
 			}
 			for operation, run := range map[string]func() error{
 				"install": func() error {
-					_, err := f.install(demo.ExecutorSchema, "worker", true)
+					_, err := f.install(storagecheck.Executor, "worker", true)
 					return err
 				},
 				"status": func() error {
-					_, err := f.installer.Status(context.Background(), demo.ExecutorSchema, "worker")
+					_, err := f.installer.Status(context.Background(), storagecheck.Executor, "worker")
 					return err
 				},
 				"stop": func() error {
-					_, err := f.installer.Stop(context.Background(), demo.ExecutorSchema, "worker")
+					_, err := f.installer.Stop(context.Background(), storagecheck.Executor, "worker")
 					return err
 				},
 				"purge": func() error {
-					_, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", true)
+					_, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", true)
 					return err
 				},
 				"drain": func() error {
-					_, err := f.installer.Drain(context.Background(), demo.ExecutorSchema, "worker", DrainOptions{Timeout: time.Second})
+					_, err := f.installer.Drain(context.Background(), storagecheck.Executor, "worker", DrainOptions{Timeout: time.Second})
 					return err
 				},
 				"resume": func() error {
-					_, err := f.installer.Resume(context.Background(), demo.ExecutorSchema, "worker")
+					_, err := f.installer.Resume(context.Background(), storagecheck.Executor, "worker")
 					return err
 				},
 			} {
@@ -601,19 +602,19 @@ func TestARecordThatDisagreesWithItsInstanceIsRefused(t *testing.T) {
 // applies: this runs the real ownership syscalls on a real tree.
 func TestOwnershipRefusesAnythingButFilesAndDirectories(t *testing.T) {
 	f := newOwningFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	outside := filepath.Join(f.root, "outside")
 	if err := os.WriteFile(outside, []byte("host file"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	stateDir := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	stateDir := StateDirectory(f.root, storagecheck.Executor, "worker")
 	link := filepath.Join(stateDir, "redirect")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
-	report, err := f.install(demo.ExecutorSchema, "worker", false)
+	report, err := f.install(storagecheck.Executor, "worker", false)
 	if err == nil {
 		t.Fatalf("a symbolic link in the state directory was followed: %+v", report)
 	}
@@ -654,10 +655,10 @@ func newOwningFixture(t *testing.T) *fixture {
 // account invented for one of them.
 func TestOwnershipRefusesALinkThatStaysInsideTheStateDirectory(t *testing.T) {
 	f := newOwningFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	stateDir := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	stateDir := StateDirectory(f.root, storagecheck.Executor, "worker")
 	inside := filepath.Join(stateDir, "inside")
 	if err := os.WriteFile(inside, []byte("service state"), 0600); err != nil {
 		t.Fatal(err)
@@ -666,7 +667,7 @@ func TestOwnershipRefusesALinkThatStaysInsideTheStateDirectory(t *testing.T) {
 	if err := os.Symlink(inside, link); err != nil {
 		t.Fatal(err)
 	}
-	report, err := f.install(demo.ExecutorSchema, "worker", false)
+	report, err := f.install(storagecheck.Executor, "worker", false)
 	if err == nil {
 		t.Fatalf("a link inside the state directory was followed: %+v", report)
 	}
@@ -686,7 +687,7 @@ func TestOwnershipRefusesALinkThatStaysInsideTheStateDirectory(t *testing.T) {
 // moment the walk has the entry in hand, which is the whole window.
 func TestOwnershipDoesNotFollowAnEntrySwappedAfterItWasRead(t *testing.T) {
 	f := newFixture(t)
-	stateDir := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	stateDir := StateDirectory(f.root, storagecheck.Executor, "worker")
 	swapped := filepath.Join(stateDir, "sub")
 	victim := filepath.Join(f.root, "victim")
 	if err := os.MkdirAll(filepath.Join(victim, "nested"), 0755); err != nil {
@@ -719,7 +720,7 @@ func TestOwnershipDoesNotFollowAnEntrySwappedAfterItWasRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.installer = installer
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	// The account created these between the two installations, which is what
@@ -731,7 +732,7 @@ func TestOwnershipDoesNotFollowAnEntrySwappedAfterItWasRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := f.install(demo.ExecutorSchema, "worker", false)
+	report, err := f.install(storagecheck.Executor, "worker", false)
 	if err == nil {
 		t.Fatalf("a replaced directory entry was followed: %+v", report)
 	}
@@ -762,21 +763,21 @@ func TestOwnershipDoesNotFollowAnEntrySwappedAfterItWasRead(t *testing.T) {
 func TestAFailedReloadIsRetriedByTheNextInstall(t *testing.T) {
 	f := newFixture(t)
 	f.manager.reloadErr = errors.New("the manager could not be reloaded")
-	if _, err := f.install(demo.ExecutorSchema, "worker", true); !errors.Is(err, f.manager.reloadErr) {
+	if _, err := f.install(storagecheck.Executor, "worker", true); !errors.Is(err, f.manager.reloadErr) {
 		t.Fatalf("install with a failing reload: %v", err)
 	}
-	if state, _ := f.manager.State(context.Background(), UnitName(demo.ExecutorSchema, "worker")); state.Loaded {
+	if state, _ := f.manager.State(context.Background(), UnitName(storagecheck.Executor, "worker")); state.Loaded {
 		t.Fatalf("the unit was loaded after a failed reload: %+v", state)
 	}
 	f.manager.reloadErr = nil
-	report, err := f.install(demo.ExecutorSchema, "worker", true)
+	report, err := f.install(storagecheck.Executor, "worker", true)
 	if err != nil {
 		t.Fatalf("install after a failed reload: %v", err)
 	}
 	if !report.Ready {
 		t.Fatalf("install after a failed reload: %+v", report)
 	}
-	state, err := f.manager.State(context.Background(), UnitName(demo.ExecutorSchema, "worker"))
+	state, err := f.manager.State(context.Background(), UnitName(storagecheck.Executor, "worker"))
 	if err != nil || !state.Loaded || !state.Running() {
 		t.Fatalf("unit state after the retry: %+v %v", state, err)
 	}
@@ -790,10 +791,10 @@ func TestAFailedReloadIsRetriedByTheNextInstall(t *testing.T) {
 // states the value itself instead of inheriting it.
 func TestTheManagedDispatcherConfigurationNeverEnablesLocalDevelopment(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.DispatcherSchema, "local", false); err != nil {
+	if _, err := f.install(storagecheck.Dispatcher, "local", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(StateDirectory(f.root, demo.DispatcherSchema, "local"), "service.toml"))
+	data, err := os.ReadFile(filepath.Join(StateDirectory(f.root, storagecheck.Dispatcher, "local"), "service.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -821,10 +822,10 @@ func TestTheManagedDispatcherConfigurationNeverEnablesLocalDevelopment(t *testin
 // repeat over a finished installation rebuilds nothing either way.
 func TestAnInterruptedInstallIsCompletedByTheNextOne(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	report, err := f.install(demo.ExecutorSchema, "worker", false)
+	report, err := f.install(storagecheck.Executor, "worker", false)
 	if err != nil {
 		t.Fatalf("reinstall: %v", err)
 	}
@@ -833,11 +834,11 @@ func TestAnInterruptedInstallIsCompletedByTheNextOne(t *testing.T) {
 	}
 	// What an install interrupted between making the directory and finishing
 	// the bootstrap leaves: the directory, without the database.
-	stateDir := StateDirectory(f.root, demo.ExecutorSchema, "worker")
-	if err := os.Remove(demo.RoleDatabase(stateDir, demo.ExecutorSchema)); err != nil {
+	stateDir := StateDirectory(f.root, storagecheck.Executor, "worker")
+	if err := os.Remove(demo.RoleDatabase(stateDir, storagecheck.Executor)); err != nil {
 		t.Fatal(err)
 	}
-	completed, err := f.install(demo.ExecutorSchema, "worker", false)
+	completed, err := f.install(storagecheck.Executor, "worker", false)
 	if err != nil {
 		t.Fatalf("an interrupted install can never be completed: %v", err)
 	}
@@ -853,10 +854,10 @@ func TestAnInterruptedInstallIsCompletedByTheNextOne(t *testing.T) {
 // the internal ranges.
 func TestTheManagedExecutorConfigurationNeverPermitsLocalTargets(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(StateDirectory(f.root, demo.ExecutorSchema, "worker"), "service.toml"))
+	data, err := os.ReadFile(filepath.Join(StateDirectory(f.root, storagecheck.Executor, "worker"), "service.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -895,19 +896,19 @@ func TestOwnershipRefusesASecondNameForAFileOutside(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.installer = installer
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	outside := filepath.Join(f.root, "outside")
 	if err := os.WriteFile(outside, []byte("host file"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	linked := filepath.Join(StateDirectory(f.root, demo.ExecutorSchema, "worker"), "linked")
+	linked := filepath.Join(StateDirectory(f.root, storagecheck.Executor, "worker"), "linked")
 	if err := os.Link(outside, linked); err != nil {
 		t.Fatal(err)
 	}
 
-	report, err := f.install(demo.ExecutorSchema, "worker", false)
+	report, err := f.install(storagecheck.Executor, "worker", false)
 	if err == nil {
 		t.Fatalf("a second name for a host file was handed to the service account: %+v", report)
 	}
@@ -917,5 +918,90 @@ func TestOwnershipRefusesASecondNameForAFileOutside(t *testing.T) {
 	info, err := os.Lstat(outside)
 	if err != nil || info.Mode().Perm() != 0644 {
 		t.Fatalf("the file behind the second name was changed: %v %v", info, err)
+	}
+}
+
+func TestUninstallRefusesAReplacedUnit(t *testing.T) {
+	for _, replacement := range []string{"changed content", "symlink"} {
+		t.Run(replacement, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
+				t.Fatal(err)
+			}
+			unit := filepath.Join(UnitDirectory(f.root), UnitName(storagecheck.Executor, "worker"))
+			if err := os.Remove(unit); err != nil {
+				t.Fatal(err)
+			}
+			const foreign = "[Service]\nExecStart=/opt/unrelated-service\n"
+			if replacement == "symlink" {
+				target := filepath.Join(f.root, "foreign.service")
+				if err := os.WriteFile(target, []byte(foreign), 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, unit); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(unit, []byte(foreign), 0644); err != nil {
+				t.Fatal(err)
+			}
+			before := len(f.manager.recorded())
+			if _, err := f.installer.Uninstall(t.Context(), storagecheck.Executor, "worker", true); err == nil {
+				t.Fatal("removed a replacement unit")
+			}
+			if got := f.manager.recorded()[before:]; len(got) != 0 {
+				t.Fatalf("touched manager for unowned unit: %v", got)
+			}
+			if got, err := os.ReadFile(unit); err != nil || string(got) != foreign {
+				t.Fatalf("changed replacement: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestUninstallLeavesDispatcherRunning(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.install(storagecheck.Dispatcher, "local", true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.install(storagecheck.Executor, "worker", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.installer.Uninstall(t.Context(), storagecheck.Executor, "worker", false); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := f.installer.Status(t.Context(), storagecheck.Dispatcher, "local"); err != nil || !report.Ready {
+		t.Fatalf("dispatcher changed: %+v, %v", report, err)
+	}
+	reinstalled, err := f.install(storagecheck.Executor, "worker", true)
+	if err != nil || reinstalled.ExecutorID != first.ExecutorID {
+		t.Fatalf("reinstall failed to reuse retained identity: %+v, %v", reinstalled, err)
+	}
+}
+
+func TestPurgeRefusesStateDirectorySymlink(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
+		t.Fatal(err)
+	}
+	path := StateDirectory(f.root, storagecheck.Executor, "worker")
+	retained := path + "-retained"
+	if err := os.Rename(path, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(retained, path); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.manager.recorded())
+	if _, err := f.installer.Uninstall(t.Context(), storagecheck.Executor, "worker", true); err == nil {
+		t.Fatal("purged through a state directory alias")
+	}
+	for _, call := range f.manager.recorded()[before:] {
+		if !strings.HasPrefix(call, "state ") {
+			t.Fatalf("refusal mutated manager: %s", call)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(retained, "executor.sqlite")); err != nil {
+		t.Fatal("removed aliased data", err)
 	}
 }

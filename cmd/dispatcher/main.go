@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -24,6 +26,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
@@ -43,20 +46,76 @@ import (
 )
 
 func main() {
+	version := flag.Bool("version", false, "Print build identity as JSON and exit")
 	cfgPath := flag.String("config", "/etc/debuglet/dispatcher/dispatcher.toml", "Path to dispatcher configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")
 	grant := flag.String("grant-operator", "", "Give the account with this UUID the operator role in the configured database, then exit")
 	revoke := flag.String("revoke-operator", "", "Return the account with this UUID to the ordinary role in the configured database, then exit")
 	enroll := flag.String("enroll-executor", "", "Create a single-use enrollment token for this executor ID in the configured database, print it once, then exit")
 	unenroll := flag.String("revoke-executor", "", "Delete the node credential enrolled for this executor ID in the configured database, then exit")
+	initDatabase := flag.String("init-database", "", "Create a new database at this path, then exit; its parent must be a private directory owned by this user")
 	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
+	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
+	acceptDataLoss := flag.Bool("accept-data-loss", false, "With -upgrade-database, apply a migration that drops the recorded runs and their logs")
 	flag.Parse()
+	initRequested, initOnly := false, true
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "init-database" {
+			initRequested = true
+		} else {
+			initOnly = false
+		}
+	})
+	if initRequested {
+		if !initOnly || flag.NArg() != 0 {
+			fmt.Fprintln(os.Stderr, "dispatcher: -init-database cannot be combined with other flags or arguments")
+			os.Exit(1)
+		}
+		if err := storagecheck.BootstrapFresh(context.Background(), storagecheck.Dispatcher, *initDatabase); err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("created dispatcher database %s\n", absoluteDatabasePath(*initDatabase))
+		return
+	}
+	if *version {
+		modified := false
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.modified" {
+					modified = setting.Value == "true"
+				}
+			}
+		}
+		fmt.Printf("{\"module\":%q,\"version\":%q,\"revision\":%q,\"modified\":%t}\n", "github.com/netsec-ethz/debuglet", buildinfo.Version, buildinfo.Revision, modified)
+		return
+	}
+
+	if *checkDatabase && (*upgrade || *acceptDataLoss || *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "") {
+		fmt.Fprintln(os.Stderr, "dispatcher: -check-database cannot be combined with another administration flag")
+		os.Exit(1)
+	}
+	if *acceptDataLoss && !*upgrade {
+		fmt.Fprintln(os.Stderr, "dispatcher: -accept-data-loss is only valid with -upgrade-database")
+		os.Exit(1)
+	}
 
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
 	}
 
+	// Checking a database only reads it, so it is safe while the daemon
+	// serves it; the answer tells an upgrade whether there is work to do.
+	if *checkDatabase {
+		err := storagecheck.Check(context.Background(), storagecheck.Dispatcher, cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(checkDatabaseStatus(err))
+		}
+		fmt.Printf("dispatcher database %s is current for this build\n", absoluteDatabasePath(cfg.Database.Path))
+		return
+	}
 	// A database is upgraded only when its operator asks for it, never at
 	// start: a normal start refuses an outdated schema instead.
 	if *upgrade {
@@ -64,12 +123,18 @@ func main() {
 			fmt.Fprintln(os.Stderr, "dispatcher: -upgrade-database cannot be combined with another administration flag")
 			os.Exit(1)
 		}
-		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Dispatcher, cfg.Database.Path)
+		var options []storagecheck.UpgradeOption
+		if *acceptDataLoss {
+			options = append(options, storagecheck.AcceptDataLoss())
+		}
+		path := absoluteDatabasePath(cfg.Database.Path)
+		fmt.Printf("upgrading dispatcher database %s\n", path)
+		version, err := storagecheck.Upgrade(context.Background(), storagecheck.Dispatcher, cfg.Database.Path, options...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("database %s now records dispatcher schema version %d\n", cfg.Database.Path, version)
+		fmt.Printf("database %s now records dispatcher schema version %d\n", path, version)
 		// The daemon enforces foreign keys on new writes only; rows an
 		// earlier version wrote without them are reported, not changed.
 		violations, err := storagecheck.ForeignKeyViolations(context.Background(), cfg.Database.Path)
@@ -117,6 +182,34 @@ func main() {
 	logger.Info("Dispatcher stopped", zap.String("role", "dispatcher"), zap.Bool("joined", true))
 }
 
+// checkDatabaseStatus maps the answer of -check-database to its exit status:
+// 3 for a database the upgrade brings to this build keeping its data, 4 for
+// one whose upgrade drops the recorded runs, 1 for any other refusal.
+func checkDatabaseStatus(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, storagecheck.ErrOutdated) && errors.Is(err, storagecheck.ErrDataLoss):
+		return 4
+	case errors.Is(err, storagecheck.ErrOutdated):
+		return 3
+	default:
+		return 1
+	}
+}
+
+// absoluteDatabasePath names the database file an administration mode acts
+// on, which is not always next to the configuration file that names it.
+func absoluteDatabasePath(path string) string {
+	if path == "" {
+		return path
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		return absolute
+	}
+	return path
+}
+
 func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile string, logger *zap.Logger) error {
 	// Refuse unusable TLS material and an unsupported schema before opening the
 	// database for service, restoring the scheduler or binding a listener.
@@ -143,6 +236,9 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 		return fmt.Errorf("create dispatcher: %w", err)
 	}
 	defer d.Close()
+	if err := d.ConfigureOutputLimits(cfg.Output); err != nil {
+		return fmt.Errorf("configure output limits: %w", err)
+	}
 	// An executor ID is bound to a node credential only where the listeners
 	// actually verify one; with no client certificate there is nothing to bind.
 	if security != nil && security.RequireClientIdentity {
@@ -365,6 +461,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	// cookie's Secure attribute comes from this daemon's own transport, never
 	// from a request header, for the reason recorded at the Serve call below.
 	handler := api.NewHandler(manager, db, logger,
+		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
 		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),
 		api.GitHubOAuth(api.GitHubOAuthConfig{
@@ -376,14 +473,8 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
+	e.Use(api.RequestLog(logger))
 	e.Use(middleware.Recover())
-	logFormat := `{"level":"info","ts":${time_unix},"msg":"request","method":"${method}","uri":"${uri}","status":${status},"latency":${latency},"remote_ip":"${remote_ip}","host":"${host}","error":"${error}"}` + "\n"
-	if !cfg.Logging.JSONLogs {
-		logFormat = "${time_rfc3339}\t${method}\t${uri} ${status} ${latency_human} ${remote_ip}\n"
-	}
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Format: logFormat,
-	}))
 	corsConfig := middleware.DefaultCORSConfig
 	corsConfig.ExposeHeaders = []string{api.VersionHeader}
 	if len(cfg.CORS.AllowedOrigins) > 0 {

@@ -1,0 +1,311 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+rule_files:
+  - alerts.yml
+evaluation_interval: 15s
+tests:
+  - name: healthy
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+  - name: scrape failure
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: API unready
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: control lost
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: zero capacity
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: registry unavailable
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '0+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: missing readiness
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: missing capacity
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: stale observation
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x8'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x8'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x8'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+0x8'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+  - name: recovery preserves unknown outcomes
+    interval: 15s
+    input_series:
+      - series: 'up{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x12'
+      - series: 'debuglet_api_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x12'
+      - series: 'debuglet_executors_ready{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1 1 0 0 0 0 0 0 1 1 1 1 1'
+      - series: 'debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1000000+0x12'
+      - series: 'debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="registry",reason=""}'
+        values: '1+0x12'
+      - series: 'debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '0+15x12'
+      - series: 'debuglet_retained_runs_unknown{job="debuglet-dispatcher",instance="owned:9000"}'
+        values: '1+0x12'
+    alert_rule_test:
+      - eval_time: 90s
+        alertname: DebugletUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: debuglet-dispatcher
+              instance: owned:9000
+              severity: page
+              owner: debuglet-operator
+            exp_annotations:
+              summary: Debuglet API readiness or eligible executor capacity is unavailable
+              description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+              runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability
+      - eval_time: 150s
+        alertname: DebugletUnavailable
+        exp_alerts: []
+    promql_expr_test:
+      - expr: 'debuglet_retained_runs_unknown{job="debuglet-dispatcher"}'
+        eval_time: 150s
+        exp_samples:
+          - labels: 'debuglet_retained_runs_unknown{job="debuglet-dispatcher",instance="owned:9000"}'
+            value: 1

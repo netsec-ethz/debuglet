@@ -31,6 +31,8 @@ tag=${1:-smoke}
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 dockerfile=deploy/docker/debuglet.Dockerfile
 
+full_image="debuglet-full:${tag}"
+cli_image="debuglet-cli:${tag}"
 dispatcher_image="debuglet-dispatcher:${tag}"
 executor_image="debuglet-executor:${tag}"
 dispatcher_role="debuglet-smoke-dispatcher-role-${tag}"
@@ -86,11 +88,23 @@ json_string() {
 }
 
 check_identity() {
-	local image=$1 revision expected version manifest
+	local image=$1 component=$2 revision expected version manifest binary component_path
 	expected=$(git -C "$root" rev-parse HEAD)
 	local reported
-	reported=$(docker run --rm --network none --entrypoint /opt/debuglet/bin/dbl \
-		"$image" --output json version)
+	binary=dbl
+	component_path=
+	if [ -n "$component" ]; then component_path=/$component; fi
+	if [ "$component" = dispatcher ] || [ "$component" = executor ]; then
+		binary=debuglet-$component
+		reported=$(docker run --rm --network none "$image" --version)
+	else
+		reported=$(docker run --rm --network none --entrypoint /opt/debuglet/bin/dbl \
+			"$image" --output json version)
+	fi
+	if [ -n "$component" ]; then
+		docker run --rm --network none --entrypoint /bin/sh "$image" \
+			-c 'test "$(ls /opt/debuglet/bin)" = "$1" && test "$(find /opt/debuglet/lib -path "*/bin/*" -type f | wc -l)" -eq 1' sh "$binary"
+	fi
 	revision=$(printf '%s' "$reported" | json_string revision)
 	version=$(printf '%s' "$reported" | json_string version)
 	if [ "$revision" != "$expected" ]; then
@@ -98,7 +112,7 @@ check_identity() {
 		return 1
 	fi
 	manifest=$(docker run --rm --network none --entrypoint /bin/cat \
-		"$image" "/opt/debuglet/lib/debuglet/$version/share/debuglet/manifest.json")
+		"$image" "/opt/debuglet/lib/debuglet$component_path/$version/share/debuglet/manifest.json")
 	local toolchain
 	toolchain=$(printf '%s' "$manifest" | json_string go_version)
 	if [ "$toolchain" != "go1.25.11" ]; then
@@ -124,20 +138,24 @@ await() {
 	done
 }
 
+build full "$full_image"
+build cli "$cli_image"
 build dispatcher "$dispatcher_image"
 build executor "$executor_image"
 
-check_identity "$dispatcher_image"
-check_identity "$executor_image"
+check_identity "$full_image" ""
+check_identity "$cli_image" cli
+check_identity "$dispatcher_image" dispatcher
+check_identity "$executor_image" executor
 
 # The role commands manage a private state directory: they bootstrap a fresh
 # database and write the daemon configuration the product itself generates.
 # Running them first gives the daemon checks below a real temporary
 # configuration without a second, hand-maintained copy of the config schema.
-note "starting the dispatcher image's local role on loopback"
+note "preparing dispatcher state with the full bundle on loopback"
 docker run --detach --name "$dispatcher_role" --network none --user "$runtime_user" \
 	--volume "$work/dispatcher:/state" --entrypoint /opt/debuglet/bin/dbl \
-	"$dispatcher_image" --config /state/dbl.toml --output json \
+	"$full_image" --config /state/dbl.toml --output json \
 	dispatcher up --name smoke --state-dir /state/role --port 9000 --grpc-port 9001 >/dev/null
 await "$work/dispatcher/role/ready.json" "$dispatcher_role"
 docker stop --time 30 "$dispatcher_role" >/dev/null
@@ -151,10 +169,10 @@ await "$work/dispatcher/dispatcher-ready.json" "$dispatcher_daemon"
 
 # The executor containers join the dispatcher container's network namespace, so
 # the whole check stays on a loopback interface no other process can reach.
-note "registering the executor image with the dispatcher image over loopback"
+note "preparing executor state with the full bundle over loopback"
 docker run --detach --name "$executor_role" --network "container:$dispatcher_daemon" \
 	--user "$runtime_user" --volume "$work/executor:/state" \
-	--entrypoint /opt/debuglet/bin/dbl "$executor_image" \
+	--entrypoint /opt/debuglet/bin/dbl "$full_image" \
 	--config /state/dbl.toml --output json \
 	executor up --name smoke --state-dir /state/role --dispatcher http://127.0.0.1:9000 >/dev/null
 await "$work/executor/role/ready.json" "$executor_role"

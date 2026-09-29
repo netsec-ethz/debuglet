@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/memory"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +39,7 @@ import (
 // to a SQLite database to persist states across executor restarts.
 type SqliteStorage struct {
 	db          *sql.DB
+	output      *outputstore.Store
 	decorate    func(database.DBTX) database.DBTX
 	local       *memory.MemoryStorage
 	callbackMu  sync.RWMutex
@@ -53,8 +56,8 @@ var _ scheduler.Scheduler = (*SqliteStorage)(nil)
 
 // NewStorage persists the in-memory core's accepted work. Its admission guards
 // are the ones that core commits new reservations and queue promotion under.
-func NewStorage(db *sql.DB, eligibility scheduler.RestoreEligibility, admission scheduler.Admission) (*SqliteStorage, error) {
-	s := &SqliteStorage{db: db, eligibility: eligibility}
+func NewStorage(db *sql.DB, output *outputstore.Store, eligibility scheduler.RestoreEligibility, admission scheduler.Admission) (*SqliteStorage, error) {
+	s := &SqliteStorage{db: db, output: output, eligibility: eligibility}
 	local, err := memory.NewPersistentStorage(s.persist, s.finalize, s.inspectAbsent, admission)
 	if err != nil {
 		return nil, err
@@ -167,26 +170,42 @@ func (s *SqliteStorage) persist(ctx context.Context, spec scheduler.Spec) (sched
 		startTime = *spec.StartTime
 	}
 
-	if err := s.withDatabase(ctx, func(ctx context.Context, queries *database.Queries) error {
-		return queries.CreateDebuglet(ctx, database.CreateDebugletParams{
-			Uuid:                  spec.DebugletID,
-			DispatcherIncarnation: spec.Binding.Incarnation,
-			SessionID:             spec.Binding.SessionID,
-			StartTime:             database.NewUTCTime(startTime),
-			Args:                  spec.Args,
-			Wasm:                  spec.Wasm,
-			TransactionID:         spec.TransactionID,
-			// policy
-			FloorBw:     spec.Policy.FloorBW,
-			CeilBw:      spec.Policy.CeilBW,
-			TimeoutMs:   spec.Policy.Timeout.Milliseconds(),
-			Addresses:   spec.Policy.Addresses,
-			RequireIcmp: spec.Policy.RequireICMP,
-			ListenUdp:   spec.Policy.ListenUDP,
-			ListenTcp:   spec.Policy.ListenTCP,
-			ListenScion: spec.Policy.ListenSCION,
+	params := database.CreateDebugletParams{
+		Uuid:                  spec.DebugletID,
+		DispatcherIncarnation: spec.Binding.Incarnation,
+		SessionID:             spec.Binding.SessionID,
+		StartTime:             database.NewUTCTime(startTime),
+		Args:                  spec.Args,
+		Wasm:                  spec.Wasm,
+		TransactionID:         spec.TransactionID,
+		// policy
+		FloorBw:     spec.Policy.FloorBW,
+		CeilBw:      spec.Policy.CeilBW,
+		TimeoutMs:   spec.Policy.Timeout.Milliseconds(),
+		Addresses:   spec.Policy.Addresses,
+		RequireIcmp: spec.Policy.RequireICMP,
+		ListenUdp:   spec.Policy.ListenUDP,
+		ListenTcp:   spec.Policy.ListenTCP,
+		ListenScion: spec.Policy.ListenSCION,
+	}
+	var err error
+	switch spec.OutputVersion {
+	case 0:
+		err = s.withDatabase(ctx, func(ctx context.Context, q *database.Queries) error { return q.CreateDebuglet(ctx, params) })
+	case pb.OutputVersion:
+		if s.output == nil {
+			return scheduler.Spec{}, errors.New("output storage is required for versioned admission")
+		}
+		err = s.withTransaction(ctx, func(ctx context.Context, tx *sql.Tx, q *database.Queries) error {
+			if err := q.CreateDebuglet(ctx, params); err != nil {
+				return err
+			}
+			return s.output.AdmitTx(ctx, tx, spec.DebugletID, spec.Binding, spec.OutputVersion)
 		})
-	}); err != nil {
+	default:
+		return scheduler.Spec{}, errors.New("unsupported output version")
+	}
+	if err != nil {
 		return scheduler.Spec{}, err
 	}
 
@@ -230,9 +249,13 @@ func (s *SqliteStorage) inspectAbsent(ctx context.Context, id uuid.UUID, binding
 func (s *SqliteStorage) Shutdown(ctx context.Context) error { return s.local.Shutdown(ctx) }
 
 func (s *SqliteStorage) finalize(ctx context.Context, debugletID uuid.UUID) error {
-	if err := s.withDatabase(ctx, func(ctx context.Context, queries *database.Queries) error {
-		return queries.DeleteDebuglet(ctx, debugletID)
-	}); err != nil {
+	var err error
+	if s.output == nil {
+		err = s.withDatabase(ctx, func(ctx context.Context, q *database.Queries) error { return q.DeleteDebuglet(ctx, debugletID) })
+	} else {
+		err = s.finalizeWithOutput(ctx, debugletID)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to delete debuglet %s from database: %w", debugletID, err)
 	}
 	return nil

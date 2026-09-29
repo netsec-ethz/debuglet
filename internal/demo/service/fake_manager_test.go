@@ -156,7 +156,7 @@ func (m *fakeManager) State(_ context.Context, unit string) (UnitState, error) {
 	if u, known := m.units[unit]; known && u.active == "failed" {
 		// A failed unit keeps its failure until it is reset or run
 		// again, even once its file is gone.
-		return UnitState{Loaded: loaded, Active: u.active, Sub: u.sub, Enabled: u.enabled,
+		return UnitState{Loaded: loaded, FragmentPath: filepath.Join(UnitDirectory(m.root), unit), Active: u.active, Sub: u.sub, Enabled: u.enabled,
 			Result: u.result, ExecMainStatus: u.status}, nil
 	}
 	if _, err := os.Stat(filepath.Join(UnitDirectory(m.root), unit)); err != nil {
@@ -169,7 +169,7 @@ func (m *fakeManager) State(_ context.Context, unit string) (UnitState, error) {
 		return UnitState{Active: "inactive", Sub: "dead", Result: "success"}, nil
 	}
 	u := m.unit(unit)
-	return UnitState{Loaded: true, Active: u.active, Sub: u.sub, Enabled: u.enabled,
+	return UnitState{Loaded: true, FragmentPath: filepath.Join(UnitDirectory(m.root), unit), Active: u.active, Sub: u.sub, Enabled: u.enabled,
 		MainPID: u.pid, Result: u.result, ExecMainStatus: u.status}, nil
 }
 

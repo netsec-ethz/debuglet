@@ -10,9 +10,17 @@ import (
 
 func installedFixture(t *testing.T) (string, Manifest) {
 	t.Helper()
+	return installedComponentFixture(t, "")
+}
+
+func installedComponentFixture(t *testing.T, component string) (string, Manifest) {
+	t.Helper()
 	root := t.TempDir()
 	m := Manifest{SchemaVersion: 1, Version: "v0.0.0-dev.123456abcdef", SourceSHA: strings.Repeat("a", 40), GoVersion: Toolchain, GOOS: "linux", GOARCH: "amd64", GuestABI: GuestABI, Files: map[string]File{}}
-	for name, mode := range PayloadModes() {
+	if component != "" {
+		m.SchemaVersion, m.Component = 2, component
+	}
+	for name, mode := range PayloadModesFor(component) {
 		if name == ManifestPath {
 			continue
 		}
@@ -39,6 +47,9 @@ func writeManifest(t *testing.T, root string, m Manifest) {
 	t.Helper()
 	data, err := json.Marshal(m)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "share", "debuglet"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(ManifestPath)), data, 0644); err != nil {
@@ -149,5 +160,55 @@ func TestVersionPathSafety(t *testing.T) {
 		if ValidVersion(v) {
 			t.Errorf("accepted %q", v)
 		}
+	}
+}
+
+func TestVerifyComponentInstallation(t *testing.T) {
+	for _, component := range []string{"cli", "executor", "dispatcher"} {
+		t.Run(component, func(t *testing.T) {
+			root, want := installedComponentFixture(t, component)
+			got, err := Verify(root)
+			if err != nil || got.Component != component || got.SourceSHA != want.SourceSHA {
+				t.Fatalf("verify: %+v %v", got, err)
+			}
+			// A valid binary from another role is still an unexpected member.
+			extra := "bin/dbl"
+			if component == "cli" {
+				extra = "bin/debuglet-executor"
+			}
+			if err := os.WriteFile(filepath.Join(root, extra), []byte("other role"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Verify(root); err == nil {
+				t.Fatal("accepted another component's payload")
+			}
+		})
+	}
+}
+
+func TestComponentManifestSchema(t *testing.T) {
+	_, m := installedComponentFixture(t, "cli")
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, old, replacement string }{
+		{"unknown component", `"component":"cli"`, `"component":"other"`},
+		{"null component", `"component":"cli"`, `"component":null`},
+		{"missing component", `"component":"cli",`, ``},
+		{"empty component", `"component":"cli"`, `"component":""`},
+		{"legacy schema with component", `"schema_version":2`, `"schema_version":1`},
+		{"component case alias", `"component":"cli"`, `"Component":"cli"`},
+		{"wrong component file set", `"component":"cli"`, `"component":"executor"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := strings.Replace(string(data), tc.old, tc.replacement, 1)
+			if changed == string(data) {
+				t.Fatal("fixture mutation had no effect")
+			}
+			if _, err := DecodeManifest([]byte(changed)); err == nil {
+				t.Fatal("accepted invalid component manifest")
+			}
+		})
 	}
 }
