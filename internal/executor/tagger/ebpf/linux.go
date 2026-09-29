@@ -10,8 +10,10 @@
 // egress hook on a named network interface.
 //
 // Key architecture:
-//   - The Go-side KeyManager periodically updates a BPF hash map with the
-//     current per-measurement authentication key (ak).
+//   - The Go side updates a BPF hash map with the current per-measurement
+//     authentication key (ak) at each epoch boundary, and reports the epoch
+//     whose key the map may still hold to the key schedule, which withholds
+//     that key from disclosure.
 //   - The eBPF program reads ak from the map, runs SipHash-2-4 over the packet,
 //     and writes the 16-bit result into the IPv4 IPID field.
 //   - The Linux kernel's BPF_F_RECOMPUTE_CSUM flag causes the checksum to be
@@ -82,10 +84,15 @@ type BPFTagger struct {
 	// Immutable owned resources; Close attempts every release even after errors.
 	closers []io.Closer
 
-	// refreshMu guards the last refresh failure and the last successful install.
-	refreshMu   sync.Mutex
-	refreshErr  error
-	lastInstall time.Time
+	// refreshMu guards the last refresh failure, the last successful install
+	// and the hold: the epoch whose key the map slot may still contain. The
+	// hold is claimed before a key is written and released only after the slot
+	// is confirmed empty or the program detached.
+	refreshMu      sync.Mutex
+	refreshErr     error
+	lastInstall    time.Time
+	installedEpoch int64
+	holding        bool
 }
 
 // NewBPFTagger loads the compiled eBPF object, attaches the TC egress program
@@ -150,10 +157,7 @@ func NewBPFTagger(logger *zap.Logger, iface *net.Interface, schedule *tesla.KeyS
 		closers:    []io.Closer{l, objs.DebugletTag, objs.AkMap},
 	}
 
-	if err := bt.initializeRefresh(bt.updateKey, func() (<-chan time.Time, func()) {
-		ticker := time.NewTicker(bt.schedule.Config().Delay / 2)
-		return ticker.C, ticker.Stop
-	}); err != nil {
+	if err := bt.initializeRefresh(bt.updateKey, bt.refreshTimer); err != nil {
 		return nil, fmt.Errorf("ebpf: initial key update: %w", err)
 	}
 
@@ -204,12 +208,25 @@ func (bt *BPFTagger) updateKey() error {
 // applyKeyAt installs the entry for time now through install. Without a usable
 // key, or when the install fails, it removes the slot so the TC program passes
 // packets untagged instead of tagging with a public or previous epoch's key.
+//
+// The hold is claimed before install writes the slot and moves to the new
+// epoch once the write succeeded; while a write is in flight it keeps the
+// older of the previous and the new epoch. It is released only when remove
+// confirmed the slot empty, so a failed removal keeps withholding the key the
+// kernel may still tag with.
 func (bt *BPFTagger) applyKeyAt(now time.Time, install func(akEntry) error, remove func() error) error {
 	entry, ok, err := akEntryAt(bt.schedule, bt.measureID, now)
 	if err == nil && ok {
+		epoch := bt.schedule.EpochOf(now)
+		bt.refreshMu.Lock()
+		if !bt.holding || epoch < bt.installedEpoch {
+			bt.installedEpoch, bt.holding = epoch, true
+		}
+		bt.refreshMu.Unlock()
 		if err = install(entry); err == nil {
 			bt.refreshMu.Lock()
 			bt.lastInstall = now
+			bt.installedEpoch = epoch
 			bt.refreshMu.Unlock()
 			return nil
 		}
@@ -220,7 +237,23 @@ func (bt *BPFTagger) applyKeyAt(now time.Time, install func(akEntry) error, remo
 		}
 		return fmt.Errorf("%w; %w: %w", err, errStaleKey, rmErr)
 	}
+	bt.releaseHold()
 	return err
+}
+
+// releaseHold records that the map slot holds no key any more.
+func (bt *BPFTagger) releaseHold() {
+	bt.refreshMu.Lock()
+	bt.holding = false
+	bt.refreshMu.Unlock()
+}
+
+// InstalledEpoch reports the epoch whose key the map slot may still hold, for
+// the key schedule's disclosure cap.
+func (bt *BPFTagger) InstalledEpoch() (int64, bool) {
+	bt.refreshMu.Lock()
+	defer bt.refreshMu.Unlock()
+	return bt.installedEpoch, bt.holding
 }
 
 func (bt *BPFTagger) MapKey() uint32 {
@@ -235,32 +268,85 @@ func mapKey(measurementID []byte) uint32 {
 	return h.Sum32()
 }
 
-// initializeRefresh runs before the constructor publishes bt. An initial
-// failure has no refresh goroutine to join and still releases every resource.
-func (bt *BPFTagger) initializeRefresh(update func() error, newTicks func() (<-chan time.Time, func())) error {
+// refreshTimer fires when the next update is due after one that returned
+// lastErr (see refreshWait). Without a due update the loop idles until stop.
+func (bt *BPFTagger) refreshTimer(lastErr error) (<-chan time.Time, func()) {
+	_, holding := bt.InstalledEpoch()
+	wait, ok := refreshWait(bt.schedule, time.Now(), lastErr != nil, holding)
+	if !ok {
+		return nil, func() {}
+	}
+	timer := time.NewTimer(wait)
+	return timer.C, func() { timer.Stop() }
+}
+
+// refreshWait returns how long after now the next update is due. After a
+// successful update it is the next epoch boundary, so the key of a new epoch
+// is installed when it begins and the previous one can be disclosed. A failed
+// update is retried after Delay/2, or at the boundary if that comes first; from
+// Expiry on, retries continue while the slot may still hold a key. Otherwise no
+// key is ever installed again and false means no update is due.
+func refreshWait(schedule *tesla.KeySchedule, now time.Time, failed, holding bool) (time.Duration, bool) {
+	retry := schedule.Config().Delay / 2
+	next, ok := nextBoundary(schedule, now)
+	switch {
+	case ok && failed:
+		return min(retry, next.Sub(now)), true
+	case ok:
+		return next.Sub(now), true
+	case failed && holding:
+		return retry, true
+	default:
+		return 0, false
+	}
+}
+
+// nextBoundary returns the start of the epoch after the one containing now,
+// and false once the chain is exhausted.
+func nextBoundary(schedule *tesla.KeySchedule, now time.Time) (time.Time, bool) {
+	if schedule.Exhausted(now) {
+		return time.Time{}, false
+	}
+	cfg := schedule.Config()
+	return cfg.Epoch.Add(time.Duration(schedule.EpochOf(now)+1) * cfg.Delay), true
+}
+
+// initializeRefresh runs before the constructor publishes bt. The tagger
+// registers with the schedule before the first key is written, so the schedule
+// never sees an installed key without its hold. An initial failure has no
+// refresh goroutine to join and still releases every resource.
+func (bt *BPFTagger) initializeRefresh(update func() error, newTimer func(lastErr error) (<-chan time.Time, func())) error {
+	if bt.schedule != nil {
+		bt.schedule.RegisterInstalled(bt)
+	}
 	if err := update(); err != nil {
 		return cleanup.Join(err, bt.Close())
 	}
-	ticks, stopTicker := newTicks()
 	bt.refreshDone = make(chan struct{})
-	go bt.keyRefreshLoop(update, ticks, stopTicker)
+	go bt.keyRefreshLoop(update, newTimer)
 	return nil
 }
 
-func (bt *BPFTagger) keyRefreshLoop(update func() error, ticks <-chan time.Time, stopTicker func()) {
+// keyRefreshLoop waits on a fresh timer after every update, chosen from that
+// update's result: the boundary that follows it, or a retry after a failure.
+func (bt *BPFTagger) keyRefreshLoop(update func() error, newTimer func(lastErr error) (<-chan time.Time, func())) {
 	defer close(bt.refreshDone)
-	defer stopTicker()
+	var lastErr error
 	for {
 		select {
 		case <-bt.stopCh:
 			return
 		default:
 		}
+		fired, stopTimer := newTimer(lastErr)
 		select {
 		case <-bt.stopCh:
+			stopTimer()
 			return
-		case <-ticks:
-			bt.noteRefresh(update())
+		case <-fired:
+			stopTimer()
+			lastErr = update()
+			bt.noteRefresh(lastErr)
 		}
 	}
 }
@@ -291,6 +377,23 @@ func (bt *BPFTagger) TagPacket(pkt []byte) ([]byte, error) {
 
 // Close detaches the eBPF program and releases all BPF resources.
 func (bt *BPFTagger) Close() error {
+	return bt.closeWith(bt.deleteSlot)
+}
+
+// deleteSlot empties this measurement's map slot.
+func (bt *BPFTagger) deleteSlot() error {
+	if bt.objs.AkMap == nil {
+		return errors.New("no key map")
+	}
+	key := bt.MapKey()
+	return bt.objs.AkMap.Delete(&key)
+}
+
+// closeWith joins the refresh loop, removes the slot through remove and then
+// releases the resources, attachment first. The hold is released when the slot
+// is confirmed empty or the attachment was closed; otherwise the program may
+// still tag with the installed key, which then stays withheld from disclosure.
+func (bt *BPFTagger) closeWith(remove func() error) error {
 	bt.closeOnce.Do(func() {
 		if bt.stopCh != nil {
 			close(bt.stopCh)
@@ -298,7 +401,24 @@ func (bt *BPFTagger) Close() error {
 		if bt.refreshDone != nil {
 			<-bt.refreshDone
 		}
-		bt.closeErr = closeResources(bt.closers...)
+		rmErr := remove()
+		removed := rmErr == nil || errors.Is(rmErr, ebpf.ErrKeyNotExist)
+		// The attachment is the first closer; closing it detaches the program.
+		detached := false
+		if len(bt.closers) > 0 {
+			detachErr := closeResources(bt.closers[0])
+			detached = detachErr == nil
+			bt.closeErr = errors.Join(detachErr, closeResources(bt.closers[1:]...))
+		}
+		if removed || detached {
+			bt.releaseHold()
+			if bt.schedule != nil {
+				bt.schedule.UnregisterInstalled(bt)
+			}
+		} else if epoch, holding := bt.InstalledEpoch(); holding {
+			bt.logger.Warn("eBPF tagger may still tag after Close; its key stays withheld from disclosure",
+				zap.Int64("epoch", epoch), zap.NamedError("remove_error", rmErr), zap.Error(bt.closeErr))
+		}
 	})
 	return bt.closeErr
 }

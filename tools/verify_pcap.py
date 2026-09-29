@@ -43,6 +43,15 @@ Workflow
       eBPF tagger and the pure-Go fallback compute alike.
 5. Report which debuglet IDs verified for each packet.
 
+Disclosure timing
+-----------------
+A key is published no earlier than the first executor heartbeat after every
+kernel tagger has moved off it, so disclosure may lag the epoch boundary by up
+to one heartbeat interval plus the time the executor takes to refresh its
+key, and longer while a refresh fails. "Not disclosed yet" therefore means
+retry later, not that the packet failed to verify. The one epoch of clock skew
+tolerated between the capture host and the executor is unchanged.
+
 Usage
 -----
     python3 tools/verify_pcap.py --pcap capture.pcap \\
