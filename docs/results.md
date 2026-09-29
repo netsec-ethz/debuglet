@@ -42,11 +42,11 @@ baseline for future readers.
   says actual host enforcement was not measured. An enrolled identity does not
   establish that a measurement is true.
 - `outcome` preserves the stored workload state and bounded error classification.
-  `exit_code` is null because it is not currently recorded. An exited workload
+  `exit_code` is always null in format 1.0, which does not record it. An exited workload
   must not be interpreted as exit code zero.
 - `timing.scheduled_start` and `reserved_until` are the reserved window, not
-  measured execution times. Actual start, finish and clock uncertainty are null
-  unless recorded. `observed_at` is the dispatcher time of the export snapshot;
+  measured execution times. Actual start, finish and clock uncertainty are always
+  null in format 1.0; the reader rejects a 1.0 file that sets them. `observed_at` is the dispatcher time of the export snapshot;
   nanosecond timestamp representation is not a clock accuracy claim.
 - `output.entries` contains every retained entry, in ID order, with exact bytes
   encoded as base64. `output.status` distinguishes `unknown`, `pending`,

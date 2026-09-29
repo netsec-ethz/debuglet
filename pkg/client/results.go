@@ -73,10 +73,12 @@ func validateResult(doc Result) error {
 	if doc.Attempt != nil && !resultBinding(*doc.Attempt) {
 		return bad()
 	}
-	if t := doc.Timing; (t.ScheduledStart == nil) != (t.ReservedUntil == nil) || t.ScheduledStart != nil && (!t.ReservedUntil.After(*t.ScheduledStart) || t.ScheduledStart.IsZero()) || t.ClockUncertaintyNS != nil && *t.ClockUncertaintyNS < 0 || t.StartedAt != nil && t.StartedAt.IsZero() || t.FinishedAt != nil && t.FinishedAt.IsZero() {
+	if t := doc.Timing; (t.ScheduledStart == nil) != (t.ReservedUntil == nil) || t.ScheduledStart != nil && (!t.ReservedUntil.After(*t.ScheduledStart) || t.ScheduledStart.IsZero()) {
 		return bad()
 	}
-	if doc.Timing.StartedAt != nil && doc.Timing.FinishedAt != nil && doc.Timing.FinishedAt.Before(*doc.Timing.StartedAt) {
+	// Format 1.0 records none of these facts. They stay null so that a later
+	// minor version can fill them without changing what a 1.0 file means.
+	if doc.Outcome.ExitCode != nil || doc.Timing.StartedAt != nil || doc.Timing.FinishedAt != nil || doc.Timing.ClockUncertaintyNS != nil {
 		return bad()
 	}
 	attribution := "unknown"

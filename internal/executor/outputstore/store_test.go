@@ -118,8 +118,8 @@ func TestSpoolRestartAcknowledgementAndIndependentLifetime(t *testing.T) {
 		t.Fatalf("acknowledged frames=%v %v", frames, err)
 	}
 	used, err := database.New(reopened).GetOutputUsage(ctx)
-	if err != nil || used != pb.OutputRunCharge {
-		t.Fatalf("usage=%d %v", used, err)
+	if err != nil || used != 0 {
+		t.Fatalf("usage after acknowledged end=%d %v", used, err)
 	}
 	pending, err := s.Pending(ctx, "", 100)
 	if err != nil || len(pending) != 0 {
@@ -163,6 +163,47 @@ func TestSpoolLimitsDoNotResetAfterAcknowledgement(t *testing.T) {
 	}
 	if err := s.Admit(ctx, uuid.New(), controlsession.Binding{Incarnation: uuid.NewString(), SessionID: uuid.NewString()}, pb.OutputVersion); !errors.Is(err, ErrSpoolLimit) {
 		t.Fatalf("run cap=%v", err)
+	}
+}
+
+// Acknowledged ends leave the retained-run and byte budgets, so a long-lived
+// executor keeps admitting work instead of reaching a lifetime cap.
+func TestSpoolAcknowledgedEndsReleaseRunCapacity(t *testing.T) {
+	limits := DefaultLimits()
+	limits.Runs = 2
+	s, db, _ := fixture(t, limits)
+	ctx := t.Context()
+	finish := func(id uuid.UUID, truncate bool) {
+		t.Helper()
+		appendFrame(t, s, id, "x")
+		end, err := s.Finish(ctx, id, pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if truncate {
+			receipt := &pb.DebugletOutputEnd{LastSequence: 0, Status: pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_TRUNCATED, Reason: pb.OutputReasonStorageLimit}
+			if err := s.AcceptTruncation(ctx, id, receipt); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		for range 2 {
+			if err := s.Acknowledge(ctx, id, end.LastSequence, end); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for round := range 3 {
+		first, second := admit(t, s), admit(t, s)
+		if err := s.Admit(ctx, uuid.New(), controlsession.Binding{Incarnation: uuid.NewString(), SessionID: uuid.NewString()}, pb.OutputVersion); !errors.Is(err, ErrSpoolLimit) {
+			t.Fatalf("round %d: run cap with two open runs=%v", round, err)
+		}
+		finish(first, false)
+		finish(second, true)
+		used, err := database.New(db).GetOutputUsage(ctx)
+		if err != nil || used != 0 {
+			t.Fatalf("round %d: usage=%d %v", round, used, err)
+		}
 	}
 }
 
@@ -273,8 +314,8 @@ func TestSpoolQuotaReceiptPreservesProducerEnd(t *testing.T) {
 		t.Fatalf("conflicting receipt=%v", err)
 	}
 	used, err := database.New(reopened).GetOutputUsage(ctx)
-	if err != nil || used != pb.OutputRunCharge {
-		t.Fatalf("receipt charge=%d %v", used, err)
+	if err != nil || used != 0 {
+		t.Fatalf("usage after accepted receipt=%d %v", used, err)
 	}
 }
 
@@ -298,4 +339,37 @@ func TestSpoolEmptyEndAndCanceledAdmission(t *testing.T) {
 	if _, err := s.Get(ctx, other); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("canceled admission persisted: %v", err)
 	}
+}
+
+// Abandoning an unresumable run releases its whole spool charge once, and an
+// open run cannot be abandoned while its producer may still write.
+func TestSpoolAbandonReleasesUnresumableRun(t *testing.T) {
+	limits := DefaultLimits()
+	limits.Runs = 1
+	s, db, _ := fixture(t, limits)
+	ctx := t.Context()
+	id := admit(t, s)
+	appendFrame(t, s, id, "undeliverable")
+	if err := s.Abandon(ctx, id); !errors.Is(err, ErrAcknowledgement) {
+		t.Fatalf("abandoned open run: %v", err)
+	}
+	if _, err := s.Finish(ctx, id, pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE, ""); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.Abandon(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	used, err := database.New(db).GetOutputUsage(ctx)
+	if err != nil || used != 0 {
+		t.Fatalf("usage after abandon=%d %v", used, err)
+	}
+	if frames, err := s.Frames(ctx, id, 0, 64); err != nil || len(frames) != 0 {
+		t.Fatalf("frames after abandon=%v %v", frames, err)
+	}
+	if pending, err := s.Pending(ctx, "", 10); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after abandon=%v %v", pending, err)
+	}
+	admit(t, s)
 }
