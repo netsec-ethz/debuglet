@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func key(b byte) []byte { return bytes.Repeat([]byte{b}, 32) }
@@ -42,15 +43,15 @@ func TestKeyStoreKeepsDisclosuresPerChain(t *testing.T) {
 	const id = "executor"
 	chainA, chainB := hashChain(0xA0, 4), hashChain(0xB0, 4)
 	for epoch := int64(1); epoch <= 3; epoch++ {
-		if err := ks.Store(id, chainA[0], epoch, chainA[epoch]); err != nil {
+		if err := ks.Store(id, Chain{Anchor: chainA[0]}, time.Time{}, epoch, chainA[epoch]); err != nil {
 			t.Fatal(err)
 		}
-		if err := ks.Store(id, chainB[0], epoch, chainB[epoch]); err != nil {
+		if err := ks.Store(id, Chain{Anchor: chainB[0]}, time.Time{}, epoch, chainB[epoch]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// A repeated disclosure is a no-op.
-	if err := ks.Store(id, chainB[0], 3, chainB[3]); err != nil {
+	if err := ks.Store(id, Chain{Anchor: chainB[0]}, time.Time{}, 3, chainB[3]); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []struct {
@@ -80,7 +81,7 @@ func TestKeyStoreBoundsChainsPerExecutor(t *testing.T) {
 	chains := make([][][]byte, maxChainsPerExecutor+2)
 	for c := byte(1); c <= maxChainsPerExecutor+1; c++ {
 		chains[c] = hashChain(c, 1)
-		if err := ks.Store(id, chains[c][0], 1, chains[c][1]); err != nil {
+		if err := ks.Store(id, Chain{Anchor: chains[c][0]}, time.Time{}, 1, chains[c][1]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -96,7 +97,7 @@ func TestKeyStoreBoundsChainsPerExecutor(t *testing.T) {
 		}
 	}
 
-	rejected(t, ks.Store("anchorless", nil, 4, key(0x44)))
+	rejected(t, ks.Store("anchorless", Chain{Anchor: nil}, time.Time{}, 4, key(0x44)))
 	if _, _, ok := ks.LatestDisclosed("anchorless", []byte{}); ok {
 		t.Error("a disclosure without an anchor was stored")
 	}
@@ -119,19 +120,19 @@ func TestKeyStoreVerifiesDisclosures(t *testing.T) {
 	}
 
 	// No key yet is no disclosure; the first one hashes to the anchor.
-	if err := ks.Store(id, anchor, 0, nil); err != nil {
+	if err := ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := ks.Store(id, anchor, 3, chain[3]); err != nil {
+	if err := ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 3, chain[3]); err != nil {
 		t.Fatal(err)
 	}
 	latest(3)
 
 	// A forged key is rejected, reported as the chain's first rejection once.
-	if r := rejected(t, ks.Store(id, anchor, 5, key(0xEE))); !r.First {
+	if r := rejected(t, ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 5, key(0xEE))); !r.First {
 		t.Error("the first rejection was not marked first")
 	}
-	if r := rejected(t, ks.Store(id, anchor, 6, key(0xEF))); r.First {
+	if r := rejected(t, ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 6, key(0xEF))); r.First {
 		t.Error("a repeated rejection was marked first")
 	}
 	if _, ok := ks.Get(id, anchor, 5); ok {
@@ -139,13 +140,13 @@ func TestKeyStoreVerifiesDisclosures(t *testing.T) {
 	}
 
 	// Later disclosures verify from the last verified key.
-	if err := ks.Store(id, anchor, 5, chain[5]); err != nil {
+	if err := ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 5, chain[5]); err != nil {
 		t.Fatal(err)
 	}
 	latest(5)
 
 	// An older epoch is ignored, even its genuine key.
-	if err := ks.Store(id, anchor, 4, chain[4]); err != nil {
+	if err := ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 4, chain[4]); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := ks.Get(id, anchor, 4); ok {
@@ -154,16 +155,60 @@ func TestKeyStoreVerifiesDisclosures(t *testing.T) {
 	latest(5)
 
 	// A different key for a stored epoch is rejected and does not replace it.
-	rejected(t, ks.Store(id, anchor, 3, chain[4]))
+	rejected(t, ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 3, chain[4]))
 	if k, _ := ks.Get(id, anchor, 3); !bytes.Equal(k, chain[3]) {
 		t.Error("a conflicting key replaced the stored one")
 	}
 
 	// A disclosure further than the bound from the last verified key is
 	// rejected before any hashing.
-	r := rejected(t, ks.Store(id, anchor, 5+maxVerifyWalk+1, key(0x01)))
+	r := rejected(t, ks.Store(id, Chain{Anchor: anchor}, time.Time{}, 5+maxVerifyWalk+1, key(0x01)))
 	if r.Epoch != 5+maxVerifyWalk+1 || !strings.Contains(r.Reason, "bound") {
 		t.Errorf("rejection = %v; want the walk bound for its epoch", r)
 	}
 	latest(5)
+}
+
+// TestKeyStoreBoundsDisclosuresByWallClock checks that a disclosure whose
+// epoch lies ahead of the chain's registered schedule is rejected before any
+// hashing, while the epoch an executor discloses at that time is accepted.
+func TestKeyStoreBoundsDisclosuresByWallClock(t *testing.T) {
+	ks := NewKeyStore()
+	const id = "executor"
+	chain := hashChain(0x7C, 64)
+	start := time.Unix(1_700_000_000, 0)
+	c := Chain{Anchor: chain[0], Start: start, Interval: 10 * time.Second}
+	// At start+42s the executor is in epoch 4 and discloses k_3. The bound
+	// is epoch 4 plus one epoch of tolerance (the skew allowance of 5s does
+	// not reach epoch 5 here).
+	now := start.Add(42 * time.Second)
+
+	r := rejected(t, ks.Store(id, c, now, 6, chain[6]))
+	if !strings.Contains(r.Reason, "wall-clock") || !r.First {
+		t.Errorf("rejection = %+v; want the first, a wall-clock rejection", r)
+	}
+	// A far-future epoch within the absolute walk bound is rejected the same
+	// way, so it costs no hashing.
+	r = rejected(t, ks.Store(id, c, now, maxVerifyWalk, key(0x01)))
+	if !strings.Contains(r.Reason, "wall-clock") {
+		t.Errorf("rejection = %v; want the wall-clock bound", r)
+	}
+	if _, _, ok := ks.LatestDisclosed(id, c.Anchor); ok {
+		t.Fatal("a disclosure ahead of wall-clock time was stored")
+	}
+
+	for _, epoch := range []int64{3, 5} {
+		if err := ks.Store(id, c, now, epoch, chain[epoch]); err != nil {
+			t.Fatalf("epoch %d at start+42s: %v", epoch, err)
+		}
+	}
+	if epoch, _, _ := ks.LatestDisclosed(id, c.Anchor); epoch != 5 {
+		t.Errorf("latest epoch = %d; want 5", epoch)
+	}
+
+	// Before the chain starts, only the tolerance applies.
+	rejected(t, ks.Store("early", c, start.Add(-time.Hour), 2, chain[2]))
+	if err := ks.Store("early", c, start.Add(-time.Hour), 1, chain[1]); err != nil {
+		t.Fatal(err)
+	}
 }

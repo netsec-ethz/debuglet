@@ -2755,11 +2755,11 @@ components:
         disclosed_epoch:
           type: integer
           format: int64
-          description: "Index of the latest disclosed key, 0 when none was disclosed."
+          description: "Index of the latest disclosed key that verified against the chain anchor, 0 when none has verified."
         disclosed_key:
           type: string
           format: byte
-          description: "Base64-encoded latest disclosed key. Empty when none was disclosed."
+          description: "Base64-encoded latest disclosed key that verified against the chain anchor. Empty when none has verified."
     DestinationLimitRequest:
       type: object
       additionalProperties: false

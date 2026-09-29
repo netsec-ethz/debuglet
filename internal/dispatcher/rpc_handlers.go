@@ -48,7 +48,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 	seen := d.now()
 	// The anchor names the chain the disclosed key belongs to; a re-registered
 	// executor announces a new one.
-	var anchor []byte
+	var chain tag.Chain
 	d.mu.Lock()
 	if exec, exists := d.executors[execID]; !d.closed && exists && exec.owner == owner {
 		// Concurrent requests may acquire the lock out of receipt order. A later
@@ -61,7 +61,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.Capabilities = capabilitiesFromReport(req.Capabilities, seen)
 			exec.capabilityObserved = seen
 		}
-		anchor = bytes.Clone(exec.TeslaAnchorKey)
+		chain = tag.Chain{Anchor: bytes.Clone(exec.TeslaAnchorKey), Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay}
 	} else {
 		d.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "executor session is unavailable")
@@ -77,7 +77,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 	}
 	// A disclosure that does not verify against the chain is dropped; the
 	// heartbeat still counts, and the chain is logged once rather than per beat.
-	err = d.keystore.Store(execID, anchor, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	err = d.keystore.Store(execID, chain, seen, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
 	var rejected *tag.RejectedError
 	if errors.As(err, &rejected) {
 		if rejected.First {
