@@ -83,3 +83,33 @@ func TestCapabilitySelectionCarriesICMPIntoSubmission(t *testing.T) {
 		t.Fatalf("filtered nodes: %s %v", stdout, err)
 	}
 }
+
+// The human table names the attribution state and only its documented reasons;
+// the JSON output carries the refresh details unchanged.
+func TestNodesShowAttribution(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /executors", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"old","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"]}},` +
+			`{"id":"ok","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"available","reason":"","epoch":3}}},` +
+			`{"id":"failing","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"unavailable","reason":"refresh_failing","epoch":3,"installed_epoch":2,"refresh_error":"put failed","disclosure_held_since":1700000000}}},` +
+			`{"id":"odd","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"unavailable","reason":"\u001b[31m"}}}]`))
+	})
+	fx := newFixture(t, mux)
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
+	assertCode(t, code, exitOK, stdout, stderr)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 5 || !strings.HasSuffix(strings.TrimSpace(lines[0]), "ATTRIBUTION") {
+		t.Fatalf("nodes table:\n%s", stdout)
+	}
+	for i, want := range []string{"unknown", "available", "unavailable(refresh_failing)", "unavailable"} {
+		if fields := strings.Fields(lines[i+1]); fields[len(fields)-1] != want {
+			t.Errorf("row %d attribution %q, want %q", i, fields[len(fields)-1], want)
+		}
+	}
+	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "nodes")
+	assertCode(t, code, exitOK, stdout, stderr)
+	if !strings.Contains(stdout, `"refresh_error":"put failed"`) || !strings.Contains(stdout, `"disclosure_held_since":1700000000`) {
+		t.Fatalf("JSON dropped attribution details: %s", stdout)
+	}
+}

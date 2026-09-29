@@ -270,4 +270,20 @@ message ExecutorCapabilities {
   uint32 schema_version = 1;
   repeated string protocols = 2;
   string enforcement_mode = 3; // Actual packet counter: ebpf or fallback; empty unknown.
+  // Additive within schema version 1: absent from older executors, which
+  // leaves attribution unknown.
+  AttributionState attribution = 4;
+}
+
+// Whether packets tagged now can be attributed once their TESLA key is
+// disclosed, and the kernel key-refresh state that decides it. Ages are
+// measured on the executor's clock when the report was built.
+message AttributionState {
+  string state = 1;  // available or unavailable.
+  string reason = 2; // Empty when available; epoch_zero, chain_exhausted, refresh_failing or disclosure_held.
+  int64 epoch = 3;   // Current key-schedule epoch.
+  optional int64 installed_epoch = 4;     // Oldest epoch a kernel tagger slot may still sign with; absent when none holds a key.
+  optional int64 last_refresh_age_ms = 5; // Since the oldest last successful kernel key install; absent without one.
+  string refresh_error = 6;               // Short error of a failing kernel key refresh, at most 128 bytes; empty when none fails.
+  optional int64 disclosure_held_ms = 7;  // How long an installed key has held disclosure back; absent when not held.
 }

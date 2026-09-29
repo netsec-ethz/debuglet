@@ -41,6 +41,35 @@ omitted heartbeat report does not refresh the previous observation. Replacing
 a binding clears its old capabilities and capacity. Expired control sessions
 are excluded independently of heartbeat telemetry.
 
+## Attribution state
+
+The `attribution` object in `capabilities` reports whether packets the executor
+tags now can be attributed once their TESLA key is disclosed. `dbl nodes` shows
+it in the `ATTRIBUTION` column as `available`, `unavailable(REASON)` or
+`unknown`; `--output json` carries every field. It is `null` or absent for
+executors and dispatchers that predate it, which means unknown, not available.
+A malformed attribution state is also `null`; the rest of the report stands.
+It is an executor claim, not a verification, and it is not a discovery filter.
+
+| `reason` | Meaning |
+| --- | --- |
+| `epoch_zero` | The chain anchor k_0 is public and never signs, so nothing sent during epoch 0 (the first `tesla.delay` after startup) is attributable. |
+| `chain_exhausted` | The key chain has ended; nothing is tagged until the executor restarts. |
+| `refresh_failing` | A kernel tagger's latest key refresh failed. Its slot is empty or may still hold the previous epoch's key; `refresh_error` gives a short error of at most 128 bytes. |
+| `disclosure_held` | An installed key has held disclosure back for longer than one epoch, so the keys of new tags are not published. This is the case of a tagger whose slot could not be cleared. |
+
+`epoch` is the current key-schedule epoch. With eBPF taggers of running
+measurements, `installed_epoch` is the oldest epoch a kernel slot may still
+sign with, `last_refresh_at` the oldest last successful key install and
+`disclosure_held_since` the end of the held key's epoch; each is `null`
+otherwise, including for the fallback tagger, which holds no key. A hold from
+each epoch boundary until that boundary's refresh lands is ordinary. The times
+are Unix seconds on the dispatcher's clock: its receipt time minus the age the
+executor reported.
+
+A change of reason is sent on the next heartbeat rather than waiting for the
+30 second report interval. The executor log keeps the full refresh error.
+
 TCP/TLS/UDP observations reflect the operator's transport switches. ICMP also
 requires a successful process-local raw-socket probe. SCION requires the operator
 switch plus a responsive configured SCION daemon and a local route observation.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 const (
@@ -82,13 +83,13 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS")
+		fmt.Fprintln(tw, "ID\tREADY\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION")
 		for _, n := range nodes {
 			lastSeen := "-"
 			if n.LastSeen > 0 {
 				lastSeen = time.Unix(n.LastSeen, 0).UTC().Format(time.RFC3339)
 			}
-			protocols, enforcement, capacity := "unknown", "unknown", "unknown"
+			protocols, enforcement, capacity, attribution := "unknown", "unknown", "unknown", "unknown"
 			if report := n.Capabilities; report != nil && report.SchemaVersion == 1 {
 				protocols = strings.Join(report.Protocols, ",")
 				if report.EnforcementMode != "" {
@@ -97,11 +98,30 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 				if report.AdvertisedCapacityBPS != nil {
 					capacity = strconv.FormatInt(*report.AdvertisedCapacityBPS, 10)
 				}
+				attribution = attributionColumn(report.Attribution)
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", n.ID, n.Ready, lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity)
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready, lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution)
 		}
 		return tw.Flush()
 	})
+}
+
+// attributionColumn renders available, unavailable(reason) or unknown. Only the
+// documented vocabulary is printed; the JSON output carries the refresh details.
+func attributionColumn(a *wire.AttributionState) string {
+	switch {
+	case a == nil:
+		return "unknown"
+	case a.State == "available" && a.Reason == "":
+		return "available"
+	case a.State != "unavailable":
+		return "unknown"
+	}
+	switch a.Reason {
+	case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held":
+		return "unavailable(" + a.Reason + ")"
+	}
+	return "unavailable"
 }
 
 // statusDocument is `status`'s JSON: the State plus the queried ID.

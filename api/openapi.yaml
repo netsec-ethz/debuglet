@@ -2654,12 +2654,66 @@ components:
             - ebpf
             - fallback
           description: "Actual packet-counter mode. Empty means unknown; this does not establish packet attribution or measurement truth."
+        attribution:
+          $ref: "#/components/schemas/ExecutorAttribution"
         advertised_capacity_bps:
           type: integer
           format: int64
           minimum: 0
           nullable: true
           description: "Advertised total capacity in bits per second, or null if unobserved. This is not free capacity or an admission guarantee for a destination and time window."
+    ExecutorAttribution:
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: "Executor-reported TESLA attribution state: whether packets it tags now can be attributed once their key is disclosed. Absent or null means unknown, including executors and dispatchers that predate it and a malformed report of it. Available is an executor claim, not a verification. Times are the dispatcher receipt time minus an executor-reported age, in Unix seconds."
+      required:
+        - state
+        - reason
+        - epoch
+        - installed_epoch
+        - last_refresh_at
+        - refresh_error
+        - disclosure_held_since
+      properties:
+        state:
+          type: string
+          enum:
+            - available
+            - unavailable
+        reason:
+          type: string
+          enum:
+            - ""
+            - epoch_zero
+            - chain_exhausted
+            - refresh_failing
+            - disclosure_held
+          description: "Empty when available. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch."
+        epoch:
+          type: integer
+          format: int64
+          minimum: 0
+          description: "Current key-schedule epoch."
+        installed_epoch:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: "Oldest epoch a kernel tagger slot may still sign with; null when none holds a key, including the fallback tagger and an executor without running measurements."
+        last_refresh_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Oldest last successful kernel key install; null without one."
+        refresh_error:
+          type: string
+          description: "Short error of a failing kernel key refresh, at most 128 bytes of UTF-8 without control characters; empty when none fails."
+        disclosure_held_since:
+          type: integer
+          format: int64
+          nullable: true
+          description: "When an installed key started holding disclosure back, the end of its epoch; null when not held. A hold until the refresh at each epoch boundary is ordinary."
     ExecutorResponse:
       type: object
       additionalProperties: false

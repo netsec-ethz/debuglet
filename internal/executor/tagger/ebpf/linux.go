@@ -268,6 +268,14 @@ func mapKey(measurementID []byte) uint32 {
 	return h.Sum32()
 }
 
+// LastRefresh reports the last successful install and the outcome of the
+// latest refresh, for the schedule's attribution report.
+func (bt *BPFTagger) LastRefresh() (time.Time, error) {
+	bt.refreshMu.Lock()
+	defer bt.refreshMu.Unlock()
+	return bt.lastInstall, bt.refreshErr
+}
+
 // refreshTimer fires when the next update is due after one that returned
 // lastErr (see refreshWait). Without a due update the loop idles until stop.
 func (bt *BPFTagger) refreshTimer(lastErr error) (<-chan time.Time, func()) {
