@@ -6,3 +6,6 @@
 pkg/client/auth_test.go:generic-api-key:13
 # Run UUID that names no run; the generic rule keys on its `auth` identifier.
 internal/dispatcher/transport/api/auth_test.go:generic-api-key:28
+# Route constant `routeAttributionKeys = "attribution/keys"` in the first
+# attribution-history commit; renamed to routeDisclosures in a later commit.
+85aaeb395edd6e2d1218e787f60969868eaf362b:pkg/client/attribution.go:generic-api-key:29
