@@ -25,11 +25,25 @@ missing selections, malformed events and failed tests cannot pass as coverage.
 
 ## Security and offline checks
 
-The secret lane scans proposed commits and the produced archives using pinned
-Gitleaks. Reports contain rule, path and line only; match values are discarded.
+The secret lane scans proposed commits, every tracked file at `HEAD`, and the
+produced archives using pinned Gitleaks with its default rules. Reports contain
+rule, path and line only; match values are discarded. The scanner runs a harmless
+failing control and fails if execution or reports are unavailable.
+
 Credential-negative fixtures need exact reviewed exceptions, never a directory-wide
-exclusion. The scanner runs a harmless failing control and fails if execution or reports
-are unavailable.
+exclusion. Exceptions live in the root `.gitleaksignore`, one Gitleaks fingerprint
+per line: `path:rule-id:line`, or `commit:path:rule-id:line` for a single commit.
+`tools/scan-secrets.py` rejects any other form (wildcards, directories, missing
+rule or line) and refuses scans that bring their own `.gitleaks.toml`, a different
+`.gitleaksignore`, or config overrides. Inline `gitleaks:allow` comments are
+ignored, because they bypass review of this file.
+
+To add an exception, confirm the value is a deliberate invalid fixture, take the
+path, rule and line that the failing secret job prints, and add that line to
+`.gitleaksignore` with a comment naming the fixture. When a fixture moves, replace
+its entry rather than adding another, and remove the entry with the fixture. The
+control proves an exempted finding is skipped while the same value on another
+line, in another file or under another rule is still rejected.
 
 The offline lane installs and verifies the candidate, then executes its local demo
 inside the pinned compiler-free runtime image with networking disabled. It checks
