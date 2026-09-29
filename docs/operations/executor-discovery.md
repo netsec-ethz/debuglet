@@ -74,7 +74,8 @@ A change of reason is sent on the next heartbeat rather than waiting for the
 30 second report interval. The executor log keeps the full refresh error.
 
 TCP/TLS/UDP observations reflect the operator's transport switches. ICMP also
-requires a successful process-local raw-socket probe. SCION requires the operator
+requires a successful process-local raw-socket probe (see
+[host probes](#host-probes)). SCION requires the operator
 switch plus a responsive configured SCION daemon and a local route observation.
 The bounded discovery probe accepts literal IP addresses for the daemon and its
 control-service address. Hostname configurations remain unknown for discovery;
@@ -131,3 +132,46 @@ take effect when the dispatcher restarts.
 No location is inferred from IP addresses, hostnames or account identity. This
 version provides no geographical filter; location is the operator's label,
 never finer than city.
+
+## Host probes
+
+Executors probe their own host at startup and with every capability report
+(at most every 30 seconds, expiring after 90). Every result is
+`executor-reported`. The probes are local and read-only: none sends a packet,
+changes host state or contacts a time source.
+
+- `capabilities.icmp`: `{state, reason}`. The executor opens and closes a raw
+  ICMPv4 socket, which guest ICMP needs. `available` agrees with `icmp` in
+  `protocols`. `unavailable` gives a reason: `disabled` (the operator's
+  `network.policy.icmp = false`; no socket is opened), `not_permitted` (raw
+  sockets need `CAP_NET_RAW`), `ping_socket_only` (raw sockets are refused but
+  an unprivileged ping socket opens, which guests cannot use) or `unsupported`.
+  The refreshed answer also decides guest ICMP admission on the executor. The
+  hello's `icmp_enabled`, which the dispatcher's `require_icmp` check uses, is
+  the probe of that hello.
+- `capabilities.enforcement_reason`: why the executor uses the `fallback`
+  counter: `configured` (`packet_counter = "fallback"`), `no_interface`,
+  `not_permitted` (the eBPF attach lacked privilege), `unsupported` or
+  `attach_failed`. The executor log keeps the full error. Empty for `ebpf` and
+  when unknown.
+- `clock`: `{value, source, observed_at}` in `GET /executors`. The value is the
+  kernel's clock discipline, read on Linux with `adjtimex` in read-only mode:
+  `state` is `synced`, `unsynced` (`STA_UNSYNC`) or `unknown` (not Linux);
+  `estimated_error_ns` and `max_error_ns` are the kernel's `esterror` and
+  `maxerror`, estimates kept by the host's time daemon rather than measured
+  bounds. `readiness` is `degraded` with reason `unsynced` or
+  `error_exceeds_bound` when the estimated error exceeds the executor's
+  `clock.max_error_ms` (default 100 ms, reported as `error_bound_ns`), `ready`
+  within it and `unknown` otherwise. Degraded readiness is reported and logged
+  by the executor; it does not refuse admission. `dbl doctor` runs the same
+  check locally.
+- Host platform: OS, architecture, kernel release, logical CPUs, total memory
+  and build version. This is operator-only data and never appears in
+  `GET /executors`. There is no live operator view of it yet; it is recorded in
+  the admission snapshot `provenance.vantage_point.platform`, which only the
+  run's owner and operators can read.
+
+A malformed clock, platform, ICMP state or reason leaves only that field
+unknown; the executor stays listed with the rest of its report. Results record
+the ICMP state, reason, clock and platform at admission, marked `stale` when
+the report had expired.

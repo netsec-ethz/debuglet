@@ -2272,9 +2272,14 @@ type ExecutorCapabilities struct {
 	EnforcementMode string                 `protobuf:"bytes,3,opt,name=enforcement_mode,json=enforcementMode,proto3" json:"enforcement_mode,omitempty"` // Actual packet counter: ebpf or fallback; empty unknown.
 	// Additive within schema version 1: absent from older executors, which
 	// leaves attribution unknown.
-	Attribution   *AttributionState `protobuf:"bytes,4,opt,name=attribution,proto3" json:"attribution,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Attribution *AttributionState `protobuf:"bytes,4,opt,name=attribution,proto3" json:"attribution,omitempty"`
+	// Additive within schema version 1; empty or absent is unknown.
+	// Why the counter is fallback: configured, no_interface, not_permitted,
+	// unsupported or attach_failed. Empty when enforcement_mode is ebpf.
+	EnforcementReason string      `protobuf:"bytes,5,opt,name=enforcement_reason,json=enforcementReason,proto3" json:"enforcement_reason,omitempty"`
+	Icmp              *ProbeState `protobuf:"bytes,6,opt,name=icmp,proto3" json:"icmp,omitempty"` // Raw ICMPv4 socket probe of this process.
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ExecutorCapabilities) Reset() {
@@ -2335,6 +2340,73 @@ func (x *ExecutorCapabilities) GetAttribution() *AttributionState {
 	return nil
 }
 
+func (x *ExecutorCapabilities) GetEnforcementReason() string {
+	if x != nil {
+		return x.EnforcementReason
+	}
+	return ""
+}
+
+func (x *ExecutorCapabilities) GetIcmp() *ProbeState {
+	if x != nil {
+		return x.Icmp
+	}
+	return nil
+}
+
+// A local probe outcome. Opening a socket sends nothing.
+type ProbeState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`   // available or unavailable.
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"` // Empty when available; disabled, not_permitted, ping_socket_only or unsupported.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeState) Reset() {
+	*x = ProbeState{}
+	mi := &file_protocol_protocol_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeState) ProtoMessage() {}
+
+func (x *ProbeState) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeState.ProtoReflect.Descriptor instead.
+func (*ProbeState) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *ProbeState) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *ProbeState) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 // Whether packets tagged now can be attributed once their TESLA key is
 // disclosed, and the kernel key-refresh state that decides it. Ages are
 // measured on the executor's clock when the report was built.
@@ -2353,7 +2425,7 @@ type AttributionState struct {
 
 func (x *AttributionState) Reset() {
 	*x = AttributionState{}
-	mi := &file_protocol_protocol_proto_msgTypes[36]
+	mi := &file_protocol_protocol_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2365,7 +2437,7 @@ func (x *AttributionState) String() string {
 func (*AttributionState) ProtoMessage() {}
 
 func (x *AttributionState) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[36]
+	mi := &file_protocol_protocol_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2378,7 +2450,7 @@ func (x *AttributionState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributionState.ProtoReflect.Descriptor instead.
 func (*AttributionState) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{36}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *AttributionState) GetState() string {
@@ -2438,13 +2510,17 @@ type VantagePointReport struct {
 	SchemaVersion uint32                 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
 	ScionIsdAs    string                 `protobuf:"bytes,2,opt,name=scion_isd_as,json=scionIsdAs,proto3" json:"scion_isd_as,omitempty"` // Local ISD-AS from the SCION daemon; empty unknown.
 	Listeners     []string               `protobuf:"bytes,3,rep,name=listeners,proto3" json:"listeners,omitempty"`                       // Listener transports it can open: tcp, udp, scion.
+	// Additive within schema version 1; absent is unknown. The dispatcher
+	// clears a malformed field alone and keeps the rest of the report.
+	Clock         *ClockState   `protobuf:"bytes,4,opt,name=clock,proto3" json:"clock,omitempty"`
+	Platform      *HostPlatform `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"` // Operator only; never in the public executor listing.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VantagePointReport) Reset() {
 	*x = VantagePointReport{}
-	mi := &file_protocol_protocol_proto_msgTypes[37]
+	mi := &file_protocol_protocol_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2456,7 +2532,7 @@ func (x *VantagePointReport) String() string {
 func (*VantagePointReport) ProtoMessage() {}
 
 func (x *VantagePointReport) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[37]
+	mi := &file_protocol_protocol_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2469,7 +2545,7 @@ func (x *VantagePointReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VantagePointReport.ProtoReflect.Descriptor instead.
 func (*VantagePointReport) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{37}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *VantagePointReport) GetSchemaVersion() uint32 {
@@ -2491,6 +2567,190 @@ func (x *VantagePointReport) GetListeners() []string {
 		return x.Listeners
 	}
 	return nil
+}
+
+func (x *VantagePointReport) GetClock() *ClockState {
+	if x != nil {
+		return x.Clock
+	}
+	return nil
+}
+
+func (x *VantagePointReport) GetPlatform() *HostPlatform {
+	if x != nil {
+		return x.Platform
+	}
+	return nil
+}
+
+// The kernel clock discipline as read by adjtimex without changing it.
+type ClockState struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	State            string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`                                                        // synced, unsynced or unknown.
+	EstimatedErrorNs *int64                 `protobuf:"varint,2,opt,name=estimated_error_ns,json=estimatedErrorNs,proto3,oneof" json:"estimated_error_ns,omitempty"` // Kernel esterror; absent unknown.
+	MaxErrorNs       *int64                 `protobuf:"varint,3,opt,name=max_error_ns,json=maxErrorNs,proto3,oneof" json:"max_error_ns,omitempty"`                   // Kernel maxerror; absent unknown.
+	ErrorBoundNs     int64                  `protobuf:"varint,4,opt,name=error_bound_ns,json=errorBoundNs,proto3" json:"error_bound_ns,omitempty"`                   // The operator's configured bound on estimated_error_ns.
+	Readiness        string                 `protobuf:"bytes,5,opt,name=readiness,proto3" json:"readiness,omitempty"`                                                // ready, degraded or unknown.
+	Reason           string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`                                                      // Empty unless degraded: unsynced or error_exceeds_bound.
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ClockState) Reset() {
+	*x = ClockState{}
+	mi := &file_protocol_protocol_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClockState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClockState) ProtoMessage() {}
+
+func (x *ClockState) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClockState.ProtoReflect.Descriptor instead.
+func (*ClockState) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *ClockState) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *ClockState) GetEstimatedErrorNs() int64 {
+	if x != nil && x.EstimatedErrorNs != nil {
+		return *x.EstimatedErrorNs
+	}
+	return 0
+}
+
+func (x *ClockState) GetMaxErrorNs() int64 {
+	if x != nil && x.MaxErrorNs != nil {
+		return *x.MaxErrorNs
+	}
+	return 0
+}
+
+func (x *ClockState) GetErrorBoundNs() int64 {
+	if x != nil {
+		return x.ErrorBoundNs
+	}
+	return 0
+}
+
+func (x *ClockState) GetReadiness() string {
+	if x != nil {
+		return x.Readiness
+	}
+	return ""
+}
+
+func (x *ClockState) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// Host platform facts. Empty or zero fields are unknown.
+type HostPlatform struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Os            string                 `protobuf:"bytes,1,opt,name=os,proto3" json:"os,omitempty"`                                             // Go GOOS.
+	Arch          string                 `protobuf:"bytes,2,opt,name=arch,proto3" json:"arch,omitempty"`                                         // Go GOARCH.
+	KernelRelease string                 `protobuf:"bytes,3,opt,name=kernel_release,json=kernelRelease,proto3" json:"kernel_release,omitempty"`  // uname release.
+	Cpus          uint32                 `protobuf:"varint,4,opt,name=cpus,proto3" json:"cpus,omitempty"`                                        // Logical CPUs usable by the process.
+	MemoryBytes   *uint64                `protobuf:"varint,5,opt,name=memory_bytes,json=memoryBytes,proto3,oneof" json:"memory_bytes,omitempty"` // Total physical memory.
+	BuildVersion  string                 `protobuf:"bytes,6,opt,name=build_version,json=buildVersion,proto3" json:"build_version,omitempty"`     // Executor build version.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostPlatform) Reset() {
+	*x = HostPlatform{}
+	mi := &file_protocol_protocol_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostPlatform) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostPlatform) ProtoMessage() {}
+
+func (x *HostPlatform) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostPlatform.ProtoReflect.Descriptor instead.
+func (*HostPlatform) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *HostPlatform) GetOs() string {
+	if x != nil {
+		return x.Os
+	}
+	return ""
+}
+
+func (x *HostPlatform) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+func (x *HostPlatform) GetKernelRelease() string {
+	if x != nil {
+		return x.KernelRelease
+	}
+	return ""
+}
+
+func (x *HostPlatform) GetCpus() uint32 {
+	if x != nil {
+		return x.Cpus
+	}
+	return 0
+}
+
+func (x *HostPlatform) GetMemoryBytes() uint64 {
+	if x != nil && x.MemoryBytes != nil {
+		return *x.MemoryBytes
+	}
+	return 0
+}
+
+func (x *HostPlatform) GetBuildVersion() string {
+	if x != nil {
+		return x.BuildVersion
+	}
+	return ""
 }
 
 var File_protocol_protocol_proto protoreflect.FileDescriptor
@@ -2665,12 +2925,18 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x1aInspectRetainedRunResponse\x12<\n" +
 	"\x06status\x18\x01 \x01(\x0e2$.debuglet.protocol.RetainedRunStatusR\x06status\x125\n" +
 	"\x03run\x18\x02 \x01(\v2\x1e.debuglet.protocol.RetainedRunH\x00R\x03run\x88\x01\x01B\x06\n" +
-	"\x04_run\"\xcd\x01\n" +
+	"\x04_run\"\xaf\x02\n" +
 	"\x14ExecutorCapabilities\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x1c\n" +
 	"\tprotocols\x18\x02 \x03(\tR\tprotocols\x12)\n" +
 	"\x10enforcement_mode\x18\x03 \x01(\tR\x0fenforcementMode\x12E\n" +
-	"\vattribution\x18\x04 \x01(\v2#.debuglet.protocol.AttributionStateR\vattribution\"\xd3\x02\n" +
+	"\vattribution\x18\x04 \x01(\v2#.debuglet.protocol.AttributionStateR\vattribution\x12-\n" +
+	"\x12enforcement_reason\x18\x05 \x01(\tR\x11enforcementReason\x121\n" +
+	"\x04icmp\x18\x06 \x01(\v2\x1d.debuglet.protocol.ProbeStateR\x04icmp\":\n" +
+	"\n" +
+	"ProbeState\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd3\x02\n" +
 	"\x10AttributionState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x14\n" +
@@ -2681,12 +2947,33 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x12disclosure_held_ms\x18\a \x01(\x03H\x02R\x10disclosureHeldMs\x88\x01\x01B\x12\n" +
 	"\x10_installed_epochB\x16\n" +
 	"\x14_last_refresh_age_msB\x15\n" +
-	"\x13_disclosure_held_ms\"{\n" +
+	"\x13_disclosure_held_ms\"\xed\x01\n" +
 	"\x12VantagePointReport\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12 \n" +
 	"\fscion_isd_as\x18\x02 \x01(\tR\n" +
 	"scionIsdAs\x12\x1c\n" +
-	"\tlisteners\x18\x03 \x03(\tR\tlisteners*X\n" +
+	"\tlisteners\x18\x03 \x03(\tR\tlisteners\x123\n" +
+	"\x05clock\x18\x04 \x01(\v2\x1d.debuglet.protocol.ClockStateR\x05clock\x12;\n" +
+	"\bplatform\x18\x05 \x01(\v2\x1f.debuglet.protocol.HostPlatformR\bplatform\"\x80\x02\n" +
+	"\n" +
+	"ClockState\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\x121\n" +
+	"\x12estimated_error_ns\x18\x02 \x01(\x03H\x00R\x10estimatedErrorNs\x88\x01\x01\x12%\n" +
+	"\fmax_error_ns\x18\x03 \x01(\x03H\x01R\n" +
+	"maxErrorNs\x88\x01\x01\x12$\n" +
+	"\x0eerror_bound_ns\x18\x04 \x01(\x03R\ferrorBoundNs\x12\x1c\n" +
+	"\treadiness\x18\x05 \x01(\tR\treadiness\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reasonB\x15\n" +
+	"\x13_estimated_error_nsB\x0f\n" +
+	"\r_max_error_ns\"\xcb\x01\n" +
+	"\fHostPlatform\x12\x0e\n" +
+	"\x02os\x18\x01 \x01(\tR\x02os\x12\x12\n" +
+	"\x04arch\x18\x02 \x01(\tR\x04arch\x12%\n" +
+	"\x0ekernel_release\x18\x03 \x01(\tR\rkernelRelease\x12\x12\n" +
+	"\x04cpus\x18\x04 \x01(\rR\x04cpus\x12&\n" +
+	"\fmemory_bytes\x18\x05 \x01(\x04H\x00R\vmemoryBytes\x88\x01\x01\x12#\n" +
+	"\rbuild_version\x18\x06 \x01(\tR\fbuildVersionB\x0f\n" +
+	"\r_memory_bytes*X\n" +
 	"\bRunState\x12\x19\n" +
 	"\x15RUN_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16RUN_STATE_INITIALIZING\x10\x01\x12\x15\n" +
@@ -2731,7 +3018,7 @@ func file_protocol_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_protocol_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
+var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_protocol_protocol_proto_goTypes = []any{
 	(RunState)(0),                      // 0: debuglet.protocol.RunState
 	(DebugletOutputStatus)(0),          // 1: debuglet.protocol.DebugletOutputStatus
@@ -2772,69 +3059,75 @@ var file_protocol_protocol_proto_goTypes = []any{
 	(*InspectRetainedRunRequest)(nil),  // 36: debuglet.protocol.InspectRetainedRunRequest
 	(*InspectRetainedRunResponse)(nil), // 37: debuglet.protocol.InspectRetainedRunResponse
 	(*ExecutorCapabilities)(nil),       // 38: debuglet.protocol.ExecutorCapabilities
-	(*AttributionState)(nil),           // 39: debuglet.protocol.AttributionState
-	(*VantagePointReport)(nil),         // 40: debuglet.protocol.VantagePointReport
-	(*timestamppb.Timestamp)(nil),      // 41: google.protobuf.Timestamp
+	(*ProbeState)(nil),                 // 39: debuglet.protocol.ProbeState
+	(*AttributionState)(nil),           // 40: debuglet.protocol.AttributionState
+	(*VantagePointReport)(nil),         // 41: debuglet.protocol.VantagePointReport
+	(*ClockState)(nil),                 // 42: debuglet.protocol.ClockState
+	(*HostPlatform)(nil),               // 43: debuglet.protocol.HostPlatform
+	(*timestamppb.Timestamp)(nil),      // 44: google.protobuf.Timestamp
 }
 var file_protocol_protocol_proto_depIdxs = []int32{
 	38, // 0: debuglet.protocol.HelloResponse.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
-	40, // 1: debuglet.protocol.HelloResponse.vantage_point:type_name -> debuglet.protocol.VantagePointReport
-	41, // 2: debuglet.protocol.UploadRequest.start_time:type_name -> google.protobuf.Timestamp
+	41, // 1: debuglet.protocol.HelloResponse.vantage_point:type_name -> debuglet.protocol.VantagePointReport
+	44, // 2: debuglet.protocol.UploadRequest.start_time:type_name -> google.protobuf.Timestamp
 	5,  // 3: debuglet.protocol.UploadRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
 	28, // 4: debuglet.protocol.UploadRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
 	10, // 5: debuglet.protocol.BandwidthRequest.limits:type_name -> debuglet.protocol.DestinationLimit
 	38, // 6: debuglet.protocol.HeartbeatRequest.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
-	40, // 7: debuglet.protocol.HeartbeatRequest.vantage_point:type_name -> debuglet.protocol.VantagePointReport
+	41, // 7: debuglet.protocol.HeartbeatRequest.vantage_point:type_name -> debuglet.protocol.VantagePointReport
 	0,  // 8: debuglet.protocol.DebugletStateRequest.state:type_name -> debuglet.protocol.RunState
 	5,  // 9: debuglet.protocol.DebugletAllocateRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
 	10, // 10: debuglet.protocol.DebugletAllocateResponse.allocated_limits:type_name -> debuglet.protocol.DestinationLimit
 	28, // 11: debuglet.protocol.DebugletIdent.original_binding:type_name -> debuglet.protocol.ControlBinding
-	41, // 12: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
+	44, // 12: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
 	1,  // 13: debuglet.protocol.DebugletOutputEnd.status:type_name -> debuglet.protocol.DebugletOutputStatus
 	23, // 14: debuglet.protocol.DebugletStreamRequest.ident:type_name -> debuglet.protocol.DebugletIdent
 	24, // 15: debuglet.protocol.DebugletStreamRequest.output:type_name -> debuglet.protocol.DebugletOutput
 	25, // 16: debuglet.protocol.DebugletStreamRequest.end:type_name -> debuglet.protocol.DebugletOutputEnd
 	25, // 17: debuglet.protocol.DebugletStreamResponse.end:type_name -> debuglet.protocol.DebugletOutputEnd
 	28, // 18: debuglet.protocol.RetainedRun.original_binding:type_name -> debuglet.protocol.ControlBinding
-	41, // 19: debuglet.protocol.RetainedRun.started_at:type_name -> google.protobuf.Timestamp
-	41, // 20: debuglet.protocol.RetainedRun.start_time:type_name -> google.protobuf.Timestamp
+	44, // 19: debuglet.protocol.RetainedRun.started_at:type_name -> google.protobuf.Timestamp
+	44, // 20: debuglet.protocol.RetainedRun.start_time:type_name -> google.protobuf.Timestamp
 	28, // 21: debuglet.protocol.InspectRetainedRunRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
 	2,  // 22: debuglet.protocol.InspectRetainedRunResponse.status:type_name -> debuglet.protocol.RetainedRunStatus
 	35, // 23: debuglet.protocol.InspectRetainedRunResponse.run:type_name -> debuglet.protocol.RetainedRun
-	39, // 24: debuglet.protocol.ExecutorCapabilities.attribution:type_name -> debuglet.protocol.AttributionState
-	13, // 25: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
-	15, // 26: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
-	17, // 27: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
-	19, // 28: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
-	21, // 29: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
-	26, // 30: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
-	29, // 31: debuglet.protocol.DispatcherService.BindSession:input_type -> debuglet.protocol.BindSessionRequest
-	31, // 32: debuglet.protocol.DispatcherService.RenewLease:input_type -> debuglet.protocol.RenewLeaseRequest
-	3,  // 33: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
-	6,  // 34: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
-	8,  // 35: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
-	11, // 36: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
-	33, // 37: debuglet.protocol.ExecutorService.ProbeSession:input_type -> debuglet.protocol.ProbeSessionRequest
-	36, // 38: debuglet.protocol.ExecutorService.InspectRetainedRun:input_type -> debuglet.protocol.InspectRetainedRunRequest
-	14, // 39: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
-	16, // 40: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
-	18, // 41: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
-	20, // 42: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
-	22, // 43: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
-	27, // 44: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
-	30, // 45: debuglet.protocol.DispatcherService.BindSession:output_type -> debuglet.protocol.BindSessionResponse
-	32, // 46: debuglet.protocol.DispatcherService.RenewLease:output_type -> debuglet.protocol.RenewLeaseResponse
-	4,  // 47: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
-	7,  // 48: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
-	9,  // 49: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
-	12, // 50: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
-	34, // 51: debuglet.protocol.ExecutorService.ProbeSession:output_type -> debuglet.protocol.ProbeSessionResponse
-	37, // 52: debuglet.protocol.ExecutorService.InspectRetainedRun:output_type -> debuglet.protocol.InspectRetainedRunResponse
-	39, // [39:53] is the sub-list for method output_type
-	25, // [25:39] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	40, // 24: debuglet.protocol.ExecutorCapabilities.attribution:type_name -> debuglet.protocol.AttributionState
+	39, // 25: debuglet.protocol.ExecutorCapabilities.icmp:type_name -> debuglet.protocol.ProbeState
+	42, // 26: debuglet.protocol.VantagePointReport.clock:type_name -> debuglet.protocol.ClockState
+	43, // 27: debuglet.protocol.VantagePointReport.platform:type_name -> debuglet.protocol.HostPlatform
+	13, // 28: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
+	15, // 29: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
+	17, // 30: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
+	19, // 31: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
+	21, // 32: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
+	26, // 33: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
+	29, // 34: debuglet.protocol.DispatcherService.BindSession:input_type -> debuglet.protocol.BindSessionRequest
+	31, // 35: debuglet.protocol.DispatcherService.RenewLease:input_type -> debuglet.protocol.RenewLeaseRequest
+	3,  // 36: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
+	6,  // 37: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
+	8,  // 38: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
+	11, // 39: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
+	33, // 40: debuglet.protocol.ExecutorService.ProbeSession:input_type -> debuglet.protocol.ProbeSessionRequest
+	36, // 41: debuglet.protocol.ExecutorService.InspectRetainedRun:input_type -> debuglet.protocol.InspectRetainedRunRequest
+	14, // 42: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
+	16, // 43: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
+	18, // 44: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
+	20, // 45: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
+	22, // 46: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
+	27, // 47: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
+	30, // 48: debuglet.protocol.DispatcherService.BindSession:output_type -> debuglet.protocol.BindSessionResponse
+	32, // 49: debuglet.protocol.DispatcherService.RenewLease:output_type -> debuglet.protocol.RenewLeaseResponse
+	4,  // 50: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
+	7,  // 51: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
+	9,  // 52: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
+	12, // 53: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
+	34, // 54: debuglet.protocol.ExecutorService.ProbeSession:output_type -> debuglet.protocol.ProbeSessionResponse
+	37, // 55: debuglet.protocol.ExecutorService.InspectRetainedRun:output_type -> debuglet.protocol.InspectRetainedRunResponse
+	42, // [42:56] is the sub-list for method output_type
+	28, // [28:42] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
@@ -2852,14 +3145,16 @@ func file_protocol_protocol_proto_init() {
 	}
 	file_protocol_protocol_proto_msgTypes[32].OneofWrappers = []any{}
 	file_protocol_protocol_proto_msgTypes[34].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[36].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[37].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[39].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[40].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocol_protocol_proto_rawDesc), len(file_protocol_protocol_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   38,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

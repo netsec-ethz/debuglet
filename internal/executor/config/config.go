@@ -32,6 +32,23 @@ type ExecutorConfig struct {
 	Database    DatabaseConfig
 	Pricing     PricingConfig
 	Output      OutputConfig
+	Clock       ClockConfig
+}
+
+// ClockConfig bounds the kernel's estimated clock error the executor accepts
+// before it reports its clock readiness as degraded. Readiness is reported,
+// not enforced: a degraded clock does not stop admission.
+type ClockConfig struct {
+	MaxErrorMS int64 `toml:"max_error_ms"`
+}
+
+// MaxErrorBound is the configured bound as a duration; zero selects
+// DefaultClockMaxErrorMS.
+func (cfg ClockConfig) MaxErrorBound() time.Duration {
+	if cfg.MaxErrorMS == 0 {
+		return DefaultClockMaxErrorMS * time.Millisecond
+	}
+	return time.Duration(cfg.MaxErrorMS) * time.Millisecond
 }
 
 type IdentityConfig struct {
@@ -180,6 +197,10 @@ const DefaultConfigPath = "/etc/debuglet/executor/executor.toml"
 const (
 	DefaultLogLevel     = "info"
 	DefaultMaxDebuglets = 100
+	// DefaultClockMaxErrorMS matches hostprobe.DefaultClockErrorBound.
+	DefaultClockMaxErrorMS = 100
+	// MaxClockMaxErrorMS is one minute, well beyond any disciplined clock.
+	MaxClockMaxErrorMS = 60_000
 )
 
 // MaxChainLength bounds an explicitly configured TESLA chain. It matches one
@@ -249,6 +270,9 @@ func DecodeConfig(data []byte) (*ExecutorConfig, configcheck.Document, error) {
 	if !document.Set("resources", "max_debuglets") {
 		cfg.Resources.MaxDebuglets = DefaultMaxDebuglets
 	}
+	if !document.Set("clock", "max_error_ms") {
+		cfg.Clock.MaxErrorMS = DefaultClockMaxErrorMS
+	}
 	if cfg.Dispatcher.YamuxAddr == "" {
 		cfg.Dispatcher.YamuxAddr = cfg.Dispatcher.Addr
 	}
@@ -294,6 +318,10 @@ func (cfg *ExecutorConfig) Validate() error {
 	}
 	if err := cfg.Output.Validate(); err != nil {
 		return err
+	}
+	// Zero selects the default, as for the output limits.
+	if cfg.Clock.MaxErrorMS < 0 || cfg.Clock.MaxErrorMS > MaxClockMaxErrorMS {
+		return fmt.Errorf("clock.max_error_ms must be between 0 (default) and %d, got %d", MaxClockMaxErrorMS, cfg.Clock.MaxErrorMS)
 	}
 	return cfg.validatePricing()
 }

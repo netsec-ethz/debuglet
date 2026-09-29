@@ -5,6 +5,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"net"
 	"net/netip"
 	"os"
@@ -13,11 +14,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/hostprobe"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"github.com/scionproto/scion/pkg/addr"
 	"github.com/scionproto/scion/pkg/daemon"
 	"github.com/scionproto/scion/pkg/snet/addrutil"
+	"go.uber.org/zap"
 )
 
 // A heartbeat may run much faster than this interval for TESLA disclosure. Send
@@ -39,14 +43,15 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	e.capabilityMu.Unlock()
 
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution}
-	vantage := &pb.VantagePointReport{SchemaVersion: 1}
+	vantage := &pb.VantagePointReport{SchemaVersion: 1, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	policy := e.cfg.Network.Policy.Spec()
+	report.Icmp = icmpReport(policy.ICMP, netpolicy.RefreshICMP)
 	for _, transport := range []struct {
 		name    string
 		enabled bool
 	}{
 		{"tcp", policy.TCP}, {"tls", policy.TLS}, {"udp", policy.UDP},
-		{"icmp", policy.ICMP && netpolicy.ICMPPermitted() == nil},
+		{"icmp", report.Icmp.GetState() == "available"},
 	} {
 		if transport.enabled {
 			report.Protocols = append(report.Protocols, transport.name)
@@ -63,8 +68,14 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	}
 	if e.packetCount != nil {
 		switch mode := e.packetCount.Type(); mode {
-		case "ebpf", "fallback":
+		case "ebpf":
 			report.EnforcementMode = mode
+		case "fallback":
+			report.EnforcementMode = mode
+			report.EnforcementReason = ratelimit.FallbackReason(e.packetCount)
+			if e.cfg.Network.PacketCounter == "fallback" {
+				report.EnforcementReason = ratelimit.FallbackConfigured
+			}
 		}
 	}
 	if policy.SCION {
@@ -86,6 +97,65 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 		}
 	}
 	return report, vantage
+}
+
+// icmpReport probes raw ICMPv4 sockets unless the operator switched ICMP off,
+// in which case no socket is opened. The probe also refreshes the answer guest
+// admission uses.
+func icmpReport(enabled bool, probe func() (string, error)) *pb.ProbeState {
+	if !enabled {
+		return &pb.ProbeState{State: "unavailable", Reason: netpolicy.ICMPDisabled}
+	}
+	if reason, err := probe(); err != nil {
+		if reason == "" {
+			reason = netpolicy.ICMPUnsupported
+		}
+		return &pb.ProbeState{State: "unavailable", Reason: reason}
+	}
+	return &pb.ProbeState{State: "available"}
+}
+
+// clockReport reads the kernel clock against the configured bound and logs a
+// change of its degraded reason once.
+func (e *Executor) clockReport() *pb.ClockState {
+	c := hostprobe.ReadClock(e.cfg.Clock.MaxErrorBound())
+	e.capabilityMu.Lock()
+	changed := c.Reason != e.clockReason
+	e.clockReason = c.Reason
+	e.capabilityMu.Unlock()
+	if changed && e.logger != nil {
+		if c.Reason != "" {
+			e.logger.Warn("Clock readiness degraded", zap.String("reason", c.Reason), zap.String("state", c.State), zap.Duration("bound", c.Bound))
+		} else {
+			e.logger.Info("Clock readiness restored", zap.String("state", c.State))
+		}
+	}
+	return clockState(c)
+}
+
+func clockState(c hostprobe.Clock) *pb.ClockState {
+	out := &pb.ClockState{State: c.State, ErrorBoundNs: c.Bound.Nanoseconds(), Readiness: c.Readiness, Reason: c.Reason}
+	if c.EstimatedError != nil {
+		ns := c.EstimatedError.Nanoseconds()
+		out.EstimatedErrorNs = &ns
+	}
+	if c.MaxError != nil {
+		ns := c.MaxError.Nanoseconds()
+		out.MaxErrorNs = &ns
+	}
+	return out
+}
+
+func platformReport(p hostprobe.Platform) *pb.HostPlatform {
+	out := &pb.HostPlatform{Os: p.OS, Arch: p.Arch, KernelRelease: p.KernelRelease, BuildVersion: p.BuildVersion}
+	if p.CPUs > 0 && p.CPUs <= math.MaxUint32 {
+		out.Cpus = uint32(p.CPUs)
+	}
+	if p.MemoryBytes > 0 {
+		memory := p.MemoryBytes
+		out.MemoryBytes = &memory
+	}
+	return out
 }
 
 // maxRefreshError bounds the refresh error text a report carries; the

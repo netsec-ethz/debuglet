@@ -15,9 +15,24 @@
 package netpolicy
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync"
+)
+
+// ICMP probe reasons, reported with an unavailable ICMP capability.
+const (
+	// ICMPDisabled: the operator's network policy switches ICMP off.
+	ICMPDisabled = "disabled"
+	// ICMPNotPermitted: the process may not open raw sockets (CAP_NET_RAW).
+	ICMPNotPermitted = "not_permitted"
+	// ICMPPingSocketOnly: raw sockets are refused, but an unprivileged ping
+	// socket opens. Guests need raw sockets, so ICMP remains unavailable.
+	ICMPPingSocketOnly = "ping_socket_only"
+	// ICMPUnsupported: the raw socket failed for another reason.
+	ICMPUnsupported = "unsupported"
 )
 
 // ICMPPermitted reports whether this process may open the raw ICMPv4 sockets
@@ -26,10 +41,49 @@ import (
 // cannot open the socket must not advertise the capability, and a job that
 // asks for it must be refused before it dials.
 //
-// The answer is determined once. Process privileges do not change while the
-// executor runs, and repeating the probe on every connect would open a raw
-// socket for every guest call.
-var ICMPPermitted = sync.OnceValue(probeICMP)
+// The first call probes; later calls return the latest answer. Repeating the
+// probe on every connect would open a raw socket for every guest call, so the
+// executor refreshes it on the capability cadence with RefreshICMP instead.
+func ICMPPermitted() error {
+	icmpState.mu.Lock()
+	defer icmpState.mu.Unlock()
+	if !icmpState.probed {
+		icmpState.err, icmpState.probed = probeICMP(), true
+	}
+	return icmpState.err
+}
+
+// RefreshICMP probes again and records the answer for ICMPPermitted. A refusal
+// comes with its reason: ICMPNotPermitted, ICMPPingSocketOnly or
+// ICMPUnsupported. Both are empty when raw sockets are permitted.
+func RefreshICMP() (reason string, err error) {
+	err = probeICMP()
+	icmpState.mu.Lock()
+	icmpState.err, icmpState.probed = err, true
+	icmpState.mu.Unlock()
+	return icmpReason(err, probePingSocket), err
+}
+
+var icmpState struct {
+	mu     sync.Mutex
+	probed bool
+	err    error
+}
+
+// icmpReason classifies a raw-socket failure. Only a permission refusal tries
+// the unprivileged ping socket, which then only refines the reason.
+func icmpReason(err error, pingSocket func() error) string {
+	switch {
+	case err == nil:
+		return ""
+	case !errors.Is(err, os.ErrPermission):
+		return ICMPUnsupported
+	case pingSocket() == nil:
+		return ICMPPingSocketOnly
+	default:
+		return ICMPNotPermitted
+	}
+}
 
 // probeICMP opens and immediately closes one raw ICMPv4 socket. It binds the
 // unspecified address, so it sends nothing and reaches no destination.

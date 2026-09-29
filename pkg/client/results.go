@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -154,6 +155,10 @@ func validVantagePoint(v wire.VantagePoint) bool {
 	} else if canonical, ok := wire.CanonicalISDAS(*ia.Value); !ok || canonical != *ia.Value || !source(ia.Source) || ia.ObservedAt == nil || ia.ObservedAt.IsZero() || ia.Stale == nil {
 		return false
 	}
+	// Added within schema 1 with the executor probes; omitted reads as null.
+	if !validReport(v.Clock, source, validClock) || !validReport(v.Platform, source, func(wire.HostPlatform) bool { return true }) {
+		return false
+	}
 	c := v.Capabilities
 	if c.Value == nil {
 		return v.SchemaVersion == 1 && c.Source == nil && c.ObservedAt == nil && c.Stale == nil
@@ -166,7 +171,53 @@ func validVantagePoint(v wire.VantagePoint) bool {
 	default:
 		return false
 	}
+	switch c.Value.EnforcementReason {
+	case "":
+	case "configured", "no_interface", "not_permitted", "unsupported", "attach_failed":
+		if c.Value.EnforcementMode != "fallback" {
+			return false
+		}
+	default:
+		return false
+	}
+	if p := c.Value.ICMP; p != nil {
+		switch {
+		case p.State == "available" && p.Reason == "":
+		case p.State == "unavailable" && slices.Contains([]string{"disabled", "not_permitted", "ping_socket_only", "unsupported"}, p.Reason):
+		default:
+			return false
+		}
+	}
 	return v.SchemaVersion == 1
+}
+
+// validReport requires an expiring report and its labels together or not at
+// all, and a valid value.
+func validReport[T any](r wire.LabelledReport[T], source func(*string) bool, valid func(T) bool) bool {
+	if r.Value == nil {
+		return r.Source == nil && r.ObservedAt == nil && r.Stale == nil
+	}
+	return source(r.Source) && r.ObservedAt != nil && !r.ObservedAt.IsZero() && r.Stale != nil && valid(*r.Value)
+}
+
+func validClock(c wire.ClockReport) bool {
+	switch c.State {
+	case "synced", "unsynced", "unknown":
+	default:
+		return false
+	}
+	switch {
+	case c.Readiness == "degraded" && (c.Reason == "unsynced" || c.Reason == "error_exceeds_bound"):
+	case (c.Readiness == "ready" || c.Readiness == "unknown") && c.Reason == "":
+	default:
+		return false
+	}
+	for _, ns := range []*int64{c.EstimatedErrorNS, c.MaxErrorNS} {
+		if ns != nil && *ns < 0 {
+			return false
+		}
+	}
+	return c.ErrorBoundNS > 0
 }
 
 func resultUUID(value string) bool { return isCanonicalUUID(value) && !isNilUUID(value) }

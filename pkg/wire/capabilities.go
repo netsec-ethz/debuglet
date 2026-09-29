@@ -20,6 +20,48 @@ type ExecutorCapabilities struct {
 	EnforcementMode       string            `json:"enforcement_mode"`        // Actual ebpf/fallback packet counter; empty unknown.
 	AdvertisedCapacityBPS *int64            `json:"advertised_capacity_bps"` // Total reported bandwidth, not free capacity; null unknown.
 	Attribution           *AttributionState `json:"attribution"`             // Null unknown, including executors that predate it.
+	// EnforcementReason says why the counter is fallback: configured,
+	// no_interface, not_permitted, unsupported or attach_failed. Empty when
+	// unknown or ebpf.
+	EnforcementReason string `json:"enforcement_reason"`
+	// ICMP is the executor's raw ICMPv4 socket probe; null unknown.
+	ICMP *ProbeState `json:"icmp"`
+}
+
+// ProbeState is an executor-reported local probe outcome.
+type ProbeState struct {
+	State  string `json:"state"`  // available or unavailable.
+	Reason string `json:"reason"` // Empty when available; disabled, not_permitted, ping_socket_only or unsupported.
+}
+
+// ClockReport is the executor's reading of its kernel clock discipline
+// (adjtimex). The errors are the kernel's own estimates, maintained by a time
+// daemon, not measured bounds.
+type ClockReport struct {
+	State            string `json:"state"`              // synced, unsynced or unknown.
+	EstimatedErrorNS *int64 `json:"estimated_error_ns"` // Kernel esterror; null unknown.
+	MaxErrorNS       *int64 `json:"max_error_ns"`       // Kernel maxerror; null unknown.
+	ErrorBoundNS     int64  `json:"error_bound_ns"`     // Operator-configured bound on the estimated error.
+	Readiness        string `json:"readiness"`          // ready, degraded or unknown.
+	Reason           string `json:"reason"`             // Empty unless degraded: unsynced or error_exceeds_bound.
+}
+
+// HostPlatform is operator-only host detail. Null values are unknown.
+type HostPlatform struct {
+	OS            *string `json:"os"`   // Go GOOS.
+	Arch          *string `json:"arch"` // Go GOARCH.
+	KernelRelease *string `json:"kernel_release"`
+	CPUs          *int64  `json:"cpus"`
+	MemoryBytes   *uint64 `json:"memory_bytes"`
+	BuildVersion  *string `json:"build_version"`
+}
+
+// ObservedClock is the live clock observation; all fields are null together
+// when unknown or expired.
+type ObservedClock struct {
+	Value      *ClockReport `json:"value"`
+	Source     *string      `json:"source"`
+	ObservedAt *int64       `json:"observed_at"` // Dispatcher receipt time, Unix seconds.
 }
 
 // AttributionState is the executor's report of whether packets it tags now can

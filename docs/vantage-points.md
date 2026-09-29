@@ -2,12 +2,12 @@
 
 This note records how Debuglet will collect, store and expose an executor's
 network, location, platform and reachability context. It is a design; steps 1
-and 2 of the delivery order below have landed. Today results record an
+to 3 of the delivery order below have landed. Today results record an
 admission-time vantage point, executors report schema-1
-[capabilities](operations/executor-discovery.md), their SCION ISD-AS and
-listener transports, and operators may label executors with a display name,
-city, country and network. No location is inferred. Keep this note in step with
-the code as each step below lands.
+[capabilities](operations/executor-discovery.md), their SCION ISD-AS,
+listener transports and ICMP, clock and host-platform probes, and operators may
+label executors with a display name, city, country and network. No location is
+inferred. Keep this note in step with the code as each step below lands.
 
 ## Provenance
 
@@ -34,7 +34,9 @@ Executors send a `VantagePointReport` protobuf message, `schema_version = 1`, as
 a versioned sibling of `ExecutorCapabilities` in `HelloResponse` and heartbeats.
 It is not added as more top-level `HelloResponse` fields. As with capabilities,
 the dispatcher discards a report with an unknown schema version or malformed
-content, which leaves the fields unknown.
+content, which leaves the fields unknown. Fields added later within schema 1,
+such as the clock and platform probes, are validated one by one: a malformed
+one is unknown and the rest of the report stands.
 
 The dispatcher holds the current observation in executor-registry memory, tied
 to the control binding like `Capabilities`. There is no live vantage-point
@@ -59,8 +61,9 @@ always `unknown`, never a guessed value.
 | --- | --- |
 | Network (ASN, AS name, prefix, ISD-AS, address families, reachability) | Public |
 | Location, at most city and country | Public |
-| Measurement capabilities | Public |
-| Host platform (OS, kernel, architecture, CPU, memory, clock detail) | Operator only |
+| Measurement capabilities, including the ICMP probe and fallback reason | Public |
+| Clock sync state, kernel error estimates and clock readiness | Public |
+| Host platform (OS, kernel, architecture, CPU, memory, build version) | Operator, and the run's owner through its result provenance |
 | Control-connection source IP and advertised public host | Operator, and the run's owner through its result provenance |
 
 Location is never finer than city. An executor can opt out of location; the
@@ -80,7 +83,11 @@ executor view. The admission snapshot keeps the last report and marks it
 1. Admission snapshot in result format 1.1 (#241). Done in #336.
 2. SCION ISD-AS and operator display metadata (#213, part of #237). Done in
    #338; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata).
-3. ICMP, platform and clock probes (#240).
+3. ICMP, platform and clock probes (#240). Done; see
+   [executor discovery](operations/executor-discovery.md#host-probes). The
+   dispatcher has no live operator executor view, so the host platform is
+   stored with the registration and published only in result provenance. The
+   bandwidth-estimate probe was dropped as disproportionate.
 4. Offline MMDB ASN and geolocation (#237, #238).
 5. Connect-back listener reachability and admission refusal (#239 part 1).
 6. Dual-stack egress discovery (#239 part 2).

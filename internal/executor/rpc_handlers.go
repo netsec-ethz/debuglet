@@ -10,7 +10,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
-	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
@@ -74,9 +73,10 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		TeslaAnchorTimestampNs: e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:         e.teslaSchedule.Anchor(),
 		// ICMP is advertised only when the operator's network policy leaves it
-		// enabled and this process can actually open the raw socket the
-		// transport needs; the packet counter says nothing about either.
-		IcmpEnabled: e.cfg.Network.Policy.Spec().ICMP && netpolicy.ICMPPermitted() == nil,
+		// enabled and the probe of this hello's capability report opened the
+		// raw socket the transport needs; the packet counter says nothing
+		// about either.
+		IcmpEnabled: capabilities.GetIcmp().GetState() == "available",
 		PricePerBwS: e.cfg.Pricing.PricePerBwS,
 		Currency:    e.cfg.Pricing.Currency,
 		SuiWallet:   &e.cfg.Pricing.SuiWallet,

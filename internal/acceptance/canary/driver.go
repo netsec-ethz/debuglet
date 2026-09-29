@@ -432,7 +432,7 @@ func strictCLIDocument(data []byte, out any) error {
 			return errors.New("invalid nodes JSON")
 		}
 		for _, node := range nodes {
-			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities", "admission", "display", "scion_isd_as", "listeners"}, map[string]bool{"tesla_anchor_key": true})
+			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities", "admission", "display", "scion_isd_as", "listeners", "clock"}, map[string]bool{"tesla_anchor_key": true})
 			if err != nil {
 				return err
 			}
@@ -440,7 +440,7 @@ func strictCLIDocument(data []byte, out any) error {
 				return err
 			}
 			if observation, present := fields["capabilities"]; present {
-				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, []string{"attribution"}, map[string]bool{"advertised_capacity_bps": true, "attribution": true})
+				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, []string{"attribution", "enforcement_reason", "icmp"}, map[string]bool{"advertised_capacity_bps": true, "attribution": true, "icmp": true})
 				if err != nil {
 					return err
 				}
@@ -497,7 +497,7 @@ func checkNodeVantage(fields map[string]json.RawMessage) error {
 			}
 		}
 	}
-	for _, key := range []string{"scion_isd_as", "listeners"} {
+	for _, key := range []string{"scion_isd_as", "listeners", "clock"} {
 		if raw, present := fields[key]; present {
 			if _, err := strictFields(raw, []string{"value", "source", "observed_at"}, nil, map[string]bool{"value": true, "source": true, "observed_at": true}); err != nil {
 				return err

@@ -2654,6 +2654,10 @@ components:
             - ebpf
             - fallback
           description: "Actual packet-counter mode. Empty means unknown; this does not establish packet attribution or measurement truth."
+        enforcement_reason:
+          $ref: "#/components/schemas/EnforcementReason"
+        icmp:
+          $ref: "#/components/schemas/ICMPProbe"
         attribution:
           $ref: "#/components/schemas/ExecutorAttribution"
         advertised_capacity_bps:
@@ -2662,6 +2666,107 @@ components:
           minimum: 0
           nullable: true
           description: "Advertised total capacity in bits per second, or null if unobserved. This is not free capacity or an admission guarantee for a destination and time window."
+    EnforcementReason:
+      type: string
+      enum:
+        - ""
+        - configured
+        - no_interface
+        - not_permitted
+        - unsupported
+        - attach_failed
+      description: "Added in API 1.9. Why the executor uses the fallback counter: configured (packet_counter = fallback), no_interface (no interface to attach to), not_permitted (the eBPF attach was refused for lack of privilege), unsupported (the kernel or platform lacks eBPF support) or attach_failed (another eBPF failure; the executor log has the error). Empty when enforcement_mode is ebpf or the reason is unknown, including older executors. Executor-reported."
+    ICMPProbe:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - state
+        - reason
+      properties:
+        state:
+          type: string
+          enum:
+            - available
+            - unavailable
+        reason:
+          type: string
+          enum:
+            - ""
+            - disabled
+            - not_permitted
+            - ping_socket_only
+            - unsupported
+          description: "Empty when available. disabled: the operator's network.policy.icmp switch is off and no socket was opened. not_permitted: raw ICMPv4 sockets need CAP_NET_RAW. ping_socket_only: raw sockets are refused but an unprivileged ping socket opens; guests need raw sockets, so ICMP stays unavailable. unsupported: the raw socket failed for another reason."
+      description: "Added in API 1.9. The executor's own probe, on startup and every capability report, of whether it can open the raw ICMPv4 socket guests use. Opening the socket sends nothing. Agrees with icmp in protocols. Null when unknown, including older executors and a malformed report. Executor-reported."
+    ClockReport:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - state
+        - estimated_error_ns
+        - max_error_ns
+        - error_bound_ns
+        - readiness
+        - reason
+      properties:
+        state:
+          type: string
+          enum:
+            - synced
+            - unsynced
+            - unknown
+          description: "Kernel clock discipline read with adjtimex (read only). unsynced: the kernel reports STA_UNSYNC or TIME_ERROR. unknown: not Linux or the read failed."
+        estimated_error_ns:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: "Kernel esterror, maintained by the host's time daemon; an estimate, not a measured bound. Null unless synced."
+        max_error_ns:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: "Kernel maxerror; null unless synced."
+        error_bound_ns:
+          type: integer
+          format: int64
+          minimum: 1
+          description: "The executor operator's clock.max_error_ms bound on estimated_error_ns."
+        readiness:
+          type: string
+          enum:
+            - ready
+            - degraded
+            - unknown
+          description: "degraded when unsynced or the estimated error exceeds the bound. Reported only; admission is not refused."
+        reason:
+          type: string
+          enum:
+            - ""
+            - unsynced
+            - error_exceeds_bound
+          description: "Empty unless degraded."
+    ObservedClock:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+        - source
+        - observed_at
+      properties:
+        value:
+          $ref: "#/components/schemas/ClockReport"
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Dispatcher receipt time of the report in Unix seconds."
+      description: "Added in API 1.9. Executor-reported kernel clock state. All fields are null together: unknown, including older executors, a malformed clock report and reports older than 90 s."
     ExecutorAttribution:
       type: object
       nullable: true
@@ -2746,6 +2851,8 @@ components:
           $ref: "#/components/schemas/ObservedString"
         listeners:
           $ref: "#/components/schemas/ObservedList"
+        clock:
+          $ref: "#/components/schemas/ObservedClock"
         last_seen:
           type: integer
           format: int64
@@ -3252,6 +3359,10 @@ components:
           $ref: "#/components/schemas/ResultLabelledObservation"
         display:
           $ref: "#/components/schemas/ExecutorDisplay"
+        clock:
+          $ref: "#/components/schemas/ResultLabelledClock"
+        platform:
+          $ref: "#/components/schemas/ResultLabelledPlatform"
       description: "Added in format 1.1. Where the run was to execute, as known at admission. Each value names its source; no label means verified. Null for runs admitted before format 1.1, and always absent from 1.0 files."
       nullable: true
     ResultSourceLabel:
@@ -3300,6 +3411,93 @@ components:
           nullable: true
           description: "True when the report had outlived its 90 s lifetime at admission."
       description: "Added within vantage_point schema 1 (API 1.9); a 1.1 file written before it omits the field, which reads as null. All fields are null together."
+    ResultLabelledClock:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "value"
+        - "source"
+        - "observed_at"
+        - "stale"
+      properties:
+        value:
+          $ref: "#/components/schemas/ClockReport"
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+          description: "Dispatcher receipt time of the report."
+        stale:
+          type: "boolean"
+          nullable: true
+          description: "True when the report had outlived its 90 s lifetime at admission."
+      description: "Added within vantage_point schema 1 (API 1.9). The executor-reported kernel clock state last known at admission; not a bound on the run's timestamps, so timing.clock_uncertainty_ns stays null. A file written before it omits the field, which reads as null. All fields are null together."
+    ResultLabelledPlatform:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "value"
+        - "source"
+        - "observed_at"
+        - "stale"
+      properties:
+        value:
+          $ref: "#/components/schemas/HostPlatform"
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+          description: "Dispatcher receipt time of the report."
+        stale:
+          type: "boolean"
+          nullable: true
+          description: "True when the report had outlived its 90 s lifetime at admission."
+      description: "Added within vantage_point schema 1 (API 1.9). Operator-only host platform detail, recorded here because a result is readable only by the run's owner and operators; GET /executors never lists it. A file written before it omits the field, which reads as null. All fields are null together."
+    HostPlatform:
+      type: "object"
+      nullable: true
+      additionalProperties: false
+      required:
+        - "os"
+        - "arch"
+        - "kernel_release"
+        - "cpus"
+        - "memory_bytes"
+        - "build_version"
+      properties:
+        os:
+          type: "string"
+          nullable: true
+          description: "Go GOOS, such as linux."
+        arch:
+          type: "string"
+          nullable: true
+          description: "Go GOARCH, such as amd64."
+        kernel_release:
+          type: "string"
+          nullable: true
+          description: "uname release."
+        cpus:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          nullable: true
+          description: "Logical CPUs usable by the executor process."
+        memory_bytes:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          nullable: true
+          description: "Total physical memory."
+        build_version:
+          type: "string"
+          nullable: true
+          description: "Executor build version."
+      description: "Executor-reported host platform. Null values are unknown."
     ResultVantageCapabilities:
       type: "object"
       additionalProperties: false
@@ -3332,7 +3530,11 @@ components:
                 - ""
                 - "ebpf"
                 - "fallback"
-          description: "Last validated executor capability report at admission; null when there was none."
+            enforcement_reason:
+              $ref: "#/components/schemas/EnforcementReason"
+            icmp:
+              $ref: "#/components/schemas/ICMPProbe"
+          description: "Last validated executor capability report at admission; null when there was none. enforcement_reason and icmp were added within vantage_point schema 1 (API 1.9); earlier files omit them, which reads as empty and null."
         source:
           $ref: "#/components/schemas/ResultSourceLabel"
         observed_at:

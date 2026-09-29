@@ -7,6 +7,7 @@ package ebpf
 
 import (
 	"errors"
+	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"net"
@@ -14,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNotAvailable = errors.New("ebpf: not available on this platform")
+var ErrNotAvailable = fmt.Errorf("ebpf: not available on this platform: %w", errors.ErrUnsupported)
 
 type BpfCount struct{}
 
