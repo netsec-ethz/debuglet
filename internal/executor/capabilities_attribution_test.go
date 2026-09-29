@@ -52,17 +52,20 @@ func TestCapabilityReportsAttributionFromEpochOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.teslaSchedule = schedule
-	report := e.capabilityReport(t.Context(), true)
+	report, _ := e.capabilityReport(t.Context(), true)
 	a := report.GetAttribution()
 	if a.GetState() != "unavailable" || a.GetReason() != tesla.UnattributableEpochZero || a.GetEpoch() != 0 ||
 		a.InstalledEpoch != nil || a.LastRefreshAgeMs != nil || a.DisclosureHeldMs != nil || a.GetRefreshError() != "" {
 		t.Fatalf("epoch 0: %v", a)
 	}
-	if e.capabilityReport(t.Context(), false) != nil {
+	if caps, vantage := e.capabilityReport(t.Context(), false); caps != nil || vantage != nil {
 		t.Fatal("unchanged attribution bypassed the report interval")
 	}
 	time.Sleep(time.Until(schedule.Config().Epoch.Add(delay + delay/4)))
-	report = e.capabilityReport(t.Context(), false)
+	report, vantage := e.capabilityReport(t.Context(), false)
+	if vantage == nil {
+		t.Fatal("early attribution report dropped the vantage report")
+	}
 	if a := report.GetAttribution(); a.GetState() != "available" || a.GetReason() != "" || a.GetEpoch() != 1 {
 		t.Fatalf("epoch 1: %v", a)
 	}
@@ -90,7 +93,8 @@ func TestCapabilityReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
 	long := errors.New("map update: " + strings.Repeat("é", 200))
 	holder.set(current-5, now.Add(-5*delay), long)
 
-	a := e.capabilityReport(t.Context(), true).GetAttribution()
+	report, _ := e.capabilityReport(t.Context(), true)
+	a := report.GetAttribution()
 	if a.GetState() != "unavailable" || a.GetReason() != tesla.UnattributableRefreshFailing || a.GetInstalledEpoch() != current-5 {
 		t.Fatalf("refresh failure: %v", a)
 	}
@@ -105,7 +109,8 @@ func TestCapabilityReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
 	}
 
 	holder.set(current-5, now.Add(-5*delay), nil)
-	a = e.capabilityReport(t.Context(), false).GetAttribution()
+	report, _ = e.capabilityReport(t.Context(), false)
+	a = report.GetAttribution()
 	if a.GetReason() != tesla.UnattributableDisclosureHeld || a.GetRefreshError() != "" || a.DisclosureHeldMs == nil {
 		t.Fatalf("held disclosure: %v", a)
 	}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -37,6 +38,9 @@ type RegisteredExecutor struct {
 	ICMPEnabled        bool
 	Capabilities       *wire.ExecutorCapabilities
 	capabilityObserved time.Time
+	vantage            *vantageReport
+	vantageObserved    time.Time
+	display            config.ExecutorDisplay
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -200,11 +204,14 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	record.LastSeen = d.now()
 	record.Capabilities = capabilitiesFromReport(hello.GetCapabilities(), record.LastSeen)
 	record.capabilityObserved = record.LastSeen
+	record.vantage = vantageFromReport(hello.GetVantagePoint())
+	record.vantageObserved = record.LastSeen
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return ErrDispatcherClosed
 	}
+	record.display = d.display[record.ID]
 	old := d.executors[record.ID]
 	if old != nil {
 		record.history = cloneHistory(old.history)
@@ -253,6 +260,9 @@ func cloneHistory(history *debugletHistory) *debugletHistory {
 func snapshotLocked(entry *executorEntry, now time.Time) RegisteredExecutor {
 	out := *entry.RegisteredExecutor
 	out.Capabilities = capabilitySnapshot(entry, now)
+	if vantageExpired(entry.vantageObserved, now) {
+		out.vantage = nil
+	}
 	out.TeslaAnchorKey = append([]byte(nil), out.TeslaAnchorKey...)
 	out.history = cloneHistory(entry.history)
 	if entry.publicHost != nil {

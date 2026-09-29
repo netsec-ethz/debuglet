@@ -48,10 +48,16 @@ Readers from before 1.1 reject 1.1 exports as an unsupported version.
   connection; and the executor's configured `public_host`. It is `null` for runs
   admitted before 1.1. The object has its own `schema_version` (1); later facts
   such as ASN, geolocation or reachability are added as new fields.
+- Within schema 1, `vantage_point` also records `scion_isd_as`, the executor's
+  last reported SCION ISD-AS with `observed_at` and `stale` like capabilities,
+  and `display`, the operator's `display_name`, `city`, `country` and `network`
+  for that executor. 1.1 files written before these fields omit them; readers
+  treat an omitted field as `null`, and readers without them ignore it, so every
+  1.1 file stays valid.
 - Each vantage-point value names its `source`: `operator`,
   `executor-reported` or `dispatcher-observed` (`database:<name>@<version>` is
-  reserved for later lookups). Capabilities and `public_host` are
-  `executor-reported`. `source_ip` is `dispatcher-observed` when taken from the
+  reserved for later lookups). Capabilities, `scion_isd_as` and `public_host`
+  are `executor-reported`; `display` values are `operator`. `source_ip` is `dispatcher-observed` when taken from the
   connection, and `executor-reported` when the dispatcher fell back to the
   address in the executor's hello. No label means verified: an executor claim
   remains a claim. A value that was not recorded is `null` together with its

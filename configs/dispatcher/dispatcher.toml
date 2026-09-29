@@ -38,6 +38,14 @@ key_file = ""
 [database]
 path = ".data/dispatcher.db"
 
+# Optional operator labels for an executor, published in the executor listing
+# with source "operator". Every key is optional; country is ISO 3166-1 alpha-2.
+# [executors."local-executor"]
+# display_name = "Local executor"
+# city = "Zurich"
+# country = "CH"
+# network = "Loopback"
+
 # Blockchain payments are switched off explicitly; TEST submissions keep
 # working. Nothing is inferred from the empty fields below, and no keystore,
 # account or network is named.

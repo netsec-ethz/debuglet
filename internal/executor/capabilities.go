@@ -24,20 +24,22 @@ import (
 // only newly collected observations; resending a cached positive would renew its
 // dispatcher expiry without probing whether it is still available. A changed
 // attribution reason is sent on the next heartbeat regardless, so a failing key
-// refresh is not advertised as available until the interval ends.
-func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.ExecutorCapabilities {
+// refresh is not advertised as available until the interval ends. Both reports
+// come from the same probe and are sent, or omitted, together.
+func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
 	now := time.Now()
 	attribution := attributionReport(e.teslaSchedule, now)
 	e.capabilityMu.Lock()
 	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason {
 		e.capabilityMu.Unlock()
-		return nil
+		return nil, nil
 	}
 	e.capabilityNext = now.Add(30 * time.Second)
 	e.capabilityReason = attribution.GetReason()
 	e.capabilityMu.Unlock()
 
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution}
+	vantage := &pb.VantagePointReport{SchemaVersion: 1}
 	policy := e.cfg.Network.Policy.Spec()
 	for _, transport := range []struct {
 		name    string
@@ -49,6 +51,15 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.Execu
 		if transport.enabled {
 			report.Protocols = append(report.Protocols, transport.name)
 		}
+	}
+	// TCP and UDP listeners need the inbound switch, the transport and both
+	// public_host and public_ports; the address itself is not reported here.
+	inbound := policy.Inbound && e.portManager.Enabled()
+	if inbound && policy.TCP {
+		vantage.Listeners = append(vantage.Listeners, "tcp")
+	}
+	if inbound && policy.UDP {
+		vantage.Listeners = append(vantage.Listeners, "udp")
 	}
 	if e.packetCount != nil {
 		switch mode := e.packetCount.Type(); mode {
@@ -62,12 +73,19 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) *pb.Execu
 			budget = 500 * time.Millisecond
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, budget)
-		if scionAvailable(probeCtx) {
-			report.Protocols = append(report.Protocols, "scion")
-		}
+		ia, available := scionProbe(probeCtx)
 		cancel()
+		if !ia.IsWildcard() {
+			vantage.ScionIsdAs = ia.String()
+		}
+		if available {
+			report.Protocols = append(report.Protocols, "scion")
+			if policy.Inbound {
+				vantage.Listeners = append(vantage.Listeners, "scion")
+			}
+		}
 	}
-	return report
+	return report, vantage
 }
 
 // maxRefreshError bounds the refresh error text a report carries; the
@@ -114,36 +132,38 @@ func attributionReport(schedule *tesla.KeySchedule, now time.Time) *pb.Attributi
 // Probe the configured daemon and local route only. The execution helper also
 // accepts hostnames, but its DNS resolution is not context bounded. Such names
 // therefore remain unknown to discovery; this probe never resolves or sends a
-// packet to a destination. No runtime lock is held while probing.
-func scionAvailable(ctx context.Context) bool {
+// packet to a destination. No runtime lock is held while probing. The local
+// ISD-AS is returned whenever the daemon names one, even if no local route to
+// its control service is found.
+func scionProbe(ctx context.Context) (addr.IA, bool) {
 	target := os.Getenv("SCION_DAEMON_ADDRESS")
 	endpoint, err := netip.ParseAddrPort(target)
 	if err != nil || endpoint.Port() == 0 {
-		return false
+		return 0, false
 	}
 	connector, err := daemon.NewService(target).Connect(ctx)
 	if err != nil {
-		return false
+		return 0, false
 	}
 	defer connector.Close()
 	info, err := connector.ASInfo(ctx, 0)
 	if err != nil || info.IA == 0 {
-		return false
+		return 0, false
 	}
 	services, err := connector.SVCInfo(ctx, []addr.SVC{addr.SvcCS})
 	if err != nil {
-		return false
+		return info.IA, false
 	}
 	for _, service := range services[addr.SvcCS] {
 		if ctx.Err() != nil {
-			return false
+			return info.IA, false
 		}
 		endpoint, err := netip.ParseAddrPort(service)
 		if err == nil && endpoint.Port() != 0 {
 			if _, err := addrutil.ResolveLocal(net.IP(endpoint.Addr().AsSlice())); err == nil {
-				return true
+				return info.IA, true
 			}
 		}
 	}
-	return false
+	return info.IA, false
 }

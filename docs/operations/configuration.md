@@ -6,6 +6,8 @@
 
 A networked dispatcher needs a SQLite database path, reachable HTTP and gRPC listeners, and TLS. Keep `server.local_development = false`; the credential-free profile is only for loopback local development. Configure a trusted certificate authority when enrolling executor client certificates.
 
+Optional `[executors."<executor-id>"]` tables label executors with `display_name`, `city`, `country` (ISO 3166-1 alpha-2) and `network` for the executor listing and result provenance; see [executor discovery](executor-discovery.md#vantage-point-metadata).
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.

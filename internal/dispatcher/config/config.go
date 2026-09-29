@@ -22,6 +22,8 @@ type DispatcherConfig struct {
 	CORS        CORSConfig        `toml:"cors"`
 	GitHubOAuth GitHubOAuthConfig `toml:"github_oauth"`
 	Output      OutputConfig      `toml:"output"`
+	// Executors holds optional operator display metadata by executor ID.
+	Executors map[string]ExecutorDisplay `toml:"executors"`
 }
 
 type GitHubOAuthConfig struct {
@@ -161,6 +163,9 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
 	if err := cfg.Output.Validate(); err != nil {
+		return err
+	}
+	if err := validateExecutors(cfg.Executors); err != nil {
 		return err
 	}
 	if cfg.Server.BindHost != "" {

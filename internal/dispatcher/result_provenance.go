@@ -62,6 +62,7 @@ func admissionVantagePoint(entry *executorEntry, now time.Time) *wire.VantagePoi
 		SchemaVersion: 1, Capabilities: admissionCapabilities(entry, now),
 		SourceIP:   labelled(entry.sourceIp, ipSource),
 		PublicHost: labelled(host, wire.SourceExecutorReported),
+		SCIONISDAS: admissionISDAS(entry, now), Display: entry.Display(),
 	}
 }
 
