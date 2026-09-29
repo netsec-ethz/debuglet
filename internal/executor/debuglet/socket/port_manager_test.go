@@ -273,13 +273,14 @@ func (c *pmControl) control(network, _ string, raw syscall.RawConn) error {
 	c.calls++
 	if strings.HasPrefix(network, "tcp") {
 		var proto int
+		var known bool
 		var protoErr error
 		if err := raw.Control(func(fd uintptr) {
-			proto, protoErr = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
+			proto, known, protoErr = socketProtocol(int(fd))
 		}); err != nil {
 			protoErr = err
 		}
-		if protoErr != nil || proto != syscall.IPPROTO_TCP {
+		if protoErr != nil || (known && proto != syscall.IPPROTO_TCP) {
 			c.t.Errorf("listener socket protocol = %d, %v; want plain TCP (%d)", proto, protoErr, syscall.IPPROTO_TCP)
 		}
 	}
