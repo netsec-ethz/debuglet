@@ -41,6 +41,24 @@
 //
 // with the packet's IPID and checksum fields zeroed. The eBPF tagger (tagger.c)
 // and the pure-Go fallback compute it identically; see ComputeTag.
+//
+// # Disclosure
+//
+// A key is disclosed no earlier than the first heartbeat after every kernel
+// tagger of the chain has moved off it. Each eBPF tagger registers with the
+// schedule as an InstalledKeyHolder and reports the epoch whose key its map
+// slot may still hold; DisclosedKey never names that epoch or a later one. The
+// kernel taggers refresh their key at each epoch boundary, so in the ordinary
+// case k_i is disclosed on the first heartbeat of epoch i+1 after the refresh.
+// A delayed or failed refresh delays disclosure instead of leaving a disclosed
+// key installed. At the end of the chain k_{L-1} follows the same rule: it is
+// disclosed once every tagger has removed it at Expiry. The pure-Go tagger
+// reads CurrentKey for every packet and holds no key.
+//
+// Disclosure therefore lags the epoch boundary by up to one heartbeat interval
+// plus the refresh time, or longer while a refresh fails. A verifier waits for
+// the key rather than treating a missing one as a failure; its tolerance for
+// clock skew between the tag and the epoch it is checked against is unchanged.
 package tesla
 
 import (
@@ -50,6 +68,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/hkdf"
@@ -110,8 +129,16 @@ type Config struct {
 // k_0 is public from setup, so it never signs: epoch 0, and any instant before
 // Epoch, has no usable signing key. The first usable key is k_1 at Epoch+Delay
 // and the last is k_{L-1}; from Expiry, the start of epoch L, no key signs.
+//
+// The set of registered InstalledKeyHolders is the one mutable part; every
+// other field is fixed at construction.
 type KeySchedule struct {
 	cfg Config
+
+	// holdersMu guards holders, the kernel taggers whose installed key caps
+	// what DisclosedKey may name.
+	holdersMu sync.Mutex
+	holders   map[InstalledKeyHolder]struct{}
 
 	// keys holds the whole precomputed chain as one contiguous buffer:
 	// keys[i*keySize:(i+1)*keySize] is k_i for i ∈ [0, L]. A slice rather
@@ -172,10 +199,36 @@ func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 	}
 
 	return &KeySchedule{
-		cfg:  cfg,
-		keys: keys,
+		cfg:     cfg,
+		keys:    keys,
+		holders: make(map[InstalledKeyHolder]struct{}),
 	}, nil
 }
+
+// InstalledKeyHolder is a signing path that keeps a chain key outside the
+// schedule, such as a kernel map slot. InstalledEpoch reports the epoch whose
+// key the path may still sign with, and false once it holds no key.
+type InstalledKeyHolder interface {
+	InstalledEpoch() (epoch int64, installed bool)
+}
+
+// RegisterInstalled adds h to the holders that cap DisclosedKey. A holder
+// registers before it installs its first key.
+func (ks *KeySchedule) RegisterInstalled(h InstalledKeyHolder) {
+	ks.holdersMu.Lock()
+	defer ks.holdersMu.Unlock()
+	ks.holders[h] = struct{}{}
+}
+
+// UnregisterInstalled removes h once it can no longer sign with any key.
+func (ks *KeySchedule) UnregisterInstalled(h InstalledKeyHolder) {
+	ks.holdersMu.Lock()
+	defer ks.holdersMu.Unlock()
+	delete(ks.holders, h)
+}
+
+// EpochOf returns the epoch that contains t: 0 before Epoch, and at most L.
+func (ks *KeySchedule) EpochOf(t time.Time) int64 { return ks.epochOf(t) }
 
 // Config returns a copy of the schedule's configuration.
 func (ks *KeySchedule) Config() Config {
@@ -260,6 +313,9 @@ func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, err
 // If t is still within epoch 0 (no key is disclosable yet), ok is false. From
 // epoch L on the disclosed key stays k_{L-1}, the last signing key; k_L is
 // never disclosed.
+//
+// A registered holder that may still sign with k_e caps the result at e-1, so
+// a key is never disclosed while an installed copy of it can tag packets.
 func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bool) {
 	current := ks.epochOf(t)
 	if current < 1 {
@@ -267,6 +323,13 @@ func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bo
 	}
 	// Disclose the key one epoch behind the current one (disclosure delay d=1).
 	disclosable := current - 1
+	ks.holdersMu.Lock()
+	for h := range ks.holders {
+		if epoch, installed := h.InstalledEpoch(); installed && epoch-1 < disclosable {
+			disclosable = max(epoch-1, 0)
+		}
+	}
+	ks.holdersMu.Unlock()
 	return disclosable, ks.keyForEpoch(disclosable), true
 }
 

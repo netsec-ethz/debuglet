@@ -64,7 +64,10 @@ type Executor struct {
 	capabilityNext time.Time
 	cfg            config.ExecutorConfig
 	teslaSchedule  *tesla.KeySchedule
-	logger         *zap.Logger
+	// chainReport is the node's, so each end-of-chain line is logged once per
+	// process rather than once per control session.
+	chainReport *chainReport
+	logger      *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
@@ -121,7 +124,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule,
+	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
 		packetCount: node.packetCount, iface: node.iface, portManager: ports,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
@@ -295,7 +298,9 @@ func (e *Executor) announceResourcesWith(ctx context.Context, announce, wait fun
 
 // chainReport decides what the heartbeat loop logs about the end of the key
 // chain. Each condition is reported on the first tick that observes it and
-// never again while it holds, so a short epoch does not repeat the line.
+// never again while it holds, so a short epoch does not repeat the line. The
+// node keeps one for all its sessions; sessions never overlap, so only one
+// heartbeat loop uses it at a time.
 type chainReport struct {
 	nearly, exhausted bool
 }
@@ -329,14 +334,13 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 	e.logger.Info("Starting heartbeat loop", zap.Duration("interval", interval))
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	var report chainReport
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			now := time.Now()
-			if level, msg, fields := report.observe(e.teslaSchedule, now); msg != "" {
+			if level, msg, fields := e.chainReport.observe(e.teslaSchedule, now); msg != "" {
 				e.logger.Log(level, msg, fields...)
 			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
