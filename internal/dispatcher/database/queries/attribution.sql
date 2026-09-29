@@ -42,7 +42,10 @@ WHERE debuglet_id = (SELECT id FROM debuglets WHERE uuid = sqlc.arg(uuid));
 SELECT d.uuid, d.executor_id, r.source_ip_observed, r.active_from_ns, r.active_to_ns,
        c.chain_id, c.anchor, c.t0_ns, c.interval_ns, c.delay_epochs, c.chain_length, c.tag_spec,
        CAST(COALESCE((SELECT MAX(k.epoch) FROM attribution_keys k
-                      WHERE k.executor_id = c.executor_id AND k.chain_id = c.chain_id), 0) AS INTEGER) AS disclosed_through
+                      WHERE k.executor_id = c.executor_id AND k.chain_id = c.chain_id), 0) AS INTEGER) AS disclosed_through,
+       CAST(COALESCE((SELECT k.disclosed_at_ns FROM attribution_keys k
+                      WHERE k.executor_id = c.executor_id AND k.chain_id = c.chain_id
+                      ORDER BY k.epoch DESC LIMIT 1), 0) AS INTEGER) AS disclosed_through_at_ns
 FROM attribution_runs r
 JOIN debuglets d ON d.id = r.debuglet_id
 JOIN attribution_chains c ON c.executor_id = d.executor_id AND c.chain_id = r.chain_id
@@ -59,15 +62,23 @@ SELECT retained_from_ns FROM attribution_retention WHERE singleton = 1;
 UPDATE attribution_retention SET retained_from_ns = MAX(retained_from_ns, CAST(sqlc.arg(cutoff_ns) AS INTEGER))
 WHERE singleton = 1;
 
+-- A lookup at a time t lists the runs active within one epoch of t, so a run
+-- stays on record until its interval ended more than one epoch before the
+-- cutoff: every lookup at or after retained_from still finds it.
 -- name: PruneAttributionRuns :execrows
-DELETE FROM attribution_runs WHERE active_to_ns < sqlc.arg(cutoff_ns);
+DELETE FROM attribution_runs
+WHERE active_to_ns + COALESCE((SELECT c.interval_ns FROM attribution_chains c JOIN debuglets d ON d.id = attribution_runs.debuglet_id
+                               WHERE c.executor_id = d.executor_id AND c.chain_id = attribution_runs.chain_id), 0) < sqlc.arg(cutoff_ns);
 
+-- A key is kept until its epoch ended more than one epoch before the cutoff,
+-- matching the runs kept above. Every key a lookup at or after retained_from
+-- needs, of the packet's epoch or a later one it is derived from, is kept.
 -- name: PruneAttributionKeys :execrows
 DELETE FROM attribution_keys
 WHERE EXISTS (
     SELECT 1 FROM attribution_chains c
     WHERE c.executor_id = attribution_keys.executor_id AND c.chain_id = attribution_keys.chain_id
-      AND c.interval_ns > 0 AND c.t0_ns + (attribution_keys.epoch + 1) * c.interval_ns < sqlc.arg(cutoff_ns)
+      AND c.interval_ns > 0 AND c.t0_ns + (attribution_keys.epoch + 2) * c.interval_ns < sqlc.arg(cutoff_ns)
 );
 
 -- name: PruneAttributionChains :execrows

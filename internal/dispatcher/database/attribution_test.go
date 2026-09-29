@@ -106,7 +106,7 @@ func TestAttributionHistoryRecordsChainsKeysAndRuns(t *testing.T) {
 		}
 	}
 	got := candidates("192.0.2.7", from)[0]
-	if got.Uuid != run.Uuid || got.ExecutorID != executor || got.DisclosedThrough != 3 || got.DelayEpochs != 15 || got.ChainLength != 100 || got.SourceIpObserved != 1 {
+	if got.Uuid != run.Uuid || got.ExecutorID != executor || got.DisclosedThrough != 3 || got.DisclosedThroughAtNs != 1 || got.DelayEpochs != 15 || got.ChainLength != 100 || got.SourceIpObserved != 1 {
 		t.Fatalf("candidate=%+v", got)
 	}
 
@@ -140,27 +140,39 @@ func TestAttributionPruneFollowsTheCutoff(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Epoch 1 of the live chain ends at t0+2h, epoch 5 at t0+6h.
-	for _, epoch := range []int64{1, 5} {
+	// Epoch 1 of the live chain ends at t0+2h, epoch 2 at t0+3h, epoch 5 at
+	// t0+6h. The cutoff is t0+3h30m: a lookup at it lists the runs active
+	// within one epoch, back to t0+2h30m, and needs the keys of epoch 2 on.
+	for _, epoch := range []int64{1, 2, 5} {
 		if err := q.InsertAttributionKey(ctx, database.InsertAttributionKeyParams{ExecutorID: executor, ChainID: "live", Epoch: epoch, Key: []byte{1}, DisclosedAtNs: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	oldRun, liveRun := cbCreate(t, ctx, q, cbIncarnation, cbSession), cbCreate(t, ctx, q, cbIncarnation, cbSession)
+	boundaryRun := cbCreate(t, ctx, q, cbIncarnation, cbSession)
 	for _, r := range []struct {
 		id int64
 		to time.Time
-	}{{oldRun.ID, t0.Add(time.Hour)}, {liveRun.ID, t0.Add(5 * time.Hour)}} {
+	}{{oldRun.ID, t0.Add(time.Hour)}, {liveRun.ID, t0.Add(5 * time.Hour)}, {boundaryRun.ID, t0.Add(2*time.Hour + 45*time.Minute)}} {
 		if err := q.RecordAttributionRun(ctx, database.RecordAttributionRunParams{DebugletID: r.id, ChainID: "live", SourceIp: "192.0.2.7", SourceIpObserved: 1, ActiveFromNs: t0.UnixNano(), ActiveToNs: r.to.UnixNano()}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cutoff := t0.Add(3 * time.Hour).UnixNano()
+	cutoff := t0.Add(3*time.Hour + 30*time.Minute).UnixNano()
 	if n, err := q.PruneAttributionRuns(ctx, cutoff); err != nil || n != 1 {
-		t.Fatalf("pruned runs=%d, %v", n, err)
+		t.Fatalf("pruned runs=%d, %v; want only the run that ended more than an epoch before the cutoff", n, err)
 	}
 	if n, err := q.PruneAttributionKeys(ctx, cutoff); err != nil || n != 1 {
-		t.Fatalf("pruned keys=%d, %v", n, err)
+		t.Fatalf("pruned keys=%d, %v; want only epoch 1", n, err)
+	}
+	// A lookup at retained_from still finds the run that ended within one
+	// epoch before it, with the latest key of its chain.
+	rows, err := q.ListAttributionCandidates(ctx, database.ListAttributionCandidatesParams{SourceIp: "192.0.2.7", AtNs: cutoff, MaxRows: 33})
+	if err != nil || len(rows) != 2 || rows[0].DisclosedThrough != 5 {
+		t.Fatalf("candidates at the cutoff=%+v, %v; want the boundary and live runs", rows, err)
+	}
+	if key, err := q.GetAttributionKey(ctx, database.GetAttributionKeyParams{ExecutorID: executor, ChainID: "live", Epoch: 2}); err != nil || len(key) == 0 {
+		t.Fatalf("the key of epoch 2 was pruned: %v", err)
 	}
 	// The old chain has neither keys nor runs left; the live one keeps both.
 	if n, err := q.PruneAttributionChains(ctx, cutoff); err != nil || n != 1 {

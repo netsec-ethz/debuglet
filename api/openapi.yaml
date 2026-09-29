@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.10"
+  version: "1.11"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -1910,7 +1910,7 @@ paths:
     get:
       operationId: "getAttributionCandidates"
       summary: "List the runs active from a source address at a time."
-      description: "Dated attribution lookup for probe verification (docs/verification.md). Public and rate-limited per client address. A candidate names the run and its executor, never the account that submitted it. It replaces GET /executors/by-ip."
+      description: "Added in API 1.11. Dated attribution lookup for probe verification (docs/verification.md). Public and rate-limited per client address. A candidate names the run and its executor, never the account that submitted it. It replaces GET /executors/by-ip."
       parameters:
         - name: "ip"
           in: "query"
@@ -1996,15 +1996,15 @@ paths:
     get:
       operationId: "getAttributionKeys"
       summary: "Read the disclosed keys of one chain."
-      description: "One page of the disclosed TESLA keys of a chain, in ascending epoch order. Only keys that verified against the chain anchor are recorded, each once; undisclosed epochs are absent. A verifier checks every key against k0 itself. Public and rate-limited per client address. It replaces GET /executors/{id}/tesla."
+      description: "Added in API 1.11. One page of the disclosed TESLA keys of a chain, in ascending epoch order. Only keys that verified against the chain anchor are recorded, each once; undisclosed epochs are absent. A verifier checks every key against k0 itself. Public and rate-limited per client address. It replaces GET /executors/{id}/tesla."
       parameters:
-        - name: "executor"
+        - name: "executor_id"
           in: "query"
           required: true
           description: "Executor ID, as a candidate names it."
           schema:
             type: string
-        - name: "chain"
+        - name: "chain_id"
           in: "query"
           required: true
           description: "Chain identifier, as a candidate's schedule names it."
@@ -2046,7 +2046,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AttributionKeys"
         "400":
-          description: "executor or chain is missing, an epoch is not a non-negative integer or to_epoch is below from_epoch (invalid_request), or the Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          description: "executor_id or chain_id is missing, an epoch is not a non-negative integer or to_epoch is below from_epoch (invalid_request), or the Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3737,32 +3737,32 @@ components:
     AttributionSchedule:
       type: object
       additionalProperties: false
-      description: "Public TESLA schedule of one chain. The key of epoch t covers packets sent from t0 + t * interval to t0 + (t + 1) * interval and is disclosed no earlier than t0 + (t + delay_epochs) * interval."
+      description: "Added in API 1.11. Public TESLA schedule of one chain; the names follow GET /executors/{id}/tesla. The key of epoch t covers packets sent from t0_unix_ns + t * epoch_seconds to t0_unix_ns + (t + 1) * epoch_seconds and is disclosed no earlier than t0_unix_ns + (t + disclosure_delay_epochs) * epoch_seconds."
       required:
-        - chain
+        - chain_id
         - k0
-        - t0
-        - interval
-        - delay_epochs
+        - t0_unix_ns
+        - epoch_seconds
+        - disclosure_delay_epochs
         - chain_length
         - tag_spec
       properties:
-        chain:
+        chain_id:
           type: string
           description: "Chain identifier, the lowercase hex of the first 16 bytes of SHA-256(k0)."
         k0:
           type: string
           format: byte
           description: "Base64-encoded chain anchor, the key of epoch 0. Every disclosed key hashes to it."
-        t0:
+        t0_unix_ns:
           type: integer
           format: int64
           description: "Start of epoch 0 in Unix nanoseconds."
-        interval:
+        epoch_seconds:
           type: integer
           format: int64
           description: "Epoch length I in seconds."
-        delay_epochs:
+        disclosure_delay_epochs:
           type: integer
           format: int64
           description: "Disclosure delay d in epochs. 0 for an executor that predates it, whose tags a verifier must not accept."
@@ -3773,7 +3773,8 @@ components:
         tag_spec:
           type: integer
           format: int64
-          description: "Tag specification version the chain tags with."
+          minimum: 0
+          description: "Tag specification version the executor reported when it registered the chain: 1 is debuglet-tag-v1 (docs/tag-spec.md); 0 is legacy, an executor that did not report debuglet-tag-v1, including every executor that predates the report, whose pre-v1 tags a verifier of tag spec v1 must report as unsupported rather than as a mismatch. Clients must tolerate higher values."
     AttributionCandidate:
       type: object
       additionalProperties: false
@@ -3785,6 +3786,8 @@ components:
         - ip_source
         - schedule
         - disclosed_through
+        - disclosed_through_at_ns
+        - next_disclosure_at_ns
       properties:
         executor_id:
           type: string
@@ -3812,6 +3815,14 @@ components:
           type: integer
           format: int64
           description: "Latest epoch of the chain whose disclosed key is on record, 0 when none is."
+        disclosed_through_at_ns:
+          type: integer
+          format: int64
+          description: "Unix nanoseconds at which the dispatcher recorded the key of disclosed_through; 0 when none is on record. The key may have been public from then on."
+        next_disclosure_at_ns:
+          type: integer
+          format: int64
+          description: "Earliest Unix nanoseconds the key of epoch disclosed_through + 1 may be disclosed, t0_unix_ns + (disclosed_through + 1 + d) * epoch_seconds with d = 1 for an executor that reported none; 0 when the schedule is unknown. Disclosure follows on the next executor heartbeat."
     AttributionCandidates:
       type: object
       additionalProperties: false
@@ -3858,13 +3869,13 @@ components:
       additionalProperties: false
       required:
         - executor_id
-        - chain
+        - chain_id
         - keys
         - next_epoch
       properties:
         executor_id:
           type: string
-        chain:
+        chain_id:
           type: string
         keys:
           type: array

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // maxChainsPerExecutor bounds the key chains cached per executor. An executor
@@ -21,9 +22,25 @@ import (
 // stay on record and are read back when needed.
 const maxChainsPerExecutor = 4
 
-// TagSpec is the tag specification every chain recorded today is used with:
-// tag spec v1 (docs/verification.md). An executor does not report it yet.
-const TagSpec = 1
+// Tag specification versions recorded with a chain (docs/verification.md).
+// TagSpecLegacy is a chain whose executor did not report debuglet-tag-v1 when
+// it registered the chain: it predates tag spec v1 and tags with the earlier,
+// non-standard tag, which verifiers treat as unsupported. TagSpecV1 is
+// debuglet-tag-v1 (docs/tag-spec.md).
+const (
+	TagSpecLegacy int64 = 0
+	TagSpecV1     int64 = 1
+)
+
+// TagSpecOf returns the recorded tag specification version of the tagging an
+// executor reports: TagSpecV1 for wire.TagSpecV1, and TagSpecLegacy for an
+// absent report, an absent or unknown identifier.
+func TagSpecOf(tagging *wire.TaggingMode) int64 {
+	if tagging != nil && tagging.TagSpec == wire.TagSpecV1 {
+		return TagSpecV1
+	}
+	return TagSpecLegacy
+}
 
 // ChainID returns the public identifier of the chain with the given anchor k_0:
 // the lowercase hex of the first 16 bytes of SHA-256(k_0). It is empty for an
@@ -61,6 +78,10 @@ type Chain struct {
 	// Length is L, the number of epochs the chain serves; zero is unknown.
 	// It is recorded with the chain and does not bound a disclosure.
 	Length int64
+	// TagSpec is the tag specification version the executor reported when it
+	// registered the chain (TagSpecLegacy or TagSpecV1). It is recorded with
+	// the chain and does not affect key verification.
+	TagSpec int64
 }
 
 // Backend is the durable record a KeyStore caches. Save is called once for
@@ -259,8 +280,18 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 	if ks.backend != nil {
 		// Record before caching, so a key the cache holds is on record; a
 		// failed write stores nothing and the next disclosure retries it.
-		if err := ks.backend.Save(executorID, chain, epoch, key, now); err != nil {
+		// The write runs outside the lock, so a slow database delays this
+		// disclosure only, not every other executor's; the key verified, so
+		// recording it is right whatever was stored meanwhile, and the
+		// record keeps the first copy of a repeat.
+		ks.mu.Unlock()
+		err := ks.backend.Save(executorID, chain, epoch, key, now)
+		ks.mu.Lock()
+		if err != nil {
 			return fmt.Errorf("record disclosed key for epoch %d: %w", epoch, err)
+		}
+		if epoch < c.latest {
+			return nil
 		}
 	}
 	c.keys[epoch] = key

@@ -20,10 +20,18 @@ import (
 // attributionRegister registers id with the given chain anchor on d.
 func attributionRegister(t *testing.T, d *Dispatcher, id string, anchor []byte) {
 	t.Helper()
+	attributionRegisterWith(t, d, id, anchor, nil)
+}
+
+// attributionRegisterWith registers id with the given chain anchor and hello
+// capability report on d.
+func attributionRegisterWith(t *testing.T, d *Dispatcher, id string, anchor []byte, caps *pb.ExecutorCapabilities) {
+	t.Helper()
 	owner := registryOwner(t, id)
 	hello := registryHello(id)
 	hello.TeslaAnchorKey = anchor
 	hello.TeslaChainLength = 5
+	hello.Capabilities = caps
 	if err := registryRegisterWithSetup(context.Background(), d, owner, hello, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +75,7 @@ func TestDisclosedKeysSurviveADispatcherRestart(t *testing.T) {
 		t.Fatalf("a repeated disclosure is on record %d times; want once", n)
 	}
 	chain, err := database.New(db).GetAttributionChain(t.Context(), database.GetAttributionChainParams{ExecutorID: id, ChainID: tag.ChainID(anchor)})
-	if err != nil || chain.ChainLength != 5 || chain.IntervalNs != int64(2*time.Second) || chain.TagSpec != tag.TagSpec {
+	if err != nil || chain.ChainLength != 5 || chain.IntervalNs != int64(2*time.Second) || chain.TagSpec != tag.TagSpecLegacy {
 		t.Fatalf("recorded chain=%+v, %v", chain, err)
 	}
 	d.Close()
@@ -128,6 +136,44 @@ func TestDisclosureForAnEarlierRecordedChain(t *testing.T) {
 	attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{TeslaKeyEpoch: 5, TeslaKey: tailB, TeslaKeyAnchor: anchorB})
 	if epoch, _, ok := d.keystore.LatestDisclosed(id, anchorB); !ok || epoch != 5 {
 		t.Fatalf("current chain latest=(%d, %v); want epoch 5", epoch, ok)
+	}
+}
+
+// TestRecordedChainCarriesTheReportedTagSpec records the tag specification the
+// executor reported in its hello with the chain: v1 only for debuglet-tag-v1,
+// and legacy (0) for an executor that predates the report, reports no tagging
+// or reports an identifier this dispatcher does not know. A disclosure for the
+// chain keeps what registration recorded.
+func TestRecordedChainCarriesTheReportedTagSpec(t *testing.T) {
+	d, db, _ := newRegistryFixture(t)
+	caps := func(tagging *pb.TaggingMode) *pb.ExecutorCapabilities {
+		return &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}, EnforcementMode: "ebpf", Tagging: tagging}
+	}
+	for i, tc := range []struct {
+		name string
+		caps *pb.ExecutorCapabilities
+		want int64
+	}{
+		{"v1", caps(&pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none", TagSpec: "debuglet-tag-v1"}), tag.TagSpecV1},
+		{"pre-v1 executor", caps(&pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none"}), tag.TagSpecLegacy},
+		{"no tagging report", caps(nil), tag.TagSpecLegacy},
+		{"no capability report", nil, tag.TagSpecLegacy},
+		{"unknown spec", caps(&pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none", TagSpec: "debuglet-tag-v9"}), tag.TagSpecLegacy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "spec-" + string(rune('a'+i))
+			tail := bytes.Repeat([]byte{byte(0x60 + i)}, 32)
+			anchor := chainKey(tail, 0)
+			attributionRegisterWith(t, d, id, anchor, tc.caps)
+			attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{TeslaKeyEpoch: 5, TeslaKey: tail})
+			chain, err := database.New(db).GetAttributionChain(t.Context(), database.GetAttributionChainParams{ExecutorID: id, ChainID: tag.ChainID(anchor)})
+			if err != nil || chain.TagSpec != tc.want {
+				t.Fatalf("recorded tag_spec=%d, %v; want %d", chain.TagSpec, err, tc.want)
+			}
+			if n := attributionKeyRows(t, d); n != i+1 {
+				t.Fatalf("%d keys on record; want %d", n, i+1)
+			}
+		})
 	}
 }
 

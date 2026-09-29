@@ -6,10 +6,13 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,16 +98,34 @@ func (h *Handler) GetAttributionCandidates(c echo.Context) error {
 			ActiveFrom: time.Unix(0, row.ActiveFromNs).UTC(), ActiveTo: time.Unix(0, row.ActiveToNs).UTC(),
 			IPSource: source,
 			Schedule: wire.AttributionSchedule{
-				Chain: row.ChainID, K0: row.Anchor, T0: row.T0Ns, Interval: int64(time.Duration(row.IntervalNs) / time.Second),
-				DelayEpochs: row.DelayEpochs, ChainLength: row.ChainLength, TagSpec: int(row.TagSpec),
+				ChainID: row.ChainID, K0: row.Anchor, T0UnixNs: row.T0Ns, EpochSeconds: int64(time.Duration(row.IntervalNs) / time.Second),
+				DisclosureDelayEpochs: row.DelayEpochs, ChainLength: row.ChainLength, TagSpec: row.TagSpec,
 			},
-			DisclosedThrough: row.DisclosedThrough,
+			DisclosedThrough:     row.DisclosedThrough,
+			DisclosedThroughAtNs: row.DisclosedThroughAtNs,
+			NextDisclosureAtNs:   nextDisclosureAtNs(row.T0Ns, row.IntervalNs, row.DelayEpochs, row.DisclosedThrough),
 		})
 	}
 	return c.JSON(http.StatusOK, resp)
 }
 
-// GET /attribution/keys?executor=<id>&chain=<chain>[&from_epoch=<n>][&to_epoch=<n>]
+// nextDisclosureAtNs is the earliest Unix nanoseconds the key of epoch
+// disclosedThrough+1 may be disclosed: t0 + (disclosedThrough+1+d)*I, with
+// d = 1 for an executor that reported none, as the key store enforces. It is
+// 0 when the schedule is unknown or the time does not fit.
+func nextDisclosureAtNs(t0Ns, intervalNs, delayEpochs, disclosedThrough int64) int64 {
+	if intervalNs <= 0 {
+		return 0
+	}
+	d := max(delayEpochs, 1)
+	epochs := disclosedThrough + 1 + d
+	if epochs <= 0 || epochs > (math.MaxInt64-max(t0Ns, 0))/intervalNs {
+		return 0
+	}
+	return t0Ns + epochs*intervalNs
+}
+
+// GET /attribution/keys?executor_id=<id>&chain_id=<chain>[&from_epoch=<n>][&to_epoch=<n>]
 //
 // One page of the disclosed keys of a chain, from from_epoch (default 1)
 // towards to_epoch (default unbounded), spanning at most
@@ -113,9 +134,9 @@ func (h *Handler) GetAttributionKeys(c echo.Context) error {
 	if err := h.attributionLimiter.allow(c); err != nil {
 		return err
 	}
-	executorID, chainID := c.QueryParam("executor"), c.QueryParam("chain")
+	executorID, chainID := c.QueryParam("executor_id"), c.QueryParam("chain_id")
 	if executorID == "" || chainID == "" {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "executor and chain query parameters are required")
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "executor_id and chain_id query parameters are required")
 	}
 	from, err := epochParam(c, "from_epoch", 1)
 	if err != nil {
@@ -145,7 +166,7 @@ func (h *Handler) GetAttributionKeys(c echo.Context) error {
 	if err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the attribution history", err)
 	}
-	resp := AttributionKeysResponse{ExecutorID: executorID, Chain: chainID, Keys: make([]wire.AttributionKey, 0, len(rows))}
+	resp := AttributionKeysResponse{ExecutorID: executorID, ChainID: chainID, Keys: make([]wire.AttributionKey, 0, len(rows))}
 	for _, row := range rows {
 		resp.Keys = append(resp.Keys, wire.AttributionKey{Epoch: row.Epoch, Key: row.Key})
 	}
@@ -182,11 +203,14 @@ func epochParam(c echo.Context, name string, fallback int64) (int64, error) {
 
 // addressLimiter is a token bucket per client address. The address is the
 // TCP peer of the request: forwarding headers are set by whoever sent the
-// request and are not trusted, so behind a reverse proxy every client shares
-// the proxy's bucket. An IPv6 client is limited by its /64.
+// request and are not trusted, unless the peer is one of the configured
+// trusted proxies (see AttributionTrustedProxies). Without one, every client
+// behind a reverse proxy shares the proxy's bucket. An IPv6 client is limited
+// by its /64.
 type addressLimiter struct {
 	limit   rate.Limit
 	burst   int
+	trusted []netip.Prefix
 	mu      sync.Mutex
 	buckets map[netip.Addr]*addressBucket
 	now     func() time.Time
@@ -215,7 +239,7 @@ func (l *addressLimiter) allow(c echo.Context) error {
 	if l == nil {
 		return nil
 	}
-	key := clientAddress(c.Request())
+	key := clientAddress(c.Request(), l.trusted)
 	now := l.now()
 	l.mu.Lock()
 	bucket := l.buckets[key]
@@ -243,22 +267,74 @@ func (l *addressLimiter) allow(c echo.Context) error {
 	return nil
 }
 
-// clientAddress is the limiter key of a request: its TCP peer address, an
-// IPv6 peer reduced to its /64.
-func clientAddress(r *http.Request) netip.Addr {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+// clientAddress is the limiter key of a request: its client address, an IPv6
+// client reduced to its /64. The client address is the TCP peer, unless the
+// peer is a trusted proxy: X-Forwarded-For is then read from the right, each
+// entry appended by the hop before it, and the first entry that is not a
+// trusted proxy is the client. Entries left of it were written by the client
+// itself and are ignored. A malformed entry ends the walk at the last trusted
+// hop, so a client cannot choose its bucket by sending garbage.
+func clientAddress(r *http.Request, trusted []netip.Prefix) netip.Addr {
+	addr := parseHostAddr(r.RemoteAddr)
+	if addr.IsValid() && isTrustedProxy(addr, trusted) {
+		hops := strings.Split(strings.Join(r.Header.Values(echo.HeaderXForwardedFor), ","), ",")
+		for i := len(hops) - 1; i >= 0; i-- {
+			hop := parseHostAddr(strings.TrimSpace(hops[i]))
+			if !hop.IsValid() {
+				break
+			}
+			addr = hop
+			if !isTrustedProxy(hop, trusted) {
+				break
+			}
+		}
+	}
+	return limiterKey(addr)
+}
+
+// parseHostAddr parses an address with or without a port, or returns the
+// zero Addr.
+func parseHostAddr(value string) netip.Addr {
+	host, _, err := net.SplitHostPort(value)
 	if err != nil {
-		host = r.RemoteAddr
+		host = value
 	}
 	addr, err := netip.ParseAddr(host)
 	if err != nil {
 		return netip.Addr{}
 	}
-	addr = addr.WithZone("").Unmap()
+	return addr.WithZone("").Unmap()
+}
+
+func isTrustedProxy(addr netip.Addr, trusted []netip.Prefix) bool {
+	for _, prefix := range trusted {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// limiterKey reduces an IPv6 address to its /64.
+func limiterKey(addr netip.Addr) netip.Addr {
+	if !addr.IsValid() {
+		return netip.Addr{}
+	}
 	if addr.Is6() {
 		if prefix, err := addr.Prefix(64); err == nil {
 			return prefix.Addr()
 		}
 	}
 	return addr
+}
+
+// AttributionTrustedProxies names the reverse proxies whose X-Forwarded-For
+// header the attribution rate limit trusts (attribution.trusted_proxies).
+// With none, the limit counts the TCP peer of every request.
+func AttributionTrustedProxies(prefixes []netip.Prefix) Option {
+	return func(h *Handler) {
+		if h.attributionLimiter != nil {
+			h.attributionLimiter.trusted = slices.Clone(prefixes)
+		}
+	}
 }

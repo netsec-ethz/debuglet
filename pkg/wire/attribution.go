@@ -6,26 +6,42 @@ package wire
 import "time"
 
 // AttributionSchedule is the public TESLA schedule of one executor chain. The
-// key of epoch t covers the packets sent from T0 + t*Interval to
-// T0 + (t+1)*Interval and is disclosed from T0 + (t+DelayEpochs)*Interval.
+// key of epoch t covers the packets sent from T0UnixNs + t*EpochSeconds to
+// T0UnixNs + (t+1)*EpochSeconds and is disclosed no earlier than
+// T0UnixNs + (t+DisclosureDelayEpochs)*EpochSeconds. Its field names follow
+// those of GET /executors/{id}/tesla.
 type AttributionSchedule struct {
-	// Chain identifies the chain; it is derived from K0.
-	Chain string `json:"chain"`
+	// ChainID identifies the chain: the lowercase hex of the first 16 bytes
+	// of SHA-256(K0).
+	ChainID string `json:"chain_id"`
 	// K0 is the chain anchor, the key of epoch 0; every disclosed key hashes
 	// to it.
 	K0 []byte `json:"k0"`
-	// T0 is the start of epoch 0 in Unix nanoseconds.
-	T0 int64 `json:"t0"`
-	// Interval is the epoch length I in seconds.
-	Interval int64 `json:"interval"`
-	// DelayEpochs is the disclosure delay d; zero is an executor that predates
-	// it, whose tags a verifier must not accept.
-	DelayEpochs int64 `json:"delay_epochs"`
+	// T0UnixNs is the start of epoch 0 in Unix nanoseconds.
+	T0UnixNs int64 `json:"t0_unix_ns"`
+	// EpochSeconds is the epoch length I in seconds.
+	EpochSeconds int64 `json:"epoch_seconds"`
+	// DisclosureDelayEpochs is the disclosure delay d in epochs; zero is an
+	// executor that predates it, whose tags a verifier must not accept.
+	DisclosureDelayEpochs int64 `json:"disclosure_delay_epochs"`
 	// ChainLength is L, the number of epochs the chain serves; zero is unknown.
 	ChainLength int64 `json:"chain_length"`
-	// TagSpec is the tag specification version the chain tags with.
-	TagSpec int `json:"tag_spec"`
+	// TagSpec is the tag specification version the executor reported when it
+	// registered the chain: TagSpecVersionV1, or TagSpecVersionLegacy for an
+	// executor that did not report debuglet-tag-v1. Verifiers of tag spec v1
+	// must treat a legacy chain as unsupported, not as a mismatch.
+	TagSpec int64 `json:"tag_spec"`
 }
+
+// Tag specification versions of an AttributionSchedule.
+const (
+	// TagSpecVersionLegacy is a chain tagged with the pre-v1, non-standard
+	// tag, including every chain of an executor that predates tag spec
+	// reports: unsupported under tag spec v1.
+	TagSpecVersionLegacy int64 = 0
+	// TagSpecVersionV1 is TagSpecV1 (docs/tag-spec.md).
+	TagSpecVersionV1 int64 = 1
+)
 
 // AttributionCandidate is one run that was active from the queried address
 // near the queried time. It names the run and its executor only, never the
@@ -43,6 +59,12 @@ type AttributionCandidate struct {
 	// DisclosedThrough is the latest epoch whose disclosed key is on record,
 	// 0 when none is.
 	DisclosedThrough int64 `json:"disclosed_through"`
+	// DisclosedThroughAtNs is when the dispatcher recorded the key of
+	// DisclosedThrough, in Unix nanoseconds; 0 when none is on record.
+	DisclosedThroughAtNs int64 `json:"disclosed_through_at_ns"`
+	// NextDisclosureAtNs is the earliest Unix nanoseconds the key of epoch
+	// DisclosedThrough+1 may be disclosed; 0 when the schedule is unknown.
+	NextDisclosureAtNs int64 `json:"next_disclosure_at_ns"`
 }
 
 // AttributionCandidates answers GET /attribution/candidates.
@@ -67,7 +89,7 @@ type AttributionKey struct {
 // keys of a chain in ascending epoch order. Undisclosed epochs are absent.
 type AttributionKeys struct {
 	ExecutorID string           `json:"executor_id"`
-	Chain      string           `json:"chain"`
+	ChainID    string           `json:"chain_id"`
 	Keys       []AttributionKey `json:"keys"`
 	// NextEpoch is the from_epoch of the next page, nil on the last one.
 	NextEpoch *int64 `json:"next_epoch"`

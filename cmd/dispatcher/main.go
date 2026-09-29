@@ -473,8 +473,13 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	// example, runs the API with authentication and authorization enforced. The
 	// cookie's Secure attribute comes from this daemon's own transport, never
 	// from a request header, for the reason recorded at the Serve call below.
+	trustedProxies, proxyErr := cfg.Attribution.TrustedProxyPrefixes()
+	if proxyErr != nil {
+		return proxyErr
+	}
 	handler := api.NewHandler(manager, db, logger,
 		api.ExecutorOnboarding(cfg.ExecutorOnboarding, issuer),
+		api.AttributionTrustedProxies(trustedProxies),
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
 		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -36,6 +37,8 @@ func atFixture(t *testing.T) *ccFixture {
 	peer := &cpPeer{id: ccExecutorID, price: ccPricePerBwS, currency: "TEST", tesla: &pb.HelloResponse{
 		TeslaAnchorKey: atAnchor, TeslaAnchorTimestampNs: atT0.UnixNano(), TeslaDelaySec: 60,
 		TeslaDisclosureDelayEpochs: 15, TeslaChainLength: 10080,
+		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}, EnforcementMode: "ebpf",
+			Tagging: &pb.TaggingMode{Ipv4: "ebpf", Ipv6: "none", Scion: "none", TagSpec: "debuglet-tag-v1"}},
 	}}
 	return ccNewFixturePeer(t, zap.NewNop(), peer)
 }
@@ -61,8 +64,10 @@ func TestAttributionCandidatesAnswerForAnAddressAndTime(t *testing.T) {
 		t.Fatalf("candidates=%+v; want the submitted run", doc)
 	}
 	got := doc.Candidates[0]
-	want := client.AttributionSchedule{Chain: tag.ChainID(atAnchor), K0: atAnchor, T0: atT0.UnixNano(), Interval: 60, DelayEpochs: 15, ChainLength: 10080, TagSpec: 1}
-	if got.RunID != submission.IDs[0] || got.ExecutorID != ccExecutorID || got.IPSource != "observed" || !equalSchedule(got.Schedule, want) || got.DisclosedThrough != 0 {
+	want := client.AttributionSchedule{ChainID: tag.ChainID(atAnchor), K0: atAnchor, T0UnixNs: atT0.UnixNano(), EpochSeconds: 60,
+		DisclosureDelayEpochs: 15, ChainLength: 10080, TagSpec: client.TagSpecVersionV1}
+	if got.RunID != submission.IDs[0] || got.ExecutorID != ccExecutorID || got.IPSource != "observed" || !equalSchedule(got.Schedule, want) ||
+		got.DisclosedThrough != 0 || got.DisclosedThroughAtNs != 0 || got.NextDisclosureAtNs != atT0.Add(16*time.Minute).UnixNano() {
 		t.Fatalf("candidate=%+v; want run %s with schedule %+v", got, submission.IDs[0], want)
 	}
 	if !got.ActiveFrom.Before(time.Now()) || !got.ActiveTo.After(time.Now()) || doc.RetainedFrom.After(time.Now()) {
@@ -100,7 +105,7 @@ func TestAttributionCandidatesAnswerForAnAddressAndTime(t *testing.T) {
 		fields = append(fields, name)
 	}
 	slices.Sort(fields)
-	if strings.Join(fields, " ") != "active_from active_to disclosed_through executor_id ip_source run_id schedule" {
+	if strings.Join(fields, " ") != "active_from active_to disclosed_through disclosed_through_at_ns executor_id ip_source next_disclosure_at_ns run_id schedule" {
 		t.Fatalf("candidate fields %v", fields)
 	}
 
@@ -129,8 +134,8 @@ func TestAttributionCandidatesAnswerForAnAddressAndTime(t *testing.T) {
 }
 
 func equalSchedule(a, b client.AttributionSchedule) bool {
-	return a.Chain == b.Chain && bytes.Equal(a.K0, b.K0) && a.T0 == b.T0 && a.Interval == b.Interval &&
-		a.DelayEpochs == b.DelayEpochs && a.ChainLength == b.ChainLength && a.TagSpec == b.TagSpec
+	return a.ChainID == b.ChainID && bytes.Equal(a.K0, b.K0) && a.T0UnixNs == b.T0UnixNs && a.EpochSeconds == b.EpochSeconds &&
+		a.DisclosureDelayEpochs == b.DisclosureDelayEpochs && a.ChainLength == b.ChainLength && a.TagSpec == b.TagSpec
 }
 
 // TestAttributionKeysArePaged reads the disclosed keys of a chain in pages of
@@ -166,9 +171,9 @@ func TestAttributionKeysArePaged(t *testing.T) {
 		t.Fatalf("unknown chain: %v", err)
 	}
 	for _, target := range []string{
-		"/attribution/keys?executor=" + ccExecutorID,
-		"/attribution/keys?executor=" + ccExecutorID + "&chain=" + chain + "&from_epoch=9&to_epoch=3",
-		"/attribution/keys?executor=" + ccExecutorID + "&chain=" + chain + "&from_epoch=-1",
+		"/attribution/keys?executor_id=" + ccExecutorID,
+		"/attribution/keys?executor_id=" + ccExecutorID + "&chain_id=" + chain + "&from_epoch=9&to_epoch=3",
+		"/attribution/keys?executor_id=" + ccExecutorID + "&chain_id=" + chain + "&from_epoch=-1",
 		"/attribution/candidates?ip=127.0.0.1",
 		"/attribution/candidates?ip=127.0.0.1&at=yesterday",
 	} {
@@ -211,5 +216,67 @@ func TestAttributionRoutesAreRateLimitedPerAddress(t *testing.T) {
 	lookup("[2001:db8::2]:4000")
 	if rec := lookup("[2001:db8::3]:4000"); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("a third address of the same /64 answered %d", rec.Code)
+	}
+}
+
+// TestAttributionRateLimitBehindATrustedProxy counts each client behind a
+// configured proxy separately, by its X-Forwarded-For entry, and ignores the
+// header from any other peer and the entries a client wrote itself.
+func TestAttributionRateLimitBehindATrustedProxy(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24"), netip.MustParsePrefix("fd00::/64")}
+	for _, tc := range []struct {
+		name, remote string
+		xff          []string
+		want         string
+	}{
+		{"no proxy configured peer", "198.51.100.1:4000", []string{"203.0.113.9"}, "198.51.100.1"},
+		{"trusted proxy", "10.0.0.5:4000", []string{"203.0.113.9"}, "203.0.113.9"},
+		{"trusted proxy without header", "10.0.0.5:4000", nil, "10.0.0.5"},
+		{"client-written entries are ignored", "10.0.0.5:4000", []string{"192.0.2.1, 203.0.113.9"}, "203.0.113.9"},
+		{"chained trusted proxies", "10.0.0.5:4000", []string{"203.0.113.9, 10.0.0.7", "10.0.0.6"}, "203.0.113.9"},
+		{"malformed entry stops at the last trusted hop", "10.0.0.5:4000", []string{"203.0.113.9, garbage"}, "10.0.0.5"},
+		{"ipv6 client by /64", "[fd00::1]:4000", []string{"2001:db8:1:2:3::4"}, "2001:db8:1:2::"},
+		{"mapped client", "10.0.0.5:4000", []string{"::ffff:203.0.113.9"}, "203.0.113.9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/attribution/candidates", nil)
+			req.RemoteAddr = tc.remote
+			for _, v := range tc.xff {
+				req.Header.Add(echo.HeaderXForwardedFor, v)
+			}
+			if got := clientAddress(req, nil); tc.name != "no proxy configured peer" && got != limiterKey(parseHostAddr(tc.remote)) {
+				t.Fatalf("without trusted proxies the key is %s; want the peer", got)
+			}
+			if got := clientAddress(req, trusted); got != netip.MustParseAddr(tc.want) {
+				t.Fatalf("key %s; want %s", got, tc.want)
+			}
+		})
+	}
+
+	// Through the handler: two clients behind one trusted proxy have their own
+	// allowance, and without the option they share the proxy's.
+	f := atFixture(t)
+	lookup := func(h *Handler, client string) int {
+		e := echo.New()
+		h.RegisterRoutes(e)
+		req := httptest.NewRequest(http.MethodGet, "/attribution/candidates?ip=127.0.0.1&at=2026-09-29T10:00:00Z", nil)
+		req.RemoteAddr = "10.0.0.5:4000"
+		req.Header.Set(echo.HeaderXForwardedFor, client)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, option := range []struct {
+		trusted     []netip.Prefix
+		secondFirst int
+	}{{trusted, http.StatusOK}, {nil, http.StatusTooManyRequests}} {
+		h := NewHandler(f.d, f.db, zap.NewNop(), AttributionTrustedProxies(option.trusted))
+		h.attributionLimiter.limit, h.attributionLimiter.burst = rate.Every(time.Hour), 1
+		if code := lookup(h, "203.0.113.1"); code != http.StatusOK {
+			t.Fatalf("first client answered %d", code)
+		}
+		if code := lookup(h, "203.0.113.2"); code != option.secondFirst {
+			t.Fatalf("trusted=%v: second client answered %d; want %d", option.trusted, code, option.secondFirst)
+		}
 	}
 }

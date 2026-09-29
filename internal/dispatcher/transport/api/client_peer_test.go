@@ -86,6 +86,7 @@ func (p *cpPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, er
 		hello.TeslaAnchorKey, hello.TeslaAnchorTimestampNs = p.tesla.TeslaAnchorKey, p.tesla.TeslaAnchorTimestampNs
 		hello.TeslaDelaySec, hello.TeslaDisclosureDelayEpochs = p.tesla.TeslaDelaySec, p.tesla.TeslaDisclosureDelayEpochs
 		hello.TeslaChainLength = p.tesla.TeslaChainLength
+		hello.Capabilities = p.tesla.Capabilities
 	}
 	return hello, nil
 }

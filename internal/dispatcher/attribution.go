@@ -53,7 +53,7 @@ func (d *Dispatcher) ConfigureAttribution(cfg config.AttributionConfig) error {
 // teslaChain is the chain this executor's session announced.
 func (e *RegisteredExecutor) teslaChain() tag.Chain {
 	return tag.Chain{Anchor: bytes.Clone(e.TeslaAnchorKey), Start: e.TeslaAnchorTimestamp, Interval: e.TeslaDelay,
-		DisclosureDelay: e.TeslaDisclosureDelay, Length: e.TeslaChainLength}
+		DisclosureDelay: e.TeslaDisclosureDelay, Length: e.TeslaChainLength, TagSpec: e.TeslaTagSpec}
 }
 
 // attributionBackend is the durable record behind the key store.
@@ -63,7 +63,7 @@ func chainParams(executorID string, chain tag.Chain, seen time.Time) database.Re
 	return database.RecordAttributionChainParams{
 		ExecutorID: executorID, ChainID: tag.ChainID(chain.Anchor), Anchor: chain.Anchor,
 		T0Ns: chain.Start.UnixNano(), IntervalNs: int64(chain.Interval), DelayEpochs: max(chain.DisclosureDelay, 0),
-		ChainLength: max(chain.Length, 0), TagSpec: tag.TagSpec, SeenNs: seen.UnixNano(),
+		ChainLength: max(chain.Length, 0), TagSpec: chain.TagSpec, SeenNs: seen.UnixNano(),
 	}
 }
 
@@ -138,7 +138,7 @@ func (d *Dispatcher) recordedChain(ctx context.Context, executorID string, ancho
 		return tag.Chain{}, false, err
 	}
 	return tag.Chain{Anchor: row.Anchor, Start: time.Unix(0, row.T0Ns), Interval: time.Duration(row.IntervalNs),
-		DisclosureDelay: row.DelayEpochs, Length: row.ChainLength}, true, nil
+		DisclosureDelay: row.DelayEpochs, Length: row.ChainLength, TagSpec: row.TagSpec}, true, nil
 }
 
 // normalizeIP returns the canonical text of an address, or the input when it

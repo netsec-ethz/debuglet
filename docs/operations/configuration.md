@@ -15,10 +15,11 @@ The dispatcher keeps the history that probe verification needs in its database: 
 | Key | Unit | Default | Allowed |
 | --- | --- | --- | --- |
 | `retention_days` | days | 90 | 1–3,650 |
+| `trusted_proxies` | IP addresses or CIDR prefixes | empty | at most 64 |
 
-The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, keys whose epoch ended and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 14; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.
+The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, and keys whose epoch ended, more than one epoch before the cutoff (a lookup at the cutoff lists runs within one epoch of it), and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 14; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.
 
-The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). Forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance; rate-limit per client at the proxy instead.
+The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
 
 ## Executor
 

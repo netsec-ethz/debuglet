@@ -24,6 +24,13 @@ type (
 	AttributionKey        = wire.AttributionKey
 )
 
+// Tag specification versions of an AttributionSchedule: a legacy chain is
+// unsupported under tag spec v1.
+const (
+	TagSpecVersionLegacy = wire.TagSpecVersionLegacy
+	TagSpecVersionV1     = wire.TagSpecVersionV1
+)
+
 const (
 	routeAttributionCandidates = "attribution/candidates"
 	routeAttributionKeys       = "attribution/keys"
@@ -36,7 +43,7 @@ const (
 // AttributionCandidates lists the runs that were active from ip within one
 // epoch of at, with the schedule of each run's chain. It needs no credential
 // and names runs and executors only, never accounts. An empty answer for a
-// time before RetainedFrom is no evidence either way. This optional API 1.9
+// time before RetainedFrom is no evidence either way. This optional API 1.11
 // route is absent on older dispatchers, which answer 404.
 func (c *Client) AttributionCandidates(ctx context.Context, ip string, at time.Time) (AttributionCandidates, error) {
 	addr, err := netip.ParseAddr(ip)
@@ -61,8 +68,9 @@ func (c *Client) AttributionCandidates(ctx context.Context, ip string, at time.T
 		valid = valid && isCanonicalUUID(candidate.RunID) && !isNilUUID(candidate.RunID) &&
 			strings.TrimSpace(candidate.ExecutorID) != "" && !candidate.ActiveTo.Before(candidate.ActiveFrom) &&
 			(candidate.IPSource == "observed" || candidate.IPSource == "advertised") &&
-			s.Chain != "" && len(s.K0) > 0 && s.Interval >= 0 && s.DelayEpochs >= 0 && s.ChainLength >= 0 &&
-			candidate.DisclosedThrough >= 0
+			s.ChainID != "" && len(s.K0) > 0 && s.EpochSeconds >= 0 && s.DisclosureDelayEpochs >= 0 && s.ChainLength >= 0 &&
+			s.TagSpec >= 0 && candidate.DisclosedThrough >= 0 && candidate.DisclosedThroughAtNs >= 0 &&
+			candidate.NextDisclosureAtNs >= 0 && (candidate.DisclosedThrough == 0) == (candidate.DisclosedThroughAtNs == 0)
 	}
 	if !valid {
 		return AttributionCandidates{}, c.protocolErr(http.MethodGet, routeAttributionCandidates, "inconsistent attribution candidates")
@@ -75,16 +83,16 @@ func (c *Client) AttributionCandidates(ctx context.Context, ip string, at time.T
 // the fromEpoch of the next page while keys beyond this one exist. A toEpoch
 // of zero sets no bound.
 // Undisclosed epochs are absent, and the caller checks every key against the
-// chain's K0 itself. It needs no credential. This optional API 1.9 route is
+// chain's K0 itself. It needs no credential. This optional API 1.11 route is
 // absent on older dispatchers, which answer 404.
-func (c *Client) AttributionKeys(ctx context.Context, executorID, chain string, fromEpoch, toEpoch int64) (AttributionKeys, error) {
-	if strings.TrimSpace(executorID) == "" || strings.TrimSpace(chain) == "" {
+func (c *Client) AttributionKeys(ctx context.Context, executorID, chainID string, fromEpoch, toEpoch int64) (AttributionKeys, error) {
+	if strings.TrimSpace(executorID) == "" || strings.TrimSpace(chainID) == "" {
 		return AttributionKeys{}, errors.New("client: attribution keys need an executor and a chain")
 	}
 	if fromEpoch < 0 || toEpoch < 0 || (toEpoch != 0 && toEpoch < fromEpoch) {
 		return AttributionKeys{}, errors.New("client: invalid attribution key epoch range")
 	}
-	query := url.Values{"executor": {executorID}, "chain": {chain}, "from_epoch": {strconv.FormatInt(fromEpoch, 10)}}
+	query := url.Values{"executor_id": {executorID}, "chain_id": {chainID}, "from_epoch": {strconv.FormatInt(fromEpoch, 10)}}
 	last := fromEpoch + maxAttributionKeyPage - 1
 	if toEpoch != 0 {
 		query.Set("to_epoch", strconv.FormatInt(toEpoch, 10))
@@ -98,7 +106,7 @@ func (c *Client) AttributionKeys(ctx context.Context, executorID, chain string, 
 	if err := c.decode(http.MethodGet, routeAttributionKeys, data, &doc); err != nil {
 		return AttributionKeys{}, err
 	}
-	valid := doc.ExecutorID == executorID && doc.Chain == chain && doc.Keys != nil
+	valid := doc.ExecutorID == executorID && doc.ChainID == chainID && doc.Keys != nil
 	previous := fromEpoch - 1
 	for _, key := range doc.Keys {
 		valid = valid && key.Epoch > previous && key.Epoch <= last && len(key.Key) > 0

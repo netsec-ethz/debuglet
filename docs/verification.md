@@ -113,15 +113,19 @@ every supported link type.
 The routes below follow the existing conventions. They have no path prefix;
 the version is negotiated with the `Debuglet-API-Version` header, and the
 routes are an addition in the next minor version (the candidates and keys
-routes are part of the unreleased API 1.9). They are public
+routes are part of the unreleased API 1.11). They are public
 (`security: []`), rate-limited per client address (10 requests per second,
-burst 40, per TCP peer and per /64 for IPv6; `429 rate_limited` with
-`Retry-After`), and answer the usual `{code, message}` errors.
+burst 40, per TCP peer and per /64 for IPv6, or per `X-Forwarded-For` client
+behind a proxy listed in `[attribution] trusted_proxies`; `429 rate_limited`
+with `Retry-After`), and answer the usual `{code, message}` errors. Their
+field names follow `GET /executors/{id}/tesla`: an integer field carries its
+unit in its name (`_unix_ns`, `_ns`, `_seconds`, `_epochs`), and other times
+are RFC 3339.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /attribution/candidates?ip=&at=` | Dated lookup: the runs active from `ip` within one epoch of `at` (RFC 3339). Each candidate gives `executor_id`, `run_id`, active interval (`active_from`, `active_to`), `ip_source` (`observed` or `advertised`), and the schedule `{chain, k0, t0, interval, delay_epochs, chain_length, tag_spec}` together with `disclosed_through` (the latest disclosed epoch, 0 for none). `t0` is Unix nanoseconds, `interval` seconds, `chain` the hex of the first 16 bytes of SHA-256(`k0`), and `chain_length` 0 when the executor did not report it. The answer includes `retained_from`, so that `missing` can be told apart from "no run", and `truncated` when more than 32 runs matched. |
-| `GET /attribution/keys?executor=&chain=&from_epoch=&to_epoch=` | Disclosed keys of one chain, at most 1024 epochs per page, with `next_epoch` for the next page (null on the last). `from_epoch` defaults to 1 and `to_epoch` to no bound. Undisclosed epochs are absent. The client checks every key against `k0`. |
+| `GET /attribution/candidates?ip=&at=` | Dated lookup: the runs active from `ip` within one epoch of `at` (RFC 3339). Each candidate gives `executor_id`, `run_id`, active interval (`active_from`, `active_to`), `ip_source` (`observed` or `advertised`), the schedule `{chain_id, k0, t0_unix_ns, epoch_seconds, disclosure_delay_epochs, chain_length, tag_spec}`, `disclosed_through` (the latest disclosed epoch, 0 for none), `disclosed_through_at_ns` (when the dispatcher recorded that key, 0 for none) and `next_disclosure_at_ns` (the earliest time the key of `disclosed_through + 1` may be disclosed, `t0_unix_ns + (disclosed_through + 1 + d)·I`). `chain_id` is the hex of the first 16 bytes of SHA-256(`k0`), and `chain_length` 0 when the executor did not report it. `tag_spec` is the version the executor reported with the chain when it registered: 1 is tag spec v1, 0 is legacy (an executor that did not report `debuglet-tag-v1`, including every executor that predates the report), and a v1 verifier reports a legacy chain's packets `unsupported`, not `invalid`. The answer includes `retained_from`, so that `missing` can be told apart from "no run", and `truncated` when more than 32 runs matched. |
+| `GET /attribution/keys?executor_id=&chain_id=&from_epoch=&to_epoch=` | Disclosed keys of one chain, at most 1024 epochs per page, with `next_epoch` for the next page (null on the last). `from_epoch` defaults to 1 and `to_epoch` to no bound. Undisclosed epochs are absent. The client checks every key against `k0`. |
 | `POST /attribution/verify` | Server-assisted check. The request lists up to 256 packets as `{data: base64 of the first 64 bytes of the IPv4 packet, captured_at}`. The response gives a verdict for each group, the budget `{limit, remaining, resets_at}` per group, and a signed `receipt`. |
 | `GET /attribution/receipt-keys` | The dispatcher's current and past receipt-verification keys (Ed25519) with their validity periods. |
 
@@ -149,7 +153,7 @@ old ones when the dispatcher does not offer them.
 | `invalid` | History covers the time and no candidate run reproduces the tags. `reason` is `tag_mismatch`, `no_run` (no run was active from that address) or `mixed_runs`. |
 | `pending` | The key is not yet disclosed and no server answer was possible. This happens with `--offline`, when the executor is offline, or when the budget is exhausted. `pending_until` is the disclosure time; retry then. |
 | `missing` | The dispatcher no longer holds, or never held, the schedule or keys for that time (before `retained_from`, or lost). This is no evidence either way. |
-| `unsupported` | The group cannot be checked. `reason` is one of IPv6, SCION, unknown link type, truncated packet, unknown tag spec, too many candidates, or over a work cap. |
+| `unsupported` | The group cannot be checked. `reason` is one of IPv6, SCION, unknown link type, truncated packet, unknown or legacy (pre-v1) tag spec, too many candidates, or over a work cap. |
 
 A verdict attributes packets to a run. It says nothing about whether the
 measurement was consented to or whether its conclusions are sound.
