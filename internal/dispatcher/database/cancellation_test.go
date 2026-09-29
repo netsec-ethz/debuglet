@@ -14,10 +14,10 @@ import (
 )
 
 func TestCancellationMigrationPreservesRunsWithoutInventingRequests(t *testing.T) {
-	ctx, db := cbOpen(t, 12)
+	ctx, db := cbOpen(t, 11)
 	q := database.New(db)
 	run := cbCreate(t, ctx, q, cbIncarnation, cbSession)
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 13 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 12 {
 		t.Fatalf("migration=%d, %v", version, err)
 	}
 	got, err := q.GetDebugletByUUID(ctx, run.Uuid)

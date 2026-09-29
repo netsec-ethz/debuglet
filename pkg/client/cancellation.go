@@ -47,6 +47,8 @@ func (c *Client) Cancellation(ctx context.Context, id string) (CancellationDocum
 		valid = valid && doc.AttemptedAt != nil && doc.AcknowledgedAt == nil && doc.Reason == ""
 	case "acknowledged":
 		valid = valid && doc.AcknowledgedAt != nil && doc.Reason == ""
+	case "not_needed":
+		valid = valid && doc.AttemptedAt == nil && doc.AcknowledgedAt == nil && strings.TrimSpace(doc.Reason) != ""
 	case "unresolved":
 		valid = valid && doc.AcknowledgedAt == nil && strings.TrimSpace(doc.Reason) != ""
 	}

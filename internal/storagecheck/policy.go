@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 13
+	MinimumDispatcherVersion int64 = 12
 	MinimumExecutorVersion   int64 = 6
 )
 

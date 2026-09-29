@@ -101,7 +101,7 @@ func TestControlBindingMigrationPreservesDispatcherRows(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO debuglet_logs (debuglet_id,timestamp,output) VALUES (?,?,?)`, legacyID, now, []byte("preserved output")); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 13 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 12 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)

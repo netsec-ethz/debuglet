@@ -556,7 +556,9 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 		d.releaseTerminal(run)
 		return nil
 	}
-	if !record.AcknowledgedAt.Valid {
+	// Keep an earlier, more specific failure such as executor_refused or
+	// transport_outcome_unknown: losing the binding later does not explain it.
+	if !record.AcknowledgedAt.Valid && record.Failure == "" {
 		if err := d.failCancellation(ctx, run.ID, "original_binding_unavailable"); err != nil {
 			return err
 		}

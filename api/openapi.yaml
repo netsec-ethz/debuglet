@@ -2378,7 +2378,7 @@ components:
           format: date-time
         disposition:
           type: string
-          description: "requested, delivery_attempted, acknowledged or unresolved. Unknown future values remain observations, never replay advice."
+          description: "requested, delivery_attempted, acknowledged, not_needed (the run was already terminal; reason already_terminal) or unresolved. Unknown future values remain observations, never replay advice."
         reason:
           type: string
           description: "Empty or a bounded code: already_terminal (no delivery needed), original_binding_unavailable, transport_outcome_unknown or executor_refused."

@@ -112,11 +112,52 @@ func TestCancellationTerminalAndWrongExecutorDoNotDeliver(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, err := f.d.Cancellation(f.ctx, run.id)
-	if err != nil || doc.Reason != "already_terminal" || doc.AcknowledgedAt != nil {
+	if err != nil || doc.Disposition != "not_needed" || doc.Reason != "already_terminal" || doc.AcknowledgedAt != nil || doc.AttemptedAt != nil {
 		t.Fatalf("already terminal: %+v, %v", doc, err)
 	}
 	if len(peer.recordedAborts()) != 0 {
 		t.Fatal("terminal run delivered another Abort")
 	}
 	tgAssertSnapshot(t, f, before, "already terminal cancellation")
+}
+
+// Losing the original binding after a failed delivery must not replace the
+// specific failure that delivery recorded.
+func TestUnboundCancellationKeepsEarlierDeliveryFailure(t *testing.T) {
+	for _, tc := range []struct {
+		failure string
+		code    codes.Code
+	}{
+		{"executor_refused", codes.FailedPrecondition},
+		{"transport_outcome_unknown", codes.Unavailable},
+	} {
+		t.Run(tc.failure, func(t *testing.T) {
+			peer := &tgPeer{}
+			f := newTGFixture(t, peer)
+			run, err := f.submit(t, tgFloorA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			peer.scriptAbort(status.Error(tc.code, "abort failed"))
+			if err := f.abort(t, run.id, "first reason"); err == nil {
+				t.Fatal("failed delivery was reported as success")
+			}
+			if doc, err := f.d.Cancellation(f.ctx, run.id); err != nil || doc.Disposition != "unresolved" || doc.Reason != tc.failure {
+				t.Fatalf("delivery failure: %+v, %v", doc, err)
+			}
+			// A new session of the same executor makes the original binding unavailable.
+			registryRegister(t, f.d, tgExecutorID)
+			if err := f.abort(t, run.id, "second reason"); err != nil {
+				t.Fatal(err)
+			}
+			tgAssertRow(t, f.row(t, run.id), models.RunStateExited, tgText("first reason"+unobservedCancellation))
+			doc, err := f.d.Cancellation(f.ctx, run.id)
+			if err != nil || doc.Disposition != "unresolved" || doc.Reason != tc.failure || doc.AttemptedAt == nil || doc.AcknowledgedAt != nil {
+				t.Fatalf("unbound cancellation replaced the delivery failure: %+v, %v", doc, err)
+			}
+			if len(peer.recordedAborts()) != 1 {
+				t.Fatalf("unbound cancellation delivered to a replacement: %d aborts", len(peer.recordedAborts()))
+			}
+		})
+	}
 }

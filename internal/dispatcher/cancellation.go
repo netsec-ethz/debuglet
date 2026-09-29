@@ -75,6 +75,8 @@ func (d *Dispatcher) Cancellation(ctx context.Context, id uuid.UUID) (wire.Cance
 	switch {
 	case record.AcknowledgedAt.Valid:
 		doc.Disposition, doc.Reason = "acknowledged", ""
+	case record.Failure == "already_terminal":
+		doc.Disposition = "not_needed"
 	case record.Failure != "":
 		doc.Disposition = "unresolved"
 	case !current:

@@ -67,6 +67,11 @@ func TestCancellationInspectionRejectsContradictoryEvidence(t *testing.T) {
 		{"unresolved attempted", "unresolved", "transport_outcome_unknown", binding, &now, nil, true},
 		{"unresolved without reason", "unresolved", "", binding, &now, nil, false},
 		{"unresolved with acknowledgement", "unresolved", "executor_refused", binding, &now, &now, false},
+		{"not needed", "not_needed", "already_terminal", binding, nil, nil, true},
+		{"not needed legacy", "not_needed", "already_terminal", nil, nil, nil, true},
+		{"not needed without reason", "not_needed", "", binding, nil, nil, false},
+		{"not needed with attempt", "not_needed", "already_terminal", binding, &now, nil, false},
+		{"not needed with acknowledgement", "not_needed", "already_terminal", binding, &now, &now, false},
 		{"future with evidence", "future_status", "future_reason", binding, &now, &earlier, true},
 		{"future with missing binding", "future_status", "future_reason", nil, &now, &now, false},
 	} {
