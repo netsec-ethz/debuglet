@@ -304,13 +304,20 @@
         that:
           - executor_capacity | int > 0
           - executor_max_debuglets | int > 0
-          - tesla_delay | int > 0
+          - (tesla_delay if tesla_delay is defined else tesla_epoch_seconds) | int > 0
+          - tesla_disclosure_delay_epochs | int == 0 or tesla_disclosure_delay_epochs | int >= 2
+          - >-
+            tesla_disclosure_delay_epochs | int == 0 or
+            (tesla_disclosure_delay_epochs | int - 1) * ((tesla_delay if tesla_delay is defined else tesla_epoch_seconds) | int) >= 10
           - tesla_chain_length | int >= 0
           - executor_packet_counter in ['auto', 'fallback']
           - (executor_packet_counter == 'fallback') or (executor_enable_bpf | bool)
         fail_msg: >-
-          executor_capacity, executor_max_debuglets and tesla_delay must be
-          positive; tesla_chain_length must not be negative; and the packet
+          executor_capacity, executor_max_debuglets and tesla_epoch_seconds
+          (or the deprecated tesla_delay) must be positive;
+          tesla_disclosure_delay_epochs must be 0 (derived) or at least 2
+          with (d - 1) * tesla_epoch_seconds of at least 10 seconds;
+          tesla_chain_length must not be negative; and the packet
           counter must be auto with BPF enabled or explicit fallback.
         quiet: true
 

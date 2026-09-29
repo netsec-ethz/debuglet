@@ -69,7 +69,7 @@ func verifyCaptured(t *testing.T, what string, ks *tesla.KeySchedule, now time.T
 // tag the verifier accepts, and the UDP payload reaches its socket intact.
 func TestTaggedDatagramsReachTheWire(t *testing.T) {
 	now := time.Now()
-	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, Delay: time.Hour, Epoch: now.Add(-time.Hour)})
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, EpochLength: time.Hour, Epoch: now.Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

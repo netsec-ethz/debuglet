@@ -22,7 +22,7 @@ func TestMapEntryEmptyBeforeEpochOne(t *testing.T) {
 	ks, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:        bytes.Repeat([]byte{0x5A}, 32),
 		ChainLength: 16,
-		Delay:       delay,
+		EpochLength: delay,
 		Epoch:       start,
 	})
 	if err != nil {

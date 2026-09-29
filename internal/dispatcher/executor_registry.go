@@ -31,9 +31,13 @@ type RegisteredExecutor struct {
 	Ready    bool
 	LastSeen time.Time
 
-	TeslaDelay           time.Duration
+	TeslaDelay           time.Duration // the epoch length I (historical name)
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte // k_0, the public chain anchor
+	// TeslaDisclosureDelay is d in epochs: the key of epoch i is disclosed
+	// from the start of epoch i+d. Zero means the executor predates it and
+	// disclosed after one epoch.
+	TeslaDisclosureDelay int64
 
 	ICMPEnabled        bool
 	Capabilities       *wire.ExecutorCapabilities
@@ -193,6 +197,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		TeslaDelay:           time.Duration(hello.GetTeslaDelaySec()) * time.Second,
 		TeslaAnchorTimestamp: time.Unix(0, hello.GetTeslaAnchorTimestampNs()),
 		TeslaAnchorKey:       append([]byte(nil), hello.GetTeslaAnchorKey()...),
+		TeslaDisclosureDelay: hello.GetTeslaDisclosureDelayEpochs(),
 		ICMPEnabled:          hello.GetIcmpEnabled(), PricePerBwS: hello.GetPricePerBwS(),
 		Currency: hello.GetCurrency(), SuiWallet: hello.GetSuiWallet(),
 		sourceIp: sourceIP, sourceIPObserved: observedIP, history: &debugletHistory{},

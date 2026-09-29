@@ -84,7 +84,7 @@ func TestRecordedAnchorRefusesNodeConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reused, err := tesla.NewKeySchedule(tesla.Config{Seed: tail, Delay: time.Second, ChainLength: cfg.Tesla.ChainLength})
+	reused, err := tesla.NewKeySchedule(tesla.Config{Seed: tail, EpochLength: time.Second, ChainLength: cfg.Tesla.ChainLength})
 	if err != nil {
 		t.Fatal(err)
 	}

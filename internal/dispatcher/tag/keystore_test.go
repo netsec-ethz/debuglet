@@ -171,44 +171,88 @@ func TestKeyStoreVerifiesDisclosures(t *testing.T) {
 
 // TestKeyStoreBoundsDisclosuresByWallClock checks that a disclosure whose
 // epoch lies ahead of the chain's registered schedule is rejected before any
-// hashing, while the epoch an executor discloses at that time is accepted.
+// hashing, while the epoch an executor discloses at that time is accepted. A
+// chain without a disclosure delay is an executor that predates it, which
+// discloses one epoch behind its current one.
 func TestKeyStoreBoundsDisclosuresByWallClock(t *testing.T) {
 	ks := NewKeyStore()
 	const id = "executor"
 	chain := hashChain(0x7C, 64)
 	start := time.Unix(1_700_000_000, 0)
 	c := Chain{Anchor: chain[0], Start: start, Interval: 10 * time.Second}
-	// At start+42s the executor is in epoch 4 and discloses k_3. The bound
-	// is epoch 4 plus one epoch of tolerance (the skew allowance of 5s does
-	// not reach epoch 5 here).
+	// At start+42s the executor is in epoch 4 and discloses k_3. The skew
+	// allowance of 5s does not reach epoch 5 here.
 	now := start.Add(42 * time.Second)
 
-	r := rejected(t, ks.Store(id, c, now, 6, chain[6]))
-	if !strings.Contains(r.Reason, "wall-clock") || !r.First {
-		t.Errorf("rejection = %+v; want the first, a wall-clock rejection", r)
+	r := rejected(t, ks.Store(id, c, now, 4, chain[4]))
+	if !strings.Contains(r.Reason, "before its schedule allows") || !r.First || !r.Early {
+		t.Errorf("rejection = %+v; want the first, an early disclosure", r)
 	}
 	// A far-future epoch within the absolute walk bound is rejected the same
 	// way, so it costs no hashing.
 	r = rejected(t, ks.Store(id, c, now, maxVerifyWalk, key(0x01)))
-	if !strings.Contains(r.Reason, "wall-clock") {
-		t.Errorf("rejection = %v; want the wall-clock bound", r)
+	if !strings.Contains(r.Reason, "wall-clock") || !r.Early || r.First {
+		t.Errorf("rejection = %+v; want a repeated early disclosure", r)
 	}
 	if _, _, ok := ks.LatestDisclosed(id, c.Anchor); ok {
 		t.Fatal("a disclosure ahead of wall-clock time was stored")
 	}
 
-	for _, epoch := range []int64{3, 5} {
-		if err := ks.Store(id, c, now, epoch, chain[epoch]); err != nil {
-			t.Fatalf("epoch %d at start+42s: %v", epoch, err)
+	if err := ks.Store(id, c, now, 3, chain[3]); err != nil {
+		t.Fatalf("epoch 3 at start+42s: %v", err)
+	}
+	// The skew allowance admits k_4 from start+45s.
+	if err := ks.Store(id, c, start.Add(45*time.Second), 4, chain[4]); err != nil {
+		t.Fatalf("epoch 4 at start+45s: %v", err)
+	}
+	if epoch, _, _ := ks.LatestDisclosed(id, c.Anchor); epoch != 4 {
+		t.Errorf("latest epoch = %d; want 4", epoch)
+	}
+
+	// Before the chain starts nothing is disclosable.
+	rejected(t, ks.Store("early", c, start.Add(-time.Hour), 1, chain[1]))
+}
+
+// TestKeyStoreRejectsEarlyDisclosure registers a disclosure delay of three
+// epochs: k_i may be disclosed from the start of epoch i+3, less the skew
+// allowance, and not before. An early disclosure is reported as such once per
+// chain, even after another kind of rejection was reported.
+func TestKeyStoreRejectsEarlyDisclosure(t *testing.T) {
+	ks := NewKeyStore()
+	const id = "executor"
+	chain := hashChain(0x7D, 64)
+	start := time.Unix(1_700_000_000, 0)
+	c := Chain{Anchor: chain[0], Start: start, Interval: 10 * time.Second, DisclosureDelay: 3}
+
+	if at, ok := c.DisclosableAt(5); !ok || !at.Equal(start.Add(80*time.Second)) {
+		t.Fatalf("DisclosableAt(5) = %s, %v; want start+80s", at, ok)
+	}
+	// A key that does not verify is a rejection of another kind.
+	if r := rejected(t, ks.Store(id, c, start.Add(60*time.Second), 2, key(0x01))); !r.First || r.Early {
+		t.Fatalf("rejection = %+v; want the first, not early", r)
+	}
+
+	// At start+74s the executor is in epoch 7 (with the allowance, epoch 7
+	// still), so k_4 is the latest it may disclose; k_5 and k_6, the keys a
+	// verifier accepts for packets of epoch 6 or 7, are early.
+	now := start.Add(74 * time.Second)
+	for _, epoch := range []int64{6, 5} {
+		r := rejected(t, ks.Store(id, c, now, epoch, chain[epoch]))
+		if !r.Early || !strings.Contains(r.Reason, "disclosure delay 3 epochs") {
+			t.Fatalf("epoch %d: rejection = %+v; want an early disclosure", epoch, r)
 		}
+		if r.First != (epoch == 6) {
+			t.Fatalf("epoch %d: First = %v; an early disclosure is reported once", epoch, r.First)
+		}
+	}
+	if err := ks.Store(id, c, now, 4, chain[4]); err != nil {
+		t.Fatalf("epoch 4 at start+74s: %v", err)
+	}
+	// From start+75s, 80s less the allowance, k_5 is on time.
+	if err := ks.Store(id, c, start.Add(75*time.Second), 5, chain[5]); err != nil {
+		t.Fatalf("epoch 5 at start+75s: %v", err)
 	}
 	if epoch, _, _ := ks.LatestDisclosed(id, c.Anchor); epoch != 5 {
 		t.Errorf("latest epoch = %d; want 5", epoch)
-	}
-
-	// Before the chain starts, only the tolerance applies.
-	rejected(t, ks.Store("early", c, start.Add(-time.Hour), 2, chain[2]))
-	if err := ks.Store("early", c, start.Add(-time.Hour), 1, chain[1]); err != nil {
-		t.Fatal(err)
 	}
 }

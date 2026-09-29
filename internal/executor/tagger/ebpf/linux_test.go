@@ -24,8 +24,8 @@ import (
 
 func TestBPFLinuxLoad(t *testing.T) {
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:  make([]byte, 32),
-		Delay: 10 * time.Second,
+		Seed:        make([]byte, 32),
+		EpochLength: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)

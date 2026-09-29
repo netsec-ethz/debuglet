@@ -26,7 +26,7 @@ message HelloResponse {
   string executor_id = 1; // Unique ID for this executor instance
   string version = 2; // Optional: software version or capabilities
   string source_ip = 3; // Source IP for packet attribution
-  int64 tesla_delay_sec = 4; // TESLA epoch delay in seconds
+  int64 tesla_delay_sec = 4; // TESLA epoch length I in seconds (historical name; not the disclosure delay)
   int64 tesla_anchor_timestamp_ns = 5; // Reference wall-clock time for epoch 0
   bytes tesla_anchor_key = 6; // Public anchor k_0 = H^L(seed); used to verify disclosed keys
   bool icmp_enabled = 7; // Whether the executor can handle ICMP packets
@@ -44,6 +44,10 @@ message HelloResponse {
   uint32 output_version = 17;
   ExecutorCapabilities capabilities = 18; // Optional additive discovery observation.
   VantagePointReport vantage_point = 19; // Optional; sent with capabilities.
+  // TESLA disclosure delay d: the key of epoch i is disclosed once epoch i+d
+  // starts, at tesla_anchor_timestamp_ns + (i+d)*tesla_delay_sec. At least 2;
+  // zero from an executor that predates it, which disclosed after one epoch.
+  int64 tesla_disclosure_delay_epochs = 20;
 }
 
 message DebugletPolicy {

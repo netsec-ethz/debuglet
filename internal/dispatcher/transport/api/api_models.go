@@ -70,13 +70,27 @@ type ExecutorByIPResponse struct {
 // ExecutorTeslaResponse is returned by GET /executors/:id/tesla.
 // It provides all parameters needed by an external verifier to reconstruct
 // chain keys and validate packet authentication tags.
+//
+// The key of epoch t is disclosed no earlier than
+// anchor_timestamp_ns + (t + disclosure_delay_epochs) * epoch_seconds. A
+// verifier accepts a packet captured at time c with the key of its epoch t or
+// t-1 only while that key was still secret at c.
 type ExecutorTeslaResponse struct {
 	ExecutorID        string `json:"executor_id"`
 	AnchorKey         string `json:"anchor_key"`          // base64-encoded k_0
 	AnchorTimestampNs int64  `json:"anchor_timestamp_ns"` // Unix nanoseconds of epoch 0
-	DelaySec          int64  `json:"delay_sec"`           // epoch duration in seconds
-	DisclosedEpoch    int64  `json:"disclosed_epoch"`     // index of latest disclosed key
-	DisclosedKey      string `json:"disclosed_key"`       // base64-encoded k_τ, empty if none yet
+	DelaySec          int64  `json:"delay_sec"`           // deprecated name of epoch_seconds
+	EpochSeconds      int64  `json:"epoch_seconds"`       // epoch length I in seconds
+	// DisclosureDelayEpochs is d; 0 for an executor that predates it, which
+	// disclosed after one epoch and whose tags a verifier must not accept.
+	DisclosureDelayEpochs  int64  `json:"disclosure_delay_epochs"`
+	DisclosureDelaySeconds int64  `json:"disclosure_delay_seconds"` // d * epoch_seconds
+	DisclosedEpoch         int64  `json:"disclosed_epoch"`          // index of latest disclosed key
+	DisclosedKey           string `json:"disclosed_key"`            // base64-encoded k_τ, empty if none yet
+	// NextDisclosureEpoch is disclosed_epoch+1, and NextDisclosureAtNs the
+	// earliest Unix nanoseconds its key may be disclosed.
+	NextDisclosureEpoch int64 `json:"next_disclosure_epoch"`
+	NextDisclosureAtNs  int64 `json:"next_disclosure_at_ns"`
 }
 
 type DestinationLimitRequest struct {

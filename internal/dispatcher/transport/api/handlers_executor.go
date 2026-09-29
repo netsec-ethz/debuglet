@@ -12,6 +12,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -140,10 +141,14 @@ func (h *Handler) GetExecutorTesla(c echo.Context) error {
 		return apiError(http.StatusNotFound, CodeNotFound, "executor not found: "+echoed(id))
 	}
 
+	epochSeconds := int64(exec.TeslaDelay.Seconds())
 	resp := ExecutorTeslaResponse{
-		ExecutorID:        exec.ID,
-		AnchorTimestampNs: exec.TeslaAnchorTimestamp.UnixNano(),
-		DelaySec:          int64(exec.TeslaDelay.Seconds()),
+		ExecutorID:             exec.ID,
+		AnchorTimestampNs:      exec.TeslaAnchorTimestamp.UnixNano(),
+		DelaySec:               epochSeconds,
+		EpochSeconds:           epochSeconds,
+		DisclosureDelayEpochs:  exec.TeslaDisclosureDelay,
+		DisclosureDelaySeconds: exec.TeslaDisclosureDelay * epochSeconds,
 	}
 	if len(exec.TeslaAnchorKey) > 0 {
 		resp.AnchorKey = base64.StdEncoding.EncodeToString(exec.TeslaAnchorKey)
@@ -153,6 +158,11 @@ func (h *Handler) GetExecutorTesla(c echo.Context) error {
 	if epoch, key, ok := h.dispatcher.GetKeyStore().LatestDisclosed(id, exec.TeslaAnchorKey); ok {
 		resp.DisclosedEpoch = epoch
 		resp.DisclosedKey = base64.StdEncoding.EncodeToString(key)
+	}
+	resp.NextDisclosureEpoch = resp.DisclosedEpoch + 1
+	chain := tag.Chain{Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay, DisclosureDelay: exec.TeslaDisclosureDelay}
+	if at, ok := chain.DisclosableAt(resp.NextDisclosureEpoch); ok {
+		resp.NextDisclosureAtNs = at.UnixNano()
 	}
 
 	return c.JSON(http.StatusOK, resp)

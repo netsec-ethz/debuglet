@@ -168,7 +168,7 @@ func TestReadSemanticsWASM(t *testing.T) {
 	seed := bytes.Repeat([]byte{0x42}, 32)
 	schedule, err := tesla.NewKeySchedule(tesla.Config{
 		Seed:        seed,
-		Delay:       time.Second,
+		EpochLength: time.Second,
 		ChainLength: 64,
 	})
 	if err != nil {
