@@ -45,6 +45,31 @@ func TestAdmissionVantagePointLabels(t *testing.T) {
 	}
 }
 
+// Registration decides the source-IP label: the connection's address is the
+// dispatcher's observation, the hello's address only the executor's claim.
+func TestRegistrationLabelsVantageSourceIP(t *testing.T) {
+	d, _, _ := newRegistryFixture(t)
+	for _, tc := range []struct {
+		id, connection, want, source string
+	}{
+		{"observed", "198.51.100.4", "198.51.100.4", wire.SourceDispatcherObserved},
+		{"claimed", "", "203.0.113.8", wire.SourceExecutorReported},
+	} {
+		if err := registryRegisterWithSetup(t.Context(), d, registryOwner(t, tc.id), registryHello(tc.id), tc.connection); err != nil {
+			t.Fatal(err)
+		}
+		d.mu.Lock()
+		v := admissionVantagePoint(d.executors[tc.id], d.now())
+		d.mu.Unlock()
+		if ip := v.SourceIP; ip.Value == nil || *ip.Value != tc.want || *ip.Source != tc.source {
+			t.Fatalf("%s: source ip %+v", tc.id, ip)
+		}
+		if host := v.PublicHost; host.Value == nil || *host.Source != wire.SourceExecutorReported {
+			t.Fatalf("%s: public host %+v", tc.id, host)
+		}
+	}
+}
+
 func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 	d, _, _ := newRegistryFixture(t)
 	now := time.Unix(1700000000, 0)
