@@ -60,10 +60,20 @@ Readers from before 1.1 reject 1.1 exports as an unsupported version.
   for that executor. 1.1 files written before these fields omit them; readers
   treat an omitted field as `null`, and readers without them ignore it, so every
   1.1 file stays valid.
+- Also within schema 1, the executor's host probes: `capabilities.value.icmp`
+  (`{state, reason}` of its raw ICMPv4 socket probe) and
+  `capabilities.value.enforcement_reason` (why the `fallback` counter is used);
+  `clock`, the kernel clock `state`, `estimated_error_ns`, `max_error_ns`,
+  `error_bound_ns`, `readiness` and `reason`; and `platform`, the host's `os`,
+  `arch`, `kernel_release`, `cpus`, `memory_bytes` and `build_version`. `clock`
+  and `platform` carry `source`, `observed_at` and `stale` like `scion_isd_as`.
+  Platform detail is operator-only elsewhere and appears here because a result
+  is readable only by its owner and operators. Earlier files omit these fields,
+  which reads as `null` (or an empty reason).
 - Each vantage-point value names its `source`: `operator`,
   `executor-reported` or `dispatcher-observed` (`database:<name>@<version>` is
-  reserved for later lookups). Capabilities, `scion_isd_as` and `public_host`
-  are `executor-reported`; `display` values are `operator`. `source_ip` is `dispatcher-observed` when taken from the
+  reserved for later lookups). Capabilities, `scion_isd_as`, `clock`,
+  `platform` and `public_host` are `executor-reported`; `display` values are `operator`. `source_ip` is `dispatcher-observed` when taken from the
   connection, and `executor-reported` when the dispatcher fell back to the
   address in the executor's hello. No label means verified: an executor claim
   remains a claim. A value that was not recorded is `null` together with its
@@ -76,7 +86,10 @@ Readers from before 1.1 reject 1.1 exports as an unsupported version.
   must not be interpreted as exit code zero.
 - `timing.scheduled_start` and `reserved_until` are the reserved window, not
   measured execution times. Actual start, finish and clock uncertainty are always
-  null in formats 1.0 and 1.1; the reader rejects a file that sets them. `observed_at` is the dispatcher time of the export snapshot;
+  null in formats 1.0 and 1.1; the reader rejects a file that sets them. The
+  kernel error estimate in `vantage_point.clock` is the executor's report at
+  admission, not a bound on any run timestamp, so it does not fill
+  `clock_uncertainty_ns`. `observed_at` is the dispatcher time of the export snapshot;
   nanosecond timestamp representation is not a clock accuracy claim.
 - `output.entries` contains every retained entry, in ID order, with exact bytes
   encoded as base64. `output.status` distinguishes `unknown`, `pending`,

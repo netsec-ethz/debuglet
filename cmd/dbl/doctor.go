@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/artifact"
+	"github.com/netsec-ethz/debuglet/internal/hostprobe"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/internal/tlsfiles"
 )
@@ -27,10 +28,13 @@ Check the installed payload and, with a daemon file, its local prerequisites.
 --connection explicitly checks only the selected HTTP dispatcher. No other
 network is contacted. Local filesystem/capability checks use this process's
 identity, which may differ from the service account. No measurement is launched.
+The clock check reads the kernel's own synchronization state and error estimate
+(Linux adjtimex, read only) against the executor's clock.max_error_ms; no time
+source is queried.
 
 Statuses: pass, failure, unavailable, not_checked. Exit 1 means a failure or
 unavailable check; not_checked is inconclusive. This does not certify isolation,
-packet enforcement, clock synchronization or readiness of a running daemon.
+packet enforcement, clock accuracy or readiness of a running daemon.
 `
 
 type doctorCheck struct {
@@ -58,6 +62,7 @@ func doctorCommand(ctx context.Context, args []string, options globalOptions, st
 	}
 	executable, _ := os.Executable()
 	report := doctorReport{Checks: []doctorCheck{payloadCheck(executable)}}
+	clockBound := hostprobe.DefaultClockErrorBound
 	if *role == "" {
 		report.Checks = append(report.Checks, doctorCheck{"config", "not_checked", "no daemon configuration selected", "supply --role and --file to check local daemon prerequisites"})
 	} else {
@@ -67,9 +72,12 @@ func doctorCommand(ctx context.Context, args []string, options globalOptions, st
 		} else {
 			report.Checks = append(report.Checks, doctorCheck{"config", "pass", "startup configuration validation passed", ""})
 			report.Checks = append(report.Checks, localDaemonChecks(ctx, *role, cfg, *offline)...)
+			if cfg.executor != nil {
+				clockBound = cfg.executor.Clock.MaxErrorBound()
+			}
 		}
 	}
-	report.Checks = append(report.Checks, doctorCheck{"clock", "not_checked", "local UTC time is " + time.Now().UTC().Format(time.RFC3339), "verify host clock synchronization; no external time source was queried"})
+	report.Checks = append(report.Checks, clockCheck(readClock(clockBound)))
 	if *connection {
 		report.Checks = append(report.Checks, dispatcherCheck(ctx, options))
 	} else {
@@ -100,6 +108,30 @@ func doctorCommand(ctx context.Context, args []string, options globalOptions, st
 		}
 	}
 	return exitOK
+}
+
+// readClock is replaced in tests; the host's own clock state is not a fixture.
+var readClock = hostprobe.ReadClock
+
+// clockCheck grades the kernel's own clock discipline, read without changing
+// it, against the executor's bound (the default without an executor file). No
+// external time source is queried, so a pass means the kernel reports a
+// disciplined clock within the bound, not that the time is verified.
+func clockCheck(c hostprobe.Clock) doctorCheck {
+	switch c.Readiness {
+	case hostprobe.ReadinessReady:
+		return doctorCheck{"clock", "pass", fmt.Sprintf("kernel clock is synchronized; estimated error %v within the %v bound", *c.EstimatedError, c.Bound), ""}
+	case hostprobe.ReadinessDegraded:
+		// Inconclusive rather than a failure: the executor reports degraded
+		// readiness but still admits runs, and development hosts and VMs
+		// often run without a time daemon. As for BTF, the detail says why.
+		if c.Reason == hostprobe.ReasonUnsynced {
+			return doctorCheck{"clock", "not_checked", "kernel clock is not synchronized; the executor would report degraded clock readiness", "run a time daemon such as chrony or systemd-timesyncd and wait for it to synchronize"}
+		}
+		return doctorCheck{"clock", "not_checked", fmt.Sprintf("kernel estimated clock error %v exceeds the %v bound; the executor would report degraded clock readiness", *c.EstimatedError, c.Bound), "check the time daemon's sources, or raise clock.max_error_ms deliberately"}
+	default:
+		return doctorCheck{"clock", "not_checked", "kernel clock state is unavailable on this platform; local UTC time is " + time.Now().UTC().Format(time.RFC3339), "verify host clock synchronization; no external time source was queried"}
+	}
 }
 
 func payloadCheck(executable string) doctorCheck {

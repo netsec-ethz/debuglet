@@ -49,6 +49,9 @@ type Executor struct {
 	SCIONISDAS ObservedString  `json:"scion_isd_as"`
 	// Listeners are the transports the executor can open run listeners on.
 	Listeners ObservedList `json:"listeners"`
+	// Clock is the executor-reported kernel clock state. Host platform detail
+	// is operator-only and never part of this public listing.
+	Clock ObservedClock `json:"clock"`
 }
 
 // State is a debuglet's reported state. Unknown state strings are preserved.

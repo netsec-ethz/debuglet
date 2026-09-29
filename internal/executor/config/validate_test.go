@@ -78,6 +78,8 @@ func TestRejectsUnsupportedOrMalformedFields(t *testing.T) {
 		{"empty log level", baseSections + "[logging]\nlog_level=''\n", "logging.log_level must not be empty"},
 		{"negative price", baseSections + "[pricing]\nprice_per_bw_s=-1\n", "pricing.price_per_bw_s must not be negative"},
 		{"negative trial time", baseSections + "[pricing]\ntrial_time_limit=-1\n", "pricing.trial_time_limit must not be negative"},
+		{"negative clock bound", baseSections + "[clock]\nmax_error_ms=-1\n", "clock.max_error_ms must be between"},
+		{"clock bound beyond a minute", baseSections + "[clock]\nmax_error_ms=60001\n", "clock.max_error_ms must be between"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, calls, err := load(t, tc.body)
@@ -101,7 +103,7 @@ func TestOmittedKeysKeepDocumentedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("minimal configuration: %v", err)
 	}
-	if cfg.Resources.MaxDebuglets != DefaultMaxDebuglets || cfg.Logging.LogLevel != DefaultLogLevel {
+	if cfg.Resources.MaxDebuglets != DefaultMaxDebuglets || cfg.Logging.LogLevel != DefaultLogLevel || cfg.Clock.MaxErrorMS != DefaultClockMaxErrorMS {
 		t.Fatalf("defaults changed: %+v", cfg)
 	}
 	if cfg.Dispatcher.YamuxAddr != cfg.Dispatcher.Addr {

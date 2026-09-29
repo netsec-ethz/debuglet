@@ -48,6 +48,25 @@ changes; the linked API and deployment documentation contains operational detail
   `display` within schema 1; earlier 1.1 files remain valid. `dbl nodes` shows
   the new columns, and `dbl nodes`, `dbl run` and `ExecutorFilter.ISDAS` filter
   by ISD-AS. See `docs/operations/executor-discovery.md`.
+- Executors probe their host at startup and with every capability report.
+  `capabilities.icmp` reports whether a raw ICMPv4 socket opens (`available`,
+  or `unavailable` with `disabled`, `not_permitted`, `ping_socket_only` or
+  `unsupported`); the probe is repeated instead of cached for the process
+  lifetime, and `network.policy.icmp = false` still switches ICMP off.
+  `capabilities.enforcement_reason` says why the fallback counter is used.
+  A new `clock` field in `GET /executors` reports the kernel clock state
+  (`synced`, `unsynced`, `unknown`) and its error estimates read with
+  `adjtimex`, graded `degraded` above the new executor setting
+  `clock.max_error_ms` (default 100 ms). The host platform (OS, architecture,
+  kernel, CPUs, memory, build version) is operator-only: it is never listed and
+  is recorded only in result provenance. `provenance.vantage_point` gains
+  `clock` and `platform`, and its capability report gains `icmp` and
+  `enforcement_reason`, all within schema 1 and labelled `executor-reported`.
+  `timing.clock_uncertainty_ns` stays null.
+- `dbl doctor` checks the kernel clock against the executor's
+  `clock.max_error_ms` instead of reporting `clock: not_checked`: synchronized within the bound passes; unsynced or
+  above the bound stays `not_checked` with the reason (the executor admits
+  runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
 
 ### Changed
 - A run whose packets the eBPF tagger attributes refuses IPv6 destinations and

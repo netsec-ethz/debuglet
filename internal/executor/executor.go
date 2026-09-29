@@ -67,8 +67,10 @@ type Executor struct {
 	capabilityReason string
 	// capabilityTagging is the tagging mode of the last report sent.
 	capabilityTagging tagger.Mode
-	cfg               config.ExecutorConfig
-	teslaSchedule     *tesla.KeySchedule
+	// clockReason is the clock readiness reason last logged.
+	clockReason   string
+	cfg           config.ExecutorConfig
+	teslaSchedule *tesla.KeySchedule
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
 	chainReport *chainReport

@@ -33,6 +33,9 @@ retained_runs = 65_536
 rate_bytes_per_second = 1_048_576
 burst_bytes = 65_536
 
+[clock]
+max_error_ms = 100  # estimated kernel clock error above which clock readiness is reported degraded
+
 [tesla]
 seed = ""                                  # optional; empty auto-generates
 delay = 30

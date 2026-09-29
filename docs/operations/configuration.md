@@ -12,6 +12,8 @@ Optional `[executors."<executor-id>"]` tables label executors with `display_name
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
 
+The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. It does not refuse admission. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
+
 ### Executor output limits
 
 The optional `[output]` section uses the defaults shown in the [executor example](../../configs/executor/executor.toml): 8 MiB and 65,536 frames emitted per run, 64 MiB queued per executor, 65,536 retained run records, and 1 MiB/s per run with a 64 KiB burst. Zero selects the default. Stdout and stderr share one ordered writer, 16 KiB chunks and a 256 KiB accepted queue. Rate limits apply backpressure; a total-byte or storage limit cancels that guest and marks its accepted output prefix as truncated.

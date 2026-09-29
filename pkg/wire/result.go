@@ -68,6 +68,20 @@ type VantagePoint struct {
 	// Added within schema 1; absent in earlier 1.1 files, which means null.
 	SCIONISDAS LabelledObservation `json:"scion_isd_as"`
 	Display    ExecutorDisplay     `json:"display"`
+	// Added within schema 1 with the executor probes; absent means null.
+	// Platform is host detail, recorded here because a result is visible only
+	// to the run's owner and operators.
+	Clock    LabelledReport[ClockReport]  `json:"clock"`
+	Platform LabelledReport[HostPlatform] `json:"platform"`
+}
+
+// LabelledReport is an expiring report as known at admission, like
+// LabelledObservation. All fields are null together.
+type LabelledReport[T any] struct {
+	Value      *T         `json:"value"`
+	Source     *string    `json:"source"`
+	ObservedAt *time.Time `json:"observed_at"`
+	Stale      *bool      `json:"stale"`
 }
 
 // LabelledObservation is an expiring value as known at admission: Stale says
@@ -101,6 +115,9 @@ type CapabilityReport struct {
 	// Tagging is the report's tagging mode; null when the report had none.
 	// Additive within result format 1.1.
 	Tagging *TaggingMode `json:"tagging"`
+	// Added within vantage_point schema 1; absent in earlier files.
+	EnforcementReason string      `json:"enforcement_reason"`
+	ICMP              *ProbeState `json:"icmp"`
 }
 
 type ResultOutcome struct {

@@ -278,6 +278,17 @@ message ExecutorCapabilities {
   // Additive within schema version 1: absent from older executors, which
   // leaves the tagging mode unknown.
   TaggingMode tagging = 5;
+  // Additive within schema version 1; empty or absent is unknown.
+  // Why the counter is fallback: configured, no_interface, not_permitted,
+  // unsupported or attach_failed. Empty when enforcement_mode is ebpf.
+  string enforcement_reason = 6;
+  ProbeState icmp = 7; // Raw ICMPv4 socket probe of this process.
+}
+
+// A local probe outcome. Opening a socket sends nothing.
+message ProbeState {
+  string state = 1;  // available or unavailable.
+  string reason = 2; // Empty when available; disabled, not_permitted, ping_socket_only or unsupported.
 }
 
 // How the packets of a run on this executor are tagged, per address family
@@ -312,4 +323,28 @@ message VantagePointReport {
   uint32 schema_version = 1;
   string scion_isd_as = 2; // Local ISD-AS from the SCION daemon; empty unknown.
   repeated string listeners = 3; // Listener transports it can open: tcp, udp, scion.
+  // Additive within schema version 1; absent is unknown. The dispatcher
+  // clears a malformed field alone and keeps the rest of the report.
+  ClockState clock = 4;
+  HostPlatform platform = 5; // Operator only; never in the public executor listing.
+}
+
+// The kernel clock discipline as read by adjtimex without changing it.
+message ClockState {
+  string state = 1;                      // synced, unsynced or unknown.
+  optional int64 estimated_error_ns = 2; // Kernel esterror; absent unknown.
+  optional int64 max_error_ns = 3;       // Kernel maxerror; absent unknown.
+  int64 error_bound_ns = 4;              // The operator's configured bound on estimated_error_ns.
+  string readiness = 5;                  // ready, degraded or unknown.
+  string reason = 6;                     // Empty unless degraded: unsynced or error_exceeds_bound.
+}
+
+// Host platform facts. Empty or zero fields are unknown.
+message HostPlatform {
+  string os = 1;             // Go GOOS.
+  string arch = 2;           // Go GOARCH.
+  string kernel_release = 3; // uname release.
+  uint32 cpus = 4;           // Logical CPUs usable by the process.
+  optional uint64 memory_bytes = 5; // Total physical memory.
+  string build_version = 6;  // Executor build version.
 }

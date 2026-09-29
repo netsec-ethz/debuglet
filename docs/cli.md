@@ -153,7 +153,14 @@ dbl --dispatcher research --timeout 10s --output json doctor --connection
 Network checks require `--connection` and contact only the selected HTTP
 dispatcher's version route. Filesystem and capability checks describe the
 invoking process, which may differ from the service account; they do not prove
-packet enforcement, clock synchronization or daemon readiness.
+packet enforcement or daemon readiness. The `clock` check reads the kernel's
+synchronization state and estimated error on Linux (`adjtimex`, read only) and
+passes when the kernel reports a synchronized clock within the executor's
+`clock.max_error_ms` (100 ms without an executor file). An unsynchronized
+clock or a larger error is `not_checked` with the reason, not a failure: the
+executor then reports degraded clock readiness but still admits runs. It
+queries no time source, so a pass is the kernel's own estimate, not a verified
+time. Other platforms report it `not_checked`.
 
 After stopping the daemon, add `--offline` to inspect its database schema without
 writing database state. Existing journals make that check inconclusive and are

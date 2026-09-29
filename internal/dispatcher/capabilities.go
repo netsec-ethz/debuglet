@@ -43,10 +43,48 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 	if report.Attribution != nil {
 		out.Attribution = attributionFromReport(report.Attribution, observed)
 	}
+	out.EnforcementReason = enforcementReason(out.EnforcementMode, report.GetEnforcementReason())
+	if report.Icmp != nil {
+		out.ICMP = icmpFromReport(report.Icmp, slices.Contains(protocols, "icmp"))
+	}
 	if report.Tagging != nil {
 		out.Tagging = taggingFromReport(report.Tagging)
 	}
 	return out
+}
+
+// A malformed reason leaves the reason unknown and keeps the mode.
+func enforcementReason(mode, reason string) string {
+	switch reason {
+	case "configured", "no_interface", "not_permitted", "unsupported", "attach_failed":
+		if mode == "fallback" {
+			return reason
+		}
+	}
+	return ""
+}
+
+// icmpFromReport keeps a probe state that agrees with the reported protocols;
+// anything else leaves the ICMP state unknown without touching the protocols.
+func icmpFromReport(report *pb.ProbeState, advertised bool) *wire.ProbeState {
+	switch report.GetState() {
+	case "available":
+		if report.GetReason() != "" || !advertised {
+			return nil
+		}
+	case "unavailable":
+		switch report.GetReason() {
+		case "disabled", "not_permitted", "ping_socket_only", "unsupported":
+		default:
+			return nil
+		}
+		if advertised {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return &wire.ProbeState{State: report.GetState(), Reason: report.GetReason()}
 }
 
 // taggingFromReport validates the tagging mode. Nil means malformed, which
@@ -153,9 +191,18 @@ func admissionCapabilities(entry *executorEntry, now time.Time) wire.VantageCapa
 	return wire.VantageCapabilities{
 		Value: &wire.CapabilityReport{SchemaVersion: int(entry.Capabilities.SchemaVersion),
 			Protocols: append([]string{}, entry.Capabilities.Protocols...), EnforcementMode: entry.Capabilities.EnforcementMode,
+			EnforcementReason: entry.Capabilities.EnforcementReason, ICMP: cloneProbe(entry.Capabilities.ICMP),
 			Tagging: cloneTagging(entry.Capabilities.Tagging)},
 		Source: &source, ObservedAt: &observed, Stale: &stale,
 	}
+}
+
+func cloneProbe(p *wire.ProbeState) *wire.ProbeState {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	return &out
 }
 
 // Caller holds the registry lock. Capacity belongs to the current registration
@@ -170,6 +217,7 @@ func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapab
 		attribution := *out.Attribution
 		out.Attribution = &attribution
 	}
+	out.ICMP = cloneProbe(out.ICMP)
 	out.Tagging = cloneTagging(out.Tagging)
 	if len(out.Protocols) == 0 {
 		out.Protocols = []string{}
