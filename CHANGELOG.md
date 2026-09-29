@@ -19,7 +19,12 @@ changes; the linked API and deployment documentation contains operational detail
   - The executor now discloses k_i at the start of epoch i+d.
     `[tesla] disclosure_delay_epochs` sets d; 0 derives the smallest d
     covering 15 minutes (90 epochs at the default 10-second epoch), and an
-    explicit value below 2 is refused. The installed-key hold still applies.
+    explicit value below 2, or with less than 10 s of margin
+    ((d − 1) × epoch length), is refused. The installed-key hold still applies.
+  - A restart starts a new chain, so the keys of the last d epochs before it
+    are never disclosed and those packets cannot be verified; the chain
+    exhaustion log names `final_disclosure_at`, the time after which a
+    restart loses nothing.
   - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
     skew) and logs the executor once as misbehaving. An executor that does
     not report d is treated as d = 1.

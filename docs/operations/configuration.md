@@ -23,7 +23,7 @@ d epochs later so that anyone can verify the tags afterwards.
 | Key | Unit | Default | Allowed |
 | --- | --- | --- | --- |
 | `epoch_seconds` | seconds | 10 (0 selects it) | 0–86,400 |
-| `disclosure_delay_epochs` | epochs | 0: the smallest d with d × `epoch_seconds` ≥ 15 minutes (90 at 10 s, 30 at 30 s) | 0, or 2 up to 7 days' worth of epochs |
+| `disclosure_delay_epochs` | epochs | 0: the smallest d with d × `epoch_seconds` ≥ 15 minutes (90 at 10 s, 30 at 30 s) | 0, or at least 2 and with (d − 1) × `epoch_seconds` ≥ 10 s, up to 7 days' worth of epochs |
 | `chain_length` | epochs | 0: 7 days of epochs | 0–604,800 |
 | `seed` | text | empty: random | any |
 
@@ -40,9 +40,19 @@ during epoch t, and anyone who had fetched it could forge tags that verify for
 packets they timestamp in epoch t. A delay of at least two epochs is
 therefore enforced. The margin (d − 1) × `epoch_seconds` must exceed the
 verifier's clock tolerance plus the skew between the executor, the dispatcher
-and the capture host. The 15-minute default is in the range the TRACER design
-uses, far beyond that bound. Tags become verifiable once the delay has
-elapsed.
+and the capture host; an explicit delay is refused below 10 seconds of margin
+(the dispatcher's 5-second skew allowance plus the verifier's tolerance), so
+at 1-second epochs d is at least 11. The 15-minute default is in the range the
+TRACER design uses, far beyond that bound. Tags become verifiable once the
+delay has elapsed.
+
+The keys live only in the running executor, and every start builds a new
+chain. The keys of the last d epochs before a restart are therefore never
+disclosed, and packets tagged in them (the last 15 minutes by default) can
+never be verified. Stop an executor only once its last attributed packets are
+d epochs old. When the chain runs out, the executor logs
+`final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
+disclosed; restart it after that time.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
 never disclosed while an installed copy can still sign. `GET

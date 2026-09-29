@@ -73,7 +73,7 @@ func TestChainReportLogsEachConditionOnce(t *testing.T) {
 		{"fresh", start.Add(time.Minute), zapcore.InfoLevel, "", ""},
 		{"nearly", expiry.Add(-30 * time.Minute), zapcore.WarnLevel, "TESLA key chain nearly exhausted", "remaining"},
 		{"nearly again", expiry.Add(-time.Minute), zapcore.InfoLevel, "", ""},
-		{"exhausted", expiry, zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; restart the executor or raise tesla.chain_length", "expired_at"},
+		{"exhausted", expiry, zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; raise tesla.chain_length and restart the executor after final_disclosure_at, since a restart before then never discloses the keys of the chain's last epochs", "expired_at"},
 		{"exhausted again", expiry.Add(time.Hour), zapcore.InfoLevel, "", ""},
 	} {
 		level, msg, fields := report.observe(ks, tick.at)

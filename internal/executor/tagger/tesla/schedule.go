@@ -413,6 +413,15 @@ func (ks *KeySchedule) Expiry() time.Time {
 	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength) * ks.cfg.EpochLength)
 }
 
+// FinalDisclosure returns when the last signing key k_{L-1} becomes
+// disclosable: the start of epoch L-1+d, d-1 epochs after Expiry. Keys live
+// only in this schedule, so a restart before then starts a new chain and the
+// keys of the old chain's last undisclosed epochs are never published; the
+// packets they tagged cannot be verified.
+func (ks *KeySchedule) FinalDisclosure() time.Time {
+	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength-1+ks.cfg.DisclosureDelay) * ks.cfg.EpochLength)
+}
+
 // epochOf returns the epoch index for a given wall-clock time.
 func (ks *KeySchedule) epochOf(t time.Time) int64 {
 	elapsed := t.Sub(ks.cfg.Epoch)

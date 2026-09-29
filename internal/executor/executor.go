@@ -320,8 +320,8 @@ func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level
 	case schedule.Exhausted(now):
 		if !r.exhausted {
 			r.exhausted = true
-			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; restart the executor or raise tesla.chain_length",
-				[]zap.Field{zap.Time("expired_at", expiry)}
+			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; raise tesla.chain_length and restart the executor after final_disclosure_at, since a restart before then never discloses the keys of the chain's last epochs",
+				[]zap.Field{zap.Time("expired_at", expiry), zap.Time("final_disclosure_at", schedule.FinalDisclosure())}
 		}
 	case expiry.Sub(now) < time.Hour:
 		if !r.nearly {

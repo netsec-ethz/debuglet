@@ -45,7 +45,14 @@ func TestExhaustedChainHasNoSigningKey(t *testing.T) {
 		}
 	}
 	// k_2 is due at the start of epoch 2+d = 4, after Expiry, and stays the
-	// disclosed key from then on.
+	// disclosed key from then on. FinalDisclosure names that instant, before
+	// which a restart would lose k_2.
+	if !ks.FinalDisclosure().Equal(at(4)) {
+		t.Errorf("FinalDisclosure() = %s; want the start of epoch 4", ks.FinalDisclosure())
+	}
+	if idx, _, _ := ks.DisclosedKey(ks.FinalDisclosure().Add(-time.Nanosecond)); idx != 1 {
+		t.Errorf("DisclosedKey just before FinalDisclosure = %d; want 1", idx)
+	}
 	if idx, _, ok := ks.DisclosedKey(at(3)); !ok || idx != 1 {
 		t.Errorf("DisclosedKey(epoch 3) = (%d, %v); want (1, true)", idx, ok)
 	}

@@ -237,6 +237,15 @@ const MaxEpochSeconds = int64(24 * time.Hour / time.Second)
 // be disclosed only after it expired.
 const MaxDisclosureWindow = tesla.DefaultChainHorizon
 
+// MinDisclosureMargin bounds (d−1)·I from below, the time the key of a
+// packet's previous epoch stays secret after the packet's epoch ends. A
+// verifier refuses a key the dispatcher may have accepted, which it does up to
+// 5 seconds early (clockSkew in internal/dispatcher/tag), before the capture
+// time plus its own clock tolerance (1 second by default in
+// tools/verify_pcap.py). A smaller margin makes tags of whole epochs
+// unverifiable: at one-second epochs, d = 2 verifies nothing.
+const MinDisclosureMargin = 10 * time.Second
+
 // maxInterfaceName is the kernel limit for a network interface name.
 const maxInterfaceName = 15
 
@@ -390,6 +399,11 @@ func (cfg *ExecutorConfig) validateTesla() error {
 	if d := cfg.Tesla.DisclosureDelayEpochs; d != 0 && (d < tesla.MinDisclosureDelay || d > maxDelay) {
 		return fmt.Errorf("tesla.disclosure_delay_epochs must be 0 (derive the smallest delay covering %d seconds) or between %d and %d epochs (%d seconds in all at %d-second epochs), got %d",
 			int64(tesla.DefaultDisclosureWindow/time.Second), tesla.MinDisclosureDelay, maxDelay, int64(MaxDisclosureWindow/time.Second), int64(epoch/time.Second), d)
+	}
+	if d := cfg.Tesla.DisclosureDelayEpochs; d != 0 && time.Duration(d-1)*epoch < MinDisclosureMargin {
+		minDelay := 1 + int64((MinDisclosureMargin+epoch-1)/epoch)
+		return fmt.Errorf("tesla.disclosure_delay_epochs must be at least %d at %d-second epochs, so the key of a packet's previous epoch stays secret for %d seconds after the packet's epoch (clock skew allowance plus verifier tolerance), got %d",
+			minDelay, int64(epoch/time.Second), int64(MinDisclosureMargin/time.Second), d)
 	}
 	if cfg.Tesla.ChainLength < 0 || cfg.Tesla.ChainLength > MaxChainLength {
 		return fmt.Errorf("tesla.chain_length must be between 0 and %d epochs, got %d", MaxChainLength, cfg.Tesla.ChainLength)
