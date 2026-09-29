@@ -15,8 +15,10 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	sdpb "github.com/scionproto/scion/pkg/proto/daemon"
@@ -70,6 +72,12 @@ func TestHeterogeneousExecutorCapabilitiesSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 		report := hello.GetCapabilities()
+		// The kernel node's runs get the eBPF tagger, the other's the pure-Go
+		// one; neither tags IPv6 or SCION.
+		wantIPv4 := []string{tagger.ModeEBPF, debuglet.UserspaceTagging()}[i]
+		if tagging := report.GetTagging(); tagging.GetIpv4() != wantIPv4 || tagging.GetIpv6() != tagger.ModeNone || tagging.GetScion() != tagger.ModeNone {
+			t.Fatalf("executor %d tagging %v, want ipv4 %s", i, tagging, wantIPv4)
+		}
 		nodes = append(nodes, client.Node{ID: []string{"kernel", "scion"}[i], Ready: true, Capabilities: &wire.ExecutorCapabilities{
 			SchemaVersion: report.GetSchemaVersion(), Protocols: report.GetProtocols(), EnforcementMode: report.GetEnforcementMode()}})
 	}

@@ -440,7 +440,7 @@ func strictCLIDocument(data []byte, out any) error {
 				return err
 			}
 			if observation, present := fields["capabilities"]; present {
-				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, []string{"attribution"}, map[string]bool{"advertised_capacity_bps": true, "attribution": true})
+				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, []string{"attribution", "tagging"}, map[string]bool{"advertised_capacity_bps": true, "attribution": true, "tagging": true})
 				if err != nil {
 					return err
 				}

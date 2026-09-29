@@ -51,6 +51,11 @@ type Run struct {
 	ListenTCP   bool
 	ListenUDP   bool
 	ListenSCION bool
+	// RefuseIPv6 refuses every IPv6 destination and peer with ErrUntagged. It
+	// is set for a run whose packets the kernel tagger attributes, which tags
+	// IPv4 only. SCION is not affected: its sockets are never tagged, and its
+	// traffic is reported untagged instead.
+	RefuseIPv6 bool
 }
 
 // Policy is the operator policy and one job's policy together. It is the only
@@ -286,6 +291,10 @@ func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target strin
 			refusal = errors.Join(refusal, fmt.Errorf("%w: icmp: %s is not an IPv4 address", ErrDenied, candidate))
 			continue
 		}
+		if err := p.checkFamily(t, candidate); err != nil {
+			refusal = errors.Join(refusal, err)
+			continue
+		}
 		if _, ok := denied[candidate]; ok {
 			refusal = errors.Join(refusal, fmt.Errorf("%w: %s resolves an opted-out destination", ErrDenied, candidate))
 			continue
@@ -325,6 +334,9 @@ func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort
 		return Match{}, err
 	}
 	peer := Normalize(addr.Addr())
+	if err := p.checkFamily(t, peer); err != nil {
+		return Match{}, err
+	}
 	if t != Inbound {
 		if err := p.op.CheckPort(int(addr.Port())); err != nil {
 			return Match{}, err
@@ -350,6 +362,19 @@ func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort
 	}
 	return Match{Key: key}, nil
 }
+
+// checkFamily refuses an IPv6 address of a run that refuses IPv6. addr is
+// normalized, so an IPv4-mapped address counts as the IPv4 address it is.
+func (p *Policy) checkFamily(t Transport, addr netip.Addr) error {
+	if !p.run.RefuseIPv6 || t == SCION || addr.Is4() {
+		return nil
+	}
+	return fmt.Errorf("%w: %s: %s is an IPv6 address and this executor's kernel tagger tags IPv4 only", ErrUntagged, t, addr)
+}
+
+// RefusesIPv6 reports whether this run refuses IPv6 destinations and peers.
+// Its listeners are then bound to IPv4 only.
+func (p *Policy) RefusesIPv6() bool { return p != nil && p.run.RefuseIPv6 }
 
 // resolve turns one target into the addresses it currently has, normalized.
 // An answer is reused for the resolution window: admission runs on traffic the

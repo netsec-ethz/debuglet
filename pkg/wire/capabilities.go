@@ -20,6 +20,24 @@ type ExecutorCapabilities struct {
 	EnforcementMode       string            `json:"enforcement_mode"`        // Actual ebpf/fallback packet counter; empty unknown.
 	AdvertisedCapacityBPS *int64            `json:"advertised_capacity_bps"` // Total reported bandwidth, not free capacity; null unknown.
 	Attribution           *AttributionState `json:"attribution"`             // Null unknown, including executors that predate it.
+	Tagging               *TaggingMode      `json:"tagging"`                 // Null unknown, including executors that predate it.
+}
+
+// Tagging modes of one address family or transport.
+const (
+	TaggingEBPF      = "ebpf"      // Kernel tagger: every packet of a marked socket.
+	TaggingUserspace = "userspace" // Pure-Go tagger: IPv4 UDP and ICMP datagrams only; TCP and TLS untagged.
+	TaggingNone      = "none"      // Untagged.
+)
+
+// TaggingMode is the executor's report of how a run's packets are tagged, per
+// address family and for SCION. It is the node's capability, the mode a run on
+// it is set up to get, not the mode of any particular run; an executor claim,
+// not a verification. Readers must tolerate values they do not know.
+type TaggingMode struct {
+	IPv4  string `json:"ipv4"`
+	IPv6  string `json:"ipv6"`
+	SCION string `json:"scion"`
 }
 
 // AttributionState is the executor's report of whether packets it tags now can
