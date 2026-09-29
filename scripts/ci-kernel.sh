@@ -60,6 +60,7 @@ required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestBPFLinuxLoad"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestKernelTagMatchesGoTagger"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestLegacyTCAttachesAndRemovesOnlyItsFilter"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestCaptureTCPTagsVerifyAtReceiver"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestDisclosureFollowsKernelSlot"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestDisclosureWaitsForEveryTagger"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger", "TestTaggedDatagramsReachTheWire"),
@@ -72,7 +73,7 @@ for package, test in sorted(missing):
     print(f"Missing passing {package}/{test}; kernel checks did not run.", file=sys.stderr)
 if skips or missing:
     sys.exit(1)
-print("Tagger load, kernel/Go tag parity, legacy tc, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter and heterogeneous capability-selection checks passed with zero skipped tests.")
+print("Tagger load, kernel/Go tag parity, legacy tc, receiver-verified TCP tagging, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter and heterogeneous capability-selection checks passed with zero skipped tests.")
 PY
 
 # Separately prove that the checked-in C sources compile with this toolchain.

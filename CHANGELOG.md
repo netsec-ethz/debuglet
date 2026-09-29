@@ -61,6 +61,10 @@ changes; the linked API and deployment documentation contains operational detail
 - Refuse a destination limit below the floors reserved for admitted runs
   whose window lies ahead, not only below the floors of active allocations
   (`PATCH /destination` answers 409 `capacity_exhausted`).
+- Listener sockets of a run are marked for packet attribution before they
+  bind and listen, so a SYN-ACK and every accepted connection carry the
+  run's mark; a refused mark fails the listener instead of trying the next
+  port.
 
 ## [0.2.0] - 2026-09-27
 

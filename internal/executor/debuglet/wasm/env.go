@@ -106,25 +106,18 @@ func markSocket(e *WasmEnv, conn syscall.Conn) error {
 
 // Listener publication competes with terminal closure. References remain
 // immutable after successful publication; late resources are consumed/closed.
-// A listener is marked before it is published, and never after closure; one
-// that cannot be marked is closed. Handshake replies sent between listen and
-// marking can still escape attribution.
+// A listener arrives already marked: the PortManager marks it in its listen
+// control hook, before the socket is bound and listening, so no handshake
+// reply or datagram leaves it unattributed.
 func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error {
 	e.mu.Lock()
-	var markErr error
-	if !e.closed && e.TcpServer == nil {
-		markErr = markSocket(e, lis)
-	}
-	if markErr != nil || e.closed || e.TcpServer != nil {
+	if e.closed || e.TcpServer != nil {
 		e.mu.Unlock()
 		err := lis.Close()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
 		e.RecordCleanupError(err)
-		if markErr != nil {
-			return errors.Join(markErr, err)
-		}
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.TcpServer, e.TcpServerPort, e.TcpServerAddr = lis, port, addr
@@ -133,20 +126,13 @@ func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error 
 }
 func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
 	e.mu.Lock()
-	var markErr error
-	if !e.closed && e.UdpServer == nil {
-		markErr = markSocket(e, conn)
-	}
-	if markErr != nil || e.closed || e.UdpServer != nil {
+	if e.closed || e.UdpServer != nil {
 		e.mu.Unlock()
 		err := conn.Close()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
 		e.RecordCleanupError(err)
-		if markErr != nil {
-			return errors.Join(markErr, err)
-		}
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.UdpServer, e.UdpServerPort, e.UdpServerAddr = conn, port, addr
