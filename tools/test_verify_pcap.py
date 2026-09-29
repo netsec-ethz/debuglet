@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import sys
 import unittest
+import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import verify_pcap as vp  # noqa: E402
@@ -106,6 +107,82 @@ class VerificationWindowTest(unittest.TestCase):
         del info["epoch_seconds"]
         matched, reason = self.verify(packet(at(5, 1), 5), info)
         self.assertEqual(matched, [(DEBUGLET, 5, "siphash")], reason)
+
+
+class StubClient(vp.DispatcherClient):
+    """A DispatcherClient answering from a routing table instead of HTTP."""
+
+    def __init__(self, routes):
+        super().__init__("http://dispatcher.test")
+        self.routes = routes
+        self.calls = []
+
+    def _get(self, path, **params):
+        self.calls.append((path, params))
+        answer = self.routes.get(path)
+        if answer is None:
+            raise urllib.error.HTTPError(path, 404, "not found", {}, None)
+        return answer(params) if callable(answer) else answer
+
+
+def candidates(ts_ns, retained_from="2020-01-01T00:00:00Z", runs=(DEBUGLET,)):
+    return {
+        "ip": "192.0.2.1", "at": "", "retained_from": retained_from, "truncated": False,
+        "candidates": [{
+            "executor_id": "exec-1", "run_id": run, "active_from": "", "active_to": "",
+            "ip_source": "observed", "disclosed_through": 9,
+            "schedule": {"chain": "c1", "k0": base64.b64encode(KEYS[0]).decode(),
+                         "t0": ANCHOR_NS, "interval": EPOCH_S, "delay_epochs": 2,
+                         "chain_length": LENGTH, "tag_spec": 1},
+        } for run in runs],
+    }
+
+
+class LookupTest(unittest.TestCase):
+    def test_dated_routes_are_preferred(self):
+        pkt = packet(at(5, 1), 5)
+        stub = StubClient({
+            "/attribution/candidates": lambda params: candidates(pkt.ts_ns),
+            "/attribution/keys": {"executor_id": "exec-1", "chain": "c1", "next_epoch": None,
+                                  "keys": [{"epoch": 9, "key": base64.b64encode(KEYS[9]).decode()}]},
+        })
+        groups, reason = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(len(groups), 1, reason)
+        tesla, ids = groups[0]
+        self.assertEqual(ids, [DEBUGLET])
+        matched, why = vp.verify_packet(pkt, tesla, ids, 0)
+        self.assertEqual(matched, [(DEBUGLET, 5, "siphash")], why)
+        self.assertNotIn("/executors/by-ip", [path for path, _ in stub.calls])
+        keys = [params for path, params in stub.calls if path == "/attribution/keys"]
+        self.assertEqual(keys, [{"executor": "exec-1", "chain": "c1", "from_epoch": 9, "to_epoch": 9}])
+        # A second packet of the same second is answered from the cache.
+        stub.lookup("192.0.2.1", pkt.ts_ns + 1)
+        self.assertEqual(len(stub.calls), 2)
+
+    def test_history_before_retained_from_is_missing(self):
+        pkt = packet(at(5, 1), 5)
+        doc = candidates(pkt.ts_ns, retained_from="2100-01-01T00:00:00.123456789Z", runs=())
+        stub = StubClient({"/attribution/candidates": doc})
+        groups, reason = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(groups, [])
+        self.assertIn("missing", reason)
+        doc["retained_from"] = "2020-01-01T00:00:00Z"
+        stub = StubClient({"/attribution/candidates": doc})
+        self.assertIn("no run", stub.lookup("192.0.2.1", pkt.ts_ns)[1])
+
+    def test_older_dispatcher_falls_back_to_the_deprecated_routes(self):
+        pkt = packet(at(5, 1), 5)
+        stub = StubClient({
+            "/executors/by-ip": {"executor_id": "exec-1", "debuglet_ids": [DEBUGLET]},
+            "/executors/exec-1/tesla": schedule(9),
+        })
+        groups, reason = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(len(groups), 1, reason)
+        matched, why = vp.verify_packet(pkt, groups[0][0], groups[0][1], 0)
+        self.assertEqual(matched, [(DEBUGLET, 5, "siphash")], why)
+        # The missing route is not asked again.
+        stub.lookup("192.0.2.1", pkt.ts_ns + 5 * SECOND)
+        self.assertEqual([path for path, _ in stub.calls].count("/attribution/candidates"), 1)
 
 
 if __name__ == "__main__":

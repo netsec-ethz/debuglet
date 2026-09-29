@@ -1,25 +1,33 @@
 # Probe verification
 
 This note records how the recipient of a probe checks which Debuglet run sent
-it. It is a design for #71, #73 and #341; none of it has landed. Keep it in
-step with the code as each step of the delivery order lands. The tag
+it. It is a design for #71, #73 and #341; steps 1 and 2 of the
+[delivery order](#delivery-order) have landed, the rest has not. Keep it in
+step with the code as each step lands. The tag
 algorithm itself is specified in the tag spec (`docs/tag-spec.md`, tag spec
 v1).
 
 **Today.** Each executor tags outgoing IPv4 packets with a 16-bit SipHash-2-4
 tag in the IP ID, keyed by `HKDF(k_t, run_id)` over the first 64 bytes of the
 canonical packet, where `k_t` is the key of epoch `t` in the executor's TESLA
-chain. The executor discloses `k_t` on a heartbeat about one epoch later. The
-dispatcher keeps disclosed keys in memory only, for at most four chains per
-executor, and loses them on restart. The only verifier is
+chain. The executor discloses `k_t` on a heartbeat once epoch `t + d` has
+started. The dispatcher records every chain an executor announces, every
+disclosed key that verifies against its chain, and each run's interval and
+source address, in its database for the configured retention (default 90
+days, [configuration](operations/configuration.md#dispatcher-attribution-history)).
+Anyone can look them up without an account through
+`GET /attribution/candidates` and `GET /attribution/keys`, so captures older
+than the executor's current chain or the dispatcher's last restart can still
+be verified. The only verifier is
 [`tools/verify_pcap.py`](../tools/verify_pcap.py), mirrored by the website's
-`verify.ts`. It calls `GET /executors/by-ip`, which requires an account and
-lists only the caller's own runs among the executor's last 20, and
-`GET /executors/{id}/tesla`, which returns the current chain's anchor and
-latest disclosed key. A recipient without an account therefore cannot verify
-someone else's run. Captures older than the current chain, or older than the
-dispatcher's last restart, cannot be verified, and nothing can be verified
-before disclosure. There is no `dbl verify`, SDK call or evidence file.
+`verify.ts`; it uses the new routes and falls back to the deprecated
+`GET /executors/by-ip` (account required, the caller's own runs among the
+executor's last 20) and `GET /executors/{id}/tesla` (current chain only). An
+executor restart still loses the last `d` epochs of its chain: the dispatcher
+accepts a disclosure for an earlier recorded chain (`tesla_key_anchor` on the
+heartbeat), but the executor does not yet re-derive and disclose that tail.
+Nothing can be verified before disclosure. There is no `dbl verify`,
+`client.Verify` or evidence file.
 
 ## Model
 
@@ -104,14 +112,16 @@ every supported link type.
 
 The routes below follow the existing conventions. They have no path prefix;
 the version is negotiated with the `Debuglet-API-Version` header, and the
-routes are an addition in the next minor version. They are public
-(`security: []`), rate-limited per client address, and answer the usual
-`{code, message}` errors.
+routes are an addition in the next minor version (the candidates and keys
+routes are part of the unreleased API 1.9). They are public
+(`security: []`), rate-limited per client address (10 requests per second,
+burst 40, per TCP peer and per /64 for IPv6; `429 rate_limited` with
+`Retry-After`), and answer the usual `{code, message}` errors.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /attribution/candidates?ip=&at=` | Dated lookup: the runs active from `ip` within one epoch of `at`. Each candidate gives `executor_id`, `run_id`, active interval, and the schedule `{chain, k0, t0, interval, delay_epochs, chain_length, tag_spec}` together with `disclosed_through` (the latest disclosed epoch). The answer includes `retained_from`, so that `missing` can be told apart from "no run". |
-| `GET /attribution/keys?executor=&chain=&from_epoch=&to_epoch=` | Disclosed keys of one chain, at most 1024 epochs per page, with `next_epoch` for the next page. Undisclosed epochs are absent. The client checks every key against `k0`. |
+| `GET /attribution/candidates?ip=&at=` | Dated lookup: the runs active from `ip` within one epoch of `at` (RFC 3339). Each candidate gives `executor_id`, `run_id`, active interval (`active_from`, `active_to`), `ip_source` (`observed` or `advertised`), and the schedule `{chain, k0, t0, interval, delay_epochs, chain_length, tag_spec}` together with `disclosed_through` (the latest disclosed epoch, 0 for none). `t0` is Unix nanoseconds, `interval` seconds, `chain` the hex of the first 16 bytes of SHA-256(`k0`), and `chain_length` 0 when the executor did not report it. The answer includes `retained_from`, so that `missing` can be told apart from "no run", and `truncated` when more than 32 runs matched. |
+| `GET /attribution/keys?executor=&chain=&from_epoch=&to_epoch=` | Disclosed keys of one chain, at most 1024 epochs per page, with `next_epoch` for the next page (null on the last). `from_epoch` defaults to 1 and `to_epoch` to no bound. Undisclosed epochs are absent. The client checks every key against `k0`. |
 | `POST /attribution/verify` | Server-assisted check. The request lists up to 256 packets as `{data: base64 of the first 64 bytes of the IPv4 packet, captured_at}`. The response gives a verdict for each group, the budget `{limit, remaining, resets_at}` per group, and a signed `receipt`. |
 | `GET /attribution/receipt-keys` | The dispatcher's current and past receipt-verification keys (Ed25519) with their validity periods. |
 
@@ -199,10 +209,13 @@ receipt for abuse handling, not the packets.
 ## Delivery order
 
 1. Disclosure delay `d ≥ 2`, configurable, default about 15 minutes
-   (fix/tesla-disclosure-delay).
+   (fix/tesla-disclosure-delay). *Landed.*
 2. #71(a): durable disclosed-key history, a dated run-by-address record, and
    `GET /attribution/candidates` and `/attribution/keys`. The old routes are
-   deprecated.
+   deprecated. *Landed* (dispatcher schema 13, API 1.9), with the dispatcher
+   side of disclosing an old chain's tail after an executor restart; the
+   executor side, re-deriving the previous chain from its seed and
+   generation and disclosing it with `tesla_key_anchor`, is open.
 3. #73: `dbl verify` offline, `client.Verify` and `ReadCapture`, result
    categories, work caps, the evidence bundle, and shared vectors with
    `verify_pcap.py`.

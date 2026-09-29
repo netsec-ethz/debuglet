@@ -11,6 +11,41 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
+type AttributionChain struct {
+	ExecutorID  string
+	ChainID     string
+	Anchor      []byte
+	T0Ns        int64
+	IntervalNs  int64
+	DelayEpochs int64
+	ChainLength int64
+	TagSpec     int64
+	FirstSeenNs int64
+	LastSeenNs  int64
+}
+
+type AttributionKey struct {
+	ExecutorID    string
+	ChainID       string
+	Epoch         int64
+	Key           []byte
+	DisclosedAtNs int64
+}
+
+type AttributionRetention struct {
+	Singleton      int64
+	RetainedFromNs int64
+}
+
+type AttributionRun struct {
+	DebugletID       int64
+	ChainID          string
+	SourceIp         string
+	SourceIpObserved int64
+	ActiveFromNs     int64
+	ActiveToNs       int64
+}
+
 type Debuglet struct {
 	ID                    int64
 	Uuid                  uuid.UUID

@@ -48,6 +48,9 @@ message HelloResponse {
   // starts, at tesla_anchor_timestamp_ns + (i+d)*tesla_delay_sec. At least 2;
   // zero from an executor that predates it, which disclosed after one epoch.
   int64 tesla_disclosure_delay_epochs = 20;
+  // TESLA chain length L: the chain serves epochs below it. Zero from an
+  // executor that predates it; the schedule's length is then unknown.
+  int64 tesla_chain_length = 21;
 }
 
 message DebugletPolicy {
@@ -102,6 +105,11 @@ message HeartbeatRequest {
   bytes tesla_key = 4;
   ExecutorCapabilities capabilities = 5; // Absent means no new observation.
   VantagePointReport vantage_point = 6; // Absent means no new observation.
+  // Anchor k_0 of the chain tesla_key belongs to. Empty means the chain this
+  // session announced in its hello. A different anchor names an earlier chain
+  // of this executor that the dispatcher has on record, so the tail of a chain
+  // can still be disclosed after the executor restarted onto a new one.
+  bytes tesla_key_anchor = 7;
 }
 message HeartbeatResponse {}
 

@@ -18,6 +18,7 @@ import (
 
 	apispec "github.com/netsec-ethz/debuglet/api"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 
@@ -323,6 +324,13 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			if _, err := sdk.Cancellation(ctx, submission.IDs[0]); err != nil {
 				t.Fatalf("Cancellation: %v", err)
 			}
+			// The public attribution lookups, without a credential.
+			if _, err := sdk.AttributionCandidates(ctx, "127.0.0.1", time.Now()); err != nil {
+				t.Fatalf("AttributionCandidates: %v", err)
+			}
+			if _, err := sdk.AttributionKeys(ctx, oaExecutorID, tag.ChainID(oaAnchor), 1, 0); err != nil {
+				t.Fatalf("AttributionKeys: %v", err)
+			}
 
 			// The session routes, driven through the SDK so that the documented
 			// request and response shapes are the ones a real client sends and
@@ -368,6 +376,8 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/"+oaExecutorID+"/tesla", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/no-such-executor/tesla", nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/candidates?ip=not-an-ip&at=2026-09-29T10:00:00Z", nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/keys?executor=no-such-executor&chain=none&from_epoch=1&to_epoch=5", nil)
 			oaRaw(t, raw, http.MethodPatch, deployment.url+"/destination", []byte(`{"destination":"127.0.0.1","limit":1000000}`))
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/payment/"+submission.TransactionID+"/status", nil)
 			oaRaw(t, raw, http.MethodPut, deployment.url+"/user", []byte(`{"name":"   "}`))
@@ -404,6 +414,9 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 
 const oaExecutorID = "oa-executor"
 
+// oaAnchor is the TESLA chain anchor the contract executor announces.
+var oaAnchor = []byte{1, 2, 3, 4}
+
 // oaRegisterExecutor publishes a second executor with a fixed source IP and a
 // TESLA anchor through the real registry callbacks.
 func oaRegisterExecutor(t *testing.T, f *ccFixture) {
@@ -413,7 +426,7 @@ func oaRegisterExecutor(t *testing.T, f *ccFixture) {
 	defer cancel()
 	hello := &pb.HelloResponse{
 		ExecutorId: oaExecutorID, Version: "contract", TeslaDelaySec: 3,
-		TeslaAnchorTimestampNs: time.Now().UnixNano(), TeslaAnchorKey: []byte{1, 2, 3, 4},
+		TeslaAnchorTimestampNs: time.Now().UnixNano(), TeslaAnchorKey: oaAnchor,
 		PricePerBwS: 1, Currency: "TEST",
 	}
 	if err := apiTestRegister(ctx, f.d, owner, hello, "127.0.0.1"); err != nil {

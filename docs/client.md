@@ -46,4 +46,6 @@ merely because output is pending, unknown, or truncated.
 | WebAssembly measurement written in Go | [`pkg/debuglet`](debuglets.md) |
 | Another language | [HTTP API](api.md) |
 
+`Client.AttributionCandidates(ctx, ip, at)` and `Client.AttributionKeys(ctx, executorID, chain, fromEpoch, toEpoch)` read the public [probe verification](verification.md) history on API 1.9 or newer and work on a client without a credential. The first lists the runs active from an address within one epoch of a time, each with its chain schedule; an empty answer for a time before `RetainedFrom` is no evidence either way. The second pages a chain's disclosed keys, 1024 epochs at a time, following `NextEpoch`; check every key against the schedule's `K0` before use. Older dispatchers return 404.
+
 `Client.Cancellation(ctx, id)` inspects a durable cancellation request on API 1.9 or newer. It does not retry delivery. `AcknowledgedAt == nil` means the executor acknowledgement is unknown, including when the run has a local terminal result. Older dispatchers can return 404 for this optional route; `Client.Cancel` retains its existing signature and compatibility.

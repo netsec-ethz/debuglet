@@ -5,7 +5,9 @@ package tag
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -13,10 +15,26 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
-// maxChainsPerExecutor bounds the key chains kept per executor. An executor
+// maxChainsPerExecutor bounds the key chains cached per executor. An executor
 // announces a new chain anchor each time it restarts; when a further chain
-// appears, the disclosures of the oldest one are dropped.
+// appears, the oldest one leaves the cache. With a Backend its disclosures
+// stay on record and are read back when needed.
 const maxChainsPerExecutor = 4
+
+// TagSpec is the tag specification every chain recorded today is used with:
+// tag spec v1 (docs/verification.md). An executor does not report it yet.
+const TagSpec = 1
+
+// ChainID returns the public identifier of the chain with the given anchor k_0:
+// the lowercase hex of the first 16 bytes of SHA-256(k_0). It is empty for an
+// empty anchor.
+func ChainID(anchor []byte) string {
+	if len(anchor) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(anchor)
+	return hex.EncodeToString(sum[:16])
+}
 
 // maxVerifyWalk bounds the hashes spent verifying one disclosure: the epochs
 // between it and the last verified key of its chain (or the anchor). It is the
@@ -40,6 +58,19 @@ type Chain struct {
 	Start           time.Time
 	Interval        time.Duration
 	DisclosureDelay int64
+	// Length is L, the number of epochs the chain serves; zero is unknown.
+	// It is recorded with the chain and does not bound a disclosure.
+	Length int64
+}
+
+// Backend is the durable record a KeyStore caches. Save is called once for
+// each disclosure that verified, before the cache holds it; Latest and Get
+// read the record for a chain the cache does not hold. A Backend must store a
+// key at most once per (executor, chain, epoch) and keep the first.
+type Backend interface {
+	Save(executorID string, chain Chain, epoch int64, key []byte, at time.Time) error
+	Latest(executorID string, anchor []byte) (epoch int64, key []byte, ok bool, err error)
+	Get(executorID string, anchor []byte, epoch int64) (key []byte, ok bool, err error)
 }
 
 // disclosureDelay returns d, one epoch for an executor that reported none.
@@ -109,14 +140,25 @@ type chainKeys struct {
 
 // KeyStore stores disclosed TESLA keys for retroactive packet verification.
 // Keys are indexed by (executor_id, chain anchor, epoch). An empty anchor is
-// the chain of an executor that published none.
+// the chain of an executor that published none. Without a Backend the store
+// is memory only; with one, it is a cache over the durable record, and a
+// chain that is not cached resumes from the latest key on record.
 type KeyStore struct {
-	mu     sync.RWMutex
-	chains map[string][]*chainKeys // executorID → chains, oldest first
+	mu      sync.RWMutex
+	chains  map[string][]*chainKeys // executorID → chains, oldest first
+	backend Backend
 }
 
 func NewKeyStore() *KeyStore {
 	return &KeyStore{chains: make(map[string][]*chainKeys)}
+}
+
+// NewPersistentKeyStore returns a KeyStore that records every verified
+// disclosure in backend and caches it in memory.
+func NewPersistentKeyStore(backend Backend) *KeyStore {
+	ks := NewKeyStore()
+	ks.backend = backend
+	return ks
 }
 
 // chain returns the stored chain of executorID with the given anchor, or nil.
@@ -142,19 +184,11 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 		return nil
 	}
 	anchor := chain.Anchor
-	ks.mu.Lock()
-	c := ks.chain(executorID, anchor)
-	if c == nil {
-		c = &chainKeys{anchor: anchor, keys: make(map[int64][]byte)}
-		chains := append(ks.chains[executorID], c)
-		if evicted := len(chains) - maxChainsPerExecutor; evicted > 0 {
-			// Clear the dropped entries so the backing array does not keep
-			// their keys reachable.
-			clear(chains[:evicted])
-			chains = chains[evicted:]
-		}
-		ks.chains[executorID] = chains
+	c, err := ks.cached(executorID, anchor)
+	if err != nil {
+		return err
 	}
+	ks.mu.Lock()
 	if stored, ok := c.keys[epoch]; ok {
 		defer ks.mu.Unlock()
 		if !bytes.Equal(stored, key) {
@@ -164,7 +198,18 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 	}
 	if epoch < c.latest {
 		ks.mu.Unlock()
-		return nil
+		// An earlier epoch is only compared with the record: a conflicting
+		// key is rejected as it would be from the cache.
+		if ks.backend == nil || epoch <= 0 {
+			return nil
+		}
+		stored, ok, err := ks.backend.Get(executorID, anchor, epoch)
+		if err != nil || !ok || bytes.Equal(stored, key) {
+			return err
+		}
+		ks.mu.Lock()
+		defer ks.mu.Unlock()
+		return c.reject(epoch, "conflicts with the key stored for this epoch", false)
 	}
 	base, baseKey := c.latest, c.keys[c.latest]
 	if base == 0 {
@@ -211,11 +256,56 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 		// store monotonic.
 		return nil
 	}
+	if ks.backend != nil {
+		// Record before caching, so a key the cache holds is on record; a
+		// failed write stores nothing and the next disclosure retries it.
+		if err := ks.backend.Save(executorID, chain, epoch, key, now); err != nil {
+			return fmt.Errorf("record disclosed key for epoch %d: %w", epoch, err)
+		}
+	}
 	c.keys[epoch] = key
 	if epoch > c.latest {
 		c.latest = epoch
 	}
 	return nil
+}
+
+// cached returns the cache entry of a chain, creating it on a miss. With a
+// Backend a new entry starts from the latest key on record, read outside the
+// lock; the oldest cached chain of the executor is evicted beyond
+// maxChainsPerExecutor.
+func (ks *KeyStore) cached(executorID string, anchor []byte) (*chainKeys, error) {
+	ks.mu.Lock()
+	c := ks.chain(executorID, anchor)
+	ks.mu.Unlock()
+	if c != nil {
+		return c, nil
+	}
+	loaded := &chainKeys{anchor: anchor, keys: make(map[int64][]byte)}
+	if ks.backend != nil && len(anchor) > 0 {
+		epoch, key, ok, err := ks.backend.Latest(executorID, anchor)
+		if err != nil {
+			return nil, fmt.Errorf("read disclosed keys on record: %w", err)
+		}
+		if ok && epoch > 0 {
+			loaded.keys[epoch] = key
+			loaded.latest = epoch
+		}
+	}
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	if c := ks.chain(executorID, anchor); c != nil {
+		return c, nil // cached meanwhile
+	}
+	chains := append(ks.chains[executorID], loaded)
+	if evicted := len(chains) - maxChainsPerExecutor; evicted > 0 {
+		// Clear the dropped entries so the backing array does not keep
+		// their keys reachable.
+		clear(chains[:evicted])
+		chains = chains[evicted:]
+	}
+	ks.chains[executorID] = chains
+	return loaded, nil
 }
 
 // reject records a rejected disclosure of c and returns its error.
@@ -230,32 +320,47 @@ func (c *chainKeys) reject(epoch int64, reason string, early bool) error {
 }
 
 // Get retrieves a key disclosed on the chain with the given anchor.
+// A key the cache does not hold is read from the Backend, if any.
 func (ks *KeyStore) Get(executorID string, anchor []byte, epoch int64) ([]byte, bool) {
 	ks.mu.RLock()
-	defer ks.mu.RUnlock()
-	c := ks.chain(executorID, anchor)
-	if c == nil {
+	if c := ks.chain(executorID, anchor); c != nil {
+		if k, ok := c.keys[epoch]; ok {
+			ks.mu.RUnlock()
+			return k, true
+		}
+	}
+	ks.mu.RUnlock()
+	if ks.backend == nil {
 		return nil, false
 	}
-	k, ok := c.keys[epoch]
-	return k, ok
+	k, ok, err := ks.backend.Get(executorID, anchor, epoch)
+	return k, ok && err == nil
 }
 
 // LatestDisclosed returns the epoch index and key of the most recently
 // disclosed key on the chain of executorID with the given anchor. ok is false
-// if no key of that chain has been stored yet.
+// if no key of that chain has been stored yet. A chain the cache does not
+// hold is answered from the Backend, if any.
 func (ks *KeyStore) LatestDisclosed(executorID string, anchor []byte) (epoch int64, key []byte, ok bool) {
 	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	c := ks.chain(executorID, anchor)
-	if c == nil || c.latest == 0 {
+	if c != nil {
+		defer ks.mu.RUnlock()
+		k, has := c.keys[c.latest]
+		if c.latest == 0 || !has {
+			return 0, nil, false
+		}
+		return c.latest, k, true
+	}
+	ks.mu.RUnlock()
+	if ks.backend == nil || len(anchor) == 0 {
 		return 0, nil, false
 	}
-	k, has := c.keys[c.latest]
-	if !has {
+	epoch, key, ok, err := ks.backend.Latest(executorID, anchor)
+	if err != nil || !ok || epoch <= 0 {
 		return 0, nil, false
 	}
-	return c.latest, k, true
+	return epoch, key, true
 }
 
 func (ks *KeyStore) PrintKeys() {

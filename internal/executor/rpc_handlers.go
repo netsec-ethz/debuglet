@@ -73,6 +73,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		TeslaAnchorTimestampNs:     e.teslaSchedule.Config().Epoch.UnixNano(),
 		TeslaAnchorKey:             e.teslaSchedule.Anchor(),
 		TeslaDisclosureDelayEpochs: e.teslaSchedule.DisclosureDelay(),
+		TeslaChainLength:           e.teslaSchedule.ChainLength(),
 		// ICMP is advertised only when the operator's network policy leaves it
 		// enabled and the probe of this hello's capability report opened the
 		// raw socket the transport needs; the packet counter says nothing

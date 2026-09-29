@@ -8,6 +8,18 @@ A networked dispatcher needs a SQLite database path, reachable HTTP and gRPC lis
 
 Optional `[executors."<executor-id>"]` tables label executors with `display_name`, `city`, `country` (ISO 3166-1 alpha-2) and `network` for the executor listing and result provenance; see [executor discovery](executor-discovery.md#vantage-point-metadata).
 
+### Dispatcher attribution history
+
+The dispatcher keeps the history that probe verification needs in its database: every TESLA chain an executor announced (anchor k0, t0, epoch length, disclosure delay, chain length), each disclosed key that verified against its chain, stored once, and the interval and source address of every run. `GET /attribution/candidates` and `GET /attribution/keys` answer from it without an account; see [probe verification](../verification.md). The optional `[attribution]` section sets how long it is kept:
+
+| Key | Unit | Default | Allowed |
+| --- | --- | --- | --- |
+| `retention_days` | days | 90 | 1–3,650 |
+
+The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, keys whose epoch ended and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 13; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.
+
+The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). Forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance; rate-limit per client at the proxy instead.
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
@@ -49,14 +61,17 @@ delay has elapsed.
 The keys live only in the running executor, and every start builds a new
 chain. The keys of the last d epochs before a restart are therefore never
 disclosed, and packets tagged in them (the last 15 minutes by default) can
-never be verified. Stop an executor only once its last attributed packets are
+never be verified. (The dispatcher already accepts a disclosure for an earlier
+chain it has on record, named by `tesla_key_anchor` on the heartbeat, but the
+executor does not yet re-derive and disclose its previous chain's tail.) Stop an executor only once its last attributed packets are
 d epochs old. When the chain runs out, the executor logs
 `final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
 disclosed; restart it after that time.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
-never disclosed while an installed copy can still sign. `GET
-/executors/:id/tesla` publishes `epoch_seconds`, `disclosure_delay_epochs`,
+never disclosed while an installed copy can still sign. The schedule and every
+disclosed key are published by `GET /attribution/candidates` and `GET
+/attribution/keys`. The deprecated `GET /executors/:id/tesla` publishes `epoch_seconds`, `disclosure_delay_epochs`,
 `disclosure_delay_seconds` and the time the next key is due
 (`next_disclosure_at_ns`). A verifier does not have to derive them.
 [`tools/verify_pcap.py`](../../tools/verify_pcap.py) refuses a schedule with d

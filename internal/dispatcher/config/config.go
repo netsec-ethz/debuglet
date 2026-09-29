@@ -22,6 +22,7 @@ type DispatcherConfig struct {
 	CORS        CORSConfig        `toml:"cors"`
 	GitHubOAuth GitHubOAuthConfig `toml:"github_oauth"`
 	Output      OutputConfig      `toml:"output"`
+	Attribution AttributionConfig `toml:"attribution"`
 	// Executors holds optional operator display metadata by executor ID.
 	Executors map[string]ExecutorDisplay `toml:"executors"`
 }
@@ -139,6 +140,7 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) {
 	var cfg DispatcherConfig
 	cfg.Output = DefaultOutputConfig()
+	cfg.Attribution = DefaultAttributionConfig()
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
 		return nil, document, err
@@ -163,6 +165,9 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
 	if err := cfg.Output.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.Attribution.Validate(); err != nil {
 		return err
 	}
 	if err := validateExecutors(cfg.Executors); err != nil {

@@ -46,6 +46,9 @@ type Handler struct {
 	// health holds the last health observation. See handlers_health.go.
 	health  healthMemo
 	metrics metricsMemo
+	// attributionLimiter bounds the public attribution routes per client
+	// address. See handlers_attribution.go.
+	attributionLimiter *addressLimiter
 }
 
 type GitHubOAuthConfig struct {
@@ -93,9 +96,10 @@ func CookieSecure(secure bool) Option {
 
 func NewHandler(d *dispatcher.Dispatcher, db *sql.DB, l *zap.Logger, options ...Option) *Handler {
 	h := &Handler{
-		dispatcher: d,
-		db:         db,
-		logger:     l,
+		dispatcher:         d,
+		db:                 db,
+		logger:             l,
+		attributionLimiter: newAddressLimiter(attributionRate, attributionBurst),
 	}
 	for _, option := range options {
 		option(h)
@@ -137,6 +141,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/executors", h.GetExecutors)
 	e.GET("/executors/by-ip", h.GetExecutorByIP)
 	e.GET("/executors/:id/tesla", h.GetExecutorTesla)
+	// attribution
+	e.GET(routeAttributionCandidates, h.GetAttributionCandidates)
+	e.GET(routeAttributionKeys, h.GetAttributionKeys)
 	// destination
 	e.PATCH("/destination", h.PatchDestinationLimit)
 	// payment

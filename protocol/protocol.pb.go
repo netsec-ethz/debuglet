@@ -290,8 +290,11 @@ type HelloResponse struct {
 	// starts, at tesla_anchor_timestamp_ns + (i+d)*tesla_delay_sec. At least 2;
 	// zero from an executor that predates it, which disclosed after one epoch.
 	TeslaDisclosureDelayEpochs int64 `protobuf:"varint,20,opt,name=tesla_disclosure_delay_epochs,json=teslaDisclosureDelayEpochs,proto3" json:"tesla_disclosure_delay_epochs,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// TESLA chain length L: the chain serves epochs below it. Zero from an
+	// executor that predates it; the schedule's length is then unknown.
+	TeslaChainLength int64 `protobuf:"varint,21,opt,name=tesla_chain_length,json=teslaChainLength,proto3" json:"tesla_chain_length,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *HelloResponse) Reset() {
@@ -460,6 +463,13 @@ func (x *HelloResponse) GetVantagePoint() *VantagePointReport {
 func (x *HelloResponse) GetTeslaDisclosureDelayEpochs() int64 {
 	if x != nil {
 		return x.TeslaDisclosureDelayEpochs
+	}
+	return 0
+}
+
+func (x *HelloResponse) GetTeslaChainLength() int64 {
+	if x != nil {
+		return x.TeslaChainLength
 	}
 	return 0
 }
@@ -920,8 +930,13 @@ type HeartbeatRequest struct {
 	TeslaKey      []byte                 `protobuf:"bytes,4,opt,name=tesla_key,json=teslaKey,proto3" json:"tesla_key,omitempty"`
 	Capabilities  *ExecutorCapabilities  `protobuf:"bytes,5,opt,name=capabilities,proto3" json:"capabilities,omitempty"`                     // Absent means no new observation.
 	VantagePoint  *VantagePointReport    `protobuf:"bytes,6,opt,name=vantage_point,json=vantagePoint,proto3" json:"vantage_point,omitempty"` // Absent means no new observation.
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Anchor k_0 of the chain tesla_key belongs to. Empty means the chain this
+	// session announced in its hello. A different anchor names an earlier chain
+	// of this executor that the dispatcher has on record, so the tail of a chain
+	// can still be disclosed after the executor restarted onto a new one.
+	TeslaKeyAnchor []byte `protobuf:"bytes,7,opt,name=tesla_key_anchor,json=teslaKeyAnchor,proto3" json:"tesla_key_anchor,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HeartbeatRequest) Reset() {
@@ -992,6 +1007,13 @@ func (x *HeartbeatRequest) GetCapabilities() *ExecutorCapabilities {
 func (x *HeartbeatRequest) GetVantagePoint() *VantagePointReport {
 	if x != nil {
 		return x.VantagePoint
+	}
+	return nil
+}
+
+func (x *HeartbeatRequest) GetTeslaKeyAnchor() []byte {
+	if x != nil {
+		return x.TeslaKeyAnchor
 	}
 	return nil
 }
@@ -2852,7 +2874,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12#\n" +
 	"\rsession_token\x18\x04 \x01(\fR\fsessionToken\x12*\n" +
 	"\x11lease_duration_ms\x18\x05 \x01(\x03R\x0fleaseDurationMs\x12%\n" +
-	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\xb4\a\n" +
+	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\xe2\a\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -2878,7 +2900,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x0eoutput_version\x18\x11 \x01(\rR\routputVersion\x12K\n" +
 	"\fcapabilities\x18\x12 \x01(\v2'.debuglet.protocol.ExecutorCapabilitiesR\fcapabilities\x12J\n" +
 	"\rvantage_point\x18\x13 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\x12A\n" +
-	"\x1dtesla_disclosure_delay_epochs\x18\x14 \x01(\x03R\x1ateslaDisclosureDelayEpochsB\x0e\n" +
+	"\x1dtesla_disclosure_delay_epochs\x18\x14 \x01(\x03R\x1ateslaDisclosureDelayEpochs\x12,\n" +
+	"\x12tesla_chain_length\x18\x15 \x01(\x03R\x10teslaChainLengthB\x0e\n" +
 	"\f_public_hostB\r\n" +
 	"\v_sui_walletB\x13\n" +
 	"\x11_enrollment_token\"\x85\x02\n" +
@@ -2916,7 +2939,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"bits_limit\x18\x02 \x01(\x03R\tbitsLimit\"O\n" +
 	"\x10BandwidthRequest\x12;\n" +
 	"\x06limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x06limits\"\x13\n" +
-	"\x11BandwidthResponse\"\xb4\x02\n" +
+	"\x11BandwidthResponse\"\xde\x02\n" +
 	"\x10HeartbeatRequest\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12!\n" +
@@ -2924,7 +2947,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x0ftesla_key_epoch\x18\x03 \x01(\x03R\rteslaKeyEpoch\x12\x1b\n" +
 	"\ttesla_key\x18\x04 \x01(\fR\bteslaKey\x12K\n" +
 	"\fcapabilities\x18\x05 \x01(\v2'.debuglet.protocol.ExecutorCapabilitiesR\fcapabilities\x12J\n" +
-	"\rvantage_point\x18\x06 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\"\x13\n" +
+	"\rvantage_point\x18\x06 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\x12(\n" +
+	"\x10tesla_key_anchor\x18\a \x01(\fR\x0eteslaKeyAnchor\"\x13\n" +
 	"\x11HeartbeatResponse\"b\n" +
 	"\x10ResourcesRequest\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +

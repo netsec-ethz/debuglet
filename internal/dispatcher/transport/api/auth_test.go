@@ -717,6 +717,8 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"GET /executors":                      {anonymous: http.StatusOK, target: "/executors", public: true},
 	"GET /executors/by-ip":                {anonymous: http.StatusUnauthorized, target: "/executors/by-ip?ip=127.0.0.1"},
 	"GET /executors/:id/tesla":            {anonymous: http.StatusOK, target: "/executors/" + ccExecutorID + "/tesla", public: true},
+	"GET /attribution/candidates":         {anonymous: http.StatusOK, target: "/attribution/candidates?ip=127.0.0.1&at=2026-09-29T10:00:00Z", public: true},
+	"GET /attribution/keys":               {anonymous: http.StatusNotFound, target: "/attribution/keys?executor=" + ccExecutorID + "&chain=none", public: true},
 	"PATCH /destination":                  {anonymous: http.StatusUnauthorized, target: "/destination", body: []byte(`{"destination":"127.0.0.1","limit":1000000}`)},
 	"PUT /payment/intent":                 {anonymous: http.StatusUnauthorized, target: "/payment/intent", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /payment/:transaction_id/status": {anonymous: http.StatusUnauthorized, target: "/payment/none/status"},
