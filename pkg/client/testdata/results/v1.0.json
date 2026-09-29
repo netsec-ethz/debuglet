@@ -1,0 +1,12 @@
+{
+  "format": "debuglet-result",
+  "version": "1.0",
+  "run_id": "a94c47e1-e09e-4ef2-a00f-e4db0eb4cdb0",
+  "executor_id": "fixture-executor",
+  "attempt": null,
+  "provenance": null,
+  "outcome": {"state": "RunStateUnspecified", "error": "", "exit_code": null},
+  "timing": {"observed_at": "2026-09-28T12:00:00Z", "scheduled_start": null, "reserved_until": null, "started_at": null, "finished_at": null, "clock_uncertainty_ns": null},
+  "output": {"status": {"state": "unknown", "final_cursor": null, "loss_reason": ""}, "entries": []},
+  "verification": {"attribution": "unknown", "packet_evidence": "unverified", "measurement_truth": "unverified"}
+}

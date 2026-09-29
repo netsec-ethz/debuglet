@@ -62,6 +62,11 @@ type DebugletOutput struct {
 	Reason            string
 }
 
+type DebugletProvenance struct {
+	DebugletID int64
+	Document   string
+}
+
 type DebugletUser struct {
 	DebugletID int64
 	UserID     int64

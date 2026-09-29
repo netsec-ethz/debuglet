@@ -52,6 +52,14 @@ Historical output is `unknown`; older servers omit the metadata. Neither case,
 nor an unknown future state, proves completeness. Workload success and output
 completeness are separate results.
 
+## Portable results
+
+API 1.8 adds `GET /debuglet/{id}/result`, an owned-run snapshot containing retained
+output, output finality and immutable admission facts. The portable file format
+has its own version. Missing historical facts remain unknown; an export does not
+verify measurement truth. See [portable results](results.md) for bounds and
+offline SDK/CLI use.
+
 ## Errors and health
 
 API failures use `{"code": "…", "message": "…"}`. Programmatic clients should branch on `code`, not the human-readable message.

@@ -99,6 +99,8 @@ func dispatch(ctx context.Context, command string, args []string, options global
 		return validateCommand(ctx, args, options, stdout, stderr)
 	case "run":
 		return runCommand(ctx, args, options, stdout, stderr)
+	case "export":
+		return exportCommand(ctx, args, options, stdout, stderr)
 	case "recovery":
 		return recoveryCommand(ctx, args, options, stdout, stderr)
 	case "status":

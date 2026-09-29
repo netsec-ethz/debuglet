@@ -150,6 +150,10 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 				return nil, fmt.Errorf("failed to associate debuglet with user in database: %w", err)
 			}
 		}
+		if err := d.recordProvenance(ctx, qtx, row.ID, debugletIDS[i], specs[i], selected[i]); err != nil {
+			failLocked()
+			return nil, fmt.Errorf("record admission provenance: %w", err)
+		}
 		if err := d.createOutputMetadata(ctx, qtx, debugletIDS[i], selected[i].owner.OutputVersion(), selected[i].owner.CredentialFingerprint()); err != nil {
 			failLocked()
 			return nil, fmt.Errorf("reserve output storage: %w", err)

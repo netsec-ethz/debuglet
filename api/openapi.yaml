@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.7"
+  version: "1.8"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -12,6 +12,91 @@ security:
   - bearerAuth: []
   - cookieAuth: []
 paths:
+  /debuglet/{id}/result:
+    get:
+      operationId: "getDebugletResult"
+      summary: "Export a portable retained-run snapshot."
+      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Format version 1.0 is independent of the HTTP API version. Does not wait for completion."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Portable result snapshot; incomplete or unknown output is preserved as data."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortableResult"
+        "400":
+          description: "The path segment is not a canonical UUID, or the required API version is unsupported."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "No valid credential. Local development profile permits unauthenticated access."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "The run does not exist or belongs to another account."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The result exceeds 33554432 encoded bytes or 65536 retained entries; use paginated logs. The global 33554432-byte request-body limit also applies. No silent truncation."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The stored result could not be read consistently."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /metrics:
     get:
       operationId: "getMetrics"
@@ -2759,3 +2844,238 @@ components:
         yamux_address:
           type: string
           description: "Loopback host:port of the multiplexed control listener."
+
+    PortableResult:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "format"
+        - "version"
+        - "run_id"
+        - "executor_id"
+        - "attempt"
+        - "provenance"
+        - "outcome"
+        - "timing"
+        - "output"
+        - "verification"
+      properties:
+        format:
+          type: "string"
+          enum:
+            - "debuglet-result"
+        version:
+          type: "string"
+          enum:
+            - "1.0"
+        run_id:
+          type: "string"
+          format: "uuid"
+        executor_id:
+          type: "string"
+        attempt:
+          $ref: "#/components/schemas/RecoveryOriginalBinding"
+        provenance:
+          $ref: "#/components/schemas/ResultProvenance"
+        outcome:
+          $ref: "#/components/schemas/ResultOutcome"
+        timing:
+          $ref: "#/components/schemas/ResultTiming"
+        output:
+          $ref: "#/components/schemas/ResultOutput"
+        verification:
+          $ref: "#/components/schemas/ResultVerification"
+      description: "Portable format 1.0. One consistent retained-run snapshot, not a signed attestation. Missing historical provenance remains null. The reader rejects unsupported versions and inconsistent run identities. Output may still be pending, unknown or truncated."
+    ResultProvenance:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "run_id"
+        - "executor_id"
+        - "attempt"
+        - "admitted_at"
+        - "workload_sha256"
+        - "arguments"
+        - "admitted_policy"
+        - "host_policy"
+        - "executor_software"
+        - "dispatcher_software"
+        - "dispatcher_revision"
+        - "certificate_sha256"
+      properties:
+        run_id:
+          type: "string"
+          format: "uuid"
+        executor_id:
+          type: "string"
+        attempt:
+          $ref: "#/components/schemas/ResultBinding"
+        admitted_at:
+          type: "string"
+          format: "date-time"
+          description: "Dispatcher admission time in UTC."
+        workload_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+          description: "Lowercase SHA-256 of the exact admitted WASM bytes."
+        arguments:
+          type: "array"
+          items:
+            type: "string"
+        admitted_policy:
+          $ref: "#/components/schemas/DebugletPolicyRequest"
+        host_policy:
+          type: "string"
+          enum:
+            - "unknown"
+          description: "Actual host enforcement was not measured; never inferred from the admitted request."
+        executor_software:
+          type: "string"
+          description: "Executor-reported version at admission; null if unavailable."
+          nullable: true
+        dispatcher_software:
+          type: "string"
+          description: "Dispatcher build version at admission; null if unavailable."
+          nullable: true
+        dispatcher_revision:
+          type: "string"
+          description: "Dispatcher build revision at admission; null if unavailable."
+          nullable: true
+        certificate_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+          description: "Enrolled credential fingerprint at admission, not a signature over this export; null for an unenrolled session."
+          nullable: true
+      description: "Immutable facts recorded with admission in the same database transaction. Current executor metadata never replaces historical facts. Null for runs admitted before this record existed."
+      nullable: true
+    ResultBinding:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "dispatcher_incarnation"
+        - "session_id"
+      properties:
+        dispatcher_incarnation:
+          type: "string"
+          format: "uuid"
+        session_id:
+          type: "string"
+          format: "uuid"
+      description: "Original control-session binding. Together with run_id it identifies the attempt; no retry number is invented."
+    ResultOutcome:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "state"
+        - "error"
+        - "exit_code"
+      properties:
+        state:
+          type: "string"
+          description: "Stored workload state, independent of output finality; open string."
+        error:
+          type: "string"
+          description: "Stored bounded error classification."
+        exit_code:
+          type: "integer"
+          format: "int64"
+          nullable: true
+          description: "Always null in format 1.0, which does not record exit codes. Exited state alone does not establish exit code zero."
+    ResultTiming:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "observed_at"
+        - "scheduled_start"
+        - "reserved_until"
+        - "started_at"
+        - "finished_at"
+        - "clock_uncertainty_ns"
+      properties:
+        observed_at:
+          type: "string"
+          format: "date-time"
+          description: "Dispatcher UTC time of this read snapshot."
+        scheduled_start:
+          type: "string"
+          format: "date-time"
+          description: "Reserved start time; not evidence of actual execution."
+          nullable: true
+        reserved_until:
+          type: "string"
+          format: "date-time"
+          description: "Reserved end time; not evidence of actual execution."
+          nullable: true
+        started_at:
+          type: "string"
+          format: "date-time"
+          description: "Actual start; always null in format 1.0."
+          nullable: true
+        finished_at:
+          type: "string"
+          format: "date-time"
+          description: "Actual finish; always null in format 1.0."
+          nullable: true
+        clock_uncertainty_ns:
+          type: "integer"
+          format: "int64"
+          nullable: true
+          description: "Measured clock-error bound, not timestamp resolution; always null in format 1.0."
+          minimum: 0
+    ResultOutput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "status"
+        - "entries"
+      properties:
+        status:
+          $ref: "#/components/schemas/OutputStatus"
+        entries:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/ResultLogEntry"
+      description: "All retained entries in increasing ID order. Known finality requires final_cursor to equal the final entry ID (zero for empty output); a truncated record is still incomplete. Payload bytes are base64."
+    ResultLogEntry:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "timestamp"
+        - "output"
+      properties:
+        id:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+        timestamp:
+          type: "string"
+          format: "date-time"
+          description: "Stored UTC timestamp in RFC3339 with available fractional seconds."
+        output:
+          type: "string"
+          format: "byte"
+          description: "Base64-encoded guest output bytes."
+    ResultVerification:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "attribution"
+        - "packet_evidence"
+        - "measurement_truth"
+      properties:
+        attribution:
+          type: "string"
+          enum:
+            - "unknown"
+            - "unenrolled_session"
+            - "enrolled_at_admission"
+          description: "Admission identity status only: unknown without provenance, unenrolled_session, or enrolled_at_admission. Enrollment does not verify measurement truth."
+        packet_evidence:
+          type: "string"
+          enum:
+            - "unverified"
+        measurement_truth:
+          type: "string"
+          enum:
+            - "unverified"

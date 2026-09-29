@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 10
+	MinimumDispatcherVersion int64 = 11
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -72,6 +72,7 @@ func PolicyFor(role Role) (Policy, error) {
 		}, Tables: map[string][]string{
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
+			"debuglet_provenance":        {"debuglet_id", "document"},
 			"debuglet_output":            {"debuglet_id", "output_version", "owner_fingerprint", "account_id", "committed_sequence", "final_sequence", "final_cursor", "status", "reason"},
 			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
 			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
