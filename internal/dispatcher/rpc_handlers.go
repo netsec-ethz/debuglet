@@ -12,6 +12,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -47,7 +48,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 	seen := d.now()
 	// The anchor names the chain the disclosed key belongs to; a re-registered
 	// executor announces a new one.
-	var anchor []byte
+	var chain tag.Chain
 	d.mu.Lock()
 	if exec, exists := d.executors[execID]; !d.closed && exists && exec.owner == owner {
 		// Concurrent requests may acquire the lock out of receipt order. A later
@@ -60,7 +61,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.Capabilities = capabilitiesFromReport(req.Capabilities, seen)
 			exec.capabilityObserved = seen
 		}
-		anchor = bytes.Clone(exec.TeslaAnchorKey)
+		chain = tag.Chain{Anchor: bytes.Clone(exec.TeslaAnchorKey), Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay}
 	} else {
 		d.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "executor session is unavailable")
@@ -74,8 +75,15 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		})
 		entry.Write(zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
 	}
-	err = d.keystore.Store(execID, anchor, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
-	if err != nil {
+	// A disclosure that does not verify against the chain is dropped; the
+	// heartbeat still counts, and the chain is logged once rather than per beat.
+	err = d.keystore.Store(execID, chain, seen, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	var rejected *tag.RejectedError
+	if errors.As(err, &rejected) {
+		if rejected.First {
+			d.logger.Warn("Rejected disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
+		}
+	} else if err != nil {
 		return nil, fmt.Errorf("failed to store Tesla key: %w", err)
 	}
 	return &pb.HeartbeatResponse{}, nil

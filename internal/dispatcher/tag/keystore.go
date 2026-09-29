@@ -5,14 +5,65 @@ package tag
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
 // maxChainsPerExecutor bounds the key chains kept per executor. An executor
 // announces a new chain anchor each time it restarts; when a further chain
 // appears, the disclosures of the oldest one are dropped.
 const maxChainsPerExecutor = 4
+
+// maxVerifyWalk bounds the hashes spent verifying one disclosure: the epochs
+// between it and the last verified key of its chain (or the anchor). It is the
+// longest chain an executor can configure, one week of one-second epochs, so
+// the first disclosure after a dispatcher restart still verifies.
+const maxVerifyWalk = 7 * 24 * 60 * 60
+
+// clockSkew is the lead of an executor's clock over the dispatcher's that a
+// disclosure may show before it is rejected as lying ahead of wall-clock time.
+const clockSkew = 5 * time.Second
+
+// Chain names the key chain a disclosure belongs to: its public anchor k_0 and
+// the schedule the executor registered with it. Epoch i starts at
+// Start + i*Interval. A zero Interval means the schedule is unknown; only the
+// absolute walk bound then limits a disclosure's epoch.
+type Chain struct {
+	Anchor   []byte
+	Start    time.Time
+	Interval time.Duration
+}
+
+// maxEpoch returns the highest epoch a disclosure received at now may carry:
+// the epoch in progress at now, allowing for clockSkew, plus one epoch.
+// An honest executor discloses one epoch behind its current one.
+func (c Chain) maxEpoch(now time.Time) (int64, bool) {
+	if c.Interval <= 0 {
+		return 0, false
+	}
+	elapsed := now.Add(clockSkew).Sub(c.Start)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return int64(elapsed/c.Interval) + 1, true
+}
+
+// RejectedError reports a disclosure that was not stored because it does not
+// extend its chain. First is set for the first rejection on that chain, so a
+// caller can log a misbehaving executor once rather than on every heartbeat.
+type RejectedError struct {
+	Epoch  int64
+	Reason string
+	First  bool
+}
+
+func (e *RejectedError) Error() string {
+	return fmt.Sprintf("disclosed key for epoch %d rejected: %s", e.Epoch, e.Reason)
+}
 
 // chainKeys holds the disclosures of one key chain, identified by its anchor.
 type chainKeys struct {
@@ -22,6 +73,9 @@ type chainKeys struct {
 	// latest is the highest disclosed epoch above zero, so LatestDisclosed
 	// can answer in O(1) without scanning; zero means none yet.
 	latest int64
+
+	// rejected records that a disclosure of this chain was rejected.
+	rejected bool
 }
 
 // KeyStore stores disclosed TESLA keys for retroactive packet verification.
@@ -46,12 +100,20 @@ func (ks *KeyStore) chain(executorID string, anchor []byte) *chainKeys {
 	return nil
 }
 
-// Store saves a key disclosed on the chain with the given anchor. If a key for
-// this epoch of that chain is already stored it is a no-op (keys are immutable
-// once disclosed).
-func (ks *KeyStore) Store(executorID string, anchor []byte, epoch int64, key []byte) error {
+// Store saves a key disclosed at now on the given chain once it verifies
+// against the chain: H^(epoch-l)(key) must equal the last verified key k_l, or
+// the anchor k_0 when none is stored yet. An epoch ahead of what the chain's
+// schedule allows at now (see Chain) is rejected before any hashing, which
+// bounds the work one heartbeat can cause. Disclosures are
+// monotonic: an epoch below the latest is ignored, a repeat of a stored key is
+// a no-op, and a different key for a stored epoch is rejected. An empty key is
+// no disclosure. A rejection returns a *RejectedError and stores nothing.
+func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch int64, key []byte) error {
+	if len(key) == 0 {
+		return nil
+	}
+	anchor := chain.Anchor
 	ks.mu.Lock()
-	defer ks.mu.Unlock()
 	c := ks.chain(executorID, anchor)
 	if c == nil {
 		c = &chainKeys{anchor: anchor, keys: make(map[int64][]byte)}
@@ -64,7 +126,57 @@ func (ks *KeyStore) Store(executorID string, anchor []byte, epoch int64, key []b
 		}
 		ks.chains[executorID] = chains
 	}
-	if _, ok := c.keys[epoch]; ok {
+	if stored, ok := c.keys[epoch]; ok {
+		defer ks.mu.Unlock()
+		if !bytes.Equal(stored, key) {
+			return c.reject(epoch, "conflicts with the key stored for this epoch")
+		}
+		return nil
+	}
+	if epoch < c.latest {
+		ks.mu.Unlock()
+		return nil
+	}
+	base, baseKey := c.latest, c.keys[c.latest]
+	if base == 0 {
+		baseKey = anchor
+	}
+	ks.mu.Unlock()
+
+	// Hash outside the lock; a key that extends any verified key of the chain
+	// is authentic, so a disclosure stored meanwhile does not invalidate this.
+	reason := ""
+	maxEpoch, scheduled := chain.maxEpoch(now)
+	switch {
+	case len(anchor) == 0:
+		reason = "the executor published no chain anchor"
+	case epoch < 0:
+		reason = "negative epoch"
+	case scheduled && epoch > maxEpoch:
+		reason = fmt.Sprintf("ahead of wall-clock time, which allows at most epoch %d", maxEpoch)
+	case epoch-base > maxVerifyWalk:
+		reason = fmt.Sprintf("%d epochs past the last verified key exceeds the bound of %d", epoch-base, maxVerifyWalk)
+	default:
+		derived, err := tesla.DeriveFromDisclosed(key, epoch, base)
+		if err != nil || subtle.ConstantTimeCompare(derived, baseKey) != 1 {
+			reason = "does not hash to the last verified key or the chain anchor"
+		}
+	}
+
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	if reason != "" {
+		return c.reject(epoch, reason)
+	}
+	if stored, ok := c.keys[epoch]; ok {
+		if !bytes.Equal(stored, key) {
+			return c.reject(epoch, "conflicts with the key stored for this epoch")
+		}
+		return nil
+	}
+	if epoch < c.latest {
+		// A later disclosure was stored while this one was hashed; keep the
+		// store monotonic.
 		return nil
 	}
 	c.keys[epoch] = key
@@ -72,6 +184,13 @@ func (ks *KeyStore) Store(executorID string, anchor []byte, epoch int64, key []b
 		c.latest = epoch
 	}
 	return nil
+}
+
+// reject records a rejected disclosure of c and returns its error.
+func (c *chainKeys) reject(epoch int64, reason string) error {
+	first := !c.rejected
+	c.rejected = true
+	return &RejectedError{Epoch: epoch, Reason: reason, First: first}
 }
 
 // Get retrieves a key disclosed on the chain with the given anchor.
