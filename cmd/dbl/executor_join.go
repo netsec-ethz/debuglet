@@ -395,7 +395,7 @@ path = %q
 capacity = 10485760
 max_debuglets = 4
 [tesla]
-delay = 30
+epoch_seconds = 30
 [network]
 packet_counter = "fallback"
 disable_scion_environment = true

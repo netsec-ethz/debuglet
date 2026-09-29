@@ -253,6 +253,9 @@ func TestExecutorJoinWritesUsablePrivateIdentity(t *testing.T) {
 	if cfg.Identity.ExecutorID != joinExecutorID || cfg.TLS.Disable || cfg.Credentials.EnrollmentToken != "" || cfg.Pricing.Currency != "TEST" || cfg.Network.PacketCounter != "fallback" || cfg.Network.Policy.Spec().LocalTargets || cfg.Network.Policy.Spec().Inbound || cfg.Network.Policy.Spec().SCION {
 		t.Fatalf("unexpected enrollment profile: %+v", cfg)
 	}
+	if cfg.Tesla.EpochSeconds != 30 || cfg.Tesla.Delay != 0 {
+		t.Fatalf("unexpected TESLA epoch configuration: %+v", cfg.Tesla)
+	}
 	if _, err := tls.LoadX509KeyPair(cfg.Credentials.ClientCert, cfg.Credentials.ClientKey); err != nil {
 		t.Fatal(err)
 	}

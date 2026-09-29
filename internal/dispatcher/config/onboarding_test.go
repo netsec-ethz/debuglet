@@ -24,6 +24,9 @@ ca_key = "enrollment-ca.key"
 dispatcher_url = "https://dispatcher.example/api/"
 grpc_address = "dispatcher.example:443"
 yamux_address = "[::1]:8443"
+[executors."existing-node"]
+display_name = "Research node"
+country = "CH"
 `
 	cfg, _, err := DecodeConfig([]byte(body))
 	if err != nil {
@@ -32,7 +35,11 @@ yamux_address = "[::1]:8443"
 	if !cfg.ExecutorOnboarding.Enabled || cfg.ExecutorOnboarding.CACert != "enrollment-ca.crt" || cfg.ExecutorOnboarding.CAKey != "enrollment-ca.key" || cfg.ExecutorOnboarding.DispatcherURL != "https://dispatcher.example/api/" || cfg.ExecutorOnboarding.GRPCAddress != "dispatcher.example:443" || cfg.ExecutorOnboarding.YamuxAddress != "[::1]:8443" {
 		t.Fatalf("onboarding config: %+v", cfg.ExecutorOnboarding)
 	}
+	if display := cfg.Executors["existing-node"]; display.DisplayName != "Research node" || display.Country != "CH" {
+		t.Fatalf("executor display config: %+v", cfg.Executors)
+	}
 	for _, tc := range []struct{ name, from, to, want string }{
+		{"invalid display country", `country = "CH"`, `country = "ZZ"`, "country"},
 		{"plaintext", "require_client_cert = true", "disable = true", "requires TLS"},
 		{"optional client identity", "require_client_cert = true", "require_client_cert = false", "tls.require_client_cert"},
 		{"no signing certificate", `ca_cert = "enrollment-ca.crt"`, `ca_cert = ""`, "executor_onboarding.ca_cert"},

@@ -199,6 +199,21 @@ Self-service enrollment is disabled by default. It requires native TLS with
 client certificates, an explicitly configured certificate issuer and public
 connection addresses. Back up and upgrade an existing dispatcher database using
 the release's normal database upgrade procedure before starting the new binary.
+This build requires dispatcher schema 13 even if enrollment remains disabled.
+A source merge does not migrate the running service. Schedule deployment
+separately: preserve the current package, configuration and a consistent database
+backup; stop the dispatcher; run the selected package's explicit database upgrade;
+then start that same package and verify existing executors and measurements.
+Rolling back requires restoring the matching backup and package, not only the
+old binary. See the [deployment procedures](../../deploy/README.md).
+
+Before enabling client-certificate enforcement, confirm that every existing
+executor presents a certificate trusted by the retained client CA bundle.
+Replacing that trust bundle or enabling enforcement for uncertified executors
+will disconnect them. Keep enrollment disabled until this prerequisite and both
+advertised native control endpoints have been verified. Publish a matching full
+package and installation guide before enabling the console setup flow.
+
 Configure the existing `[tls]` section with
 `require_client_cert = true`; its `ca_file` must trust the enrollment issuer.
 Then add:
