@@ -160,6 +160,13 @@ type OutputNodeUsage struct {
 	FrameCount   int64
 }
 
+type OwnedExecutor struct {
+	ExecutorID string
+	UserID     int64
+	Name       string
+	CreatedAt  models.UTCTime
+}
+
 type Session struct {
 	ID           int64
 	Selector     string

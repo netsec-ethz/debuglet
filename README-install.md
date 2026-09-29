@@ -33,6 +33,7 @@ not establish support for Docker Desktop or emulation there.
 
 ## Next steps
 
+- Join an existing dispatcher with [executor setup, including SSH and shell-only instructions](docs/operations/executor-onboarding.md). Use its compatible full bundle; v0.2.0 does not include `dbl executor join`.
 - Learn the commands in the [CLI reference](docs/cli.md).
 - Return to an account with [re-login and recovery](docs/cli.md#return-to-an-existing-account), or start with [troubleshooting](docs/cli.md#troubleshooting).
 - Run local roles separately with the [local-role walkthrough](docs/cli.md#run-local-roles-separately).

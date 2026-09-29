@@ -13,16 +13,17 @@ import (
 )
 
 type DispatcherConfig struct {
-	Server      ServerConfig      `toml:"server"`
-	Logging     LoggingConfig     `toml:"logging"`
-	Scheduler   SchedulerConfig   `toml:"scheduler"`
-	TLS         TLSConfig         `toml:"tls"`
-	Database    DatabaseConfig    `toml:"database"`
-	Sui         SuiConfig         `toml:"sui"`
-	CORS        CORSConfig        `toml:"cors"`
-	GitHubOAuth GitHubOAuthConfig `toml:"github_oauth"`
-	Output      OutputConfig      `toml:"output"`
-	Attribution AttributionConfig `toml:"attribution"`
+	Server             ServerConfig             `toml:"server"`
+	Logging            LoggingConfig            `toml:"logging"`
+	Scheduler          SchedulerConfig          `toml:"scheduler"`
+	TLS                TLSConfig                `toml:"tls"`
+	Database           DatabaseConfig           `toml:"database"`
+	Sui                SuiConfig                `toml:"sui"`
+	CORS               CORSConfig               `toml:"cors"`
+	GitHubOAuth        GitHubOAuthConfig        `toml:"github_oauth"`
+	Output             OutputConfig             `toml:"output"`
+	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
+	Attribution        AttributionConfig        `toml:"attribution"`
 	// Executors holds optional operator display metadata by executor ID.
 	Executors map[string]ExecutorDisplay `toml:"executors"`
 }
@@ -222,6 +223,9 @@ func (cfg *DispatcherConfig) Validate() error {
 		return err
 	}
 	if err := cfg.validateTLS(); err != nil {
+		return err
+	}
+	if err := cfg.ExecutorOnboarding.Validate(cfg.TLS); err != nil {
 		return err
 	}
 	for i, origin := range cfg.CORS.AllowedOrigins {

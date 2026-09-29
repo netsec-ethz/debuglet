@@ -14,11 +14,11 @@ import (
 )
 
 func TestAttributionMigrationKeepsRunsAndStartsTheHistoryNow(t *testing.T) {
-	ctx, db := cbOpen(t, 12)
+	ctx, db := cbOpen(t, 13)
 	q := database.New(db)
 	run := cbCreate(t, ctx, q, cbIncarnation, cbSession)
 	before := time.Now().Add(-time.Second)
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 13 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 14 {
 		t.Fatalf("migration=%d, %v", version, err)
 	}
 	got, err := q.GetDebugletByUUID(ctx, run.Uuid)
@@ -37,7 +37,7 @@ func TestAttributionMigrationKeepsRunsAndStartsTheHistoryNow(t *testing.T) {
 }
 
 func TestAttributionHistoryRecordsChainsKeysAndRuns(t *testing.T) {
-	ctx, db := cbOpen(t, 13)
+	ctx, db := cbOpen(t, 14)
 	q := database.New(db)
 	const executor, chain = "binding-executor", "c1"
 	t0 := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
@@ -129,7 +129,7 @@ func TestAttributionHistoryRecordsChainsKeysAndRuns(t *testing.T) {
 }
 
 func TestAttributionPruneFollowsTheCutoff(t *testing.T) {
-	ctx, db := cbOpen(t, 13)
+	ctx, db := cbOpen(t, 14)
 	q := database.New(db)
 	const executor = "binding-executor"
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

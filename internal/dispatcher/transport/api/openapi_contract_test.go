@@ -168,7 +168,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 	t.Run("accepted requirements reach the handler", func(t *testing.T) {
 		// An absent or blank header states no requirement, which is what every
 		// client written before the contract was versioned sends.
-		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"} {
+		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"} {
 			headers := map[string]string{}
 			if required != "absent" {
 				headers[apispec.VersionHeader] = required
@@ -376,6 +376,10 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/"+oaExecutorID+"/tesla", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/no-such-executor/tesla", nil)
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/operator/executors", nil)
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/executors", []byte(`{"name":"contract node"}`))
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/executors/00000000-0000-0000-0000-00000000dead/enrollment-token", nil)
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/executor-enrollment", []byte(`{"executor_id":"00000000-0000-0000-0000-00000000dead","token":"unused","csr":"unused"}`))
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/candidates?ip=not-an-ip&at=2026-09-29T10:00:00Z", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/keys?executor=no-such-executor&chain=none&from_epoch=1&to_epoch=5", nil)
 			oaRaw(t, raw, http.MethodPatch, deployment.url+"/destination", []byte(`{"destination":"127.0.0.1","limit":1000000}`))

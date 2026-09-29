@@ -77,6 +77,19 @@ has its own version. Missing historical facts remain unknown; an export does not
 verify measurement truth. See [portable results](results.md) for bounds and
 offline SDK/CLI use.
 
+## Account-owned executors
+
+API 1.10 adds authenticated `GET` and `POST /operator/executors`, plus
+`POST /operator/executors/{id}/enrollment-token`. These are ordinary account
+operations scoped to the caller's machines; they do not grant dispatcher-wide
+operator privileges. Inventory includes pending and offline machines.
+
+`POST /executor-enrollment` exchanges a single-use setup token and a signed CSR
+for a machine certificate. It uses the token in the request body rather than a
+user session. The executor creates and retains its own private key. See
+[executor onboarding](operations/executor-onboarding.md) for setup, TLS trust,
+replacement semantics and deployment configuration.
+
 ## Errors and health
 
 API failures use `{"code": "…", "message": "…"}`. Programmatic clients should branch on `code`, not the human-readable message.

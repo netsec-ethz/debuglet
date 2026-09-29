@@ -16,7 +16,7 @@ The dispatcher keeps the history that probe verification needs in its database: 
 | --- | --- | --- | --- |
 | `retention_days` | days | 90 | 1–3,650 |
 
-The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, keys whose epoch ended and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 13; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.
+The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, keys whose epoch ended and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 14; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.
 
 The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). Forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance; rate-limit per client at the proxy instead.
 

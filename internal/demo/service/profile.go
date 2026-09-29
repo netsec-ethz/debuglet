@@ -77,6 +77,8 @@ type Profile struct {
 	// ExecutorID is the persistent identity of a managed executor. A
 	// restart keeps it; it is empty for a dispatcher.
 	ExecutorID string `json:"executor_id,omitempty"`
+	// Enrolled preserves the configuration and identity created by executor join.
+	Enrolled bool `json:"enrolled,omitempty"`
 	// HTTPPort and GRPCPort are the dispatcher's loopback listeners.
 	HTTPPort int `json:"http_port,omitempty"`
 	GRPCPort int `json:"grpc_port,omitempty"`
@@ -111,6 +113,8 @@ type Request struct {
 	HTTPPort, GRPCPort int
 	// DispatcherGRPC and DispatcherHTTP are required for an executor.
 	DispatcherGRPC, DispatcherHTTP string
+	// EnrolledState adopts an enrolled executor at its canonical managed path.
+	EnrolledState string
 }
 
 // DefaultAccount is the unprivileged service account the generated units use.
@@ -159,6 +163,16 @@ func Resolve(request Request, assets demo.Assets) (Profile, error) {
 	}
 	p.User, p.Group = user, group
 	p.Version, p.SourceSHA, p.PayloadRoot = assets.Manifest.Version, assets.Manifest.SourceSHA, assets.Root
+	if request.EnrolledState != "" {
+		if request.Role != storagecheck.Executor || request.EnrolledState != p.StateDir {
+			return p, fmt.Errorf("--enrolled-state must be the executor's managed directory %s; existing state is never moved", p.StateDir)
+		}
+		if request.DispatcherGRPC != "" || request.DispatcherHTTP != "" {
+			return p, errors.New("--enrolled-state uses its saved dispatcher configuration; omit --dispatcher and --dispatcher-http")
+		}
+		p.Enrolled, p.Executable = true, assets.Executor
+		return p, nil
+	}
 	if request.Role == storagecheck.Dispatcher {
 		p.Executable = assets.Dispatcher
 		p.HTTPPort, p.GRPCPort = request.HTTPPort, request.GRPCPort

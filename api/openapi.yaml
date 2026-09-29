@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.9"
+  version: "1.10"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -12,6 +12,369 @@ security:
   - bearerAuth: []
   - cookieAuth: []
 paths:
+  /operator/executors:
+    get:
+      operationId: "listOwnedExecutors"
+      summary: "List your executors and onboarding availability."
+      description: "Added in API 1.10. Requires an authenticated account, including when local development is enabled. Lists only machines owned by that account, including pending and offline machines. Owning a machine does not grant dispatcher administration."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnedExecutorList"
+        "400":
+          description: "Invalid request or unsupported API version."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "A valid session or enrollment token is required."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds the allowed limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The request could not be completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: "createOwnedExecutor"
+      summary: "Create a pending executor owned by your account."
+      description: "Returns a new server-assigned executor ID and a single-use setup token valid for 24 hours. The token is shown once. The machine is not online until it enrolls and establishes a ready control session. At most ten executors may be created by an account."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOwnedExecutor"
+      responses:
+        "201":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorSetup"
+        "400":
+          description: "Invalid request or unsupported API version."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "A valid session or enrollment token is required."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The session CSRF proof is missing or invalid."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "The account has reached its executor limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds the allowed limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The request could not be completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "Self-service executor enrollment is unavailable on this dispatcher."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /operator/executors/{id}/enrollment-token:
+    post:
+      operationId: "renewExecutorSetupToken"
+      summary: "Replace the setup token for your executor."
+      description: "Invalidates the previous unspent token. The existing certificate binding remains valid until a machine completes setup with the new token; completing setup replaces that binding. Other accounts receive 404. Tokens are never returned by the inventory route."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorSetup"
+        "400":
+          description: "Invalid request or unsupported API version."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "A valid session or enrollment token is required."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The session CSRF proof is missing or invalid."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "The executor does not exist or belongs to another account."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds the allowed limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The request could not be completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "Self-service executor enrollment is unavailable on this dispatcher."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /executor-enrollment:
+    post:
+      operationId: "enrollExecutorCertificate"
+      summary: "Exchange an executor setup token and CSR for its machine certificate."
+      description: "Added in API 1.10. Authenticates with the single-use token in the JSON body, not a user session. The CSR must prove possession of its key. Issues only a client authentication certificate, consumes the token and durably binds its fingerprint before answering. The private key never leaves the executor. A lost response can be recovered by requesting a new setup token from the owning account."
+      security: []
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutorEnrollmentRequest"
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorEnrollment"
+        "400":
+          description: "Invalid request or unsupported API version."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "A valid session or enrollment token is required."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds the allowed limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The request could not be completed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "Self-service executor enrollment is unavailable on this dispatcher."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /debuglet/{id}/result:
     get:
       operationId: "getDebugletResult"
@@ -2294,6 +2657,114 @@ components:
       name: "session_token"
       description: "The same session token in a cookie, for a browser client. A state-changing request authenticated this way must repeat the session's CSRF token, returned as csrf_token and set in the session_csrf cookie, in the X-Debuglet-CSRF header."
   schemas:
+    OwnedExecutor:
+      type: "object"
+      required:
+        - "id"
+        - "name"
+        - "status"
+        - "ready"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+        name:
+          type: "string"
+          pattern: "^.{1,80}$"
+        status:
+          type: "string"
+          description: "pending means no certificate is bound; offline means enrolled without a ready control session; online means ready. Clients must tolerate future values."
+        ready:
+          type: "boolean"
+        last_seen:
+          type: "integer"
+          format: "int64"
+          description: "Unix seconds of the last available executor observation. Omitted when unknown."
+        version:
+          type: "string"
+    OwnedExecutorList:
+      type: "object"
+      required:
+        - "enabled"
+        - "executors"
+      properties:
+        enabled:
+          type: "boolean"
+          description: "Whether this dispatcher permits self-service enrollment."
+        dispatcher_url:
+          type: "string"
+          description: "Deployment-configured HTTPS API base URL used by the join command."
+        executors:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/OwnedExecutor"
+    CreateOwnedExecutor:
+      type: "object"
+      required:
+        - "name"
+      properties:
+        name:
+          type: "string"
+          pattern: "^.{1,80}$"
+    ExecutorSetup:
+      type: "object"
+      required:
+        - "executor"
+        - "token"
+        - "expires_at"
+        - "dispatcher_url"
+      properties:
+        executor:
+          $ref: "#/components/schemas/OwnedExecutor"
+        token:
+          type: "string"
+          description: "Single-use machine setup credential; keep secret and never place in URL arguments."
+        expires_at:
+          type: "integer"
+          format: "int64"
+          description: "Token expiry in Unix seconds."
+        dispatcher_url:
+          type: "string"
+    ExecutorEnrollmentRequest:
+      type: "object"
+      required:
+        - "executor_id"
+        - "token"
+        - "csr"
+      properties:
+        executor_id:
+          type: "string"
+          format: "uuid"
+        token:
+          type: "string"
+          pattern: "^.{1,128}$"
+        csr:
+          type: "string"
+          description: "PEM-encoded certificate signing request, signed with the executor's local private key."
+    ExecutorEnrollment:
+      type: "object"
+      required:
+        - "executor_id"
+        - "certificate_pem"
+        - "ca_pem"
+        - "grpc_address"
+        - "yamux_address"
+      properties:
+        executor_id:
+          type: "string"
+          format: "uuid"
+        certificate_pem:
+          type: "string"
+          description: "PEM client certificate. Its public key matches the submitted CSR."
+        ca_pem:
+          type: "string"
+          description: "PEM CA certificates for validating the returned client certificate. The joining client also preserves the trust used to authenticate the HTTPS dispatcher."
+        grpc_address:
+          type: "string"
+          description: "Deployment-configured host:port for the direct control connection."
+        yamux_address:
+          type: "string"
+          description: "Deployment-configured host:port for the reverse control connection."
     Error:
       type: object
       description: "Error envelope of every failure. Branch on code; message is a bounded diagnostic for a human and must not be parsed. A minor version may add codes, so treat an unknown code as a plain failure of the status it arrived with."

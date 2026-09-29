@@ -212,7 +212,7 @@ receipt for abuse handling, not the packets.
    (fix/tesla-disclosure-delay). *Landed.*
 2. #71(a): durable disclosed-key history, a dated run-by-address record, and
    `GET /attribution/candidates` and `/attribution/keys`. The old routes are
-   deprecated. *Landed* (dispatcher schema 13, API 1.9), with the dispatcher
+   deprecated. *Landed* (dispatcher schema 14, API 1.11), with the dispatcher
    side of disclosing an old chain's tail after an executor restart; the
    executor side, re-deriving the previous chain from its seed and
    generation and disclosing it with `tesla_key_anchor`, is open.

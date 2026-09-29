@@ -17,6 +17,7 @@ const serviceUsage = `Usage:
   dbl service install (--role dispatcher|executor) [--name NAME] [--user debuglet]
       [--port 9000] [--grpc-port 9001] [--dispatcher 127.0.0.1:9001]
       [--dispatcher-http 127.0.0.1:9000] [--start=false] [--enable=false] [--root DIR]
+      [--enrolled-state /var/lib/debuglet/executors/NAME]
   dbl service start|stop|status (--role ROLE) [--name NAME]
   dbl service uninstall (--role ROLE) [--name NAME] [--purge]
   dbl service prune --prefix DIR --version VERSION [--component full|cli|dispatcher|executor] [--dry-run]
@@ -36,6 +37,11 @@ full). Command links, retained managed roles and running executables protect
 their versions. Stop foreground
 roles before pruning. Use --dry-run to inspect the candidate. Service journal
 retention is configured by the host.
+
+--enrolled-state preserves an executor join identity, TLS configuration and
+database already at the named instance's managed directory. Stop its foreground
+daemon first and do not launch it concurrently with installation. See
+docs/operations/executor-onboarding.md for the system-account setup sequence.
 `
 
 // serviceDependencies is private so the command exposes no fault-injection
@@ -176,6 +182,7 @@ func serviceFlags(fs *flag.FlagSet, local *serviceOptions, subcommand string) {
 		fs.IntVar(&local.Request.GRPCPort, "grpc-port", service.DefaultGRPCPort, "dispatcher loopback control port")
 		fs.StringVar(&local.Request.DispatcherGRPC, "dispatcher", "", "executor: dispatcher control address as host:port")
 		fs.StringVar(&local.Request.DispatcherHTTP, "dispatcher-http", "", "executor: dispatcher HTTP address as host:port")
+		fs.StringVar(&local.Request.EnrolledState, "enrolled-state", "", "executor: preserve enrolled state at this instance's canonical managed path")
 		fs.BoolVar(&local.Start, "start", true, "start the unit and observe its readiness record")
 		fs.BoolVar(&local.Enable, "enable", true, "let the service manager start the unit at boot")
 	case "uninstall":
@@ -204,7 +211,7 @@ func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options g
 	blank := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "name", "root", "user", "group", "dispatcher", "dispatcher-http":
+		case "name", "root", "user", "group", "dispatcher", "dispatcher-http", "enrolled-state":
 			if strings.TrimSpace(f.Value.String()) == "" {
 				blank = true
 			}

@@ -1,6 +1,10 @@
 # Managed services
 
-`dbl service` installs a dispatcher or executor as a system service. Use it only for a host-local, managed profile. Networked production deployments use the [Ansible deployment guide](../../deploy/README.md).
+`dbl service` installs a dispatcher or executor as a system service. By default
+it creates a host-local managed profile. An executor enrolled through My nodes
+can instead preserve its TLS identity with `--enrolled-state`; follow the
+[persistent executor setup](executor-onboarding.md#run-persistently-on-linux).
+Other networked production deployments use the [Ansible deployment guide](../../deploy/README.md).
 
 ## Basic workflow
 
@@ -16,6 +20,14 @@ sudo dbl service status --role executor
 Use `dbl drain --role executor` before planned maintenance and `dbl drain --role executor --resume` when it is ready again. Service commands need administrator privileges.
 
 The service owns its role-specific SQLite state and retains it across restart. A database is not automatically migrated or safe to reuse across arbitrary package versions. Back up state and follow the [database upgrade procedure](../../deploy/README.md#upgrading-a-database) before upgrading.
+
+For an enrolled executor, supply `--enrolled-state` on every install or reinstall.
+Its configuration supplies the dispatcher addresses, so endpoint override flags
+are refused. The state must already be at the selected instance's canonical
+managed path. An existing foreground daemon must be stopped before adoption;
+do not launch one concurrently with installation. Use the managed unit to start
+and stop it afterward. The daemon runs under the same unprivileged service
+account and unit restrictions as the local managed profile.
 
 Reference unit files live in [`deploy/systemd`](../../deploy/systemd).
 

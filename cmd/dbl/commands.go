@@ -41,6 +41,9 @@ type globalOptions struct {
 // command when --timeout is not given. The command is parsed before this is
 // consulted so commands such as demo can select their own default.
 func defaultCommandTimeout(command string, args ...string) time.Duration {
+	if command == "executor" && len(args) > 0 && args[0] == "join" {
+		return 5 * time.Minute // Allow time to paste the enrollment token.
+	}
 	if (command == "dispatcher" || command == "executor") && len(args) > 0 && args[0] == "up" {
 		return 0
 	}

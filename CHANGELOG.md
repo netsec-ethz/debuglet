@@ -35,6 +35,11 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- API 1.10: account-owned executor enrollment and `dbl executor join`, with
+  optional systemd installation that preserves the enrolled identity. Enrollment
+  stays disabled until configured. This build requires dispatcher schema 13,
+  including when enrollment is disabled; back up and explicitly upgrade the
+  database before restarting. See [executor onboarding](docs/operations/executor-onboarding.md).
 - Durable attribution history and public verification lookups (part of #71
   and #73; `docs/verification.md`, delivery step 2). Dispatcher schema 13
   records every TESLA chain an executor announces, each disclosed key that

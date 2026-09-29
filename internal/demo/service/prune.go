@@ -222,11 +222,24 @@ func (i *Installer) checkRetainedPackages(candidate string) error {
 }
 
 func checkExecutingPackage(proc, candidate string) error {
+	return inspectExecutables(proc, 0, func(pid, exe string) error {
+		if strings.HasPrefix(exe, candidate+string(filepath.Separator)) {
+			return fmt.Errorf("package is executing in process %s; stop it before pruning", pid)
+		}
+		return nil
+	})
+}
+
+// inspectExecutables shares the fail-closed procfs walk with enrollment adoption.
+func inspectExecutables(proc string, ignorePID int, inspect func(pid, executable string) error) error {
 	entries, err := os.ReadDir(proc)
 	if err != nil {
 		return fmt.Errorf("cannot check running executables: %w", err)
 	}
 	for _, entry := range entries {
+		if entry.Name() == strconv.Itoa(ignorePID) {
+			continue
+		}
 		if _, err := strconv.Atoi(entry.Name()); err != nil || !entry.IsDir() {
 			continue
 		}
@@ -235,10 +248,10 @@ func checkExecutingPackage(proc, candidate string) error {
 			continue // Exited process or kernel thread without an executable.
 		}
 		if err != nil {
-			return fmt.Errorf("cannot inspect process %s; run prune with administrator access after stopping foreground roles: %w", entry.Name(), err)
+			return fmt.Errorf("cannot inspect process %s; run with administrator access after stopping foreground roles: %w", entry.Name(), err)
 		}
-		if strings.HasPrefix(exe, candidate+string(filepath.Separator)) {
-			return fmt.Errorf("package is executing in process %s; stop it before pruning", entry.Name())
+		if err := inspect(entry.Name(), exe); err != nil {
+			return err
 		}
 	}
 	return nil

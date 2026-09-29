@@ -138,6 +138,9 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 	if err != nil {
 		return report, err
 	}
+	if p.Enrolled && (account.UID == 0 || account.GID == 0) {
+		return report, errors.New("an enrolled executor must run as an unprivileged service account and group")
+	}
 	// An existing installation of another version keeps its databases: this
 	// build never upgrades state in place, so the operator is told which
 	// version owns the directory instead of silently adopting it.
@@ -149,6 +152,10 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 		if !existing.SamePaths(p) {
 			return report, fmt.Errorf("the record at %s does not describe this instance", RecordPath(i.root, p.Role, p.Name))
 		}
+		if existing.Enrolled != p.Enrolled {
+			return report, errors.New("installation mode differs from retained state; reinstall enrolled executors with --enrolled-state and never replace their configuration")
+		}
+		p.ExecutorID = existing.ExecutorID
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return report, err
 	} else {
@@ -275,6 +282,9 @@ func (i *Installer) observeReady(ctx context.Context, p Profile, state UnitState
 // account as the last step, so the bootstrap never runs in a directory another
 // account could already write to.
 func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report, account Account) error {
+	if p.Enrolled {
+		return i.prepareEnrolledState(ctx, p, account)
+	}
 	if err := os.MkdirAll(filepath.Dir(p.StateDir), 0755); err != nil {
 		return err
 	}
@@ -725,6 +735,7 @@ func (i *Installer) load(ctx context.Context, operation string, role storagechec
 	p.User, p.Group = record.User, record.Group
 	p.Version, p.SourceSHA, p.PayloadRoot, p.Executable = record.Version, record.SourceSHA, record.PayloadRoot, record.Executable
 	p.ExecutorID = record.ExecutorID
+	p.Enrolled = record.Enrolled
 	p.HTTPPort, p.GRPCPort = record.HTTPPort, record.GRPCPort
 	p.DispatcherGRPC, p.DispatcherHTTP = record.DispatcherGRPC, record.DispatcherHTTP
 	report.Version, report.ExecutorID = p.Version, p.ExecutorID
