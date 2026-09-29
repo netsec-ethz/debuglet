@@ -17,6 +17,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 
 - [Architecture](architecture.md) — components, trust boundaries, protocol flow, and storage.
 - [Vantage-point metadata](vantage-points.md) — design for network, location and reachability context with provenance.
+- [Packet tag specification](tag-spec.md) — `debuglet-tag-v1`: authenticated bytes, key derivation, verification and false-match bounds.
 - [Probe verification](verification.md) — design for how a probe recipient verifies which run sent a packet.
 
 ## Operate a deployment
@@ -37,7 +38,7 @@ Use the [deployment guide](../deploy/README.md) for the maintained Ansible proce
 | Submission and execution flow | [Architecture](architecture.md#measurement-flow) |
 | Guest-language examples | [Debuglet examples](../examples/debuglets); Go is supported, C and Rust are experimental |
 | Optional SCION and eBPF controls | [Executor configuration fields](../internal/executor/config/config.go) define `network.policy.scion`, `network.disable_scion_environment`, `network.packet_counter` and `network.interface`; see [kernel checks](../scripts/ci-kernel.sh) and [support limits](../SECURITY.md). SCION is off by default. |
-| Packet attribution | [Capture verifier](../tools/verify_pcap.py) and [current supported scope](../SECURITY.md); attribution is not destination consent or a general authentication guarantee |
+| Packet attribution | [Tag specification](tag-spec.md), [capture verifier](../tools/verify_pcap.py) and [current supported scope](../SECURITY.md); attribution is not destination consent or a general authentication guarantee |
 | Deployment and state | [Across-host topology](operations/remote-deployment.md), [managed services](operations/services.md), and the [deployment guide](../deploy/README.md) |
 | Local or legacy account-key users | [Re-login and recovery](cli.md#return-to-an-existing-account) |
 

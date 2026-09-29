@@ -21,6 +21,12 @@ A package version does not imply compatibility across every interface or platfor
 
 API 1.9 adds optional durable cancellation inspection. Dispatcher schema 12 stores one cancellation request per run; upgrade explicitly before starting this build. The executor schema and Abort wire protocol are unchanged. Cancellation is never automatically replayed after restart, and requests never acquire a replacement session's authority.
 
+Packet tags follow a versioned [tag specification](tag-spec.md). This release
+introduces `debuglet-tag-v1`, a breaking change of the tag format: tags of
+earlier builds do not verify under it. Executors report the version as
+`capabilities.tagging.tag_spec`; deploy one version across a fleet and its
+verifiers.
+
 API 1.9 also adds executor admission state, operator display metadata and the executor-reported SCION ISD-AS and listeners to `GET /executors`. The control protocol gains an optional `VantagePointReport` without a version change: an older executor leaves these fields unknown, and an older dispatcher ignores the report. The ICMP, fallback-reason, clock and platform probes are further additive fields of `ExecutorCapabilities` and `VantagePointReport` within schema 1, with the same compatibility.
 
 API 1.9 also adds the public attribution lookups `GET /attribution/candidates` and `GET /attribution/keys` and deprecates `GET /executors/by-ip` and `GET /executors/{id}/tesla`, which keep working within API major 1. Dispatcher schema 13 stores the attribution history they answer from; upgrade explicitly before starting this build. The control protocol gains the optional `tesla_chain_length` (hello) and `tesla_key_anchor` (heartbeat) fields without a version change; an older peer leaves them empty.

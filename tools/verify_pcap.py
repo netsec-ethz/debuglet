@@ -25,11 +25,12 @@ Workflow
 2. For each source IP and capture second call the public, dated lookup
    GET /attribution/candidates?ip=<ip>&at=<RFC 3339 time>. It lists the runs
    active from that address within one epoch of the time, each with its
-   executor, run ID and chain schedule {chain, k0, t0, interval,
-   delay_epochs, chain_length, tag_spec} and disclosed_through (tau, the
-   latest disclosed epoch), plus retained_from, before which the dispatcher
-   holds no history. Then read k_tau with
-   GET /attribution/keys?executor=<id>&chain=<chain>&from_epoch=tau&to_epoch=tau.
+   executor, run ID and chain schedule {chain_id, k0, t0_unix_ns,
+   epoch_seconds, disclosure_delay_epochs, chain_length, tag_spec} and
+   disclosed_through (tau, the latest disclosed epoch), plus retained_from,
+   before which the dispatcher holds no history. A chain with tag_spec 0
+   predates debuglet-tag-v1 and is reported unsupported. Then read k_tau with
+   GET /attribution/keys?executor_id=<id>&chain_id=<chain>&from_epoch=tau&to_epoch=tau.
    Neither route needs an account. A dispatcher without them (404) is asked
    the deprecated routes instead: GET /executors/by-ip?ip=<ip>[&n=<n>] for
    the executor and the caller's own recent debuglet IDs, and
@@ -42,7 +43,7 @@ Workflow
       disclosed_key           – k_tau (base64)
    Both are turned into that same schedule. A schedule with d < 2 (or none
    reported) is refused: see Disclosure timing.
-4. For each IPv4 packet:
+3. For each IPv4 packet:
    a. Compute the epoch t from the packet timestamp. The candidates are t and
       t-1 only. Epoch 0 has no signing key: k_0 is the public anchor, so the
       executor never tags with it and epoch 0 is never a candidate; a packet
@@ -54,9 +55,22 @@ Workflow
    c. Verify chain consistency: H^t(k_t) == k_0.
    d. For each candidate debuglet ID derive the per-measurement key:
           ak = HKDF-SHA256(secret=k_t, info=debuglet_id)
-      and check the tag stored in the IP-ID field: SipHash-2-4, which the
-      eBPF tagger and the pure-Go fallback compute alike.
-5. Report which debuglet IDs verified for each packet.
+      and check the tag stored in the IP-ID field under the packet-tag
+      specification debuglet-tag-v1 (docs/tag-spec.md), which the eBPF tagger
+      and the pure-Go fallback implement alike.
+4. Report, for each packet, the specification applied and which debuglet IDs
+   verified, or why the packet is unsupported (IPv6, an IPv4 fragment, a
+   capture too short for the tag input, a malformed header, or an executor
+   reporting another tag specification) rather than unmatched.
+
+Tag specification
+-----------------
+This verifier implements debuglet-tag-v1 only. The tag is the low 16 bits of
+standard SipHash-2-4, keyed with ak[0:16], over the first min(64, total
+length) bytes of the IPv4 packet with TOS, IP ID, flags/fragment offset, TTL,
+header checksum, IP options and the ICMP/TCP/UDP checksum zeroed. The shared
+known-answer vectors in testdata/tag-vectors-v1.json pin this implementation
+(tools/test_verify_pcap.py).
 
 Disclosure timing
 -----------------
@@ -93,6 +107,7 @@ import base64
 import datetime
 import hashlib
 import hmac
+import ipaddress
 import json
 import ssl
 import struct
@@ -151,14 +166,26 @@ def hkdf_sha256(secret: bytes, info: bytes, length: int = 32) -> bytes:
 
 _M64 = 0xFFFFFFFFFFFFFFFF
 
+# The packet-tag specification this verifier implements (docs/tag-spec.md).
+TAG_SPEC = "debuglet-tag-v1"
+TAG_INPUT_MAX = 64
 
-def siphash24(k0: int, k1: int, data: bytes) -> int:
-    """SipHash-2-4, matching the BPF tagger's 64-byte-capped implementation.
+# Why a packet carries no debuglet-tag-v1 tag, for the per-packet report.
+UNSUPPORTED = {
+    "ipv6": "IPv6 is not specified in debuglet-tag-v1; no tagger tags it",
+    "not_ipv4": "not an IPv4 packet",
+    "too_short": "the capture holds fewer bytes than the IPv4 header or the "
+                 "64-byte tag input (raise the snap length)",
+    "malformed": "malformed IPv4 header (IHL below 5 or total length below the header)",
+    "fragment": "IPv4 fragment: fragments are never tagged and cannot be verified",
+}
 
-    tagger.c hashes only whole 8-byte blocks (at most 8 of them) and folds
-    the *capped* length into the finalisation word, so trailing bytes beyond
-    the last full block never enter the state. tesla.ComputeTag in Go does the
-    same; this function reproduces both.
+
+def siphash24(key: bytes, data: bytes) -> int:
+    """Standard SipHash-2-4 keyed with 16 bytes; returns the 64-bit result.
+
+    The final block carries the trailing len % 8 bytes and len mod 256 in its
+    top byte, as in the SipHash paper.
     """
 
     def rotl(v: int, n: int) -> int:
@@ -177,52 +204,69 @@ def siphash24(k0: int, k1: int, data: bytes) -> int:
         v2 = rotl(v2, 32)
         return v0, v1, v2, v3
 
+    k0, k1 = struct.unpack_from("<QQ", key, 0)
     v0 = k0 ^ 0x736F6D6570736575
     v1 = k1 ^ 0x646F72616E646F6D
     v2 = k0 ^ 0x6C7967656E657261
     v3 = k1 ^ 0x7465646279746573
 
-    # Cap at 64 bytes, matching tagger.c
-    cap = min(len(data), 64)
-    blocks = cap // 8
-
-    for i in range(blocks):
-        m = struct.unpack_from("<Q", data, i * 8)[0]
+    full = len(data) - len(data) % 8
+    words = [struct.unpack_from("<Q", data, i)[0] for i in range(0, full, 8)]
+    last = (len(data) & 0xFF) << 56
+    for i, b in enumerate(data[full:]):
+        last |= b << (8 * i)
+    words.append(last)
+    for m in words:
         v3 ^= m
         for _ in range(2):
             v0, v1, v2, v3 = sipround(v0, v1, v2, v3)
         v0 ^= m
-
-    b = (cap << 56) & _M64
-    v3 ^= b
-    for _ in range(2):
-        v0, v1, v2, v3 = sipround(v0, v1, v2, v3)
-    v0 ^= b
     v2 ^= 0xFF
     for _ in range(4):
         v0, v1, v2, v3 = sipround(v0, v1, v2, v3)
-    return (v0 ^ v1 ^ v2 ^ v3) & 0xFFFF
+    return (v0 ^ v1 ^ v2 ^ v3) & _M64
 
 
-def compute_bpf_tag(ak: bytes, payload: bytes) -> int:
-    """16-bit SipHash-2-4 tag — the eBPF tagger. Matches tesla.ComputeTag in Go."""
-    k0 = struct.unpack_from("<Q", ak, 0)[0]
-    k1 = struct.unpack_from("<Q", ak, 8)[0]
-    return siphash24(k0, k1, payload[:64])
+def compute_tag(ak: bytes, tag_input: bytes) -> int:
+    """The debuglet-tag-v1 tag of a canonical input: the low 16 bits."""
+    return siphash24(ak[:16], tag_input) & 0xFFFF
 
 
-def canonicalize_ipv4(raw: bytes) -> bytes:
-    """Zero the IPID (bytes 4-5) and header checksum (bytes 10-11) fields.
+def tag_input(raw: bytes):
+    """Canonical debuglet-tag-v1 input of a packet.
 
-    Both taggers hash the packet in this canonical form so a verifier can
-    reproduce the hash input without knowing the pre-tag IPID or checksum.
+    Returns (input, None), or (None, reason) with a key of UNSUPPORTED for a
+    packet the specification assigns no tag.
     """
-    if len(raw) < 20 or (raw[0] >> 4) != 4:
-        return raw
-    pkt = bytearray(raw)
-    pkt[4] = pkt[5] = 0  # IPID
-    pkt[10] = pkt[11] = 0  # header checksum
-    return bytes(pkt)
+    if not raw:
+        return None, "too_short"
+    version = raw[0] >> 4
+    if version == 6:
+        return None, "ipv6"
+    if version != 4:
+        return None, "not_ipv4"
+    if len(raw) < 20:
+        return None, "too_short"
+    ihl = (raw[0] & 0x0F) * 4
+    total = struct.unpack_from(">H", raw, 2)[0]
+    if ihl < 20 or total < ihl:
+        return None, "malformed"
+    if struct.unpack_from(">H", raw, 6)[0] & 0x3FFF:
+        return None, "fragment"
+    n = min(total, TAG_INPUT_MAX)
+    if len(raw) < n:
+        return None, "too_short"
+    pkt = bytearray(raw[:n])
+    for i in (1, 4, 5, 6, 7, 8, 10, 11):  # TOS, IP ID, flags/offset, TTL, checksum
+        pkt[i] = 0
+    for i in range(20, min(ihl, n)):  # IP options
+        pkt[i] = 0
+    l4 = {1: 2, 6: 16, 17: 6}.get(pkt[9])  # ICMP, TCP, UDP checksum
+    if l4 is not None:
+        for i in (ihl + l4, ihl + l4 + 1):
+            if i < n:
+                pkt[i] = 0
+    return bytes(pkt), None
 
 
 # ---------------------------------------------------------------------------
@@ -247,24 +291,38 @@ class Packet:
         self.ip = ip
 
     @property
+    def version(self) -> int:
+        return self.ip[0] >> 4
+
+    @property
     def src(self) -> str:
+        if self.version == 6:
+            return str(ipaddress.IPv6Address(self.ip[8:24]))
         return ".".join(str(b) for b in self.ip[12:16])
 
     @property
     def dst(self) -> str:
+        if self.version == 6:
+            return str(ipaddress.IPv6Address(self.ip[24:40]))
         return ".".join(str(b) for b in self.ip[16:20])
 
     @property
-    def ip_id(self) -> int:
+    def ip_id(self) -> Optional[int]:
+        if self.version != 4:
+            return None
         return struct.unpack_from(">H", self.ip, 4)[0]
 
 
-def extract_ipv4(linktype: int, frame: bytes) -> Optional[bytes]:
-    """Strip the link-layer header and return the IPv4 packet, or None.
+ETHERTYPES_IP = (0x0800, 0x86DD)
 
-    The returned slice is trimmed to the IPv4 total-length field, which is
-    what the tagger hashed (tagger.c uses skb->len minus the L2 offset, and
-    egress frames carry no L2 padding at the capture point).
+
+def extract_ip(linktype: int, frame: bytes) -> Optional[bytes]:
+    """Strip the link-layer header and return the IPv4 or IPv6 packet, or None.
+
+    An IPv4 packet is trimmed to its total-length field, which removes L2
+    padding; a capture shorter than that is kept as captured and reported as
+    too short when it lacks the tag input. IPv6 packets are returned so the
+    report can name them unsupported rather than drop them silently.
     """
     off = 0
     if linktype == LINKTYPE_ETHERNET:
@@ -276,7 +334,7 @@ def extract_ipv4(linktype: int, frame: bytes) -> Optional[bytes]:
         while ethertype in (0x8100, 0x88A8, 0x9100) and len(frame) >= off + 4:
             ethertype = struct.unpack_from(">H", frame, off + 2)[0]
             off += 4
-        if ethertype != 0x0800:
+        if ethertype not in ETHERTYPES_IP:
             return None
     elif linktype in (LINKTYPE_RAW, LINKTYPE_IPV4):
         off = 0
@@ -288,25 +346,30 @@ def extract_ipv4(linktype: int, frame: bytes) -> Optional[bytes]:
     elif linktype == LINKTYPE_LINUX_SLL:
         if len(frame) < 16:
             return None
-        if struct.unpack_from(">H", frame, 14)[0] != 0x0800:
+        if struct.unpack_from(">H", frame, 14)[0] not in ETHERTYPES_IP:
             return None
         off = 16
     elif linktype == LINKTYPE_LINUX_SLL2:
         if len(frame) < 20:
             return None
-        if struct.unpack_from(">H", frame, 0)[0] != 0x0800:
+        if struct.unpack_from(">H", frame, 0)[0] not in ETHERTYPES_IP:
             return None
         off = 20
     else:
         return None
 
     pkt = frame[off:]
-    if len(pkt) < 20 or (pkt[0] >> 4) != 4:
+    if not pkt or (pkt[0] >> 4) not in (4, 6):
         return None
-    total = struct.unpack_from(">H", pkt, 2)[0]
-    if 20 <= total <= len(pkt):
-        pkt = pkt[:total]
+    if (pkt[0] >> 4) == 4 and len(pkt) >= 4:
+        total = struct.unpack_from(">H", pkt, 2)[0]
+        if 20 <= total <= len(pkt):
+            pkt = pkt[:total]
     return pkt
+
+
+# The earlier name; it now also returns IPv6 packets.
+extract_ipv4 = extract_ip
 
 
 def read_pcap(data: bytes) -> list:
@@ -333,7 +396,7 @@ def read_pcap(data: bytes) -> list:
             break
         frame = data[pos : pos + caplen]
         pos += caplen
-        ip = extract_ipv4(linktype, frame)
+        ip = extract_ip(linktype, frame)
         if ip is not None:
             out.append(Packet(ts_sec * 1_000_000_000 + ts_frac * ts_mult, ip))
     return out
@@ -385,7 +448,7 @@ def read_pcapng(data: bytes) -> list:
                 ts_ns = raw_ts * (10 ** (9 - tsresol)) if tsresol <= 9 else raw_ts // (
                     10 ** (tsresol - 9)
                 )
-            ip = extract_ipv4(linktype, frame)
+            ip = extract_ip(linktype, frame)
             if ip is not None:
                 out.append(Packet(ts_ns, ip))
 
@@ -421,6 +484,7 @@ class DispatcherClient:
         # None until the first dated lookup shows whether the dispatcher
         # serves the attribution routes.
         self.attribution_routes: Optional[bool] = None
+        self._tag_specs: Optional[dict] = None
 
     def _get(self, path: str, **params) -> dict:
         url = f"{self.server}{path}"
@@ -458,6 +522,24 @@ class DispatcherClient:
             raise
         self._executor_cache[cache_key] = result
         return result
+
+    def executor_tag_spec(self, executor_id: str) -> Optional[str]:
+        """The tag_spec of the executor's reported tagging, or None if unknown.
+
+        Read once from GET /executors; any failure leaves every executor
+        unknown rather than stopping verification.
+        """
+        if self._tag_specs is None:
+            self._tag_specs = {}
+            try:
+                listing = self._get("/executors") or []
+            except (urllib.error.URLError, OSError, ValueError):
+                listing = []
+            for executor in listing:
+                tagging = ((executor or {}).get("capabilities") or {}).get("tagging") or {}
+                if executor.get("id") and tagging.get("tag_spec"):
+                    self._tag_specs[executor["id"]] = tagging["tag_spec"]
+        return self._tag_specs.get(executor_id)
 
     def executor_tesla(self, executor_id: str) -> Optional[dict]:
         """Deprecated GET /executors/<id>/tesla → the TESLA key schedule parameters."""
@@ -502,7 +584,7 @@ class DispatcherClient:
         if cache_key in self._key_cache:
             return self._key_cache[cache_key]
         try:
-            page = self._get("/attribution/keys", executor=executor_id, chain=chain,
+            page = self._get("/attribution/keys", executor_id=executor_id, chain_id=chain,
                              from_epoch=epoch, to_epoch=epoch)
         except urllib.error.HTTPError as e:
             if e.code == 404:
@@ -535,7 +617,8 @@ class DispatcherClient:
         tesla_info = self.executor_tesla(exec_id)
         if tesla_info is None:
             return [], f"executor {exec_id} has no TESLA params"
-        tesla_info = dict(tesla_info, executor_id=exec_id)
+        tesla_info = dict(tesla_info, executor_id=exec_id,
+                          tag_spec=self.executor_tag_spec(exec_id))
         return [(tesla_info, exec_info.get("debuglet_ids") or [])], ""
 
     def _dated_groups(self, doc: dict, ts_ns: int):
@@ -549,18 +632,19 @@ class DispatcherClient:
         groups: dict = {}
         for c in candidates:
             s = c["schedule"]
-            group = (c["executor_id"], s["chain"])
+            group = (c["executor_id"], s["chain_id"])
             if group not in groups:
                 tau = int(c.get("disclosed_through") or 0)
-                key = self.attribution_key(c["executor_id"], s["chain"], tau) if tau > 0 else None
+                key = self.attribution_key(c["executor_id"], s["chain_id"], tau) if tau > 0 else None
                 groups[group] = ({
                     "executor_id": c["executor_id"],
                     "anchor_key": s["k0"],
-                    "anchor_timestamp_ns": int(s["t0"]),
-                    "epoch_seconds": int(s["interval"]),
-                    "disclosure_delay_epochs": int(s["delay_epochs"]),
+                    "anchor_timestamp_ns": int(s["t0_unix_ns"]),
+                    "epoch_seconds": int(s["epoch_seconds"]),
+                    "disclosure_delay_epochs": int(s["disclosure_delay_epochs"]),
                     "disclosed_epoch": tau if key is not None else 0,
                     "disclosed_key": base64.b64encode(key).decode() if key is not None else "",
+                    "tag_spec": int(s.get("tag_spec") or 0),
                 }, [])
             if c["run_id"] not in groups[group][1]:
                 groups[group][1].append(c["run_id"])
@@ -621,6 +705,48 @@ def secret_until_ns(epoch: int, anchor_ns: int, delay_ns: int, d: int) -> int:
     return anchor_ns + (epoch + d) * delay_ns - DISPATCHER_CLOCK_SKEW_S * 1_000_000_000
 
 
+def unsupported_reason(code: str) -> str:
+    return f"unsupported under {TAG_SPEC} ({code}): {UNSUPPORTED[code]}"
+
+
+# The tag_spec of a chain in the dated attribution history: 0 is an executor
+# that did not report debuglet-tag-v1 when it registered the chain, whose
+# pre-v1 tags this verifier cannot check; 1 is debuglet-tag-v1.
+TAG_SPEC_LEGACY = 0
+TAG_SPEC_V1 = 1
+
+
+def describe_tag_spec(spec) -> str:
+    if spec is None or spec == "":
+        return "not reported"
+    if isinstance(spec, int):
+        return {TAG_SPEC_LEGACY: "legacy (pre-v1)", TAG_SPEC_V1: TAG_SPEC}.get(spec, f"unknown ({spec})")
+    return spec
+
+
+def spec_mismatch(reported) -> Optional[str]:
+    """Why an executor's tag specification rules out verification.
+
+    reported is the integer tag_spec of a chain in the dated history, or the
+    string an executor reports in its capabilities (deprecated routes). On the
+    dated routes 0 is a legacy, pre-v1 chain and unsupported. A missing string
+    (an executor or dispatcher that predates the field, or a failed lookup)
+    is checked under debuglet-tag-v1, and a pre-v1 tag simply does not match.
+    """
+    if isinstance(reported, int):
+        if reported == TAG_SPEC_V1:
+            return None
+        if reported == TAG_SPEC_LEGACY:
+            return ("unsupported: the executor tagged this chain with the legacy, "
+                    f"pre-v1 tag; this verifier implements {TAG_SPEC} only")
+        return (f"unsupported: the chain uses tag spec {reported}; this verifier "
+                f"implements {TAG_SPEC} only")
+    if not reported or reported == TAG_SPEC:
+        return None
+    return (f"unsupported: the executor reports tag spec {reported}; this verifier "
+            f"implements {TAG_SPEC} only")
+
+
 def epoch_of(ts_ns: int, anchor_ns: int, delay_ns: int) -> int:
     """Epoch index containing ts_ns, matching KeySchedule.epochOf."""
     elapsed = ts_ns - anchor_ns
@@ -633,10 +759,15 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list,
                   tolerance_ns: int = int(DEFAULT_CLOCK_TOLERANCE_S * 1_000_000_000)):
     """Verify one packet.
 
-    Returns (matches, reason): matches is [(debuglet_id, epoch, tagger)] for
-    every ID whose tag reproduces, and reason explains an empty result.
-    tolerance_ns bounds how far the capture clock may lag true time.
+    Returns (matches, reason): matches is [(debuglet_id, epoch, tag_spec)]
+    for every ID whose tag reproduces, and reason explains an empty result. A
+    packet debuglet-tag-v1 does not cover is reported unsupported first,
+    whatever the key schedule says. tolerance_ns bounds how far the capture
+    clock may lag true time.
     """
+    canonical, unsupported = tag_input(pkt.ip)
+    if unsupported is not None:
+        return [], unsupported_reason(unsupported)
     anchor_ns = int(tesla["anchor_timestamp_ns"])
     delay_ns = epoch_seconds(tesla) * 1_000_000_000
     if delay_ns <= 0:
@@ -678,7 +809,6 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list,
     if not debuglet_ids:
         return [], "no recent debuglets are recorded for this executor"
 
-    canonical = canonicalize_ipv4(pkt.ip)
     tag = pkt.ip_id
 
     matched = []
@@ -699,8 +829,8 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list,
             if mid in seen:
                 continue
             ak = hkdf_sha256(chain_key, mid.encode())
-            if compute_bpf_tag(ak, canonical) == tag:
-                matched.append((mid, epoch, "siphash"))
+            if compute_tag(ak, canonical) == tag:
+                matched.append((mid, epoch, TAG_SPEC))
                 seen.add(mid)
     if not matched:
         if pkt_epoch < 1:
@@ -721,7 +851,7 @@ def verify_packet(pkt: Packet, tesla: dict, debuglet_ids: list,
 def main():
     parser = argparse.ArgumentParser(
         description="Verify IPv4 packet authentication tags in a capture "
-        "using the dispatcher TESLA APIs"
+        f"using the dispatcher TESLA APIs ({TAG_SPEC})"
     )
     parser.add_argument(
         "--server",
@@ -755,6 +885,8 @@ def main():
 
     client = DispatcherClient(args.server, verify_tls=not args.no_verify_tls)
 
+    print(f"Tag specification: {TAG_SPEC} (docs/tag-spec.md). Packets it does not "
+          "cover are reported as unsupported, not as mismatches.")
     print(f"Reading {args.pcap} …")
     try:
         packets = read_capture(args.pcap)
@@ -763,20 +895,35 @@ def main():
         sys.exit(1)
 
     if not packets:
-        print("No IPv4 packets found.")
+        print("No IP packets found.")
         sys.exit(0)
-    print(f"  {len(packets)} IPv4 packets read.\n")
+    v6 = sum(1 for p in packets if p.version == 6)
+    print(f"  {len(packets)} IP packets read ({len(packets) - v6} IPv4, {v6} IPv6).\n")
+
+    # Classify first: an unsupported packet needs no executor lookup.
+    unsupported = {id(p): tag_input(p.ip)[1] for p in packets}
 
     header = (
         f"{'Timestamp (ns)':<22}  {'Src IP':<16}  {'Dst IP':<16}  "
-        f"{'IPID':>6}  {'Epoch':>6}  Matched debuglet IDs"
+        f"{'IPID':>6}  {'Epoch':>6}  Result"
     )
     print(header)
     print("-" * len(header))
 
     total = verified = 0
+    reasons: dict = {}
     announced: set = set()
     for pkt in packets:
+        ipid = "—" if pkt.ip_id is None else f"0x{pkt.ip_id:04x}"
+        code = unsupported[id(pkt)]
+        if code is not None:
+            total += 1
+            reasons[code] = reasons.get(code, 0) + 1
+            print(
+                f"{pkt.ts_ns:<22}  {pkt.src:<16}  {pkt.dst:<16}  "
+                f"{ipid:>6}  {'—':>6}  {unsupported_reason(code)}"
+            )
+            continue
         groups, reason = client.lookup(pkt.src, pkt.ts_ns, args.n)
         for tesla, ids in groups:
             key = (pkt.src, tesla["executor_id"], tesla["anchor_key"])
@@ -784,6 +931,7 @@ def main():
                 announced.add(key)
                 print(
                     f"  [{pkt.src}] executor={tesla['executor_id']}  "
+                    f"tag_spec={describe_tag_spec(tesla.get('tag_spec'))}  "
                     f"epoch={epoch_seconds(tesla)}s  "
                     f"disclosure_delay={tesla.get('disclosure_delay_epochs', 0)} epochs  "
                     f"disclosed_epoch={tesla.get('disclosed_epoch', '—')}  "
@@ -792,35 +940,43 @@ def main():
         if not groups and client.attribution_routes is not True and reason == "no registered executor":
             continue  # the deprecated lookup knows no executor for this address
         total += 1
-        matched, epoch = [], None
+        matched, epoch, mismatches = [], None, []
         for tesla, ids in groups:
-            found, why = verify_packet(pkt, tesla, ids, tolerance_ns)
-            matched.extend(found)
-            if found or not reason:
-                reason = why
-            if epoch is None or found:
+            if epoch is None:
                 epoch = epoch_of(
                     pkt.ts_ns,
                     int(tesla["anchor_timestamp_ns"]),
                     epoch_seconds(tesla) * 1_000_000_000,
                 )
+            mismatch = spec_mismatch(tesla.get("tag_spec"))
+            if mismatch:
+                mismatches.append(mismatch)
+                continue
+            found, why = verify_packet(pkt, tesla, ids, tolerance_ns)
+            matched.extend(found)
+            if found or not reason:
+                reason = why
         if matched:
             verified += 1
-            reason = ""
-
-        matched_str = (
-            ", ".join(f"{m} (epoch {e}, {t})" for m, e, t in matched)
-            if matched
-            else f"— {reason}"
-        )
+            result = f"{TAG_SPEC}: verified " + ", ".join(
+                f"{m} (epoch {e})" for m, e, _ in matched)
+            if len(matched) > 1:
+                result += " — ambiguous: more than one candidate matches"
+        elif mismatches and len(mismatches) == len(groups):
+            reasons["tag_spec"] = reasons.get("tag_spec", 0) + 1
+            result = mismatches[0]
+        else:
+            result = f"{TAG_SPEC}: no match — {reason}"
         epoch_str = "—" if epoch is None else str(epoch)
         print(
             f"{pkt.ts_ns:<22}  {pkt.src:<16}  {pkt.dst:<16}  "
-            f"0x{pkt.ip_id:04x}  {epoch_str:>6}  {matched_str}"
+            f"{ipid:>6}  {epoch_str:>6}  {result}"
         )
 
     print("-" * len(header))
-    print(f"\nResult: {verified}/{total} packets matched at least one debuglet ID.")
+    print(f"\nResult ({TAG_SPEC}): {verified}/{total} packets matched at least one debuglet ID.")
+    if reasons:
+        print("Unsupported: " + ", ".join(f"{n} {code}" for code, n in sorted(reasons.items())))
     sys.exit(0 if verified else 2)
 
 

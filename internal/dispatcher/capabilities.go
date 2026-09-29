@@ -98,7 +98,27 @@ func taggingFromReport(report *pb.TaggingMode) *wire.TaggingMode {
 			return nil
 		}
 	}
-	return &wire.TaggingMode{IPv4: report.GetIpv4(), IPv6: report.GetIpv6(), SCION: report.GetScion()}
+	return &wire.TaggingMode{IPv4: report.GetIpv4(), IPv6: report.GetIpv6(), SCION: report.GetScion(),
+		TagSpec: tagSpec(report.GetTagSpec())}
+}
+
+// maxTagSpec bounds a reported tag specification identifier.
+const maxTagSpec = 64
+
+// tagSpec keeps a well-formed tag specification identifier, including one a
+// newer executor reports that this dispatcher does not know, so evidence names
+// it. A malformed one is cleared alone, which reads as unknown and keeps the
+// tagging modes.
+func tagSpec(spec string) string {
+	if len(spec) > maxTagSpec {
+		return ""
+	}
+	for _, r := range spec {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '.' {
+			return ""
+		}
+	}
+	return spec
 }
 
 // cloneTagging copies a tagging mode, so a snapshot never shares the

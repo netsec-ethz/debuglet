@@ -11,8 +11,9 @@
 // # Tag Placement
 //
 // The 16-bit tag is written into the IPv4 Identification (IPID) field
-// (bytes 4–5 of the IPv4 header, big-endian). The IPv4 header checksum is
-// recomputed after the field is updated.
+// (bytes 4–5 of the IPv4 header, big-endian) and DF is set. The IPv4 header
+// checksum is recomputed after the fields are updated. The algorithm is the
+// versioned tag specification tesla.TagSpec, docs/tag-spec.md.
 //
 // # Platform notes
 //
@@ -23,6 +24,7 @@ package tagger
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
@@ -55,33 +57,35 @@ func New(schedule *tesla.KeySchedule, measurementID []byte) *Tagger {
 	return &Tagger{schedule: schedule, measurementID: mid}
 }
 
-// TagPacket rewrites the IPID field of a raw IPv4 packet and recomputes the
-// IPv4 header checksum. The packet is modified in-place; the same slice is
-// returned.
+// TagPacket writes the tag of the versioned tag specification tesla.TagSpec
+// (docs/tag-spec.md) into the IPID field of a raw IPv4 packet, sets DF and
+// recomputes the IPv4 header checksum. The packet is modified in-place; the
+// same slice is returned.
 //
-// The tag is the kernel tagger's SipHash, computed over the packet in
-// canonical form (see tesla.ComputeTag): both the IPID
-// field (bytes 4–5) and the IPv4 header checksum field (bytes 10–11) are
-// zeroed before hashing. This allows a verifier to reproduce the same hash
-// input without knowing the original checksum or IPID values.
+// The tag is computed over the packet's canonical input (tesla.HashInput),
+// in which the fields a router, NAT or checksum offload rewrites are zeroed,
+// so a verifier reproduces it from the packet it receives. DF is set after
+// hashing and is not part of the input.
 //
-// If pkt does not begin with a valid IPv4 header (version 4, IHL ≥ 5) the
-// packet is returned unmodified without error. While the schedule has no
-// usable signing key (epoch 0, whose key is the public anchor) the packet is
-// likewise returned unmodified and untagged, as on the eBPF path.
+// A packet v1 does not tag (not IPv4, too short, malformed, or a fragment) is
+// returned unmodified without error. While the schedule has no usable signing
+// key (epoch 0, whose key is the public anchor) the packet is likewise
+// returned unmodified and untagged, as on the eBPF path.
 func (t *Tagger) TagPacket(pkt []byte) ([]byte, error) {
 	now := time.Now()
 	if !isIPv4(pkt) || t.schedule.CurrentKey(now) == nil {
 		return pkt, nil
 	}
-	// Canonical form: zero mutable fields before hashing.
-	binary.BigEndian.PutUint16(pkt[4:6], 0)   // IPID
-	binary.BigEndian.PutUint16(pkt[10:12], 0) // IPv4 checksum
 	tag, err := t.schedule.ComputeTagForPacket(now, t.measurementID, pkt)
+	var unsupported *tesla.UnsupportedError
+	if errors.As(err, &unsupported) {
+		return pkt, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("tagger: ComputeTagForPacket: %w", err)
 	}
 	writeIPID(pkt, tag)
+	pkt[6] |= 0x40 // DF
 	recomputeIPv4Checksum(pkt)
 	return pkt, nil
 }

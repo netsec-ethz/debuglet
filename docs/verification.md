@@ -4,7 +4,7 @@ This note records how the recipient of a probe checks which Debuglet run sent
 it. It is a design for #71, #73 and #341; steps 1 and 2 of the
 [delivery order](#delivery-order) have landed, the rest has not. Keep it in
 step with the code as each step lands. The tag
-algorithm itself is specified in the tag spec (`docs/tag-spec.md`, tag spec
+algorithm itself is specified in the [tag spec](tag-spec.md) (tag spec
 v1).
 
 **Today.** Each executor tags outgoing IPv4 packets with a 16-bit SipHash-2-4

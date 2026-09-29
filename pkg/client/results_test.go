@@ -289,6 +289,8 @@ func TestResultVantagePointTagging(t *testing.T) {
 	for _, tagging := range []wire.TaggingMode{
 		{IPv4: wire.TaggingEBPF, IPv6: wire.TaggingNone, SCION: wire.TaggingNone},
 		{IPv4: wire.TaggingEBPF, IPv6: "destination-options", SCION: wire.TaggingNone},
+		{IPv4: wire.TaggingEBPF, IPv6: wire.TaggingNone, SCION: wire.TaggingNone, TagSpec: wire.TagSpecV1},
+		{IPv4: wire.TaggingEBPF, IPv6: wire.TaggingNone, SCION: wire.TaggingNone, TagSpec: "debuglet-tag-v9"},
 	} {
 		doc.Provenance.VantagePoint.Capabilities.Value.Tagging = &tagging
 		data, _ := json.Marshal(doc)

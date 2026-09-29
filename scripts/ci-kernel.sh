@@ -63,6 +63,7 @@ for event in skips:
 required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestBPFLinuxLoad"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestKernelTagMatchesGoTagger"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestKernelTagVectorsV1"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestLegacyTCAttachesAndRemovesOnlyItsFilter"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestCaptureTCPTagsVerifyAtReceiver"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestDisclosureFollowsKernelSlot"),
@@ -78,7 +79,7 @@ for package, test in sorted(missing):
     print(f"Missing passing {package}/{test}; kernel checks did not run.", file=sys.stderr)
 if skips or missing:
     sys.exit(1)
-print("Tagger load, kernel/Go tag parity, legacy tc, receiver-verified TCP tagging, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter, heterogeneous capability-selection and IPv4-only tagged-run listener checks passed with zero skipped tests.")
+print("Tagger load, kernel/Go tag parity, debuglet-tag-v1 kernel vectors, legacy tc, receiver-verified TCP tagging, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter, heterogeneous capability-selection and IPv4-only tagged-run listener checks passed with zero skipped tests.")
 PY
 
 # Separately prove that the checked-in C sources compile with this toolchain.

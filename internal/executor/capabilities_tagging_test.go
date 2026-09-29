@@ -12,6 +12,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
@@ -27,6 +28,9 @@ func TestCapabilityReportsTaggingMode(t *testing.T) {
 	want := &pb.TaggingMode{Ipv4: debuglet.UserspaceTagging(), Ipv6: tagger.ModeNone, Scion: tagger.ModeNone}
 	if got := hello.GetCapabilities().GetTagging(); got.GetIpv4() != want.Ipv4 || got.GetIpv6() != want.Ipv6 || got.GetScion() != want.Scion {
 		t.Fatalf("tagging %v, want %v", got, want)
+	}
+	if got := hello.GetCapabilities().GetTagging().GetTagSpec(); got != tesla.TagSpec {
+		t.Fatalf("tag spec %q, want %q", got, tesla.TagSpec)
 	}
 	if report, _ := e.capabilityReport(t.Context(), false); report != nil {
 		t.Fatal("unchanged tagging renewed a cached observation")
