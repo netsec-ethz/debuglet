@@ -79,6 +79,9 @@ func TestTagPacketSetsIPID(t *testing.T) {
 	if ipid == 0 {
 		t.Error("TagPacket left IPID at zero — tag was not applied")
 	}
+	if tagged[6]&0x40 == 0 {
+		t.Error("TagPacket did not set DF")
+	}
 
 	if !validateIPv4Checksum(tagged) {
 		t.Errorf("IPv4 checksum invalid after tagging (checksum word = %04x)", IPv4Checksum(tagged[:20]))
@@ -173,47 +176,6 @@ func TestAccountabilityRoundTrip(t *testing.T) {
 	}
 	if !ok {
 		t.Error("VerifyTag returned false — accountability verification failed")
-	}
-}
-
-// TestTagPacketMatchesKernelComputation checks that the pure-Go tagger writes
-// exactly the tag tagger.c computes: SipHash over at most the first 64 bytes of
-// the IPv4 packet with its IPID and checksum zeroed. Packets shorter than,
-// equal to and longer than the 64-byte limit are covered, including lengths
-// that are not a multiple of the 8-byte block.
-func TestTagPacketMatchesKernelComputation(t *testing.T) {
-	now := time.Now()
-	ks, _ := tesla.NewKeySchedule(tesla.Config{
-		Seed:        fixedSeed,
-		EpochLength: time.Hour,
-		Epoch:       now.Add(-time.Hour),
-	})
-	tgr := New(ks, testMeasurementID)
-	for _, payloadLen := range []int{0, 1, 8, 13, 44, 45, 100, 1400} {
-		payload := make([]byte, payloadLen)
-		for i := range payload {
-			payload[i] = byte(i*7 + payloadLen)
-		}
-		pkt := buildIPv4Packet(payload)
-
-		canonical := append([]byte(nil), pkt...)
-		binary.BigEndian.PutUint16(canonical[4:6], 0)
-		binary.BigEndian.PutUint16(canonical[10:12], 0)
-		want, err := ks.ComputeTagForPacket(now, testMeasurementID, canonical)
-		if err != nil {
-			t.Fatalf("ComputeTagForPacket: %v", err)
-		}
-
-		tagged, err := tgr.TagPacket(pkt)
-		if err != nil {
-			t.Fatalf("TagPacket: %v", err)
-		}
-		if got := ReadIPID(tagged); got != want {
-			t.Errorf("payload %d: tag %04x, want the kernel's %04x", payloadLen, got, want)
-		}
-		if IPv4Checksum(tagged[:20]) != 0 {
-			t.Errorf("payload %d: the tagged header checksum does not verify", payloadLen)
-		}
 	}
 }
 

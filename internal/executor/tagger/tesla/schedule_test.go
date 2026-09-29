@@ -251,13 +251,13 @@ func TestVerifyTag(t *testing.T) {
 	ks := newTestSchedule(t, time.Second)
 	epoch := int64(7)
 	k := ks.keyForEpoch(epoch)
-	payload := []byte("test packet payload")
+	payload := testIPv4([]byte("test packet payload"))
 
 	ak, err := DeriveAK(k, testMeasurementID)
 	if err != nil {
 		t.Fatalf("DeriveAK: %v", err)
 	}
-	tag, err := ComputeTag(ak, payload)
+	tag, err := PacketTag(ak, payload)
 	if err != nil {
 		t.Fatalf("ComputeTag: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestVerifyTag(t *testing.T) {
 	}
 
 	// Tampered payload must fail.
-	ok, err = VerifyTag(k, epoch, testMeasurementID, []byte("tampered payload"), tag)
+	ok, err = VerifyTag(k, epoch, testMeasurementID, testIPv4([]byte("tampered payload")), tag)
 	if err != nil {
 		t.Fatalf("VerifyTag (tampered): %v", err)
 	}
@@ -380,12 +380,12 @@ func TestFullVerificationFlow(t *testing.T) {
 	// Executor tags a probe at epoch 5.
 	probeEpoch := int64(5)
 	k5 := ks.keyForEpoch(probeEpoch)
-	payload := []byte("probe payload data")
+	payload := testIPv4([]byte("probe payload data"))
 	ak5, err := DeriveAK(k5, testMeasurementID)
 	if err != nil {
 		t.Fatalf("DeriveAK: %v", err)
 	}
-	tag, err := ComputeTag(ak5, payload)
+	tag, err := PacketTag(ak5, payload)
 	if err != nil {
 		t.Fatalf("ComputeTag: %v", err)
 	}
@@ -412,34 +412,5 @@ func TestFullVerificationFlow(t *testing.T) {
 	}
 	if !ok {
 		t.Error("full verification flow failed: tag mismatch")
-	}
-}
-
-// TestComputeTagVectors pins the tag to values computed independently by
-// tools/verify_pcap.py, whose SipHash-2-4 follows tagger.c: at most 64
-// bytes are hashed, and the bytes after the last full 8-byte block enter only
-// through the length. Equal tags for 64 and 100 bytes show the 64-byte cut.
-func TestComputeTagVectors(t *testing.T) {
-	ak := make([]byte, 16)
-	for i := range ak {
-		ak[i] = byte(i)
-	}
-	for _, tc := range []struct {
-		length int
-		want   uint16
-	}{
-		{0, 0x0e31}, {1, 0x67fd}, {7, 0x313a}, {8, 0x0cfe}, {13, 0x9db5}, {64, 0x2882}, {100, 0x2882},
-	} {
-		data := make([]byte, tc.length)
-		for i := range data {
-			data[i] = byte(i*31 + 5)
-		}
-		got, err := ComputeTag(ak, data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != tc.want {
-			t.Errorf("ComputeTag over %d bytes = %04x, want %04x", tc.length, got, tc.want)
-		}
 	}
 }

@@ -3322,6 +3322,9 @@ components:
             - userspace
             - none
           description: "none in this API version: SCION sockets cannot be marked, so SCION traffic is untagged."
+        tag_spec:
+          type: string
+          description: "Added within API 1.9. The packet-tag specification the tagged families follow: debuglet-tag-v1 (docs/tag-spec.md) from this release on. Absent is unknown, including executors and dispatchers that predate it; a value that is not at most 64 of the characters a-z, 0-9, '-' and '.' is dropped alone. Tags of one specification do not verify under another, and a fleet runs one version. Clients must tolerate values not listed here."
     ExecutorResponse:
       type: object
       additionalProperties: false

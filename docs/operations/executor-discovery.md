@@ -79,7 +79,7 @@ The `tagging` object in `capabilities` reports which of a run's packets carry
 attribution tags, per address family and for SCION:
 
 ```json
-"tagging": {"ipv4": "ebpf", "ipv6": "none", "scion": "none"}
+"tagging": {"ipv4": "ebpf", "ipv6": "none", "scion": "none", "tag_spec": "debuglet-tag-v1"}
 ```
 
 | Mode | Meaning |
@@ -100,6 +100,15 @@ report of it, which means unknown. It is an executor claim, not a verification
 of tags at a receiver, and it is not a discovery filter. The admission snapshot
 in a [result](../results.md) keeps the capability reported at admission: what
 the run was set up to get, not a measurement of its packets.
+
+`tag_spec` names the [packet-tag specification](../tag-spec.md) the tagged
+families follow, `debuglet-tag-v1` from this release on. It is absent for
+executors and dispatchers that predate it, which means unknown; such executors
+used the unversioned pre-v1 tag, which a v1 verifier does not reproduce. A
+fleet runs one version: a verifier applies the specification it implements and
+should treat a different or unknown `tag_spec` as unsupported rather than as a
+failed match. Because the value is part of the capability report, the admission
+snapshot of a result records which specification its tags follow.
 
 **IPv6 on eBPF-tagged runs is refused.** The kernel tagger rewrites the IPv4
 identification field and has no IPv6 counterpart yet, so an IPv6 packet from a

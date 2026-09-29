@@ -305,6 +305,11 @@ message TaggingMode {
   string ipv4 = 1;
   string ipv6 = 2;
   string scion = 3;
+  // Additive: the packet-tag specification of every tagged family,
+  // debuglet-tag-v1 in this build (docs/tag-spec.md). Empty is unknown,
+  // including executors that predate it; it is set even when no family is
+  // tagged.
+  string tag_spec = 4;
 }
 
 // Whether packets tagged now can be attributed once their TESLA key is

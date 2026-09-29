@@ -53,7 +53,10 @@ Readers from before 1.1 reject 1.1 exports as an unsupported version.
   mode is the executor's reported node capability at admission, the mode the
   run was set up to get, not a measurement of the run's packets (a run whose
   kernel tagger failed to load ran with the pure-Go tagger); a file without it reads as
-  unknown, and readers keep tagging values they do not know.
+  unknown, and readers keep tagging values they do not know. Its `tag_spec`
+  names the [packet-tag specification](tag-spec.md) of the run's tags
+  (`debuglet-tag-v1`); a file written before it omits the field, which reads as
+  unknown (the unversioned pre-v1 tag).
 - Within schema 1, `vantage_point` also records `scion_isd_as`, the executor's
   last reported SCION ISD-AS with `observed_at` and `stale` like capabilities,
   and `display`, the operator's `display_name`, `city`, `country` and `network`

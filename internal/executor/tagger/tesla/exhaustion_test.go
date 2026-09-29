@@ -21,7 +21,7 @@ func TestExhaustedChainHasNoSigningKey(t *testing.T) {
 		t.Fatalf("NewKeySchedule: %v", err)
 	}
 	at := func(epoch int64) time.Time { return start.Add(time.Duration(epoch) * delay) }
-	payload := []byte("exhausted chain payload")
+	payload := testIPv4([]byte("exhausted chain payload"))
 	k2, _ := ks.KeyAtEpoch(2)
 
 	if k := ks.CurrentKey(at(2)); !bytes.Equal(k, k2) {

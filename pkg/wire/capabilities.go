@@ -80,7 +80,15 @@ type TaggingMode struct {
 	IPv4  string `json:"ipv4"`
 	IPv6  string `json:"ipv6"`
 	SCION string `json:"scion"`
+	// TagSpec is the packet-tag specification the tagged families follow,
+	// TagSpecV1 from this build on (docs/tag-spec.md). Empty, and absent from
+	// JSON, is unknown: an executor or dispatcher that predates it. Readers
+	// must tolerate values they do not know.
+	TagSpec string `json:"tag_spec,omitempty"`
 }
+
+// TagSpecV1 is the first versioned packet-tag specification.
+const TagSpecV1 = "debuglet-tag-v1"
 
 // AttributionState is the executor's report of whether packets it tags now can
 // be attributed once their TESLA key is disclosed. Its times are the dispatcher
