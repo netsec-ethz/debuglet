@@ -55,8 +55,9 @@ func (p *fbPeer) Abort(ctx context.Context, req *pb.AbortRequest) (*pb.AbortResp
 }
 
 // newFBFixture is newTGFixture's transport variant for a peer that answers
-// Abort per run.
-func newFBFixture(t *testing.T, peer *fbPeer) *tgFixture {
+// Abort per run. Each prepare function runs on the new Dispatcher before the
+// executor registers.
+func newFBFixture(t *testing.T, peer *fbPeer, prepare ...func(*Dispatcher)) *tgFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), tgBound)
 	t.Cleanup(cancel)
@@ -79,6 +80,9 @@ func newFBFixture(t *testing.T, peer *fbPeer) *tgFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	for _, p := range prepare {
+		p(d)
+	}
 	stop, err := startTerminalPeer(ctx, d, tgCapacity, peer)
 	if err != nil {
 		t.Fatalf("startTerminalPeer: %v", err)
@@ -210,7 +214,7 @@ func fbSubmitFailedBatch(t *testing.T, f *tgFixture, peer *fbPeer, refusal, ownU
 // TestFailedBatchRefusedCancellation pins the disposition of a run whose
 // executor answered the failed batch's cancellation with a refusal: it is
 // stored as unreconciled, keeps its reservation, and its later real report
-// still wins. A transport failure of the cancellation is left as it is.
+// still wins. A cancellation that failed in transport is marked the same way.
 func TestFailedBatchRefusedCancellation(t *testing.T) {
 	const batchReason = "failed to batch upload all debuglets"
 	for _, tc := range []struct {
@@ -223,7 +227,7 @@ func TestFailedBatchRefusedCancellation(t *testing.T) {
 		{"not found", status.Error(codes.NotFound, "debuglet not found"), nil, false, models.RunStateUnreconciled},
 		{"permission denied", status.Error(codes.PermissionDenied, "bound to another session"), nil, false, models.RunStateUnreconciled},
 		{"already started", status.Error(codes.NotFound, "debuglet not found"), nil, true, models.RunStateStarted},
-		{"transport failure", status.Error(codes.Unavailable, "connection lost"), nil, false, models.RunStateUploaded},
+		{"transport failure", status.Error(codes.Unavailable, "connection lost"), nil, false, models.RunStateUnreconciled},
 		{"own upload refused", status.Error(codes.NotFound, "debuglet not found"), status.Error(codes.FailedPrecondition, "upload refused"), false, models.RunStateExited},
 		{"own upload refused, abort denied", status.Error(codes.PermissionDenied, "bound to another session"), status.Error(codes.FailedPrecondition, "upload refused"), false, models.RunStateUnreconciled},
 		{"own upload unavailable", status.Error(codes.NotFound, "debuglet not found"), status.Error(codes.Unavailable, "connection lost"), false, models.RunStateUnreconciled},

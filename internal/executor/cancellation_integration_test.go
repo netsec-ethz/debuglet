@@ -26,6 +26,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	_ "modernc.org/sqlite"
 )
@@ -74,6 +75,8 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 		}
 	}
 	e, client := newExecutorRPCFixture(t, peer, storage)
+	logCore, logEntries := observer.New(zap.InfoLevel)
+	e.logger = zap.New(logCore)
 	var runtimeCreated atomic.Int32
 	e.newRuntime = func(scheduler.Spec) runtimeDebuglet {
 		runtimeCreated.Add(1)
@@ -152,6 +155,9 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 		t.Fatalf("Abort returned before its terminal-report worker joined: %v", err)
 	default:
 	}
+	if logEntries.FilterMessage("Run cancellation joined").Len() != 0 {
+		t.Fatal("cancellation logged joined before terminal report completed")
+	}
 	var rows int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM debuglets WHERE uuid = ?", id).Scan(&rows); err != nil || rows != 1 {
 		t.Fatalf("executor row retired before callback joined: rows=%d err=%v", rows, err)
@@ -165,6 +171,10 @@ func TestAbortDuringAllocateSQLiteRPC(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("Abort failed to join after report release")
+	}
+	joinedLogs := logEntries.FilterMessage("Run cancellation joined").All()
+	if len(joinedLogs) != 1 || joinedLogs[0].ContextMap()["run_id"] != id.String() || joinedLogs[0].ContextMap()["attempt"] != "unknown" {
+		t.Fatalf("missing joined run correlation: %+v", joinedLogs)
 	}
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM debuglets WHERE uuid = ?", id).Scan(&rows); err != nil || rows != 0 {
 		t.Fatalf("successful Abort left restorable row: rows=%d err=%v", rows, err)
@@ -291,13 +301,15 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	if _, err := queries.CreateDebuglet(ctx, dispatcherdb.CreateDebugletParams{DispatcherIncarnation: binding.Incarnation, SessionID: binding.SessionID, Uuid: id, StartTime: models.NewUTCTime(start), EndTime: models.NewUTCTime(start.Add(time.Minute)), Usage: floor, CeilBw: 2 * floor, ExecutorID: e.cfg.Identity.ExecutorID, Addresses: addresses, State: models.RunStateUploaded, TransactionID: transaction, OrderID: 1}); err != nil {
 		t.Fatal(err)
 	}
+	// The run fits on the first destination and not on the second, so the
+	// dispatcher rejects the whole allocation after charging the first one.
+	// The limits are set before the run's floor is reserved, which a limit
+	// below it would otherwise be refused for.
+	d.SetDestinationLimit(destination, bitrate.Bitrate(floor))
+	d.SetDestinationLimit(blocked, bitrate.Bitrate(floor-1))
 	if err := d.RestoreScheduler(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// The run fits on the first destination and not on the second, so the
-	// dispatcher rejects the whole allocation after charging the first one.
-	d.SetDestinationLimit(destination, bitrate.Bitrate(floor))
-	d.SetDestinationLimit(blocked, bitrate.Bitrate(floor-1))
 	if _, err := client.Upload(ctx, &pb.UploadRequest{ControlBinding: &pb.ControlBinding{DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID}, Id: id.String(), TransactionId: transaction, Wasm: []byte("\x00asm\x01\x00\x00\x00"), Policy: &pb.DebugletPolicy{FloorBw: floor, CeilBw: 2 * floor, TimeoutMs: 30000, Addresses: addresses}}); err != nil {
 		t.Fatal(err)
 	}

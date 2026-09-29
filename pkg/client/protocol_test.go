@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -502,4 +503,69 @@ func TestClientProtocol(t *testing.T) {
 			t.Fatalf("Error() = %q", err.Error())
 		}
 	})
+}
+
+func TestLogOutputMetadata(t *testing.T) {
+	f := newFakeServer(t, "")
+	c := f.client(t, Options{})
+	for _, tc := range []struct {
+		name, output string
+		after        int64
+		logs         string
+		wantErr      bool
+		wantState    string
+	}{
+		{name: "old server", wantState: "unknown"},
+		{name: "null metadata", output: `null`, wantState: "unknown"},
+		{name: "unknown", output: `{"state":"unknown","final_cursor":null,"loss_reason":""}`, wantState: "unknown"},
+		{name: "pending", output: `{"state":"pending"}`, wantState: "pending"},
+		{name: "empty complete", output: `{"state":"complete","final_cursor":0}`, wantState: "complete"},
+		{name: "resume beyond final", after: 9, output: `{"state":"complete","final_cursor":3}`, wantState: "complete"},
+		{name: "truncated", output: `{"state":"truncated","final_cursor":0,"loss_reason":"storage_limit"}`, wantState: "truncated"},
+		{name: "future reason", output: `{"state":"truncated","final_cursor":0,"loss_reason":"future_reason"}`, wantState: "truncated"},
+		{name: "future state", output: `{"state":"archived","final_cursor":7,"loss_reason":"future_reason"}`, wantState: "archived"},
+		{name: "pending final", output: `{"state":"pending","final_cursor":0}`, wantErr: true},
+		{name: "unknown reason", output: `{"state":"unknown","loss_reason":"output_limit"}`, wantErr: true},
+		{name: "complete missing cursor", output: `{"state":"complete"}`, wantErr: true},
+		{name: "complete null cursor", output: `{"state":"complete","final_cursor":null}`, wantErr: true},
+		{name: "malformed final cursor", output: `{"state":"complete","final_cursor":"0"}`, wantErr: true},
+		{name: "complete negative cursor", output: `{"state":"complete","final_cursor":-1}`, wantErr: true},
+		{name: "complete loss", output: `{"state":"complete","final_cursor":0,"loss_reason":"output_limit"}`, wantErr: true},
+		{name: "truncated missing reason", output: `{"state":"truncated","final_cursor":0}`, wantErr: true},
+		{name: "truncated blank reason", output: `{"state":"truncated","final_cursor":0,"loss_reason":" "}`, wantErr: true},
+		{name: "truncated oversized reason", output: `{"state":"truncated","final_cursor":0,"loss_reason":"` + strings.Repeat("x", 65) + `"}`, wantErr: true},
+		{name: "entry beyond final", after: 1, logs: `[{"id":1,"output":""}]`, output: `{"state":"complete","final_cursor":0}`, wantErr: true},
+		{name: "missing final prefix", output: `{"state":"complete","final_cursor":1}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := tc.logs
+			if logs == "" {
+				logs = "[]"
+			}
+			body := fmt.Sprintf(`{"state":"RunStateExited","after":%d,"logs":%s,"has_more":false`, tc.after, logs)
+			if tc.output != "" {
+				body += `,"output":` + tc.output
+			}
+			body += "}"
+			f.handle("GET /debuglet/{id}/logs", jsonHandler(http.StatusOK, body))
+			requested := tc.after
+			if tc.logs != "" {
+				requested = 0
+			}
+			page, err := c.Logs(testContext(t), fixtureID, LogOptions{After: requested})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("accepted inconsistent output")
+				}
+				asProtocolError(t, err)
+				return
+			}
+			if err != nil || page.Output.State != tc.wantState {
+				t.Fatalf("output=%+v err=%v", page.Output, err)
+			}
+			if strings.Contains(tc.output, "future_reason") && page.Output.LossReason != "future_reason" {
+				t.Fatal("future reason discarded")
+			}
+		})
+	}
 }

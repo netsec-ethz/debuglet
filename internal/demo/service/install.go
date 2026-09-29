@@ -15,6 +15,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/fsutil"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // Account is the resolved service account a unit runs as.
@@ -98,14 +99,15 @@ type Report struct {
 	Ready bool `json:"ready"`
 	// Joined reports a daemon that finished its own shutdown. It is the
 	// only thing that permits deleting, upgrading or rebuilding state.
-	Joined     bool   `json:"joined,omitempty"`
-	Enabled    bool   `json:"enabled"`
-	Active     string `json:"active,omitempty"`
-	MainPID    int    `json:"main_pid,omitempty"`
-	ExecutorID string `json:"executor_id,omitempty"`
-	Endpoint   string `json:"endpoint,omitempty"`
-	StateDir   string `json:"state_dir,omitempty"`
-	UnitPath   string `json:"unit_path,omitempty"`
+	Joined      bool   `json:"joined,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Active      string `json:"active,omitempty"`
+	MainPID     int    `json:"main_pid,omitempty"`
+	ExecutorID  string `json:"executor_id,omitempty"`
+	Endpoint    string `json:"endpoint,omitempty"`
+	StateDir    string `json:"state_dir,omitempty"`
+	UnitPath    string `json:"unit_path,omitempty"`
+	PackagePath string `json:"package_path,omitempty"`
 	// Changed lists what this operation actually altered on disk or in the
 	// service manager. A repeated identical install changes nothing.
 	Changed []string `json:"changed,omitempty"`
@@ -223,7 +225,7 @@ func (i *Installer) finishReport(ctx context.Context, p Profile, report Report, 
 		return report, fmt.Errorf("%s did not publish readiness: %w", p.Unit, err)
 	}
 	report.Ready, report.State, report.MainPID = true, "ready", record.PID
-	if p.Role == demo.DispatcherSchema {
+	if p.Role == storagecheck.Dispatcher {
 		report.Endpoint = "http://" + record.HTTPAddr
 	}
 	return report, nil
@@ -288,6 +290,9 @@ func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report
 	if !info.IsDir() || info.Mode().Perm() != 0700 {
 		return fmt.Errorf("%s must be a real mode-0700 directory", p.StateDir)
 	}
+	if err := os.Remove(filepath.Join(p.StateDir, demo.OfflineStateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	// The role identity is established before the database exists: a
 	// directory that already holds a database but no identity belongs to
 	// something else, and adopting it would take ownership of state this
@@ -303,7 +308,7 @@ func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report
 	if bootstrapped {
 		report.Changed = append(report.Changed, "database")
 	}
-	if p.Role == demo.ExecutorSchema {
+	if p.Role == storagecheck.Executor {
 		p.ExecutorID = state.Identity
 	}
 	changed, err := i.writeConfiguration(*p)
@@ -325,7 +330,7 @@ func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report
 // generator the foreground roles use and reports whether its bytes changed.
 func (i *Installer) writeConfiguration(p Profile) (bool, error) {
 	var config map[string]any
-	if p.Role == demo.DispatcherSchema {
+	if p.Role == storagecheck.Dispatcher {
 		config = demo.DispatcherConfiguration(p.Version, p.DatabasePath)
 		server := config["server"].(map[string]any)
 		server["http_port"], server["grpc_port"] = p.HTTPPort, p.GRPCPort
@@ -479,9 +484,12 @@ func (i *Installer) own(dir string, account Account) error {
 }
 
 // Start starts an installed instance and observes its readiness record.
-func (i *Installer) Start(ctx context.Context, role demo.SchemaRole, name string) (Report, error) {
+func (i *Installer) Start(ctx context.Context, role storagecheck.Role, name string) (Report, error) {
 	p, report, err := i.load(ctx, "start", role, name)
 	if err != nil {
+		return report, err
+	}
+	if err := os.Remove(filepath.Join(p.StateDir, demo.OfflineStateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return report, err
 	}
 	state, err := i.manager.State(ctx, p.Unit)
@@ -502,7 +510,7 @@ func (i *Installer) Start(ctx context.Context, role demo.SchemaRole, name string
 // the manager actually reports it down. It leaves the unit enabled: stopping
 // for a moment is not the same decision as removing a node from service, which
 // is what Drain is for.
-func (i *Installer) Stop(ctx context.Context, role demo.SchemaRole, name string) (Report, error) {
+func (i *Installer) Stop(ctx context.Context, role storagecheck.Role, name string) (Report, error) {
 	p, report, err := i.load(ctx, "stop", role, name)
 	if err != nil {
 		return report, err
@@ -587,7 +595,7 @@ func unitResult(result string) string {
 
 // Status reports the installed contract and what the manager and the readiness
 // record currently say about it, without changing anything.
-func (i *Installer) Status(ctx context.Context, role demo.SchemaRole, name string) (Report, error) {
+func (i *Installer) Status(ctx context.Context, role storagecheck.Role, name string) (Report, error) {
 	p, report, err := i.load(ctx, "status", role, name)
 	if err != nil {
 		return report, err
@@ -602,14 +610,14 @@ func (i *Installer) Status(ctx context.Context, role demo.SchemaRole, name strin
 		report.State = "started"
 		if record, err := readiness.Read(p.ReadyFile, state.MainPID, p.ExecutorID); err == nil {
 			report.Ready, report.State = true, "ready"
-			if p.Role == demo.DispatcherSchema {
+			if p.Role == storagecheck.Dispatcher {
 				report.Endpoint = "http://" + record.HTTPAddr
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			report.Note = "the published readiness record does not describe the running process: " + err.Error()
 		}
 	}
-	if p.Role == demo.DispatcherSchema {
+	if p.Role == storagecheck.Dispatcher {
 		if switchState, err := ReadMaintenance(p.MaintenanceFile); err == nil && switchState.Paused {
 			report.Note = "submission admission is stopped for maintenance: " + switchState.Reason
 		}
@@ -621,9 +629,12 @@ func (i *Installer) Status(ctx context.Context, role demo.SchemaRole, name strin
 // persistent state directory is kept unless purge is set, and purge is refused
 // until the manager reports the unit stopped: until local ownership has
 // joined, no database, identity or result may be deleted.
-func (i *Installer) Uninstall(ctx context.Context, role demo.SchemaRole, name string, purge bool) (Report, error) {
+func (i *Installer) Uninstall(ctx context.Context, role storagecheck.Role, name string, purge bool) (Report, error) {
 	p, report, err := i.load(ctx, "uninstall", role, name)
 	if err != nil {
+		return report, err
+	}
+	if err := i.verifyRemoval(ctx, p); err != nil {
 		return report, err
 	}
 	stopped, joined, err := i.stopAndVerify(ctx, p, &report)
@@ -689,7 +700,7 @@ func (i *Installer) Uninstall(ctx context.Context, role demo.SchemaRole, name st
 // derived from the root, role and name the operator named; the installed
 // record only supplies what an operator chose at installation time, and it is
 // accepted at all only when it agrees with those derived paths.
-func (i *Installer) load(ctx context.Context, operation string, role demo.SchemaRole, name string) (Profile, Report, error) {
+func (i *Installer) load(ctx context.Context, operation string, role storagecheck.Role, name string) (Profile, Report, error) {
 	report := Report{Operation: operation, Role: string(role), Name: name}
 	derived, err := DerivePaths(i.root, role, name)
 	if err != nil {
@@ -721,7 +732,7 @@ func (i *Installer) load(ctx context.Context, operation string, role demo.Schema
 }
 
 // ReadRecord reads the installed record of one instance.
-func ReadRecord(root string, role demo.SchemaRole, name string) (Profile, error) {
+func ReadRecord(root string, role storagecheck.Role, name string) (Profile, error) {
 	var p Profile
 	path := RecordPath(root, role, name)
 	info, err := os.Lstat(path)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -381,6 +382,24 @@ func TestCLIReceipts(t *testing.T) {
 		}
 		if strings.Contains(strings.ToLower(stdout+stderr), "stopped") {
 			t.Fatalf("output must not claim the job stopped: %q %q", stdout, stderr)
+		}
+	})
+
+	t.Run("cancel status only inspects unresolved delivery", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /debuglet/{id}/cancellation", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":%q,"request_id":"b85c3ccb-c486-40e1-ae49-93e1d2c8ac52","executor_id":%q,"original_binding":null,"requested_at":"2026-09-28T12:00:00Z","attempted_at":null,"acknowledged_at":null,"checked_at":"2026-09-28T12:01:00Z","disposition":"unresolved","reason":"original_binding_unavailable","state":"RunStateExited","error":""}`, fixJobID, fixExecutor)
+		})
+		fx := newFixture(t, mux)
+		code, stdout, stderr := runCLI(bg, "--endpoint", fx.endpoint(), "--output", "json", "cancel", "--status", fixJobID)
+		assertCode(t, code, exitOK, stdout, stderr)
+		doc := oneJSONDocument(t, stdout)
+		if doc["disposition"] != "unresolved" || doc["acknowledged_at"] != nil {
+			t.Fatalf("inspection: %v", doc)
+		}
+		if _, exists := fx.last("DELETE", "/debuglet"); exists {
+			t.Fatal("inspection sent cancellation")
 		}
 	})
 

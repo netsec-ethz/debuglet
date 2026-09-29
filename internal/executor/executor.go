@@ -38,6 +38,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
@@ -49,6 +50,7 @@ import (
 	"google.golang.org/grpc/status"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,19 +60,25 @@ import (
 )
 
 type Executor struct {
-	cfg           config.ExecutorConfig
-	teslaSchedule *tesla.KeySchedule
-	logger        *zap.Logger
+	capabilityMu   sync.Mutex
+	capabilityNext time.Time
+	cfg            config.ExecutorConfig
+	teslaSchedule  *tesla.KeySchedule
+	logger         *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
-	scheduler   scheduler.Scheduler
-	running     map[uuid.UUID]RunningDebuglet
-	mu          sync.RWMutex
-	limiter     *app.Limiter
-	packetCount ratelimit.PacketCount
-	iface       *net.Interface
-	portManager *socket.PortManager
+	scheduler     scheduler.Scheduler
+	running       map[uuid.UUID]RunningDebuglet
+	mu            sync.RWMutex
+	limiter       *app.Limiter
+	packetCount   ratelimit.PacketCount
+	output        *outputstore.Store
+	outputFailed  *atomic.Bool
+	outputVersion atomic.Uint32
+	outputKick    chan struct{}
+	iface         *net.Interface
+	portManager   *socket.PortManager
 	// Tests can hold individual resource boundaries; nil uses the real runtime.
 	newRuntime func(scheduler.Spec) runtimeDebuglet
 	// clientFor is a construction-fixed seam for scripted direct gRPC peers, which
@@ -81,6 +89,8 @@ type Executor struct {
 	// now, so reporting and reconciliation never settle the same row twice.
 	deliveringMu sync.Mutex
 	delivering   map[uuid.UUID]struct{}
+	// Output retries do not own terminal delivery; either may remain pending.
+	outputDelivering map[uuid.UUID]struct{}
 	// reconcileKick requests one reconciliation pass without waiting for it.
 	reconcileKick chan struct{}
 
@@ -114,7 +124,9 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
 		packetCount: node.packetCount, iface: node.iface, portManager: ports,
-		delivering: make(map[uuid.UUID]struct{}), reconcileKick: make(chan struct{}, 1),
+		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
+		delivering: make(map[uuid.UUID]struct{}), outputDelivering: make(map[uuid.UUID]struct{}),
+		reconcileKick: make(chan struct{}, 1),
 		resourcesDone: make(chan struct{})}
 	storage.RegisterOnStart(e.OnDebugletStart)
 	storage.RegisterFailed(e.OnDebugletFailed)
@@ -153,7 +165,8 @@ func (e *Executor) Listen(parent context.Context) error {
 		// Reconciliation runs here rather than in the heartbeat loop, and is
 		// joined below, so no pass outlives the transport and database it uses.
 		var passes sync.WaitGroup
-		passes.Add(1)
+		passes.Add(2)
+		go func() { defer passes.Done(); e.reconcileOutputLoop(ctx, binding) }()
 		go func() {
 			defer passes.Done()
 			e.reconcileLoop(ctx, binding)
@@ -188,6 +201,9 @@ func (e *Executor) closeTransport() {
 // acknowledgement, or the terminal startup error. Discovery heartbeat readiness
 // is deliberately a separate dispatcher state.
 func (e *Executor) WaitResourcesReady(ctx context.Context) error {
+	if e.outputFailed != nil && e.outputFailed.Load() {
+		return status.Error(codes.Unavailable, "executor output storage is unhealthy")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -329,6 +345,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 				TimestampNs:   now.UnixNano(),
 				TeslaKeyEpoch: epoch,
 				TeslaKey:      key,
+				Capabilities:  e.capabilityReport(ctx, false),
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))

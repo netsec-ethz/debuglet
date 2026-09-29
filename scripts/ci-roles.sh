@@ -10,7 +10,12 @@ mkdir -p .cache/ci
 evidence="$(realpath .cache/ci)/role-evidence"
 mkdir -p -m 0700 "$evidence"
 export DEBUGLET_ROLE_EVIDENCE_DIR="$evidence"
-"${GO:-go}" test -mod=readonly -json -tags=roles_integration -count=1 -timeout=3m \
-  ./internal/acceptance/roles -run '^TestInstalledRoles$' | tee .cache/ci/role-tests.json
-"${GO:-go}" run -mod=readonly ./internal/packaging check-role-evidence \
-  -evidence .cache/ci/role-tests.json
+"${GO:-go}" test -mod=readonly -json -tags=roles_integration -count=1 -timeout=5m \
+  ./internal/acceptance/roles -run '^TestInstalled(Roles|BackupRestore|Recovery|Output)$' | tee .cache/ci/role-tests.json
+python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalledRoles \
+  --test ./internal/acceptance/roles:TestInstalledBackupRestore \
+  --test ./internal/acceptance/roles:TestInstalledRecovery \
+  --test ./internal/acceptance/roles:TestInstalledOutput \
+  --test ./internal/acceptance/roles:TestInstalledRecovery/graceful \
+  --test ./internal/acceptance/roles:TestInstalledRecovery/terminated \
+  --evidence .cache/ci/role-tests.json

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 )
 
 type ExecutorConn struct {
@@ -461,12 +462,16 @@ func (b *BidiServer) registerExecutor(ctx context.Context, gconn *grpc.ClientCon
 	client := pb.NewExecutorServiceClient(gconn)
 	helloCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := client.Hello(helloCtx, &pb.HelloRequest{ControlVersion: controlsession.ProtocolVersion, DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID, SessionToken: append([]byte(nil), offer.credentials.Token[:]...), LeaseDurationMs: b.lease.Duration.Milliseconds()})
+	out, err := client.Hello(helloCtx, &pb.HelloRequest{ControlVersion: controlsession.ProtocolVersion, DispatcherIncarnation: binding.Incarnation, SessionId: binding.SessionID, SessionToken: append([]byte(nil), offer.credentials.Token[:]...), LeaseDurationMs: b.lease.Duration.Milliseconds(), OutputVersion: pb.OutputVersion})
 	if err != nil {
-		return nil, nil, controlrpc.Unavailable()
+		// Only the status code of a peer's answer is kept, never its message.
+		if ctxErr := helloCtx.Err(); ctxErr != nil {
+			return nil, nil, fmt.Errorf("hello: %w", ctxErr)
+		}
+		return nil, nil, fmt.Errorf("hello: %s", status.Code(err))
 	}
-	if out.GetControlVersion() != controlsession.ProtocolVersion || out.GetDispatcherIncarnation() != binding.Incarnation || out.GetSessionId() != binding.SessionID || out.GetLeaseDurationMs() != b.lease.Duration.Milliseconds() {
-		return nil, nil, controlrpc.Unavailable()
+	if out.GetOutputVersion() > pb.OutputVersion || out.GetControlVersion() != controlsession.ProtocolVersion || out.GetDispatcherIncarnation() != binding.Incarnation || out.GetSessionId() != binding.SessionID || out.GetLeaseDurationMs() != b.lease.Duration.Milliseconds() {
+		return nil, nil, fmt.Errorf("hello: mismatched offer")
 	}
 	// The claimed ID is checked against the enrolled node before an owner
 	// exists, so a peer that is not this executor replaces nothing.
@@ -476,6 +481,10 @@ func (b *BidiServer) registerExecutor(ctx context.Context, gconn *grpc.ClientCon
 	owner, err := NewSessionOwnerWithClock(out.GetExecutorId(), binding, b.lease.Duration, b.now)
 	if err != nil {
 		return nil, nil, controlrpc.Unavailable()
+	}
+	owner.outputVersion = out.GetOutputVersion()
+	if b.nodeAuthority() != nil {
+		owner.credentialFingerprint = fingerprint
 	}
 	b.mu.Lock()
 	if b.closed || ctx.Err() != nil {

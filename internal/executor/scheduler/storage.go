@@ -76,6 +76,7 @@ type Policy struct {
 type RestoreEligibility func(controlsession.Binding) bool
 
 type Spec struct {
+	OutputVersion uint32
 	Binding       controlsession.Binding
 	DebugletID    uuid.UUID
 	StartTime     *time.Time

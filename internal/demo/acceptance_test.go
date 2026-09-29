@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -211,9 +212,9 @@ func (h *installedHarness) libraryCase(t *testing.T, fault string) {
 	faultObserved := false
 	var faultAt time.Time
 	var observed map[string]any
-	deps.bootstrap = func(ctx context.Context, role SchemaRole, path string) error {
+	deps.bootstrap = func(ctx context.Context, role storagecheck.Role, path string) error {
 		track.directory(filepath.Dir(path))
-		return BootstrapFresh(ctx, role, path)
+		return storagecheck.BootstrapFresh(ctx, role, path)
 	}
 	deps.startTarget = func(ctx context.Context, nonce string) (targetProcess, error) {
 		var p targetProcess
@@ -231,7 +232,7 @@ func (h *installedHarness) libraryCase(t *testing.T, fault string) {
 		}
 		return p, err
 	}
-	deps.startChild = func(spec ChildSpec) (childProcess, error) {
+	deps.startChild = func(spec ChildSpec) (ChildProcess, error) {
 		if fault == "executor_start_failure" && spec.Path == h.assets.Executor {
 			mu.Lock()
 			faultObserved = true

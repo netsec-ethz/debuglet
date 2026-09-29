@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,7 +18,10 @@ import (
 
 const (
 	nodesUsage = `Usage:
-  dbl nodes
+  dbl nodes [--protocol NAME ...] [--enforcement ebpf|fallback] [--min-capacity-bps N]
+
+Filters return ready matching executors only. Unknown capability reports do not
+match. Capacity means advertised total bandwidth, not free admission capacity.
 
 Lists the dispatcher's registered executors. JSON output is always an array.
 `
@@ -27,12 +32,15 @@ Reports the debuglet's state. The command completes (exit 0) whenever the
 dispatcher answered, including for a debuglet that failed.
 `
 	cancelUsage = `Usage:
-  dbl cancel ID
+  dbl cancel [--status] ID
+
+--status inspects the durable request without sending another cancellation (API
+1.9 or newer). Older dispatchers support cancel without this optional flag.
 
 Looks up the debuglet's executor, then asks the dispatcher to abort it. A
 success is an acknowledgement only, not proof that execution stopped. A
 server or transport failure leaves the cancellation unconfirmed; check
-dbl status ID.
+dbl cancel --status ID (or dbl status ID on older dispatchers).
 `
 	versionUsage = `Usage:
   dbl version [--server]
@@ -44,17 +52,28 @@ Options:
 
 func nodesCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	fs := newCommandFlagSet("nodes")
+	var filter client.ExecutorFilter
+	capabilityFlags(fs, &filter)
 	if code, ok := parseCommandFlags(fs, args, nodesUsage, stdout, stderr); !ok {
 		return code
 	}
 	if fs.NArg() > 0 {
 		return usageError("dbl nodes", nodesUsage, stderr, "unexpected arguments %q", fs.Args())
 	}
+	if err := filter.Validate(); err != nil {
+		return usageError("dbl nodes", nodesUsage, stderr, "%v", err)
+	}
 	c, code, ok := connect("dbl nodes", options, false, stderr)
 	if !ok {
 		return code
 	}
-	nodes, err := c.Nodes(ctx)
+	var nodes []client.Node
+	var err error
+	if filter.Empty() {
+		nodes, err = c.Nodes(ctx)
+	} else {
+		nodes, err = c.DiscoverExecutors(ctx, filter)
+	}
 	if err != nil {
 		return reportFailure(ctx, "dbl nodes", stderr, err)
 	}
@@ -63,13 +82,23 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY")
+		fmt.Fprintln(tw, "ID\tREADY\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS")
 		for _, n := range nodes {
 			lastSeen := "-"
 			if n.LastSeen > 0 {
 				lastSeen = time.Unix(n.LastSeen, 0).UTC().Format(time.RFC3339)
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%d\t%s\n", n.ID, n.Ready, lastSeen, n.Version, n.PricePerBw, n.Currency)
+			protocols, enforcement, capacity := "unknown", "unknown", "unknown"
+			if report := n.Capabilities; report != nil && report.SchemaVersion == 1 {
+				protocols = strings.Join(report.Protocols, ",")
+				if report.EnforcementMode != "" {
+					enforcement = report.EnforcementMode
+				}
+				if report.AdvertisedCapacityBPS != nil {
+					capacity = strconv.FormatInt(*report.AdvertisedCapacityBPS, 10)
+				}
+			}
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", n.ID, n.Ready, lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity)
 		}
 		return tw.Flush()
 	})
@@ -118,6 +147,7 @@ type cancelAcknowledgement struct {
 
 func cancelCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	fs := newCommandFlagSet("cancel")
+	inspect := fs.Bool("status", false, "inspect the recorded cancellation without retrying")
 	if code, ok := parseCommandFlags(fs, args, cancelUsage, stdout, stderr); !ok {
 		return code
 	}
@@ -129,11 +159,22 @@ func cancelCommand(ctx context.Context, args []string, options globalOptions, st
 	if !ok {
 		return code
 	}
+	if *inspect {
+		doc, err := c.Cancellation(ctx, id)
+		if err != nil {
+			return reportFailure(ctx, "dbl cancel: inspection", stderr, err)
+		}
+		return emit("dbl cancel", options.Output, stdout, stderr, doc, func(w io.Writer) error {
+			_, err := fmt.Fprintf(w, "request_id: %s\ndisposition: %s\nreason: %s\nstate: %s\n", doc.RequestID, doc.Disposition, doc.Reason, doc.State)
+			return err
+		})
+	}
 	st, err := c.Status(ctx, id)
 	if err != nil {
 		return reportFailure(ctx, "dbl cancel: status lookup", stderr, err)
 	}
 	if err := c.Cancel(ctx, id, st.ExecutorID); err != nil {
+		fmt.Fprintf(stderr, "Inspect the recorded request with dbl cancel --status %s (API 1.9 or newer).\n", id)
 		return reportFailure(ctx, cancelFailureName(err), stderr, err)
 	}
 	return emit("dbl cancel", options.Output, stdout, stderr, cancelAcknowledgement{ID: id, Acknowledged: true},

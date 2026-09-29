@@ -133,7 +133,7 @@ WHERE uuid = ?3
   AND dispatcher_incarnation = ?5
   AND session_id = ?6
   AND dispatcher_incarnation <> '' AND session_id <> ''
-RETURNING id, debuglet_id, timestamp, output
+RETURNING id, debuglet_id, timestamp, output, source_sequence
 `
 
 type CreateDebugletLogParams struct {
@@ -160,6 +160,7 @@ func (q *Queries) CreateDebugletLog(ctx context.Context, arg CreateDebugletLogPa
 		&i.DebugletID,
 		&i.Timestamp,
 		&i.Output,
+		&i.SourceSequence,
 	)
 	return i, err
 }
@@ -254,7 +255,7 @@ func (q *Queries) GetOwnedDebugletByUUID(ctx context.Context, arg GetOwnedDebugl
 }
 
 const listDebugletLogs = `-- name: ListDebugletLogs :many
-SELECT debuglet_logs.id, debuglet_logs.debuglet_id, debuglet_logs.timestamp, debuglet_logs.output
+SELECT debuglet_logs.id, debuglet_logs.debuglet_id, debuglet_logs.timestamp, debuglet_logs.output, debuglet_logs.source_sequence
 FROM debuglet_logs
 INNER JOIN debuglets ON debuglet_logs.debuglet_id = debuglets.id
 WHERE uuid = ? AND debuglet_logs.id > ?
@@ -282,6 +283,7 @@ func (q *Queries) ListDebugletLogs(ctx context.Context, arg ListDebugletLogsPara
 			&i.DebugletID,
 			&i.Timestamp,
 			&i.Output,
+			&i.SourceSequence,
 		); err != nil {
 			return nil, err
 		}
@@ -358,6 +360,55 @@ WHERE end_time > ?
 
 func (q *Queries) ListDebugletsEndAfter(ctx context.Context, endTime models.UTCTime) ([]Debuglet, error) {
 	rows, err := q.db.QueryContext(ctx, listDebugletsEndAfter, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Debuglet
+	for rows.Next() {
+		var i Debuglet
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uuid,
+			&i.StartTime,
+			&i.EndTime,
+			&i.Usage,
+			&i.CeilBw,
+			&i.ExecutorID,
+			&i.Addresses,
+			&i.State,
+			&i.Error,
+			&i.TransactionID,
+			&i.OrderID,
+			&i.DispatcherIncarnation,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnfinishedDebugletsEndBefore = `-- name: ListUnfinishedDebugletsEndBefore :many
+SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets
+WHERE state <> ?1 AND end_time < ?2
+  AND dispatcher_incarnation <> '' AND session_id <> ''
+`
+
+type ListUnfinishedDebugletsEndBeforeParams struct {
+	ExitedState models.DebugletRunState
+	EndTime     models.UTCTime
+}
+
+func (q *Queries) ListUnfinishedDebugletsEndBefore(ctx context.Context, arg ListUnfinishedDebugletsEndBeforeParams) ([]Debuglet, error) {
+	rows, err := q.db.QueryContext(ctx, listUnfinishedDebugletsEndBefore, arg.ExitedState, arg.EndTime)
 	if err != nil {
 		return nil, err
 	}

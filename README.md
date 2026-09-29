@@ -2,7 +2,7 @@
 
 Debuglet runs small WebAssembly programs for network measurements. A **dispatcher** accepts jobs and stores results. **Executors** run debuglets within their configured time and bandwidth budgets. The project includes the `dbl` command-line client, a Go client library, a Go SDK for writing debuglets, and examples.
 
-> Debuglet is an alpha for trusted environments. Read the [security policy](SECURITY.md) and [current limits](https://github.com/netsec-ethz/debuglet/wiki/Security-and-supported-scope) before operating a networked deployment.
+> Debuglet is an alpha for trusted environments. Read the [security policy](SECURITY.md) before operating a networked deployment.
 
 ## Try it locally
 
@@ -15,6 +15,10 @@ dbl demo
 
 The demo starts temporary local roles, runs a WebAssembly measurement, verifies the result, and cleans up. It needs no existing service, account, compiler, root access, wallet, or hand-written configuration. See [Install Debuglet](README-install.md) for the short installation path.
 
+A successful run prints `Debuglet VERSION completed locally: ...`, its executor
+and run IDs, and `Cleanup: complete`, then exits zero. If it fails, start with
+[troubleshooting](docs/operations/troubleshooting.md).
+
 ## How it fits together
 
 ```mermaid
@@ -26,11 +30,11 @@ flowchart LR
     E -->|local state| ES[(Executor state)]
 ```
 
-The dispatcher exposes the API and coordinates work. Executors connect outward to it, so they do not require a public inbound control port. See the [Architecture Wiki page](https://github.com/netsec-ethz/debuglet/wiki/Architecture) for the run flow and operational model.
+The dispatcher exposes the API and coordinates work. Executors connect outward to it, so they do not require a public inbound control port. See the [measurement flow](docs/architecture.md#measurement-flow) for submission and execution, and [deployment topology](docs/operations/remote-deployment.md) for the operational model.
 
 ## Documentation
 
-The repository keeps stable developer and API references close to the code. The Wiki contains user and operator guides that evolve with deployments.
+The versioned guides in [`docs/`](docs/README.md) are published at the [documentation site](https://debuglet.netsec.ethz.ch/docs/). Use the documentation for the release you install.
 
 | Need | Start here |
 | --- | --- |
@@ -40,7 +44,7 @@ The repository keeps stable developer and API references close to the code. The 
 | Write a debuglet | [Write a debuglet](docs/debuglets.md) |
 | Integrate with the HTTP API | [OpenAPI contract](api/openapi.yaml) and [API guide](docs/api.md) |
 | Understand the code and protocol | [Architecture](docs/architecture.md) |
-| Operate a service | [Project Wiki](https://github.com/netsec-ethz/debuglet/wiki) |
+| Operate a service | [Managed services](docs/operations/services.md) |
 | Contribute | [Contributing](CONTRIBUTING.md) |
 
 ## Development

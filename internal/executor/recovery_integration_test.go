@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"net"
 	"path/filepath"
 	"sync"
@@ -55,7 +56,28 @@ func (p *recoveryPeer) OnDebugletExit(ctx context.Context, _ *drpc.Mutation, req
 	return p.DebugletExit(ctx, req)
 }
 func (p *recoveryPeer) OnDebugletStream(_ *drpc.SessionOwner, stream grpc.BidiStreamingServer[pb.DebugletStreamRequest, pb.DebugletStreamResponse]) error {
-	return p.DebugletStream(stream)
+	// The real Hello negotiates output receipts. These tests script acceptance;
+	// durable dispatcher storage is exercised by the output integration tests.
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		receipt := &pb.DebugletStreamResponse{}
+		if output := req.GetOutput(); output != nil {
+			receipt.CommittedSequence = output.GetSequence()
+		}
+		if end := req.GetEnd(); end != nil {
+			receipt.CommittedSequence = end.GetLastSequence()
+			receipt.End = end
+		}
+		if err := stream.Send(receipt); err != nil {
+			return err
+		}
+	}
 }
 
 type recoveryHarness struct {

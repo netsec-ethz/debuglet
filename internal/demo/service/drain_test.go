@@ -13,8 +13,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	_ "modernc.org/sqlite"
 )
 
@@ -80,19 +80,19 @@ func seedExecutorWork(t *testing.T, path string) {
 
 func TestDrainExecutorJoinsAndReportsDisposition(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.DispatcherSchema, "local", true); err != nil {
+	if _, err := f.install(storagecheck.Dispatcher, "local", true); err != nil {
 		t.Fatalf("install dispatcher: %v", err)
 	}
-	if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 		t.Fatalf("install executor: %v", err)
 	}
-	if _, err := f.install(demo.ExecutorSchema, "other", true); err != nil {
+	if _, err := f.install(storagecheck.Executor, "other", true); err != nil {
 		t.Fatalf("install second executor: %v", err)
 	}
-	drained := StateDirectory(f.root, demo.ExecutorSchema, "worker")
+	drained := StateDirectory(f.root, storagecheck.Executor, "worker")
 	seedExecutorWork(t, filepath.Join(drained, "executor.sqlite"))
 
-	report, err := f.installer.Drain(context.Background(), demo.ExecutorSchema, "worker",
+	report, err := f.installer.Drain(context.Background(), storagecheck.Executor, "worker",
 		DrainOptions{Timeout: 2 * time.Second, Disable: true})
 	if err != nil {
 		t.Fatalf("drain: %v", err)
@@ -115,7 +115,7 @@ func TestDrainExecutorJoinsAndReportsDisposition(t *testing.T) {
 	}
 
 	// Nothing was deleted or replayed: the same rows are still there.
-	again, err := f.installer.Drain(context.Background(), demo.ExecutorSchema, "worker",
+	again, err := f.installer.Drain(context.Background(), storagecheck.Executor, "worker",
 		DrainOptions{Timeout: 2 * time.Second, Disable: true})
 	if err != nil {
 		t.Fatalf("second drain: %v", err)
@@ -125,7 +125,7 @@ func TestDrainExecutorJoinsAndReportsDisposition(t *testing.T) {
 	}
 
 	// Every other managed role keeps serving.
-	for _, unit := range []string{UnitName(demo.DispatcherSchema, "local"), UnitName(demo.ExecutorSchema, "other")} {
+	for _, unit := range []string{UnitName(storagecheck.Dispatcher, "local"), UnitName(storagecheck.Executor, "other")} {
 		state, err := f.manager.State(context.Background(), unit)
 		if err != nil {
 			t.Fatal(err)
@@ -134,13 +134,13 @@ func TestDrainExecutorJoinsAndReportsDisposition(t *testing.T) {
 			t.Fatalf("draining one executor disturbed %s: %+v", unit, state)
 		}
 	}
-	other := filepath.Join(StateDirectory(f.root, demo.ExecutorSchema, "other"), "executor.sqlite")
+	other := filepath.Join(StateDirectory(f.root, storagecheck.Executor, "other"), "executor.sqlite")
 	if _, err := os.Stat(other); err != nil {
 		t.Fatalf("the unrelated executor lost its database: %v", err)
 	}
 
 	// Resuming serves again without replaying anything.
-	resumed, err := f.installer.Resume(context.Background(), demo.ExecutorSchema, "worker")
+	resumed, err := f.installer.Resume(context.Background(), storagecheck.Executor, "worker")
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -152,11 +152,11 @@ func TestDrainExecutorJoinsAndReportsDisposition(t *testing.T) {
 func TestDrainWithoutAJoinAuthorizesNothing(t *testing.T) {
 	t.Run("a unit that never stops is incomplete", func(t *testing.T) {
 		f := newFixture(t)
-		if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+		if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 			t.Fatalf("install: %v", err)
 		}
 		f.manager.stuck = true
-		report, err := f.installer.Drain(context.Background(), demo.ExecutorSchema, "worker",
+		report, err := f.installer.Drain(context.Background(), storagecheck.Executor, "worker",
 			DrainOptions{Timeout: 500 * time.Millisecond, Disable: true})
 		if !errors.Is(err, ErrDrainIncomplete) {
 			t.Fatalf("drain error: %v", err)
@@ -172,20 +172,20 @@ func TestDrainWithoutAJoinAuthorizesNothing(t *testing.T) {
 		if !report.Enabled {
 			t.Fatalf("an unfinished drain disabled the unit: %+v", report)
 		}
-		if _, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", true); err == nil {
+		if _, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", true); err == nil {
 			t.Fatal("state was deleted after an unfinished drain")
 		}
-		if _, err := os.Stat(filepath.Join(StateDirectory(f.root, demo.ExecutorSchema, "worker"), "executor.sqlite")); err != nil {
+		if _, err := os.Stat(filepath.Join(StateDirectory(f.root, storagecheck.Executor, "worker"), "executor.sqlite")); err != nil {
 			t.Fatalf("an unfinished drain lost the database: %v", err)
 		}
 	})
 	t.Run("a daemon killed at its stop timeout is incomplete", func(t *testing.T) {
 		f := newFixture(t)
-		if _, err := f.install(demo.ExecutorSchema, "worker", true); err != nil {
+		if _, err := f.install(storagecheck.Executor, "worker", true); err != nil {
 			t.Fatalf("install: %v", err)
 		}
 		f.manager.timedOut = true
-		report, err := f.installer.Drain(context.Background(), demo.ExecutorSchema, "worker",
+		report, err := f.installer.Drain(context.Background(), storagecheck.Executor, "worker",
 			DrainOptions{Timeout: time.Second, Disable: true})
 		if !errors.Is(err, ErrDrainIncomplete) {
 			t.Fatalf("drain error: %v", err)
@@ -198,10 +198,10 @@ func TestDrainWithoutAJoinAuthorizesNothing(t *testing.T) {
 		if report.Active != "failed" {
 			t.Fatalf("expected a failed unit: %+v", report)
 		}
-		if _, err := os.Stat(f.readyFile(demo.ExecutorSchema, "worker")); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(f.readyFile(storagecheck.Executor, "worker")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("runtime directory outlived the stop: %v", err)
 		}
-		if _, err := f.installer.Uninstall(context.Background(), demo.ExecutorSchema, "worker", true); err == nil {
+		if _, err := f.installer.Uninstall(context.Background(), storagecheck.Executor, "worker", true); err == nil {
 			t.Fatal("state was deleted after a drain that never joined")
 		}
 	})
@@ -209,12 +209,12 @@ func TestDrainWithoutAJoinAuthorizesNothing(t *testing.T) {
 
 func TestDispatcherAdmissionStopAndResume(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.install(demo.DispatcherSchema, "local", true); err != nil {
+	if _, err := f.install(storagecheck.Dispatcher, "local", true); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	unit := UnitName(demo.DispatcherSchema, "local")
+	unit := UnitName(storagecheck.Dispatcher, "local")
 	mark := len(f.manager.recorded())
-	report, err := f.installer.Drain(context.Background(), demo.DispatcherSchema, "local",
+	report, err := f.installer.Drain(context.Background(), storagecheck.Dispatcher, "local",
 		DrainOptions{Reason: "planned\nmaintenance", Timeout: time.Second})
 	if err != nil {
 		t.Fatalf("drain dispatcher: %v", err)
@@ -241,7 +241,7 @@ func TestDispatcherAdmissionStopAndResume(t *testing.T) {
 	}
 	// The dispatcher may read the switch and may not remove it, so it
 	// cannot take itself out of maintenance.
-	if strings.HasPrefix(switchPath, StateDirectory(f.root, demo.DispatcherSchema, "local")) {
+	if strings.HasPrefix(switchPath, StateDirectory(f.root, storagecheck.Dispatcher, "local")) {
 		t.Fatalf("the switch is inside the account's own directory: %s", switchPath)
 	}
 	if _, owned := f.chowned[switchPath]; owned {
@@ -250,10 +250,10 @@ func TestDispatcherAdmissionStopAndResume(t *testing.T) {
 	if info, err := os.Lstat(switchPath); err != nil || info.Mode().Perm() != 0644 {
 		t.Fatalf("maintenance switch mode: %v %v", info, err)
 	}
-	if status, err := f.installer.Status(context.Background(), demo.DispatcherSchema, "local"); err != nil || status.Note == "" {
+	if status, err := f.installer.Status(context.Background(), storagecheck.Dispatcher, "local"); err != nil || status.Note == "" {
 		t.Fatalf("status does not report maintenance: %+v %v", status, err)
 	}
-	resumed, err := f.installer.Resume(context.Background(), demo.DispatcherSchema, "local")
+	resumed, err := f.installer.Resume(context.Background(), storagecheck.Dispatcher, "local")
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestDispatcherAdmissionStopAndResume(t *testing.T) {
 		t.Fatalf("the maintenance switch survived the resume: %v", err)
 	}
 	// Resuming twice is not an error and changes nothing.
-	if second, err := f.installer.Resume(context.Background(), demo.DispatcherSchema, "local"); err != nil || len(second.Changed) != 0 {
+	if second, err := f.installer.Resume(context.Background(), storagecheck.Dispatcher, "local"); err != nil || len(second.Changed) != 0 {
 		t.Fatalf("repeated resume: %+v %v", second, err)
 	}
 }

@@ -43,13 +43,13 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected build, package, verify, check-demo-evidence or check-compatibility-evidence")
+		return errors.New("expected build, package or verify")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dist := fs.String("dist", ".cache/ci/dist", "compiled artifacts")
 	out := fs.String("out", ".cache/ci/packages", "candidate output")
 	installed := fs.String("installed-root", "", "installed version directory")
-	evidence := fs.String("evidence", "", "Go JSON evidence file")
+	component := fs.String("component", "", "package cli, executor or dispatcher only; empty builds the full bundle")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -66,21 +66,11 @@ func run(args []string) error {
 	case "build":
 		return build(ctx, *dist, sha)
 	case "package":
-		return packWithCopy(*dist, *out, sha, copyFile)
+		return packWithCopy(*dist, *out, sha, *component, copyFile)
 	case "verify":
 		return verifyInstalled(ctx, *installed, sha)
-	case "check-demo-evidence":
-		return checkDemoEvidence(*evidence)
-	case "check-compatibility-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/internal/acceptance/canary", "TestCanaryLocal")
-	case "check-local-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/internal/acceptance/localdev", "TestLocalDevelopment")
-	case "check-role-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/internal/acceptance/roles", "TestInstalledRoles")
-	case "check-guest-abi-evidence":
-		return checkTestEvidence(*evidence, "github.com/netsec-ethz/debuglet/pkg/debuglet", "TestGuestABIInstalledGuests")
 	default:
-		return errors.New("expected build, package, verify, check-demo-evidence or check-compatibility-evidence")
+		return errors.New("expected build, package or verify")
 	}
 }
 func command(ctx context.Context, name string, args ...string) (string, error) {
@@ -272,7 +262,7 @@ func loadRecord(dist, sha string) (buildRecord, error) {
 	}
 	record.Metadata = metadata
 	m := record.Metadata
-	if m.SchemaVersion != 1 || m.SourceSHA != sha || m.Dirty || !artifact.ValidVersion(m.Version) || m.GoVersion != artifact.Toolchain || m.GOOS != "linux" || m.GOARCH != "amd64" || m.GuestABI != artifact.GuestABI || len(m.Files) != 0 {
+	if m.SchemaVersion != 1 || m.Component != "" || m.SourceSHA != sha || m.Dirty || !artifact.ValidVersion(m.Version) || m.GoVersion != artifact.Toolchain || m.GOOS != "linux" || m.GOARCH != "amd64" || m.GuestABI != artifact.GuestABI || len(m.Files) != 0 {
 		return record, errors.New("build record identity does not match this candidate")
 	}
 	if len(record.Compiled) != len(targets) {
@@ -322,7 +312,11 @@ func copyFile(source, dest string, mode os.FileMode) error {
 }
 
 // packWithCopy takes a copier so a test can change a file after the record check.
-func packWithCopy(dist, out, sha string, copyPayload func(string, string, os.FileMode) error) error {
+func packWithCopy(dist, out, sha, component string, copyPayload func(string, string, os.FileMode) error) error {
+	modes := artifact.PayloadModesFor(component)
+	if modes == nil {
+		return errors.New("component must be cli, executor, dispatcher or empty for the full bundle")
+	}
 	record, err := loadRecord(dist, sha)
 	if err != nil {
 		return err
@@ -343,14 +337,24 @@ func packWithCopy(dist, out, sha string, copyPayload func(string, string, os.Fil
 	}
 	defer os.RemoveAll(stage)
 	m := record.Metadata
-	for _, name := range []string{"dbl", "debuglet-dispatcher", "debuglet-executor"} {
-		if err := copyPayload(filepath.Join(dist, name), filepath.Join(stage, "bin", name), 0755); err != nil {
+	if component != "" {
+		m.SchemaVersion, m.Component = 2, component
+	}
+	for destination, mode := range modes {
+		if !strings.HasPrefix(destination, "bin/") && !strings.HasSuffix(destination, ".wasm") {
+			continue
+		}
+		source := filepath.Base(destination)
+		path := filepath.Join(stage, filepath.FromSlash(destination))
+		if err := copyPayload(filepath.Join(dist, source), path, mode); err != nil {
 			return err
 		}
-	}
-	for _, name := range []string{"demo.wasm", "hello.wasm"} {
-		if err := copyPayload(filepath.Join(dist, name), filepath.Join(stage, "share", "debuglet", name), 0644); err != nil {
+		got, err := artifact.HashFile(path)
+		if err != nil {
 			return err
+		}
+		if got != record.Compiled[source] {
+			return fmt.Errorf("compiled artifact changed while packaging: %s", source)
 		}
 	}
 	if err := copyPayload("LICENSE", filepath.Join(stage, "LICENSE"), 0644); err != nil {
@@ -368,16 +372,7 @@ func packWithCopy(dist, out, sha string, copyPayload func(string, string, os.Fil
 	if err := os.Chmod(filepath.Join(stage, "README-install.md"), 0644); err != nil {
 		return err
 	}
-	for source, destination := range map[string]string{"dbl": "bin/dbl", "debuglet-dispatcher": "bin/debuglet-dispatcher", "debuglet-executor": "bin/debuglet-executor", "demo.wasm": "share/debuglet/demo.wasm", "hello.wasm": "share/debuglet/hello.wasm"} {
-		got, err := artifact.HashFile(filepath.Join(stage, filepath.FromSlash(destination)))
-		if err != nil {
-			return err
-		}
-		if got != record.Compiled[source] {
-			return fmt.Errorf("compiled artifact changed while packaging: %s", source)
-		}
-	}
-	for name := range artifact.PayloadModes() {
+	for name := range modes {
 		if name == artifact.ManifestPath {
 			continue
 		}
@@ -387,15 +382,23 @@ func packWithCopy(dist, out, sha string, copyPayload func(string, string, os.Fil
 		}
 		m.Files[name] = f
 	}
+	if err := os.MkdirAll(filepath.Join(stage, "share", "debuglet"), 0755); err != nil {
+		return err
+	}
 	if err := writeJSON(filepath.Join(stage, filepath.FromSlash(artifact.ManifestPath)), m); err != nil {
 		return err
 	}
 	if _, err := artifact.Verify(stage); err != nil {
 		return err
 	}
-	archiveName := "debuglet-" + m.Version + "-linux-amd64.tar.gz"
+	archivePrefix, installerName, checksumsName := "debuglet-", "install.sh", "SHA256SUMS"
+	if component != "" {
+		archivePrefix += component + "-"
+		installerName, checksumsName = "install-"+component+".sh", "SHA256SUMS-"+component
+	}
+	archiveName := archivePrefix + m.Version + "-linux-amd64.tar.gz"
 	archivePath := filepath.Join(out, archiveName)
-	if err := archive(stage, archivePath); err != nil {
+	if err := archive(stage, archivePath, modes); err != nil {
 		return err
 	}
 	template, err := os.ReadFile("scripts/install.sh")
@@ -403,7 +406,7 @@ func packWithCopy(dist, out, sha string, copyPayload func(string, string, os.Fil
 		return err
 	}
 	var sums strings.Builder
-	for _, name := range orderedKeys(artifact.PayloadModes()) {
+	for _, name := range orderedKeys(modes) {
 		f, err := artifact.HashFile(filepath.Join(stage, filepath.FromSlash(name)))
 		if err != nil {
 			return err
@@ -412,25 +415,26 @@ func packWithCopy(dist, out, sha string, copyPayload func(string, string, os.Fil
 	}
 	installer := bytes.ReplaceAll(template, []byte("@VERSION@"), []byte(m.Version))
 	installer = bytes.ReplaceAll(installer, []byte("@SOURCE_SHA@"), []byte(m.SourceSHA))
+	installer = bytes.ReplaceAll(installer, []byte("@COMPONENT@"), []byte(component))
 	installer = bytes.ReplaceAll(installer, []byte("@PAYLOAD_SUMS@"), []byte(strings.TrimSuffix(sums.String(), "\n")))
-	if err := os.WriteFile(filepath.Join(out, "install.sh"), installer, 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(out, installerName), installer, 0755); err != nil {
 		return err
 	}
 	var detached strings.Builder
-	for _, name := range []string{archiveName, "install.sh"} {
+	for _, name := range []string{archiveName, installerName} {
 		f, err := artifact.HashFile(filepath.Join(out, name))
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(&detached, "%s  %s\n", f.SHA256, name)
 	}
-	if err := os.WriteFile(filepath.Join(out, "SHA256SUMS"), []byte(detached.String()), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(out, checksumsName), []byte(detached.String()), 0644); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout, archivePath)
 	return nil
 }
-func archive(root, path string) (err error) {
+func archive(root, path string, modes map[string]os.FileMode) (err error) {
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
@@ -438,7 +442,6 @@ func archive(root, path string) (err error) {
 	gzipWriter := gzip.NewWriter(out)
 	tarWriter := tar.NewWriter(gzipWriter)
 	defer func() { err = errors.Join(err, tarWriter.Close(), gzipWriter.Close(), out.Close()) }()
-	modes := artifact.PayloadModes()
 	for _, name := range orderedKeys(modes) {
 		source := filepath.Join(root, filepath.FromSlash(name))
 		info, err := os.Stat(source)
@@ -474,12 +477,16 @@ func verifyInstalled(parent context.Context, root, sha string) error {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	var stdout, stderr limitedOutput
-	cmd := exec.CommandContext(ctx, filepath.Join(root, "bin", "dbl"), "--output", "json", "version")
+	binary, args := "dbl", []string{"--output", "json", "version"}
+	if m.Component == "executor" || m.Component == "dispatcher" {
+		binary, args = "debuglet-"+m.Component, []string{"--version"}
+	}
+	cmd := exec.CommandContext(ctx, filepath.Join(root, "bin", binary), args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("installed CLI version: %w: %s", err, stderr.Bytes())
+		return fmt.Errorf("installed version: %w: %s", err, stderr.Bytes())
 	}
 	if stdout.overflow || stderr.overflow {
 		return errors.New("installed version output exceeds limit")
@@ -499,7 +506,7 @@ func verifyInstalled(parent context.Context, root, sha string) error {
 		return errors.New("trailing installed version output")
 	}
 	if version.Module != "github.com/netsec-ethz/debuglet" || version.Version != m.Version || version.Revision != sha || version.Modified {
-		return errors.New("installed CLI build identity does not match manifest")
+		return errors.New("installed build identity does not match manifest")
 	}
 	return json.NewEncoder(os.Stdout).Encode(m)
 }
@@ -548,93 +555,6 @@ func readBuildRecord(path string) ([]byte, error) {
 		return nil, errors.New("build record exceeds 64 KiB")
 	}
 	return data, nil
-}
-
-func checkDemoEvidence(path string) error {
-	return checkTestEvidence(path, "github.com/netsec-ethz/debuglet/internal/demo", "TestInstalledDemoAcceptance")
-}
-
-func checkTestEvidence(path, packageName, testName string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	d := json.NewDecoder(f)
-	passes := 0
-	for {
-		var e struct{ Action, Test, Package string }
-		token, err := d.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if token != json.Delim('{') {
-			return errors.New("test evidence event is not an object")
-		}
-		seen := make(map[string]bool)
-		for d.More() {
-			token, err := d.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := token.(string)
-			if !ok || seen[strings.ToLower(key)] {
-				return errors.New("test evidence contains duplicate event fields")
-			}
-			seen[strings.ToLower(key)] = true
-			var value json.RawMessage
-			if err := d.Decode(&value); err != nil {
-				return err
-			}
-			var field *string
-			switch strings.ToLower(key) {
-			case "action":
-				if key != "Action" {
-					return errors.New("test evidence contains an aliased Action field")
-				}
-				field = &e.Action
-			case "test":
-				if key != "Test" {
-					return errors.New("test evidence contains an aliased Test field")
-				}
-				field = &e.Test
-			case "package":
-				if key != "Package" {
-					return errors.New("test evidence contains an aliased Package field")
-				}
-				field = &e.Package
-			}
-			if field != nil {
-				if bytes.Equal(value, []byte("null")) {
-					return errors.New("test evidence contains a null control field")
-				}
-				if err := json.Unmarshal(value, field); err != nil {
-					return err
-				}
-			}
-		}
-		if token, err := d.Token(); err != nil || token != json.Delim('}') {
-			return errors.New("test evidence contains an incomplete event")
-		}
-		if e.Action == "fail" || e.Action == "skip" || e.Action == "build-fail" {
-			return errors.New("test evidence contains a failure or skip")
-		}
-		switch e.Action {
-		case "start", "run", "pause", "cont", "pass", "bench", "output", "build-output":
-		default:
-			return errors.New("test evidence contains an invalid event action")
-		}
-		if e.Action == "pass" && e.Test == testName && e.Package == packageName {
-			passes++
-		}
-	}
-	if passes != 1 {
-		return fmt.Errorf("expected exactly one %s pass event", testName)
-	}
-	return nil
 }
 
 func verifyCompiler(ctx context.Context, path string) error {

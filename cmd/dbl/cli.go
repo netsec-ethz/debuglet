@@ -38,6 +38,10 @@ const usageText = `Usage:
 Commands:
   demo                                  run an installed local measurement
   up [--state-dir DIR] [--port 9000]      keep a local environment running
+  backup --state-dir DIR --destination BACKUP --offline
+                                        snapshot stopped foreground state
+  restore --backup BACKUP --state-dir NEWDIR
+                                        restore separate state without starting it
   service install|start|stop|status|uninstall --role ROLE [--name NAME]
                                         manage an installed role as a service
   drain --role ROLE [--name NAME] [--resume]
@@ -48,6 +52,10 @@ Commands:
   login [--account-key-file FILE] [--register NAME]
                                         obtain and store a session credential
   logout                                revoke and forget the stored credential
+  whoami                                show the selected session's account
+  config --role ROLE --file FILE        inspect redacted daemon configuration
+  doctor [--role ROLE --file FILE] [--connection]
+                                        diagnose local setup or a saved connection
   nodes                                 list registered executors
   validate (--wasm FILE | --sample hello) [--executor ID|auto] [--allow ADDRESS ...]
       [--duration 10s] [--floor-bps 1048576] [--ceil-bps 1048576]
@@ -57,9 +65,11 @@ Commands:
       [--wait] [--allow-remote-test] [-- guest arguments ...]
                                         submit one TEST-funded debuglet
   status ID                             report a debuglet's state
+  export ID                             export a versioned measurement result
+  recovery ID                           inspect control and retained metadata
   logs [--after N] [--limit N] [--follow] ID
                                         read stored guest output
-  cancel ID                             ask the dispatcher to abort a debuglet
+  cancel [--status] ID                  cancel a run or inspect its cancellation
   version [--server]                    print client (and server) version
 
 Global options must precede the command; command options precede positionals.

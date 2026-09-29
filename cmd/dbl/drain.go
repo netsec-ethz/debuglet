@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 const drainUsage = `Usage:
@@ -58,12 +58,12 @@ func drainCommandWith(ctx context.Context, args []string, options globalOptions,
 	if options.EndpointSet || options.Dispatcher != "" {
 		return usageError("dbl drain", drainUsage, stderr, "drain administers a managed service on this host; it takes no --endpoint or --dispatcher")
 	}
-	var role demo.SchemaRole
+	var role storagecheck.Role
 	switch local.Role {
-	case string(demo.DispatcherSchema):
-		role = demo.DispatcherSchema
-	case string(demo.ExecutorSchema):
-		role = demo.ExecutorSchema
+	case string(storagecheck.Dispatcher):
+		role = storagecheck.Dispatcher
+	case string(storagecheck.Executor):
+		role = storagecheck.Executor
 	case "":
 		return usageError("dbl drain", drainUsage, stderr, "--role dispatcher or --role executor is required")
 	default:
@@ -91,7 +91,7 @@ func drainCommandWith(ctx context.Context, args []string, options globalOptions,
 	// startable: its maintenance switch is a file an administrator owns and
 	// survives a reboot by itself. Accepting the option here would say
 	// otherwise and change nothing.
-	if role == demo.DispatcherSchema && local.KeepEnabled {
+	if role == storagecheck.Dispatcher && local.KeepEnabled {
 		return usageError("dbl drain", drainUsage, stderr,
 			"--keep-enabled belongs to an executor drain; a dispatcher is not stopped, so it is never disabled and its maintenance switch outlives a reboot on its own")
 	}

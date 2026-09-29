@@ -118,8 +118,35 @@ func seedRestoreRuns(t *testing.T) (*tgFixture, tgDebuglet) {
 // a fresh Dispatcher, as a restarted dispatcher process does: only the stored
 // rows carry over. The executor registers again, in a new session and with the
 // fixture's capacity. Registration leaves the schedule alone, so the caller
-// decides when to restore it.
-func restartTG(t *testing.T, f *tgFixture) *tgFixture {
+// decides when to restore it. Each prepare function runs on the new Dispatcher
+// before the executor registers.
+func restartTG(t *testing.T, f *tgFixture, prepare ...func(*Dispatcher)) *tgFixture {
+	t.Helper()
+	g := reopenTG(t, f, prepare...)
+	owner, err := rpc.NewSessionOwner(tgExecutorID, effectTestBinding(t), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registryRegisterWithSetup(f.ctx, g.d, owner, &pb.HelloResponse{
+		ExecutorId: tgExecutorID, Version: "tg-direct", PricePerBwS: tgPrice, Currency: tgCurrency,
+	}, "127.0.0.1"); err != nil {
+		t.Fatalf("register executor after restart: %v", err)
+	}
+	if !owner.MarkRegistered() {
+		t.Fatal("executor owner retired before registration completed")
+	}
+	mutation := effectTestMutation(t, g.d, tgExecutorID)
+	_, err = g.d.OnResources(f.ctx, mutation, &pb.ResourcesRequest{ExecutorId: tgExecutorID, BandwidthCapacity: int64(tgCapacity)})
+	mutation.Finish()
+	if err != nil {
+		t.Fatalf("set capacity after restart: %v", err)
+	}
+	return g
+}
+
+// reopenTG is restartTG without the executor's registration: a restarted
+// dispatcher that no executor has connected to yet.
+func reopenTG(t *testing.T, f *tgFixture, prepare ...func(*Dispatcher)) *tgFixture {
 	t.Helper()
 	f.d.Close()
 	var seq int64
@@ -145,23 +172,8 @@ func restartTG(t *testing.T, f *tgFixture) *tgFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
-	owner, err := rpc.NewSessionOwner(tgExecutorID, effectTestBinding(t), time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := registryRegisterWithSetup(f.ctx, d, owner, &pb.HelloResponse{
-		ExecutorId: tgExecutorID, Version: "tg-direct", PricePerBwS: tgPrice, Currency: tgCurrency,
-	}, "127.0.0.1"); err != nil {
-		t.Fatalf("register executor after restart: %v", err)
-	}
-	if !owner.MarkRegistered() {
-		t.Fatal("executor owner retired before registration completed")
-	}
-	mutation := effectTestMutation(t, d, tgExecutorID)
-	_, err = d.OnResources(f.ctx, mutation, &pb.ResourcesRequest{ExecutorId: tgExecutorID, BandwidthCapacity: int64(tgCapacity)})
-	mutation.Finish()
-	if err != nil {
-		t.Fatalf("set capacity after restart: %v", err)
+	for _, p := range prepare {
+		p(d)
 	}
 	return &tgFixture{ctx: f.ctx, db: db, q: database.New(db), ph: ph, d: d, start: f.start}
 }

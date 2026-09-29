@@ -101,7 +101,7 @@ func TestControlBindingMigrationPreservesDispatcherRows(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO debuglet_logs (debuglet_id,timestamp,output) VALUES (?,?,?)`, legacyID, now, []byte("preserved output")); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 9 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 12 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)
@@ -120,7 +120,7 @@ func TestControlBindingMigrationPreservesDispatcherRows(t *testing.T) {
 }
 
 func TestControlBindingDispatcherOwnedQueries(t *testing.T) {
-	ctx, db := cbOpen(t, 5)
+	ctx, db := cbOpen(t, sqlitedb.Latest)
 	q := database.New(db)
 	row := cbCreate(t, ctx, q, cbIncarnation, cbSession)
 	owner := cbOwner(row)
@@ -176,7 +176,7 @@ func TestControlBindingDispatcherRejectsEmptyStoredComponents(t *testing.T) {
 		{"empty_incarnation", "", cbSession}, {"empty_session", cbIncarnation, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, db := cbOpen(t, 5)
+			ctx, db := cbOpen(t, sqlitedb.Latest)
 			q := database.New(db)
 			row := cbCreate(t, ctx, q, tc.incarnation, tc.session)
 			cbReject(t, ctx, q, row, cbOwner(row))

@@ -10,6 +10,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 const serviceUsage = `Usage:
@@ -18,6 +19,7 @@ const serviceUsage = `Usage:
       [--dispatcher-http 127.0.0.1:9000] [--start=false] [--enable=false] [--root DIR]
   dbl service start|stop|status (--role ROLE) [--name NAME]
   dbl service uninstall (--role ROLE) [--name NAME] [--purge]
+  dbl service prune --prefix DIR --version VERSION [--component full|cli|dispatcher|executor] [--dry-run]
 
 Install one verified role as a service the host's service manager supervises.
 --root writes the same files below another directory to inspect them; a staged
@@ -27,6 +29,13 @@ time, and a running daemon is never restarted as a side effect. The command
 reports readiness only after the daemon published its own readiness record.
 Administrator privileges and an existing service account are required; the
 foreground commands (dbl up, dbl dispatcher up, dbl executor up) are unchanged.
+Uninstall retains recoverable state by default. Prune requires administrator
+access and an administrator-owned system prefix; user-owned prefixes are not
+supported. It removes one verified inactive package (--component defaults to
+full). Command links, retained managed roles and running executables protect
+their versions. Stop foreground
+roles before pruning. Use --dry-run to inspect the candidate. Service journal
+retention is configured by the host.
 `
 
 // serviceDependencies is private so the command exposes no fault-injection
@@ -82,6 +91,9 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 		return usageError("dbl service", serviceUsage, stderr, "missing subcommand")
 	}
 	subcommand := args[0]
+	if subcommand == "prune" {
+		return servicePruneCommand(ctx, args[1:], options, stdout, stderr, deps)
+	}
 	if subcommand == "--help" || subcommand == "-h" {
 		fmt.Fprint(stdout, serviceUsage)
 		return exitOK
@@ -89,7 +101,7 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 	switch subcommand {
 	case "install", "start", "stop", "status", "uninstall":
 	default:
-		return usageError("dbl service", serviceUsage, stderr, "expected install, start, stop, status or uninstall")
+		return usageError("dbl service", serviceUsage, stderr, "expected install, start, stop, status, uninstall or prune")
 	}
 	name := "dbl service " + subcommand
 	fs := newCommandFlagSet("service " + subcommand)
@@ -174,16 +186,16 @@ func serviceFlags(fs *flag.FlagSet, local *serviceOptions, subcommand string) {
 // serviceRole validates the selected role and fills in the default instance
 // name. Managed services take no dispatcher endpoint: they are local
 // administration of this host, not a client of a remote one.
-func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options globalOptions, stderr io.Writer) (demo.SchemaRole, int, bool) {
+func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options globalOptions, stderr io.Writer) (storagecheck.Role, int, bool) {
 	if options.EndpointSet || options.Dispatcher != "" {
 		return "", usageError(name, serviceUsage, stderr, "managed service commands administer this host; they take no --endpoint or --dispatcher"), false
 	}
-	var role demo.SchemaRole
+	var role storagecheck.Role
 	switch local.Role {
-	case string(demo.DispatcherSchema):
-		role = demo.DispatcherSchema
-	case string(demo.ExecutorSchema):
-		role = demo.ExecutorSchema
+	case string(storagecheck.Dispatcher):
+		role = storagecheck.Dispatcher
+	case string(storagecheck.Executor):
+		role = storagecheck.Executor
 	case "":
 		return "", usageError(name, serviceUsage, stderr, "--role dispatcher or --role executor is required"), false
 	default:
@@ -208,8 +220,8 @@ func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options g
 }
 
 // defaultInstanceName keeps the managed names the same as the foreground ones.
-func defaultInstanceName(role demo.SchemaRole) string {
-	if role == demo.DispatcherSchema {
+func defaultInstanceName(role storagecheck.Role) string {
+	if role == storagecheck.Dispatcher {
 		return "local"
 	}
 	return "worker"
@@ -280,14 +292,18 @@ func writeServiceReport(stdout io.Writer, report service.Report) error {
 	}
 	// A report that names no role and no state was refused before any
 	// instance was identified; the error alone describes it.
-	if report.Role != "" || report.State != "" {
+	if report.Operation == "prune" {
+		if _, err := fmt.Fprintf(stdout, "prune %s: %s\n", report.Version, report.State); err != nil {
+			return err
+		}
+	} else if report.Role != "" || report.State != "" {
 		if _, err := fmt.Fprintf(stdout, "%s %s %s: %s (%s)\n", report.Operation, report.Role, report.Name, report.State, readiness); err != nil {
 			return err
 		}
 	}
 	for _, line := range []struct{ label, value string }{
 		{"unit", report.Unit}, {"version", report.Version}, {"state directory", report.StateDir},
-		{"unit file", report.UnitPath}, {"executor", report.ExecutorID}, {"endpoint", report.Endpoint},
+		{"unit file", report.UnitPath}, {"package", report.PackagePath}, {"executor", report.ExecutorID}, {"endpoint", report.Endpoint},
 		{"service manager", report.Active},
 	} {
 		if line.value == "" {
@@ -313,4 +329,33 @@ func writeServiceReport(stdout io.Writer, report service.Report) error {
 		}
 	}
 	return nil
+}
+
+func servicePruneCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer, deps serviceDependencies) int {
+	const name = "dbl service prune"
+	fs := newCommandFlagSet("service prune")
+	var prefix, version, component string
+	var dryRun bool
+	fs.StringVar(&prefix, "prefix", "", "installation prefix containing bin and lib/debuglet")
+	fs.StringVar(&version, "version", "", "one inactive installed version to remove")
+	fs.StringVar(&component, "component", "full", "package to remove: full, cli, dispatcher or executor")
+	fs.BoolVar(&dryRun, "dry-run", false, "verify the candidate without deleting it")
+	if code, ok := parseCommandFlags(fs, args, serviceUsage, stdout, stderr); !ok {
+		return code
+	}
+	if fs.NArg() != 0 || prefix == "" || version == "" || options.EndpointSet || options.Dispatcher != "" {
+		return usageError(name, serviceUsage, stderr, "prune requires --prefix and --version and takes no remote endpoint")
+	}
+	// Package pruning only reads service records; no systemctl client or
+	// running service manager is needed.
+	installer, err := service.New(service.Options{Root: deps.root, Manager: service.StagingManager{}})
+	if err != nil {
+		return reportFailure(ctx, name, stderr, err)
+	}
+	report, err := installer.Prune(ctx, prefix, version, component, dryRun)
+	if err != nil {
+		return reportFailure(ctx, name, stderr, err)
+	}
+	return emitReported(ctx, name, options.Output, stdout, stderr, report,
+		func(w io.Writer) error { return writeServiceReport(w, report) })
 }

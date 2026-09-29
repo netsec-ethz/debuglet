@@ -132,6 +132,20 @@ func writeAddr(mod api.Module, bufPtr, bufLen uint32, addr string) int32 {
 // never contacted. Returns the socket handle as I32.
 // WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
 func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
+	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
+		addr, err := ExtractStr(mod, addrp, addrLen)
+		if err != nil {
+			panic(err)
+		}
+		handle, err := connectSocket(ctx, ctx, env, socketType, addr)
+		if err != nil {
+			panic(err)
+		}
+		return handle
+	}
+}
+
+func connectSocket(ctx, dialCtx context.Context, env *WasmEnv, socketType socket.SocketType, addr string) (int32, error) {
 	var network string
 	var transport netpolicy.Transport
 	switch socketType {
@@ -147,70 +161,63 @@ func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Co
 		panic(fmt.Errorf("connect: unknown SocketType %d", socketType))
 	}
 
-	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
-		addr, err := ExtractStr(mod, addrp, addrLen)
-		if err != nil {
-			panic(err)
-		}
-
-		destination, err := env.Net.AdmitDestination(ctx, transport, addr)
-		if err != nil {
-			env.Logger.Warnw("hostConnect: destination refused", "addr", addr, "transport", transport.String(), "err", err)
-			panic(fmt.Errorf("connect: %w", err))
-		}
-
-		// The dialer consults the same admitted destination again, in the
-		// control hook the operating system calls between creating the socket
-		// and connecting it, and marks the socket there for this run's packet
-		// attribution.
-		dialer, err := hostconn.NewDialer(destination, env.Tagger)
-		if err != nil {
-			env.Logger.Warnw("hostConnect: failed to create dialer", "err", err)
-			panic(fmt.Errorf("connect: %w", err))
-		}
-
-		// A destination with several addresses is tried in order, the way
-		// dialling the name would have: an unreachable first address must not
-		// make the destination unreachable. Each attempt passes the control
-		// hook again, so every one of them is an admitted address.
-		var conn net.Conn
-		var dialed string
-		var failures error
-		for _, candidate := range destination.DialAddresses() {
-			if socketType == socket.SocketTypeTLS {
-				tlsDialer := &tls.Dialer{
-					NetDialer: &net.Dialer{Control: dialer.Control},
-					Config:    tlsConfigFor(env.TlsCfg, destination.ServerName),
-				}
-				conn, err = tlsDialer.DialContext(ctx, "tcp", candidate)
-			} else {
-				conn, err = dialer.DialContext(ctx, network, candidate)
-			}
-			if err == nil {
-				dialed = candidate
-				break
-			}
-			failures = errors.Join(failures, fmt.Errorf("%s: %w", candidate, err))
-			if ctx.Err() != nil {
-				break
-			}
-		}
-		if conn == nil {
-			if failures == nil {
-				failures = errors.New("no admitted address to dial")
-			}
-			env.Logger.Warnw("hostConnect: failed to dial", "addr", addr, "err", failures)
-			panic(fmt.Errorf("connect: %w", failures))
-		}
-
-		conn = tagDatagrams(env, conn, socketType)
-		handle, err := attachSocket(ctx, env, conn, destination.Key, socketType)
-		if err != nil {
-			env.Logger.Warnw("hostConnect: failed to admit connection", "addr", dialed, "err", err)
-			panic(fmt.Errorf("connect: %w", err))
-		}
-		return handle
+	destination, err := env.Net.AdmitDestination(dialCtx, transport, addr)
+	if err != nil {
+		env.Logger.Warnw("hostConnect: destination refused", "addr", addr, "transport", transport.String(), "err", err)
+		return -1, fmt.Errorf("connect: %w", err)
 	}
+
+	// The dialer consults the same admitted destination again, in the
+	// control hook the operating system calls between creating the socket
+	// and connecting it, and marks the socket there for this run's packet
+	// attribution.
+	dialer, err := hostconn.NewDialer(destination, env.Tagger)
+	if err != nil {
+		env.Logger.Warnw("hostConnect: failed to create dialer", "err", err)
+		return -1, fmt.Errorf("connect: %w", err)
+	}
+
+	// A destination with several addresses is tried in order, the way
+	// dialling the name would have: an unreachable first address must not
+	// make the destination unreachable. Each attempt passes the control
+	// hook again, so every one of them is an admitted address.
+	var conn net.Conn
+	var dialed string
+	var failures error
+	for _, candidate := range destination.DialAddresses() {
+		if socketType == socket.SocketTypeTLS {
+			tlsDialer := &tls.Dialer{
+				NetDialer: &net.Dialer{Control: dialer.Control},
+				Config:    tlsConfigFor(env.TlsCfg, destination.ServerName),
+			}
+			conn, err = tlsDialer.DialContext(dialCtx, "tcp", candidate)
+		} else {
+			conn, err = dialer.DialContext(dialCtx, network, candidate)
+		}
+		if err == nil {
+			dialed = candidate
+			break
+		}
+		failures = errors.Join(failures, fmt.Errorf("%s: %w", candidate, err))
+		if dialCtx.Err() != nil {
+			break
+		}
+	}
+	if conn == nil {
+		if failures == nil {
+			failures = errors.New("no admitted address to dial")
+		}
+		env.Logger.Warnw("hostConnect: failed to dial", "addr", addr, "err", failures)
+		return -1, fmt.Errorf("connect: %w", failures)
+	}
+
+	conn = tagDatagrams(env, conn, socketType)
+	handle, err := attachSocket(ctx, env, conn, destination.Key, socketType)
+	if err != nil {
+		env.Logger.Warnw("hostConnect: failed to admit connection", "addr", dialed, "err", err)
+		return -1, fmt.Errorf("connect: %w", err)
+	}
+	return handle, nil
 }
 
 // tlsConfigFor keeps certificate verification about the name the guest asked

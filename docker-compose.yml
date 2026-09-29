@@ -77,23 +77,42 @@ services:
       - dispatcher
     restart: unless-stopped
 
-  # One-shot: create the two databases in the volumes above, using the
-  # packaged CLI from the image the rig already builds. It starts the local
-  # services on their own private state directory, which applies the packaged
-  # migrations, then copies each schema into the volume the daemons read.
-  # Nothing outside the rig is needed and nothing is published.
+  # Create fresh schemas directly with the packaged daemons, without starting
+  # a service. Existing volume databases are retained.
   seed:
     profiles: ["seed"]
     build:
       context: .
       dockerfile: deploy/docker/debuglet.Dockerfile
-      target: dispatcher
-    entrypoint: ["/bin/sh", "/usr/local/bin/seed-state.sh"]
+      target: full
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        for role in dispatcher executor; do
+          target=/seed/$$role/$$role.db
+          if [ -e "$$target" ]; then
+            printf 'seed: keeping %s\n' "$$target"
+          else
+            chmod 700 "/seed/$$role"
+            "debuglet-$$role" -init-database "$$target"
+          fi
+        done
     network_mode: none
     volumes:
-      - ./deploy/docker/seed-state.sh:/usr/local/bin/seed-state.sh:ro
       - dispatcher-state:/seed/dispatcher
       - executor-state:/seed/executor
+    restart: "no"
+
+  # Optional client and sample tools; daemon images contain only their own role.
+  tools:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: deploy/docker/debuglet.Dockerfile
+      target: full
+    network_mode: "service:dispatcher"
+    volumes:
+      - client-state:/state
     restart: "no"
 
   # Provisional TLS-terminating edge for API clients; see the note at the top
@@ -114,5 +133,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  client-state:
   dispatcher-state:
   executor-state:

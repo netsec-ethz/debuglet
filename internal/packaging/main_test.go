@@ -99,7 +99,7 @@ func packageFixture(t *testing.T) (string, string, buildRecord) {
 }
 func TestCandidateArchive(t *testing.T) {
 	dist, out, r := packageFixture(t)
-	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, copyFile); err != nil {
+	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, "", copyFile); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(out, "debuglet-"+r.Metadata.Version+"-linux-amd64.tar.gz")
@@ -168,7 +168,7 @@ func TestPackageDetectsCopyMutation(t *testing.T) {
 		}
 		return copyFile(source, dest, mode)
 	}
-	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, copier); err == nil {
+	if err := packWithCopy(dist, out, r.Metadata.SourceSHA, "", copier); err == nil {
 		t.Fatal("packaged changed compiled bytes")
 	}
 	entries, err := os.ReadDir(out)
@@ -232,64 +232,14 @@ func TestBuildRecordValidation(t *testing.T) {
 		}
 	})
 }
-func TestDemoEvidenceRequiresActualPass(t *testing.T) {
-	for _, tc := range []struct {
-		name, data string
-		ok         bool
-	}{
-		{"pass", `{"Action":"pass","Test":"TestInstalledDemoAcceptance","Package":"github.com/netsec-ethz/debuglet/internal/demo"}`, true},
-		{"empty", "", false}, {"renamed", `{"Action":"pass","Test":"Other"}`, false},
-		{"skip", `{"Action":"skip","Test":"TestInstalledDemoAcceptance"}`, false}, {"bad JSON", "{", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := filepath.Join(t.TempDir(), "events")
-			if err := os.WriteFile(p, []byte(tc.data), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := checkDemoEvidence(p); (err == nil) != tc.ok {
-				t.Fatalf("result %v", err)
-			}
-		})
-	}
-}
-func TestCompatibilityEvidenceRequiresActualPass(t *testing.T) {
-	const pkg = "github.com/netsec-ethz/debuglet/internal/acceptance/canary"
-	const passed = `{"Action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`
-	for _, tc := range []struct {
-		name, data string
-		ok         bool
-	}{
-		{"pass", passed, true},
-		{"empty", "", false},
-		{"wrong test", `{"Action":"pass","Test":"Other","Package":"` + pkg + `"}`, false},
-		{"wrong package", `{"Action":"pass","Test":"TestCanaryLocal","Package":"other"}`, false},
-		{"duplicate pass", passed + "\n" + passed, false},
-		{"pass then package failure", passed + "\n" + `{"Action":"fail","Package":"` + pkg + `"}`, false},
-		{"pass then subtest skip", passed + "\n" + `{"Action":"skip","Test":"TestCanaryLocal/cleanup"}`, false},
-		{"trailing malformed event", passed + "\n{", false},
-		{"null event", passed + "\nnull", false},
-		{"empty event", passed + "\n{}", false},
-		{"unknown action", passed + "\n" + `{"Action":"unknown"}`, false},
-		{"overwritten failure", `{"Action":"fail","Action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`, false},
-		{"aliased failure", `{"Action":"fail","action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`, false},
-		{"aliased action", `{"action":"pass","Test":"TestCanaryLocal","Package":"` + pkg + `"}`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "events")
-			if err := os.WriteFile(path, []byte(tc.data), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := checkTestEvidence(path, pkg, "TestCanaryLocal"); (err == nil) != tc.ok {
-				t.Fatalf("result %v", err)
-			}
-		})
-	}
-}
-
 func TestCompatibilityChecksBytesBeforeInstaller(t *testing.T) {
 	// The sentinel installer exits before any build. Its invocation is the
 	// positive control; a changed payload must fail before that invocation.
 	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci-compatibility.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci-install-candidate.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +258,7 @@ func TestCompatibilityChecksBytesBeforeInstaller(t *testing.T) {
 				}
 			}
 			write("scripts/ci-compatibility.sh", script)
+			write("scripts/ci-install-candidate.sh", helper)
 			const archiveName = "debuglet-v0.0.0-dev.aaaaaaaaaaaa-linux-amd64.tar.gz"
 			archive := []byte("fixture archive bytes")
 			installer := []byte("#!/bin/sh\nprintf 'ran' > .installer-ran\nexit 93\n")
@@ -362,6 +313,57 @@ func TestSelectedCompilerVersion(t *testing.T) {
 			err := verifyCompiler(ctx, path)
 			if (err == nil) != (version == "go version go1.25.11 linux/amd64") {
 				t.Fatalf("compiler result %v", err)
+			}
+		})
+	}
+}
+
+func TestComponentArchive(t *testing.T) {
+	for _, component := range []string{"cli", "executor", "dispatcher"} {
+		t.Run(component, func(t *testing.T) {
+			dist, out, r := packageFixture(t)
+			if err := packWithCopy(dist, out, r.Metadata.SourceSHA, component, copyFile); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(filepath.Join(out, "debuglet-"+component+"-"+r.Metadata.Version+"-linux-amd64.tar.gz"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			gz, err := gzip.NewReader(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gz.Close()
+			tr := tar.NewReader(gz)
+			modes := artifact.PayloadModesFor(component)
+			seen := map[string]bool{}
+			for {
+				h, err := tr.Next()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				mode, ok := modes[h.Name]
+				if !ok || seen[h.Name] || h.Typeflag != tar.TypeReg || h.Mode != int64(mode) {
+					t.Fatalf("unexpected member %+v", h)
+				}
+				seen[h.Name] = true
+				if h.Name == artifact.ManifestPath {
+					data, err := io.ReadAll(tr)
+					if err != nil {
+						t.Fatal(err)
+					}
+					m, err := artifact.DecodeManifest(data)
+					if err != nil || m.Component != component || m.SourceSHA != r.Metadata.SourceSHA {
+						t.Fatalf("manifest: %+v, %v", m, err)
+					}
+				}
+			}
+			if len(seen) != len(modes) {
+				t.Fatalf("members: %v", seen)
 			}
 		})
 	}

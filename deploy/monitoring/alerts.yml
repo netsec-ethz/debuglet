@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+groups:
+  - name: debuglet-availability
+    interval: 15s
+    rules:
+      - alert: DebugletUnavailable
+        expr: |
+          (up{job="debuglet-dispatcher"} == 0)
+          or
+          (up{job="debuglet-dispatcher"} unless on(job, instance)
+            ((debuglet_api_ready{job="debuglet-dispatcher"} == 1)
+             and on(job, instance) (debuglet_executors_ready{job="debuglet-dispatcher"} >= 1)
+             and on(job, instance) (debuglet_ready_capacity_bits_per_second{job="debuglet-dispatcher"} >= 1)
+             and on(job, instance) (debuglet_observation_available{job="debuglet-dispatcher",observation="registry"} == 1)
+             and on(job, instance) (abs(time() - debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher"}) <= 45)))
+          or absent(up{job="debuglet-dispatcher"})
+        for: 45s
+        labels:
+          severity: page
+          owner: debuglet-operator
+        annotations:
+          summary: Debuglet API readiness or eligible executor capacity is unavailable
+          description: Check the scrape, /readyz, operator metrics and service doctor/status. Recovery restores baseline availability, not the outcomes of retained runs.
+          runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#availability

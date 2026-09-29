@@ -62,7 +62,8 @@ func (op *debugletOperation) finish(workErr error, pump *outputPump) scheduler.C
 	}
 	op.closeOnce.Do(func() { close(op.closeRequest) })
 	if pump != nil {
-		if op.ctx.Err() != nil {
+		pump.producerFinished(workErr)
+		if op.ctx.Err() != nil && pump.producerDone == nil {
 			pump.Cancel()
 		}
 		ctx, end := context.WithTimeout(context.WithoutCancel(op.ctx), scheduler.CleanupTimeout)

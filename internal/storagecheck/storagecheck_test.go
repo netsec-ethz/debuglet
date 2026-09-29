@@ -260,12 +260,32 @@ func TestIncompatibleSchemasAreRefused(t *testing.T) {
 }
 
 // TestAbsentStorageIsDistinguished separates a database that does not exist
-// from one that exists but cannot be served.
+// from one that exists but cannot be served, and keeps the refusal naming the
+// steps that create the database on a deployed or hand-installed host.
 func TestAbsentStorageIsDistinguished(t *testing.T) {
 	dir := t.TempDir()
-	err := Check(context.Background(), Dispatcher, filepath.Join(dir, "dispatcher.sqlite"))
-	if !errors.Is(err, ErrAbsent) {
-		t.Fatalf("absent database: %v", err)
+	for _, tc := range []struct {
+		role  Role
+		local string
+	}{
+		{role: Dispatcher, local: "debuglet-dispatcher -init-database PATH"},
+		{role: Executor, local: "debuglet-executor -init-database PATH"},
+	} {
+		path := filepath.Join(dir, string(tc.role)+".sqlite")
+		err := Check(context.Background(), tc.role, path)
+		if !errors.Is(err, ErrAbsent) {
+			t.Fatalf("absent %s database: %v", tc.role, err)
+		}
+		for _, want := range []string{path, "does not exist", "make deploy-seed-db", tc.local, "docs/operations/configuration.md"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("absent %s database refusal does not name %q: %v", tc.role, want, err)
+			}
+		}
+		// make upgrade writes a source checkout's .data directory, not the
+		// configured database of a deployed host.
+		if strings.Contains(err.Error(), "make upgrade") {
+			t.Errorf("absent %s database refusal names make upgrade: %v", tc.role, err)
+		}
 	}
 	if err := Check(context.Background(), Dispatcher, ""); !errors.Is(err, ErrAbsent) {
 		t.Fatalf("unconfigured path: %v", err)
@@ -620,6 +640,87 @@ func TestOutdatedSchemaNamesTheUpgradeStep(t *testing.T) {
 	}
 }
 
+// TestOutdatedSchemaNamesTheDataLoss tells an outdated database whose upgrade
+// drops the recorded runs from one whose upgrade keeps them, without writing
+// to either.
+func TestOutdatedSchemaNamesTheDataLoss(t *testing.T) {
+	for _, role := range []Role{Dispatcher, Executor} {
+		t.Run(string(role), func(t *testing.T) {
+			policy, err := PolicyFor(role)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.DropsBelow < 2 || policy.DropsBelow >= policy.Minimum {
+				t.Fatalf("%s policy drops data below %d", role, policy.DropsBelow)
+			}
+			lossy := fixture(t, role, policy.DropsBelow-1)
+			before := digest(t, lossy)
+			err = Check(context.Background(), role, lossy)
+			if !errors.Is(err, ErrOutdated) || !errors.Is(err, ErrDataLoss) {
+				t.Fatalf("version %d: %v, want %v and %v", policy.DropsBelow-1, err, ErrOutdated, ErrDataLoss)
+			}
+			for _, want := range []string{"debuglets", "debuglet_logs", "-accept-data-loss", "-upgrade-database"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal does not name %q: %v", want, err)
+				}
+			}
+			unchanged(t, lossy, before)
+
+			kept := fixture(t, role, policy.DropsBelow)
+			before = digest(t, kept)
+			err = Check(context.Background(), role, kept)
+			if !errors.Is(err, ErrOutdated) || errors.Is(err, ErrDataLoss) {
+				t.Fatalf("version %d: %v, want %v only", policy.DropsBelow, err, ErrOutdated)
+			}
+			unchanged(t, kept, before)
+		})
+	}
+}
+
+// TestUpgradeRefusesToDropRecordedRunsUnlessAccepted leaves a database whose
+// upgrade drops the recorded runs exactly as it was until the loss is
+// accepted, and then upgrades it like any other.
+func TestUpgradeRefusesToDropRecordedRunsUnlessAccepted(t *testing.T) {
+	tested := 0
+	for _, database := range populated {
+		policy, err := PolicyFor(database.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if database.version >= policy.DropsBelow {
+			continue
+		}
+		tested++
+		t.Run(database.name, func(t *testing.T) {
+			path := database.fixture(t)
+			before := digest(t, path)
+			_, err := Upgrade(context.Background(), database.role, path)
+			if !errors.Is(err, ErrDataLoss) {
+				t.Fatalf("upgrade without accepting the loss: %v, want %v", err, ErrDataLoss)
+			}
+			for _, want := range []string{path, string(database.role), "version " + strconv.FormatInt(database.version, 10),
+				"debuglets", "debuglet_logs", "-accept-data-loss", "upgrade_accept_data_loss=true"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal does not name %q: %v", want, err)
+				}
+			}
+			if got := schemaVersionOf(t, path); got != database.version {
+				t.Fatalf("refused upgrade left version %d, want %d", got, database.version)
+			}
+			unchanged(t, path, before)
+
+			version, err := Upgrade(context.Background(), database.role, path, AcceptDataLoss())
+			if err != nil || version != policy.Current {
+				t.Fatalf("accepted upgrade: version %d, %v, want %d", version, err, policy.Current)
+			}
+			database.checkRows(t, path)
+		})
+	}
+	if tested != 2 {
+		t.Fatalf("%d populated databases lose recorded runs on upgrade, want the dispatcher's and the executor's", tested)
+	}
+}
+
 // TestUpgradeBringsAnOlderDatabaseToTheCurrentVersion keeps the rows of an
 // older database while the upgrade adds the columns later versions carry, and
 // applies the migrations with foreign keys enforced.
@@ -631,7 +732,11 @@ func TestUpgradeBringsAnOlderDatabaseToTheCurrentVersion(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := database.fixture(t)
-			version, err := Upgrade(context.Background(), database.role, path)
+			var opts []UpgradeOption
+			if database.version < policy.DropsBelow {
+				opts = append(opts, AcceptDataLoss())
+			}
+			version, err := Upgrade(context.Background(), database.role, path, opts...)
 			if err != nil {
 				t.Fatalf("upgrade: %v", err)
 			}
@@ -656,7 +761,7 @@ func TestFailedUpgradeKeepsTheLastCompletedVersion(t *testing.T) {
 	if err := Check(context.Background(), Dispatcher, path); !errors.Is(err, ErrOutdated) {
 		t.Fatalf("version 1 database: %v", err)
 	}
-	_, err := Upgrade(context.Background(), Dispatcher, path)
+	_, err := Upgrade(context.Background(), Dispatcher, path, AcceptDataLoss())
 	if err == nil {
 		t.Fatal("upgrade of a version 1 database with transactions succeeded")
 	}
@@ -738,4 +843,42 @@ func TestUpgradeRefusesWhatCheckRefuses(t *testing.T) {
 			unchanged(t, tc.path, before)
 		})
 	}
+}
+
+func TestDispatcherRequiresAdmissionProvenanceSchema(t *testing.T) {
+	ctx := context.Background()
+	path := fixture(t, Dispatcher, 10)
+	before := digest(t, path)
+	if err := Check(ctx, Dispatcher, path); !errors.Is(err, ErrOutdated) || !strings.Contains(err.Error(), "-upgrade-database") {
+		t.Fatalf("schema without provenance must require explicit upgrade: %v", err)
+	}
+	unchanged(t, path, before)
+	if got := schemaVersionOf(t, path); got != 10 {
+		t.Fatalf("refusal migrated schema to %d", got)
+	}
+	policy, err := PolicyFor(Dispatcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version, err := Upgrade(ctx, Dispatcher, path); err != nil || version != policy.Current {
+		t.Fatalf("upgrade to provenance schema: version=%d, err=%v", version, err)
+	}
+	before = digest(t, path)
+	if err := Check(ctx, Dispatcher, path); err != nil {
+		t.Fatalf("upgraded provenance schema refused: %v", err)
+	}
+	unchanged(t, path, before)
+
+	modify(t, path, "DROP TABLE debuglet_provenance")
+	before = digest(t, path)
+	if err := Check(ctx, Dispatcher, path); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("missing provenance table accepted: %v", err)
+	}
+	unchanged(t, path, before)
+	modify(t, path, "CREATE TABLE debuglet_provenance (debuglet_id INTEGER PRIMARY KEY)")
+	before = digest(t, path)
+	if err := Check(ctx, Dispatcher, path); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("missing provenance document column accepted: %v", err)
+	}
+	unchanged(t, path, before)
 }

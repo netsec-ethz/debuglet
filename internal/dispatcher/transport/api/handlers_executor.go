@@ -23,6 +23,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 	for _, e := range executors {
 		resp = append(resp, ExecutorResponse{
 			ID:                     e.ID,
+			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,
 			Version:                e.Version,
 			LastSeen:               e.LastSeen.Unix(),

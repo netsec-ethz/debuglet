@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // A managed service and a foreground role differ only in who supervises the
@@ -16,23 +16,6 @@ import (
 // entry points keep that single generator, so an installed unit can never be
 // started against a configuration shape no foreground role was ever tested on.
 
-// DispatcherConfiguration returns the generated dispatcher configuration for a
-// database path. Callers may override the server ports before writing it.
-func DispatcherConfiguration(version, database string) map[string]any {
-	return dispatcherConfiguration(version, database)
-}
-
-// ExecutorConfiguration returns the generated executor configuration for one
-// executor identity, database and dispatcher control record.
-func ExecutorConfiguration(version, executorID, database string, dispatcher readiness.Record) map[string]any {
-	return executorConfiguration(version, executorID, database, dispatcher)
-}
-
-// WriteConfig writes a generated configuration to an absent path, mode 0600.
-func WriteConfig(path string, config map[string]any) error {
-	return writeConfig(path, config)
-}
-
 // ValidateControlAddress accepts the literal-loopback host:port spelling the
 // generated configurations use for the local control plane.
 func ValidateControlAddress(address string) error {
@@ -40,7 +23,7 @@ func ValidateControlAddress(address string) error {
 }
 
 // RoleDatabase names the database file a role keeps in its state directory.
-func RoleDatabase(dir string, role SchemaRole) string {
+func RoleDatabase(dir string, role storagecheck.Role) string {
 	return filepath.Join(dir, string(role)+".sqlite")
 }
 
@@ -57,21 +40,21 @@ func RoleDatabase(dir string, role SchemaRole) string {
 // its database existed can be completed by the next one, a finished directory
 // can have nothing created in it, and no account that could replace the name
 // in between has the directory to do it in.
-func PrepareRoleDatabase(ctx context.Context, role SchemaRole, dir string) (path string, created bool, err error) {
+func PrepareRoleDatabase(ctx context.Context, role storagecheck.Role, dir string) (path string, created bool, err error) {
 	return productionDependencies().prepareRoleDatabase(ctx, role, dir)
 }
 
 // prepareRoleDatabase is that decision with the bootstrap and the schema check
 // left as seams, so a foreground role and an installed unit make it once and
 // reach the same database in the same states.
-func (d dependencies) prepareRoleDatabase(ctx context.Context, role SchemaRole, dir string) (path string, created bool, err error) {
+func (d dependencies) prepareRoleDatabase(ctx context.Context, role storagecheck.Role, dir string) (path string, created bool, err error) {
 	path = RoleDatabase(dir, role)
 	info, err := os.Lstat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		bootstrap := d.bootstrap
 		if bootstrap == nil {
-			bootstrap = BootstrapFresh
+			bootstrap = storagecheck.BootstrapFresh
 		}
 		if err := bootstrap(ctx, role, path); err != nil {
 			return path, false, fmt.Errorf("bootstrap %s: %w", role, err)

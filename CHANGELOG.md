@@ -10,13 +10,50 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Added
+- `debuglet-dispatcher -check-database` and `debuglet-executor -check-database`
+  report read-only whether the configured database is current for the build
+  (exit 0), needs the upgrade (3) or needs an upgrade that drops the recorded
+  runs and their logs (4). `-upgrade-database` refuses such an upgrade unless
+  `-accept-data-loss` is given. Both modes name the absolute database path.
+
 ### Changed
+- `install.sh` prints the `export PATH=...` line to use when the installed
+  `bin` directory is not on `PATH`.
+- Lead the README with a published installation and organize versioned
+  references under `docs/`; keep user and operator procedures in the Wiki.
+- `deploy/ansible/upgrade-database.yml` checks each database with the candidate
+  before stopping its service and leaves a current host running without a
+  backup; with `debuglet_manage_services=false` it requires
+  `upgrade_confirm_stopped=true`, before a destructive upgrade
+  `upgrade_accept_data_loss=true`, and before stopping the service twice the
+  database's size free. `deploy/README.md` documents the order and the cleanup
+  of `backup-*` directories.
+- The refusal of an absent database names the deployment seeding step and the
+  local-service copy a hand-installed host uses, instead of `make upgrade`;
+  `docs/operations/configuration.md` describes creating and upgrading a database.
 - Reject `_` in DNS names in daemon configuration (`server.bind_host`,
   `dispatcher.addr`, `dispatcher.yamux_addr`, `tls.server_name`,
   `network.public_host`), matching `dbl validate`. Both now apply the RFC 1123
   host-name rules documented in `docs/operations/configuration.md`.
 
 ### Fixed
+- Answer `400 unknown_executor` when a submission names an executor that is
+  not registered or no longer available at admission, and `400 invalid_policy`
+  when the policy requires ICMP or a listener the executor cannot serve; these
+  answered `500 internal_error` before.
+- Classify a run that is still not terminal about two minutes after the end
+  of its reserved window as `RunStateExited` with an `outcome unknown` error,
+  releasing its reservation once. A cancellation the dispatcher could not
+  deliver marks the run `RunStateUnreconciled`, and restart no longer reserves
+  capacity for runs whose window already ended. `docs/api.md` describes states.
+- Serialize ordinary destination-limit deliveries per executor. A timed-out
+  in-flight delivery can still apply after its successor; wire-version ordering
+  and durable retries remain unsupported. Failed recipients are named in
+  operator logs; `PATCH /destination` returns a fixed delivery-failure message.
+- Refuse a destination limit below the floors reserved for admitted runs
+  whose window lies ahead, not only below the floors of active allocations
+  (`PATCH /destination` answers 409 `capacity_exhausted`).
 - Listener sockets of a run are marked for packet attribution before they
   bind and listen, so a SYN-ACK and every accepted connection carry the
   run's mark; a refused mark fails the listener instead of trying the next
@@ -29,13 +66,6 @@ changes; the linked API and deployment documentation contains operational detail
   backed-up database upgrades, and verified Linux amd64 packages.
 
 ### Changed
-- `install.sh` prints the `export PATH=...` line to use when the installed
-  `bin` directory is not on `PATH`.
-- The README leads with downloading and verifying a published release; building
-  from source moves to the installation guide. The daemon configuration and
-  stored-state reference moves to `docs/operations/configuration.md`, and managed services
-  and drain to `docs/operations/services.md`; `docs/operations/local-checks.md` keeps the local
-  environment checker. `docs/api.md` lists the tested version combinations.
 - Move the debuglet examples from `local/wasm_samples/` to `examples/debuglets/`,
   the local daemon configurations from `local/configs/` to `configs/`,
   `verify_pcap.py` to `tools/`, and the illustrative HTTP exchanges to

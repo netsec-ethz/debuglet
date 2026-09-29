@@ -11,6 +11,7 @@ import (
 // Hello belongs to setup and is deliberately absent here. An RPC that returns
 // does not prove that its remote handler has stopped.
 type BoundExecutorClient interface {
+	InspectRetainedRun(context.Context, *pb.InspectRetainedRunRequest, ...grpc.CallOption) (*pb.InspectRetainedRunResponse, error)
 	Upload(context.Context, *pb.UploadRequest, ...grpc.CallOption) (*pb.UploadResponse, error)
 	Abort(context.Context, *pb.AbortRequest, ...grpc.CallOption) (*pb.AbortResponse, error)
 	Bandwidth(context.Context, *pb.BandwidthRequest, ...grpc.CallOption) (*pb.BandwidthResponse, error)

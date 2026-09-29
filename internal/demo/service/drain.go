@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // Drain removes one managed role from eligible capacity and reports what
@@ -77,14 +77,14 @@ type DrainReport struct {
 var ErrDrainIncomplete = errors.New("drain incomplete: local ownership has not joined")
 
 // Drain performs the drain of one installed role instance.
-func (i *Installer) Drain(ctx context.Context, role demo.SchemaRole, name string, options DrainOptions) (DrainReport, error) {
+func (i *Installer) Drain(ctx context.Context, role storagecheck.Role, name string, options DrainOptions) (DrainReport, error) {
 	p, base, err := i.load(ctx, "drain", role, name)
 	report := DrainReport{Operation: "drain", Role: base.Role, Name: base.Name, Unit: base.Unit, StateDir: base.StateDir}
 	if err != nil {
 		report.Outcome = base.State
 		return report, err
 	}
-	if role == demo.DispatcherSchema {
+	if role == storagecheck.Dispatcher {
 		return i.pauseAdmission(ctx, p, report, options)
 	}
 	budget := options.Timeout
@@ -160,14 +160,14 @@ func (i *Installer) pauseAdmission(ctx context.Context, p Profile, report DrainR
 // Resume reverses a drain: it clears a dispatcher's admission switch, or it
 // enables and starts a drained executor again and observes its readiness. It
 // replays nothing: work retained from before the drain stays quarantined.
-func (i *Installer) Resume(ctx context.Context, role demo.SchemaRole, name string) (DrainReport, error) {
+func (i *Installer) Resume(ctx context.Context, role storagecheck.Role, name string) (DrainReport, error) {
 	p, base, err := i.load(ctx, "resume", role, name)
 	report := DrainReport{Operation: "resume", Role: base.Role, Name: base.Name, Unit: base.Unit, StateDir: base.StateDir}
 	if err != nil {
 		report.Outcome = base.State
 		return report, err
 	}
-	if role == demo.DispatcherSchema {
+	if role == storagecheck.Dispatcher {
 		cleared, err := ClearMaintenance(p.MaintenanceFile)
 		if err != nil {
 			return report, err

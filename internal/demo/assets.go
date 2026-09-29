@@ -26,5 +26,8 @@ func ResolveAssets(executable string) (Assets, error) {
 	if err != nil {
 		return assets, err
 	}
+	if manifest.Component != "" {
+		return assets, errors.New("local services and bundled samples require the full Debuglet bundle; install the full bundle to use this command")
+	}
 	return Assets{Root: root, CLI: real, Dispatcher: filepath.Join(root, "bin", "debuglet-dispatcher"), Executor: filepath.Join(root, "bin", "debuglet-executor"), Guest: filepath.Join(root, "share", "debuglet", "demo.wasm"), Manifest: manifest}, nil
 }

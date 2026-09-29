@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 )
 
 // A named pipe answers an open only when somebody opens the other end. The
@@ -31,17 +31,17 @@ func TestOwnershipNeverWaitsOnANamedPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.installer = installer
-	if _, err := f.install(demo.ExecutorSchema, "worker", false); err != nil {
+	if _, err := f.install(storagecheck.Executor, "worker", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	pipe := filepath.Join(StateDirectory(f.root, demo.ExecutorSchema, "worker"), "pipe")
+	pipe := filepath.Join(StateDirectory(f.root, storagecheck.Executor, "worker"), "pipe")
 	if err := syscall.Mkfifo(pipe, 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.install(demo.ExecutorSchema, "worker", false)
+		_, err := f.install(storagecheck.Executor, "worker", false)
 		done <- err
 	}()
 	select {

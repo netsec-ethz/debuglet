@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,9 @@ Options:
   --wasm FILE            regular guest WASM file (at most 24 MiB)
   --sample hello         use the hello guest bundled with the full installation
   --executor ID|auto     executor ID (default: auto selects the sole ready executor)
+  --protocol NAME        required tcp/tls/udp/icmp/scion support; repeatable
+  --enforcement MODE     actual packet counter: ebpf or fallback
+  --min-capacity-bps N    minimum advertised total bandwidth (not a reservation)
   --allow ADDRESS        allowed destination address; repeatable
   --duration 10s         server-side run budget, whole milliseconds, >= 1ms
   --floor-bps N          bandwidth floor in bits per second (>= 0)
@@ -85,6 +89,7 @@ type runOptions struct {
 	wasmPath        string
 	sample          string
 	executor        string
+	filter          client.ExecutorFilter
 	allow           stringList
 	duration        time.Duration
 	floorBPS        int64
@@ -111,6 +116,7 @@ func splitGuestArgs(args []string) (flags, guest []string) {
 func parseRunOptions(args []string, stdout, stderr io.Writer) (runOptions, int, bool) {
 	var o runOptions
 	fs := newCommandFlagSet("run")
+	capabilityFlags(fs, &o.filter)
 	fs.StringVar(&o.wasmPath, "wasm", "", "")
 	fs.StringVar(&o.sample, "sample", "", "")
 	fs.StringVar(&o.executor, "executor", "auto", "")
@@ -124,6 +130,9 @@ func parseRunOptions(args []string, stdout, stderr io.Writer) (runOptions, int, 
 	flagArgs, guest := splitGuestArgs(args)
 	if code, ok := parseCommandFlags(fs, flagArgs, runUsage, stdout, stderr); !ok {
 		return o, code, false
+	}
+	if err := o.filter.Validate(); err != nil {
+		return o, usageError("dbl run", runUsage, stderr, "%v", err), false
 	}
 	o.guestArgs = guest
 	fail := func(format string, a ...any) (runOptions, int, bool) {
@@ -235,15 +244,19 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 	if !ok {
 		return code
 	}
-	if o.executor == "auto" {
-		nodes, err := c.Nodes(ctx)
+	if o.executor == "auto" || !o.filter.Empty() {
+		id := o.executor
+		if id == "auto" {
+			id = ""
+		}
+		node, err := c.SelectExecutor(ctx, id, o.filter)
+		if errors.Is(err, client.ErrNoMatchingExecutor) && id == "" && o.filter.Empty() {
+			err = errNoReadyExecutor
+		}
 		if err != nil {
 			return reportFailure(ctx, "dbl run: discover executor", stderr, err)
 		}
-		o.executor, err = soleReadyExecutor(nodes)
-		if err != nil {
-			return reportFailure(ctx, "dbl run", stderr, err)
-		}
+		o.executor = node.ID
 	}
 	batch, err := client.Prepare([]client.Request{{
 		OrderID:    0,
@@ -251,10 +264,11 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 		Args:       o.guestArgs,
 		Wasm:       wasm,
 		Policy: client.Policy{
-			FloorBW:   o.floorBPS,
-			CeilBW:    o.ceilBPS,
-			TimeoutMS: int64(o.duration / time.Millisecond),
-			Addresses: addresses,
+			FloorBW:     o.floorBPS,
+			CeilBW:      o.ceilBPS,
+			TimeoutMS:   int64(o.duration / time.Millisecond),
+			Addresses:   addresses,
+			RequireICMP: slices.Contains(o.filter.Protocols, "icmp"),
 		},
 	}})
 	if err != nil {
@@ -296,23 +310,6 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 		fmt.Fprintf(stderr, "dbl run: debuglet %s failed: %s\n", r.ID, r.Error)
 	}
 	return code
-}
-
-func soleReadyExecutor(nodes []client.Node) (string, error) {
-	var id string
-	for _, node := range nodes {
-		if !node.Ready || strings.TrimSpace(node.ID) == "" {
-			continue
-		}
-		if id != "" {
-			return "", errors.New("more than one executor is ready; use dbl nodes and choose --executor ID")
-		}
-		id = node.ID
-	}
-	if id == "" {
-		return "", errors.New("no executor is ready; start one with dbl up or sudo dbl service start --role executor --name NAME, then check dbl nodes (a newly started executor needs a few seconds)")
-	}
-	return id, nil
 }
 
 // reportSubmissionFailure emits a receipt only when a transaction is already
@@ -357,3 +354,7 @@ func waitForExit(ctx context.Context, status func(context.Context) (client.State
 		}
 	}
 }
+
+// errNoReadyExecutor keeps the first-run hint for an unfiltered selection:
+// with no filters, the likely cause is that no executor has started yet.
+var errNoReadyExecutor = errors.New("no executor is ready; start one with dbl up or sudo dbl service start --role executor --name NAME, then check dbl nodes (a newly started executor needs a few seconds)")

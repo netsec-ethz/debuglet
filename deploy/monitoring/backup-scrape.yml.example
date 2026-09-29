@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+# Merge into your existing Prometheus configuration, retaining the authenticated
+# debuglet-dispatcher scrape from prometheus.yml.example. This example assumes
+# node_exporter and Prometheus share a host. Do not expose this plaintext port.
+rule_files:
+  - alerts.yml
+  - storage-alerts.yml
+scrape_configs:
+  - job_name: debuglet-backup
+    static_configs:
+      - targets: [127.0.0.1:9100]

@@ -8,10 +8,11 @@ umask 077
 
 fail() { printf 'bootstrap: %s\n' "$*" >&2; exit 1; }
 [ "$#" -eq 0 ] || fail 'configure DEBUGLET_VERSION and DEBUGLET_PREFIX through the environment'
-for command in curl sha256sum tar mktemp uname rm sh; do
+command -v uname >/dev/null 2>&1 || fail 'required command is missing: uname'
+[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || fail 'supported platform: Linux amd64; run dbl on a Linux amd64 machine; see https://github.com/netsec-ethz/debuglet/blob/main/README-install.md#supported-platforms'
+for command in curl sha256sum tar mktemp rm sh; do
 	command -v "$command" >/dev/null 2>&1 || fail "required command is missing: $command"
 done
-[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || fail 'this package requires Linux amd64'
 
 valid_version() (
 	[ "${#1}" -le 128 ] || exit 1

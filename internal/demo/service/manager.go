@@ -16,6 +16,9 @@ import (
 type UnitState struct {
 	// Loaded reports whether the manager knows a unit of this name at all.
 	Loaded bool
+	// FragmentPath and DropInPaths identify the definition the manager loaded.
+	FragmentPath string
+	DropInPaths  string
 	// Active is the manager's active state ("active", "inactive",
 	// "failed", "activating", "deactivating").
 	Active string
@@ -132,7 +135,7 @@ func (s *Systemctl) Stop(ctx context.Context, unit string) error {
 func (s *Systemctl) State(ctx context.Context, unit string) (UnitState, error) {
 	out, err := s.run(ctx, "show", unit, "--property=LoadState", "--property=ActiveState",
 		"--property=SubState", "--property=UnitFileState", "--property=MainPID",
-		"--property=Result", "--property=ExecMainStatus")
+		"--property=Result", "--property=ExecMainStatus", "--property=FragmentPath", "--property=DropInPaths")
 	if err != nil {
 		return UnitState{}, err
 	}
@@ -145,6 +148,10 @@ func (s *Systemctl) State(ctx context.Context, unit string) (UnitState, error) {
 		switch key {
 		case "LoadState":
 			state.Loaded = value == "loaded"
+		case "FragmentPath":
+			state.FragmentPath = value
+		case "DropInPaths":
+			state.DropInPaths = value
 		case "ActiveState":
 			state.Active = value
 		case "SubState":

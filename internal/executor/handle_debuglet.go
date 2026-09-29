@@ -29,7 +29,8 @@ func (e *Executor) OnDebugletFailed(ctx context.Context, spec scheduler.Spec, er
 	}
 	op := newDebugletOperation(ctx)
 	defer op.cancel(nil)
-	completion := op.finish(err, nil)
+	pump, outputErr := e.newDurableOutput(op, spec)
+	completion := op.finish(errors.Join(err, outputErr), pump)
 	e.reportDebugletExit(op, spec)
 	return completion
 }
@@ -39,37 +40,42 @@ func (e *Executor) OnDebugletStart(ctx context.Context, spec scheduler.Spec) sch
 	// exists before any outbound allocation or resource initialization.
 	op := newDebugletOperation(ctx)
 	defer op.cancel(nil)
-	pump, err := e.debugletHandler(op, spec)
+	pump, err := e.newDurableOutput(op, spec)
+	if err == nil {
+		pump, err = e.debugletHandler(op, spec, pump)
+	}
 	completion := op.finish(err, pump)
 	e.unregisterDebuglet(spec.DebugletID, op)
 	e.reportDebugletExit(op, spec)
 	return completion
 }
 
-func (e *Executor) debugletHandler(op *debugletOperation, spec scheduler.Spec) (*outputPump, error) {
+func (e *Executor) debugletHandler(op *debugletOperation, spec scheduler.Spec, pump *outputPump) (*outputPump, error) {
 	ctx := op.ctx
 	if err := ctx.Err(); err != nil {
-		return nil, context.Cause(ctx)
+		return pump, context.Cause(ctx)
 	}
 	if err := e.allocateDebuglet(ctx, spec); err != nil {
-		return nil, fmt.Errorf("failed to allocate debuglet: %w", err)
+		return pump, fmt.Errorf("failed to allocate debuglet: %w", err)
 	}
 	if err := e.checkExecutionLease(ctx, spec.Binding); err != nil {
-		return nil, err
+		return pump, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, context.Cause(ctx)
+		return pump, context.Cause(ctx)
 	}
 	deb, err := e.registerDebuglet(spec, op)
 	if err != nil {
-		return nil, fmt.Errorf("failed to register debuglet: %w", err)
+		return pump, fmt.Errorf("failed to register debuglet: %w", err)
 	}
 	if err := e.initializeDebuglet(ctx, spec, deb); err != nil {
-		return nil, fmt.Errorf("failed to initialize debuglet: %w", err)
+		return pump, fmt.Errorf("failed to initialize debuglet: %w", err)
 	}
-	pump, err := e.propagateOutputToStream(op, spec.DebugletID, spec.Binding)
-	if err != nil {
-		return pump, fmt.Errorf("failed to open stream for debuglet output: %w", err)
+	if pump == nil {
+		pump, err = e.propagateOutputToStream(op, spec.DebugletID, spec.Binding)
+		if err != nil {
+			return pump, fmt.Errorf("failed to open stream for debuglet output: %w", err)
+		}
 	}
 	timedCtx, cancel := context.WithTimeoutCause(ctx, spec.Policy.Timeout, policyTimeout{budget: spec.Policy.Timeout})
 	defer cancel()

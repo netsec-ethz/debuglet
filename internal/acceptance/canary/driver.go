@@ -44,7 +44,7 @@ type localSession interface {
 type driverDependencies struct {
 	validate func(Manifest, demo.Assets) error
 	resolve  func(string) (demo.Assets, error)
-	open     func(Options, string) localSession
+	open     func(context.Context, Options, string) localSession
 	write    func(string, Evidence) error
 	poll     func(context.Context) error
 }
@@ -137,7 +137,7 @@ func runDriver(parent context.Context, opts Options, deps driverDependencies) (e
 	if err != nil {
 		return ev, err
 	}
-	session = deps.open(opts, stateDir)
+	session = deps.open(ctx, opts, stateDir)
 	ev.Phase = "startup"
 	endpoint, err := session.StartDispatcher(ctx)
 	if err != nil {
@@ -432,16 +432,37 @@ func strictCLIDocument(data []byte, out any) error {
 			return errors.New("invalid nodes JSON")
 		}
 		for _, node := range nodes {
-			if _, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, nil, map[string]bool{"tesla_anchor_key": true}); err != nil {
+			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities"}, map[string]bool{"tesla_anchor_key": true})
+			if err != nil {
 				return err
+			}
+			if observation, present := fields["capabilities"]; present {
+				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, nil, map[string]bool{"advertised_capacity_bps": true})
+				if err != nil {
+					return err
+				}
+				// Go decodes a null array item into an empty string; the CLI
+				// emits only string items, or an empty array if none were reported.
+				var protocols []*string
+				if json.Unmarshal(capability["protocols"], &protocols) != nil {
+					return errors.New("invalid capability protocols")
+				}
+				for _, protocol := range protocols {
+					if protocol == nil {
+						return errors.New("invalid capability protocols")
+					}
+				}
 			}
 		}
 	case *statusDocument:
 		_, err := strictFields(data, []string{"id", "state", "error", "executor_id"}, nil, nil)
 		return err
 	case *client.LogPage:
-		fields, err := strictFields(data, []string{"state", "error", "after", "logs", "has_more"}, nil, map[string]bool{"logs": true})
+		fields, err := strictFields(data, []string{"state", "error", "after", "logs", "has_more", "output"}, nil, map[string]bool{"logs": true})
 		if err != nil {
+			return err
+		}
+		if _, err := strictFields(fields["output"], []string{"state", "final_cursor", "loss_reason"}, nil, map[string]bool{"final_cursor": true}); err != nil {
 			return err
 		}
 		var entries []json.RawMessage

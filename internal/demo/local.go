@@ -8,11 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/fsutil"
+	"github.com/netsec-ethz/debuglet/internal/readiness"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -30,6 +31,7 @@ type LocalOptions struct {
 	StateDir string
 	Port     int
 	Ready    func(LocalEnvironment) error
+	Logs     LogOptions
 }
 
 type localState struct {
@@ -60,6 +62,11 @@ func Up(ctx context.Context, assets Assets, options LocalOptions) error {
 }
 
 func up(ctx context.Context, assets Assets, options LocalOptions, deps dependencies, startupTimeout time.Duration) (err error) {
+	options.Logs, err = options.Logs.defaults()
+	if err != nil {
+		return err
+	}
+
 	if runtime.GOOS != "linux" {
 		return errors.New("local environment requires Linux")
 	}
@@ -88,45 +95,38 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 		return err
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
+	if err := removeLocalFile(filepath.Join(dir, OfflineStateFile)); err != nil {
+		return err
+	}
 	state, err := readLocalState(dir, assets.Manifest)
 	if err != nil {
 		return err
 	}
 
-	workCtx, cancelWork := context.WithCancelCause(ctx)
-	watchCtx, cancelWatches := context.WithCancel(workCtx)
+	supervisor := newSupervisor(ctx, deps)
+	workCtx, cancelWork := supervisor.Context(), supervisor.Cancel
 	startupCtx, cancelStartup := context.WithTimeout(workCtx, startupTimeout)
 	defer cancelStartup()
-	var watchers sync.WaitGroup
-	var children []childProcess
-	var logs []*os.File
+	var dispatcher, executor ChildProcess
+	var logs []*rotatingLog
 	defer func() {
-		cancelWatches()
-		watchers.Wait()
-		cancelWork(nil)
+		supervisor.Quiesce()
 		if ctx.Err() == context.Canceled && localCancellationOnly(err) {
 			err = nil
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()
-		for i := len(children) - 1; i >= 0; i-- {
-			phase, end := cleanupPhase(cleanupCtx, i+1)
-			err = errors.Join(err, children[i].Stop(phase))
-			end()
-		}
-		for _, child := range children {
-			if !child.CleanupComplete() {
-				err = errors.Join(err, child.Stop(cleanupCtx))
-			}
-			if !child.CleanupComplete() {
-				err = errors.Join(err, errors.New("local child cleanup incomplete; inspect retained state before restarting"))
-			}
-		}
+		children, stopErr := supervisor.Close(cleanupCtx)
+		err = errors.Join(err, stopErr)
+		joined := dispatcher != nil && executor != nil && children.Joined && stopErr == nil
 		for _, log := range logs {
 			err = errors.Join(err, log.Close())
 		}
 		for _, name := range []string{"environment.json", "dispatcher-ready.json", "executor-ready.json"} {
 			err = errors.Join(err, removeLocalFile(filepath.Join(dir, name)))
+		}
+		if joined {
+			err = errors.Join(err, recordStoppedState(dir, assets.Manifest))
 		}
 	}()
 	for _, name := range []string{"environment.json", "dispatcher-ready.json", "executor-ready.json", "dispatcher.toml", "executor.toml"} {
@@ -134,38 +134,27 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 			return err
 		}
 	}
-	for _, role := range []SchemaRole{DispatcherSchema, ExecutorSchema} {
+	for _, role := range []storagecheck.Role{storagecheck.Dispatcher, storagecheck.Executor} {
 		if _, _, err := deps.prepareRoleDatabase(startupCtx, role, dir); err != nil {
 			return err
 		}
 	}
-	start := func(name, executable string, config map[string]any) (childProcess, error) {
-		configPath := filepath.Join(dir, name+".toml")
-		if err := writeConfig(configPath, config); err != nil {
-			return nil, err
-		}
-		log, err := os.OpenFile(filepath.Join(dir, name+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	start := func(name, executable, id string, config map[string]any) (ChildProcess, readiness.Record, error) {
+		log, err := newRotatingLog(filepath.Join(dir, name+".log"), options.Logs, cancelWork)
 		if err != nil {
-			return nil, err
+			return nil, readiness.Record{}, err
 		}
 		logs = append(logs, log)
-		child, err := deps.startChild(ChildSpec{Path: executable, Dir: dir,
-			Args: []string{"--config", configPath, "--ready-file", filepath.Join(dir, name+"-ready.json")},
-			Env:  childEnvironment(dir), Stdout: log, Stderr: log})
-		if err != nil {
-			return nil, err
-		}
-		children = append(children, child)
-		watchChild(watchCtx, &watchers, name, child, cancelWork)
-		return child, nil
+		return supervisor.StartRole(startupCtx, RoleProcess{
+			Role: storagecheck.Role(name), Directory: dir, Executable: executable,
+			ConfigPath: filepath.Join(dir, name+".toml"), ReadyPath: filepath.Join(dir, name+"-ready.json"),
+			ExecutorID: id, Configuration: config, Stdout: log, Stderr: log,
+		})
 	}
-	config := dispatcherConfiguration(assets.Manifest.Version, filepath.Join(dir, "dispatcher.sqlite"))
+	config := DispatcherConfiguration(assets.Manifest.Version, filepath.Join(dir, "dispatcher.sqlite"))
 	config["server"].(map[string]any)["http_port"] = options.Port
-	dispatcher, err := start("dispatcher", assets.Dispatcher, config)
-	if err != nil {
-		return fmt.Errorf("start dispatcher: %w", err)
-	}
-	record, err := awaitReady(startupCtx, filepath.Join(dir, "dispatcher-ready.json"), dispatcher.PID(), "")
+	var record readiness.Record
+	dispatcher, record, err = start("dispatcher", assets.Dispatcher, "", config)
 	if err != nil {
 		return fmt.Errorf("dispatcher readiness (see %s): %w", filepath.Join(dir, "dispatcher.log"), err)
 	}
@@ -174,11 +163,8 @@ func up(ctx context.Context, assets Assets, options LocalOptions, deps dependenc
 	if err != nil {
 		return err
 	}
-	executor, err := start("executor", assets.Executor, executorConfiguration(assets.Manifest.Version, state.ExecutorID, filepath.Join(dir, "executor.sqlite"), record))
+	executor, _, err = start("executor", assets.Executor, state.ExecutorID, ExecutorConfiguration(assets.Manifest.Version, state.ExecutorID, filepath.Join(dir, "executor.sqlite"), record))
 	if err != nil {
-		return fmt.Errorf("start executor: %w", err)
-	}
-	if _, err := awaitReady(startupCtx, filepath.Join(dir, "executor-ready.json"), executor.PID(), state.ExecutorID); err != nil {
 		return fmt.Errorf("executor readiness (see %s): %w", filepath.Join(dir, "executor.log"), err)
 	}
 	if err := awaitDiscovery(startupCtx, c, state.ExecutorID); err != nil {
