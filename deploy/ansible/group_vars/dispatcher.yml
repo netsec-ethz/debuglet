@@ -54,6 +54,19 @@ dispatcher_require_client_cert: false
 # only when client certificates are required, and deploy-certs.yml installs it
 # next to the server keypair.
 dispatcher_tls_ca_file: "{{ config_dir }}/dispatcher/ca.crt"
+# Local source for that public trust bundle. Keep all still-valid client
+# issuers trusted during a rotation; deploy-certs.yml copies this file verbatim.
+dispatcher_tls_ca_source: "{{ certs_dir }}/ca.crt"
+
+# Self-service enrollment is opt-in. Preprovision a dedicated intermediate
+# issuer on the deployment controller, never the deployment root's private key.
+# Only deploy-certs.yml copies its material; site.yml renders the configuration.
+dispatcher_executor_onboarding_enabled: false
+dispatcher_executor_onboarding_ca_cert: ""
+dispatcher_executor_onboarding_ca_key: ""
+dispatcher_executor_onboarding_dispatcher_url: ""
+dispatcher_executor_onboarding_grpc_address: ""
+dispatcher_executor_onboarding_yamux_address: ""
 
 # Blockchain payments. The deployment runs without a wallet: the dispatcher
 # constructs no chain client and rejects USDC/SUI payment actions, while TEST

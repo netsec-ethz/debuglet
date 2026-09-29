@@ -219,6 +219,28 @@ for leaf in "$certs/dispatcher/server.crt" "$certs/executors/$fixture_executor/c
 	fi
 done
 
+# A separate intermediate is provisioned only for this fixture. Production
+# playbooks never generate an enrollment issuer or copy the deployment root key.
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+	-keyout "$work/enrollment.key" -out "$work/enrollment.csr" \
+	-subj '/CN=Fixture Executor Issuer' >/dev/null 2>&1
+printf '%s\n' 'basicConstraints=critical,CA:TRUE,pathlen:0' \
+	'keyUsage=critical,keyCertSign,cRLSign' 'extendedKeyUsage=clientAuth' \
+	>"$work/enrollment.ext"
+openssl x509 -req -in "$work/enrollment.csr" -CA "$certs/ca.crt" \
+	-CAkey "$certs/ca.key" -CAcreateserial -days 2 -sha256 \
+	-extfile "$work/enrollment.ext" -out "$work/enrollment.crt" >/dev/null 2>&1
+chmod 0600 "$work/enrollment.key"
+cat >"$work/onboarding.yml" <<EOF
+dispatcher_require_client_cert: true
+dispatcher_executor_onboarding_enabled: true
+dispatcher_executor_onboarding_ca_cert: $work/enrollment.crt
+dispatcher_executor_onboarding_ca_key: $work/enrollment.key
+dispatcher_executor_onboarding_dispatcher_url: https://api.fixture.invalid/api
+dispatcher_executor_onboarding_grpc_address: dispatcher.fixture.invalid:19001
+dispatcher_executor_onboarding_yamux_address: dispatcher.fixture.invalid:19000
+EOF
+
 # ---------------------------------------------------------------- parsing ---
 for playbook in "$playbooks"/*.yml; do
 	name=$(basename "$playbook")
@@ -281,6 +303,33 @@ refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certifi
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \
 	-e dispatcher_disable_tls=true -e dispatcher_require_client_cert=true
 
+refuses 'onboarding requires client certificates' 'dispatcher_require_client_cert=true' \
+	-e "@$work/onboarding.yml" -e dispatcher_require_client_cert=false
+refuses 'onboarding requires a clean HTTPS API URL' 'an HTTPS URL' \
+	-e "@$work/onboarding.yml" -e dispatcher_executor_onboarding_dispatcher_url=https://api.fixture.invalid/api?token=x
+refuses 'onboarding refuses an API URL with port zero' 'an HTTPS URL' \
+	-e "@$work/onboarding.yml" -e dispatcher_executor_onboarding_dispatcher_url=https://api.fixture.invalid:0/api
+refuses 'onboarding requires explicit control endpoints' 'native TLS host:port' \
+	-e "@$work/onboarding.yml" -e dispatcher_executor_onboarding_grpc_address=
+refuses 'onboarding refuses a control hostname absent from the certificate' 'hostname mismatch' \
+	-e "@$work/onboarding.yml" -e dispatcher_executor_onboarding_yamux_address=other.fixture.invalid:19000
+refuses 'onboarding requires a preprovisioned issuer' 'preprovisioned dedicated' \
+	-e "@$work/onboarding.yml" -e "dispatcher_executor_onboarding_ca_cert=$work/absent.crt"
+chmod 0644 "$work/enrollment.key"
+refuses 'onboarding requires an owner-only issuer key' 'owner-only' -e "@$work/onboarding.yml"
+chmod 0600 "$work/enrollment.key"
+refuses 'onboarding refuses the deployment root key' 'never the deployment root CA key' \
+	-e "@$work/onboarding.yml" -e "dispatcher_executor_onboarding_ca_cert=$certs/ca.crt" \
+	-e "dispatcher_executor_onboarding_ca_key=$certs/ca.key"
+refuses 'onboarding refuses a mismatched issuer key' 'does not match its certificate' \
+	-e "@$work/onboarding.yml" -e "dispatcher_executor_onboarding_ca_key=$certs/dispatcher/server.key"
+if run "$work/onboarding-preflight.log" preflight-variables.yml -e "@$work/onboarding.yml"; then
+	check 'onboarding accepts a dedicated trusted issuer and public endpoints' pass
+else
+	check 'onboarding accepts a dedicated trusted issuer and public endpoints' fail
+	tail -20 "$work/onboarding-preflight.log" >&2
+fi
+
 # Material the daemons refuse: a leaf that does not chain to the configured
 # root, and a root that has expired. Both are checked before a host is
 # touched, so both are refused here.
@@ -292,6 +341,12 @@ CERTS_DIR=$work/foreign-ca DISPATCHER_SANS='DNS:other.fixture.invalid' \
 cp "$work/foreign-ca/ca.crt" "$foreign/ca.crt"
 refuses 'a leaf that does not chain to the authority is refused' 'verification failed' \
 	-e "certs_dir=$foreign"
+refuses 'onboarding refuses an untrusted issuer' 'verification failed' \
+	-e "@$work/onboarding.yml" -e "dispatcher_tls_ca_source=$foreign/ca.crt"
+# The custom bundle must survive deployment verbatim, including overlapping
+# trust for old clients. Only public certificates are installed as trust.
+cat "$certs/ca.crt" "$foreign/ca.crt" >"$work/client-trust.crt"
+printf '%s\n' "dispatcher_tls_ca_source: $work/client-trust.crt" >>"$work/onboarding.yml"
 
 expired=$work/expired
 mkdir -p "$expired"
@@ -388,6 +443,12 @@ expect 'the executor presents its client certificate' "$executor_toml" \
 # neither carries neither.
 refute 'no client-certificate requirement is rendered by default' "$dispatcher_toml" 'require_client_cert ='
 refute 'no verification name is rendered by default' "$executor_toml" 'server_name ='
+refute 'self-service enrollment remains disabled by default' "$dispatcher_toml" '[executor_onboarding]'
+if [ ! -e "$host/etc/debuglet/dispatcher/enrollment-ca.key" ]; then
+	check 'the default deployment installs no enrollment issuer key' pass
+else
+	check 'the default deployment installs no enrollment issuer key' fail
+fi
 
 # …and are rendered when they are, which is what an operator who needs them
 # writes in the inventory.
@@ -450,6 +511,43 @@ if run "$work/tls-render.log" "$work/tls-render.yml" \
 else
 	check 'the transport keys render when they are set' fail
 	tail -20 "$work/tls-render.log" >&2
+fi
+
+# Opt-in certificate installation preserves the explicit client trust source,
+# protects the dedicated signing key and renders exactly the daemon's fields.
+if run "$work/onboarding-certs.log" deploy-certs.yml --limit dispatcher -e "@$work/onboarding.yml" &&
+	run "$work/onboarding-render.log" "$work/tls-render.yml" --limit dispatcher \
+		-e "tls_template_dir=$playbooks" -e "tls_render_dir=$work/tls" -e "@$work/onboarding.yml"; then
+	check 'self-service enrollment material installs and configuration renders' pass
+	if cmp -s "$work/client-trust.crt" "$host/etc/debuglet/dispatcher/ca.crt" &&
+		cmp -s "$work/enrollment.key" "$host/etc/debuglet/dispatcher/enrollment-ca.key" &&
+		[ "$(stat -c %a "$host/etc/debuglet/dispatcher/enrollment-ca.key")" = 600 ] &&
+		[ "$(stat -c %u "$host/etc/debuglet/dispatcher/enrollment-ca.key")" = "$(id -u)" ]; then
+		check 'custom client trust is preserved and the issuer key is private to the service owner' pass
+	else
+		check 'custom client trust is preserved and the issuer key is private to the service owner' fail
+	fi
+	for expected in '[executor_onboarding]' 'enabled = true' \
+		"ca_cert = \"$host/etc/debuglet/dispatcher/enrollment-ca.crt\"" \
+		"ca_key = \"$host/etc/debuglet/dispatcher/enrollment-ca.key\"" \
+		'dispatcher_url = "https://api.fixture.invalid/api"' \
+		'grpc_address = "dispatcher.fixture.invalid:19001"' \
+		'yamux_address = "dispatcher.fixture.invalid:19000"'; do
+		expect "onboarding configuration includes $expected" "$work/tls/dispatcher.toml" "$expected"
+	done
+	output=$(timeout 10 "$host/opt/debuglet/prod/bin/debuglet-dispatcher" \
+		--config "$work/tls/dispatcher.toml" 2>&1 || true)
+	case $output in
+		*"$host/var/lib/debuglet/dispatcher/dispatcher.db"*)
+			check 'the dispatcher accepts the enabled onboarding configuration and issuer' pass ;;
+		*) check 'the dispatcher accepts the enabled onboarding configuration and issuer' fail
+			printf '%s\n' "$output" | head -5 >&2 ;;
+	esac
+else
+	check 'self-service enrollment material installs and configuration renders' fail
+	for log in "$work/onboarding-certs.log" "$work/onboarding-render.log"; do
+		[ ! -f "$log" ] || tail -n 20 "$log" >&2
+	done
 fi
 
 # Wallet-free by default, explicitly rather than by omission.

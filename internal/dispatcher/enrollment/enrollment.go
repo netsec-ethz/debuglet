@@ -1,9 +1,9 @@
 // Package enrollment binds an executor ID to the node credential its machine
-// holds: the SHA-256 fingerprint of the client certificate the dispatcher's
-// configured authority verified on a control connection. An operator creates a
-// single-use, expiring token on the dispatcher host; the executor presents it
-// once in its first Hello, and the dispatcher records the fingerprint. From
-// then on that ID is admitted only over that certificate.
+// holds: the SHA-256 fingerprint of a verified client certificate. An
+// administrator or the machine's account owner creates a single-use, expiring
+// token. It binds that fingerprint either when the machine requests its client
+// certificate or when it first connects with an administrator-issued one.
+// From then on the executor ID is admitted only over that certificate.
 //
 // This is a node identity, not a session. It outlives control sessions, their
 // generations and their leases, and it fences no message: what it answers is
@@ -104,35 +104,37 @@ func (s *Store) Issue(ctx context.Context, executorID string, lifetime time.Dura
 	if lifetime <= 0 {
 		lifetime = DefaultLifetime
 	}
+	var token string
+	err := s.write(ctx, func(q *database.Queries) error {
+		var err error
+		token, _, err = s.issue(ctx, q, executorID, lifetime)
+		return err
+	})
+	return token, err
+}
+
+func (s *Store) issue(ctx context.Context, q *database.Queries, executorID string, lifetime time.Duration) (string, time.Time, error) {
 	selector, err := secret(selectorBytes)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	verifier, err := secret(verifierBytes)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	digest := sha256.Sum256([]byte(verifier))
 	now := s.now()
-	err = s.write(ctx, func(q *database.Queries) error {
-		if _, err := q.DeleteExecutorEnrollmentTokens(ctx, executorID); err != nil {
-			return fmt.Errorf("drop outstanding enrollment tokens: %w", err)
-		}
-		if err := q.CreateExecutorEnrollmentToken(ctx, database.CreateExecutorEnrollmentTokenParams{
-			Selector:   selector,
-			ExecutorID: executorID,
-			SecretHash: digest[:],
-			CreatedAt:  models.NewUTCTime(now),
-			ExpiresAt:  models.NewUTCTime(now.Add(lifetime)),
-		}); err != nil {
-			return fmt.Errorf("store enrollment token: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
+	expires := now.Add(lifetime)
+	if _, err := q.DeleteExecutorEnrollmentTokens(ctx, executorID); err != nil {
+		return "", time.Time{}, fmt.Errorf("drop outstanding enrollment tokens: %w", err)
 	}
-	return tokenPrefix + "_" + selector + "." + verifier, nil
+	if err := q.CreateExecutorEnrollmentToken(ctx, database.CreateExecutorEnrollmentTokenParams{
+		Selector: selector, ExecutorID: executorID, SecretHash: digest[:],
+		CreatedAt: models.NewUTCTime(now), ExpiresAt: models.NewUTCTime(expires),
+	}); err != nil {
+		return "", time.Time{}, fmt.Errorf("store enrollment token: %w", err)
+	}
+	return tokenPrefix + "_" + selector + "." + verifier, expires, nil
 }
 
 // DropTokens deletes every unused token of executorID and leaves its binding

@@ -47,7 +47,7 @@ Commands:
   drain --role ROLE [--name NAME] [--resume]
                                         take a managed role out of service
   dispatcher up|list|use|remove          start or manage saved dispatchers
-  executor up|list                       start an executor or list registered ones
+  executor up|join|list                  start, enroll or list executors
   connect URL [--name NAME]              save and select a dispatcher connection
   login [--account-key-file FILE] [--register NAME]
                                         obtain and store a session credential

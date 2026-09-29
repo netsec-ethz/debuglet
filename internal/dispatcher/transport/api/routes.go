@@ -10,6 +10,8 @@ import (
 	"strconv"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
 
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -43,6 +45,8 @@ type Handler struct {
 	// cookieSecure marks the session cookies Secure. See CookieSecure.
 	cookieSecure bool
 	githubOAuth  GitHubOAuthConfig
+	onboarding   config.ExecutorOnboardingConfig
+	issuer       *enrollment.Signer
 	// health holds the last health observation. See handlers_health.go.
 	health  healthMemo
 	metrics metricsMemo
@@ -56,6 +60,12 @@ type GitHubOAuthConfig struct {
 
 func GitHubOAuth(cfg GitHubOAuthConfig) Option {
 	return func(h *Handler) { h.githubOAuth = cfg }
+}
+
+// ExecutorOnboarding enables account-owned machines using an explicitly
+// configured certificate authority. A nil issuer leaves enrollment disabled.
+func ExecutorOnboarding(cfg config.ExecutorOnboardingConfig, issuer *enrollment.Signer) Option {
+	return func(h *Handler) { h.onboarding, h.issuer = cfg, issuer }
 }
 
 // Option configures a Handler. Every option is explicit: the zero
@@ -137,6 +147,10 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/executors", h.GetExecutors)
 	e.GET("/executors/by-ip", h.GetExecutorByIP)
 	e.GET("/executors/:id/tesla", h.GetExecutorTesla)
+	e.GET("/operator/executors", h.GetOwnedExecutors)
+	e.POST("/operator/executors", h.PostOwnedExecutor)
+	e.POST("/operator/executors/:id/enrollment-token", h.PostOwnedExecutorToken)
+	e.POST("/executor-enrollment", h.PostExecutorEnrollment)
 	// destination
 	e.PATCH("/destination", h.PatchDestinationLimit)
 	// payment

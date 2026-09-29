@@ -29,7 +29,7 @@ func TestLocalConnectionMetadata(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- startHTTPServer(ctx, httpL, &dispatcher.Dispatcher{}, cfg, nil, zap.NewNop(), metadata)
+		done <- startHTTPServer(ctx, httpL, &dispatcher.Dispatcher{}, cfg, nil, zap.NewNop(), metadata, nil)
 	}()
 	defer func() {
 		cancel()

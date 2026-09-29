@@ -222,6 +222,13 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	if err != nil {
 		return err
 	}
+	var issuer *enrollment.Signer
+	if cfg.ExecutorOnboarding.Enabled {
+		issuer, err = enrollment.NewSigner(cfg.ExecutorOnboarding.CACert, cfg.ExecutorOnboarding.CAKey, cfg.TLS.CAFile)
+		if err != nil {
+			return fmt.Errorf("configure executor onboarding: %w", err)
+		}
+	}
 	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
 		return err
 	}
@@ -278,7 +285,7 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	g, subCtx := errgroup.WithContext(ctx)
 	g.Go(func() error { return d.Bidi.ServeGRPCListener(subCtx, grpcL) })
 	g.Go(func() error {
-		return serveCombinedWithMetadata(subCtx, httpL, d, cfg, security, db, logger, connection)
+		return serveCombinedWithMetadata(subCtx, httpL, d, cfg, security, db, logger, connection, issuer)
 	})
 	// A disabled or unconfigured blockchain endpoint runs no payment listener.
 	if cfg.Sui.GRPCEndpoint != "" && !cfg.Sui.Disabled {
@@ -312,10 +319,10 @@ func bindDispatcherListeners(ctx context.Context, cfg config.ServerConfig, liste
 }
 
 func serveCombined(ctx context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger) error {
-	return serveCombinedWithMetadata(ctx, lis, d, cfg, security, db, logger, nil)
+	return serveCombinedWithMetadata(ctx, lis, d, cfg, security, db, logger, nil, nil)
 }
 
-func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
+func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *dispatcher.Dispatcher, cfg *config.DispatcherConfig, security *config.ServerTLS, db *sql.DB, logger *zap.Logger, connection *connectionMetadata, issuer *enrollment.Signer) error {
 	stopCtx, stop := context.WithCancelCause(parent)
 	defer stop(nil)
 	g, ctx := errgroup.WithContext(stopCtx)
@@ -354,7 +361,7 @@ func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *disp
 		return err
 	}
 	g.Go(func() error { return failure(m.Serve()) })
-	g.Go(func() error { return failure(startHTTPServer(ctx, httpL, d, cfg, db, logger, connection)) })
+	g.Go(func() error { return failure(startHTTPServer(ctx, httpL, d, cfg, db, logger, connection, issuer)) })
 	g.Go(func() error { return failure(d.Bidi.ServeYamux(ctx, yamuxL)) })
 	err := g.Wait()
 	<-joined // Wait cancels the errgroup context, including successful exits.
@@ -452,7 +459,7 @@ func (c *ownedConn) Close() error {
 }
 
 // startHTTPServer runs the Echo-based HTTP API on the given listener.
-func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, connection *connectionMetadata) error {
+func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.Dispatcher, cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, connection *connectionMetadata, issuer *enrollment.Signer) error {
 	if cfg.GitHubOAuth.Enabled && (os.Getenv("GITHUB_OAUTH_CLIENT_ID") == "" || os.Getenv("GITHUB_OAUTH_CLIENT_SECRET") == "") {
 		return errors.New("github_oauth.enabled requires GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET")
 	}
@@ -464,6 +471,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	// cookie's Secure attribute comes from this daemon's own transport, never
 	// from a request header, for the reason recorded at the Serve call below.
 	handler := api.NewHandler(manager, db, logger,
+		api.ExecutorOnboarding(cfg.ExecutorOnboarding, issuer),
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
 		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),

@@ -154,6 +154,67 @@
         quiet: true
       when: dispatcher_require_client_cert | bool
 
+    - name: Require explicit public executor enrollment settings
+      ansible.builtin.assert:
+        that:
+          - not (dispatcher_disable_tls | bool)
+          - dispatcher_require_client_cert | bool
+          - dispatcher_executor_onboarding_dispatcher_url is match('^https://(?:[A-Za-z0-9][A-Za-z0-9._-]*|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?(?:/[^?#\s]*)?$')
+          - (dispatcher_executor_onboarding_dispatcher_url | urlsplit('port')) is none or (dispatcher_executor_onboarding_dispatcher_url | urlsplit('port') | int) > 0
+          - (dispatcher_executor_onboarding_dispatcher_url | urlsplit('port') | default(443, true) | int) <= 65535
+        fail_msg: >-
+          dispatcher_executor_onboarding_enabled requires native TLS with
+          dispatcher_require_client_cert=true and an explicit
+          dispatcher_executor_onboarding_dispatcher_url: an HTTPS URL with no
+          credentials, query or fragment. Keep existing executors enrolled
+          before requiring their certificates.
+        quiet: true
+      when: dispatcher_executor_onboarding_enabled | bool
+
+    - name: Require public executor control endpoints
+      ansible.builtin.assert:
+        that:
+          - item.value is match('^(?:[A-Za-z0-9][A-Za-z0-9._-]*|\[[0-9A-Fa-f:]+\]):[0-9]+$')
+          - item.value.rsplit(':', 1)[-1] | int > 0
+          - item.value.rsplit(':', 1)[-1] | int <= 65535
+        fail_msg: >-
+          {{ item.key }} must be the externally reachable native TLS host:port
+          (bracket IPv6 addresses), with a port between 1 and 65535. Its host
+          must match the dispatcher server certificate.
+        quiet: true
+      loop:
+        - { key: dispatcher_executor_onboarding_grpc_address, value: "{{ dispatcher_executor_onboarding_grpc_address }}" }
+        - { key: dispatcher_executor_onboarding_yamux_address, value: "{{ dispatcher_executor_onboarding_yamux_address }}" }
+      loop_control:
+        label: "{{ item.key }}"
+      when: dispatcher_executor_onboarding_enabled | bool
+
+    - name: Inspect dedicated executor enrollment material
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+      register: enrollment_material
+      loop:
+        - { path: "{{ dispatcher_executor_onboarding_ca_cert }}", private: false }
+        - { path: "{{ dispatcher_executor_onboarding_ca_key }}", private: true }
+      when: dispatcher_executor_onboarding_enabled | bool
+
+    - name: Require dedicated executor enrollment material
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg | default(false)
+          - not item.item.private or item.stat.mode | default('') in ['0400', '0600']
+        fail_msg: >-
+          Set dispatcher_executor_onboarding_ca_cert and
+          dispatcher_executor_onboarding_ca_key to a preprovisioned dedicated
+          issuer certificate chain and matching key on the controller. The key
+          must be owner-only (chmod 600); never use the deployment root CA key.
+        quiet: true
+      loop: "{{ enrollment_material.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.path | default('') }}"
+      when: dispatcher_executor_onboarding_enabled | bool
+
     # dispatcher.toml.j2 renders these paths whenever the dispatcher serves
     # TLS, and the daemon refuses to start without them. A deployment can
     # serve TLS with no TLS executor in its inventory, so the dispatcher's own
@@ -165,6 +226,7 @@
       register: dispatcher_material
       loop:
         - "{{ certs_dir }}/ca.crt"
+        - "{{ dispatcher_tls_ca_source }}"
         - "{{ certs_dir }}/dispatcher/server.crt"
         - "{{ certs_dir }}/dispatcher/server.key"
       when: not (dispatcher_disable_tls | bool)
@@ -213,6 +275,58 @@
       register: dispatcher_chain
       failed_when: dispatcher_chain.rc != 0
       when: not (dispatcher_disable_tls | bool)
+
+    - name: Validate the dedicated executor enrollment issuer
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - |
+            import ipaddress, json, subprocess, sys
+            issuer, key, trust, root, server, endpoints = json.load(sys.stdin)
+            def openssl(*args):
+                result = subprocess.run(["openssl", *args], capture_output=True, text=True)
+                if result.returncode:
+                    sys.exit("Executor enrollment issuer validation failed: " + result.stderr.strip())
+                return result.stdout
+            details = openssl("x509", "-in", issuer, "-noout", "-text")
+            if "CA:TRUE" not in details or "Certificate Sign" not in details:
+                sys.exit("dispatcher_executor_onboarding_ca_cert must be a certificate-signing authority")
+            public = openssl("x509", "-in", issuer, "-pubkey", "-noout")
+            if public == openssl("x509", "-in", root, "-pubkey", "-noout"):
+                sys.exit("Use a dedicated enrollment issuer, never the deployment root CA key")
+            if public == openssl("x509", "-in", server, "-pubkey", "-noout"):
+                sys.exit("Use a dedicated enrollment issuer, never the dispatcher server key")
+            if public != openssl("pkey", "-in", key, "-passin", "pass:", "-pubout"):
+                sys.exit("dispatcher_executor_onboarding_ca_key does not match its certificate")
+            if ("X509v3 Extended Key Usage" in details and
+                    "TLS Web Client Authentication" not in details and "Any Extended Key Usage" not in details):
+                sys.exit("Enrollment issuer must permit client authentication")
+            # A cert-sign-only CA is not itself a TLS client leaf. The daemon
+            # also checks client-auth constraints throughout the issuer chain.
+            openssl("verify", "-CAfile", trust, "-untrusted", issuer, "-purpose", "any", issuer)
+            sans = openssl("x509", "-in", server, "-noout", "-ext", "subjectAltName")
+            for endpoint in endpoints:
+                host = endpoint.rsplit(":", 1)[0].strip("[]")
+                try:
+                    ipaddress.ip_address(host)
+                    name_check = "-verify_ip"
+                except ValueError:
+                    name_check = "-verify_hostname"
+                    if "DNS:" not in sans:
+                        sys.exit("Dispatcher certificate needs DNS subjectAltName entries for " + host)
+                openssl("verify", "-CAfile", trust, "-untrusted", server,
+                        "-purpose", "sslserver", name_check, host, server)
+        stdin: >-
+          {{ [dispatcher_executor_onboarding_ca_cert,
+              dispatcher_executor_onboarding_ca_key,
+              dispatcher_tls_ca_source, certs_dir ~ '/ca.crt',
+              certs_dir ~ '/dispatcher/server.crt',
+              [dispatcher_executor_onboarding_grpc_address,
+               dispatcher_executor_onboarding_yamux_address]] | to_json }}
+      changed_when: false
+      check_mode: false
+      when: dispatcher_executor_onboarding_enabled | bool
 
 - name: Check executor variables
   hosts: executors
