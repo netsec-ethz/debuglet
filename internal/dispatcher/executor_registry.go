@@ -47,8 +47,10 @@ type RegisteredExecutor struct {
 	SuiWallet   string
 	capacity    bitrate.Bitrate
 
-	sourceIp   string
-	publicHost *string
+	sourceIp string
+	// sourceIPObserved is false when sourceIp is the executor's own hello claim.
+	sourceIPObserved bool
+	publicHost       *string
 }
 
 // PublicHost returns the executor's public host (IP or domain) at which
@@ -178,7 +180,8 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	if err := callCtx.Err(); err != nil {
 		return err
 	}
-	if sourceIP == "" {
+	observedIP := sourceIP != ""
+	if !observedIP {
 		sourceIP = hello.GetSourceIp()
 	}
 	record := &RegisteredExecutor{
@@ -188,7 +191,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		TeslaAnchorKey:       append([]byte(nil), hello.GetTeslaAnchorKey()...),
 		ICMPEnabled:          hello.GetIcmpEnabled(), PricePerBwS: hello.GetPricePerBwS(),
 		Currency: hello.GetCurrency(), SuiWallet: hello.GetSuiWallet(),
-		sourceIp: sourceIP, history: &debugletHistory{},
+		sourceIp: sourceIP, sourceIPObserved: observedIP, history: &debugletHistory{},
 	}
 	if host := hello.GetPublicHost(); host != "" {
 		record.publicHost = &host

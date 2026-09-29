@@ -39,6 +39,22 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 		Protocols: protocols, EnforcementMode: report.GetEnforcementMode()}
 }
 
+// Caller holds the registry lock. Unlike capabilitySnapshot this keeps a report
+// past its lifetime and says it was stale, because a result records what the
+// dispatcher knew at admission rather than filtering on it.
+func admissionCapabilities(entry *executorEntry, now time.Time) wire.VantageCapabilities {
+	if entry.Capabilities == nil {
+		return wire.VantageCapabilities{}
+	}
+	source, observed := wire.SourceExecutorReported, entry.capabilityObserved.UTC()
+	stale := now.Before(entry.capabilityObserved) || now.Sub(entry.capabilityObserved) >= capabilityLifetime
+	return wire.VantageCapabilities{
+		Value: &wire.CapabilityReport{SchemaVersion: int(entry.Capabilities.SchemaVersion),
+			Protocols: append([]string{}, entry.Capabilities.Protocols...), EnforcementMode: entry.Capabilities.EnforcementMode},
+		Source: &source, ObservedAt: &observed, Stale: &stale,
+	}
+}
+
 // Caller holds the registry lock. Capacity belongs to the current registration
 // and remains a total advertisement before reservations and destination limits.
 func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapabilities {

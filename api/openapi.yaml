@@ -16,7 +16,7 @@ paths:
     get:
       operationId: "getDebugletResult"
       summary: "Export a portable retained-run snapshot."
-      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Format version 1.0 is independent of the HTTP API version. Does not wait for completion."
+      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Writes portable format 1.1, independent of the HTTP API version. Does not wait for completion."
       parameters:
         - name: "id"
           in: "path"
@@ -3011,6 +3011,8 @@ components:
           type: "string"
           enum:
             - "1.0"
+            - "1.1"
+          description: "The dispatcher writes 1.1. Readers accept 1.0 files, which never carry provenance.vantage_point."
         run_id:
           type: "string"
           format: "uuid"
@@ -3028,7 +3030,7 @@ components:
           $ref: "#/components/schemas/ResultOutput"
         verification:
           $ref: "#/components/schemas/ResultVerification"
-      description: "Portable format 1.0. One consistent retained-run snapshot, not a signed attestation. Missing historical provenance remains null. The reader rejects unsupported versions and inconsistent run identities. Output may still be pending, unknown or truncated."
+      description: "Portable format 1.1 (1.0 remains readable). One consistent retained-run snapshot, not a signed attestation. Missing historical provenance remains null. The reader rejects unsupported versions and inconsistent run identities. Output may still be pending, unknown or truncated."
     ResultProvenance:
       type: "object"
       additionalProperties: false
@@ -3045,6 +3047,7 @@ components:
         - "dispatcher_software"
         - "dispatcher_revision"
         - "certificate_sha256"
+        - "vantage_point"
       properties:
         run_id:
           type: "string"
@@ -3089,8 +3092,97 @@ components:
           pattern: "^[0-9a-f]{64}$"
           description: "Enrolled credential fingerprint at admission, not a signature over this export; null for an unenrolled session."
           nullable: true
+        vantage_point:
+          $ref: "#/components/schemas/ResultVantagePoint"
       description: "Immutable facts recorded with admission in the same database transaction. Current executor metadata never replaces historical facts. Null for runs admitted before this record existed."
       nullable: true
+    ResultVantagePoint:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "schema_version"
+        - "capabilities"
+        - "source_ip"
+        - "public_host"
+      properties:
+        schema_version:
+          type: "integer"
+          enum:
+            - 1
+          description: "Later facts (ASN, geolocation, reachability) are added under schema_version 1 as new fields."
+        capabilities:
+          $ref: "#/components/schemas/ResultVantageCapabilities"
+        source_ip:
+          $ref: "#/components/schemas/ResultLabelledString"
+        public_host:
+          $ref: "#/components/schemas/ResultLabelledString"
+      description: "Added in format 1.1. Where the run was to execute, as known at admission. Each value names its source; no label means verified. Null for runs admitted before format 1.1, and always absent from 1.0 files."
+      nullable: true
+    ResultSourceLabel:
+      type: "string"
+      enum:
+        - "operator"
+        - "executor-reported"
+        - "dispatcher-observed"
+      description: "Who asserted the value. database:<name>@<version> is reserved for a later format. Null exactly when the value is null."
+      nullable: true
+    ResultLabelledString:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "value"
+        - "source"
+      properties:
+        value:
+          type: "string"
+          nullable: true
+          description: "Null when not recorded; never guessed."
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+    ResultVantageCapabilities:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "value"
+        - "source"
+        - "observed_at"
+        - "stale"
+      properties:
+        value:
+          type: "object"
+          additionalProperties: false
+          nullable: true
+          required:
+            - "schema_version"
+            - "protocols"
+            - "enforcement_mode"
+          properties:
+            schema_version:
+              type: "integer"
+              enum:
+                - 1
+            protocols:
+              type: "array"
+              items:
+                type: "string"
+            enforcement_mode:
+              type: "string"
+              enum:
+                - ""
+                - "ebpf"
+                - "fallback"
+          description: "Last validated executor capability report at admission; null when there was none."
+        source:
+          $ref: "#/components/schemas/ResultSourceLabel"
+        observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+          description: "Dispatcher receipt time of the report."
+        stale:
+          type: "boolean"
+          nullable: true
+          description: "True when the report had outlived its 90 s lifetime at admission."
     ResultBinding:
       type: "object"
       additionalProperties: false
@@ -3123,7 +3215,7 @@ components:
           type: "integer"
           format: "int64"
           nullable: true
-          description: "Always null in format 1.0, which does not record exit codes. Exited state alone does not establish exit code zero."
+          description: "Always null in formats 1.0 and 1.1, which do not record exit codes. Exited state alone does not establish exit code zero."
     ResultTiming:
       type: "object"
       additionalProperties: false
@@ -3152,18 +3244,18 @@ components:
         started_at:
           type: "string"
           format: "date-time"
-          description: "Actual start; always null in format 1.0."
+          description: "Actual start; always null in formats 1.0 and 1.1."
           nullable: true
         finished_at:
           type: "string"
           format: "date-time"
-          description: "Actual finish; always null in format 1.0."
+          description: "Actual finish; always null in formats 1.0 and 1.1."
           nullable: true
         clock_uncertainty_ns:
           type: "integer"
           format: "int64"
           nullable: true
-          description: "Measured clock-error bound, not timestamp resolution; always null in format 1.0."
+          description: "Measured clock-error bound, not timestamp resolution; always null in formats 1.0 and 1.1."
           minimum: 0
     ResultOutput:
       type: "object"

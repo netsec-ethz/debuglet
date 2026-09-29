@@ -6,9 +6,11 @@ package wire
 import "time"
 
 const (
-	ResultFormat   = "debuglet-result"
-	ResultVersion  = "1.0"
-	MaxResultBytes = 32 << 20
+	ResultFormat  = "debuglet-result"
+	ResultVersion = "1.1"
+	// ResultVersion10 files predate vantage_point and remain readable.
+	ResultVersion10 = "1.0"
+	MaxResultBytes  = 32 << 20
 )
 
 // Result is a portable snapshot, not proof that a measurement is true. Missing
@@ -44,6 +46,46 @@ type ResultProvenance struct {
 	DispatcherSoftware *string        `json:"dispatcher_software"`
 	DispatcherRevision *string        `json:"dispatcher_revision"`
 	CertificateSHA256  *string        `json:"certificate_sha256"`
+	VantagePoint       *VantagePoint  `json:"vantage_point"`
+}
+
+// Source labels name who asserted a value. None of them means verified: an
+// executor claim stays executor-reported however plausible it looks.
+const (
+	SourceOperator           = "operator"
+	SourceExecutorReported   = "executor-reported"
+	SourceDispatcherObserved = "dispatcher-observed"
+)
+
+// VantagePoint is the admission-time view of where a run executes. It carries
+// its own schema version so later facts (ASN, geolocation, reachability) are
+// additive. A value that was not recorded is null together with its source.
+type VantagePoint struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Capabilities  VantageCapabilities `json:"capabilities"`
+	SourceIP      LabelledString      `json:"source_ip"`
+	PublicHost    LabelledString      `json:"public_host"`
+}
+
+type LabelledString struct {
+	Value  *string `json:"value"`
+	Source *string `json:"source"`
+}
+
+// VantageCapabilities keeps the last validated capability report even when it
+// had outlived its lifetime at admission; Stale says so. ObservedAt is the
+// dispatcher's receipt time of that report.
+type VantageCapabilities struct {
+	Value      *CapabilityReport `json:"value"`
+	Source     *string           `json:"source"`
+	ObservedAt *time.Time        `json:"observed_at"`
+	Stale      *bool             `json:"stale"`
+}
+
+type CapabilityReport struct {
+	SchemaVersion   int      `json:"schema_version"`
+	Protocols       []string `json:"protocols"`
+	EnforcementMode string   `json:"enforcement_mode"`
 }
 
 type ResultOutcome struct {

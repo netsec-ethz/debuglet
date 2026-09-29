@@ -78,6 +78,15 @@ func TestExportMatchesSDKAndRoundTrips(t *testing.T) {
 		{ID: 2, Timestamp: "2026-09-28T11:59:20.5Z", Output: []byte{0x00, 0xff, '<', '\n'}},
 	}
 	doc.Verification.Attribution = "enrolled_at_admission"
+	doc.Version = wire.ResultVersion
+	ip, observed := wire.SourceDispatcherObserved, admitted.Add(-10*time.Second)
+	fresh := false
+	sourceIP := "198.51.100.7"
+	reported := wire.SourceExecutorReported
+	doc.Provenance.VantagePoint = &wire.VantagePoint{SchemaVersion: 1,
+		Capabilities: wire.VantageCapabilities{Value: &wire.CapabilityReport{SchemaVersion: 1, Protocols: []string{"udp"}}, Source: &reported, ObservedAt: &observed, Stale: &fresh},
+		SourceIP:     wire.LabelledString{Value: &sourceIP, Source: &ip},
+	}
 	response, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
