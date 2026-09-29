@@ -4,12 +4,15 @@
 package socket
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // ParsePortRanges expands "2022,2025-3005,56000-62000" into a deduped,
@@ -104,13 +107,40 @@ func (s *PortManager) Enabled() bool {
 	return s != nil && s.publicAddr != "" && len(s.ports) > 0
 }
 
+// errListenControl marks an error returned by a listen control function: the
+// socket itself was refused, which trying another port does not change.
+var errListenControl = errors.New("listen control refused the socket")
+
+// listenConfig returns the net.ListenConfig that runs control on every socket
+// before it is bound. A nil control means no control.
+func listenConfig(control func(network, address string, c syscall.RawConn) error) *net.ListenConfig {
+	lc := &net.ListenConfig{}
+	// The run's listener stays a plain TCP socket so the counter's socket
+	// storage matches the socket that owns the packets.
+	lc.SetMultipathTCP(false)
+	if control == nil {
+		return lc
+	}
+	lc.Control = func(network, address string, c syscall.RawConn) error {
+		if err := control(network, address, c); err != nil {
+			return fmt.Errorf("%w: %w", errListenControl, err)
+		}
+		return nil
+	}
+	return lc
+}
+
 // ListenTCP binds a TCP listener on the first free port in the pool and returns
-// the listener, the bound port, and the public "host:port" address. It returns
-// an error when no free port is available.
-func (s *PortManager) ListenTCP() (*net.TCPListener, int, string, error) {
+// the listener, the bound port, and the public "host:port" address. control,
+// when not nil, runs on the socket before it is bound and listening, so a
+// setting it applies covers the listener's first handshake reply. It returns an
+// error when no free port is available or when control refused the socket; in
+// both cases no port is allocated and no socket is left open.
+func (s *PortManager) ListenTCP(control func(network, address string, c syscall.RawConn) error) (*net.TCPListener, int, string, error) {
+	lc := listenConfig(control)
 	var lis *net.TCPListener
 	port, addr, err := s.allocate(func(p int) (int, error) {
-		l, err := net.ListenTCP("tcp", &net.TCPAddr{Port: p})
+		l, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort("", strconv.Itoa(p)))
 		if err != nil {
 			return 0, err
 		}
@@ -119,9 +149,12 @@ func (s *PortManager) ListenTCP() (*net.TCPListener, int, string, error) {
 			l.Close()
 			return 0, fmt.Errorf("bound to port %d, requested %d", got, p)
 		}
-		lis = l
+		lis = l.(*net.TCPListener)
 		return p, nil
 	})
+	if errors.Is(err, errListenControl) {
+		return nil, 0, "", fmt.Errorf("TCP listener: %w", err)
+	}
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("no free TCP port available: %w", err)
 	}
@@ -129,12 +162,16 @@ func (s *PortManager) ListenTCP() (*net.TCPListener, int, string, error) {
 }
 
 // ListenUDP binds a UDP socket on the first free port in the pool and returns
-// the connection, the bound port, and the public "host:port" address. It
-// returns an error when no free port is available.
-func (s *PortManager) ListenUDP() (*net.UDPConn, int, string, error) {
+// the connection, the bound port, and the public "host:port" address. control,
+// when not nil, runs on the socket before it is bound, so a setting it applies
+// covers the first datagram. It returns an error when no free port is
+// available or when control refused the socket; in both cases no port is
+// allocated and no socket is left open.
+func (s *PortManager) ListenUDP(control func(network, address string, c syscall.RawConn) error) (*net.UDPConn, int, string, error) {
+	lc := listenConfig(control)
 	var conn *net.UDPConn
 	port, addr, err := s.allocate(func(p int) (int, error) {
-		l, err := net.ListenUDP("udp", &net.UDPAddr{Port: p})
+		l, err := lc.ListenPacket(context.Background(), "udp", net.JoinHostPort("", strconv.Itoa(p)))
 		if err != nil {
 			return 0, err
 		}
@@ -142,9 +179,12 @@ func (s *PortManager) ListenUDP() (*net.UDPConn, int, string, error) {
 			l.Close()
 			return 0, fmt.Errorf("bound to port %d, requested %d", got, p)
 		}
-		conn = l
+		conn = l.(*net.UDPConn)
 		return p, nil
 	})
+	if errors.Is(err, errListenControl) {
+		return nil, 0, "", fmt.Errorf("UDP listener: %w", err)
+	}
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("no free UDP port available: %w", err)
 	}
@@ -154,7 +194,9 @@ func (s *PortManager) ListenUDP() (*net.UDPConn, int, string, error) {
 // allocate finds the first free port in the pool and verifies it can be bound
 // via bind (which returns the actually-bound port or an error). On success it
 // marks the port used and returns the bound port and its public "host:port"
-// address.
+// address. A bind failure moves on to the next port; a refusal by the listen
+// control function stops and is returned, since another port would be refused
+// the same way.
 func (s *PortManager) allocate(bind func(int) (int, error)) (int, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,6 +206,9 @@ func (s *PortManager) allocate(bind func(int) (int, error)) (int, string, error)
 			continue
 		}
 		bound, err := bind(p)
+		if errors.Is(err, errListenControl) {
+			return 0, "", err
+		}
 		if err != nil {
 			continue // EADDRINUSE etc → try next
 		}

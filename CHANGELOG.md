@@ -38,6 +38,13 @@ changes; the linked API and deployment documentation contains operational detail
   host-name rules documented in `docs/operations/configuration.md`.
 
 ### Fixed
+- A TESLA key is disclosed only after every kernel tagger has moved off it,
+  including the last key at the end of the chain. The kernel key refresh runs
+  at each epoch boundary instead of every half epoch; a delayed or failed
+  refresh delays disclosure instead of leaving a disclosed key installed.
+- The executor reports "TESLA key chain nearly exhausted" and "TESLA key
+  chain exhausted" once per process; a reconnected control session no longer
+  repeats them.
 - Answer `400 unknown_executor` when a submission names an executor that is
   not registered or no longer available at admission, and `400 invalid_policy`
   when the policy requires ICMP or a listener the executor cannot serve; these
@@ -56,9 +63,14 @@ changes; the linked API and deployment documentation contains operational detail
   (`PATCH /destination` answers 409 `capacity_exhausted`).
 - Verify each TESLA key an executor discloses on its heartbeat against its
   chain anchor before storing it, hashing forward from the last verified key.
-  A key that does not verify, lies more than one week of epochs past it, or
+  A key that does not verify, lies ahead of the chain's registered schedule
+  or more than one week of epochs past it, or
   differs from the key stored for its epoch is dropped and logged once per
   chain; an older epoch is ignored. The heartbeat itself still succeeds.
+- Listener sockets of a run are marked for packet attribution before they
+  bind and listen, so a SYN-ACK and every accepted connection carry the
+  run's mark; a refused mark fails the listener instead of trying the next
+  port.
 
 ## [0.2.0] - 2026-09-27
 

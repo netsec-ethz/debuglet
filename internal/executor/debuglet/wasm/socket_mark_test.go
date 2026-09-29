@@ -18,6 +18,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
@@ -25,16 +26,20 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
 var smErrMark = errors.New("socket mark refused")
 
-// smMark is one SetSocketMark call: the socket and whether it had a peer at
-// that moment (nil peerErr means it was already connected).
+// smMark is one SetSocketMark call: the socket and, at that moment, whether it
+// had a peer (nil peerErr means it was already connected), whether it had a
+// local port, and whether it was already listening.
 type smMark struct {
-	fd      int
-	peerErr error
+	fd        int
+	peerErr   error
+	bound     bool
+	listening bool
 }
 
 // smTagger records every socket it is asked to mark, or refuses them all.
@@ -51,8 +56,16 @@ func (s *smTagger) Schedule() *tesla.KeySchedule         { return nil }
 
 func (s *smTagger) SetSocketMark(fd int) error {
 	_, peerErr := syscall.Getpeername(fd)
+	bound := false
+	switch local, _ := syscall.Getsockname(fd); sa := local.(type) {
+	case *syscall.SockaddrInet4:
+		bound = sa.Port != 0
+	case *syscall.SockaddrInet6:
+		bound = sa.Port != 0
+	}
+	accepting, _ := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ACCEPTCONN)
 	s.mu.Lock()
-	s.marks = append(s.marks, smMark{fd: fd, peerErr: peerErr})
+	s.marks = append(s.marks, smMark{fd: fd, peerErr: peerErr, bound: bound, listening: accepting == 1})
 	onMark := s.onMark
 	s.mu.Unlock()
 	if onMark != nil {
@@ -240,28 +253,80 @@ func TestSocketMarkFailureFailsTheDial(t *testing.T) {
 	}
 }
 
-func TestSocketMarkListenerBeforePublication(t *testing.T) {
-	lis, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
+// smListenControl is the listen control the executor passes to the
+// PortManager for a run's listeners: it marks the socket through the same
+// hostconn.MarkSocket the dialer uses.
+func smListenControl(tg *smTagger) func(network, address string, c syscall.RawConn) error {
+	return func(_, _ string, c syscall.RawConn) error { return hostconn.MarkSocket(c, tg) }
+}
+
+// smPortManager returns a PortManager with one port free for both TCP and
+// UDP, attached to env so that a refused install releases it.
+func smPortManager(t *testing.T, env *WasmEnv) (*socket.PortManager, int) {
+	t.Helper()
+	port := 0
+	for port == 0 {
+		free, err := net.ListenTCP("tcp", &net.TCPAddr{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate := free.Addr().(*net.TCPAddr).Port
+		if err := free.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if udp, err := net.ListenUDP("udp", &net.UDPAddr{Port: candidate}); err == nil {
+			udp.Close()
+			port = candidate
+		}
+	}
+	pm, err := socket.NewPortManager("127.0.0.1", strconv.Itoa(port))
 	if err != nil {
 		t.Fatal(err)
 	}
+	env.PortManager = pm
+	return pm, port
+}
+
+// smRequireUnbound asserts exactly one mark, made before the socket had a
+// local port, so before it could listen or send.
+func smRequireUnbound(t *testing.T, tg *smTagger) {
+	t.Helper()
+	marks := tg.recorded()
+	if len(marks) != 1 {
+		t.Fatalf("listener marked %d times, want once", len(marks))
+	}
+	if marks[0].listening {
+		t.Fatal("listener marked after listen(): a SYN arriving before the mark is answered with an unmarked SYN-ACK")
+	}
+	if marks[0].bound {
+		t.Fatal("listener marked after bind(): it could already receive and answer")
+	}
+}
+
+func TestSocketMarkListenerBeforeListen(t *testing.T) {
 	tg := &smTagger{}
 	env := smLocalEnv(t, tg)
+	pm, _ := smPortManager(t, env)
 	published := true
 	tg.onMark = func(int) { published = env.TcpServer != nil }
-	if err := env.InstallTCP(lis, 0, lis.Addr().String()); err != nil {
-		t.Fatalf("InstallTCP: %v", err)
+	lis, port, addr, err := pm.ListenTCP(smListenControl(tg))
+	if err != nil {
+		t.Fatalf("ListenTCP: %v", err)
 	}
-	if got := len(tg.recorded()); got != 1 {
-		t.Fatalf("listener marked %d times, want once", got)
-	}
+	smRequireUnbound(t, tg)
 	if published {
 		t.Error("the listener was published before it was marked")
 	}
 	tg.onMark = nil
+	if err := env.InstallTCP(lis, port, addr); err != nil {
+		t.Fatalf("InstallTCP: %v", err)
+	}
+	if got := len(tg.recorded()); got != 1 {
+		t.Fatalf("listener marks after install = %d, want the one made at listen time", got)
+	}
 
 	// An accepted socket is marked before the guest receives it.
-	peer, err := net.DialTimeout("tcp", lis.Addr().String(), 5*time.Second)
+	peer, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,20 +343,73 @@ func TestSocketMarkListenerBeforePublication(t *testing.T) {
 	_ = env.Registry.Close(handle)
 }
 
-func TestSocketMarkListenerFailureClosesIt(t *testing.T) {
-	lis, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
+func TestSocketMarkUDPListenerBeforeBind(t *testing.T) {
+	tg := &smTagger{}
+	env := smLocalEnv(t, tg)
+	pm, _ := smPortManager(t, env)
+	conn, port, addr, err := pm.ListenUDP(smListenControl(tg))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ListenUDP: %v", err)
 	}
-	defer lis.Close()
-	env := smLocalEnv(t, &smTagger{fail: smErrMark})
-	if err := env.InstallTCP(lis, 0, lis.Addr().String()); !errors.Is(err, smErrMark) {
-		t.Fatalf("InstallTCP = %v, want the mark failure", err)
+	smRequireUnbound(t, tg)
+	if err := env.InstallUDP(conn, port, addr); err != nil {
+		t.Fatalf("InstallUDP: %v", err)
 	}
-	if env.TcpServer != nil {
-		t.Error("an unmarked listener was published")
+	if got := len(tg.recorded()); got != 1 {
+		t.Errorf("listener marks after install = %d, want the one made at bind time", got)
 	}
-	if _, err := lis.Accept(); !errors.Is(err, net.ErrClosed) {
-		t.Errorf("accept on the unmarked listener = %v, want it closed", err)
+}
+
+func TestSocketMarkListenerFailureClosesIt(t *testing.T) {
+	for _, proto := range []string{"tcp", "udp"} {
+		t.Run(proto, func(t *testing.T) {
+			tg := &smTagger{fail: smErrMark}
+			env := smLocalEnv(t, tg)
+			pm, port := smPortManager(t, env)
+			var err error
+			if proto == "tcp" {
+				var lis *net.TCPListener
+				lis, _, _, err = pm.ListenTCP(smListenControl(tg))
+				if lis != nil {
+					lis.Close()
+				}
+			} else {
+				var conn *net.UDPConn
+				conn, _, _, err = pm.ListenUDP(smListenControl(tg))
+				if conn != nil {
+					conn.Close()
+				}
+			}
+			if !errors.Is(err, smErrMark) {
+				t.Fatalf("listen = %v, want the mark failure", err)
+			}
+			if got := len(tg.recorded()); got != 1 {
+				t.Errorf("mark attempts = %d, want 1 (a refused mark does not try another port)", got)
+			}
+			if env.TcpServer != nil || env.UdpServer != nil {
+				t.Error("an unmarked listener was published")
+			}
+			// The port was not allocated and the unmarked socket is closed:
+			// an unmarked listen on the same port succeeds.
+			if proto == "tcp" {
+				lis, got, _, err := pm.ListenTCP(nil)
+				if err != nil {
+					t.Fatalf("port %d still held after the refused mark: %v", port, err)
+				}
+				lis.Close()
+				if got != port {
+					t.Errorf("port = %d, want %d", got, port)
+				}
+			} else {
+				conn, got, _, err := pm.ListenUDP(nil)
+				if err != nil {
+					t.Fatalf("port %d still held after the refused mark: %v", port, err)
+				}
+				conn.Close()
+				if got != port {
+					t.Errorf("port = %d, want %d", got, port)
+				}
+			}
+		})
 	}
 }
