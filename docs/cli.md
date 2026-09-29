@@ -215,3 +215,5 @@ Use the [troubleshooting guide](operations/troubleshooting.md) for occupied
 ports, executor connections, OAuth sessions, service logs and state-version errors.
 
 The [operations guides](README.md#operate-a-deployment) explain managed services, deployment, and recovery. The [HTTP API guide](api.md) is the reference for applications that do not use `dbl`.
+
+`dbl cancel --status ID` inspects the first recorded cancellation without sending another request. It requires API 1.9 or newer and exits successfully even for an unresolved disposition. JSON includes separate request, delivery-attempt and executor-acknowledgement timestamps plus the stored run result. After a lost response or timeout, inspect this record before deciding whether to repeat `dbl cancel ID`; a missing acknowledgement is not proof that the executor did nothing. On older dispatchers, use `dbl status ID` for the run result; ordinary `dbl cancel ID` remains supported.

@@ -69,7 +69,7 @@ Commands:
   recovery ID                           inspect control and retained metadata
   logs [--after N] [--limit N] [--follow] ID
                                         read stored guest output
-  cancel ID                             ask the dispatcher to abort a debuglet
+  cancel [--status] ID                  cancel a run or inspect its cancellation
   version [--server]                    print client (and server) version
 
 Global options must precede the command; command options precede positionals.

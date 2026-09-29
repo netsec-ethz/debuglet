@@ -517,10 +517,7 @@ func (d *Dispatcher) AbortDebuglet(ctx context.Context, executorID string, debug
 	if _, err := d.ownedDebuglet(mutation.Context(), mutation.Owner(), debugletID); err != nil {
 		return err
 	}
-	client, ok := d.Bidi.GetClientFor(mutation.Owner())
-	if !ok {
-		return status.Error(codes.FailedPrecondition, "abort session is unavailable")
-	}
+	client, _ := d.Bidi.GetClientFor(mutation.Owner())
 	return d.abortCaptured(mutation.Context(), mutation, client, debugletID, reason)
 }
 
@@ -538,27 +535,48 @@ func bindingLive(entry *executorEntry, identity database.GetDebugletIdentityByUU
 	return binding.Incarnation == identity.DispatcherIncarnation && binding.SessionID == identity.SessionID
 }
 
-// cancelUnbound records the cancellation of a run whose stored binding is not
-// the registered owner's. A binding names one session lifetime and a session
-// never resumes once its owner retired: the executor's reconnection is a new
-// session and a restarted dispatcher is a new incarnation. No Abort is sent,
-// since no session can deliver it, and the executor quarantines the run
-// instead of starting it.
-//
-// The terminal write is guarded by the stored binding, as every terminal write
-// of the run is. A retired session admits no new work; work it admitted before
-// retiring and other cancellations of the same run write through the same
-// guard, so exactly one writer wins and only the winner runs the effects.
-// They are those of a nonzero exit, except the fairshare update, which needs a
-// live mutation of the run's session; other executors keep their allocations
-// on the run's destinations until the next update.
+// cancelUnbound retains the request without delivering it to a replacement.
+// A persisted acknowledgement confirms earlier delivery; a missing one stays unknown.
 func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
-	// A row stored before bindings were recorded has none, and the guard
-	// admits no terminal write without one.
+	run, err := database.New(d.db).GetDebugletByUUID(ctx, id)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to read cancellation run: %v", err)
+	}
+	record, err := d.requestCancellation(ctx, run.ID, reason)
+	if err != nil {
+		return err
+	}
+	if run.State == models.RunStateExited {
+		if !record.AcknowledgedAt.Valid && !record.AttemptedAt.Valid && record.Failure == "" {
+			if err := d.failCancellation(ctx, run.ID, "already_terminal"); err != nil {
+				return err
+			}
+		}
+		// Release by run identity, a no-op if the winner already did.
+		d.releaseTerminal(run)
+		return nil
+	}
+	// Keep an earlier, more specific failure such as executor_refused or
+	// transport_outcome_unknown: losing the binding later does not explain it.
+	if !record.AcknowledgedAt.Valid && record.Failure == "" {
+		if err := d.failCancellation(ctx, run.ID, "original_binding_unavailable"); err != nil {
+			return err
+		}
+	}
 	if identity.DispatcherIncarnation == "" || identity.SessionID == "" {
 		return status.Error(codes.FailedPrecondition, "run has no control binding to cancel under")
 	}
-	msg := reason + unobservedCancellation
+	reason = record.Reason
+	if !record.AcknowledgedAt.Valid {
+		reason += unobservedCancellation
+	}
+	return d.recordCancellationResult(ctx, identity, id, reason)
+}
+
+// recordCancellationResult uses only the run's original binding. Terminal
+// selection and cleanup are shared with exits; payment runs only for the winner.
+func (d *Dispatcher) recordCancellationResult(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
+	msg := reason
 	queries := database.New(d.db)
 	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
 		ExitedState:           models.RunStateExited,
@@ -589,7 +607,7 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 		d.releaseTerminal(existing)
 		return nil
 	}
-	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", append(daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID}), zap.String("executor_outcome", "unknown"))...)
+	d.logger.Info("Recorded cancellation of a debuglet", daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID})...)
 	d.settleTerminalPayment(ctx, &deb, -1)
 	d.releaseTerminal(deb)
 	return nil
@@ -600,23 +618,54 @@ func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, 
 	if err != nil {
 		return err
 	}
-	if _, err := d.ownedDebuglet(ctx, owner, id); err != nil {
+	run, err := d.ownedDebuglet(ctx, owner, id)
+	if err != nil {
 		return err
 	}
-	if client == nil {
-		return status.Error(codes.FailedPrecondition, "abort session is unavailable")
+	record, err := d.requestCancellation(ctx, run.ID, reason)
+	if err != nil {
+		return err
 	}
-	if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: id.String(), Reason: reason}); err != nil {
-		switch status.Code(err) {
-		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
-			return fmt.Errorf("failed to abort debuglet: %w", err)
+	if run.State == models.RunStateExited {
+		if !record.AcknowledgedAt.Valid && !record.AttemptedAt.Valid && record.Failure == "" {
+			if err := d.failCancellation(ctx, run.ID, "already_terminal"); err != nil {
+				return err
+			}
 		}
-		return fmt.Errorf("failed to abort debuglet: %w: %w", ErrAbortRefused, err)
+		// Release by run identity, a no-op if the winner already did.
+		d.releaseTerminal(run)
+		return nil
 	}
-	// One local terminal attempt follows the remote acknowledgement, under the
-	// same live mutation. It is no durable terminal or refund guarantee, and a
-	// failed attempt is reported rather than acknowledged. A run that is
-	// already terminal keeps its result and is acknowledged.
+	reason = record.Reason
+	if !record.AcknowledgedAt.Valid {
+		if client == nil {
+			if err := d.failCancellation(ctx, run.ID, "original_binding_unavailable"); err != nil {
+				return err
+			}
+			return status.Error(codes.FailedPrecondition, "abort session is unavailable")
+		}
+		q := database.New(d.db)
+		if err := q.AttemptCancellation(ctx, database.AttemptCancellationParams{DebugletID: run.ID, AttemptedAt: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}}); err != nil {
+			return status.Errorf(codes.Internal, "failed to record cancellation attempt: %v", err)
+		}
+		if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: id.String(), Reason: reason}); err != nil {
+			failure := "executor_refused"
+			switch status.Code(err) {
+			case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+				failure = "transport_outcome_unknown"
+			}
+			if recordErr := d.failCancellation(ctx, run.ID, failure); recordErr != nil {
+				return recordErr
+			}
+			if failure == "transport_outcome_unknown" {
+				return fmt.Errorf("failed to abort debuglet: %w", err)
+			}
+			return fmt.Errorf("failed to abort debuglet: %w: %w", ErrAbortRefused, err)
+		}
+		if err := q.AcknowledgeCancellation(ctx, database.AcknowledgeCancellationParams{DebugletID: run.ID, AcknowledgedAt: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}}); err != nil {
+			return status.Errorf(codes.Internal, "failed to record cancellation acknowledgement: %v", err)
+		}
+	}
 	if _, err := d.OnDebugletExit(ctx, mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
 		return fmt.Errorf("%w: %w", ErrCancellationNotRecorded, err)
 	}

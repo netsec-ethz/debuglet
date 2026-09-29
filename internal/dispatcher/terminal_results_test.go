@@ -1053,7 +1053,7 @@ func TestTerminalResultGuards(t *testing.T) {
 			tgAssertRow(t, f.row(t, a.id), models.RunStateExited, tgText("operator abort"))
 			tgAssertSnapshot(t, f, after, "duplicate abort")
 			tgAssertReserved(t, f, a, tgFloorB)
-			if aborts := peer.recordedAborts(); len(aborts) != 2 || aborts[0].GetDebugletId() != a.id.String() || aborts[0].GetReason() != "operator abort" {
+			if aborts := peer.recordedAborts(); len(aborts) != 1 || aborts[0].GetDebugletId() != a.id.String() || aborts[0].GetReason() != "operator abort" {
 				t.Fatalf("peer recorded aborts %+v", aborts)
 			}
 
