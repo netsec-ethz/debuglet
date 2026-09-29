@@ -10,8 +10,10 @@ import (
 // and the caller that falls back keeps only cleanup.Released for its eventual
 // cleanup result.
 
-// Generated object Close helpers return at the first error. Rollback and normal
-// tagger Close must attempt each individually acquired resource instead.
+// Generated object Close helpers return at the first error. Rollback and the
+// tagger's Close must attempt each individually acquired resource instead; Close
+// closes the attachment on its own first, to learn whether the program is
+// detached, and the remaining resources through closeResources.
 func closeResources(closers ...io.Closer) error {
 	var err error
 	for _, closer := range closers {
