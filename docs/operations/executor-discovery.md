@@ -56,7 +56,7 @@ It is an executor claim, not a verification, and it is not a discovery filter.
 
 | `reason` | Meaning |
 | --- | --- |
-| `epoch_zero` | The chain anchor k_0 is public and never signs, so nothing sent during epoch 0 (the first `tesla.delay` after startup) is attributable. |
+| `epoch_zero` | The chain anchor k_0 is public and never signs, so nothing sent during epoch 0 (the first `tesla.epoch_seconds` after startup) is attributable. |
 | `chain_exhausted` | The key chain has ended; nothing is tagged until the executor restarts. |
 | `refresh_failing` | A kernel tagger's latest key refresh failed. Its slot is empty or may still hold the previous epoch's key; `refresh_error` gives a short error of at most 128 bytes. |
 | `disclosure_held` | An installed key has held disclosure back for longer than one epoch, so the keys of new tags are not published. This is the case of a tagger whose slot could not be cleared. |

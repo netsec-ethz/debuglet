@@ -10,6 +10,25 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Security
+- The TESLA disclosure delay is configurable and at least two epochs.
+  Previously the key of epoch i was disclosed shortly after epoch i+1 began,
+  while verifiers accepted epochs t-1, t and t+1 for a packet of epoch t.
+  Anyone who had seen k_i could therefore forge tags that verify for packets
+  they timestamp in epoch i+1.
+  - The executor now discloses k_i at the start of epoch i+d.
+    `[tesla] disclosure_delay_epochs` sets d; 0 derives the smallest d
+    covering 15 minutes (90 epochs at the default 10-second epoch), and an
+    explicit value below 2 is refused. The installed-key hold still applies.
+  - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
+    skew) and logs the executor once as misbehaving. An executor that does
+    not report d is treated as d = 1.
+  - `tools/verify_pcap.py` tries only epochs t and t-1. It refuses a
+    schedule with d < 2 or without d, and a key that could have been public
+    at capture time plus `--clock-tolerance`.
+  - The browser verifier in debuglet-website needs the same change.
+  - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
+
 ### Added
 - Executor capability reports carry an `attribution` state, shown by
   `GET /executors` and in the new `ATTRIBUTION` column of `dbl nodes`:
@@ -69,6 +88,17 @@ changes; the linked API and deployment documentation contains operational detail
   runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
 
 ### Changed
+- The executor's `[tesla] delay` key is renamed `epoch_seconds`: it always was
+  the epoch length, not a delay. `delay` is still read when `epoch_seconds`
+  is unset, with a deprecation warning; setting both is an error. The
+  Ansible variable `tesla_delay` is likewise `tesla_epoch_seconds`, and
+  `tesla_disclosure_delay_epochs` is new. Configuration errors name the field
+  and its allowed range.
+- The executor hello carries `tesla_disclosure_delay_epochs` (protocol field
+  20). `GET /executors/:id/tesla` adds `epoch_seconds` (`delay_sec`, with
+  the same value, is deprecated), `disclosure_delay_epochs`,
+  `disclosure_delay_seconds`, `next_disclosure_epoch` and
+  `next_disclosure_at_ns`. The change is additive within API 1.9.
 - A run whose packets the eBPF tagger attributes refuses IPv6 destinations and
   peers instead of sending them untagged, and binds its TCP and UDP listeners
   to IPv4 only; a dual-stack name is dialled on its IPv4 addresses. Such a
