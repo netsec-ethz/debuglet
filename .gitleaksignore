@@ -1,0 +1,8 @@
+# Reviewed secret-scan exceptions: one exact Gitleaks fingerprint per line,
+# `path:rule-id:line` (or `commit:path:rule-id:line`). Wildcards, directories and
+# inline gitleaks:allow comments are not accepted. See docs/development/ci.md.
+
+# Invalid dbs_ session token used by the SDK credential-redaction tests.
+pkg/client/auth_test.go:generic-api-key:13
+# Run UUID that names no run; the generic rule keys on its `auth` identifier.
+internal/dispatcher/transport/api/auth_test.go:generic-api-key:28
