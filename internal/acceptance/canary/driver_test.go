@@ -9,6 +9,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/artifact"
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -156,7 +157,9 @@ func (s *scriptedSession) Execute(ctx context.Context, args []string) commandRes
 		if s.fault == "wrong_node" {
 			id = testRun
 		}
-		return doc([]client.Node{{ID: id, Ready: true, Version: s.opts.Assets.Manifest.Version, TeslaDelaySec: 2, Currency: "TEST"}})
+		return doc([]client.Node{{ID: id, Ready: true, Version: s.opts.Assets.Manifest.Version, TeslaDelaySec: 2, Currency: "TEST",
+			Capabilities: &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: 1790598500, Protocols: []string{"tcp", "udp"}, EnforcementMode: "fallback", AdvertisedCapacityBPS: ptr(int64(1_000_000))},
+		}})
 	case "run":
 		s.submissions++
 		want := []string{"run", "--wasm", s.opts.Assets.Guest, "--executor", testExecutor, "--allow", "127.0.0.1", "--duration", "1s", "--floor-bps", "64000", "--ceil-bps", "1000000", "--wait", "--", "127.0.0.1:12346", testNonce}
@@ -447,6 +450,43 @@ func TestLogPageOutputDocumentKeepsExactFields(t *testing.T) {
 			raw := []byte(`{"state":"RunStateExited","error":"","after":0,"logs":[],"has_more":false,"output":` + tc.output + `}`)
 			var page client.LogPage
 			err := decodeCommand(commandResult{Started: true, Stdout: raw}, &page)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestNodeCapabilitiesDocumentKeepsExactFields(t *testing.T) {
+	const observation = `{"schema_version":1,"observed_at":1790598500,"protocols":["tcp","udp"],"enforcement_mode":"fallback","advertised_capacity_bps":1000000}`
+	field := func(value string) string { return `,"capabilities":` + value }
+	for _, tc := range []struct {
+		name, fields string
+		valid        bool
+	}{
+		{"omitted", "", true},
+		{"observed", field(observation), true},
+		{"unknown capacity", field(`{"schema_version":1,"observed_at":1790598500,"protocols":[],"enforcement_mode":"","advertised_capacity_bps":null}`), true},
+		{"null object", field(`null`), false},
+		{"wrong object type", field(`[]`), false},
+		{"missing field", field(strings.Replace(observation, `"observed_at":1790598500,`, "", 1)), false},
+		{"null schema", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":null`, 1)), false},
+		{"null time", field(strings.Replace(observation, `"observed_at":1790598500`, `"observed_at":null`, 1)), false},
+		{"null protocols", field(strings.Replace(observation, `["tcp","udp"]`, `null`, 1)), false},
+		{"null mode", field(strings.Replace(observation, `"enforcement_mode":"fallback"`, `"enforcement_mode":null`, 1)), false},
+		{"null protocol item", field(strings.Replace(observation, `["tcp","udp"]`, `["tcp",null]`, 1)), false},
+		{"wrong protocol item", field(strings.Replace(observation, `["tcp","udp"]`, `["tcp",1]`, 1)), false},
+		{"duplicate object", field(observation) + field(observation), false},
+		{"case object", `,"Capabilities":` + observation, false},
+		{"unknown node field", field(observation) + `,"other":true`, false},
+		{"duplicate nested field", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":1,"schema_version":1`, 1)), false},
+		{"case nested field", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":1,"Schema_version":1`, 1)), false},
+		{"unknown nested field", field(strings.Replace(observation, `"schema_version":1`, `"schema_version":1,"other":true`, 1)), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`[{"id":"` + testExecutor + `","ready":true,"last_seen":1790598500,"version":"test","tesla_delay_sec":2,"tesla_anchor_timestamp_ns":0,"tesla_anchor_key":null,"price_per_bw":0,"currency":"TEST"` + tc.fields + `}]`)
+			var nodes []client.Node
+			err := decodeCommand(commandResult{Started: true, Stdout: raw}, &nodes)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%t error=%v", tc.valid, err)
 			}

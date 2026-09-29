@@ -40,6 +40,8 @@ dbl --dispatcher research nodes
 dbl --dispatcher research run --sample hello --wait --allow-remote-test
 ```
 
+Use [capability filters](operations/executor-discovery.md) on `nodes` and `run` to select a ready executor by protocol, enforcement mode and advertised capacity.
+
 ### Return to an existing account
 
 For a local or legacy account-key account, use the workflow below. Renew a

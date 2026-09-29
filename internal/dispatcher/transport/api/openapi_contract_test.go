@@ -167,7 +167,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 	t.Run("accepted requirements reach the handler", func(t *testing.T) {
 		// An absent or blank header states no requirement, which is what every
 		// client written before the contract was versioned sends.
-		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"} {
+		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"} {
 			headers := map[string]string{}
 			if required != "absent" {
 				headers[apispec.VersionHeader] = required
@@ -189,7 +189,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 		// None of these is a substring of the implemented version, so a
 		// message naming that version cannot be mistaken for an echo of the
 		// value the caller sent.
-		for _, required := range []string{"9", "2.0", "0.9", "1.7", "one", "1.0.0", "-1", "1.0; drop"} {
+		for _, required := range []string{"9", "2.0", "0.9", "1.8", "one", "1.0.0", "-1", "1.0; drop"} {
 			rec := oaServe(f.e, http.MethodPut, "/user", []byte(`{"name":"x"}`),
 				map[string]string{apispec.VersionHeader: required})
 			if rec.Code != http.StatusBadRequest {

@@ -9,6 +9,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"sync"
 	"time"
@@ -33,7 +34,9 @@ type RegisteredExecutor struct {
 	TeslaAnchorTimestamp time.Time
 	TeslaAnchorKey       []byte // k_0, the public chain anchor
 
-	ICMPEnabled bool
+	ICMPEnabled        bool
+	Capabilities       *wire.ExecutorCapabilities
+	capabilityObserved time.Time
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -192,6 +195,8 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	}
 	d.initializeEarnings(callCtx, record)
 	record.LastSeen = d.now()
+	record.Capabilities = capabilitiesFromReport(hello.GetCapabilities(), record.LastSeen)
+	record.capabilityObserved = record.LastSeen
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -242,8 +247,9 @@ func cloneHistory(history *debugletHistory) *debugletHistory {
 }
 
 // snapshotLocked copies data only; no used mutex or live history is copied.
-func snapshotLocked(entry *executorEntry) RegisteredExecutor {
+func snapshotLocked(entry *executorEntry, now time.Time) RegisteredExecutor {
 	out := *entry.RegisteredExecutor
+	out.Capabilities = capabilitySnapshot(entry, now)
 	out.TeslaAnchorKey = append([]byte(nil), out.TeslaAnchorKey...)
 	out.history = cloneHistory(entry.history)
 	if entry.publicHost != nil {
@@ -276,7 +282,7 @@ func (d *Dispatcher) GetExecutorByIPFull(ip string) (RegisteredExecutor, bool) {
 	if best == nil {
 		return RegisteredExecutor{}, false
 	}
-	return snapshotLocked(best), true
+	return snapshotLocked(best, d.now()), true
 }
 
 func (d *Dispatcher) ListExecutors() []RegisteredExecutor {
@@ -288,7 +294,7 @@ func (d *Dispatcher) ListExecutors() []RegisteredExecutor {
 	}
 	for _, entry := range d.executors {
 		if entry.owner.Available() {
-			out = append(out, snapshotLocked(entry))
+			out = append(out, snapshotLocked(entry, d.now()))
 		}
 	}
 	return out
@@ -319,7 +325,7 @@ func (d *Dispatcher) GetExecutor(id string) (*RegisteredExecutor, bool) {
 	if d.closed || !exists || !entry.owner.Available() {
 		return nil, false
 	}
-	out := snapshotLocked(entry)
+	out := snapshotLocked(entry, d.now())
 	return &out, true
 }
 

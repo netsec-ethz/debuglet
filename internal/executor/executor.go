@@ -60,9 +60,11 @@ import (
 )
 
 type Executor struct {
-	cfg           config.ExecutorConfig
-	teslaSchedule *tesla.KeySchedule
-	logger        *zap.Logger
+	capabilityMu   sync.Mutex
+	capabilityNext time.Time
+	cfg            config.ExecutorConfig
+	teslaSchedule  *tesla.KeySchedule
+	logger         *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
@@ -343,6 +345,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 				TimestampNs:   now.UnixNano(),
 				TeslaKeyEpoch: epoch,
 				TeslaKey:      key,
+				Capabilities:  e.capabilityReport(ctx, false),
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))

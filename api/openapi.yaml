@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.6"
+  version: "1.7"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -2390,6 +2390,48 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/DebugletResponse"
+    ExecutorCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - observed_at
+        - protocols
+        - enforcement_mode
+        - advertised_capacity_bps
+      properties:
+        schema_version:
+          type: integer
+          enum:
+            - 1
+        observed_at:
+          type: integer
+          format: int64
+          description: "Dispatcher receipt time in Unix seconds of the latest capability observation; stale reports are omitted."
+        protocols:
+          type: array
+          items:
+            type: string
+            enum:
+              - tcp
+              - tls
+              - udp
+              - icmp
+              - scion
+          description: "Distinct positively observed, operator-enabled protocols. ICMP means IPv4; SCION indicates local daemon readiness, not destination reachability."
+        enforcement_mode:
+          type: string
+          enum:
+            - ""
+            - ebpf
+            - fallback
+          description: "Actual packet-counter mode. Empty means unknown; this does not establish packet attribution or measurement truth."
+        advertised_capacity_bps:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+          description: "Advertised total capacity in bits per second, or null if unobserved. This is not free capacity or an admission guarantee for a destination and time window."
     ExecutorResponse:
       type: object
       additionalProperties: false
@@ -2434,6 +2476,8 @@ components:
           description: "Price per bit per second and second of run time, in the executor's currency. An order costs price_per_bw × floor_bw × timeout_ms / 1000, computed exactly and rounded up to the next whole unit. A batch costs the sum of its orders. An order or a batch whose price exceeds 9223372036854775807 is refused with invalid_policy, and nothing is written."
         currency:
           type: string
+        capabilities:
+          $ref: "#/components/schemas/ExecutorCapabilities"
     ExecutorList:
       type: array
       nullable: true

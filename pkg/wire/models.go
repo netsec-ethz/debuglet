@@ -33,15 +33,16 @@ type Policy struct {
 
 // Executor is one executor as reported by GET executors.
 type Executor struct {
-	ID                     string `json:"id"`
-	Ready                  bool   `json:"ready"`
-	LastSeen               int64  `json:"last_seen"`
-	Version                string `json:"version"`
-	TeslaDelaySec          int64  `json:"tesla_delay_sec"`
-	TeslaAnchorTimestampNs int64  `json:"tesla_anchor_timestamp_ns"`
-	TeslaAnchorKey         []byte `json:"tesla_anchor_key"` // k_0, the public chain anchor
-	PricePerBw             int64  `json:"price_per_bw"`
-	Currency               string `json:"currency"`
+	Capabilities           *ExecutorCapabilities `json:"capabilities,omitempty"`
+	ID                     string                `json:"id"`
+	Ready                  bool                  `json:"ready"`
+	LastSeen               int64                 `json:"last_seen"`
+	Version                string                `json:"version"`
+	TeslaDelaySec          int64                 `json:"tesla_delay_sec"`
+	TeslaAnchorTimestampNs int64                 `json:"tesla_anchor_timestamp_ns"`
+	TeslaAnchorKey         []byte                `json:"tesla_anchor_key"` // k_0, the public chain anchor
+	PricePerBw             int64                 `json:"price_per_bw"`
+	Currency               string                `json:"currency"`
 }
 
 // State is a debuglet's reported state. Unknown state strings are preserved.
