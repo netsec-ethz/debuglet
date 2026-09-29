@@ -69,6 +69,12 @@ changes; the linked API and deployment documentation contains operational detail
 - Refuse a destination limit below the floors reserved for admitted runs
   whose window lies ahead, not only below the floors of active allocations
   (`PATCH /destination` answers 409 `capacity_exhausted`).
+- Verify each TESLA key an executor discloses on its heartbeat against its
+  chain anchor before storing it, hashing forward from the last verified key.
+  A key that does not verify, lies ahead of the chain's registered schedule
+  or more than one week of epochs past it, or
+  differs from the key stored for its epoch is dropped and logged once per
+  chain; an older epoch is ignored. The heartbeat itself still succeeds.
 - Listener sockets of a run are marked for packet attribution before they
   bind and listen, so a SYN-ACK and every accepted connection carry the
   run's mark; a refused mark fails the listener instead of trying the next
