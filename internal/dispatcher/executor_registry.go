@@ -6,9 +6,11 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -38,6 +40,14 @@ type RegisteredExecutor struct {
 	// from the start of epoch i+d. Zero means the executor predates it and
 	// disclosed after one epoch.
 	TeslaDisclosureDelay int64
+	// TeslaChainLength is L, the number of epochs the chain serves; zero is
+	// an executor that predates reporting it.
+	TeslaChainLength int64
+	// TeslaTagSpec is the tag specification version of the chain, from the
+	// executor's hello capability report: tag.TagSpecV1 when it reports
+	// debuglet-tag-v1, tag.TagSpecLegacy otherwise, including executors that
+	// predate the report.
+	TeslaTagSpec int64
 
 	ICMPEnabled        bool
 	Capabilities       *wire.ExecutorCapabilities
@@ -198,6 +208,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		TeslaAnchorTimestamp: time.Unix(0, hello.GetTeslaAnchorTimestampNs()),
 		TeslaAnchorKey:       append([]byte(nil), hello.GetTeslaAnchorKey()...),
 		TeslaDisclosureDelay: hello.GetTeslaDisclosureDelayEpochs(),
+		TeslaChainLength:     hello.GetTeslaChainLength(),
 		ICMPEnabled:          hello.GetIcmpEnabled(), PricePerBwS: hello.GetPricePerBwS(),
 		Currency: hello.GetCurrency(), SuiWallet: hello.GetSuiWallet(),
 		sourceIp: sourceIP, sourceIPObserved: observedIP, history: &debugletHistory{},
@@ -208,6 +219,16 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	d.initializeEarnings(callCtx, record)
 	record.LastSeen = d.now()
 	record.Capabilities = capabilitiesFromReport(hello.GetCapabilities(), record.LastSeen)
+	if record.Capabilities != nil {
+		record.TeslaTagSpec = tag.TagSpecOf(record.Capabilities.Tagging)
+	}
+	// The chain is on record before any run is admitted for it, so every run
+	// recorded for attribution names a chain whose schedule can be read. It
+	// records the tag specification the hello reported with it.
+	// A canceled registration is classified below, like any other.
+	if err := d.recordChain(callCtx, record.ID, record.teslaChain(), record.LastSeen); err != nil && callCtx.Err() == nil {
+		return fmt.Errorf("record the executor's TESLA chain: %w", err)
+	}
 	record.capabilityObserved = record.LastSeen
 	record.vantage = vantageFromReport(hello.GetVantagePoint())
 	record.vantageObserved = record.LastSeen
@@ -356,12 +377,13 @@ type realExpiryTicker struct{ *time.Ticker }
 func (t realExpiryTicker) C() <-chan time.Time { return t.Ticker.C }
 
 // runExpiry is the sole expiry loop: on each tick it retires the owners whose
-// lease has run out and then classifies the runs whose window has ended.
+// lease has run out and then classifies the runs whose window has ended. It
+// also prunes the attribution history, on its first tick and hourly after.
 func (d *Dispatcher) runExpiry(done chan struct{}) {
 	defer close(done)
 	ticker := d.newExpiryTicker(d.leaseTiming.WatchdogInterval)
 	defer ticker.Stop()
-	var lastSweep time.Time
+	var lastSweep, lastPrune time.Time
 	for {
 		select {
 		case <-d.expiryStop:
@@ -371,6 +393,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 				d.expireOwner(owner)
 			}
 			lastSweep = d.sweepEndedWindows(lastSweep)
+			lastPrune = d.pruneAttributionDue(lastPrune)
 		}
 	}
 }

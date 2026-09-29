@@ -60,7 +60,11 @@ func TestBootstrapFresh(t *testing.T) {
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
 					"owned_executors":            "executor_id user_id name created_at",
 					"oauth_identities":           "provider subject user_id login created_at updated_at",
-				}, []string{"debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
+					"attribution_chains":         "executor_id chain_id anchor t0_ns interval_ns delay_epochs chain_length tag_spec first_seen_ns last_seen_ns",
+					"attribution_keys":           "executor_id chain_id epoch key disclosed_at_ns",
+					"attribution_runs":           "debuglet_id chain_id source_ip source_ip_observed active_from_ns active_to_ns",
+					"attribution_retention":      "singleton retained_from_ns",
+				}, []string{"attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

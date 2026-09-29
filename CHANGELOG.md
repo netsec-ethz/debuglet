@@ -40,6 +40,35 @@ changes; the linked API and deployment documentation contains operational detail
   stays disabled until configured. This build requires dispatcher schema 13,
   including when enrollment is disabled; back up and explicitly upgrade the
   database before restarting. See [executor onboarding](docs/operations/executor-onboarding.md).
+- Durable attribution history and public verification lookups (part of #71
+  and #73; `docs/verification.md`, delivery step 2). Dispatcher schema 14
+  records every TESLA chain an executor announces, each disclosed key that
+  verified against it (once), and each run's interval and source address. A
+  dispatcher restart no longer loses disclosed keys, and earlier chains stay
+  verifiable. The history is pruned after `[attribution] retention_days`
+  (default 90); upgrade the database explicitly before starting this build.
+  - API 1.11: `GET /attribution/candidates?ip=&at=` lists the runs active
+    from an address within one epoch of a time (at most 32) with their chain
+    schedule `{chain_id, k0, t0_unix_ns, epoch_seconds,
+    disclosure_delay_epochs, chain_length, tag_spec}`, `disclosed_through`,
+    `disclosed_through_at_ns`, `next_disclosure_at_ns` and `retained_from`.
+    `tag_spec` is what the executor reported when it registered the chain:
+    1 for `debuglet-tag-v1`, 0 (legacy, unsupported under v1) otherwise.
+    `GET /attribution/keys?executor_id=&chain_id=` pages the disclosed keys
+    of a chain, 1024 epochs at a time. Both need no account, name runs and
+    executors but never accounts, and are rate-limited per client address
+    (`429 rate_limited`, a new error code); `[attribution] trusted_proxies`
+    lets the limit count clients by `X-Forwarded-For` behind listed proxies.
+  - `GET /executors/by-ip` and `GET /executors/{id}/tesla` are deprecated;
+    they keep working within API major 1.
+  - `pkg/client` gains `AttributionCandidates` and `AttributionKeys`, which
+    work without a credential. `tools/verify_pcap.py` uses the new routes and
+    falls back to the deprecated ones on an older dispatcher.
+  - The control protocol gains `HelloResponse.tesla_chain_length` and
+    `HeartbeatRequest.tesla_key_anchor` without a version change. The
+    dispatcher verifies a key naming an earlier recorded chain against that
+    chain, so a restarted executor could disclose its previous chain's tail;
+    the executor does not do so yet.
 - Executor capability reports carry an `attribution` state, shown by
   `GET /executors` and in the new `ATTRIBUTION` column of `dbl nodes`:
   `available`, or `unavailable` with `epoch_zero`, `chain_exhausted`,

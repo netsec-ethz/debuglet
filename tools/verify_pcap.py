@@ -22,17 +22,28 @@ step for step; keep the two in sync.
 Workflow
 --------
 1. Parse the capture locally (pcap and pcapng, stdlib only — no scapy).
-2. For each unique source IP call GET /executors/by-ip?ip=<ip>[&n=<n>]
-   to obtain the executor ID and the candidate debuglet (measurement) IDs.
-3. Call GET /executors/<id>/tesla to obtain:
+2. For each source IP and capture second call the public, dated lookup
+   GET /attribution/candidates?ip=<ip>&at=<RFC 3339 time>. It lists the runs
+   active from that address within one epoch of the time, each with its
+   executor, run ID and chain schedule {chain_id, k0, t0_unix_ns,
+   epoch_seconds, disclosure_delay_epochs, chain_length, tag_spec} and
+   disclosed_through (tau, the latest disclosed epoch), plus retained_from,
+   before which the dispatcher holds no history. A chain with tag_spec 0
+   predates debuglet-tag-v1 and is reported unsupported. Then read k_tau with
+   GET /attribution/keys?executor_id=<id>&chain_id=<chain>&from_epoch=tau&to_epoch=tau.
+   Neither route needs an account. A dispatcher without them (404) is asked
+   the deprecated routes instead: GET /executors/by-ip?ip=<ip>[&n=<n>] for
+   the executor and the caller's own recent debuglet IDs, and
+   GET /executors/<id>/tesla for the current chain only:
       anchor_key              – k_0 (base64), used for chain consistency checks
       anchor_timestamp_ns     – t_0, when epoch 0 started
       epoch_seconds           – epoch length I (delay_sec on older dispatchers)
       disclosure_delay_epochs – d, the key of epoch e is disclosed from t_0 + (e+d)*I
       disclosed_epoch         – tau, the latest epoch whose key is published
       disclosed_key           – k_tau (base64)
-   A schedule with d < 2 (or none reported) is refused: see Disclosure timing.
-4. For each IPv4 packet:
+   Both are turned into that same schedule. A schedule with d < 2 (or none
+   reported) is refused: see Disclosure timing.
+3. For each IPv4 packet:
    a. Compute the epoch t from the packet timestamp. The candidates are t and
       t-1 only. Epoch 0 has no signing key: k_0 is the public anchor, so the
       executor never tags with it and epoch 0 is never a candidate; a packet
@@ -47,7 +58,7 @@ Workflow
       and check the tag stored in the IP-ID field under the packet-tag
       specification debuglet-tag-v1 (docs/tag-spec.md), which the eBPF tagger
       and the pure-Go fallback implement alike.
-5. Report, for each packet, the specification applied and which debuglet IDs
+4. Report, for each packet, the specification applied and which debuglet IDs
    verified, or why the packet is unsupported (IPv6, an IPv4 fragment, a
    capture too short for the tag input, a malformed header, or an executor
    reporting another tag specification) rather than unmatched.
@@ -101,6 +112,7 @@ import json
 import ssl
 import struct
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -467,6 +479,11 @@ class DispatcherClient:
             self.ctx.verify_mode = ssl.CERT_NONE
         self._executor_cache: dict = {}
         self._tesla_cache: dict = {}
+        self._candidate_cache: dict = {}
+        self._key_cache: dict = {}
+        # None until the first dated lookup shows whether the dispatcher
+        # serves the attribution routes.
+        self.attribution_routes: Optional[bool] = None
         self._tag_specs: Optional[dict] = None
 
     def _get(self, path: str, **params) -> dict:
@@ -474,11 +491,23 @@ class DispatcherClient:
         if params:
             url += "?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, context=self.ctx, timeout=20) as resp:
-            return json.loads(resp.read().decode())
+        for attempt in range(ATTRIBUTION_RETRIES + 1):
+            try:
+                with urllib.request.urlopen(req, context=self.ctx, timeout=20) as resp:
+                    return json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                # The public attribution routes are rate-limited per address.
+                if e.code != 429 or attempt == ATTRIBUTION_RETRIES:
+                    raise
+                try:
+                    wait = float(e.headers.get("Retry-After") or 1)
+                except ValueError:
+                    wait = 1.0
+                time.sleep(min(max(wait, 0.1), 30.0))
+        raise AssertionError("unreachable")
 
     def executor_by_ip(self, ip: str, n: int = 0) -> Optional[dict]:
-        """GET /executors/by-ip?ip=<ip>[&n=<n>] → {executor_id, debuglet_ids}."""
+        """Deprecated GET /executors/by-ip?ip=<ip>[&n=<n>] → {executor_id, debuglet_ids}."""
         cache_key = (ip, n)
         if cache_key in self._executor_cache:
             return self._executor_cache[cache_key]
@@ -513,7 +542,7 @@ class DispatcherClient:
         return self._tag_specs.get(executor_id)
 
     def executor_tesla(self, executor_id: str) -> Optional[dict]:
-        """GET /executors/<id>/tesla → the TESLA key schedule parameters."""
+        """Deprecated GET /executors/<id>/tesla → the TESLA key schedule parameters."""
         if executor_id in self._tesla_cache:
             return self._tesla_cache[executor_id]
         try:
@@ -524,6 +553,128 @@ class DispatcherClient:
             raise
         self._tesla_cache[executor_id] = result
         return result
+
+    def attribution_candidates(self, ip: str, at_ns: int) -> Optional[dict]:
+        """GET /attribution/candidates for ip at the capture second of at_ns.
+
+        Every epoch is at least a second long, so one lookup per second
+        covers every run active within one epoch of any packet in it. None
+        means the dispatcher does not serve the route.
+        """
+        second = at_ns // 1_000_000_000
+        cache_key = (ip, second)
+        if cache_key in self._candidate_cache:
+            return self._candidate_cache[cache_key]
+        at = datetime.datetime.fromtimestamp(second, datetime.timezone.utc)
+        try:
+            result = self._get("/attribution/candidates", ip=ip,
+                               at=at.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                self.attribution_routes = False
+                return None
+            raise
+        self.attribution_routes = True
+        self._candidate_cache[cache_key] = result
+        return result
+
+    def attribution_key(self, executor_id: str, chain: str, epoch: int) -> Optional[bytes]:
+        """The disclosed key of one epoch from GET /attribution/keys, or None."""
+        cache_key = (executor_id, chain, epoch)
+        if cache_key in self._key_cache:
+            return self._key_cache[cache_key]
+        try:
+            page = self._get("/attribution/keys", executor_id=executor_id, chain_id=chain,
+                             from_epoch=epoch, to_epoch=epoch)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise
+        key = None
+        for item in page.get("keys") or []:
+            if int(item["epoch"]) == epoch:
+                key = base64.b64decode(item["key"])
+        self._key_cache[cache_key] = key
+        return key
+
+    def lookup(self, ip: str, ts_ns: int, n: int = 0):
+        """The schedules and debuglet IDs to check a packet from ip at ts_ns.
+
+        Returns (groups, reason): groups is [(tesla, ids)] with tesla in the
+        shape of the deprecated /executors/<id>/tesla answer, one per
+        (executor, chain) with the run IDs of that chain; reason explains an
+        empty list. The dated attribution routes are preferred, the
+        deprecated ones are the fallback of a dispatcher without them.
+        """
+        if self.attribution_routes is not False:
+            doc = self.attribution_candidates(ip, ts_ns)
+            if doc is not None:
+                return self._dated_groups(doc, ts_ns)
+        exec_info = self.executor_by_ip(ip, n)
+        if exec_info is None:
+            return [], "no registered executor"
+        exec_id = exec_info["executor_id"]
+        tesla_info = self.executor_tesla(exec_id)
+        if tesla_info is None:
+            return [], f"executor {exec_id} has no TESLA params"
+        tesla_info = dict(tesla_info, executor_id=exec_id,
+                          tag_spec=self.executor_tag_spec(exec_id))
+        return [(tesla_info, exec_info.get("debuglet_ids") or [])], ""
+
+    def _dated_groups(self, doc: dict, ts_ns: int):
+        candidates = doc.get("candidates") or []
+        if not candidates:
+            retained = _parse_time_ns(doc.get("retained_from"))
+            if retained is not None and ts_ns < retained:
+                return [], ("missing: the dispatcher retains no attribution "
+                            "history for that time")
+            return [], "no run was active from that address at that time"
+        groups: dict = {}
+        for c in candidates:
+            s = c["schedule"]
+            group = (c["executor_id"], s["chain_id"])
+            if group not in groups:
+                tau = int(c.get("disclosed_through") or 0)
+                key = self.attribution_key(c["executor_id"], s["chain_id"], tau) if tau > 0 else None
+                groups[group] = ({
+                    "executor_id": c["executor_id"],
+                    "anchor_key": s["k0"],
+                    "anchor_timestamp_ns": int(s["t0_unix_ns"]),
+                    "epoch_seconds": int(s["epoch_seconds"]),
+                    "disclosure_delay_epochs": int(s["disclosure_delay_epochs"]),
+                    "disclosed_epoch": tau if key is not None else 0,
+                    "disclosed_key": base64.b64encode(key).decode() if key is not None else "",
+                    "tag_spec": int(s.get("tag_spec") or 0),
+                }, [])
+            if c["run_id"] not in groups[group][1]:
+                groups[group][1].append(c["run_id"])
+        if doc.get("truncated"):
+            print(f"  warning: more than {len(candidates)} runs were active; "
+                  "only the listed ones are checked", file=sys.stderr)
+        return list(groups.values()), ""
+
+
+# ATTRIBUTION_RETRIES bounds the retries of a rate-limited request.
+ATTRIBUTION_RETRIES = 5
+
+
+def _parse_time_ns(value) -> Optional[int]:
+    """Unix nanoseconds of an RFC 3339 time, at microsecond precision."""
+    if not value:
+        return None
+    text = value.replace("Z", "+00:00")
+    # datetime reads at most six fractional digits.
+    if "." in text:
+        head, rest = text.split(".", 1)
+        digits = ""
+        while rest and rest[0].isdigit():
+            digits, rest = digits + rest[0], rest[1:]
+        text = f"{head}.{digits[:6].ljust(6, '0')}{rest}"
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return int(parsed.timestamp()) * 1_000_000_000 + parsed.microsecond * 1000
 
 
 # ---------------------------------------------------------------------------
@@ -558,14 +709,38 @@ def unsupported_reason(code: str) -> str:
     return f"unsupported under {TAG_SPEC} ({code}): {UNSUPPORTED[code]}"
 
 
-def spec_mismatch(reported: Optional[str]) -> Optional[str]:
-    """Why an executor's reported tag specification rules out verification.
+# The tag_spec of a chain in the dated attribution history: 0 is an executor
+# that did not report debuglet-tag-v1 when it registered the chain, whose
+# pre-v1 tags this verifier cannot check; 1 is debuglet-tag-v1.
+TAG_SPEC_LEGACY = 0
+TAG_SPEC_V1 = 1
 
-    None when it reports this verifier's specification or nothing (an
-    executor or dispatcher that predates the field, or a failed lookup): the
-    packet is then checked under debuglet-tag-v1 and a pre-v1 tag simply does
-    not match.
+
+def describe_tag_spec(spec) -> str:
+    if spec is None or spec == "":
+        return "not reported"
+    if isinstance(spec, int):
+        return {TAG_SPEC_LEGACY: "legacy (pre-v1)", TAG_SPEC_V1: TAG_SPEC}.get(spec, f"unknown ({spec})")
+    return spec
+
+
+def spec_mismatch(reported) -> Optional[str]:
+    """Why an executor's tag specification rules out verification.
+
+    reported is the integer tag_spec of a chain in the dated history, or the
+    string an executor reports in its capabilities (deprecated routes). On the
+    dated routes 0 is a legacy, pre-v1 chain and unsupported. A missing string
+    (an executor or dispatcher that predates the field, or a failed lookup)
+    is checked under debuglet-tag-v1, and a pre-v1 tag simply does not match.
     """
+    if isinstance(reported, int):
+        if reported == TAG_SPEC_V1:
+            return None
+        if reported == TAG_SPEC_LEGACY:
+            return ("unsupported: the executor tagged this chain with the legacy, "
+                    f"pre-v1 tag; this verifier implements {TAG_SPEC} only")
+        return (f"unsupported: the chain uses tag spec {reported}; this verifier "
+                f"implements {TAG_SPEC} only")
     if not reported or reported == TAG_SPEC:
         return None
     return (f"unsupported: the executor reports tag spec {reported}; this verifier "
@@ -728,36 +903,6 @@ def main():
     # Classify first: an unsupported packet needs no executor lookup.
     unsupported = {id(p): tag_input(p.ip)[1] for p in packets}
 
-    # Collect executor + TESLA info per source IP of the packets v1 covers.
-    info_by_ip: dict = {}
-    for pkt in packets:
-        src = pkt.src
-        if unsupported[id(pkt)] is not None or src in info_by_ip:
-            continue
-        exec_info = client.executor_by_ip(src, args.n)
-        if exec_info is None:
-            info_by_ip[src] = None
-            print(f"  [{src}] no registered executor — skipping")
-            continue
-        exec_id = exec_info["executor_id"]
-        tesla_info = client.executor_tesla(exec_id)
-        if tesla_info is None:
-            info_by_ip[src] = None
-            print(f"  [{src}] executor {exec_id} has no TESLA params — skipping")
-            continue
-        ids = exec_info.get("debuglet_ids") or []
-        reported = client.executor_tag_spec(exec_id)
-        info_by_ip[src] = (tesla_info, ids, reported)
-        print(
-            f"  [{src}] executor={exec_id}  "
-            f"tag_spec={reported or 'not reported'}  "
-            f"epoch={epoch_seconds(tesla_info)}s  "
-            f"disclosure_delay={tesla_info.get('disclosure_delay_epochs', 0)} epochs  "
-            f"disclosed_epoch={tesla_info.get('disclosed_epoch', '—')}  "
-            f"debuglets={ids}"
-        )
-    print()
-
     header = (
         f"{'Timestamp (ns)':<22}  {'Src IP':<16}  {'Dst IP':<16}  "
         f"{'IPID':>6}  {'Epoch':>6}  Result"
@@ -767,6 +912,7 @@ def main():
 
     total = verified = 0
     reasons: dict = {}
+    announced: set = set()
     for pkt in packets:
         ipid = "—" if pkt.ip_id is None else f"0x{pkt.ip_id:04x}"
         code = unsupported[id(pkt)]
@@ -778,33 +924,53 @@ def main():
                 f"{ipid:>6}  {'—':>6}  {unsupported_reason(code)}"
             )
             continue
-        info = info_by_ip.get(pkt.src)
-        if info is None:
-            continue
-        tesla, ids, reported = info
+        groups, reason = client.lookup(pkt.src, pkt.ts_ns, args.n)
+        for tesla, ids in groups:
+            key = (pkt.src, tesla["executor_id"], tesla["anchor_key"])
+            if key not in announced:
+                announced.add(key)
+                print(
+                    f"  [{pkt.src}] executor={tesla['executor_id']}  "
+                    f"tag_spec={describe_tag_spec(tesla.get('tag_spec'))}  "
+                    f"epoch={epoch_seconds(tesla)}s  "
+                    f"disclosure_delay={tesla.get('disclosure_delay_epochs', 0)} epochs  "
+                    f"disclosed_epoch={tesla.get('disclosed_epoch', '—')}  "
+                    f"debuglets={ids}"
+                )
+        if not groups and client.attribution_routes is not True and reason == "no registered executor":
+            continue  # the deprecated lookup knows no executor for this address
         total += 1
-        epoch = epoch_of(
-            pkt.ts_ns,
-            int(tesla["anchor_timestamp_ns"]),
-            epoch_seconds(tesla) * 1_000_000_000,
-        )
-        mismatch = spec_mismatch(reported)
-        if mismatch:
+        matched, epoch, mismatches = [], None, []
+        for tesla, ids in groups:
+            if epoch is None:
+                epoch = epoch_of(
+                    pkt.ts_ns,
+                    int(tesla["anchor_timestamp_ns"]),
+                    epoch_seconds(tesla) * 1_000_000_000,
+                )
+            mismatch = spec_mismatch(tesla.get("tag_spec"))
+            if mismatch:
+                mismatches.append(mismatch)
+                continue
+            found, why = verify_packet(pkt, tesla, ids, tolerance_ns)
+            matched.extend(found)
+            if found or not reason:
+                reason = why
+        if matched:
+            verified += 1
+            result = f"{TAG_SPEC}: verified " + ", ".join(
+                f"{m} (epoch {e})" for m, e, _ in matched)
+            if len(matched) > 1:
+                result += " — ambiguous: more than one candidate matches"
+        elif mismatches and len(mismatches) == len(groups):
             reasons["tag_spec"] = reasons.get("tag_spec", 0) + 1
-            result = mismatch
+            result = mismatches[0]
         else:
-            matched, reason = verify_packet(pkt, tesla, ids, tolerance_ns)
-            if matched:
-                verified += 1
-                result = f"{TAG_SPEC}: verified " + ", ".join(
-                    f"{m} (epoch {e})" for m, e, _ in matched)
-                if len(matched) > 1:
-                    result += " — ambiguous: more than one candidate matches"
-            else:
-                result = f"{TAG_SPEC}: no match — {reason}"
+            result = f"{TAG_SPEC}: no match — {reason}"
+        epoch_str = "—" if epoch is None else str(epoch)
         print(
             f"{pkt.ts_ns:<22}  {pkt.src:<16}  {pkt.dst:<16}  "
-            f"{ipid:>6}  {epoch:>6}  {result}"
+            f"{ipid:>6}  {epoch_str:>6}  {result}"
         )
 
     print("-" * len(header))
