@@ -43,6 +43,12 @@ type Executor struct {
 	TeslaAnchorKey         []byte                `json:"tesla_anchor_key"` // k_0, the public chain anchor
 	PricePerBw             int64                 `json:"price_per_bw"`
 	Currency               string                `json:"currency"`
+	// Admission is ready, maintenance or offline; empty from older dispatchers.
+	Admission  string          `json:"admission"`
+	Display    ExecutorDisplay `json:"display"`
+	SCIONISDAS ObservedString  `json:"scion_isd_as"`
+	// Listeners are the transports the executor can open run listeners on.
+	Listeners ObservedList `json:"listeners"`
 }
 
 // State is a debuglet's reported state. Unknown state strings are preserved.

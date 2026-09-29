@@ -59,10 +59,12 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	if e.cfg.Network.PublicHost != "" {
 		publicHost = &e.cfg.Network.PublicHost
 	}
+	capabilities, vantage := e.capabilityReport(ctx, true)
 	resp := &pb.HelloResponse{
 		ExecutorId:   e.cfg.Identity.ExecutorID,
 		Version:      e.cfg.Identity.Version,
-		Capabilities: e.capabilityReport(ctx, true),
+		Capabilities: capabilities,
+		VantagePoint: vantage,
 		// The dispatcher records the address it observes on the control
 		// connection, which is what probe recipients see. Reporting an
 		// address here would only be a hint, so leave it empty.

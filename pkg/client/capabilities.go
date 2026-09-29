@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // ExecutorFilter requires every specified observation. Unknown capabilities do
@@ -18,9 +20,16 @@ type ExecutorFilter struct {
 	Protocols       []string
 	EnforcementMode string
 	MinCapacityBPS  *int64
+	// ISDAS requires the executor-reported SCION ISD-AS, such as 1-ff00:0:110.
+	// Equivalent spellings match; an unknown ISD-AS does not.
+	ISDAS string
 }
 
 func (f ExecutorFilter) Empty() bool {
+	return len(f.Protocols) == 0 && f.EnforcementMode == "" && f.MinCapacityBPS == nil && f.ISDAS == ""
+}
+
+func (f ExecutorFilter) capabilityEmpty() bool {
 	return len(f.Protocols) == 0 && f.EnforcementMode == "" && f.MinCapacityBPS == nil
 }
 
@@ -37,6 +46,9 @@ func (f ExecutorFilter) Validate() error {
 	}
 	if f.MinCapacityBPS != nil && *f.MinCapacityBPS < 0 {
 		return errors.New("minimum capacity must not be negative")
+	}
+	if _, ok := wire.CanonicalISDAS(f.ISDAS); f.ISDAS != "" && !ok {
+		return fmt.Errorf("ISD-AS filter %q must be a concrete SCION ISD-AS such as 1-ff00:0:110", f.ISDAS)
 	}
 	return nil
 }
@@ -57,7 +69,17 @@ func (c *Client) DiscoverExecutors(ctx context.Context, filter ExecutorFilter) (
 		if !node.Ready || strings.TrimSpace(node.ID) == "" {
 			continue
 		}
-		if filter.Empty() {
+		if filter.ISDAS != "" {
+			want, _ := wire.CanonicalISDAS(filter.ISDAS)
+			got := node.SCIONISDAS.Value
+			if got == nil {
+				continue
+			}
+			if canonical, ok := wire.CanonicalISDAS(*got); !ok || canonical != want {
+				continue
+			}
+		}
+		if filter.capabilityEmpty() {
 			matched = append(matched, node)
 			continue
 		}

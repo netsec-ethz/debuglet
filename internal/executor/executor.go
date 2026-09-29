@@ -67,11 +67,8 @@ type Executor struct {
 	capabilityReason string
 	// capabilityTagging is the tagging mode of the last report sent.
 	capabilityTagging tagger.Mode
-	// lastTagging is the tagging mode of the latest run created in this
-	// session; nil before the first, when the report predicts it instead.
-	lastTagging   atomic.Pointer[tagger.Mode]
-	cfg           config.ExecutorConfig
-	teslaSchedule *tesla.KeySchedule
+	cfg               config.ExecutorConfig
+	teslaSchedule     *tesla.KeySchedule
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
 	chainReport *chainReport
@@ -352,12 +349,14 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 				e.logger.Log(level, msg, fields...)
 			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
+			capabilities, vantage := e.capabilityReport(ctx, false)
 			req := &protocol.HeartbeatRequest{
 				ExecutorId:    e.cfg.Identity.ExecutorID,
 				TimestampNs:   now.UnixNano(),
 				TeslaKeyEpoch: epoch,
 				TeslaKey:      key,
-				Capabilities:  e.capabilityReport(ctx, false),
+				Capabilities:  capabilities,
+				VantagePoint:  vantage,
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))

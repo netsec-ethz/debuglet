@@ -40,7 +40,7 @@ dbl --dispatcher research nodes
 dbl --dispatcher research run --sample hello --wait --allow-remote-test
 ```
 
-Use [capability filters](operations/executor-discovery.md) on `nodes` and `run` to select a ready executor by protocol, enforcement mode and advertised capacity.
+Use [capability filters](operations/executor-discovery.md) on `nodes` and `run` to select a ready executor by protocol, enforcement mode, advertised capacity and SCION ISD-AS (`--isd-as`). The table also shows the operator's name and location labels, the reported ISD-AS and the packet attribution state (`available`, `unavailable(<reason>)` or `unknown`); `--output json` adds admission state, the operator's network label, the reported listeners and the attribution refresh details.
 
 ### Return to an existing account
 

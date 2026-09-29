@@ -43,6 +43,7 @@ message HelloResponse {
   optional string enrollment_token = 16;
   uint32 output_version = 17;
   ExecutorCapabilities capabilities = 18; // Optional additive discovery observation.
+  VantagePointReport vantage_point = 19; // Optional; sent with capabilities.
 }
 
 message DebugletPolicy {
@@ -96,6 +97,7 @@ message HeartbeatRequest {
   int64 tesla_key_epoch = 3;
   bytes tesla_key = 4;
   ExecutorCapabilities capabilities = 5; // Absent means no new observation.
+  VantagePointReport vantage_point = 6; // Absent means no new observation.
 }
 message HeartbeatResponse {}
 
@@ -281,8 +283,9 @@ message ExecutorCapabilities {
 // How the packets of a run on this executor are tagged, per address family
 // and for SCION: ebpf (the kernel tagger, every packet of a marked socket),
 // userspace (the pure-Go tagger, IPv4 UDP and ICMP datagrams only) or none.
-// It is the mode of the executor's latest run, or before any run the mode a
-// run is set up to get. IPv6 and SCION are none in this build.
+// It is the node's capability, the mode a run on this executor is set up to
+// get, not the mode of any particular run. IPv6 and SCION are none in this
+// build.
 message TaggingMode {
   string ipv4 = 1;
   string ipv6 = 2;
@@ -300,4 +303,13 @@ message AttributionState {
   optional int64 last_refresh_age_ms = 5; // Since the oldest last successful kernel key install; absent without one.
   string refresh_error = 6;               // Short error of a failing kernel key refresh, at most 128 bytes; empty when none fails.
   optional int64 disclosure_held_ms = 7;  // How long an installed key has held disclosure back; absent when not held.
+}
+
+// Executor-reported network context, a versioned sibling of
+// ExecutorCapabilities on the same cadence. Every field is a claim of the
+// executor; the dispatcher never labels it verified.
+message VantagePointReport {
+  uint32 schema_version = 1;
+  string scion_isd_as = 2; // Local ISD-AS from the SCION daemon; empty unknown.
+  repeated string listeners = 3; // Listener transports it can open: tcp, udp, scion.
 }

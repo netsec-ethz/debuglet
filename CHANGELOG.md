@@ -24,7 +24,8 @@ changes; the linked API and deployment documentation contains operational detail
   (`ebpf`, `userspace` or `none`), shown by `GET /executors` and recorded in
   the result's `provenance.vantage_point` capability snapshot. The field is
   additive within capability schema 1 and result format 1.1; `null` means
-  unknown. See `docs/operations/executor-discovery.md#tagging-mode`.
+  unknown. It is the node's capability, the mode a run is set up to get, not a
+  per-run measurement. See `docs/operations/executor-discovery.md#tagging-mode`.
 - `debuglet-dispatcher -check-database` and `debuglet-executor -check-database`
   report read-only whether the configured database is current for the build
   (exit 0), needs the upgrade (3) or needs an upgrade that drops the recorded
@@ -38,11 +39,22 @@ changes; the linked API and deployment documentation contains operational detail
   Exports are written as 1.1; `client.ReadResult` and `dbl` still read 1.0 files
   and reject a 1.0 file carrying a vantage point. Older readers reject 1.1
   exports. See `docs/results.md`.
+- API 1.9: `GET /executors` reports `admission` (`ready`, `maintenance`,
+  `offline`), operator display metadata (`display_name`, `city`, `country`,
+  `network`) from new optional `[executors."<id>"]` dispatcher configuration
+  tables, and the executor-reported SCION ISD-AS and listener transports, each
+  with a source label. Executors send them in a new `VantagePointReport` beside
+  the capability report. `provenance.vantage_point` gains `scion_isd_as` and
+  `display` within schema 1; earlier 1.1 files remain valid. `dbl nodes` shows
+  the new columns, and `dbl nodes`, `dbl run` and `ExecutorFilter.ISDAS` filter
+  by ISD-AS. See `docs/operations/executor-discovery.md`.
 
 ### Changed
 - A run whose packets the eBPF tagger attributes refuses IPv6 destinations and
   peers instead of sending them untagged, and binds its TCP and UDP listeners
-  to IPv4 only; a dual-stack name is dialled on its IPv4 addresses. The guest
+  to IPv4 only; a dual-stack name is dialled on its IPv4 addresses. Such a
+  node with an IPv6 `public_host` literal refuses TCP and UDP listeners and
+  does not advertise them. The guest
   sees `denied`, and a failed run reports `destination refused: IPv6 not tagged
   on this executor`. Runs with the pure-Go tagger keep IPv6. SCION traffic
   stays permitted and is reported untagged (`tagging.scion = none`), since its

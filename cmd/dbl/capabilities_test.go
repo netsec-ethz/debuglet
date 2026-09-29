@@ -84,6 +84,52 @@ func TestCapabilitySelectionCarriesICMPIntoSubmission(t *testing.T) {
 	}
 }
 
+func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /executors", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"old","ready":true},
+{"id":"lab","ready":true,"admission":"maintenance",
+ "display":{"display_name":{"value":"ETH lab","source":"operator"},"city":{"value":"Zurich","source":"operator"},"country":{"value":"CH","source":"operator"},"network":{"value":null,"source":null}},
+ "scion_isd_as":{"value":"1-ff00:0:110","source":"executor-reported","observed_at":1},
+ "listeners":{"value":["udp","scion"],"source":"executor-reported","observed_at":1}}]`))
+	})
+	fx := newFixture(t, mux)
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
+	assertCode(t, code, exitOK, stdout, stderr)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	const header = "ID READY NAME LOCATION ISD_AS LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION"
+	if len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != header {
+		t.Fatalf("table: %q", stdout)
+	}
+	if fields := strings.Fields(lines[1]); fields[0] != "old" || fields[2] != "-" || fields[3] != "-" || fields[4] != "unknown" {
+		t.Fatalf("legacy row: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "ETH lab  Zurich,CH  1-ff00:0:110") {
+		t.Fatalf("vantage row: %q", lines[2])
+	}
+	// The default table stays compact; admission, network and listeners are
+	// in --output json only.
+	for _, hidden := range []string{"ADMISSION", "NETWORK", "LISTENERS", "maintenance", "udp,scion"} {
+		if strings.Contains(stdout, hidden) {
+			t.Fatalf("default table shows %q: %q", hidden, stdout)
+		}
+	}
+	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "nodes", "--isd-as", "1-ff00:0:0110")
+	assertCode(t, code, exitOK, stdout, stderr)
+	var nodes []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &nodes); err != nil || len(nodes) != 1 || nodes[0].ID != "lab" {
+		t.Fatalf("filtered nodes: %s %v", stdout, err)
+	}
+	requests := fx.total()
+	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes", "--isd-as", "1-0")
+	if code == exitOK || !strings.Contains(stderr, "ISD-AS") || fx.total() != requests {
+		t.Fatalf("invalid filter: %d %q %q", code, stdout, stderr)
+	}
+}
+
 // The human table names the attribution state and only its documented reasons;
 // the JSON output carries the refresh details unchanged.
 func TestNodesShowAttribution(t *testing.T) {

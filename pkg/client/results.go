@@ -140,10 +140,19 @@ func validVantagePoint(v wire.VantagePoint) bool {
 	source := func(value *string) bool {
 		return value != nil && (*value == wire.SourceOperator || *value == wire.SourceExecutorReported || *value == wire.SourceDispatcherObserved)
 	}
-	for _, field := range []wire.LabelledString{v.SourceIP, v.PublicHost} {
+	d := v.Display
+	for _, field := range []wire.LabelledString{v.SourceIP, v.PublicHost, d.DisplayName, d.City, d.Country, d.Network} {
 		if (field.Value == nil) != (field.Source == nil) || field.Value != nil && (strings.TrimSpace(*field.Value) == "" || !source(field.Source)) {
 			return false
 		}
+	}
+	// Added within schema 1: an earlier 1.1 file omits it, which reads as null.
+	if ia := v.SCIONISDAS; ia.Value == nil {
+		if ia.Source != nil || ia.ObservedAt != nil || ia.Stale != nil {
+			return false
+		}
+	} else if canonical, ok := wire.CanonicalISDAS(*ia.Value); !ok || canonical != *ia.Value || !source(ia.Source) || ia.ObservedAt == nil || ia.ObservedAt.IsZero() || ia.Stale == nil {
+		return false
 	}
 	c := v.Capabilities
 	if c.Value == nil {

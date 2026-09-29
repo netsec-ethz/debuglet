@@ -219,10 +219,17 @@ func (d *Debuglet) checkListenerFamily() error {
 		return nil
 	}
 	host := d.env.PortManager.PublicHost()
-	if addr, err := netip.ParseAddr(host); err == nil && !netpolicy.Normalize(addr).Is4() {
+	if IPv6PublicHost(host) {
 		return fmt.Errorf("%w: listener: public host %s is an IPv6 address and this executor's kernel tagger tags IPv4 only", netpolicy.ErrUntagged, host)
 	}
 	return nil
+}
+
+// IPv6PublicHost reports whether host is an IPv6 literal (IPv4-mapped counts
+// as IPv4), under which a run that refuses IPv6 cannot offer a listener.
+func IPv6PublicHost(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	return err == nil && !netpolicy.Normalize(addr).Is4()
 }
 
 // startServers starts the network listeners required by this debuglet instance.
