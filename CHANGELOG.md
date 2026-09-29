@@ -54,6 +54,11 @@ changes; the linked API and deployment documentation contains operational detail
 - Refuse a destination limit below the floors reserved for admitted runs
   whose window lies ahead, not only below the floors of active allocations
   (`PATCH /destination` answers 409 `capacity_exhausted`).
+- Verify each TESLA key an executor discloses on its heartbeat against its
+  chain anchor before storing it, hashing forward from the last verified key.
+  A key that does not verify, lies more than one week of epochs past it, or
+  differs from the key stored for its epoch is dropped and logged once per
+  chain; an older epoch is ignored. The heartbeat itself still succeeds.
 
 ## [0.2.0] - 2026-09-27
 

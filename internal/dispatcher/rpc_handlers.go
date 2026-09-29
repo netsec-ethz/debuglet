@@ -12,6 +12,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -74,8 +75,15 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		})
 		entry.Write(zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
 	}
+	// A disclosure that does not verify against the chain is dropped; the
+	// heartbeat still counts, and the chain is logged once rather than per beat.
 	err = d.keystore.Store(execID, anchor, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
-	if err != nil {
+	var rejected *tag.RejectedError
+	if errors.As(err, &rejected) {
+		if rejected.First {
+			d.logger.Warn("Rejected disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
+		}
+	} else if err != nil {
 		return nil, fmt.Errorf("failed to store Tesla key: %w", err)
 	}
 	return &pb.HeartbeatResponse{}, nil
