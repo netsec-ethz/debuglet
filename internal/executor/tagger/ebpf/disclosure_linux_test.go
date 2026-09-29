@@ -18,7 +18,12 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
-const disclosureDelay = time.Second
+// disclosureEpoch is the epoch length of the disclosure fixtures, and
+// disclosureDelay their disclosure delay d in epochs, the shortest allowed.
+const (
+	disclosureEpoch = time.Second
+	disclosureDelay = tesla.MinDisclosureDelay
+)
 
 // disclosureInstallBound is how long after a boundary the slot may still hold
 // the previous epoch's key. The refresh timer fires at the boundary and the
@@ -29,10 +34,11 @@ const disclosureInstallBound = 300 * time.Millisecond
 func disclosureSchedule(t *testing.T, length int64, lead time.Duration) *tesla.KeySchedule {
 	t.Helper()
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:        make([]byte, 32),
-		ChainLength: length,
-		EpochLength: disclosureDelay,
-		Epoch:       time.Now().Add(lead - 2*disclosureDelay),
+		Seed:            make([]byte, 32),
+		ChainLength:     length,
+		EpochLength:     disclosureEpoch,
+		DisclosureDelay: disclosureDelay,
+		Epoch:           time.Now().Add(lead - 2*disclosureEpoch),
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
@@ -112,8 +118,8 @@ type disclosureSample struct {
 }
 
 // disclosureCheckBoundary requires that within disclosureInstallBound after
-// the start of epoch e every slot holds k_e (or is empty when e is L) and k_{e-1}
-// is disclosed.
+// the start of epoch e every slot holds k_e (or is empty from L on) and
+// k_{e-d} is disclosed, k_{L-1} at most.
 func disclosureCheckBoundary(t *testing.T, ks *tesla.KeySchedule, samples []disclosureSample, e int64) {
 	t.Helper()
 	cfg := ks.Config()
@@ -122,11 +128,12 @@ func disclosureCheckBoundary(t *testing.T, ks *tesla.KeySchedule, samples []disc
 	if e >= cfg.ChainLength {
 		want = -1
 	}
+	disclosed := min(e-disclosureDelay, cfg.ChainLength-1)
 	for _, s := range samples {
 		if s.at.Before(boundary) {
 			continue
 		}
-		moved := s.disclosed == e-1
+		moved := s.disclosed == disclosed
 		for _, slot := range s.slots {
 			moved = moved && slot == want
 		}
@@ -135,7 +142,7 @@ func disclosureCheckBoundary(t *testing.T, ks *tesla.KeySchedule, samples []disc
 		}
 		if s.at.Sub(boundary) > disclosureInstallBound {
 			t.Fatalf("%v after the start of epoch %d: slots %v, disclosed %d; want slots at %d and k_%d disclosed",
-				s.at.Sub(boundary), e, s.slots, s.disclosed, want, e-1)
+				s.at.Sub(boundary), e, s.slots, s.disclosed, want, disclosed)
 		}
 	}
 	t.Fatalf("no sample after the start of epoch %d", e)
@@ -143,8 +150,9 @@ func disclosureCheckBoundary(t *testing.T, ks *tesla.KeySchedule, samples []disc
 
 // TestDisclosureFollowsKernelSlot runs a real tagger across two boundaries
 // and the end of the chain: the disclosed epoch is never the one whose key is
-// in the map, the slot holds the new key shortly after each boundary, and
-// after Expiry the slot is empty and k_{L-1} is disclosed.
+// in the map and trails the current one by d, the slot holds the new key
+// shortly after each boundary, after Expiry the slot is empty, and k_{L-1} is
+// disclosed from the start of epoch L-1+d.
 func TestDisclosureFollowsKernelSlot(t *testing.T) {
 	const length = 4
 	ks := disclosureSchedule(t, length, 400*time.Millisecond)
@@ -155,8 +163,9 @@ func TestDisclosureFollowsKernelSlot(t *testing.T) {
 	if epoch, ok := disclosureSlotEpoch(t, bt); !ok || epoch < before || epoch > ks.EpochOf(time.Now()) {
 		t.Fatalf("initial slot epoch=%d,%v, want %d to %d", epoch, ok, before, ks.EpochOf(time.Now()))
 	}
-	samples := disclosureWatch(t, ks, ks.Expiry().Add(disclosureDelay/2), bt)
-	for e := int64(2); e <= length; e++ {
+	lastDue := ks.Config().Epoch.Add((length - 1 + disclosureDelay) * disclosureEpoch)
+	samples := disclosureWatch(t, ks, lastDue.Add(disclosureEpoch/2), bt)
+	for e := int64(2); e <= length-1+disclosureDelay; e++ {
 		disclosureCheckBoundary(t, ks, samples, e)
 	}
 	if epoch, ok := bt.InstalledEpoch(); ok {
@@ -176,7 +185,7 @@ func TestDisclosureWaitsForEveryTagger(t *testing.T) {
 	first := disclosureTagger(t, ks, "disclosure-first")
 	second := disclosureTagger(t, ks, "disclosure-second")
 	start := ks.Config().Epoch
-	samples := disclosureWatch(t, ks, start.Add(3*disclosureDelay+disclosureDelay/2), first, second)
+	samples := disclosureWatch(t, ks, start.Add(3*disclosureEpoch+disclosureEpoch/2), first, second)
 	for e := int64(2); e <= 3; e++ {
 		disclosureCheckBoundary(t, ks, samples, e)
 	}
@@ -199,7 +208,7 @@ func TestDisclosureWaitsForEveryTagger(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	now = time.Now()
-	if idx, _, _ := ks.DisclosedKey(now); idx != ks.EpochOf(now)-1 {
-		t.Fatalf("disclosed %d with no tagger running, want %d", idx, ks.EpochOf(now)-1)
+	if idx, _, _ := ks.DisclosedKey(now); idx != ks.EpochOf(now)-disclosureDelay {
+		t.Fatalf("disclosed %d with no tagger running, want %d", idx, ks.EpochOf(now)-disclosureDelay)
 	}
 }

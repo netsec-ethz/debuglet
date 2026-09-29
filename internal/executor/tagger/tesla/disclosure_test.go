@@ -35,11 +35,15 @@ func (h *fakeHolder) release() {
 	h.mu.Unlock()
 }
 
+// disclosureDelay is the d of the disclosure fixtures, the shortest a schedule
+// accepts, so a cap by an installed key and the delay itself are both visible.
+const disclosureDelay = MinDisclosureDelay
+
 func disclosureSchedule(t *testing.T, length int64) (*KeySchedule, func(epoch int64) time.Time) {
 	t.Helper()
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	const delay = 10 * time.Second
-	ks, err := NewKeySchedule(Config{Seed: bytes.Repeat([]byte{0x5A}, 32), ChainLength: length, EpochLength: delay, Epoch: start})
+	ks, err := NewKeySchedule(Config{Seed: bytes.Repeat([]byte{0x5A}, 32), ChainLength: length, EpochLength: delay, DisclosureDelay: disclosureDelay, Epoch: start})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,46 +61,65 @@ func wantDisclosed(t *testing.T, ks *KeySchedule, at time.Time, want int64) {
 	}
 }
 
-// TestDisclosureCappedByInstalledKeys crosses the boundary into epoch 5 with
-// no, one and two holders: a holder still on epoch 4 caps disclosure at 3,
-// and k_4 is disclosed on the same instant the last holder moves off it.
+// TestDisclosureWaitsForTheDelay checks that k_i is disclosed from the start
+// of epoch i+d and not an instant earlier, so the key of a verifier's
+// candidate epochs t and t-1 is never public during epoch t.
+func TestDisclosureWaitsForTheDelay(t *testing.T) {
+	ks, at := disclosureSchedule(t, 32)
+	for epoch := int64(disclosureDelay); epoch < 20; epoch++ {
+		wantDisclosed(t, ks, at(epoch), epoch-disclosureDelay)
+		wantDisclosed(t, ks, at(epoch+1).Add(-time.Nanosecond), epoch-disclosureDelay)
+		if idx, _, _ := ks.DisclosedKey(at(epoch)); idx >= epoch-1 {
+			t.Fatalf("epoch %d discloses k_%d, a key a verifier still accepts", epoch, idx)
+		}
+	}
+}
+
+// TestDisclosureCappedByInstalledKeys crosses the boundary into epoch 6, when
+// k_4 becomes due, with no, one and two holders: a holder still on epoch 4
+// caps disclosure at 3, and k_4 is disclosed on the same instant the last
+// holder moves off it.
 func TestDisclosureCappedByInstalledKeys(t *testing.T) {
 	ks, at := disclosureSchedule(t, 16)
-	boundary := at(5)
+	boundary := at(6)
 
+	wantDisclosed(t, ks, boundary.Add(-time.Nanosecond), 3)
 	wantDisclosed(t, ks, boundary, 4)
 
 	a := &fakeHolder{}
 	a.hold(4)
 	ks.RegisterInstalled(a)
-	wantDisclosed(t, ks, boundary.Add(-time.Nanosecond), 3)
 	wantDisclosed(t, ks, boundary, 3)
 
 	b := &fakeHolder{}
 	b.hold(4)
 	ks.RegisterInstalled(b)
-	a.hold(5)
+	a.hold(6)
 	wantDisclosed(t, ks, boundary, 3)
 	b.hold(5)
 	wantDisclosed(t, ks, boundary, 4)
+	// A holder on the current epoch does not cap anything the delay allows.
+	b.hold(6)
+	wantDisclosed(t, ks, boundary, 4)
 
 	// A holder behind by several epochs caps at its own epoch, and a released
-	// holder no longer caps anything.
+	// holder no longer caps anything; a, still on epoch 6, caps at 5.
 	b.hold(2)
 	wantDisclosed(t, ks, at(9), 1)
 	b.release()
-	wantDisclosed(t, ks, at(9), 4)
+	wantDisclosed(t, ks, at(9), 5)
 
 	// The public anchor stays disclosable whatever is installed.
 	a.hold(1)
 	wantDisclosed(t, ks, at(9), 0)
 	ks.UnregisterInstalled(a)
-	wantDisclosed(t, ks, at(9), 8)
+	wantDisclosed(t, ks, at(9), 7)
 }
 
-// TestLastKeyDisclosedAfterRelease covers the end of the chain: at and after
-// Expiry k_{L-1} is disclosed only once the holder released it, and a holder
-// that never releases keeps the cap until it is unregistered.
+// TestLastKeyDisclosedAfterRelease covers the end of the chain: k_{L-1} is
+// disclosed from the start of epoch L-1+d, after Expiry, and only once the
+// holder released it; a holder that never releases keeps the cap until it is
+// unregistered.
 func TestLastKeyDisclosedAfterRelease(t *testing.T) {
 	const length = 4
 	ks, at := disclosureSchedule(t, length)
@@ -108,7 +131,10 @@ func TestLastKeyDisclosedAfterRelease(t *testing.T) {
 		wantDisclosed(t, ks, when, length-2)
 	}
 	h.release()
-	wantDisclosed(t, ks, ks.Expiry(), length-1)
+	wantDisclosed(t, ks, ks.Expiry(), length-disclosureDelay)
+	wantDisclosed(t, ks, at(length-1+disclosureDelay).Add(-time.Nanosecond), length-2)
+	wantDisclosed(t, ks, at(length-1+disclosureDelay), length-1)
+	wantDisclosed(t, ks, ks.Expiry().Add(time.Hour), length-1)
 
 	stuck := &fakeHolder{}
 	stuck.hold(2)
@@ -120,7 +146,7 @@ func TestLastKeyDisclosedAfterRelease(t *testing.T) {
 }
 
 // TestDisclosureAtEpochZeroIsNothingOrPublicAnchor pins the floor of
-// DisclosedKey. Within epoch 0, and before Epoch, nothing is disclosed
+// DisclosedKey. Before epoch d starts, and before Epoch, nothing is disclosed
 // (ok=false) whatever is installed. Later, a holder on epoch 0 or 1 caps the
 // result at (0, k_0, ok=true): k_0 is the public anchor and never signs, so
 // naming it discloses nothing a verifier did not already have.
@@ -136,7 +162,7 @@ func TestDisclosureAtEpochZeroIsNothingOrPublicAnchor(t *testing.T) {
 		if held {
 			h.hold(1)
 		}
-		for _, when := range []time.Time{at(0).Add(-time.Hour), at(0), at(1).Add(-time.Nanosecond)} {
+		for _, when := range []time.Time{at(0).Add(-time.Hour), at(0), at(1), at(disclosureDelay).Add(-time.Nanosecond)} {
 			if idx, key, ok := ks.DisclosedKey(when); ok || idx != 0 || key != nil {
 				t.Fatalf("DisclosedKey(%s, held=%v) = %d, %x, %v; want 0, nil, false",
 					when.Sub(at(0)), held, idx, key, ok)
@@ -146,7 +172,7 @@ func TestDisclosureAtEpochZeroIsNothingOrPublicAnchor(t *testing.T) {
 
 	for _, epoch := range []int64{0, 1} {
 		h.hold(epoch)
-		for _, when := range []time.Time{at(1), at(3), ks.Expiry()} {
+		for _, when := range []time.Time{at(disclosureDelay), at(4), ks.Expiry()} {
 			idx, key, ok := ks.DisclosedKey(when)
 			if !ok || idx != 0 || !bytes.Equal(key, ks.Anchor()) {
 				t.Fatalf("DisclosedKey(%s, holder on %d) = %d, %x, %v; want 0, anchor, true",
@@ -155,5 +181,5 @@ func TestDisclosureAtEpochZeroIsNothingOrPublicAnchor(t *testing.T) {
 		}
 	}
 	h.release()
-	wantDisclosed(t, ks, at(3), 2)
+	wantDisclosed(t, ks, at(4), 2)
 }

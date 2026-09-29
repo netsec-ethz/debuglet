@@ -14,9 +14,9 @@
 //
 // The executor uses key k_i during epoch i (1 ≤ i < L) and discloses it once
 // the disclosure delay of d ≥ 2 epochs has elapsed, at the start of epoch i+d
-// (see Disclosure). Because k_0 is public, epoch 0
-// has no signing key: nothing is tagged before epoch 1 starts. Because k_L is
-// never disclosed, nothing is tagged from epoch L on either. A verifier who
+// (see Disclosure). Because k_0 is public, epoch 0 has no signing key: nothing
+// is tagged before epoch 1 starts. Because k_L is never disclosed, nothing is
+// tagged from epoch L on either. A verifier who
 // has buffered packets from epoch i can verify them once k_i is published by
 // checking:
 //
@@ -57,14 +57,15 @@
 // between the executor, the dispatcher and the capture host.
 //
 // A key is also disclosed no earlier than the first heartbeat after every
-// kernel tagger of the chain has moved off it. Each eBPF tagger registers with the
-// schedule as an InstalledKeyHolder and reports the epoch whose key its map
+// kernel tagger of the chain has moved off it. Each eBPF tagger registers with
+// the schedule as an InstalledKeyHolder and reports the epoch whose key its map
 // slot may still hold; DisclosedKey never names that epoch or a later one. The
 // kernel taggers refresh their key at each epoch boundary, so in the ordinary
 // case the taggers have moved off k_i long before epoch i+d, and a delayed or
 // failed refresh delays disclosure instead of leaving a disclosed key
-// installed. At the end of the chain k_{L-1} follows the same rule: it is
-// disclosed once every tagger has removed it at Expiry. The pure-Go tagger
+// installed. At the end of the chain k_{L-1} follows the same rules: it is
+// disclosed from the start of epoch L-1+d, once every tagger has removed it at
+// Expiry. The pure-Go tagger
 // reads CurrentKey for every packet and holds no key.
 //
 // Disclosure therefore lags the start of epoch i+d by up to one heartbeat
@@ -112,10 +113,12 @@ const MinDisclosureDelay = 2
 
 // DefaultDisclosureWindow is the wall-clock time a default disclosure delay
 // covers: d defaults to the smallest number of epochs, and at least
-// MinDisclosureDelay, whose length reaches it. Five minutes is far beyond any
-// verifier tolerance or disciplined clock skew, and short enough that a
-// result's tags become verifiable soon after the run.
-const DefaultDisclosureWindow = 5 * time.Minute
+// MinDisclosureDelay, whose length reaches it. Fifteen minutes is in the
+// range TRACER uses (10 to 30 minutes), far beyond any verifier tolerance or
+// disciplined clock skew, and still short enough that a result's tags become
+// verifiable soon after the run. At the default epoch length of 10 seconds it
+// is d = 90.
+const DefaultDisclosureWindow = 15 * time.Minute
 
 // DefaultDisclosureDelay returns the disclosure delay, in epochs, of a
 // schedule with the given epoch length that names none.

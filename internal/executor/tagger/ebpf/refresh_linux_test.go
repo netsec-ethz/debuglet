@@ -20,17 +20,24 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
-const refreshDelay = 10 * time.Second
+// refreshEpoch is the epoch length of the refresh fixtures and
+// refreshDisclosure their disclosure delay d, the shortest allowed, so an
+// installed key two epochs behind caps disclosure.
+const (
+	refreshEpoch      = 10 * time.Second
+	refreshDisclosure = tesla.MinDisclosureDelay
+)
 
 var refreshStart = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func refreshTagger(t *testing.T, epoch time.Time) (*BPFTagger, *observer.ObservedLogs) {
 	t.Helper()
 	ks, err := tesla.NewKeySchedule(tesla.Config{
-		Seed:        bytes.Repeat([]byte{0x3C}, 32),
-		ChainLength: 1 << 10,
-		EpochLength: refreshDelay,
-		Epoch:       epoch,
+		Seed:            bytes.Repeat([]byte{0x3C}, 32),
+		ChainLength:     1 << 10,
+		EpochLength:     refreshEpoch,
+		DisclosureDelay: refreshDisclosure,
+		Epoch:           epoch,
 	})
 	if err != nil {
 		t.Fatalf("NewKeySchedule: %v", err)
@@ -119,7 +126,7 @@ func TestKeyRefreshRetainsAndLogsFailureChanges(t *testing.T) {
 // written, keeps the older epoch while a write is in flight, and is released
 // only after the slot is confirmed empty.
 func TestApplyKeyRemovesSlotOnFailedInstall(t *testing.T) {
-	usable := refreshStart.Add(2 * refreshDelay)
+	usable := refreshStart.Add(2 * refreshEpoch)
 	errPut, errDelete := errors.New("put failed"), errors.New("delete failed")
 	for _, tc := range []struct {
 		name              string
@@ -204,11 +211,11 @@ func TestDisclosureNeverNamesInstalledKey(t *testing.T) {
 			}
 			return now.Add(time.Hour)
 		}},
-		{name: "late_refresh", next: func(_ *tesla.KeySchedule, now time.Time) time.Time { return now.Add(refreshDelay / 2) }},
-		{name: "failed_refresh", failFrom: 3 * refreshDelay, failUntil: 9 * refreshDelay / 2, next: func(_ *tesla.KeySchedule, now time.Time) time.Time { return now.Add(refreshDelay / 3) }},
+		{name: "late_refresh", next: func(_ *tesla.KeySchedule, now time.Time) time.Time { return now.Add(refreshEpoch / 2) }},
+		{name: "failed_refresh", failFrom: 3 * refreshEpoch, failUntil: 9 * refreshEpoch / 2, next: func(_ *tesla.KeySchedule, now time.Time) time.Time { return now.Add(refreshEpoch / 3) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 6, EpochLength: refreshDelay, Epoch: refreshStart})
+			ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 6, EpochLength: refreshEpoch, DisclosureDelay: refreshDisclosure, Epoch: refreshStart})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -218,9 +225,9 @@ func TestDisclosureNeverNamesInstalledKey(t *testing.T) {
 			filled := false
 			put := func(e akEntry) error { slot, filled = e, true; return nil }
 			del := func() error { filled = false; return nil }
-			first := refreshStart.Add(2*refreshDelay + 9*refreshDelay/10)
+			first := refreshStart.Add(2*refreshEpoch + 9*refreshEpoch/10)
 			next := first
-			for now := first; !now.After(ks.Expiry().Add(2 * refreshDelay)); now = now.Add(refreshDelay / 20) {
+			for now := first; !now.After(ks.Expiry().Add(2 * refreshEpoch)); now = now.Add(refreshEpoch / 20) {
 				if !now.Before(next) {
 					if at := now.Sub(refreshStart); at >= tc.failFrom && at < tc.failUntil {
 						fail := func() error { return errBusy }
@@ -234,17 +241,19 @@ func TestDisclosureNeverNamesInstalledKey(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if held, usable, _ := akEntryAt(ks, bt.measureID, refreshStart.Add(time.Duration(idx)*refreshDelay)); filled && usable && held == slot {
+				if held, usable, _ := akEntryAt(ks, bt.measureID, refreshStart.Add(time.Duration(idx)*refreshEpoch)); filled && usable && held == slot {
 					t.Fatalf("at %v: disclosed epoch %d while its key is still installed", now.Sub(refreshStart), idx)
 				}
-				if tc.aligned && idx != ks.EpochOf(now)-1 {
-					t.Fatalf("at %v: disclosed epoch %d, want %d", now.Sub(refreshStart), idx, ks.EpochOf(now)-1)
+				// Aligned refreshes never hold disclosure back: k_{t-d}, and
+				// k_{L-1} at most, whose epoch ended long before.
+				if want := min(int64(now.Sub(refreshStart)/refreshEpoch)-refreshDisclosure, ks.ChainLength()-1); tc.aligned && idx != want {
+					t.Fatalf("at %v: disclosed epoch %d, want %d", now.Sub(refreshStart), idx, want)
 				}
 			}
 			if filled {
 				t.Fatal("slot still holds a key after Expiry")
 			}
-			if idx, _, _ := ks.DisclosedKey(ks.Expiry().Add(refreshDelay)); idx != ks.ChainLength()-1 {
+			if idx, _, _ := ks.DisclosedKey(ks.Expiry().Add(refreshEpoch)); idx != ks.ChainLength()-1 {
 				t.Fatalf("after Expiry disclosed %d, want %d", idx, ks.ChainLength()-1)
 			}
 		})
@@ -272,13 +281,14 @@ func TestTaggerCloseReleasesHoldOnlyWhenKeyGone(t *testing.T) {
 			attach, program := &refreshCloser{err: tc.detachErr}, &refreshCloser{}
 			bt.closers = []io.Closer{attach, program}
 			bt.schedule.RegisterInstalled(bt)
-			if err := bt.applyKeyAt(refreshStart.Add(2*refreshDelay), func(akEntry) error { return nil }, func() error { return nil }); err != nil {
+			if err := bt.applyKeyAt(refreshStart.Add(2*refreshEpoch), func(akEntry) error { return nil }, func() error { return nil }); err != nil {
 				t.Fatal(err)
 			}
-			later := refreshStart.Add(6 * refreshDelay)
+			later := refreshStart.Add(6 * refreshEpoch)
 			if idx, _, _ := bt.schedule.DisclosedKey(later); idx != 1 {
 				t.Fatalf("disclosed %d with epoch 2 installed, want 1", idx)
 			}
+			const due = 6 - refreshDisclosure
 			removes := 0
 			err := bt.closeWith(func() error { removes++; return tc.delErr })
 			if removes != 1 || attach.calls.Load() != 1 || program.calls.Load() != 1 {
@@ -289,7 +299,7 @@ func TestTaggerCloseReleasesHoldOnlyWhenKeyGone(t *testing.T) {
 			}
 			_, held := bt.InstalledEpoch()
 			idx, _, _ := bt.schedule.DisclosedKey(later)
-			if held == tc.released || (idx == 5) != tc.released {
+			if held == tc.released || (idx == due) != tc.released {
 				t.Fatalf("after Close hold=%v disclosed=%d, want released=%v", held, idx, tc.released)
 			}
 			if again := bt.closeWith(func() error { removes++; return nil }); removes != 1 || !errors.Is(again, err) {
@@ -305,8 +315,8 @@ func TestTaggerCloseReleasesHoldOnlyWhenKeyGone(t *testing.T) {
 func TestRefreshWaitRetriesFailedUpdates(t *testing.T) {
 	bt, _ := refreshTagger(t, refreshStart)
 	ks := bt.schedule
-	mid := refreshStart.Add(2*refreshDelay + time.Second)
-	late := refreshStart.Add(3*refreshDelay - 2*time.Second)
+	mid := refreshStart.Add(2*refreshEpoch + time.Second)
+	late := refreshStart.Add(3*refreshEpoch - 2*time.Second)
 	expired := ks.Expiry().Add(time.Second)
 	for _, tc := range []struct {
 		name            string
@@ -315,11 +325,11 @@ func TestRefreshWaitRetriesFailedUpdates(t *testing.T) {
 		wait            time.Duration
 		due             bool
 	}{
-		{name: "success_waits_for_boundary", at: mid, holding: true, wait: refreshDelay - time.Second, due: true},
-		{name: "failure_retried_mid_epoch", at: mid, failed: true, holding: true, wait: refreshDelay / 2, due: true},
+		{name: "success_waits_for_boundary", at: mid, holding: true, wait: refreshEpoch - time.Second, due: true},
+		{name: "failure_retried_mid_epoch", at: mid, failed: true, holding: true, wait: refreshEpoch / 2, due: true},
 		{name: "failure_retried_at_boundary", at: late, failed: true, holding: true, wait: 2 * time.Second, due: true},
 		{name: "expired_released_idles", at: expired},
-		{name: "expired_failed_removal_retried", at: expired, failed: true, holding: true, wait: refreshDelay / 2, due: true},
+		{name: "expired_failed_removal_retried", at: expired, failed: true, holding: true, wait: refreshEpoch / 2, due: true},
 		{name: "expired_failure_without_hold_idles", at: expired, failed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,7 +346,7 @@ func TestRefreshWaitRetriesFailedUpdates(t *testing.T) {
 // failed removal at Expiry is retried, and once it succeeds the hold is
 // released, the last key is disclosed and the loop idles.
 func TestKeyRefreshRetriesFailedUpdates(t *testing.T) {
-	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 4, EpochLength: refreshDelay, Epoch: refreshStart})
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: bytes.Repeat([]byte{0x3C}, 32), ChainLength: 4, EpochLength: refreshEpoch, DisclosureDelay: refreshDisclosure, Epoch: refreshStart})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +368,7 @@ func TestKeyRefreshRetriesFailedUpdates(t *testing.T) {
 		waits <- due{wait, ok}
 		return ticks, func() {}
 	}
-	now = refreshStart.Add(2*refreshDelay + time.Second)
+	now = refreshStart.Add(2*refreshEpoch + time.Second)
 	if err := bt.initializeRefresh(update, newTimer); err != nil {
 		t.Fatal(err)
 	}
@@ -370,11 +380,11 @@ func TestKeyRefreshRetriesFailedUpdates(t *testing.T) {
 		hold           int64 // 0: no key held
 		next           due
 	}{
-		{name: "initial", at: 2*refreshDelay + time.Second, hold: 2, next: due{refreshDelay - time.Second, true}},
-		{name: "failed_at_boundary", at: 3 * refreshDelay, putErr: errBusy, delErr: errBusy, hold: 2, next: due{refreshDelay / 2, true}},
-		{name: "retry_succeeds", at: 3*refreshDelay + refreshDelay/2, hold: 3, next: due{refreshDelay / 2, true}},
-		{name: "failed_removal_at_expiry", at: 4 * refreshDelay, delErr: errBusy, hold: 3, next: due{refreshDelay / 2, true}},
-		{name: "removal_retried", at: 4*refreshDelay + refreshDelay/2, next: due{0, false}},
+		{name: "initial", at: 2*refreshEpoch + time.Second, hold: 2, next: due{refreshEpoch - time.Second, true}},
+		{name: "failed_at_boundary", at: 3 * refreshEpoch, putErr: errBusy, delErr: errBusy, hold: 2, next: due{refreshEpoch / 2, true}},
+		{name: "retry_succeeds", at: 3*refreshEpoch + refreshEpoch/2, hold: 3, next: due{refreshEpoch / 2, true}},
+		{name: "failed_removal_at_expiry", at: 4 * refreshEpoch, delErr: errBusy, hold: 3, next: due{refreshEpoch / 2, true}},
+		{name: "removal_retried", at: 4*refreshEpoch + refreshEpoch/2, next: due{0, false}},
 	} {
 		if step.name != "initial" {
 			now, putErr, delErr = refreshStart.Add(step.at), step.putErr, step.delErr
@@ -392,8 +402,12 @@ func TestKeyRefreshRetriesFailedUpdates(t *testing.T) {
 		if epoch, held := bt.InstalledEpoch(); held != (step.hold != 0) || (held && epoch != step.hold) {
 			t.Fatalf("%s: hold=%d,%v, want %d", step.name, epoch, held, step.hold)
 		}
+		// Long after the delay elapsed, a held key still caps disclosure.
+		if idx, _, _ := ks.DisclosedKey(ks.Expiry().Add(time.Hour)); step.hold != 0 && idx != step.hold-1 {
+			t.Fatalf("%s: disclosed %d with epoch %d held, want %d", step.name, idx, step.hold, step.hold-1)
+		}
 	}
-	if idx, _, _ := ks.DisclosedKey(now); idx != 3 {
+	if idx, _, _ := ks.DisclosedKey(refreshStart.Add((3 + refreshDisclosure) * refreshEpoch)); idx != 3 {
 		t.Fatalf("after the retried removal disclosed %d, want 3", idx)
 	}
 }
