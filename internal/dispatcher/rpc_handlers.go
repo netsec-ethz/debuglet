@@ -318,8 +318,10 @@ func terminalLine(message string) string {
 }
 
 // OnDebugletExit selects one immutable terminal result. Only its winner handles
-// payment and fairshare notification; duplicates finish any recorded resource
-// cleanup without repeating payment or subtracting another run's reservation.
+// payment and fairshare notification. Winner and duplicates release the run's
+// resources by run identity, so a duplicate completes a release an earlier
+// delivery did not reach without repeating payment or subtracting another
+// run's reservation.
 func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation, req *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing exit request")
@@ -340,7 +342,8 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 
 	// Write the terminal result immediately; there is no read-before-write
 	// decision. The returned row is the one this caller won.
-	deb, err := d.completeTerminal(ctx, database.CompleteDebugletParams{
+	queries := database.New(d.db)
+	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
 		ExitedState:           models.RunStateExited,
 		Error:                 terminalError(exitCode, errMsg),
 		Uuid:                  id,
@@ -364,14 +367,14 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 		if existing.State != models.RunStateExited {
 			return nil, fmt.Errorf("exit of debuglet '%s' was rejected although it is in state %s", debugletID, existing.State.String())
 		}
-		if err := d.finishTerminalCleanup(ctx, id); err != nil {
-			return nil, err
-		}
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
 		return &pb.DebugletExitResponse{}, nil
 	}
 
 	d.settleTerminalPayment(ctx, &deb, exitCode)
-	cleanupErr := d.finishTerminalCleanup(ctx, id)
+	d.releaseTerminal(deb)
 	// Reserve the origin continuation and every exact recipient before this
 	// callback returns; the detached deadline releases no mutation of its own.
 	notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -388,9 +391,6 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 		}()
 	}
 
-	if cleanupErr != nil {
-		return nil, cleanupErr
-	}
 	return &pb.DebugletExitResponse{}, nil
 }
 
@@ -709,7 +709,7 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, de
 }
 
 // settleTerminalPayment preserves the winner's exit-code-based payment decision.
-// Durable resource recovery does not retry payment effects.
+// Resource release is separate and never retries payment effects.
 func (d *Dispatcher) settleTerminalPayment(ctx context.Context, deb *database.Debuglet, exitCode int32) {
 	switch exitCode {
 	case 0:

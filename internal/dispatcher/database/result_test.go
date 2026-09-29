@@ -16,7 +16,7 @@ func TestResultProvenanceMigrationAndImmutability(t *testing.T) {
 	ctx, db := cbOpen(t, 10)
 	q := database.New(db)
 	legacy := cbCreate(t, ctx, q, cbIncarnation, cbSession)
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 12 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 11 {
 		t.Fatalf("migration=%d, %v", version, err)
 	}
 	if _, err := q.GetDebugletProvenance(ctx, legacy.Uuid); !errors.Is(err, sql.ErrNoRows) {

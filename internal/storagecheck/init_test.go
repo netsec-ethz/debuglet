@@ -43,7 +43,6 @@ func TestBootstrapFresh(t *testing.T) {
 					"debuglets":                  "id uuid start_time end_time usage ceil_bw executor_id addresses state error transaction_id order_id dispatcher_incarnation session_id",
 					"debuglet_logs":              "id debuglet_id timestamp output source_sequence",
 					"debuglet_output":            "debuglet_id output_version owner_fingerprint account_id committed_sequence byte_count frame_count last_log_id final_sequence final_cursor status reason",
-					"debuglet_terminal_cleanup":  "debuglet_id",
 					"debuglet_provenance":        "debuglet_id document",
 					"output_account_usage":       "account_id charged_bytes frame_count",
 					"output_node_usage":          "singleton charged_bytes frame_count",
@@ -59,7 +58,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"executor_enrollments":       "executor_id fingerprint enrolled_at",
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
 					"oauth_identities":           "provider subject user_id login created_at updated_at",
-				}, []string{"debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
+				}, []string{"debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

@@ -560,7 +560,7 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 	}
 	msg := reason + unobservedCancellation
 	queries := database.New(d.db)
-	deb, err := d.completeTerminal(ctx, database.CompleteDebugletParams{
+	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
 		ExitedState:           models.RunStateExited,
 		Error:                 terminalError(-1, &msg),
 		Uuid:                  id,
@@ -584,11 +584,15 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 		if existing.State != models.RunStateExited {
 			return fmt.Errorf("cancellation of debuglet '%s' was rejected although it is in state %s", id.String(), existing.State.String())
 		}
-		return d.finishTerminalCleanup(ctx, id)
+		// The winning write may have committed without its caller seeing
+		// the result; release by run identity, a no-op if already done.
+		d.releaseTerminal(existing)
+		return nil
 	}
 	d.logger.Info("Recorded cancellation of a debuglet whose control session has ended", append(daemonlog.RunFields(ctx, id, identity.ExecutorID, controlsession.Binding{Incarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID}), zap.String("executor_outcome", "unknown"))...)
 	d.settleTerminalPayment(ctx, &deb, -1)
-	return d.finishTerminalCleanup(ctx, id)
+	d.releaseTerminal(deb)
+	return nil
 }
 
 func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, client rpc.BoundExecutorClient, id uuid.UUID, reason string) error {

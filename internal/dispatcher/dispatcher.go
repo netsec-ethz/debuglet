@@ -130,10 +130,10 @@ func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming
 // RestoreScheduler reserves again, when the dispatcher starts, the floors of
 // the stored runs whose window has not ended, so that admission counts them as
 // the previous dispatcher did. A run whose stored state is exited reserves
-// nothing; pending resource cleanup is reconciled before restoration. Every
-// other run, pending or of uncertain outcome, keeps its reservation until its
-// window ends. A run whose window ended less than expiredWindowGrace ago is
-// logged and not reserved. Release uses run identity, so a skipped reservation
+// nothing: every resource a terminal release frees is held in memory only, so
+// a restart leaves nothing of it to release. Every other run, pending or of
+// uncertain outcome, keeps its reservation until its window ends. A run whose
+// window ended less than expiredWindowGrace ago is logged and not reserved. Release uses run identity, so a skipped reservation
 // cannot subtract another run's floor in overlapping rounded buckets.
 //
 // A restored run bound to a previous dispatcher lifetime is logged as a
@@ -161,9 +161,6 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	}()
 	if d.restored {
 		return errors.New("debuglet schedule was already restored in this dispatcher lifetime")
-	}
-	if err := d.restoreTerminalCleanup(ctx); err != nil {
-		return err
 	}
 	now := d.now()
 	queries := database.New(d.db)

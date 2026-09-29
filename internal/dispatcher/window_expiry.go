@@ -71,7 +71,7 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 		if ctx.Err() != nil {
 			break
 		}
-		deb, err := d.completeTerminal(ctx, database.CompleteDebugletParams{
+		deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
 			ExitedState:           models.RunStateExited,
 			Error:                 terminalError(-1, &msg),
 			Uuid:                  run.Uuid,
@@ -88,9 +88,8 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 			d.logger.Info("Classified debuglet with outcome unknown at the end of its window", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))
 			d.settleTerminalPayment(ctx, &deb, -1)
 		}
-		if err := d.finishTerminalCleanup(ctx, run.Uuid); err != nil {
-			d.logger.Error("Failed to finish terminal resource cleanup", zap.String("debugletID", run.Uuid.String()), zap.Error(err))
-		}
+		// Release by run identity also when another writer won.
+		d.releaseTerminal(run)
 	}
 	return now
 }
