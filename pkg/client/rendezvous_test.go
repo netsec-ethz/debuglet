@@ -18,12 +18,13 @@ import (
 func TestRendezvousLifecycleAndCleanup(t *testing.T) {
 	const serverID = "d0f74c74-1395-4576-b2bc-441cf692a803"
 	const peerID = "b64e8321-17c9-40d4-8774-bfa160eabbd7"
-	for _, mode := range []string{"success", "not_ready", "server_failed", "client_failed", "interrupted", "ambiguous_client"} {
+	for _, mode := range []string{"success", "filtered_cleanup", "stale_cleanup", "not_ready", "server_failed", "client_failed", "interrupted", "ambiguous_client"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFakeServer(t, "")
 			var mu sync.Mutex
 			submissions, intents := 0, 0
 			cancelled := map[string]bool{}
+			inspections := map[string]int{}
 			endpoint := "127.0.0.1:24001"
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -92,22 +93,36 @@ func TestRendezvousLifecycleAndCleanup(t *testing.T) {
 			})
 			f.handle("GET /debuglet/{id}/recovery", func(w http.ResponseWriter, r *http.Request) {
 				id := r.PathValue("id")
+				mu.Lock()
+				inspections[id]++
+				first := inspections[id] == 1
+				mu.Unlock()
 				ex := "server"
 				if id == peerID {
 					ex = "peer"
 				}
 				now := time.Now().UTC()
 				current := true
+				controlStatus := "current"
+				classification := "absent"
+				if first && mode == "filtered_cleanup" {
+					classification = "filtered"
+				}
+				if first && mode == "stale_cleanup" {
+					current = false
+					controlStatus = "unavailable"
+				}
 				binding := &ControlBinding{DispatcherIncarnation: serverID, SessionID: peerID}
-				json.NewEncoder(w).Encode(RecoveryDocument{ID: id, ExecutorID: ex, State: StateExited, CheckedAt: now, OriginalBinding: binding, ControlStatus: "current", Observation: RecoveryObservation{Classification: "absent", Observer: &RecoveryObserver{ExecutorID: ex, Binding: *binding}, ReceivedAt: &now, CurrentAtCheck: &current}})
+				json.NewEncoder(w).Encode(RecoveryDocument{ID: id, ExecutorID: ex, State: StateExited, CheckedAt: now, OriginalBinding: binding, ControlStatus: controlStatus, Observation: RecoveryObservation{Classification: classification, Observer: &RecoveryObserver{ExecutorID: ex, Binding: *binding}, ReceivedAt: &now, CurrentAtCheck: &current}})
 			})
 			server := Request{ExecutorID: "server", Wasm: []byte{1}, Policy: Policy{TimeoutMS: 1000, ListenTCP: true}}
 			peer := Request{ExecutorID: "peer", Wasm: []byte{1}, Args: []string{ServerEndpoint}, Policy: Policy{TimeoutMS: 1000}}
 			result, err := f.client(t, Options{}).RendezvousTEST(ctx, server, peer, RendezvousOptions{ReadinessTimeout: 20 * time.Millisecond, Timeout: time.Second})
-			if mode == "success" && err != nil {
+			wantSuccess := mode == "success" || mode == "filtered_cleanup" || mode == "stale_cleanup"
+			if wantSuccess && err != nil {
 				t.Fatal(err)
 			}
-			if mode != "success" && err == nil {
+			if !wantSuccess && err == nil {
 				t.Fatal("failure incorrectly succeeded")
 			}
 			mu.Lock()
@@ -127,6 +142,9 @@ func TestRendezvousLifecycleAndCleanup(t *testing.T) {
 			}
 			if mode == "ambiguous_client" && (result.Client.ID != "" || !strings.Contains(err.Error(), "500")) {
 				t.Fatal("uncertain submission fabricated a run")
+			}
+			if (mode == "filtered_cleanup" || mode == "stale_cleanup") && (inspections[serverID] < 2 || inspections[peerID] < 2) {
+				t.Fatal("cleanup accepted filtered or historical observation as current absence")
 			}
 		})
 	}

@@ -42,8 +42,26 @@ func (p *recoveryPeer) InspectRetainedRun(ctx context.Context, req *pb.InspectRe
 }
 
 func TestRecoveryUsesOneBoundReadWithoutChangingTheRun(t *testing.T) {
-	for _, classification := range []string{"not_attempted", "unavailable", "retained_unstarted", "started_unknown", "legacy", "absent", "filtered", "unsupported", "failed", "invalid"} {
-		t.Run(classification, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, classification string
+		current, terminal    bool
+	}{
+		{"active_current", "not_attempted", true, false},
+		{"terminal_current_absent", "absent", true, true},
+		{"terminal_current_filtered", "filtered", true, true},
+		{"terminal_current_failed", "failed", true, true},
+		{"unavailable", "unavailable", false, false},
+		{"retained_unstarted", "retained_unstarted", false, false},
+		{"started_unknown", "started_unknown", false, false},
+		{"legacy", "legacy", false, false},
+		{"absent", "absent", false, false},
+		{"filtered", "filtered", false, false},
+		{"unsupported", "unsupported", false, false},
+		{"failed", "failed", false, false},
+		{"invalid", "invalid", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			classification := tc.classification
 			d := newTerminalPeerDispatcher(t)
 			original := controlsession.Binding{Incarnation: uuid.NewString(), SessionID: uuid.NewString()}
 			if classification == "legacy" {
@@ -84,7 +102,7 @@ func TestRecoveryUsesOneBoundReadWithoutChangingTheRun(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			if classification == "not_attempted" {
+			if tc.current {
 				d.mu.RLock()
 				original = d.executors["recovery-executor"].owner.Binding()
 				d.mu.RUnlock()
@@ -95,7 +113,11 @@ func TestRecoveryUsesOneBoundReadWithoutChangingTheRun(t *testing.T) {
 				d.mu.RUnlock()
 			}
 			start := time.Now().Add(time.Hour).Truncate(time.Second)
-			row, err := database.New(d.db).CreateDebuglet(t.Context(), database.CreateDebugletParams{Uuid: id, StartTime: models.NewUTCTime(start), EndTime: models.NewUTCTime(start.Add(time.Minute)), Usage: 100, CeilBw: 100, ExecutorID: "recovery-executor", State: models.RunStateStarted, TransactionID: "transaction", DispatcherIncarnation: original.Incarnation, SessionID: original.SessionID})
+			state := models.RunStateStarted
+			if tc.terminal {
+				state = models.RunStateExited
+			}
+			row, err := database.New(d.db).CreateDebuglet(t.Context(), database.CreateDebugletParams{Uuid: id, StartTime: models.NewUTCTime(start), EndTime: models.NewUTCTime(start.Add(time.Minute)), Usage: 100, CeilBw: 100, ExecutorID: "recovery-executor", State: state, TransactionID: "transaction", DispatcherIncarnation: original.Incarnation, SessionID: original.SessionID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,7 +127,7 @@ func TestRecoveryUsesOneBoundReadWithoutChangingTheRun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if doc.Observation.Classification != classification || doc.State != models.RunStateStarted.String() || doc.CheckedAt.IsZero() {
+			if doc.Observation.Classification != classification || doc.State != state.String() || doc.CheckedAt.IsZero() || tc.current && doc.ControlStatus != "current" {
 				t.Fatalf("unexpected observation: %+v", doc)
 			}
 			wantCalls := int64(1)
@@ -165,6 +187,16 @@ func TestRecoveryKeepsHistoricalReplyAndRejectsInconsistentMetadata(t *testing.T
 	if doc.Observation.CurrentAtCheck == nil || *doc.Observation.CurrentAtCheck || doc.Observation.Classification != "retained_unstarted" || *doc.Observation.ReceivedAt != received || doc.Observation.Observer.Binding.SessionID != observed.SessionID {
 		t.Fatalf("historical observation erased or relabeled: %+v", doc.Observation)
 	}
+	// Even an absent reply from the original session cannot establish current
+	// cleanup after that observer has been replaced.
+	row.DispatcherIncarnation, row.SessionID = observed.Incarnation, observed.SessionID
+	absent := validateRecoveryReply(row, owner, &pb.InspectRetainedRunResponse{Status: pb.RetainedRunStatus_RETAINED_RUN_STATUS_ABSENT}, received)
+	currentDoc := wire.Recovery{ExecutorID: row.ExecutorID, Observation: absent}
+	d.finishRecovery(&currentDoc, owner, observed)
+	if currentDoc.ControlStatus != "unavailable" || currentDoc.Observation.Classification != "absent" || currentDoc.Observation.CurrentAtCheck == nil || *currentDoc.Observation.CurrentAtCheck {
+		t.Fatalf("replaced observer confirmed current cleanup: %+v", currentDoc)
+	}
+	row.DispatcherIncarnation, row.SessionID = original.Incarnation, original.SessionID
 	for name, change := range map[string]func(*pb.InspectRetainedRunResponse){
 		"wrong id":          func(r *pb.InspectRetainedRunResponse) { r.Run.DebugletId = uuid.NewString() },
 		"wrong transaction": func(r *pb.InspectRetainedRunResponse) { r.Run.TransactionId = "other" },

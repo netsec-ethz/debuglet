@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -36,7 +37,10 @@ func (d *Dispatcher) Recovery(ctx context.Context, id uuid.UUID) (wire.Recovery,
 		owner = entry.owner
 	}
 	d.mu.RUnlock()
-	if owner != nil && original.Valid() && original == owner.Binding() {
+	// Active work still belongs to its live control session. A terminal report
+	// precedes executor retirement, so a current terminal run needs the same
+	// explicit metadata lookup as an interrupted run to observe actual absence.
+	if owner != nil && original.Valid() && original == owner.Binding() && row.State != models.RunStateExited {
 		doc.Observation.Classification = "not_attempted"
 	} else if owner != nil {
 		lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
