@@ -139,6 +139,9 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 			ListenSCION: policy.GetListenScion(),
 		},
 	}
+	if _, err := scheduler.StoredRunBytes(spec); err != nil {
+		return nil, status.Error(codes.ResourceExhausted, "executor upload size limit reached")
+	}
 	// Nothing a new run sends could be tagged, so it is not admitted. Runs
 	// admitted earlier continue untagged.
 	if e.teslaSchedule.Exhausted(time.Now()) {
@@ -148,6 +151,12 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")
 	}
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
+		if errors.Is(err, scheduler.ErrUploadLimit) {
+			return nil, status.Error(codes.ResourceExhausted, "executor upload size limit reached")
+		}
+		if errors.Is(err, scheduler.ErrQueueLimit) {
+			return nil, status.Error(codes.ResourceExhausted, "executor retained queue limit reached")
+		}
 		if errors.Is(err, outputstore.ErrSpoolLimit) {
 			return nil, status.Error(codes.ResourceExhausted, "executor output storage limit reached")
 		}

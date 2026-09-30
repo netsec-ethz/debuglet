@@ -39,6 +39,7 @@ import (
 // to a SQLite database to persist states across executor restarts.
 type SqliteStorage struct {
 	db          *sql.DB
+	queueLimits scheduler.QueueLimits
 	output      *outputstore.Store
 	decorate    func(database.DBTX) database.DBTX
 	local       *memory.MemoryStorage
@@ -56,8 +57,11 @@ var _ scheduler.Scheduler = (*SqliteStorage)(nil)
 
 // NewStorage persists the in-memory core's accepted work. Its admission guards
 // are the ones that core commits new reservations and queue promotion under.
-func NewStorage(db *sql.DB, output *outputstore.Store, eligibility scheduler.RestoreEligibility, admission scheduler.Admission) (*SqliteStorage, error) {
-	s := &SqliteStorage{db: db, output: output, eligibility: eligibility}
+func NewStorage(db *sql.DB, output *outputstore.Store, eligibility scheduler.RestoreEligibility, admission scheduler.Admission, queueLimits scheduler.QueueLimits) (*SqliteStorage, error) {
+	if err := queueLimits.Validate(); err != nil {
+		return nil, err
+	}
+	s := &SqliteStorage{db: db, output: output, eligibility: eligibility, queueLimits: queueLimits}
 	local, err := memory.NewPersistentStorage(s.persist, s.finalize, s.inspectAbsent, admission)
 	if err != nil {
 		return nil, err
@@ -170,7 +174,12 @@ func (s *SqliteStorage) persist(ctx context.Context, spec scheduler.Spec) (sched
 		startTime = *spec.StartTime
 	}
 
-	params := database.CreateDebugletParams{
+	charge, err := scheduler.StoredRunBytes(spec)
+	if err != nil {
+		return scheduler.Spec{}, err
+	}
+	params := database.CreateBoundedDebugletParams{
+		MaxQueuedRuns: s.queueLimits.Runs, MaxQueuedBytes: s.queueLimits.Bytes, QueueBytes: charge,
 		Uuid:                  spec.DebugletID,
 		DispatcherIncarnation: spec.Binding.Incarnation,
 		SessionID:             spec.Binding.SessionID,
@@ -188,16 +197,25 @@ func (s *SqliteStorage) persist(ctx context.Context, spec scheduler.Spec) (sched
 		ListenTcp:   spec.Policy.ListenTCP,
 		ListenScion: spec.Policy.ListenSCION,
 	}
-	var err error
+	insert := func(ctx context.Context, q *database.Queries) error {
+		rows, err := q.CreateBoundedDebuglet(ctx, params)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return scheduler.ErrQueueLimit
+		}
+		return nil
+	}
 	switch spec.OutputVersion {
 	case 0:
-		err = s.withDatabase(ctx, func(ctx context.Context, q *database.Queries) error { return q.CreateDebuglet(ctx, params) })
+		err = s.withDatabase(ctx, insert)
 	case pb.OutputVersion:
 		if s.output == nil {
 			return scheduler.Spec{}, errors.New("output storage is required for versioned admission")
 		}
 		err = s.withTransaction(ctx, func(ctx context.Context, tx *sql.Tx, q *database.Queries) error {
-			if err := q.CreateDebuglet(ctx, params); err != nil {
+			if err := insert(ctx, q); err != nil {
 				return err
 			}
 			return s.output.AdmitTx(ctx, tx, spec.DebugletID, spec.Binding, spec.OutputVersion)

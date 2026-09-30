@@ -26,7 +26,7 @@ func admissionShutdown(t *testing.T, storage *SqliteStorage) {
 func TestSQLiteStrictAdmissionRequiresBothGuards(t *testing.T) {
 	// A nil DB is deliberate: constructor refusal must precede database access.
 	for _, a := range []scheduler.Admission{{}, {Insert: admissionPass}, {Start: admissionPass}} {
-		if s, err := NewStorage(nil, nil, storageTestEligibility, a); err == nil || s != nil {
+		if s, err := NewStorage(nil, nil, storageTestEligibility, a, scheduler.DefaultQueueLimits()); err == nil || s != nil {
 			t.Fatalf("incomplete strict admission accepted: storage=%v error=%v", s, err)
 		}
 	}
@@ -44,7 +44,7 @@ func TestSQLiteLeaseRefusalPrecedesPersistence(t *testing.T) {
 			}
 			return refused
 		}, Start: admissionPass,
-	})
+	}, scheduler.DefaultQueueLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestSQLiteLeaseExpiryAfterPersistenceRetainsAcceptedRow(t *testing.T) {
 		commit()
 		return nil
 	}
-	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard})
+	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard}, scheduler.DefaultQueueLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestSQLiteCancelledInsideAdmissionHasNoReservation(t *testing.T) {
 	defer cancel()
 	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{
 		Insert: func(_ controlsession.Binding, commit func()) error { cancel(); commit(); return nil }, Start: admissionPass,
-	})
+	}, scheduler.DefaultQueueLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSQLiteReservedWriteSurvivesLeaseLossAndShutdown(t *testing.T) {
 		commit()
 		return nil
 	}
-	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard})
+	storage, err := NewStorage(db, nil, storageTestEligibility, scheduler.Admission{Insert: guard, Start: guard}, scheduler.DefaultQueueLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

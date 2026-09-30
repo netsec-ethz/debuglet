@@ -37,7 +37,7 @@ func fixtureAdmission() scheduler.Admission {
 
 func newFixtureStorage(t *testing.T, db *sql.DB, eligibility scheduler.RestoreEligibility) *sqlite.SqliteStorage {
 	t.Helper()
-	storage, err := sqlite.NewStorage(db, nil, eligibility, fixtureAdmission())
+	storage, err := sqlite.NewStorage(db, nil, eligibility, fixtureAdmission(), scheduler.DefaultQueueLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

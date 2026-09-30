@@ -213,7 +213,7 @@ func NewSession(node *Node, db *sql.DB) (*Session, error) {
 			return s.executor.Bidi.CommitUpload(binding, commit)
 		}
 	}
-	storage, err := sqlite.NewStorage(db, node.output, func(controlsession.Binding) bool { return false }, scheduler.Admission{Insert: guard(false), Start: guard(true)})
+	storage, err := sqlite.NewStorage(db, node.output, func(controlsession.Binding) bool { return false }, scheduler.Admission{Insert: guard(false), Start: guard(true)}, scheduler.DefaultQueueLimits())
 	if err != nil {
 		node.release(s)
 		return nil, sessionEnd(controlsession.LocalFailure, err)
