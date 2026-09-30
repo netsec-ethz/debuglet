@@ -199,7 +199,7 @@ Self-service enrollment is disabled by default. It requires native TLS with
 client certificates, an explicitly configured certificate issuer and public
 connection addresses. Back up and upgrade an existing dispatcher database using
 the release's normal database upgrade procedure before starting the new binary.
-This build requires dispatcher schema 13 even if enrollment remains disabled.
+This build requires dispatcher schema 14 even if enrollment remains disabled.
 A source merge does not migrate the running service. Schedule deployment
 separately: preserve the current package, configuration and a consistent database
 backup; stop the dispatcher; run the selected package's explicit database upgrade;

@@ -78,6 +78,9 @@ const (
 	CodeInternal = "internal_error"
 	// CodeUnavailable is a temporarily unavailable capability.
 	CodeUnavailable = "service_unavailable"
+	// CodeRateLimited is a client address that sent more requests to a
+	// rate-limited route than it admits; retry after the Retry-After delay.
+	CodeRateLimited = "rate_limited"
 )
 
 // maxEchoedValue bounds a caller-supplied value repeated in a message.
@@ -209,6 +212,8 @@ func codeForStatus(status int) string {
 		return CodeUnsupportedMediaType
 	case http.StatusServiceUnavailable:
 		return CodeUnavailable
+	case http.StatusTooManyRequests:
+		return CodeRateLimited
 	default:
 		if status >= 500 {
 			return CodeInternal

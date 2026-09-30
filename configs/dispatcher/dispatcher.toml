@@ -27,6 +27,16 @@ run_frames = 16384
 account_bytes = 0
 node_bytes = 0
 
+# Attribution history for probe verification: executor TESLA chains, their
+# disclosed keys and which runs were active from which source address. It is
+# pruned after retention_days (1 to 3650); verifiers see the cutoff as
+# retained_from.
+[attribution]
+retention_days = 90
+# Reverse proxies whose X-Forwarded-For the attribution rate limit trusts,
+# as addresses or CIDR prefixes. Empty trusts no forwarding header.
+# trusted_proxies = ["10.0.0.0/8"]
+
 # The executor reaches this dispatcher over loopback on the same machine, so
 # the control channel carries no TLS and these paths stay empty. `make
 # generate-certs` writes a keypair into this directory for experiments.

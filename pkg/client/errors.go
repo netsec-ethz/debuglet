@@ -76,6 +76,9 @@ const (
 	CodeInternal = "internal_error"
 	// CodeUnavailable is a temporarily unavailable capability.
 	CodeUnavailable = "service_unavailable"
+	// CodeRateLimited is a client address over the rate limit of a public
+	// route; retry later.
+	CodeRateLimited = "rate_limited"
 )
 
 // SubmissionError reports a failed SubmitTEST. Stage is "intent" or "submit".

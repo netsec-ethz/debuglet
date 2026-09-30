@@ -71,12 +71,13 @@ func TestDispatcherRefusesUnsupportedSchema(t *testing.T) {
 
 func dispatcherConfig(path string) *config.DispatcherConfig {
 	return &config.DispatcherConfig{
-		Output:    config.DefaultOutputConfig(),
-		Server:    config.ServerConfig{BindHost: "127.0.0.1", Version: "schema-test"},
-		Logging:   config.LoggingConfig{LogLevel: "info"},
-		Scheduler: config.SchedulerConfig{ExecutorTimeout: 60, SchedulerGranularityMs: 100},
-		TLS:       config.TLSConfig{Disable: true},
-		Database:  config.DatabaseConfig{Path: path},
-		Sui:       config.SuiConfig{Disabled: true},
+		Output:      config.DefaultOutputConfig(),
+		Attribution: config.DefaultAttributionConfig(),
+		Server:      config.ServerConfig{BindHost: "127.0.0.1", Version: "schema-test"},
+		Logging:     config.LoggingConfig{LogLevel: "info"},
+		Scheduler:   config.SchedulerConfig{ExecutorTimeout: 60, SchedulerGranularityMs: 100},
+		TLS:         config.TLSConfig{Disable: true},
+		Database:    config.DatabaseConfig{Path: path},
+		Sui:         config.SuiConfig{Disabled: true},
 	}
 }

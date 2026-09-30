@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -91,6 +92,9 @@ def pcap(packets):
 
 class FakeDispatcher(http.server.BaseHTTPRequestHandler):
     tag_spec = VECTORS['spec']
+    # When set, the dated attribution routes are served with this chain
+    # tag_spec; otherwise they are absent and the verifier falls back.
+    dated_tag_spec = None
 
     def log_message(self, *args):
         pass
@@ -110,7 +114,24 @@ class FakeDispatcher(http.server.BaseHTTPRequestHandler):
             '/executors': [{'id': EXECUTOR, 'capabilities': {'tagging': {
                 'ipv4': 'ebpf', 'ipv6': 'none', 'scion': 'none', 'tag_spec': self.tag_spec}}}],
         }
+        if self.dated_tag_spec is not None:
+            routes[f'/attribution/keys?executor_id={EXECUTOR}&chain_id=c1&from_epoch=2&to_epoch=2'] = {
+                'executor_id': EXECUTOR, 'chain_id': 'c1', 'next_epoch': None,
+                'keys': [{'epoch': disclosed,
+                          'key': base64.b64encode(bytes.fromhex(keys[disclosed])).decode()}]}
         body = routes.get(self.path)
+        if self.dated_tag_spec is not None and self.path.startswith('/attribution/candidates?'):
+            body = {'ip': SRC, 'at': '', 'retained_from': '2000-01-01T00:00:00Z', 'truncated': False,
+                    'candidates': [{
+                        'executor_id': EXECUTOR, 'run_id': VECTORS['measurement_id'],
+                        'active_from': '', 'active_to': '', 'ip_source': 'observed',
+                        'disclosed_through': disclosed, 'disclosed_through_at_ns': 0,
+                        'next_disclosure_at_ns': 0,
+                        'schedule': {'chain_id': 'c1',
+                                     'k0': base64.b64encode(bytes.fromhex(keys[0])).decode(),
+                                     't0_unix_ns': ANCHOR_NS, 'epoch_seconds': DELAY,
+                                     'disclosure_delay_epochs': 2, 'chain_length': 0,
+                                     'tag_spec': self.dated_tag_spec}}]}
         if body is None:
             self.send_response(404)
             self.end_headers()
@@ -124,8 +145,9 @@ class FakeDispatcher(http.server.BaseHTTPRequestHandler):
 
 
 class CaptureReportTest(unittest.TestCase):
-    def run_verifier(self, names, tag_spec=VECTORS['spec']):
-        handler = type('Handler', (FakeDispatcher,), {'tag_spec': tag_spec})
+    def run_verifier(self, names, tag_spec=VECTORS['spec'], dated_tag_spec=None):
+        handler = type('Handler', (FakeDispatcher,), {'tag_spec': tag_spec,
+                                                      'dated_tag_spec': dated_tag_spec})
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -175,6 +197,18 @@ class CaptureReportTest(unittest.TestCase):
             verify_pcap.Packet(pkt.ts_ns, bytes.fromhex(v['tagged_packet_hex'])), tesla,
             [VECTORS['measurement_id']])
         self.assertEqual(matched, [(VECTORS['measurement_id'], 1, 'debuglet-tag-v1')])
+
+    def test_dated_routes_verify_a_v1_chain(self):
+        result = self.run_verifier(['udp_base'], dated_tag_spec=1)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"debuglet-tag-v1: verified {VECTORS['measurement_id']} (epoch 1)", result.stdout)
+
+    def test_dated_legacy_chain_is_unsupported(self):
+        result = self.run_verifier(['udp_base'], dated_tag_spec=0)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('tag_spec=legacy (pre-v1)', result.stdout)
+        self.assertIn('legacy, pre-v1 tag', result.stdout)
+        self.assertIn('Unsupported: 1 tag_spec', result.stdout)
 
     def test_other_reported_spec_is_unsupported(self):
         result = self.run_verifier(['udp_base'], tag_spec='debuglet-tag-v9')
@@ -281,5 +315,99 @@ class VerificationWindowTest(unittest.TestCase):
         self.assertEqual(matched, [(DEBUGLET, 5, vp.TAG_SPEC)], reason)
 
 
-if __name__ == '__main__':
+class StubClient(vp.DispatcherClient):
+    """A DispatcherClient answering from a routing table instead of HTTP."""
+
+    def __init__(self, routes):
+        super().__init__("http://dispatcher.test")
+        self.routes = routes
+        self.calls = []
+
+    def _get(self, path, **params):
+        self.calls.append((path, params))
+        answer = self.routes.get(path)
+        if answer is None:
+            raise urllib.error.HTTPError(path, 404, "not found", {}, None)
+        return answer(params) if callable(answer) else answer
+
+
+def candidates(ts_ns, retained_from="2020-01-01T00:00:00Z", runs=(DEBUGLET,), tag_spec=1):
+    return {
+        "ip": "192.0.2.1", "at": "", "retained_from": retained_from, "truncated": False,
+        "candidates": [{
+            "executor_id": "exec-1", "run_id": run, "active_from": "", "active_to": "",
+            "ip_source": "observed", "disclosed_through": 9,
+            "disclosed_through_at_ns": at(11), "next_disclosure_at_ns": at(12),
+            "schedule": {"chain_id": "c1", "k0": base64.b64encode(KEYS[0]).decode(),
+                         "t0_unix_ns": ANCHOR_NS, "epoch_seconds": EPOCH_S,
+                         "disclosure_delay_epochs": 2, "chain_length": LENGTH,
+                         "tag_spec": tag_spec},
+        } for run in runs],
+    }
+
+
+class LookupTest(unittest.TestCase):
+    def test_dated_routes_are_preferred(self):
+        pkt = window_packet(at(5, 1), 5)
+        stub = StubClient({
+            "/attribution/candidates": lambda params: candidates(pkt.ts_ns),
+            "/attribution/keys": {"executor_id": "exec-1", "chain_id": "c1", "next_epoch": None,
+                                  "keys": [{"epoch": 9, "key": base64.b64encode(KEYS[9]).decode()}]},
+        })
+        groups, reason = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(len(groups), 1, reason)
+        tesla, ids = groups[0]
+        self.assertEqual(ids, [DEBUGLET])
+        matched, why = vp.verify_packet(pkt, tesla, ids, 0)
+        self.assertEqual(matched, [(DEBUGLET, 5, vp.TAG_SPEC)], why)
+        self.assertNotIn("/executors/by-ip", [path for path, _ in stub.calls])
+        keys = [params for path, params in stub.calls if path == "/attribution/keys"]
+        self.assertEqual(keys, [{"executor_id": "exec-1", "chain_id": "c1", "from_epoch": 9, "to_epoch": 9}])
+        # A second packet of the same second is answered from the cache.
+        stub.lookup("192.0.2.1", pkt.ts_ns + 1)
+        self.assertEqual(len(stub.calls), 2)
+
+    def test_history_before_retained_from_is_missing(self):
+        pkt = window_packet(at(5, 1), 5)
+        doc = candidates(pkt.ts_ns, retained_from="2100-01-01T00:00:00.123456789Z", runs=())
+        stub = StubClient({"/attribution/candidates": doc})
+        groups, reason = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(groups, [])
+        self.assertIn("missing", reason)
+        doc["retained_from"] = "2020-01-01T00:00:00Z"
+        stub = StubClient({"/attribution/candidates": doc})
+        self.assertIn("no run", stub.lookup("192.0.2.1", pkt.ts_ns)[1])
+
+    def test_legacy_chain_is_unsupported_not_a_mismatch(self):
+        pkt = window_packet(at(5, 1), 5)
+        stub = StubClient({
+            "/attribution/candidates": candidates(pkt.ts_ns, tag_spec=0),
+            "/attribution/keys": {"executor_id": "exec-1", "chain_id": "c1", "next_epoch": None,
+                                  "keys": [{"epoch": 9, "key": base64.b64encode(KEYS[9]).decode()}]},
+        })
+        groups, _ = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(groups[0][0]["tag_spec"], 0)
+        self.assertIn("legacy", vp.spec_mismatch(groups[0][0]["tag_spec"]))
+        self.assertIsNone(vp.spec_mismatch(1))
+        self.assertIn("tag spec 7", vp.spec_mismatch(7))
+        # The deprecated routes carry the string the executor reports.
+        self.assertIsNone(vp.spec_mismatch(None))
+        self.assertIsNone(vp.spec_mismatch(vp.TAG_SPEC))
+
+    def test_older_dispatcher_falls_back_to_the_deprecated_routes(self):
+        pkt = window_packet(at(5, 1), 5)
+        stub = StubClient({
+            "/executors/by-ip": {"executor_id": "exec-1", "debuglet_ids": [DEBUGLET]},
+            "/executors/exec-1/tesla": schedule(9),
+        })
+        groups, reason = stub.lookup("192.0.2.1", pkt.ts_ns)
+        self.assertEqual(len(groups), 1, reason)
+        matched, why = vp.verify_packet(pkt, groups[0][0], groups[0][1], 0)
+        self.assertEqual(matched, [(DEBUGLET, 5, vp.TAG_SPEC)], why)
+        # The missing route is not asked again.
+        stub.lookup("192.0.2.1", pkt.ts_ns + 5 * SECOND)
+        self.assertEqual([path for path, _ in stub.calls].count("/attribution/candidates"), 1)
+
+
+if __name__ == "__main__":
     unittest.main()
