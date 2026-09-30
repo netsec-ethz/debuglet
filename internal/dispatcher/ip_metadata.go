@@ -82,15 +82,3 @@ func cloneLookup[T any](r wire.IPLookup[T]) wire.IPLookup[T] {
 	}
 	return r
 }
-
-func (e *RegisteredExecutor) automaticLocation() wire.IPLookup[wire.GeoLocation] {
-	if e.ipMetadata == nil {
-		return wire.IPLookup[wire.GeoLocation]{}
-	}
-	// The observed address wins; an advertised literal is a fallback, never a
-	// reason to hide an observed/advertised disagreement.
-	if e.ipMetadata.Observed.Location.Value != nil {
-		return e.ipMetadata.Observed.Location
-	}
-	return e.ipMetadata.Advertised.Location
-}

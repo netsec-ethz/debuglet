@@ -51,8 +51,12 @@ func TestIPMetadataHTTPContractAndSDK(t *testing.T) {
 	}
 	c := f.client(f.root.URL, false)
 	selected, err := c.SelectExecutor(f.ctx, id, client.ExecutorFilter{ASN: 64500, Country: "CH"})
-	if err != nil || selected.IPMetadata.Observed.ASN.Value.Name != "Synthetic network" || selected.Display.City.Source == nil {
+	if err != nil || selected.IPMetadata.Observed.ASN.Value.Name != "Synthetic network" || selected.Display.City.Source != nil {
 		t.Fatalf("SDK metadata: %+v %v", selected, err)
+	}
+	city, country := selected.Location()
+	if city.Value == nil || *city.Value != "Fixture city" || country.Value == nil || *country.Value != "CH" {
+		t.Fatalf("client location fallback: %+v %+v", city, country)
 	}
 	// The real submission/export path also carries explicit unknown reasons for
 	// its loopback peer, through the same portable-result validator.

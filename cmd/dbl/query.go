@@ -90,6 +90,8 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION")
 		for _, n := range nodes {
+			location := n.Display
+			location.City, location.Country = n.Location()
 			lastSeen := "-"
 			if n.LastSeen > 0 {
 				lastSeen = time.Unix(n.LastSeen, 0).UTC().Format(time.RFC3339)
@@ -106,7 +108,7 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 				attribution = attributionColumn(report.Attribution)
 			}
 			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
-				labelText(n.Display.DisplayName), nodeLocation(n.Display), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata), locationSource(n.Display),
+				labelText(n.Display.DisplayName), nodeLocation(location), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata), locationSource(location),
 				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution)
 		}
 		return tw.Flush()

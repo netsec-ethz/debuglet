@@ -145,13 +145,8 @@ func validVantagePoint(v wire.VantagePoint) bool {
 		return value != nil && (*value == wire.SourceOperator || *value == wire.SourceExecutorReported || *value == wire.SourceDispatcherObserved)
 	}
 	d := v.Display
-	for _, field := range []wire.LabelledString{v.SourceIP, v.PublicHost, d.DisplayName, d.Network} {
+	for _, field := range []wire.LabelledString{v.SourceIP, v.PublicHost, d.DisplayName, d.City, d.Country, d.Network} {
 		if (field.Value == nil) != (field.Source == nil) || field.Value != nil && (strings.TrimSpace(*field.Value) == "" || !source(field.Source)) {
-			return false
-		}
-	}
-	for _, field := range []wire.LabelledString{d.City, d.Country} {
-		if (field.Value == nil) != (field.Source == nil) || field.Value != nil && (strings.TrimSpace(*field.Value) == "" || !source(field.Source) && !wire.DatabaseSource(*field.Source)) {
 			return false
 		}
 	}

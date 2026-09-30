@@ -78,7 +78,7 @@ func TestIPMetadataRegistrationOverrideAndImmutableSnapshot(t *testing.T) {
 	}
 }
 
-func TestIPMetadataDisplayFallbackAndExplicitUnknown(t *testing.T) {
+func TestIPMetadataPreservesOperatorDisplayAndExplicitUnknown(t *testing.T) {
 	databases, err := ipmetadata.Open("../ipmetadata/testdata/asn.mmdb", "../ipmetadata/testdata/city.mmdb")
 	if err != nil {
 		t.Fatal(err)
@@ -87,8 +87,15 @@ func TestIPMetadataDisplayFallbackAndExplicitUnknown(t *testing.T) {
 	host := "8.8.8.8"
 	e := &RegisteredExecutor{sourceIp: "127.0.0.1", sourceIPObserved: true, publicHost: &host, LastSeen: time.Unix(1700000123, 0)}
 	e.collectIPMetadata(databases, false)
-	if d := e.Display(); d.City.Value == nil || *d.City.Value != "Fixture city" || *d.City.Source != "database:Debuglet-Test-City@1700000000" {
-		t.Fatalf("advertised fallback: %+v", d)
+	if d := e.Display(); d.City.Value != nil || d.Country.Value != nil {
+		t.Fatalf("automatic lookup changed legacy operator fields: %+v", d)
+	}
+	if snapshot := admissionVantagePoint(&executorEntry{RegisteredExecutor: e}, e.LastSeen); snapshot.Display.City.Value != nil || snapshot.Display.Country.Value != nil {
+		t.Fatal("automatic location changed old result display contract")
+	}
+	city, country := (wire.Executor{Display: e.Display(), IPMetadata: e.IPMetadata()}).Location()
+	if city.Value == nil || *city.Value != "Fixture city" || country.Value == nil || *country.Value != "CH" || *city.Source != "database:Debuglet-Test-City@1700000000" {
+		t.Fatalf("client fallback: %+v %+v", city, country)
 	}
 	if m := e.IPMetadata(); m.Observed.ASN.Reason != "non_global" || m.Advertised.AddressSource != wire.SourceExecutorReported {
 		t.Fatalf("source distinction: %+v", m)

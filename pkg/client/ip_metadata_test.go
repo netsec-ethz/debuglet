@@ -26,8 +26,7 @@ func metadataFixture(t *testing.T) *wire.IPMetadata {
 
 func TestMetadataFiltersAndPortableResults(t *testing.T) {
 	m := metadataFixture(t)
-	country, source := "CH", *m.Observed.Location.Source
-	nodes := []Node{{ID: "unknown", Ready: true}, {ID: "match", Ready: true, IPMetadata: m, Display: wire.ExecutorDisplay{Country: wire.LabelledString{Value: &country, Source: &source}}}}
+	nodes := []Node{{ID: "unknown", Ready: true}, {ID: "match", Ready: true, IPMetadata: m}}
 	f := newFakeServer(t, "")
 	f.handle("GET /executors", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(nodes) })
 	c := f.client(t, Options{})
@@ -54,7 +53,6 @@ func TestMetadataFiltersAndPortableResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc.Provenance.VantagePoint.IPMetadata = m
-	doc.Provenance.VantagePoint.Display.Country = wire.LabelledString{Value: &country, Source: &source}
 	var output bytes.Buffer
 	if err := json.NewEncoder(&output).Encode(doc); err != nil {
 		t.Fatal(err)
@@ -62,6 +60,13 @@ func TestMetadataFiltersAndPortableResults(t *testing.T) {
 	got, err := ReadResult(&output)
 	if err != nil || got.Provenance.VantagePoint.IPMetadata.Observed.ASN.Value.Number != 64500 {
 		t.Fatalf("portable metadata: %+v %v", got, err)
+	}
+	// The old display contract remains readable independently of the additive
+	// metadata. Database provenance belongs only to the new field.
+	source, country := *m.Observed.Location.Source, "CH"
+	doc.Provenance.VantagePoint.Display.Country = wire.LabelledString{Value: &country, Source: &source}
+	if validVantagePoint(*doc.Provenance.VantagePoint) {
+		t.Fatal("database source accepted in the old operator display field")
 	}
 	m.LocationOptOut = true
 	if validIPMetadata(m) {

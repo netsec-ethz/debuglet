@@ -43,7 +43,9 @@ API 1.9 also adds `admission`, operator `display` metadata, the executor-reporte
 Optional `ip_metadata` on `GET /executors` contains offline ASN and approximate
 country/city lookups for observed and advertised addresses. Each lookup records
 its database source/build epoch, registration observation time and an explicit
-unknown reason. Operator location takes precedence; executor opt-out suppresses
+unknown reason. Existing `display` fields stay operator-only; new clients may
+derive an automatic fallback from `ip_metadata`. Operator location takes
+precedence; executor opt-out suppresses
 automatic location. The same object is captured immutably as
 `provenance.vantage_point.ip_metadata`, additive within vantage-point schema 1
 and result format 1.1. Older files omit it. See

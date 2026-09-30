@@ -85,7 +85,8 @@ func (c *Client) DiscoverExecutors(ctx context.Context, filter ExecutorFilter) (
 				continue
 			}
 		}
-		if filter.Country != "" && (node.Display.Country.Value == nil || *node.Display.Country.Value != filter.Country) {
+		_, country := node.Location()
+		if filter.Country != "" && (country.Value == nil || *country.Value != filter.Country) {
 			continue
 		}
 		if filter.ASN != 0 {

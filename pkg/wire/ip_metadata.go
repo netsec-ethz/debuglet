@@ -62,3 +62,30 @@ func DatabaseSource(source string) bool {
 	epoch, err := strconv.ParseUint(version, 10, 64)
 	return err == nil && epoch > 0 && strconv.FormatUint(epoch, 10) == version
 }
+
+// Location returns the display location for a client. Existing Display fields
+// remain operator-only on the wire and in result files, so older readers retain
+// their original source vocabulary. New clients can use this optional fallback.
+func (e Executor) Location() (city, country LabelledString) {
+	city, country = e.Display.City, e.Display.Country
+	if city.Value != nil || country.Value != nil || e.IPMetadata == nil || e.IPMetadata.LocationOptOut {
+		return
+	}
+	auto := e.IPMetadata.Observed.Location
+	if auto.Value == nil {
+		auto = e.IPMetadata.Advertised.Location
+	}
+	if auto.Value == nil || auto.Source == nil || auto.Reason != "" {
+		return
+	}
+	source := *auto.Source
+	if auto.Value.City != "" {
+		value := auto.Value.City
+		city = LabelledString{Value: &value, Source: &source}
+	}
+	if auto.Value.Country != "" {
+		value := auto.Value.Country
+		country = LabelledString{Value: &value, Source: &source}
+	}
+	return
+}

@@ -14,8 +14,8 @@ import (
 )
 
 func TestNodesFiltersAndLabelsAutomaticLocation(t *testing.T) {
-	country, city, source := "CH", "Fixture city", "database:Fixture@1700000000"
-	node := wire.Executor{ID: "fixture", Ready: true, Display: wire.ExecutorDisplay{Country: wire.LabelledString{Value: &country, Source: &source}, City: wire.LabelledString{Value: &city, Source: &source}}, IPMetadata: &wire.IPMetadata{Observed: wire.AddressMetadata{ASN: wire.IPLookup[wire.ASInfo]{Value: &wire.ASInfo{Number: 64500, Name: "Synthetic network", Prefix: "8.0.0.0/8"}, Source: &source}}}}
+	source := "database:Fixture@1700000000"
+	node := wire.Executor{ID: "fixture", Ready: true, IPMetadata: &wire.IPMetadata{Observed: wire.AddressMetadata{ASN: wire.IPLookup[wire.ASInfo]{Value: &wire.ASInfo{Number: 64500, Name: "Synthetic network", Prefix: "8.0.0.0/8"}, Source: &source}, Location: wire.IPLookup[wire.GeoLocation]{Value: &wire.GeoLocation{Country: "CH", City: "Fixture city", Precision: "city"}, Source: &source}}}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /executors", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode([]wire.Executor{node}) })
 	fx := newFixture(t, mux)

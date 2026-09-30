@@ -198,7 +198,8 @@ take effect when the dispatcher restarts.
 
 `--asn` matches a known origin ASN of either the observed control address or
 advertised literal address. `--country` matches the displayed country, including
-an operator override. Unknown values do not match. `dbl nodes` shows ASN and the
+an operator override. SDK callers can use `Node.Location()` to obtain the
+source-labelled city/country pair without changing the wire response. Unknown values do not match. `dbl nodes` shows ASN and the
 location source; `--output json` includes the detailed lookup records below.
 
 ### Offline ASN and approximate location
@@ -233,7 +234,9 @@ is retained for negative lookups; it is null when no lookup happened. Loopback,
 private, CGNAT, ULA, documentation and other special-purpose addresses stay
 unknown even if a database contains a record. Hostnames stay unknown.
 
-An operator city or country overrides the entire automatic display location;
+The existing `display` response stays operator-only for compatibility. New SDK
+and CLI clients derive a display location from `ip_metadata`: an operator city
+or country overrides the entire automatic display location;
 otherwise the observed address is preferred, then the advertised address.
 Automatic results remain visible alongside an override. `disagreements` flags
 conflicting observed/advertised ASNs or locations, or a conflicting operator

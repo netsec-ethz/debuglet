@@ -186,23 +186,13 @@ func (d *Dispatcher) ConfigureExecutorDisplay(executors map[string]config.Execut
 	return nil
 }
 
-// Display prefers operator metadata, with approximate database location when
-// the operator supplied neither city nor country. Each value keeps its source.
+// Display is the operator's metadata, labelled operator where configured.
 func (e *RegisteredExecutor) Display() wire.ExecutorDisplay {
 	c := e.display
-	out := wire.ExecutorDisplay{
+	return wire.ExecutorDisplay{
 		DisplayName: labelled(c.DisplayName, wire.SourceOperator), City: labelled(c.City, wire.SourceOperator),
 		Country: labelled(c.Country, wire.SourceOperator), Network: labelled(c.Network, wire.SourceOperator),
 	}
-	// An operator location overrides the whole automatic location, so an
-	// operator country is never combined with an unrelated automatic city.
-	if c.City == "" && c.Country == "" {
-		if auto := e.automaticLocation(); auto.Value != nil && auto.Source != nil {
-			out.City = labelled(auto.Value.City, *auto.Source)
-			out.Country = labelled(auto.Value.Country, *auto.Source)
-		}
-	}
-	return out
 }
 
 // Vantage returns the live SCION ISD-AS and listener observations. Called on a

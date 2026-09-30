@@ -3406,7 +3406,7 @@ components:
           $ref: "#/components/schemas/ResultLabelledString"
         network:
           $ref: "#/components/schemas/ResultLabelledString"
-      description: "Added in API 1.9. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Country is a two-letter country code. Location is never finer than city. Operator location takes precedence; otherwise an approximate offline database location is used, with its database source. Unknown values are null. Not verified against the executor."
+      description: "Added in API 1.9. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Country is an ISO 3166-1 alpha-2 code; location is never finer than city and is never inferred in these fields. Unconfigured values are null. Clients may derive an approximate fallback separately from ip_metadata. Not verified against the executor."
     IPMetadata:
       type: object
       additionalProperties: false
@@ -4046,8 +4046,11 @@ components:
       nullable: true
     ResultSourceLabel:
       type: "string"
-      pattern: "^(operator|executor-reported|dispatcher-observed|database:[^@[:space:]]+@[1-9][0-9]*)$"
-      description: "Who asserted the value. database:<name>@<build_epoch> identifies an offline MMDB database by its embedded type and build epoch. Null exactly when the labelled value is null."
+      enum:
+        - "operator"
+        - "executor-reported"
+        - "dispatcher-observed"
+      description: "Who asserted the value. Database lookup sources are recorded separately in ip_metadata. Null exactly when the value is null."
       nullable: true
     ResultLabelledString:
       type: "object"
