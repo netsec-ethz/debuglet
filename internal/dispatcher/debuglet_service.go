@@ -211,7 +211,9 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			d.logger.Error("Batch cleanup cancellation unconfirmed", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", errors.Is(err, ErrCancellationNotRecorded)), zap.String("cleanup_outcome", "unknown"))...)
 			d.markUnreconciled(cleanupCtx, selected[i].owner, id)
 		}
-		return nil, fmt.Errorf("failed to upload debuglets: %w", err)
+		// Admission committed before upload began. Keep every stable identity so
+		// the caller can inspect each stored outcome without submitting again.
+		return debugletIDS, fmt.Errorf("failed to upload debuglets: %w", err)
 	}
 
 	return debugletIDS, nil

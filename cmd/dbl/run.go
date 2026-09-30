@@ -319,6 +319,9 @@ func reportSubmissionFailure(ctx context.Context, err error, executor, output st
 	var subErr *client.SubmissionError
 	if errors.As(err, &subErr) && subErr.Stage == "submit" && subErr.TransactionID != "" {
 		r := receipt{ExecutorID: executor, TransactionID: subErr.TransactionID, State: stateSubmissionFailed}
+		if len(subErr.AdmittedIDs) == 1 {
+			r.ID = subErr.AdmittedIDs[0]
+		}
 		if subErr.OutcomeUnknown {
 			r.State = stateSubmissionUnknown
 		}

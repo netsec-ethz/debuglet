@@ -441,6 +441,30 @@ func TestRunsAndOrdersAreReachableOnlyByTheirOwner(t *testing.T) {
 	})
 }
 
+func TestRunListNewestFirstAcrossPages(t *testing.T) {
+	f := ccNewFixtureWith(t)
+	_, ownerToken, owner := authAccount(t, f, "list owner")
+	_, _, other := authAccount(t, f, "another list owner")
+	first := f.submit(owner, nil).IDs[0]
+	f.submit(other, nil)
+	second := f.submit(owner, nil).IDs[0]
+	third := f.submit(owner, nil).IDs[0]
+	for _, page := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{third, second, first}},
+		{"?limit=2&offset=0", []string{third, second}},
+		{"?limit=2&offset=2", []string{first}},
+		{"?limit=2&offset=3", []string{}},
+	} {
+		got := authListDebuglets(t, f, ownerToken, page.query)
+		if strings.Join(got, ",") != strings.Join(page.want, ",") {
+			t.Fatalf("list%s = %v, want newest-first %v", page.query, got, page.want)
+		}
+	}
+}
+
 // authListDebuglets reads one account's own runs.
 func authListDebuglets(t *testing.T, f *ccFixture, token, query string) []string {
 	t.Helper()

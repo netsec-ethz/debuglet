@@ -100,17 +100,24 @@ func (c *Client) doWithLimit(ctx context.Context, method, route string, query ur
 	defer resp.Body.Close()
 
 	if resp.StatusCode != want {
-		data, exceeded, readErr := readBounded(resp.Body, maxErrorBody)
+		errorLimit := int64(maxErrorBody)
+		if method == http.MethodPut && route == routeDebuglet {
+			// A failed admitted batch needs the same bounded identity receipt
+			// as a successful one. Human diagnostics keep their smaller cap.
+			errorLimit = maxSuccessBody
+		}
+		data, exceeded, readErr := readBounded(resp.Body, errorLimit)
 		if readErr != nil && ctx.Err() != nil {
 			return nil, wrapTransport(ctx, method, path, readErr, secrets...)
 		}
-		code, message := extractError(data, exceeded || readErr != nil, secrets...)
+		code, message, admittedIDs := extractError(data, exceeded || readErr != nil, secrets...)
 		return nil, &HTTPError{
-			Method:     method,
-			Path:       path,
-			StatusCode: resp.StatusCode,
-			Code:       code,
-			Message:    message,
+			Method:      method,
+			Path:        path,
+			StatusCode:  resp.StatusCode,
+			Code:        code,
+			Message:     message,
+			admittedIDs: admittedIDs,
 		}
 	}
 	if want == http.StatusNoContent {
@@ -170,45 +177,46 @@ func readBounded(r io.Reader, limit int64) ([]byte, bool, error) {
 // selecting a message; their values, and any known submission key, are
 // redacted from the result. The code is accepted only as a bounded identifier,
 // so no response text can reach the caller through it.
-func extractError(data []byte, incomplete bool, secrets ...string) (code, message string) {
+func extractError(data []byte, incomplete bool, secrets ...string) (code, message string, admittedIDs []string) {
 	text := strings.TrimSpace(string(data))
 	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.HasPrefix(text, "\"") {
 		if incomplete {
-			return "", unsafeErrorMessage
+			return "", unsafeErrorMessage, nil
 		}
 		dec := json.NewDecoder(strings.NewReader(text))
 		dec.UseNumber()
 		value, err := diagnosticJSON(dec, &secrets)
 		if err != nil {
-			return "", unsafeErrorMessage
+			return "", unsafeErrorMessage, nil
 		}
 		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-			return "", unsafeErrorMessage
+			return "", unsafeErrorMessage, nil
 		}
 		switch v := value.(type) {
 		case map[string]any:
 			if declared, ok := v["code"].(string); ok {
 				code = safeCode(redactSecrets(declared, secrets))
 			}
+			admittedIDs = admittedIDsFromError(v["admitted_ids"], secrets)
 			reported, ok := v["message"]
 			if !ok {
 				// A code without a message is still an actionable failure;
 				// only the diagnostic is missing.
-				return code, unsafeErrorMessage
+				return code, unsafeErrorMessage, nil
 			}
 			if s, ok := reported.(string); ok {
 				text = s
 			} else {
 				encoded, err := json.Marshal(reported)
 				if err != nil {
-					return code, unsafeErrorMessage
+					return code, unsafeErrorMessage, nil
 				}
 				text = string(encoded)
 			}
 		case string:
 			text = v
 		default:
-			return "", unsafeErrorMessage
+			return "", unsafeErrorMessage, nil
 		}
 	}
 	text = redactSecrets(text, secrets)
@@ -219,7 +227,27 @@ func extractError(data []byte, incomplete bool, secrets ...string) (code, messag
 			text = text[:len(text)-1]
 		}
 	}
-	return code, strings.TrimSpace(text)
+	return code, strings.TrimSpace(text), admittedIDs
+}
+
+// admittedIDsFromError accepts only a complete canonical identity list. It is
+// bounded by the error response body limit, and credentials cannot be promoted
+// to public identities even when they happen to look like UUIDs.
+func admittedIDsFromError(value any, secrets []string) []string {
+	values, ok := value.([]any)
+	if !ok || len(values) == 0 {
+		return nil
+	}
+	ids := make([]string, len(values))
+	seen := make(map[string]bool, len(values))
+	for i, value := range values {
+		id, ok := value.(string)
+		if !ok || !isCanonicalUUID(id) || isNilUUID(id) || seen[id] || redactSecrets(id, secrets) != id {
+			return nil
+		}
+		ids[i], seen[id] = id, true
+	}
+	return ids
 }
 
 // safeCode accepts a reported failure code only in the documented shape: a
