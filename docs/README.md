@@ -15,6 +15,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 
 ## Understand the system
 
+- [Threat model and supported scope](security.md) — actors, boundaries, identifier guarantees and conditions for untrusted use.
 - [Architecture](architecture.md) — components, trust boundaries, protocol flow, and storage.
 - [Vantage-point metadata](vantage-points.md) — design for network, location and reachability context with provenance.
 - [Packet tag specification](tag-spec.md) — `debuglet-tag-v1`: authenticated bytes, key derivation, verification and false-match bounds.

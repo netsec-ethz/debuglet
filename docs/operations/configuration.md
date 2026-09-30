@@ -73,6 +73,42 @@ The dispatcher's `[output]` section bounds each run with `run_bytes` (8 MiB) and
 
 Durable output requires both peers to negotiate output version 1. Retained output may resume over a new control session only with the same still-enrolled TLS certificate and original run binding. Plaintext local sessions and executors without an enrolled certificate cannot resume output across control bindings: when such a session ends, the dispatcher finalizes that output as `truncated` with reason `executor_interrupted` at its committed prefix, and the executor releases its local copy. Workloads themselves are never restarted, and output completion remains separate from the guest's exit status.
 
+## Stored state
+
+State belongs to the service account and contains plaintext secrets. Protect the
+whole directory and backups, including SQLite WAL/journal companions, with the
+same access controls as the database. A component-only package changes which
+binaries are installed; it does not change the state's contents or retention.
+
+| Location | Retained data and lifetime |
+| --- | --- |
+| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records, run identities and original bindings, result provenance, cancellation intent, and retained output/finality. Rows remain until an explicit supported removal or operator state retirement; no age-based result deletion runs automatically. |
+| Executor `database.path` | Queued workload bytes and policy, original run bindings, retained terminal reports, TESLA chain descriptors and the durable output spool. Completed execution rows can be removed by normal cleanup; interrupted prior-binding rows remain quarantined for inspection and are never automatically resumed. Acknowledged output payload is released according to the output protocol. |
+| Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
+| Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
+| CLI configuration | Connection profiles and saved credentials in the configured CLI directory. These are separate from daemon state and are excluded from foreground state backups. |
+| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority; dispatcher destination limits and disclosed TESLA keys. These do not become durable merely because a database backup exists. |
+
+See [output limits](#executor-output-limits) for the configured byte, frame and
+record budgets, [daemon log retention](services.md#foreground-daemon-logs) for
+log rotation, and [recovery inspection](recovery-inspection.md) for retained
+interrupted work. Exported [portable results](../results.md) are copies under the
+exporter's control; exporting does not delete the server's record.
+
+The [foreground backup/restore procedure](backup-restore.md) supports only its
+listed local TEST layouts and matching full package. Direct daemon, systemd,
+OAuth, external TLS and SCION state need the deployment's complete backup plan;
+a database snapshot alone does not include every required credential or config.
+Never start original and restored copies with the same identity simultaneously.
+
+Dispatcher schema 13 and executor schema 6 are the current schema boundaries.
+Recognized older databases require the explicit upgrade below. Dispatcher
+schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
+`debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
+are not reconciled payment state: migration 4 leaves old earnings without a
+payout wallet, and re-registration does not repair it. Keep payments disabled
+and retain paid databases and backups for operator reconciliation.
+
 ## State and upgrades
 
 Daemons never migrate a database at startup. Back up the dispatcher database, use the release's explicit migration process, and deploy a single reviewed version across the service. An interrupted executor run is not resumed after restart.

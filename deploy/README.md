@@ -393,7 +393,7 @@ supported for wallet-free TEST deployments. It does not restore usable paid
 state: migration 4 leaves existing earnings with an empty payout wallet that
 executor re-registration does not repair. Keep chain payments disabled and
 preserve paid databases and their backups for verified operator reconciliation
-before enabling payments, as [Stored state](../docs/operations/configuration.md)
+before enabling payments, as [Stored state](../docs/operations/configuration.md#stored-state)
 describes. Keep payments disabled when restarting upgraded paid-state
 deployments until that reconciliation is complete.
 
@@ -470,7 +470,7 @@ When step 9 fails the play stops on that host: the service stays stopped, the
 backup and previous daemon link stay in place, the remaining executors are left
 untouched, and the database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
-[Stored state](../docs/operations/configuration.md) lists the versions whose
+[Stored state](../docs/operations/configuration.md#stored-state) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
 `upgrade-database.yml`, and `site.yml` never runs it.
 
