@@ -26,7 +26,7 @@ selecting another revision.
 | Platform | Linux amd64 on the `ubuntu-24.04` CI runner and the pinned CI tools image | [CI definition](../.github/workflows/ci.yml), [CI images](development/ci-images.md). Other host/architecture combinations have no native package support. |
 | Packages | Same-candidate full bundle and separate CLI, dispatcher and executor packages | Package lane installs twice, verifies each role inventory and runs `--help`; full-bundle runtime checks run in the demo/local lanes. Split packages exist in source/CI; published v0.2.0 contains only the full bundle. |
 | CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.10 | Test, demo and local lanes. A displayed binary version does not negotiate API features. |
-| Dispatcher and executor | Same-package peers; control protocol 3 with binding and lease enforcement | Local and compatibility lanes. Same protocol alone is insufficient to claim mixed-release support. |
+| Dispatcher and executor | Same-package peers; control protocol 3 with binding and lease enforcement. Published v0.2.0 executor against the candidate dispatcher in the loopback TEST fixture | Local and compatibility lanes. The released-peer fixture checks registration, work and reconnect; it does not establish mixed-release TLS/enrollment or new optional features. |
 | Guests | `debuglet-go-wasi-imports-v1`, frozen compatibility guest and packaged Go samples | [Guest compatibility gate](debuglets.md#compatibility), compatibility lane. C/Rust guest packages remain experimental. |
 | State | State created by the same package; recognized historical SQLite schemas upgraded explicitly | [State reference](operations/configuration.md#stored-state), storagecheck tests. This is not a cross-package foreground-state migration promise. |
 | Kernel features | Regenerated eBPF objects loaded on the CI runner's kernel | Kernel lane; the runner kernel is not pinned and this does not establish other-kernel or SCION-path support. |
@@ -46,14 +46,26 @@ published release.
 | Legacy generation 0, previous generations 1/2, or an unknown future generation | Unsupported; negotiation rejects the incompatible profile before work admission. |
 | Generation 3 with missing/malformed binding or token | Rejected; a version string cannot replace session authority. |
 | Generation 3 without an optional capability | That capability is unavailable; matching protocol does not imply optional inspection, durable output or tagging support. |
-| Different software releases | Unsupported deployment combination, including two releases that both report generation 3. Use one reviewed package across the deployment. |
+| Published v0.2.0 executor → candidate dispatcher | The local lane installs the checksum-pinned release and checks registration, TEST work, reconnect with retained identity and fresh work. This is an upgrade compatibility fixture; use one reviewed version for deployed fleets. |
+| Other mixed software releases or deployment profiles | No support established, including two releases that both report generation 3. Use one reviewed package across the deployment. |
 
 The recorded [adjacent-build check](https://github.com/netsec-ethz/debuglet/issues/61#issuecomment-5828879951)
 ran registration and work between `8bb32f4` and `10f0f4f` in both
 directions, and older-executor reconnect to the newer dispatcher. Both were development builds of generation 3; this is not evidence
-for two supported releases. No supported cross-release execution matrix is
-established yet. Negative negotiation fixtures cover unsupported generations and
-missing authority; optional-operation tests cover unavailable capabilities.
+for two supported releases. The [installed released-peer tests](../internal/acceptance/roles/released_integration_test.go)
+now exercise the published v0.2.0 archive (source `be5142f7`) against the candidate,
+without rebuilding that release. Each candidate's local CI lane verifies this
+exact released-peer matrix on Linux amd64 loopback before merge.
+Negative negotiation fixtures cover unsupported generations and missing
+authority; optional-operation tests cover unavailable capabilities.
+
+The same installed fixture upgrades populated v0.2.0 dispatcher/executor
+databases with the candidate's packaged migrations, then starts that candidate
+and checks retained identities, bindings, output and verification history.
+It also checks the old daemons refuse newer schemas before readiness and can
+serve the restored offline backup. Follow the [deployment upgrade procedure](../deploy/README.md#upgrading-a-database);
+this does not permit editing foreground local-role package metadata to bypass
+its version check.
 
 An executor's displayed software version and capability report are peer claims.
 Its identity is bound to an enrolled client certificate only when the deployment
