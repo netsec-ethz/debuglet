@@ -371,7 +371,7 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) (er
 	}
 	d.initialized = true
 	d.initializing = true
-	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter().WithCloseOnContextDone(true))
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter().WithMemoryLimitPages(4096).WithCloseOnContextDone(true))
 	d.runtime = rt
 	d.mu.Unlock()
 	defer func() {
@@ -449,47 +449,7 @@ func (d *Debuglet) publishCompiled(ctx context.Context, compiled wazero.Compiled
 // that WASM modules may call. WASM-visible key strings are kept stable; only
 // the Go-side implementation names have changed.
 func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.HostModuleBuilder {
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTLS)).Export("connect_tls")
-
-	// ---- TCP socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeTCP)).Export("connect_tcp")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_tcp_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_tcp_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_tcp")
-
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAcceptTCP(d.env)).Export("accept_tcp")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetTCPAddr(d.env)).Export("get_tcp_addr")
-
-	// ---- UDP socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeUDP)).Export("connect_udp")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_udp_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_udp_data")
-
-	// ---- UDP listener API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveUDPFrom(d.env)).Export("receive_udp_from")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetUDPAddr(d.env)).Export("get_udp_addr")
-
-	// ---- ICMP socket API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostConnect(d.env, socket.SocketTypeICMP4)).Export("connect_icmp4")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveData(d.env)).Export("receive_icmp4_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendData(d.env)).Export("send_icmp4_data")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostClose(d.env)).Export("close_icmp4")
-
-	// ---- Connection Util API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostDrain(d.env)).Export("drain_connection")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostGetRemoteAddr(d.env)).Export("get_remote_addr")
-
-	// ---- SCION-UDP API ----
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSendSCIONUDPPacket(d.env)).Export("send_scion_udp_packet")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostReceiveSCIONServerUDPPacket(d.env)).Export("receive_scion_server_udp_packet")
-	// HACK: HostAnswerSCIONUDPPacket expects a list of addresses. This has been removed for the time being as the function is not being worked on or used
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostAnswerSCIONUDPPacket(d.env, []string{})).Export("answer_scion_udp_packet")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONAvailablePaths(d.env)).Export("scion_available_paths")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONPathLength(d.env)).Export("scion_path_length")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONGetInterfaceDetails(d.env)).Export("scion_get_interface_details")
-	hmb = hmb.NewFunctionBuilder().WithFunc(wasm.HostSCIONSelectPath(d.env)).Export("scion_select_path")
-
-	return hmb
+	return wasm.Register(hmb, "env", wasm.Functions(d.env), nil)
 }
 
 // Close terminates owned I/O and runtime resources exactly once. While

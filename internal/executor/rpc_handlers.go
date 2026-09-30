@@ -251,8 +251,9 @@ func (e *Executor) publishLimitsLocked(destinations []string) {
 				continue // The run does not use this destination.
 			}
 			if err := e.packetCount.SetLimit(addr, running.id, limit); err != nil {
-				e.logger.Warn("Failed to apply destination limit", zap.String("debugletID", running.id.String()),
-					zap.String("address", addr), zap.Error(err))
+				e.logger.Warn("Failed to apply destination limit", zap.String("debugletID", running.id.String()))
+				e.logger.Debug("Private destination limit diagnostic", zap.String("debugletID", running.id.String()),
+					zap.String("address", daemonlog.Diagnostic(errors.New(addr))), zap.String("error", daemonlog.Diagnostic(err)))
 			}
 		}
 		execLimit, _, err := e.limiter.GetExecLimit(running.id)
@@ -260,7 +261,8 @@ func (e *Executor) publishLimitsLocked(destinations []string) {
 			continue
 		}
 		if err := e.packetCount.SetExecLimit(running.id, execLimit); err != nil {
-			e.logger.Warn("Failed to apply executor limit", zap.String("debugletID", running.id.String()), zap.Error(err))
+			e.logger.Warn("Failed to apply executor limit", zap.String("debugletID", running.id.String()))
+			e.logger.Debug("Private executor limit diagnostic", zap.String("debugletID", running.id.String()), zap.String("error", daemonlog.Diagnostic(err)))
 		}
 	}
 }

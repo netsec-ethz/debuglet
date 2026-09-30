@@ -37,6 +37,7 @@ type DebugletPolicyRequest = wire.Policy
 type DebugletRequest = wire.Request[string]
 
 type SubmitDebugletsRequest struct {
+	Retry         *wire.RetryLink   `json:"retry,omitempty"`
 	Debuglets     []DebugletRequest `json:"debuglets"`
 	TransactionId string            `json:"transaction_id"`
 	AuthKey       string            `json:"auth_key"`
@@ -117,8 +118,9 @@ type BalanceResponse struct {
 }
 
 type IntentResponse struct {
-	Method string `json:"method"`
-	Intent any    `json:"intent"`
+	Retry  *wire.RetryReceipt `json:"retry,omitempty"`
+	Method string             `json:"method"`
+	Intent any                `json:"intent"`
 }
 
 type SuiIntent struct {
@@ -137,6 +139,7 @@ type DummyIntent struct {
 }
 
 type PaymentIntentRequest struct {
+	Retry         *wire.RetryLink   `json:"retry,omitempty"`
 	Debuglets     []DebugletRequest `json:"debuglets"`
 	PaymentMethod string            `json:"payment_method"`
 	RefundAddress string            `json:"refund_address"`
@@ -175,13 +178,13 @@ const (
 func validatePolicy(orderID int64, policy DebugletPolicyRequest) *echo.HTTPError {
 	switch models.CheckPolicyNumbers(policy.FloorBW, policy.CeilBW, policy.TimeoutMS) {
 	case models.PolicyBoundTimeout:
-		return policyError(orderID, fmt.Sprintf("timeout_ms must be positive and at most %d", maxTimeoutMS))
+		return policyFieldError(orderID, "policy.timeout_ms", "out_of_range", fmt.Sprintf("timeout_ms must be positive and at most %d", maxTimeoutMS))
 	case models.PolicyBoundFloor:
-		return policyError(orderID, fmt.Sprintf("floor_bw must be between 0 and %d bits per second", maxBandwidthBPS))
+		return policyFieldError(orderID, "policy.floor_bw", "out_of_range", fmt.Sprintf("floor_bw must be between 0 and %d bits per second", maxBandwidthBPS))
 	case models.PolicyBoundCeil:
-		return policyError(orderID, fmt.Sprintf("ceil_bw must be between 0 and %d bits per second", maxBandwidthBPS))
+		return policyFieldError(orderID, "policy.ceil_bw", "out_of_range", fmt.Sprintf("ceil_bw must be between 0 and %d bits per second", maxBandwidthBPS))
 	case models.PolicyBoundCeilBelowFloor:
-		return policyError(orderID, "ceil_bw must be at least floor_bw")
+		return policyFieldError(orderID, "policy.ceil_bw", "below_floor", "ceil_bw must be at least floor_bw")
 	}
 	return nil
 }
@@ -205,6 +208,10 @@ func policyError(orderID int64, reason string) *echo.HTTPError {
 }
 
 func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
+	requested, err := submittedConfiguration(r)
+	if err != nil {
+		return models.DebugletSpec{}, err
+	}
 	decoded, err := base64.StdEncoding.DecodeString(r.Wasm)
 	if err != nil {
 		return models.DebugletSpec{}, errors.New("invalid wasm code")
@@ -235,6 +242,7 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 	}
 
 	return models.DebugletSpec{
+		Requested:  requested,
 		StartTime:  startTime,
 		ExecutorID: r.ExecutorID,
 		Args:       r.Args,

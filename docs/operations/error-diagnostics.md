@@ -24,10 +24,10 @@ response or retry the workload automatically.
 | Surface | Information exposed |
 | --- | --- |
 | HTTP error envelope | Stable code and status, fixed public message or an explicitly bounded request value; admitted run IDs where available. Unclassified framework messages and body-decoder details are not returned. |
-| Run state, logs and portable result | Stored workload outcome and user-produced output. Current executors classify unexpected runtime/host failures as a fixed failed outcome, preserve cancellation, timeout and guest exit classification, and bound public outcome text. Compile errors can include module content. |
+| Run state, logs and portable result | Fixed workload outcome categories and user-produced output. Cancellation, timeout, numeric guest exit and known policy/resource errors remain actionable. Arbitrary historical/runtime/compile diagnostic text is projected to a fixed failure category. |
 | Request access log | Generated request ID, method, matched route, status and latency; no raw URL, query, body, cookie or caller-supplied request ID. |
-| Dispatcher and executor diagnostic log | Internal database, transport and runtime causes correlated with request or run identity. These are operator diagnostics, not a public API. |
-| Authenticated dispatcher/executor control RPC | Operational errors for the enrolled peer, potentially including internal database or runtime detail. Known control credentials are redacted from reflected peer errors; this is not a general-purpose secret filter. |
+| Dispatcher and executor diagnostic log | Routine events carry fixed classifications and correlation identifiers. Explicit private Debug entries retain bounded internal causes, with known request/control credentials redacted; startup/configuration errors remain actionable. |
+| Authenticated dispatcher/executor control RPC | Explicit validation/ownership/capacity statuses remain actionable. Unclassified, Internal and DataLoss failures use fixed messages; private details remain in operator Debug logs. Known control credentials are redacted from reflected errors. |
 
 An operator locates an HTTP failure using its `X-Request-ID` response header and
 the daemon's `request failed` log entry. Runtime failures are recorded in the
@@ -37,10 +37,15 @@ There is no API endpoint for arbitrary private diagnostic detail. Protect log
 files, service-journal access, database copies and exported diagnostics with the
 same access controls as other operator data.
 
-The API continues to return the stored terminal-error string; this change does
-not introduce a new terminal-error representation or rewrite historical results.
-Older stored errors can contain details that current executors would classify.
-A participating executor supplies terminal reports, and guest output remains
-user-controlled content. Diagnostic logs can contain secrets included by a
-runtime or dependency; they are not suitable for public sharing or a claim of
-server-wide secret redaction. Review and redact exports before sharing them.
+API 1.12 retains the terminal-error string representation and projects both new
+and historical stored messages to bounded public classifications. A nonempty
+failure never becomes success; numeric guest exits, cancellation and unknown
+outcomes retain their meaning. This changes display text, not execution truth
+or `errors.Is`/HTTP status handling. Private raw retained diagnostics expire with
+payload deletion. Enable Debug logging only for authorized diagnostics; routine
+Info/Warn logs omit private causes. Host access to logs and databases is required;
+there is no public diagnostic endpoint. Review exported diagnostics before sharing.
+Guest output remains user-controlled measurement data under normal ownership.
+
+Yamux transport diagnostics also use the bounded private Debug sink. They do not
+write raw network errors or addresses directly to standard error.

@@ -14,6 +14,7 @@ import (
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
 
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 )
 
@@ -333,7 +334,8 @@ func dialSCION(ctx context.Context, addr string, sugar *zap.SugaredLogger, pktTa
 	// also logged once per process rather than skipped silently.
 	if pktTagger != nil {
 		unmarkedSCION.Do(func() {
-			sugar.Warnw("SCION sockets cannot be marked; their packets are not attributed to the run (tagging.scion = none)", "udpAddr", udpAddr)
+			sugar.Warn("SCION sockets cannot be marked; their packets are not attributed to the run (tagging.scion = none)")
+			sugar.Debugw("Private SCION tagging diagnostic", "address", daemonlog.Diagnostic(fmt.Errorf("%s", udpAddr)))
 		})
 	}
 	return &SCIONConn{Conn: &conn, Selector: selector}, nil

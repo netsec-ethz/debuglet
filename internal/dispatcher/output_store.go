@@ -17,6 +17,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/storageheadroom"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -192,8 +193,19 @@ func (d *Dispatcher) storeOutput(ctx context.Context, writer outputWriter, id uu
 	if err := authorizeOutput(ctx, q, row, writer); err != nil {
 		return nil, err
 	}
+	if frame != nil && row.FinalSequence.Valid && writer.version == pb.OutputVersion && frame.Sequence <= row.CommittedSequence {
+		// Deleted payloads retain their committed cursor. A retry can learn the
+		// already-final receipt without re-inserting or charging discarded data.
+		_, err := q.GetPayloadTombstone(ctx, id)
+		if err == nil {
+			return outputReceipt(row), nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
 	if frame != nil {
-		if err := d.appendOutput(ctx, q, &row, frame); err != nil {
+		if err := d.appendOutput(ctx, q, tx, &row, frame); err != nil {
 			return nil, err
 		}
 	} else if end != nil {
@@ -233,7 +245,7 @@ func authorizeOutput(ctx context.Context, q *database.Queries, row database.GetD
 	return nil
 }
 
-func (d *Dispatcher) appendOutput(ctx context.Context, q *database.Queries, row *database.GetDebugletOutputRow, frame *pb.DebugletOutput) error {
+func (d *Dispatcher) appendOutput(ctx context.Context, q *database.Queries, tx *sql.Tx, row *database.GetDebugletOutputRow, frame *pb.DebugletOutput) error {
 	if row.FinalSequence.Valid {
 		return status.Error(codes.FailedPrecondition, "output is finalized")
 	}
@@ -261,6 +273,14 @@ func (d *Dispatcher) appendOutput(ctx context.Context, q *database.Queries, row 
 		return err
 	} else if full {
 		reason = pb.OutputReasonStorageLimit
+	}
+	if reason == "" {
+		if err := storageheadroom.Check(ctx, tx, d.outputLimits.ControlReserveBytes, count+pb.OutputFrameCharge); err != nil {
+			if !errors.Is(err, storageheadroom.ErrLowSpace) {
+				return err
+			}
+			reason = pb.OutputReasonStorageLimit
+		}
 	}
 	if reason != "" {
 		return finishOutput(ctx, q, row, &pb.DebugletOutputEnd{LastSequence: row.CommittedSequence,

@@ -65,7 +65,7 @@ func ReadResult(r io.Reader) (Result, error) {
 
 func validateResult(doc Result) error {
 	bad := func() error { return errors.New("inconsistent result document") }
-	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion && doc.Version != wire.ResultVersion10 {
+	if doc.Format != wire.ResultFormat || doc.Version != wire.ResultVersion && doc.Version != wire.ResultVersion10 && doc.Version != wire.RetryResultVersion {
 		return errors.New("unsupported result format or version")
 	}
 	if !resultUUID(doc.RunID) || strings.TrimSpace(doc.ExecutorID) == "" || strings.TrimSpace(doc.Outcome.State) == "" || doc.Timing.ObservedAt.IsZero() {
@@ -81,6 +81,16 @@ func validateResult(doc Result) error {
 	// later minor version can fill them without changing what an older file means.
 	if doc.Outcome.ExitCode != nil || doc.Timing.StartedAt != nil || doc.Timing.FinishedAt != nil || doc.Timing.ClockUncertaintyNS != nil {
 		return bad()
+	}
+	hasRetry := doc.Provenance != nil && doc.Provenance.Retry != nil
+	if hasRetry != (doc.Version == wire.RetryResultVersion) {
+		return bad()
+	}
+	if hasRetry {
+		retry := doc.Provenance.Retry
+		if !resultUUID(retry.ParentRunID) || !resultUUID(retry.RequestID) || retry.ParentRunID == doc.RunID {
+			return bad()
+		}
 	}
 	attribution := "unknown"
 	if p := doc.Provenance; p != nil {
@@ -138,6 +148,12 @@ func validateResult(doc Result) error {
 // A value and its source are recorded together or not at all, and a source is
 // one of the defined labels; no label asserts verification.
 func validVantagePoint(v wire.VantagePoint) bool {
+	if v.ReportedSourceIP != nil && (v.ReportedSourceIP.Value == nil || v.ReportedSourceIP.Source == nil || *v.ReportedSourceIP.Source != wire.SourceExecutorReported || strings.TrimSpace(*v.ReportedSourceIP.Value) == "") {
+		return false
+	}
+	if !validConnectivity(v.Connectivity) {
+		return false
+	}
 	if !validIPMetadata(v.IPMetadata) {
 		return false
 	}

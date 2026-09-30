@@ -16,6 +16,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/storageheadroom"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,9 +30,6 @@ import (
 )
 
 func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.DebugletSpec, userID *uuid.UUID) (uuid.UUIDs, error) {
-	if err := AdmissionPaused(); err != nil {
-		return nil, err
-	}
 	g, subCtx := errgroup.WithContext(ctx)
 	// debuglet IDs in the same order as the submission
 	debugletIDS := make(uuid.UUIDs, len(specs))
@@ -60,9 +58,18 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			return recorded, err
 		}
 	}
+	if err := AdmissionPaused(); err != nil {
+		d.mu.Unlock()
+		return nil, err
+	}
 	if d.closed {
 		d.mu.Unlock()
 		return nil, ErrDispatcherClosed
+	}
+	admissionBytes, err := validateSubmissionSize(specs)
+	if err != nil {
+		d.mu.Unlock()
+		return nil, err
 	}
 
 	var sreqs []schedule.Request
@@ -105,6 +112,10 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 	defer tx.Rollback()
 
+	if err := storageheadroom.Check(ctx, tx, d.outputLimits.ControlReserveBytes, admissionBytes); err != nil {
+		failLocked()
+		return nil, errors.Join(ErrOutputCapacity, err)
+	}
 	qtx := database.New(d.db).WithTx(tx)
 	for i := range sreqs {
 		row, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
@@ -128,6 +139,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 		// The order records its run. An order that already records one, or
 		// that has no row, refuses the whole batch.
 		claimed, err := qtx.ClaimDebugletOrder(ctx, database.ClaimDebugletOrderParams{
+			OutstandingState: int64(models.Outstanding), PaidStatus: int64(models.Paid),
 			DebugletID:    sql.NullInt64{Int64: row.ID, Valid: true},
 			TransactionID: specs[i].TransactionID,
 			OrderID:       specs[i].OrderID,
@@ -158,12 +170,20 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			failLocked()
 			return nil, fmt.Errorf("record admission provenance: %w", err)
 		}
+		if err := recordMeasurementRequest(ctx, qtx, row.ID, specs[i].Requested); err != nil {
+			failLocked()
+			return nil, fmt.Errorf("record submitted measurement: %w", err)
+		}
 		if err := d.createOutputMetadata(ctx, qtx, debugletIDS[i], selected[i].owner.OutputVersion(), selected[i].owner.CredentialFingerprint()); err != nil {
 			failLocked()
 			return nil, fmt.Errorf("reserve output storage: %w", err)
 		}
 	}
 
+	if err := d.reserveAccountRuns(ctx, qtx, debugletIDS, specs, userID); err != nil {
+		failLocked()
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		failLocked()
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
@@ -208,20 +228,26 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 				if _, err := d.OnDebugletExit(cleanupCtx, selected[i].mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
 					d.logger.Error("Batch cleanup cancellation was not recorded", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", true), zap.String("cleanup_outcome", "unknown"))...)
 				} else if err := d.finishRefusedOutput(cleanupCtx, selected[i].mutation, id); err != nil {
-					d.logger.Error("Failed to finalize refused debuglet output", zap.String("debugletID", id.String()), zap.Error(err))
+					d.logger.Error("Failed to finalize refused debuglet output", zap.String("debugletID", id.String()))
+					d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", id.String()), zap.String("operation", "Failed to finalize refused debuglet output"), zap.String("error", daemonlog.Diagnostic(err)))
 				}
 				continue
 			}
 			d.logger.Error("Batch cleanup cancellation unconfirmed", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", errors.Is(err, ErrCancellationNotRecorded)), zap.String("cleanup_outcome", "unknown"))...)
 			d.markUnreconciled(cleanupCtx, selected[i].owner, id)
 		}
-		// Admission committed before upload began. Keep every stable identity so
-		// the caller can inspect each stored outcome without submitting again.
-		return debugletIDS, fmt.Errorf("failed to upload debuglets: %w", err)
+		// Admission committed before upload began. Keep the receipt and marker
+		// so inspection and the single admitted-batch refund remain distinct.
+		return debugletIDS, fmt.Errorf("%w: failed to upload debuglets: %w", ErrAdmissionCommitted, err)
 	}
 
 	return debugletIDS, nil
 }
+
+// ErrAdmissionCommitted identifies an upload failure from the call that
+// committed the new runs. Receipt lookup and pre-admission refusals cannot
+// authorize the admitted-batch refund path.
+var ErrAdmissionCommitted = errors.New("new admission committed")
 
 // admittedRuns returns the runs recorded for the orders of a batch, in the
 // order of its specs, or nil when none of them has a run yet. A batch of which
@@ -356,12 +382,8 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 		return nil, fmt.Errorf("executor '%s' not found: %w", spec.ExecutorID, ErrUnknownExecutor)
 	}
 
-	if spec.Policy.RequireICMP && !exec.ICMPEnabled {
-		return nil, fmt.Errorf("executor does not support ICMP, but policy requires it: %w", ErrInvalidPolicy)
-	}
-
-	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
-		return nil, fmt.Errorf("executor has no public host, but policy requires a listener: %w", ErrInvalidPolicy)
+	if err := validateExecutorCapabilities(spec, exec, d.now()); err != nil {
+		return nil, err
 	}
 
 	var from time.Time
@@ -709,6 +731,7 @@ func (d *Dispatcher) markUnreconciled(ctx context.Context, owner *rpc.SessionOwn
 			d.logger.Debug("Debuglet advanced before its unconfirmed cancellation was recorded", zap.String("debugletID", id.String()))
 			return
 		}
-		d.logger.Error("Failed to mark debuglet unreconciled", zap.String("debugletID", id.String()), zap.Error(err))
+		d.logger.Error("Failed to mark debuglet unreconciled", zap.String("debugletID", id.String()))
+		d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", id.String()), zap.String("operation", "Failed to mark debuglet unreconciled"), zap.String("error", daemonlog.Diagnostic(err)))
 	}
 }

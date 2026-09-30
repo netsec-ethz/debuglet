@@ -11,9 +11,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/isolation"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"github.com/tetratelabs/wazero/sys"
@@ -66,13 +68,14 @@ func (e *Executor) endDelivery(id uuid.UUID) {
 // under the run's immutable identity, and then tries to deliver it. Successful
 // retention preserves evidence after a lost response or connection. A failed
 // retention write is logged but does not prevent execution storage deletion.
-// A failure's whole outcome is logged here under the run ID; the result that
-// is retained and delivered carries only its public classification.
+// A failure's bounded private diagnostic is logged here under the run ID; the
+// result retained and delivered carries only its public classification.
 func (e *Executor) reportDebugletExit(op *debugletOperation, spec scheduler.Spec) {
 	request := &pb.DebugletExitRequest{DebugletId: spec.DebugletID.String()}
 	if op.outcome != nil {
-		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID.String()), zap.Error(op.outcome))
 		message := publicOutcome(op.outcome)
+		e.logger.Error("Debuglet handler failed", zap.String("debugletID", spec.DebugletID.String()), zap.String("outcome", message))
+		e.logger.Debug("Private debuglet diagnostic", zap.String("debugletID", spec.DebugletID.String()), zap.String("error", daemonlog.Diagnostic(op.outcome)))
 		request.ExitCode, request.ErrorMessage = -1, &message
 	}
 	// Reporting is bounded and independent of execution cancellation. Its
@@ -90,7 +93,8 @@ func (e *Executor) reportDebugletExit(op *debugletOperation, spec scheduler.Spec
 			RecordedAt:   time.Now(),
 		}
 		if err := retention.RecordTerminal(reportCtx, event); err != nil {
-			e.logger.Error("Failed to retain debuglet exit", zap.String("debugletID", spec.DebugletID.String()), zap.Error(err))
+			e.logger.Error("Failed to retain debuglet exit", zap.String("debugletID", spec.DebugletID.String()))
+			e.logger.Debug("Private terminal retention diagnostic", zap.String("debugletID", spec.DebugletID.String()), zap.String("error", daemonlog.Diagnostic(err)))
 		} else {
 			retained = true
 		}
@@ -140,6 +144,14 @@ func publicOutcome(outcome error) string {
 		text = timeout.Error()
 	case errors.As(outcome, &exit) && exit.ExitCode() != sys.ExitCodeContextCanceled && exit.ExitCode() != sys.ExitCodeDeadlineExceeded:
 		text = fmt.Sprintf("debuglet exited with code %d", exit.ExitCode())
+	case errors.Is(outcome, isolation.ErrCompileBudget):
+		text = "compilation resource budget exceeded"
+	case errors.Is(outcome, isolation.ErrCompileWorker):
+		text = "compiler worker failed"
+	case errors.Is(outcome, isolation.ErrExecutionBudget):
+		text = "execution resource budget exceeded"
+	case errors.Is(outcome, isolation.ErrAdmission):
+		text = "compiler capacity unavailable"
 	case errors.Is(outcome, socket.ErrQuota):
 		text = "guest socket quota exceeded"
 	case errors.Is(outcome, netpolicy.ErrNotInPolicy):
@@ -150,8 +162,10 @@ func publicOutcome(outcome error) string {
 		text = "destination refused: " + netpolicy.ErrTransportUnavailable.Error()
 	case errors.Is(outcome, netpolicy.ErrUntagged):
 		text = "destination refused: IPv6 " + netpolicy.ErrUntagged.Error()
+	case errors.Is(outcome, isolation.ErrWorker):
+		text = "guest worker failed"
 	case errors.As(outcome, &compile):
-		text = "module does not compile: " + compile.Err.Error()
+		text = "module does not compile"
 	case errors.Is(outcome, context.Canceled):
 		text = "debuglet cancelled"
 	}
@@ -197,22 +211,25 @@ func (e *Executor) settleDebugletExit(ctx context.Context, retention scheduler.T
 			if release := retention.ReleaseTerminal(writeCtx, id, binding); release != nil {
 				// The result is delivered; the local row is only evidence.
 				e.logger.Error("Failed to release an acknowledged debuglet exit",
-					zap.String("debugletID", id.String()), zap.Error(release))
+					zap.String("debugletID", id.String()))
+				e.logger.Debug("Private terminal release diagnostic", zap.String("debugletID", id.String()), zap.String("error", daemonlog.Diagnostic(release)))
 			}
 		}
 		return
 	}
 	rejected := permanentRejection(err)
 	if rejected {
-		e.logger.Error("Dispatcher refused a debuglet exit", zap.String("debugletID", id.String()), zap.Error(err))
+		e.logger.Error("Dispatcher refused a debuglet exit", zap.String("debugletID", id.String()), zap.String("code", status.Code(err).String()))
 	} else {
-		e.logger.Error("Failed to notify debuglet exit", zap.String("debugletID", id.String()), zap.Error(err))
+		e.logger.Error("Failed to notify debuglet exit", zap.String("debugletID", id.String()), zap.String("code", status.Code(err).String()))
 	}
+	e.logger.Debug("Private terminal delivery diagnostic", zap.String("debugletID", id.String()), zap.String("error", daemonlog.Diagnostic(err)))
 	if retention != nil && retained {
 		attempt := scheduler.TerminalAttempt{Attempts: attempts, Rejected: rejected, Failure: err}
 		if note := retention.NoteTerminalFailure(writeCtx, id, binding, attempt); note != nil {
 			e.logger.Error("Failed to record a terminal delivery attempt",
-				zap.String("debugletID", id.String()), zap.Error(note))
+				zap.String("debugletID", id.String()))
+			e.logger.Debug("Private terminal attempt diagnostic", zap.String("debugletID", id.String()), zap.String("error", daemonlog.Diagnostic(note)))
 		}
 	}
 }
@@ -253,7 +270,7 @@ func (e *Executor) deliverDebugletExit(ctx context.Context, binding controlsessi
 			return attempts, err
 		}
 		e.logger.Debug("Retrying debuglet exit report", zap.String("debugletID", request.GetDebugletId()),
-			zap.Int("attempt", attempt), zap.Error(err))
+			zap.Int("attempt", attempt), zap.String("error", daemonlog.Diagnostic(err)))
 		timer := time.NewTimer(exitReportRetryDelay)
 		select {
 		case <-timer.C:
@@ -307,7 +324,8 @@ func (e *Executor) reconcileTerminals(ctx context.Context, binding controlsessio
 	end()
 	if err != nil {
 		if !errors.Is(err, scheduler.ErrClosed) && passCtx.Err() == nil {
-			e.logger.Error("Failed to read retained debuglet exits", zap.Error(err))
+			e.logger.Error("Failed to read retained debuglet exits")
+			e.logger.Debug("Private retained terminal lookup diagnostic", zap.String("error", daemonlog.Diagnostic(err)))
 		}
 		return
 	}

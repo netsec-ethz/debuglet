@@ -3,6 +3,8 @@ package client
 import (
 	"errors"
 	"fmt"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // HTTPError reports a response the client did not accept: any status other
@@ -18,6 +20,7 @@ type HTTPError struct {
 	StatusCode  int
 	Code        string
 	Message     string
+	FieldErrors []wire.FieldError
 	admittedIDs []string // validated shape; submission also checks batch cardinality
 }
 
@@ -65,6 +68,15 @@ const (
 	CodeNotFound = "not_found"
 	// CodeCapacityExhausted is a batch the scheduler cannot admit.
 	CodeCapacityExhausted = "capacity_exhausted"
+	// CodeAccountQuota is a request exceeding the account's configured
+	// run, reserved concurrency or queued-byte allowance.
+	CodeAccountQuota = "account_quota_exceeded"
+	// CodePayloadDeleted means the requested payload was deleted; the run's
+	// identity and original outcome are still retained.
+	CodePayloadDeleted = "payload_deleted"
+	// CodePayloadNotDeletable means completed output or confirmed executor
+	// retirement is missing, so the payload must remain retained.
+	CodePayloadNotDeletable = "payload_not_deletable"
 	// CodeCancelRefused is a cancellation the dispatcher did not accept.
 	CodeCancelRefused = "cancel_refused"
 	// CodeMethodNotAllowed is a method the route does not serve.

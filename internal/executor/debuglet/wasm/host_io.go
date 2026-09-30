@@ -16,16 +16,11 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/guestio"
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
 )
 
 // RegisterIO adds recoverable sockets without changing the legacy env module.
 func RegisterIO(builder wazero.HostModuleBuilder, env *WasmEnv) wazero.HostModuleBuilder {
-	return builder.NewFunctionBuilder().WithFunc(HostIODial(env)).Export("dial").
-		NewFunctionBuilder().WithFunc(HostIORead(env)).Export("read").
-		NewFunctionBuilder().WithFunc(HostIOWrite(env)).Export("write").
-		NewFunctionBuilder().WithFunc(HostIOClose(env)).Export("close").
-		NewFunctionBuilder().WithFunc(HostIODeadline(env)).Export("deadline")
+	return Register(builder, guestio.Module, Functions(env), nil)
 }
 
 func ioResult(n int, err error) uint64 {
@@ -65,9 +60,9 @@ func ioSocket(env *WasmEnv, handle int32) (socket.Socket, error) {
 	return sock, err
 }
 
-func HostIODial(env *WasmEnv) func(context.Context, api.Module, uint32, uint32, uint32, int64) uint64 {
-	return func(ctx context.Context, mod api.Module, transport, ptr, length uint32, timeout int64) uint64 {
-		addr, err := ExtractStr(mod, ptr, length)
+func hostIODial(env *WasmEnv) func(context.Context, Memory, uint32, uint32, uint32, int64) uint64 {
+	return func(ctx context.Context, mod Memory, transport, ptr, length uint32, timeout int64) uint64 {
+		addr, err := extractStr(mod, ptr, length)
 		if err != nil {
 			panic(err)
 		}
@@ -82,9 +77,9 @@ func HostIODial(env *WasmEnv) func(context.Context, api.Module, uint32, uint32, 
 	}
 }
 
-func HostIORead(env *WasmEnv) func(context.Context, api.Module, int32, uint32, uint32) uint64 {
-	return func(_ context.Context, mod api.Module, handle int32, ptr, length uint32) uint64 {
-		buf, err := ExtractMem[byte](mod, ptr, length)
+func hostIORead(env *WasmEnv) func(context.Context, Memory, int32, uint32, uint32) uint64 {
+	return func(_ context.Context, mod Memory, handle int32, ptr, length uint32) uint64 {
+		buf, err := extractMem[byte](mod, ptr, length)
 		if err != nil {
 			panic(err)
 		}
@@ -96,6 +91,9 @@ func HostIORead(env *WasmEnv) func(context.Context, api.Module, int32, uint32, u
 		if n < 0 || n > len(buf) {
 			panic(fmt.Errorf("read returned invalid byte count %d", n))
 		}
+		if n > 0 && !mod.Write(ptr, buf[:n]) {
+			panic("failed to write received bytes")
+		}
 		if !isStreamSocket(sock.Type()) && errors.Is(err, io.EOF) {
 			err = errors.New("unexpected datagram EOF")
 		}
@@ -106,9 +104,9 @@ func HostIORead(env *WasmEnv) func(context.Context, api.Module, int32, uint32, u
 	}
 }
 
-func HostIOWrite(env *WasmEnv) func(context.Context, api.Module, int32, uint32, uint32) uint64 {
-	return func(_ context.Context, mod api.Module, handle int32, ptr, length uint32) uint64 {
-		buf, err := ExtractMem[byte](mod, ptr, length)
+func hostIOWrite(env *WasmEnv) func(context.Context, Memory, int32, uint32, uint32) uint64 {
+	return func(_ context.Context, mod Memory, handle int32, ptr, length uint32) uint64 {
+		buf, err := extractMem[byte](mod, ptr, length)
 		if err != nil {
 			panic(err)
 		}

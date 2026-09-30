@@ -249,6 +249,9 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	if err := d.ConfigureOutputLimits(cfg.Output); err != nil {
 		return fmt.Errorf("configure output limits: %w", err)
 	}
+	if err := d.ConfigureDataLimits(cfg.Admission, cfg.Retention); err != nil {
+		return fmt.Errorf("configure account and retention limits: %w", err)
+	}
 	if err := d.ConfigureAttribution(cfg.Attribution); err != nil {
 		return fmt.Errorf("configure attribution history: %w", err)
 	}

@@ -17,6 +17,8 @@ type Request[Binary ~string | ~[]byte] struct {
 	Args           []string `json:"args,omitempty"`
 	Wasm           Binary   `json:"wasm"`
 	Policy         Policy   `json:"policy"`
+	Label          string   `json:"label,omitempty"`
+	ProgramName    string   `json:"program_name,omitempty"`
 }
 
 // Policy is the network policy requested for a debuglet.
@@ -33,16 +35,19 @@ type Policy struct {
 
 // Executor is one executor as reported by GET executors.
 type Executor struct {
-	Capabilities           *ExecutorCapabilities `json:"capabilities,omitempty"`
-	ID                     string                `json:"id"`
-	Ready                  bool                  `json:"ready"`
-	LastSeen               int64                 `json:"last_seen"`
-	Version                string                `json:"version"`
-	TeslaDelaySec          int64                 `json:"tesla_delay_sec"`
-	TeslaAnchorTimestampNs int64                 `json:"tesla_anchor_timestamp_ns"`
-	TeslaAnchorKey         []byte                `json:"tesla_anchor_key"` // k_0, the public chain anchor
-	PricePerBw             int64                 `json:"price_per_bw"`
-	Currency               string                `json:"currency"`
+	Connectivity           *Connectivity            `json:"connectivity,omitempty"`
+	AdmissionLimits        *ExecutorAdmissionLimits `json:"admission_limits,omitempty"`
+	CapabilityObservation  *CapabilityObservation   `json:"capability_observation,omitempty"`
+	Capabilities           *ExecutorCapabilities    `json:"capabilities,omitempty"`
+	ID                     string                   `json:"id"`
+	Ready                  bool                     `json:"ready"`
+	LastSeen               int64                    `json:"last_seen"`
+	Version                string                   `json:"version"`
+	TeslaDelaySec          int64                    `json:"tesla_delay_sec"`
+	TeslaAnchorTimestampNs int64                    `json:"tesla_anchor_timestamp_ns"`
+	TeslaAnchorKey         []byte                   `json:"tesla_anchor_key"` // k_0, the public chain anchor
+	PricePerBw             int64                    `json:"price_per_bw"`
+	Currency               string                   `json:"currency"`
 	// Admission is ready, maintenance or offline; empty from older dispatchers.
 	Admission  string          `json:"admission"`
 	Display    ExecutorDisplay `json:"display"`

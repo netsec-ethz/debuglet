@@ -236,7 +236,7 @@ func TestGeneratedModelsMatchFreshSchema(t *testing.T) {
 				signature := Signature(tables[table])
 				candidates := unmatched[signature]
 				if len(candidates) == 0 {
-					t.Errorf("%s table %s has columns %v that no generated model matches",
+					t.Errorf("%s table or view %s has columns %v that no generated model matches",
 						role.Name, table, tables[table])
 					continue
 				}
@@ -246,7 +246,7 @@ func TestGeneratedModelsMatchFreshSchema(t *testing.T) {
 			}
 			for _, signature := range slices.Sorted(maps.Keys(unmatched)) {
 				for _, model := range unmatched[signature] {
-					t.Errorf("%s model %s with fields %v matches no table of the fresh schema",
+					t.Errorf("%s model %s with fields %v matches no table or view of the fresh schema",
 						role.Name, model, models[model])
 				}
 			}

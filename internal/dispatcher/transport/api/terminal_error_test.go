@@ -10,18 +10,14 @@ import (
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
-// A failure report that spans lines and exceeds the stored bound reaches the
-// SDK and the CLI as the one bounded line the dispatcher recorded: 512 bytes
-// of the report followed by "...".
+// Private multiline reports retain failure truth in SDK/CLI reads while their
+// arbitrary stored detail is projected to a fixed bounded public category.
 func TestTerminalErrorReachesClientsAsOneLine(t *testing.T) {
 	f := ccNewFixture(t)
 	f.dbl = ccBuildCLI(t)
 	c := f.client(f.root.URL, false)
 	message := "first line\nsecond line\r\n" + strings.Repeat("x", 2000)
-	// One line of 515 bytes: the report's first 512 bytes with its line breaks
-	// turned into spaces, and the marker.
-	head := "first line second line  "
-	want := head + strings.Repeat("x", 512-len(head)) + "..."
+	want := "debuglet failed; operator diagnostics have the details"
 
 	f.peer.setUploadHook(f.exitHook(-1, &message))
 	sub := f.submit(c, nil)

@@ -5,11 +5,14 @@ package dispatcher
 
 import (
 	"context"
+	"database/sql"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
@@ -53,11 +56,44 @@ func TestMetricsObserveDurableTransitionsOnce(t *testing.T) {
 	if after := f.d.CollectMetrics(f.ctx).Runs; after != before {
 		t.Fatalf("duplicate/stale transition changed metrics: before=%+v after=%+v", before, after)
 	}
+	// Supported payload deletion keeps the run identity and terminal outcome.
+	// Arrange confirmed retirement and final output before exercising deletion.
+	if err := f.q.ReserveAccountRun(f.ctx, database.ReserveAccountRunParams{DebugletID: a.row.ID, QueuedBytes: 1024}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.q.RetireAccountRun(f.ctx, database.RetireAccountRunParams{DebugletID: a.row.ID, RetiredAt: sql.NullInt64{Int64: time.Now().Unix(), Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.createOutputMetadata(f.ctx, f.q, a.id, pb.OutputVersion, ""); err != nil {
+		t.Fatal(err)
+	}
+	binding := controlsession.Binding{Incarnation: a.row.DispatcherIncarnation, SessionID: a.row.SessionID}
+	writer := outputWriter{executorID: a.row.ExecutorID, binding: binding, original: binding, version: pb.OutputVersion}
+	requireOutputReceipt(t, f.d, writer, a.id, nil, &pb.DebugletOutputEnd{Status: pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE})
+	if err := f.d.DeleteCompletedPayload(f.ctx, a.id, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.q.GetPayloadTombstone(f.ctx, a.id); err != nil {
+		t.Fatal(err)
+	}
+	if after := f.d.CollectMetrics(f.ctx).Runs; after != before {
+		t.Fatalf("payload deletion changed retained outcome metrics: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestMetricsCountCurrentRowsRatherThanLifetimeEvents(t *testing.T) {
+	f := newTGFixture(t, nil)
+	a := f.seedDirect(t, tgFloorA)
+	// This bare fixture row has no retained outcome or accounting references.
+	// Removing it verifies that metrics count current rows, not cached events.
+	if before := f.d.CollectMetrics(f.ctx).Runs; before.Admitted != 1 || before.Pending != 1 {
+		t.Fatalf("before row removal: %+v", before)
+	}
 	if _, err := f.db.Exec("DELETE FROM debuglets WHERE uuid = ?", a.id); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.d.CollectMetrics(f.ctx).Runs; got.Admitted != 1 || got.ReportedSuccess != 0 {
-		t.Fatalf("retention must change gauges: %+v", got)
+	if got := f.d.CollectMetrics(f.ctx).Runs; got != (RetainedRunMetrics{}) {
+		t.Fatalf("row removal must change gauges: %+v", got)
 	}
 }
 

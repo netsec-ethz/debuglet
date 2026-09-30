@@ -205,6 +205,7 @@ func TestMissingRunAnswersWithATypedEnvelope(t *testing.T) {
 			f := modeNewFixture(t)
 			if strings.HasSuffix(route, "/logs") {
 				f.mock.ExpectBegin()
+				f.mock.ExpectQuery(`SELECT (.+) FROM payload_tombstones`).WillReturnError(sql.ErrNoRows)
 				f.mock.ExpectQuery(logsPaginationListQuery).
 					WithArgs(id, int64(0), int64(100)).
 					WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}))
@@ -310,6 +311,9 @@ func TestSDKCodesMatchTheDocumentedCodes(t *testing.T) {
 		CodeForbidden:                client.CodeForbidden,
 		CodeNotFound:                 client.CodeNotFound,
 		CodeCapacityExhausted:        client.CodeCapacityExhausted,
+		CodeAccountQuota:             client.CodeAccountQuota,
+		CodePayloadDeleted:           client.CodePayloadDeleted,
+		CodePayloadNotDeletable:      client.CodePayloadNotDeletable,
 		CodeCancelRefused:            client.CodeCancelRefused,
 		CodeMethodNotAllowed:         client.CodeMethodNotAllowed,
 		CodeUnsupportedMediaType:     client.CodeUnsupportedMediaType,

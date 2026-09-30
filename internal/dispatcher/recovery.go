@@ -27,7 +27,7 @@ func (d *Dispatcher) Recovery(ctx context.Context, id uuid.UUID) (wire.Recovery,
 		return wire.Recovery{}, err
 	}
 	original := controlsession.Binding{Incarnation: row.DispatcherIncarnation, SessionID: row.SessionID}
-	doc := wire.Recovery{ID: id.String(), ExecutorID: row.ExecutorID, State: row.State.String(), Error: row.Error.String, OriginalBinding: recoveryBinding(original)}
+	doc := wire.Recovery{ID: id.String(), ExecutorID: row.ExecutorID, State: row.State.String(), Error: PublicTerminalError(row.Error.String), OriginalBinding: recoveryBinding(original)}
 	doc.Observation.Classification = "unavailable"
 
 	d.mu.RLock()

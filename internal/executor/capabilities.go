@@ -59,6 +59,9 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
 		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
 	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
+	if initial {
+		vantage.Connectivity = e.initialConnectivityReport()
+	}
 	for _, transport := range []struct {
 		name    string
 		enabled bool
@@ -100,7 +103,10 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 			budget = 500 * time.Millisecond
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, budget)
-		ia, available := scionProbe(probeCtx)
+		ia, host, paths := scionDetails(probeCtx, e.cfg.Connectivity.SCIONPathTarget)
+		available := host != ""
+		vantage.ScionHost, vantage.ScionPaths = host, paths
+		vantage.ScionPathTarget = e.cfg.Connectivity.SCIONPathTarget
 		cancel()
 		if !ia.IsWildcard() {
 			vantage.ScionIsdAs = ia.String()
@@ -237,34 +243,61 @@ func attributionReport(schedule *tesla.KeySchedule, now time.Time) *pb.Attributi
 // ISD-AS is returned whenever the daemon names one, even if no local route to
 // its control service is found.
 func scionProbe(ctx context.Context) (addr.IA, bool) {
+	ia, host, _ := scionDetails(ctx, "")
+	return ia, host != ""
+}
+
+func scionDetails(ctx context.Context, remote string) (addr.IA, string, *pb.ProbeState) {
+	var failed *pb.ProbeState
+	if remote != "" {
+		failed = &pb.ProbeState{State: "unavailable", Reason: "daemon_failed"}
+	}
 	target := os.Getenv("SCION_DAEMON_ADDRESS")
 	endpoint, err := netip.ParseAddrPort(target)
 	if err != nil || endpoint.Port() == 0 {
-		return 0, false
+		return 0, "", failed
 	}
 	connector, err := daemon.NewService(target).Connect(ctx)
 	if err != nil {
-		return 0, false
+		return 0, "", failed
 	}
 	defer connector.Close()
 	info, err := connector.ASInfo(ctx, 0)
-	if err != nil || info.IA == 0 {
-		return 0, false
+	if err != nil || info.IA.IsWildcard() {
+		return 0, "", failed
 	}
+	var host string
 	services, err := connector.SVCInfo(ctx, []addr.SVC{addr.SvcCS})
-	if err != nil {
-		return info.IA, false
-	}
-	for _, service := range services[addr.SvcCS] {
-		if ctx.Err() != nil {
-			return info.IA, false
-		}
-		endpoint, err := netip.ParseAddrPort(service)
-		if err == nil && endpoint.Port() != 0 {
-			if _, err := addrutil.ResolveLocal(net.IP(endpoint.Addr().AsSlice())); err == nil {
-				return info.IA, true
+	if err == nil {
+		for _, service := range services[addr.SvcCS] {
+			if ctx.Err() != nil {
+				break
+			}
+			endpoint, err := netip.ParseAddrPort(service)
+			if err != nil || endpoint.Port() == 0 {
+				continue
+			}
+			if local, err := addrutil.ResolveLocal(net.IP(endpoint.Addr().AsSlice())); err == nil {
+				host = local.String()
+				break
 			}
 		}
 	}
-	return info.IA, false
+	if remote == "" {
+		return info.IA, host, nil
+	}
+	destination, err := addr.ParseIA(remote)
+	if err != nil || destination.IsWildcard() || destination == info.IA {
+		return info.IA, host, &pb.ProbeState{State: "unavailable", Reason: "invalid_target"}
+	}
+	paths, err := connector.Paths(ctx, destination, info.IA, daemon.PathReqFlags{})
+	if err != nil {
+		return info.IA, host, &pb.ProbeState{State: "unavailable", Reason: "daemon_failed"}
+	}
+	for _, path := range paths {
+		if path.Source() == info.IA && path.Destination() == destination && path.Metadata() != nil && len(path.Metadata().Interfaces) > 0 && path.Metadata().Expiry.After(time.Now()) {
+			return info.IA, host, &pb.ProbeState{State: "available"}
+		}
+	}
+	return info.IA, host, &pb.ProbeState{State: "unavailable", Reason: "no_path"}
 }

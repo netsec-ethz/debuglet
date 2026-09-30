@@ -2,7 +2,10 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 
@@ -10,6 +13,9 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // recordingPacketCount keeps the last limit applied to each active connection.
@@ -107,6 +113,46 @@ func TestChangedCapacityReachesActiveRuns(t *testing.T) {
 	}
 	if got := counter.appliedDestination(addr, id); got != 200 {
 		t.Fatalf("executor capacity change moved the destination limit to %d", got)
+	}
+}
+
+type failingLimitPacketCount struct{ *recordingPacketCount }
+
+func (*failingLimitPacketCount) SetLimit(string, uuid.UUID, bitrate.Bitrate) error {
+	return errors.New("private-limit-sentinel\n" + strings.Repeat("x", 4096))
+}
+func (*failingLimitPacketCount) SetExecLimit(uuid.UUID, bitrate.Bitrate) error {
+	return errors.New("private-limit-sentinel\n" + strings.Repeat("x", 4096))
+}
+
+func TestLimitFailureDiagnosticsStayPrivate(t *testing.T) {
+	counter := &failingLimitPacketCount{newRecordingPacketCount()}
+	e := newFixtureExecutor(t, fixtureConfig(), counter, newFixtureMemoryStorage(t))
+	core, logs := observer.New(zapcore.DebugLevel)
+	e.logger = zap.New(core)
+	const addr = "203.0.113.31"
+	id := uuid.New()
+	if err := e.limiter.InsertDebuglet(id, 0, 1000, []string{addr}); err != nil {
+		t.Fatal(err)
+	}
+	e.running[id] = RunningDebuglet{id: id}
+	e.publishLimits([]string{addr})
+	if logs.FilterLevelExact(zapcore.WarnLevel).Len() != 2 || logs.FilterLevelExact(zapcore.DebugLevel).Len() != 2 {
+		t.Fatal("missing capacity failure or private diagnostic")
+	}
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if fields["debugletID"] != id.String() {
+			t.Fatal("run correlation missing")
+		}
+		if entry.Level >= zapcore.InfoLevel {
+			text := fmt.Sprint(fields)
+			if strings.Contains(text, addr) || strings.Contains(text, "private-limit-sentinel") {
+				t.Fatal("private capacity diagnostic reached routine log")
+			}
+		} else if diagnostic := fields["error"].(string); len(diagnostic) > 2051 || strings.Contains(diagnostic, "\n") {
+			t.Fatal("private capacity diagnostic is not bounded")
+		}
 	}
 }
 

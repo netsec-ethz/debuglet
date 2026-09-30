@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 const (
@@ -81,7 +83,7 @@ func (c *Client) doWithLimit(ctx context.Context, method, route string, query ur
 		return nil, fmt.Errorf("client: %s %s: %w", method, path, err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set(apiVersionHeader, APIVersion)
+	req.Header.Set(apiVersionHeader, requiredAPIVersion(ctx))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -110,13 +112,14 @@ func (c *Client) doWithLimit(ctx context.Context, method, route string, query ur
 		if readErr != nil && ctx.Err() != nil {
 			return nil, wrapTransport(ctx, method, path, readErr, secrets...)
 		}
-		code, message, admittedIDs := extractError(data, exceeded || readErr != nil, secrets...)
+		code, message, admittedIDs, fields := extractError(data, exceeded || readErr != nil, secrets...)
 		return nil, &HTTPError{
 			Method:      method,
 			Path:        path,
 			StatusCode:  resp.StatusCode,
 			Code:        code,
 			Message:     message,
+			FieldErrors: fields,
 			admittedIDs: admittedIDs,
 		}
 	}
@@ -177,20 +180,20 @@ func readBounded(r io.Reader, limit int64) ([]byte, bool, error) {
 // selecting a message; their values, and any known submission key, are
 // redacted from the result. The code is accepted only as a bounded identifier,
 // so no response text can reach the caller through it.
-func extractError(data []byte, incomplete bool, secrets ...string) (code, message string, admittedIDs []string) {
+func extractError(data []byte, incomplete bool, secrets ...string) (code, message string, admittedIDs []string, fields []wire.FieldError) {
 	text := strings.TrimSpace(string(data))
 	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") || strings.HasPrefix(text, "\"") {
 		if incomplete {
-			return "", unsafeErrorMessage, nil
+			return "", unsafeErrorMessage, nil, nil
 		}
 		dec := json.NewDecoder(strings.NewReader(text))
 		dec.UseNumber()
 		value, err := diagnosticJSON(dec, &secrets)
 		if err != nil {
-			return "", unsafeErrorMessage, nil
+			return "", unsafeErrorMessage, nil, nil
 		}
 		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-			return "", unsafeErrorMessage, nil
+			return "", unsafeErrorMessage, nil, nil
 		}
 		switch v := value.(type) {
 		case map[string]any:
@@ -198,25 +201,26 @@ func extractError(data []byte, incomplete bool, secrets ...string) (code, messag
 				code = safeCode(redactSecrets(declared, secrets))
 			}
 			admittedIDs = admittedIDsFromError(v["admitted_ids"], secrets)
+			fields = fieldErrorsFromError(v["field_errors"], secrets)
 			reported, ok := v["message"]
 			if !ok {
 				// A code without a message is still an actionable failure;
 				// only the diagnostic is missing.
-				return code, unsafeErrorMessage, nil
+				return code, unsafeErrorMessage, nil, nil
 			}
 			if s, ok := reported.(string); ok {
 				text = s
 			} else {
 				encoded, err := json.Marshal(reported)
 				if err != nil {
-					return code, unsafeErrorMessage, nil
+					return code, unsafeErrorMessage, nil, nil
 				}
 				text = string(encoded)
 			}
 		case string:
 			text = v
 		default:
-			return "", unsafeErrorMessage, nil
+			return "", unsafeErrorMessage, nil, nil
 		}
 	}
 	text = redactSecrets(text, secrets)
@@ -227,7 +231,7 @@ func extractError(data []byte, incomplete bool, secrets ...string) (code, messag
 			text = text[:len(text)-1]
 		}
 	}
-	return code, strings.TrimSpace(text), admittedIDs
+	return code, strings.TrimSpace(text), admittedIDs, fields
 }
 
 // admittedIDsFromError accepts only a complete canonical identity list. It is

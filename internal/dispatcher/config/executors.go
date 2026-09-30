@@ -23,6 +23,10 @@ type ExecutorDisplay struct {
 	City        string `toml:"city"`
 	Country     string `toml:"country"` // ISO 3166-1 alpha-2, upper case.
 	Network     string `toml:"network"`
+	// Only this locally approved literal host and pool may receive connect-back
+	// challenges for this executor. Neither hello nor a measurement selects it.
+	ConnectivityHost  string `toml:"connectivity_host"`
+	ConnectivityPorts string `toml:"connectivity_ports"`
 }
 
 // Bounds on operator display metadata, in characters.
@@ -38,6 +42,9 @@ func validateExecutors(executors map[string]ExecutorDisplay) error {
 	}
 	for _, id := range slices.Sorted(maps.Keys(executors)) {
 		display := executors[id]
+		if err := validateConnectivityTarget(id, display); err != nil {
+			return err
+		}
 		if err := configcheck.Label(fmt.Sprintf("executors key %q", id), id, maxExecutorIDLength); err != nil {
 			return err
 		}

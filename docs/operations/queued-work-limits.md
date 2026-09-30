@@ -45,6 +45,6 @@ ownership and control-session rules. A queue-full response does not specify a
 retry time: only actual retirement can make room, and clients must preserve
 normal submission-uncertainty rules instead of automatically replaying work.
 
-This is the executor-node storage control. It does not add per-account queued
-storage limits or HTTP batch-count limits. Those controls remain separate from
-this limit and from the dispatcher's existing request-body protection.
+This is the executor-node storage control. The dispatcher adds separate
+[account admission and HTTP batch limits](account-admission.md); their
+reservations do not replace the executor's retained rows.

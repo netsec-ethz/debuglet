@@ -20,7 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestDispatcherPhysicalDiskFullDoesNotAcknowledge(t *testing.T) {
+func TestDispatcherPhysicalDiskFullPreservesCommittedPrefix(t *testing.T) {
 	root := os.Getenv("DEBUGLET_OUTPUT_ENOSPC_ROOT")
 	if !filepath.IsAbs(root) {
 		t.Fatal("absolute private DEBUGLET_OUTPUT_ENOSPC_ROOT required")
@@ -40,6 +40,7 @@ func TestDispatcherPhysicalDiskFullDoesNotAcknowledge(t *testing.T) {
 	// Existing TLS/database fixtures now live entirely on the private volume.
 	t.Setenv("TMPDIR", dir)
 	f := newOutputTLS(t)
+	f.d.outputLimits.ControlReserveBytes = 4096 // This fixture's private filesystem is smaller than the deployment default.
 	client, owner := f.connect(f.identity, true)
 	original := owner.Binding()
 	writer, err := outputWriterFor(owner, &pb.ControlBinding{DispatcherIncarnation: original.Incarnation, SessionId: original.SessionID})
@@ -78,8 +79,25 @@ func TestDispatcherPhysicalDiskFullDoesNotAcknowledge(t *testing.T) {
 	if err := stream.Send(&pb.DebugletStreamRequest{Msg: &pb.DebugletStreamRequest_Output{Output: frame}}); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := stream.Recv(); receipt != nil || status.Code(err) != codes.Unavailable {
-		t.Fatalf("failed receiver write acknowledged: %v %v", receipt, err)
+	receipt, receiveErr := stream.Recv()
+	if receiveErr == nil {
+		// The headroom guard can stop before SQLite needs another allocation.
+		// If the finality record still fits, acknowledge only the durable prefix.
+		if receipt == nil || receipt.CommittedSequence != 1 || receipt.GetEnd().GetLastSequence() != 1 || receipt.GetEnd().GetStatus() != pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_TRUNCATED || receipt.GetEnd().GetReason() != pb.OutputReasonStorageLimit {
+			t.Fatalf("low-space finality invented output: %v", receipt)
+		}
+		row, err := database.New(f.d.db).GetDebugletOutput(t.Context(), id)
+		if err != nil || row.CommittedSequence != 1 || row.FrameCount != 1 || row.ByteCount != 3 || !row.FinalSequence.Valid || row.FinalSequence.Int64 != 1 || row.Status != "truncated" || row.Reason != pb.OutputReasonStorageLimit {
+			t.Fatalf("low-space finality was not durable: %+v %v", row, err)
+		}
+		usage, err := database.New(f.d.db).GetOutputNodeUsage(t.Context())
+		if err != nil || usage.ChargedBytes != pb.OutputRunCharge+pb.OutputFrameCharge+3 {
+			t.Fatalf("declined frame charged: %+v %v", usage, err)
+		}
+		return
+	}
+	if receipt != nil || status.Code(receiveErr) != codes.Unavailable {
+		t.Fatalf("failed receiver write acknowledged: %v %v", receipt, receiveErr)
 	}
 	q := database.New(f.d.db)
 	row, err := q.GetDebugletOutput(t.Context(), id)

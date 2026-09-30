@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"net/http"
 	"strings"
 )
@@ -20,7 +22,8 @@ var (
 
 // intentResponse mirrors the TEST payment intent response.
 type intentResponse struct {
-	Method string `json:"method"`
+	Retry  *wire.RetryReceipt `json:"retry,omitempty"`
+	Method string             `json:"method"`
 	Intent struct {
 		TransactionID string `json:"transaction_id"`
 		AuthKey       string `json:"auth_key"`
@@ -29,6 +32,10 @@ type intentResponse struct {
 
 // SubmitTEST creates a TEST payment intent for the batch and submits it.
 func (c *Client) SubmitTEST(ctx context.Context, batch *PreparedBatch) (Submission, error) {
+	return c.submitTEST(ctx, batch, nil)
+}
+
+func (c *Client) submitTEST(ctx context.Context, batch *PreparedBatch, retry *wire.RetryLink) (Submission, error) {
 	if batch == nil || batch.count == 0 || len(batch.debuglets) == 0 {
 		return Submission{}, &SubmissionError{Stage: stageIntent, Err: errInvalidBatch}
 	}
@@ -44,9 +51,18 @@ func (c *Client) SubmitTEST(ctx context.Context, batch *PreparedBatch) (Submissi
 
 	// Step 1: payment intent. No transaction ID exists yet, so none is ever
 	// reported; the outcome is unknown only for a 5xx or a malformed success.
-	data, err := c.do(ctx, http.MethodPut, routeIntent, nil, intentEnvelope(batch.debuglets), http.StatusOK)
+	body := intentEnvelope(batch.debuglets)
+	if retry != nil {
+		ctx = context.WithValue(ctx, requiredVersionKey{}, "1.12")
+		var err error
+		body, err = retryEnvelope(body, retry)
+		if err != nil {
+			return Submission{}, &SubmissionError{Stage: stageIntent, Err: err}
+		}
+	}
+	data, err := c.doWithLimit(ctx, http.MethodPut, routeIntent, nil, body, http.StatusOK, maxSuccessBody)
 	if err != nil {
-		return Submission{}, &SubmissionError{Stage: stageIntent, OutcomeUnknown: outcomeUnknown(stageIntent, err), Err: err}
+		return Submission{}, &SubmissionError{Stage: stageIntent, OutcomeUnknown: outcomeUnknown(stageIntent, err) || retry != nil && !definiteHTTPRefusal(err), Err: err}
 	}
 	var intent intentResponse
 	if err := c.decode(http.MethodPut, routeIntent, data, &intent); err != nil {
@@ -62,17 +78,34 @@ func (c *Client) SubmitTEST(ctx context.Context, batch *PreparedBatch) (Submissi
 		err := c.protocolErr(http.MethodPut, routeIntent, "missing transaction_id")
 		return Submission{}, &SubmissionError{Stage: stageIntent, OutcomeUnknown: true, Err: err}
 	}
+	if retry != nil {
+		if intent.Retry == nil || intent.Retry.RetryLink != *retry {
+			return Submission{}, &SubmissionError{Stage: stageIntent, TransactionID: transactionID, OutcomeUnknown: true, Err: c.protocolErr(http.MethodPut, routeIntent, "missing or mismatched retry identity")}
+		}
+		if intent.Retry.RunID != "" {
+			if !resultUUID(intent.Retry.RunID) || intent.Retry.RunID == retry.ParentRunID {
+				return Submission{}, &SubmissionError{Stage: stageIntent, TransactionID: transactionID, OutcomeUnknown: true, Err: c.protocolErr(http.MethodPut, routeIntent, "invalid retry run identity")}
+			}
+			return Submission{IDs: []string{intent.Retry.RunID}, TransactionID: transactionID}, nil
+		}
+	}
 	authKey := intent.Intent.AuthKey // may be empty; never exposed
 
 	// Step 2: submission with the identical frozen debuglets bytes.
 	if err := ctx.Err(); err != nil {
 		return Submission{}, &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, Err: err}
 	}
-	body, err := submitEnvelope(batch.debuglets, transactionID, authKey)
+	body, err = submitEnvelope(batch.debuglets, transactionID, authKey)
 	if err != nil {
 		return Submission{}, &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, Err: err}
 	}
-	data, err = c.do(ctx, http.MethodPut, routeDebuglet, nil, body, http.StatusOK, authKey)
+	if retry != nil {
+		body, err = retryEnvelope(body, retry)
+		if err != nil {
+			return Submission{}, &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, Err: err}
+		}
+	}
+	data, err = c.doWithLimit(ctx, http.MethodPut, routeDebuglet, nil, body, http.StatusOK, maxSuccessBody, authKey)
 	if err != nil {
 		failure := &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, OutcomeUnknown: outcomeUnknown(stageSubmit, err), Err: err}
 		var httpErr *HTTPError
@@ -87,6 +120,9 @@ func (c *Client) SubmitTEST(ctx context.Context, batch *PreparedBatch) (Submissi
 	}
 	if err := c.validateSubmittedIDs(ids, batch.count); err != nil {
 		return Submission{}, &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, OutcomeUnknown: true, Err: err}
+	}
+	if retry != nil && ids[0] == retry.ParentRunID {
+		return Submission{}, &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, OutcomeUnknown: true, Err: c.protocolErr(http.MethodPut, routeDebuglet, "retry returned its parent")}
 	}
 	return Submission{IDs: ids, TransactionID: transactionID}, nil
 }
@@ -136,4 +172,24 @@ func outcomeUnknown(stage string, err error) bool {
 		return true
 	}
 	return stage == stageSubmit
+}
+
+func retryEnvelope(body []byte, retry *wire.RetryLink) ([]byte, error) {
+	link, err := json.Marshal(retry)
+	if err != nil {
+		return nil, err
+	}
+	if len(body)+len(link)+len(`,"retry":`) > maxEnvelopeBytes {
+		return nil, errors.New("client: encoded retry exceeds the 32 MiB limit")
+	}
+	result := make([]byte, 0, len(body)+len(link)+len(`,"retry":`))
+	result = append(result, body[:len(body)-1]...)
+	result = append(result, `,"retry":`...)
+	result = append(result, link...)
+	return append(result, '}'), nil
+}
+
+func definiteHTTPRefusal(err error) bool {
+	var e *HTTPError
+	return errors.As(err, &e) && e.StatusCode >= 400 && e.StatusCode < 500
 }

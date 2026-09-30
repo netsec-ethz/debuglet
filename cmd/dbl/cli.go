@@ -64,6 +64,10 @@ Commands:
       [--duration 10s] [--floor-bps 1048576] [--ceil-bps 1048576]
       [--wait] [--allow-remote-test] [-- guest arguments ...]
                                         submit one TEST-funded debuglet
+  retry PARENT --request-id UUID --executor ID [run options]
+                                        explicitly create or recover one linked attempt
+  rendezvous --server-executor ID --client-executor ID --server-allow ADDRESS
+                                        coordinate a bounded two-executor TCP echo
   status ID                             report a debuglet's state
   export ID                             export a versioned measurement result
   recovery ID                           inspect control and retained metadata

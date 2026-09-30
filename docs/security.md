@@ -67,13 +67,19 @@ stopped or that a destination no longer receives traffic.
 
 ### Guest code and the executor host
 
-Guests run inside the executor process in the wazero WASI runtime, without a
-host filesystem, inherited environment or ordinary socket access. Host functions
-mediate network operations through both the operator policy and the run's
-policy, checking resolved addresses before connection. Inbound listener peers
-are also checked. The timeout bounds the supported operation lifecycle, but
-there is no general CPU, memory, process or namespace sandbox for hostile
-modules. Output budgets and admission controls do not establish such isolation.
+WASI guests receive no host filesystem, inherited environment or ordinary
+socket access. Host functions mediate network operations through both the
+operator policy and the run's policy, checking resolved addresses before
+connection and accepting inbound peers.
+
+The trusted profile runs guests inside the executor process. The explicit Linux
+shared profile runs compilation and execution in supervised child processes with
+cgroup memory, CPU, process and time budgets. The parent retains networking and
+durable output; guest-directed copies and socket counts are bounded, but parent
+TLS, DNS and other library allocations are outside the child's memory limit.
+The [resource-limit reference](operations/guest-isolation.md) describes required
+delegation, cleanup and platform constraints. These controls do not establish
+containment of a runtime escape or of every parent host-call cost.
 
 ### Executor traffic and destination control
 
@@ -98,8 +104,11 @@ disclosed key. Kernel mode tags marked IPv4 TCP/TLS, UDP and ICMP traffic.
 Userspace mode can tag IPv4 UDP/ICMP datagrams when its raw socket is available;
 TCP/TLS remains untagged in that mode. Neither mode tags IPv6 or SCION, and
 kernel-tagged runs refuse IPv6 destinations. Check the reported tagging mode
-and transport rather than treating fallback accounting as attribution. Current disclosed-key history is held in
-memory and is lost on dispatcher restart. Restarting the executor discards
+and transport rather than treating fallback accounting as attribution. Dispatcher
+schema 14 retains announced chains, verified disclosed keys and run intervals
+across dispatcher restarts, subject to the configured attribution retention
+period. Lookups report the coverage cutoff; missing history is not evidence that
+no run existed. Restarting the executor still discards
 undisclosed keys; [key-schedule configuration](operations/configuration.md#executor-tesla-key-schedule)
 explains the disclosure window. A valid tag does not establish destination
 consent, a human identity or non-repudiation.
@@ -127,8 +136,8 @@ trusted local demonstrations do not establish it:
 
 - Authentication, ownership, enrollment and TLS configured and tested on every
   exposed boundary, with an explicit abuse and credential-revocation procedure.
-- Per-guest resource isolation and a control-plane reserve that hostile modules
-  cannot exhaust, beyond the present in-process runtime and output limits.
+- Per-guest resource isolation and control capacity verified for the selected
+  deployment, including parent host-call costs outside the shared worker budget.
 - Traffic policy enforced across all supported transports, with a durable,
   authenticated destination opt-out and an observed response to abuse reports.
 - Versioned attribution with retained verification history and accurately stated

@@ -14,7 +14,11 @@ func validIPMetadata(m *wire.IPMetadata) bool {
 	if m == nil {
 		return true
 	} // Earlier result 1.1 files omit the field.
-	for _, a := range []wire.AddressMetadata{m.Observed, m.Advertised} {
+	addresses := []wire.AddressMetadata{m.Observed, m.Advertised}
+	if m.Reported != nil {
+		addresses = append(addresses, *m.Reported)
+	}
+	for _, a := range addresses {
 		if a.AddressSource != wire.SourceDispatcherObserved && a.AddressSource != wire.SourceExecutorReported {
 			return false
 		}

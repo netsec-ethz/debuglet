@@ -8,3 +8,5 @@ for component in cli executor dispatcher; do
   "${GO:-go}" run -mod=readonly ./internal/packaging package \
     -dist "${CI_DIST:-.cache/ci/dist}" -out "$package_dir/$component" -component "$component"
 done
+"${GO:-go}" run -mod=readonly ./internal/packaging compatibility \
+  -dist "${CI_DIST:-.cache/ci/dist}" -out "$package_dir"

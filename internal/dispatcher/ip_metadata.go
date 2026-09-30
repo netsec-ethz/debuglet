@@ -35,6 +35,10 @@ func (e *RegisteredExecutor) collectIPMetadata(databases *ipmetadata.Databases, 
 		Advertised:     databases.Lookup(e.PublicHost(), wire.SourceExecutorReported, at, optOut),
 		LocationOptOut: optOut, Disagreements: []string{},
 	}
+	if e.sourceIPObserved && e.reportedSourceIP != "" && e.reportedSourceIP != e.sourceIp {
+		reported := databases.Lookup(e.reportedSourceIP, wire.SourceExecutorReported, at, optOut)
+		m.Reported = &reported
+	}
 	if a, b := m.Observed.ASN.Value, m.Advertised.ASN.Value; a != nil && b != nil && a.Number != b.Number {
 		m.Disagreements = append(m.Disagreements, "observed_advertised_asn")
 	}
@@ -68,6 +72,12 @@ func (e *RegisteredExecutor) IPMetadata() *wire.IPMetadata {
 	out.Observed.Location = cloneLookup(out.Observed.Location)
 	out.Advertised.ASN = cloneLookup(out.Advertised.ASN)
 	out.Advertised.Location = cloneLookup(out.Advertised.Location)
+	if out.Reported != nil {
+		copy := *out.Reported
+		copy.ASN = cloneLookup(copy.ASN)
+		copy.Location = cloneLookup(copy.Location)
+		out.Reported = &copy
+	}
 	return &out
 }
 

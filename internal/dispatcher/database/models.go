@@ -11,6 +11,14 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
+type AccountRunReservation struct {
+	DebugletID          int64
+	AccountID           int64
+	QueuedBytes         int64
+	RetiredAt           sql.NullInt64
+	LastRetirementCheck int64
+}
+
 type AttributionChain struct {
 	ExecutorID  string
 	ChainID     string
@@ -139,6 +147,33 @@ type ExecutorEnrollmentToken struct {
 	ExpiresAt  models.UTCTime
 }
 
+type MeasurementExecution struct {
+	DebugletID         int64
+	StartedObservedNs  sql.NullInt64
+	TerminalObservedNs sql.NullInt64
+	ExitCode           sql.NullInt64
+	TcpEndpoint        string
+}
+
+type MeasurementProfile struct {
+	ID       string
+	UserID   int64
+	Document string
+}
+
+type MeasurementRequest struct {
+	DebugletID int64
+	Document   string
+}
+
+type MeasurementSummary struct {
+	ID       string
+	Sequence interface{}
+	Label    interface{}
+	Children int64
+	State    string
+}
+
 type OauthIdentity struct {
 	Provider  string
 	Subject   string
@@ -165,6 +200,23 @@ type OwnedExecutor struct {
 	UserID     int64
 	Name       string
 	CreatedAt  models.UTCTime
+}
+
+type PayloadTombstone struct {
+	DebugletID        int64
+	DeletedAt         int64
+	Reason            string
+	WorkloadSha256    sql.NullString
+	CertificateSha256 sql.NullString
+}
+
+type RetryRequest struct {
+	CallerScope    string
+	RequestID      string
+	ParentRunID    string
+	TransactionID  string
+	RequestHash    string
+	IntentMetadata string
 }
 
 type Session struct {

@@ -51,6 +51,7 @@ func TestSubmissionOfAPartlyAdmittedBatchKeepsThePayment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if claimed, err := queries.ClaimDebugletOrder(ctx, database.ClaimDebugletOrderParams{
+		OutstandingState: int64(models.Outstanding), PaidStatus: int64(models.Paid),
 		DebugletID: sql.NullInt64{Int64: run.ID, Valid: true}, TransactionID: transactionID, OrderID: 1,
 	}); err != nil || claimed != 1 {
 		t.Fatalf("claim order 1 = (%d, %v)", claimed, err)

@@ -18,14 +18,14 @@ scheduler_granularity_ms = 30000
 # Retained output limits. Account/node bytes include 64 bytes per stored frame
 # and 256 per run. These are logical storage charges, not filesystem-size bounds.
 # Reaching a cap refuses new storage; it does not delete retained output.
-# Retained output is never deleted yet, so account and node charges only grow:
-# 0 (the default) disables those two caps. Set them only as a hard lifetime
-# ceiling; an upgrade counts the output already stored.
+# Owner deletion or configured payload expiry releases output charges.
+# Existing output is counted on upgrade; a full store does not erase it.
 [output]
+control_reserve_bytes = 16777216
 run_bytes = 8388608
 run_frames = 16384
-account_bytes = 0
-node_bytes = 0
+account_bytes = 67108864
+node_bytes = 536870912
 
 # Attribution history for probe verification: executor TESLA chains, their
 # disclosed keys and which runs were active from which source address. It is
@@ -68,3 +68,21 @@ address = ""
 payment_registry_id = ""
 payment_kit_package = ""
 keystore_path = ""
+
+# Account admission is separate from executor capacity and retained output.
+[admission.account]
+requests_per_minute = 60
+queued_jobs = 128
+active_jobs = 16
+queued_bytes = 268435456
+
+# Explicit finite limits for operators and ownerless local TEST runs.
+[admission.operator]
+requests_per_minute = 240
+queued_jobs = 1024
+active_jobs = 64
+queued_bytes = 1073741824
+
+[retention]
+# No automatic measurement expiry until this operator chooses a period.
+payload_max_age_seconds = 0

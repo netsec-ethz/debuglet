@@ -42,10 +42,11 @@ type AddressMetadata struct {
 }
 
 type IPMetadata struct {
-	Observed       AddressMetadata `json:"observed"`
-	Advertised     AddressMetadata `json:"advertised"`
-	LocationOptOut bool            `json:"location_opt_out"`
-	Disagreements  []string        `json:"disagreements"`
+	Reported       *AddressMetadata `json:"reported,omitempty"` // Separate hello claim when it differs from the observed control address.
+	Observed       AddressMetadata  `json:"observed"`
+	Advertised     AddressMetadata  `json:"advertised"`
+	LocationOptOut bool             `json:"location_opt_out"`
+	Disagreements  []string         `json:"disagreements"`
 }
 
 // DatabaseSource recognises the source convention used by offline MMDB data.

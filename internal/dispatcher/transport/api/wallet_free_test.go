@@ -226,7 +226,7 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	logger := zap.NewNop()
 	// The API keeps private diagnostics out of responses and in the log, so the
 	// log is where a scripted database failure is observed.
-	observedCore, observedLogs := observer.New(zapcore.WarnLevel)
+	observedCore, observedLogs := observer.New(zapcore.DebugLevel)
 	apiLogger := zap.New(observedCore)
 	dbPath := filepath.Join(t.TempDir(), "dispatcher.sqlite")
 	cfg := wfDisabledConfig()

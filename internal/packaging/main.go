@@ -43,7 +43,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected build, package or verify")
+		return errors.New("expected build, package, compatibility or verify")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dist := fs.String("dist", ".cache/ci/dist", "compiled artifacts")
@@ -69,8 +69,10 @@ func run(args []string) error {
 		return packWithCopy(*dist, *out, sha, *component, copyFile)
 	case "verify":
 		return verifyInstalled(ctx, *installed, sha)
+	case "compatibility":
+		return writeReleaseCompatibility(*dist, *out, sha)
 	default:
-		return errors.New("expected build, package or verify")
+		return errors.New("expected build, package, compatibility or verify")
 	}
 }
 func command(ctx context.Context, name string, args ...string) (string, error) {

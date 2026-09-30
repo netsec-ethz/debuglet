@@ -147,6 +147,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/debuglet/:id/cancellation", h.GetDebugletCancellation)
 	e.GET("/debuglet/:id/result", h.GetDebugletResult)
 	e.DELETE("/debuglet", h.DeleteDebuglet)
+	e.DELETE("/debuglet/:id/payload", h.DeleteDebugletPayload)
 	// executor
 	e.GET("/executors", h.GetExecutors)
 	e.GET("/executors/by-ip", h.GetExecutorByIP)
@@ -169,6 +170,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/user-ids", h.ListUserIDs)
 	e.PUT("/user", h.CreateUser)
 	e.GET("/list-debuglets", h.ListUserDebuglets)
+	h.registerMeasurementRoutes(e)
 }
 
 // bodyLimitMiddleware refuses a request body above maxRequestBodyBytes before

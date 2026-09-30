@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
@@ -69,6 +70,14 @@ type WasmEnv struct {
 	ScionConn                                        *socket.SCIONConnRegistry
 }
 
+// warnPrivate keeps per-run host failures correlated without putting raw
+// network/library diagnostics in the routine log. Event names are fixed here.
+func (e *WasmEnv) warnPrivate(event string, diagnostic error) {
+	e.Logger.Warnw(event, "debugletID", e.DebugletID.String())
+	e.Logger.Debugw("Private guest host diagnostic", "event", event, "debugletID", e.DebugletID.String(),
+		"error", daemonlog.Diagnostic(diagnostic))
+}
+
 // DatagramTagger is the pure-Go tagger, which tags UDP and ICMP by sending
 // them itself; the eBPF tagger tags every socket in the kernel instead.
 type DatagramTagger interface {
@@ -86,7 +95,7 @@ func tagDatagrams(e *WasmEnv, conn net.Conn, socketType socket.SocketType) net.C
 	wrapped, err := datagrams.WrapDatagram(conn)
 	if err != nil {
 		e.untaggedOnce.Do(func() {
-			e.Logger.Warnw("Datagrams of this run leave untagged", "remote", conn.RemoteAddr().String(), "err", err)
+			e.warnPrivate("Datagrams of this run leave untagged", fmt.Errorf("remote %s: %w", conn.RemoteAddr(), err))
 		})
 		return conn
 	}

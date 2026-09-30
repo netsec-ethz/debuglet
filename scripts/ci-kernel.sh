@@ -99,3 +99,11 @@ else
     echo "See .cache/ci/ci-image-evidence/ebpf-objects-reproduced.txt; kernel-load results are recorded separately." >&2
     exit 1
 fi
+
+# The shared-worker witnesses need a delegated cgroup, which is deliberately
+# absent from this eBPF container. Build with the same pinned toolchain here;
+# ci-github.sh runs only these binaries in a bounded, owned host unit afterward.
+mkdir -p .cache/ci/shared-workers
+"$ci_go" test -race -c -o .cache/ci/shared-workers/debuglet.test ./internal/executor/debuglet
+"$ci_go" test -race -c -o .cache/ci/shared-workers/executor.test ./internal/executor
+cp "$("$ci_go" tool -n test2json)" .cache/ci/shared-workers/test2json

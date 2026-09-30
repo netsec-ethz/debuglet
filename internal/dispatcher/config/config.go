@@ -22,6 +22,8 @@ type DispatcherConfig struct {
 	CORS               CORSConfig               `toml:"cors"`
 	GitHubOAuth        GitHubOAuthConfig        `toml:"github_oauth"`
 	Output             OutputConfig             `toml:"output"`
+	Admission          AdmissionConfig          `toml:"admission"`
+	Retention          RetentionConfig          `toml:"retention"`
 	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
 	Attribution        AttributionConfig        `toml:"attribution"`
 	// Executors holds optional operator display metadata by executor ID.
@@ -148,6 +150,7 @@ func LoadConfig(path string) (*DispatcherConfig, error) {
 func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) {
 	var cfg DispatcherConfig
 	cfg.Output = DefaultOutputConfig()
+	cfg.Admission = DefaultAdmissionConfig()
 	cfg.Attribution = DefaultAttributionConfig()
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
@@ -172,8 +175,17 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 // keys are applied by LoadConfig before this runs, so every value seen here is
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
+	if err := cfg.Admission.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.Retention.Validate(); err != nil {
+		return err
+	}
 	if err := cfg.Output.Validate(); err != nil {
 		return err
+	}
+	if !cfg.Server.LocalDevelopment && (cfg.Output.AccountBytes == 0 || cfg.Output.NodeBytes == 0) {
+		return errors.New("output.account_bytes and output.node_bytes must be positive outside the explicit local-development profile")
 	}
 	if err := cfg.Attribution.Validate(); err != nil {
 		return err

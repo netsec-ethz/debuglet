@@ -18,7 +18,7 @@ func TestAttributionMigrationKeepsRunsAndStartsTheHistoryNow(t *testing.T) {
 	q := database.New(db)
 	run := cbCreate(t, ctx, q, cbIncarnation, cbSession)
 	before := time.Now().Add(-time.Second)
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 14 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), 14); err != nil || version != 14 {
 		t.Fatalf("migration=%d, %v", version, err)
 	}
 	got, err := q.GetDebugletByUUID(ctx, run.Uuid)

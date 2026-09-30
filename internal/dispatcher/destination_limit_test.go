@@ -15,6 +15,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func dlBandwidth(p *tgPeer) []*pb.BandwidthRequest {
@@ -101,7 +103,7 @@ func TestDestinationLimitReportsUndeliveredShares(t *testing.T) {
 	dlInsert(t, d, refused, fairshareExecutorID)
 	start := time.Now()
 	err := d.SetDestinationLimit(refused, 40)
-	if err == nil || !strings.Contains(err.Error(), refusal) {
+	if err == nil || status.Code(err) != codes.Unknown || strings.Contains(err.Error(), refusal) {
 		t.Fatalf("refused delivery returned %v, want the executor's refusal", err)
 	}
 	if elapsed := time.Since(start); elapsed >= 5*time.Second {
@@ -207,7 +209,7 @@ func TestDestinationLimitFailedDeliveryDoesNotHoldTheNext(t *testing.T) {
 	const refused = "192.0.2.97"
 	dlInsert(t, d, refused, fairshareExecutorID)
 	err := d.SetDestinationLimit(refused, 60)
-	if err == nil || !strings.Contains(err.Error(), refusal) || !strings.Contains(err.Error(), "executor "+fairshareExecutorID) {
+	if err == nil || status.Code(err) != codes.Unknown || strings.Contains(err.Error(), refusal) || !strings.Contains(err.Error(), "executor "+fairshareExecutorID) {
 		t.Fatalf("refused delivery returned %v, want the refusal naming executor %s", err, fairshareExecutorID)
 	}
 	if err := d.SetDestinationLimit(refused, 40); err != nil {

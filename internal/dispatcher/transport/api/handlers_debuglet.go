@@ -12,12 +12,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/ids"
+	"github.com/netsec-ethz/debuglet/internal/uploadsize"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 
 	"github.com/google/uuid"
@@ -40,8 +42,14 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 
 	var req SubmitDebugletsRequest
-	if err := c.Bind(&req); err != nil {
-		return bindError(err)
+	if err := h.allowAdmissionRequest(c, established); err != nil {
+		return err
+	}
+	if err := decodeMeasurementRequest(c, &req); err != nil {
+		return err
+	}
+	if err := validateUploadBatch(req.Debuglets); err != nil {
+		return err
 	}
 
 	var reqs = req.Debuglets
@@ -53,7 +61,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	// payment intent first. The refusal accounts for an order that was
 	// already paid before admission stopped, so a submitter is never left
 	// with neither the work nor the money.
-	if err := dispatcher.AdmissionPaused(); err != nil {
+	if err := dispatcher.AdmissionPaused(); err != nil && req.Retry == nil {
 		return h.refuseForMaintenance(c, established, req, err)
 	}
 	transactionId := req.TransactionId
@@ -67,9 +75,24 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		apiError(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key")); err != nil {
 		return err
 	}
-	if !strings.EqualFold(tx.Hash, hashDebugletRequest(req.Debuglets)) {
-		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", hashDebugletRequest(req.Debuglets)))
+	if !strings.EqualFold(tx.Hash, submissionHash(req.Debuglets, req.Retry)) {
+		h.logger.Info("mismatched request", zap.String("expected", tx.Hash), zap.String("found", submissionHash(req.Debuglets, req.Retry)))
 		return apiError(http.StatusBadRequest, CodeIntentMismatch, "Request does not match the intent")
+	}
+	if req.Retry != nil {
+		if err := h.authorizeRetry(c, req.Retry, len(req.Debuglets)); err != nil {
+			return err
+		}
+		ids, err := h.retrySubmission(c.Request().Context(), established, req)
+		if err != nil {
+			return err
+		}
+		if ids != nil {
+			return c.JSON(http.StatusOK, ids)
+		}
+		if err := dispatcher.AdmissionPaused(); err != nil {
+			return h.refuseForMaintenance(c, established, req, err)
+		}
 	}
 	// A refunded order is spent: the money went back, so the batch it paid
 	// for is not admitted again however often it is submitted.
@@ -93,6 +116,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 			"unsupported payment method: "+echoed(tx.Method), err)
 	}
 
+	retryLink := req.Retry
 	var specs []models.DebugletSpec
 	for i, req := range reqs {
 		if err := validatePolicy(req.OrderID, req.Policy); err != nil {
@@ -102,6 +126,7 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		if err != nil {
 			return apiError(http.StatusBadRequest, CodeInvalidRequest, fmt.Sprintf("invalid request (i=%d): %v", i, err))
 		}
+		spec.Retry = retryLink
 		spec.TransactionID = transactionId
 		spec.OrderID = req.OrderID
 		specs = append(specs, spec)
@@ -117,12 +142,20 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		// those runs may be executing or credited, and refunding would pay
 		// for the same work twice.
 		if !errors.Is(err, dispatcher.ErrPaymentInUse) {
-			if err2 := h.dispatcher.Payment.RefundTransaction(transactionId, c.Request().Context()); err2 != nil {
-				h.logger.Warn("Failed to refund transaction", zap.String("ID", transactionId), zap.Error(err2))
+			refund := h.dispatcher.Payment.RefundUnadmittedTransaction
+			if errors.Is(err, dispatcher.ErrAdmissionCommitted) {
+				refund = h.dispatcher.Payment.RefundTransaction
+			}
+			if err2 := refund(transactionId, c.Request().Context()); err2 != nil {
+				h.logger.Warn("Failed to refund transaction", zap.String("ID", daemonlog.Identifier(transactionId)))
+				h.logger.Debug("Private request diagnostic", zap.String("ID", daemonlog.Identifier(transactionId)), zap.String("error", requestDiagnostic(c, err2, req.AuthKey)))
 			}
 		}
 		if errors.Is(err, dispatcher.ErrMaintenanceMode) {
 			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, err.Error(), err)
+		}
+		if errors.Is(err, dispatcher.ErrAccountQuota) || errors.Is(err, uploadsize.ErrLimit) {
+			return admissionError(c, err)
 		}
 		if errors.Is(err, dispatcher.ErrOutputCapacity) {
 			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, "output storage capacity exhausted", err)
@@ -132,6 +165,10 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		}
 		// Policy refusals name a numeric field or a missing capability, without
 		// repeating executor IDs or other caller-supplied text.
+		var capability *dispatcher.CapabilityError
+		if errors.As(err, &capability) {
+			return policyFieldError(capability.OrderID, capability.Field, capability.Code, capability.Message)
+		}
 		if errors.Is(err, dispatcher.ErrInvalidPolicy) {
 			return apiErrorFrom(http.StatusBadRequest, CodeInvalidPolicy, err.Error(), err)
 		}
@@ -180,8 +217,9 @@ func (h *Handler) refuseForMaintenance(c echo.Context, established *caller, req 
 	case tx.Status == int64(models.Refunded):
 		message += "; this payment order was refunded and cannot be spent again"
 	case tx.Status == int64(models.Paid):
-		if refundErr := h.dispatcher.Payment.RefundTransaction(req.TransactionId, ctx); refundErr != nil {
-			h.logger.Warn("Failed to refund transaction", zap.String("ID", req.TransactionId), zap.Error(refundErr))
+		if refundErr := h.dispatcher.Payment.RefundUnadmittedTransaction(req.TransactionId, ctx); refundErr != nil {
+			h.logger.Warn("Failed to refund transaction", zap.String("ID", daemonlog.Identifier(req.TransactionId)))
+			h.logger.Debug("Private request diagnostic", zap.String("ID", daemonlog.Identifier(req.TransactionId)), zap.String("error", requestDiagnostic(c, refundErr, req.AuthKey)))
 			message += "; this payment order is paid and was not refunded, so it stays paid and the same batch can be submitted again once admission resumes"
 		} else {
 			message += "; this payment order was paid and has been refunded, so it cannot be spent again"
@@ -230,6 +268,9 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	}
 	defer tx.Rollback()
 	queries := database.New(tx)
+	if err := requireRetainedPayload(ctx, queries, id); err != nil {
+		return err
+	}
 
 	dbLogs, err := queries.ListDebugletLogs(ctx, database.ListDebugletLogsParams{
 		Uuid:  id,
@@ -277,7 +318,7 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, DebugletLogsResponse{
 		State:   deb.State.String(),
-		Error:   deb.Error.String,
+		Error:   dispatcher.PublicTerminalError(deb.Error.String),
 		After:   lastID,
 		Logs:    entries,
 		HasMore: int64(len(dbLogs)) == limit,
@@ -319,7 +360,7 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, DebugletStateResponse{
 		State:      deb.State.String(),
-		Error:      deb.Error.String,
+		Error:      dispatcher.PublicTerminalError(deb.Error.String),
 		ExecutorID: deb.ExecutorID,
 	})
 }

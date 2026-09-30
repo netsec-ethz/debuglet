@@ -20,9 +20,19 @@ type PrimitiveType interface {
 		~float32 | ~float64
 }
 
+// Memory is the bounded memory surface used by network host calls. Read callers
+// must write received data explicitly; a returned slice need not alias the guest.
+type Memory interface {
+	Read(uint32, uint32) ([]byte, bool)
+	Write(uint32, []byte) bool
+	WriteUint32Le(uint32, uint32) bool
+}
+
 func ExtractStr(mod api.Module, source, num uint32) (string, error) {
+	return extractStr(mod.Memory(), source, num)
+}
+func extractStr(mem Memory, source, num uint32) (string, error) {
 	num = min(num, MAX_SLICE_LENGTH)
-	mem := mod.Memory()
 	buf, valid := mem.Read(source, num)
 	if !valid {
 		return "", fmt.Errorf("out of memory bounds: pointer %d, length %d", source, num)
@@ -31,8 +41,10 @@ func ExtractStr(mod api.Module, source, num uint32) (string, error) {
 }
 
 func ExtractMem[T PrimitiveType](mod api.Module, source, num uint32) ([]T, error) {
+	return extractMem[T](mod.Memory(), source, num)
+}
+func extractMem[T PrimitiveType](mem Memory, source, num uint32) ([]T, error) {
 	num = min(num, MAX_SLICE_LENGTH)
-	mem := mod.Memory()
 	var dummy T
 
 	// 'num' is the amount of elements (size depending on int type)

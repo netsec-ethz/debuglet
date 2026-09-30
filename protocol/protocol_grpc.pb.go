@@ -22,6 +22,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	DispatcherService_ReflectAddress_FullMethodName   = "/debuglet.protocol.DispatcherService/ReflectAddress"
 	DispatcherService_Heartbeat_FullMethodName        = "/debuglet.protocol.DispatcherService/Heartbeat"
 	DispatcherService_Resources_FullMethodName        = "/debuglet.protocol.DispatcherService/Resources"
 	DispatcherService_DebugletState_FullMethodName    = "/debuglet.protocol.DispatcherService/DebugletState"
@@ -36,6 +37,9 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DispatcherServiceClient interface {
+	// Optional address reflection on this dispatcher's authenticated listener.
+	// It returns only the caller's peer address; it cannot initiate a connection.
+	ReflectAddress(ctx context.Context, in *ReflectAddressRequest, opts ...grpc.CallOption) (*ReflectAddressResponse, error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	Resources(ctx context.Context, in *ResourcesRequest, opts ...grpc.CallOption) (*ResourcesResponse, error)
 	DebugletState(ctx context.Context, in *DebugletStateRequest, opts ...grpc.CallOption) (*DebugletStateResponse, error)
@@ -53,6 +57,16 @@ type dispatcherServiceClient struct {
 
 func NewDispatcherServiceClient(cc grpc.ClientConnInterface) DispatcherServiceClient {
 	return &dispatcherServiceClient{cc}
+}
+
+func (c *dispatcherServiceClient) ReflectAddress(ctx context.Context, in *ReflectAddressRequest, opts ...grpc.CallOption) (*ReflectAddressResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReflectAddressResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_ReflectAddress_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *dispatcherServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
@@ -142,6 +156,9 @@ func (c *dispatcherServiceClient) RenewLease(ctx context.Context, in *RenewLease
 // All implementations must embed UnimplementedDispatcherServiceServer
 // for forward compatibility.
 type DispatcherServiceServer interface {
+	// Optional address reflection on this dispatcher's authenticated listener.
+	// It returns only the caller's peer address; it cannot initiate a connection.
+	ReflectAddress(context.Context, *ReflectAddressRequest) (*ReflectAddressResponse, error)
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	Resources(context.Context, *ResourcesRequest) (*ResourcesResponse, error)
 	DebugletState(context.Context, *DebugletStateRequest) (*DebugletStateResponse, error)
@@ -161,6 +178,9 @@ type DispatcherServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedDispatcherServiceServer struct{}
 
+func (UnimplementedDispatcherServiceServer) ReflectAddress(context.Context, *ReflectAddressRequest) (*ReflectAddressResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReflectAddress not implemented")
+}
 func (UnimplementedDispatcherServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
 }
@@ -204,6 +224,24 @@ func RegisterDispatcherServiceServer(s grpc.ServiceRegistrar, srv DispatcherServ
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&DispatcherService_ServiceDesc, srv)
+}
+
+func _DispatcherService_ReflectAddress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReflectAddressRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).ReflectAddress(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_ReflectAddress_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).ReflectAddress(ctx, req.(*ReflectAddressRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _DispatcherService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -346,6 +384,10 @@ var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "debuglet.protocol.DispatcherService",
 	HandlerType: (*DispatcherServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ReflectAddress",
+			Handler:    _DispatcherService_ReflectAddress_Handler,
+		},
 		{
 			MethodName: "Heartbeat",
 			Handler:    _DispatcherService_Heartbeat_Handler,

@@ -2,7 +2,7 @@
 
 This note records how Debuglet will collect, store and expose an executor's
 network, location, platform and reachability context. It is a design; steps 1
-to 4 of the delivery order below have landed. Today results record an
+to 6 of the delivery order below have landed for controlled TCP/UDP peers. Today results record an
 admission-time vantage point, executors report schema-1
 [capabilities](operations/executor-discovery.md), their SCION ISD-AS,
 listener transports and ICMP, clock and host-platform probes, and operators may
@@ -19,7 +19,7 @@ admission:
 | --- | --- |
 | `operator` | Set by the operator in the dispatcher configuration. Values from an executor's own configuration, such as `public_host`, arrive over the control connection and are `executor-reported`, since the dispatcher cannot tell them from measurements. |
 | `executor-reported` | Measured or introspected by the executor itself. |
-| `dispatcher-observed` | Seen directly by the dispatcher: the control connection's remote IP and, later, the result of a connect-back reachability test. |
+| `dispatcher-observed` | Seen directly by the dispatcher: the control connection's remote IP and the result of a controlled connect-back reachability test. |
 | `database:<name>@<version>` | Looked up by the dispatcher in an offline database, keyed on a dispatcher-observed or advertised address. The version comes from the database file's own metadata. |
 
 Executor claims are never labelled verified. A `dispatcher-observed` value
@@ -76,8 +76,9 @@ dispatcher then publishes no automatic location for it.
 Metadata is collected at registration and on every reconnect. Executor probe
 results (ICMP, platform, clock, SCION, egress) use the existing capability
 cadence: reported at most every 30 seconds on the heartbeat and expired after
-90 seconds without a new report. Expired values become unknown in the live
-executor view. The admission snapshot keeps the last report and marks it
+90 seconds without a new report. Expired legacy capability values become unknown in the live
+executor view, with a separate freshness descriptor. Connectivity retains its
+last outcome with an explicit stale flag. The admission snapshot keeps the last report and marks it
 `stale`, so a result shows what the dispatcher knew and how old it was.
 
 ## Delivery order
@@ -94,6 +95,9 @@ executor view. The admission snapshot keeps the last report and marks it
    [configuration, opt-out and database updates](operations/executor-discovery.md#offline-asn-and-approximate-location).
    IP metadata is collected at registration, includes negative lookup reasons,
    and is retained in admission snapshots. SCION host-address reporting and
-   measured reachability remain outside this slice.
-5. Connect-back listener reachability and admission refusal (#239 part 1).
-6. Dual-stack egress discovery (#239 part 2).
+   measured reachability are described below.
+5. Controlled TCP/UDP connect-back reachability and field-level admission
+   refusal (#239 part 1); see [controlled observations](operations/executor-discovery.md#controlled-connectivity-observations).
+6. Dual-stack egress reflection against the authenticated dispatcher (#239
+   part 2). Local SCION host/path metadata is reported separately; external
+   SCION data-plane and listener reachability remain untested.

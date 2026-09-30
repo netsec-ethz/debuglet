@@ -61,6 +61,8 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	db           *sql.DB
 	outputLimits config.OutputConfig
+	admission    *accountAdmission
+	retention    config.RetentionConfig
 	attribution  config.AttributionConfig
 	display      map[string]config.ExecutorDisplay
 	ipMetadata   *ipmetadata.Databases
@@ -108,6 +110,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		logger:          l,
 		db:              db,
 		outputLimits:    config.DefaultOutputConfig(),
+		admission:       newAccountAdmission(),
 		destinations:    resource.NewDestinations(bitrate.Gigabit),
 		Payment:         paymentHandler,
 		scheduler:       schedule.New(granularity),

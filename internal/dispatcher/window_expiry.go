@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -63,7 +64,8 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 		EndTime:     models.NewUTCTime(now.Add(-expiredWindowGrace)),
 	})
 	if err != nil {
-		d.logger.Error("Failed to list debuglets whose window has ended", zap.Error(err))
+		d.logger.Error("Failed to list debuglets whose window has ended")
+		d.logger.Debug("Private runtime diagnostic", zap.String("operation", "Failed to list debuglets whose window has ended"), zap.String("error", daemonlog.Diagnostic(err)))
 		return now
 	}
 	msg := outcomeUnknown
@@ -82,7 +84,8 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 		if errors.Is(err, sql.ErrNoRows) {
 			d.logger.Debug("Debuglet finished before its window was classified", zap.String("debugletID", run.Uuid.String()))
 		} else if err != nil {
-			d.logger.Error("Failed to classify debuglet whose window has ended", zap.String("debugletID", run.Uuid.String()), zap.Error(err))
+			d.logger.Error("Failed to classify debuglet whose window has ended", zap.String("debugletID", run.Uuid.String()))
+			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", run.Uuid.String()), zap.String("operation", "Failed to classify debuglet whose window has ended"), zap.String("error", daemonlog.Diagnostic(err)))
 			continue
 		} else {
 			d.logger.Info("Classified debuglet with outcome unknown at the end of its window", zap.String("debugletID", deb.Uuid.String()), zap.String("executor", deb.ExecutorID))

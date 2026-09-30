@@ -307,3 +307,98 @@ A malformed clock, platform, ICMP state or reason leaves only that field
 unknown; the executor stays listed with the rest of its report. Results record
 the ICMP state, reason, clock and platform at admission, marked `stale` when
 the report had expired.
+
+## Controlled connectivity observations
+
+An operator can enable bounded checks against infrastructure they control. The
+checks are disabled by default. They cannot take a target from a measurement,
+resolve a hostname, follow redirects, or test arbitrary addresses. The existing
+authenticated dispatcher gRPC listener provides address reflection; no additional
+service or public reflector is installed.
+
+For a local topology, the executor configuration can contain:
+
+```toml
+[connectivity]
+ipv4_reflector = "127.0.0.1:9090"
+ipv6_reflector = "[::1]:9090"
+listeners = true
+# Optional local-daemon path query to an operator-selected remote ISD-AS:
+# scion_path_target = "1-ff00:0:111"
+```
+
+Each reflector must be a literal address of this executor's dispatcher, of the
+named address family. It uses the existing control identity and TLS trust.
+Plaintext is accepted only on loopback. The dispatcher must actually listen on
+both configured addresses to observe both families. A successful check proves
+TCP communication with that dispatcher over that family. It does not establish
+UDP reachability or reachability to every destination. A failure is recorded as
+`reflector_failed`, not as proof that the family is universally unavailable.
+
+Listener checks also require a dispatcher-side allowlist for that executor:
+
+```toml
+[executors."example-executor"]
+connectivity_host = "127.0.0.1"
+connectivity_ports = "42000-42015"
+```
+
+The host must be a literal unicast address, and the list may contain at most 256
+ports. Both must describe endpoints the operator controls. The executor's
+existing `network.public_host` must equal that host, and its `network.public_ports`
+must provide ports within the approved pool. An unapproved port or mismatching
+advertisement is `untested`; the dispatcher sends nothing to it.
+
+At each check, the executor temporarily binds one TCP and one UDP socket from
+its actual guest listener pool. The dispatcher sends one fixed-size challenge
+to each approved endpoint and requires a response tied to that report's random
+listener token. An unrelated open service cannot satisfy the challenge. The
+executor closes and joins both responders and releases their ports after the
+heartbeat completes. This samples particular ports; it does not guarantee that
+every port in a firewall range, or a later guest listener, is reachable.
+
+Both sides bound checks to one attempt per 30 seconds. Each listener challenge
+has a 400 ms deadline; the two family reflection calls each have a 600 ms bound.
+Observations expire after 90 seconds. Re-registration discards old proof and
+marks configured checks pending until the new session obtains its own results.
+Only successful reflection and successful/failed connect-back checks directly
+seen by the dispatcher use `dispatcher-observed`. Failed reflection calls and
+local bind failures are `executor-reported`.
+
+The optional `connectivity` object in `/executors` retains `reachable`,
+`unreachable` or `untested`, the reason, source, observation/expiry times and an
+explicit `stale` flag. Public views omit raw addresses, endpoints and the SCION
+host. Established operators can see these details; result owners receive them
+in the immutable admission snapshot. Address disagreements are reported without
+silently changing the advertised address. Names are not resolved for comparison.
+
+For a configured check, admission requires a fresh successful observation when
+a policy asks for the corresponding literal address family or TCP/UDP listener.
+Refusals identify `policy.addresses`, `policy.listen_tcp` or `policy.listen_udp`
+in `field_errors`, including the batch order and a stable reason such as
+`stale_observation`, `unmeasured` or `reachability_failed`. An unconfigured check
+retains the existing declared-capability admission path: it is explicitly
+unmeasured. Declared unsupported listeners and unavailable required ICMP are
+refused as well. Names with an unresolved family are not resolved during this
+preflight; the executor's ordinary destination policy still applies at runtime.
+
+The SCION host is the local address selected toward the configured daemon's
+control service. An optional remote ISD-AS query records whether that daemon has
+a non-expired path to it. This is path metadata, not a SCION packet exchange or
+proof of external listener reachability. SCION listener reachability remains
+`untested` with `no_controlled_peer`; declared SCION support remains separate.
+
+`dbl nodes --address-family ipv6` and `--reachable-listener tcp` select only
+fresh measured matches. Repeat either flag to require more than one. JSON output
+contains the full authorized observation; the text table labels stale and
+untested outcomes explicitly. ASN filters continue to match the observed control
+or advertised-host database origin. A differing hello source-IP claim is retained
+separately as optional `ip_metadata.reported`, with its own lookup provenance,
+and never silently adds an ASN filter match.
+
+The additional `capability_observation` descriptor distinguishes `current`,
+`stale` and `unknown` while preserving the earlier `capabilities: null` behavior
+for expired reports. `admission_limits` exposes scheduling support, the existing
+numeric timeout/bandwidth domain and `currency_per_bps_second` pricing units.
+These bounds describe valid policy inputs, not free capacity or a guarantee that
+a complete scheduled reservation fits.

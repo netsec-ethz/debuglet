@@ -21,6 +21,7 @@ const (
 	nodesUsage = `Usage:
   dbl nodes [--protocol NAME ...] [--enforcement ebpf|fallback] [--min-capacity-bps N]
             [--isd-as ISD-AS] [--asn NUMBER] [--country CODE]
+            [--address-family ipv4|ipv6] [--reachable-listener tcp|udp|scion]
 
 Filters return ready matching executors only. Unknown capability reports and an
 unknown ISD-AS do not match. Capacity means advertised total bandwidth, not free
@@ -88,7 +89,7 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION")
+		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION\tIPV4\tIPV6\tTCP_LISTENER\tUDP_LISTENER")
 		for _, n := range nodes {
 			location := n.Display
 			location.City, location.Country = n.Location()
@@ -107,12 +108,26 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 				}
 				attribution = attributionColumn(report.Attribution)
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
+			connectivity := n.Connectivity
+			if connectivity == nil {
+				connectivity = &wire.Connectivity{}
+			}
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
 				labelText(n.Display.DisplayName), nodeLocation(location), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata), locationSource(location),
-				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution)
+				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution, reachabilityColumn(connectivity.IPv4), reachabilityColumn(connectivity.IPv6), reachabilityColumn(connectivity.TCPListener), reachabilityColumn(connectivity.UDPListener))
 		}
 		return tw.Flush()
 	})
+}
+
+func reachabilityColumn(r wire.Reachability) string {
+	if r.Stale || r.ExpiresAt != nil && time.Now().Unix() >= *r.ExpiresAt {
+		return "stale"
+	}
+	if r.State == "" {
+		return "unknown"
+	}
+	return r.State
 }
 
 // Operator labels are optional: "-" is not configured, not unknown.

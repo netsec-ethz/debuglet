@@ -64,7 +64,7 @@ func (d *Dispatcher) Cancellation(ctx context.Context, id uuid.UUID) (wire.Cance
 		OriginalBinding: recoveryBinding(controlsession.Binding{Incarnation: run.DispatcherIncarnation, SessionID: run.SessionID}),
 		RequestedAt:     time.Unix(0, record.RequestedAt).UTC(),
 		AttemptedAt:     cancellationTime(record.AttemptedAt), AcknowledgedAt: cancellationTime(record.AcknowledgedAt),
-		Disposition: "requested", Reason: record.Failure, State: run.State.String(), Error: run.Error.String,
+		Disposition: "requested", Reason: record.Failure, State: run.State.String(), Error: PublicTerminalError(run.Error.String),
 	}
 	d.mu.RLock()
 	entry := d.executors[run.ExecutorID]

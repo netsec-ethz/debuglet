@@ -170,8 +170,10 @@ func TestInstalledScheduleSoak(t *testing.T) {
 	}
 	dbPath := filepath.Join(work, "dispatcher", "state.sqlite")
 	d := launch("dispatcher", assets.Dispatcher, storagecheck.Dispatcher, dispatcherconfig.DispatcherConfig{
-		Server: dispatcherconfig.ServerConfig{BindHost: "127.0.0.1", LocalDevelopment: true, Version: assets.Manifest.Version},
-		TLS:    dispatcherconfig.TLSConfig{Disable: true}, Sui: dispatcherconfig.SuiConfig{Disabled: true},
+		Admission:   dispatcherconfig.DefaultAdmissionConfig(),
+		Attribution: dispatcherconfig.DefaultAttributionConfig(),
+		Server:      dispatcherconfig.ServerConfig{BindHost: "127.0.0.1", LocalDevelopment: true, Version: assets.Manifest.Version},
+		TLS:         dispatcherconfig.TLSConfig{Disable: true}, Sui: dispatcherconfig.SuiConfig{Disabled: true},
 		Scheduler: dispatcherconfig.SchedulerConfig{ExecutorTimeout: 10, SchedulerGranularityMs: 100},
 		Output:    dispatcherconfig.DefaultOutputConfig(),
 		Database:  dispatcherconfig.DatabaseConfig{Path: dbPath}, Logging: dispatcherconfig.LoggingConfig{LogLevel: "info", JSONLogs: true}})

@@ -52,6 +52,13 @@ make ci-package
 
 The full bundle is under `.cache/ci/packages/`. Use it with the same installer command above. The build also produces the component packages below.
 
+The package output includes `compatibility.json` and
+`SHA256SUMS-compatibility`. This separate record identifies the core package,
+source revision, API version and OpenAPI digest together with the console
+repository and commit selected in `configs/release-compatibility.json`. Review
+that selection and the matching acceptance results when preparing a release.
+The console remains a separate build and deployment.
+
 ## Install one component
 
 Component packages are available from current source builds and are intended for releases after v0.2.0. The v0.2.0 release contains only the full bundle.

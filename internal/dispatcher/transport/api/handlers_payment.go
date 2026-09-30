@@ -11,6 +11,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"math/big"
 	"net/http"
 
@@ -54,6 +55,9 @@ func (h *Handler) priceIntent(request PaymentIntentRequest) ([]int64, int64, err
 	prices := make([]int64, len(request.Debuglets))
 	seen := make(map[int64]struct{}, len(request.Debuglets))
 	for i, req := range request.Debuglets {
+		if _, err := submittedConfiguration(req); err != nil {
+			return nil, 0, apiError(http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		}
 		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
 		if !exists {
 			return nil, 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
@@ -123,20 +127,30 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	// Maintenance stops the admission of new work, and pricing new work is
-	// the first half of admitting it: an intent issued now would be paid for
-	// a batch this dispatcher will not accept, and the money would then have
-	// to be given back. Nothing is priced, no transaction id is minted and no
-	// order row is written. The check follows the caller being established,
-	// so the operator's note reaches only a request that may act.
+	var req PaymentIntentRequest
+	if err := h.allowAdmissionRequest(c, established); err != nil {
+		return err
+	}
+	if err := decodeMeasurementRequest(c, &req); err != nil {
+		return err
+	}
+	if err := validateUploadBatch(req.Debuglets); err != nil {
+		return err
+	}
+	if req.Retry != nil {
+		if err := h.authorizeRetry(c, req.Retry, len(req.Debuglets)); err != nil {
+			return err
+		}
+		if saved, err := h.readRetryIntent(c.Request().Context(), database.New(h.db), established, req); err != nil {
+			return err
+		} else if saved != nil {
+			return c.JSON(http.StatusOK, saved)
+		}
+	}
 	if err := dispatcher.AdmissionPaused(); err != nil {
 		return apiError(http.StatusServiceUnavailable, CodeUnavailable, err.Error())
 	}
 
-	var req PaymentIntentRequest
-	if err := c.Bind(&req); err != nil {
-		return bindError(err)
-	}
 	// Payment-mode preflight before the allowlist and before any transaction ID,
 	// order write or intent creation: a disabled chain method (USDC or SUI) is
 	// answered with 503 regardless of the HTTP allowlist below, so that the
@@ -170,18 +184,26 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	// without its orders or its owner. The transaction row comes first,
 	// since the orders reference it. Nothing below may use h.db directly:
 	// the pool holds one connection, and this transaction owns it.
-	hash := hashDebugletRequest(req.Debuglets)
+	hash := submissionHash(req.Debuglets, req.Retry)
 	dbTx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to begin the payment intent", err)
 	}
 	defer dbTx.Rollback()
+	queries := database.New(dbTx)
+	if req.Retry != nil {
+		if saved, err := h.readRetryIntent(ctx, queries, established, req); err != nil {
+			return err
+		} else if saved != nil {
+			_ = dbTx.Rollback()
+			return c.JSON(http.StatusOK, saved)
+		}
+	}
 	intent, err := h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash))
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)
 	}
-	queries := database.New(dbTx)
 	if err := h.storeOrders(ctx, queries, req, transactionId, req.RefundAddress, prices); err != nil {
 		return err
 	}
@@ -197,39 +219,43 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to record the payment order owner", err)
 		}
 	}
+	response, err := paymentIntentResponse(req.PaymentMethod, intent)
+	if err != nil {
+		return err
+	}
+	if req.Retry != nil {
+		if err := storeRetryIntent(ctx, queries, established, req, transactionId, response); err != nil {
+			return err
+		}
+		response.Retry = &wire.RetryReceipt{RetryLink: *req.Retry}
+	}
 	if err := dbTx.Commit(); err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the payment intent", err)
 	}
-	switch req.PaymentMethod {
-	case "USDC":
-		fallthrough
-	case "SUI":
+	return c.JSON(http.StatusOK, response)
+}
+
+func paymentIntentResponse(method string, intent payments.PaymentIntent) (IntentResponse, error) {
+	switch method {
+	case "USDC", "SUI":
 		suiIntent, ok := intent.Intent.(sui.SuiPaymentIntent)
 		if !ok {
-			return apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")
+			return IntentResponse{}, apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")
 		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: req.PaymentMethod,
-			Intent: SuiIntent{
-				TransactionId:   suiIntent.TransactionId,
-				AuthKey:         suiIntent.AuthKey,
-				Price:           suiIntent.Price,
-				CoinType:        suiIntent.CoinType,
-				ExpiresAtS:      suiIntent.ExpiresAt.Unix(),
-				RegistryAddress: suiIntent.RegistryAddress,
-				ReceiverAddress: suiIntent.ReceiverAddress,
-			}})
+		return IntentResponse{Method: method, Intent: SuiIntent{
+			TransactionId: suiIntent.TransactionId, AuthKey: suiIntent.AuthKey, Price: suiIntent.Price,
+			CoinType: suiIntent.CoinType, ExpiresAtS: suiIntent.ExpiresAt.Unix(),
+			RegistryAddress: suiIntent.RegistryAddress, ReceiverAddress: suiIntent.ReceiverAddress,
+		}}, nil
 	case "TEST":
-		dummyIntent, ok := intent.Intent.(payments.DummyIntent)
+		dummy, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {
-			return apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")
+			return IntentResponse{}, apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")
 		}
-		intent := DummyIntent{
-			TransactionID: dummyIntent.TransactionId,
-			AuthKey:       dummyIntent.AuthKey,
-		}
-		return c.JSON(http.StatusOK, IntentResponse{Method: "TEST", Intent: intent})
+		return IntentResponse{Method: method, Intent: DummyIntent{TransactionID: dummy.TransactionId, AuthKey: dummy.AuthKey}}, nil
+	default:
+		return IntentResponse{}, unknownPaymentMethod(method)
 	}
-	return unknownPaymentMethod(req.PaymentMethod)
 }
 
 // paymentMethodError classifies a rejected payment method: a chain method

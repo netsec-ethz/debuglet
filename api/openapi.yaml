@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.11"
+  version: "1.12"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -379,7 +379,7 @@ paths:
     get:
       operationId: "getDebugletResult"
       summary: "Export a portable retained-run snapshot."
-      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Writes portable format 1.1, independent of the HTTP API version. Does not wait for completion."
+      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Writes portable format 1.1 for ordinary runs and 1.2 for explicit retries, independent of the HTTP API version. Does not wait for completion."
       parameters:
         - name: "id"
           in: "path"
@@ -451,6 +451,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: "The stored result could not be read consistently."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: "Payload was deleted; state and identity remain available (payload_deleted)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -1092,7 +1103,7 @@ paths:
     put:
       operationId: "submitDebuglets"
       summary: "Submit a paid batch of debuglets."
-      description: "Admits the debuglets of one completed transaction. The server hashes the decoded debuglets array and rejects any batch that differs from the one the payment intent was created for. An identical resubmission of a batch this dispatcher already admitted answers 200 with the run IDs it recorded and admits nothing again. The encoded request body must not exceed 33554432 bytes."
+      description: "Admits the debuglets of one completed transaction. The server hashes the decoded debuglets array and rejects any batch that differs from the one the payment intent was created for. An identical resubmission of a batch this dispatcher already admitted answers 200 with the run IDs it recorded and admits nothing again. The encoded request body must not exceed 33554432 bytes. Explicit retries require API 1.12 and preserve one parent/request identity across intent and submission; reusing that identity with the same frozen request recovers the existing attempt."
       requestBody:
         required: true
         content:
@@ -1105,7 +1116,7 @@ paths:
           required: false
           description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
           schema:
-            type: string
+            type: "string"
       responses:
         "200":
           description: "The debuglet IDs, in the order of the submitted batch."
@@ -1113,7 +1124,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1124,7 +1135,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1135,7 +1146,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1146,18 +1157,18 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit. Also returned for more than 128 orders, a decoded module over 24 MiB, or a logical stored run over 32 MiB."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1168,7 +1179,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1179,7 +1190,22 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Account request, queued/active reservation or queued-byte quota reached (account_quota_exceeded). Retry-After seconds only for request rate; no time promise for work quota."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+            Retry-After:
+              description: "Optional integer seconds for request-rate refusal only; absent for work reservation quota."
+              schema:
+                type: "string"
           content:
             application/json:
               schema:
@@ -1200,7 +1226,7 @@ paths:
           required: false
           description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
           schema:
-            type: string
+            type: "string"
       responses:
         "204":
           description: "A terminal result is recorded, or the run was already terminal and keeps its result. This does not alone confirm remote acknowledgement; inspect GET /debuglet/{id}/cancellation."
@@ -1208,14 +1234,14 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
         "400":
           description: "Malformed body (invalid_request), or the dispatcher refused the cancellation (cancel_refused)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1226,7 +1252,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1237,7 +1263,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1248,7 +1274,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1259,7 +1285,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1535,24 +1561,24 @@ paths:
           required: true
           description: "Canonical 36-character debuglet UUID, in lowercase as submission returns it."
           schema:
-            type: string
-            format: uuid
+            type: "string"
+            format: "uuid"
             pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         - name: "after"
           in: "query"
           required: false
           description: "Cursor: return entries with an ID strictly above this value. Defaults to 0. A present but malformed or negative value is rejected."
           schema:
-            type: integer
-            format: int64
+            type: "integer"
+            format: "int64"
             minimum: 0
         - name: "limit"
           in: "query"
           required: false
           description: "Maximum number of entries. Defaults to 100. A present but malformed or non-positive value is rejected; a larger value is clamped to 1000."
           schema:
-            type: integer
-            format: int64
+            type: "integer"
+            format: "int64"
             minimum: 1
             maximum: 1000
         - name: "Debuglet-API-Version"
@@ -1560,7 +1586,7 @@ paths:
           required: false
           description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
           schema:
-            type: string
+            type: "string"
       responses:
         "200":
           description: "One page of stored output."
@@ -1568,7 +1594,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1579,7 +1605,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1590,7 +1616,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1601,7 +1627,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1612,7 +1638,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -1623,7 +1649,18 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: "Payload was deleted; state and identity remain available (payload_deleted)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
           content:
             application/json:
               schema:
@@ -2200,7 +2237,7 @@ paths:
     put:
       operationId: "createPaymentIntent"
       summary: "Create a payment intent for a batch of debuglets."
-      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits the methods TEST and USDC; TEST is the local alpha's bookkeeping-only method. The encoded request body must not exceed 33554432 bytes."
+      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits the methods TEST and USDC; TEST is the local alpha's bookkeeping-only method. The encoded request body must not exceed 33554432 bytes. Explicit retries require API 1.12 and preserve one parent/request identity across intent and submission; reusing that identity with the same frozen request recovers the existing attempt."
       requestBody:
         required: true
         content:
@@ -2213,7 +2250,7 @@ paths:
           required: false
           description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
           schema:
-            type: string
+            type: "string"
       responses:
         "200":
           description: "The created intent."
@@ -2221,7 +2258,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -2232,7 +2269,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -2243,18 +2280,18 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit. Also returned for more than 128 orders, a decoded module over 24 MiB, or a logical stored run over 32 MiB."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -2265,7 +2302,7 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
           content:
             application/json:
               schema:
@@ -2276,7 +2313,44 @@ paths:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
-                type: string
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Account request quota reached (account_quota_exceeded); Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+            Retry-After:
+              description: "Optional integer seconds for request-rate refusal only; absent for work reservation quota."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Retry parent missing or not owned (not_found)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "Request identity is bound to a different parent or frozen payload (intent_mismatch)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
           content:
             application/json:
               schema:
@@ -2645,6 +2719,972 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  "/measurement-templates":
+    "get":
+      "operationId": "getMeasurementTemplates"
+      "summary": "getMeasurementTemplates"
+      "description": "Version 1 starter definitions name the SHA-256 of the matching dashboard program asset, argument schema and default policy."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "type": "array"
+                "items":
+                  "$ref": "#/components/schemas/MeasurementTemplate"
+        "400":
+          "description": "Invalid configuration, version, digest or unknown field."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "Authenticated account required; catalogue also permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Request body exceeds the 32 MiB limit."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/measurement-profiles":
+    "get":
+      "operationId": "listMeasurementProfiles"
+      "summary": "listMeasurementProfiles"
+      "description": "Read only profiles owned by the authenticated account. Saved configurations include program bytes and immutable template references; no schedule or payment credentials are retained."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "type": "array"
+                "items":
+                  "$ref": "#/components/schemas/ProfileSummary"
+        "400":
+          "description": "Invalid configuration, version, digest or unknown field."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "Authenticated account required; catalogue also permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Profile absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Request body exceeds the 32 MiB limit."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "createMeasurementProfile"
+      "summary": "createMeasurementProfile"
+      "description": "Account-owned profiles retain at most 32 reusable single-run configurations until explicitly deleted. Each profile is bounded to 8 MiB JSON, 256 arguments and destinations each, and 128 KiB aggregate argument/destination bytes. No absolute schedule or payment credentials are accepted. Templates are immutable version 1 definitions; program SHA-256 pins the matching dashboard asset."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementProfile"
+        "400":
+          "description": "Invalid configuration, version, digest or unknown field."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "Authenticated account required; catalogue also permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Cookie state change requires CSRF token."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Profile absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "Account already stores 32 profiles."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Profile JSON exceeds 8 MiB."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/ProfileConfig"
+  "/measurement-profiles/{id}":
+    "get":
+      "operationId": "getMeasurementProfile"
+      "summary": "getMeasurementProfile"
+      "description": "Read only profiles owned by the authenticated account. Saved configurations include program bytes and immutable template references; no schedule or payment credentials are retained."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementProfile"
+        "400":
+          "description": "Invalid configuration, version, digest or unknown field."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "Authenticated account required; catalogue also permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Profile absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Request body exceeds the 32 MiB limit."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "put":
+      "operationId": "updateMeasurementProfile"
+      "summary": "updateMeasurementProfile"
+      "description": "Account-owned profiles retain at most 32 reusable single-run configurations until explicitly deleted. Each profile is bounded to 8 MiB JSON, 256 arguments and destinations each, and 128 KiB aggregate argument/destination bytes. No absolute schedule or payment credentials are accepted. Templates are immutable version 1 definitions; program SHA-256 pins the matching dashboard asset."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementProfile"
+        "400":
+          "description": "Invalid configuration, version, digest or unknown field."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "Authenticated account required; catalogue also permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Cookie state change requires CSRF token."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Profile absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "Account already stores 32 profiles."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Profile JSON exceeds 8 MiB."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/ProfileConfig"
+    "delete":
+      "operationId": "deleteMeasurementProfile"
+      "summary": "deleteMeasurementProfile"
+      "description": "Delete an owned reusable profile. Existing runs and their results are unchanged."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "204":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+        "400":
+          "description": "Invalid configuration, version, digest or unknown field."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "Authenticated account required; catalogue also permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Cookie state change requires CSRF token."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Profile absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Request body exceeds the 32 MiB limit."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/measurements":
+    "get":
+      "operationId": "listMeasurements"
+      "summary": "List measurement batches"
+      "description": "List the account’s batches newest admission first. Limit defaults to 25 (1–100); offset is 0–1000000. Search matches batch IDs and labels, with a maximum of 120 UTF-8 bytes. Counts cover matching search before the state filter. Unknown includes unresolved work; it never implies success."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "limit"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+        - "name": "offset"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+        - "name": "state"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "search"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "200":
+          "description": "Owner-scoped measurement metadata without output. Unknown actual execution times remain null."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementPage"
+        "400":
+          "description": "Invalid filter, pagination or request."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "A named account is required for groups; individual detail permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Caller cannot access the requested detail."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Measurement absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Request or grouped detail exceeds the documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Metadata storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/measurements/{id}":
+    "get":
+      "operationId": "getMeasurement"
+      "summary": "Page measurement children"
+      "description": "Page the owner’s batch using its durable transaction ID. The response contains lightweight child references in stable order, without arguments, policies, provenance or output. Read each child’s configuration through its detail endpoint. Limit defaults to 25 (1–100); offset is 0–1000000."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+        - "name": "limit"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+        - "name": "offset"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+      "responses":
+        "200":
+          "description": "Owner-scoped measurement metadata without output. Unknown actual execution times remain null."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Measurement"
+        "400":
+          "description": "Invalid filter, pagination or request."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "A named account is required for groups; individual detail permits explicit local development."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Caller cannot access the requested detail."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Measurement absent or belongs to another account."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "Request or grouped detail exceeds the documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Metadata storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "schema":
+                "type": "string"
+              "description": "Implemented API contract version."
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  /debuglet/{id}/detail:
+    get:
+      operationId: "getRunDetail"
+      summary: "Read retained run configuration"
+      description: "Read retained configuration without loading output, bounded to 32 MiB independently of profile limits. Requested arguments, policy and start are preserved before normalization. Historical configuration may be null. Actual execution timestamps remain null when unobserved. Cost strings use exact native base units; charged is null until credited or refunded."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Owner-scoped measurement metadata without output. Unknown actual execution times remain null."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunDetail"
+        "400":
+          description: "Invalid filter, pagination or request."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "A named account is required for groups; individual detail permits explicit local development."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Caller cannot access the requested detail."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Measurement absent or belongs to another account."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request body or retained run detail exceeds 33554432 bytes (payload_too_large)."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Metadata storage operation failed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+              description: "Implemented API contract version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: "Payload was deleted; state and identity remain available (payload_deleted)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /debuglet/{id}/payload:
+    delete:
+      operationId: "deleteDebugletPayload"
+      summary: "Delete a completed measurement payload while preserving identity and outcome."
+      description: "API 1.12. Owner-only; operator read privilege does not grant deletion of another account. Ownerless local TEST runs require the explicit local profile. Requires terminal state, authenticated executor retirement and final output. Repeated deletion returns 204. Cancellation is a separate operation. Payload removal preserves immutable digest tombstones, run/order/transaction/ownership references and the original outcome."
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          description: "Required for cookie-authenticated mutations; not for bearer requests."
+          schema:
+            type: "string"
+      responses:
+        "204":
+          description: "Payload deleted or already deleted."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+        "400":
+          description: "Invalid canonical UUID or unsupported API version."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "No valid credential (unauthorized)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Missing or invalid CSRF token (forbidden)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Unknown run or caller is not its owner (not_found)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "Completed output or confirmed executor retirement is missing (payload_not_deletable)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request body exceeds 33554432 bytes (payload_too_large)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Storage/retention could not be checked or committed (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     bearerAuth:
@@ -2766,15 +3806,15 @@ components:
           type: "string"
           description: "Deployment-configured host:port for the reverse control connection."
     Error:
-      type: object
+      type: "object"
       description: "Error envelope of every failure. Branch on code; message is a bounded diagnostic for a human and must not be parsed. A minor version may add codes, so treat an unknown code as a plain failure of the status it arrived with."
       additionalProperties: false
       required:
-        - code
-        - message
+        - "code"
+        - "message"
       properties:
         code:
-          type: string
+          type: "string"
           description: "Stable machine-readable failure code."
           enum:
             - "invalid_request"
@@ -2795,16 +3835,44 @@ components:
             - "payload_too_large"
             - "internal_error"
             - "service_unavailable"
+            - "payload_deleted"
+            - "payload_not_deletable"
+            - "account_quota_exceeded"
             - "rate_limited"
         message:
-          type: string
+          type: "string"
           description: "Bounded human-readable diagnostic. Never carries a credential, a stack trace or internal database or transport detail."
+        field_errors:
+          type: "array"
+          description: "At most 16 optional request field failures. Code and field identify a refusal without parsing its message; order_id identifies the order when available."
+          items:
+            $ref: "#/components/schemas/FieldError"
         admitted_ids:
-          type: array
+          type: "array"
           description: "Present only on PUT /debuglet internal_error after durable admission, in request order. Inspect each run for its disposition; admission does not prove execution or completion. Clients must retain uncertainty when this list is absent or invalid."
           items:
-            type: string
-            format: uuid
+            type: "string"
+            format: "uuid"
+    FieldError:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - code
+        - message
+      properties:
+        field:
+          type: string
+          description: "Dotted request field of at most 128 bytes, for example policy.listen_tcp."
+        code:
+          type: string
+          description: "Stable refusal reason of at most 64 bytes. Clients must tolerate new reason codes."
+        message:
+          type: string
+          description: "Human-readable explanation of at most 512 bytes."
+        order_id:
+          type: integer
+          format: int64
     VersionResponse:
       type: object
       additionalProperties: false
@@ -2958,24 +4026,32 @@ components:
           description: "Base64-encoded guest module."
         policy:
           $ref: "#/components/schemas/DebugletPolicyRequest"
+        "label":
+          "type": "string"
+          "description": "Optional user label, at most120 UTF-8 bytes."
+        "program_name":
+          "type": "string"
+          "description": "Optional program display name, at most256 UTF-8 bytes."
     SubmitDebugletsRequest:
-      type: object
+      type: "object"
       additionalProperties: false
       required:
-        - debuglets
-        - transaction_id
-        - auth_key
+        - "debuglets"
+        - "transaction_id"
+        - "auth_key"
       properties:
         debuglets:
-          type: array
+          type: "array"
           description: "The identical debuglets array the payment intent was created for. It must contain at least one debuglet; an empty array is answered 400 invalid_request."
           items:
             $ref: "#/components/schemas/DebugletRequest"
         transaction_id:
-          type: string
+          type: "string"
         auth_key:
-          type: string
+          type: "string"
           description: "Auth key of the transaction. Empty for TEST transactions."
+        retry:
+          $ref: "#/components/schemas/RetryLink"
     DebugletIDList:
       type: array
       description: "Debuglet IDs in the order of the submitted batch."
@@ -3548,6 +4624,12 @@ components:
         - price_per_bw
         - currency
       properties:
+        connectivity:
+          $ref: "#/components/schemas/ExecutorConnectivity"
+        admission_limits:
+          $ref: "#/components/schemas/ExecutorAdmissionLimits"
+        capability_observation:
+          $ref: "#/components/schemas/CapabilityObservation"
         id:
           type: string
         ready:
@@ -3625,6 +4707,8 @@ components:
         - location_opt_out
         - disagreements
       properties:
+        reported:
+          $ref: "#/components/schemas/AddressMetadata"
         observed:
           $ref: "#/components/schemas/AddressMetadata"
         advertised:
@@ -3658,68 +4742,68 @@ components:
         location:
           $ref: "#/components/schemas/LocationLookup"
     ASNLookup:
-      type: object
+      type: "object"
       additionalProperties: false
       required:
-        - value
-        - source
-        - observed_at
-        - reason
+        - "value"
+        - "source"
+        - "observed_at"
+        - "reason"
       properties:
         value:
           $ref: "#/components/schemas/ASInfo"
         source:
-          type: string
+          type: "string"
           nullable: true
-          pattern: "^database:[^@[:space:]]+@[1-9][0-9]*$"
+          pattern: "^database:[^@\\s]+@[1-9][0-9]*$"
         observed_at:
-          type: integer
-          format: int64
+          type: "integer"
+          format: "int64"
           description: "Unix seconds at registration, retained in admission snapshots."
         reason:
-          type: string
+          type: "string"
           enum:
             - ""
-            - no_database
-            - no_address
-            - not_ip
-            - non_global
-            - opted_out
-            - not_found
-            - lookup_error
-            - invalid_record
+            - "no_database"
+            - "no_address"
+            - "not_ip"
+            - "non_global"
+            - "opted_out"
+            - "not_found"
+            - "lookup_error"
+            - "invalid_record"
       description: "Value is null when reason is nonempty. Source identifies the database even for a negative lookup, but is null when no lookup occurred."
     LocationLookup:
-      type: object
+      type: "object"
       additionalProperties: false
       required:
-        - value
-        - source
-        - observed_at
-        - reason
+        - "value"
+        - "source"
+        - "observed_at"
+        - "reason"
       properties:
         value:
           $ref: "#/components/schemas/GeoLocation"
         source:
-          type: string
+          type: "string"
           nullable: true
-          pattern: "^database:[^@[:space:]]+@[1-9][0-9]*$"
+          pattern: "^database:[^@\\s]+@[1-9][0-9]*$"
         observed_at:
-          type: integer
-          format: int64
+          type: "integer"
+          format: "int64"
           description: "Unix seconds at registration, retained in admission snapshots."
         reason:
-          type: string
+          type: "string"
           enum:
             - ""
-            - no_database
-            - no_address
-            - not_ip
-            - non_global
-            - opted_out
-            - not_found
-            - lookup_error
-            - invalid_record
+            - "no_database"
+            - "no_address"
+            - "not_ip"
+            - "non_global"
+            - "opted_out"
+            - "not_found"
+            - "lookup_error"
+            - "invalid_record"
       description: "Value is null when reason is nonempty. Source identifies the database even for a negative lookup, but is null when no lookup occurred."
     ASInfo:
       type: object
@@ -4053,38 +5137,42 @@ components:
           maximum: 1000000000000000
           description: "Bandwidth limit in bits per second, at most 1000000000000000 (1 Pbit/s). It becomes the capacity the runs of the destination are shared out of, so it is held to the same range as the bandwidth of a policy."
     PaymentIntentRequest:
-      type: object
+      type: "object"
       additionalProperties: false
       required:
-        - debuglets
-        - payment_method
+        - "debuglets"
+        - "payment_method"
       properties:
         debuglets:
-          type: array
+          type: "array"
           description: "The debuglets the intent pays for. It must contain at least one debuglet; an empty array is answered 400 invalid_request."
           items:
             $ref: "#/components/schemas/DebugletRequest"
         payment_method:
-          type: string
+          type: "string"
           description: "TEST for the local alpha's bookkeeping-only method, or USDC."
         refund_address:
-          type: string
+          type: "string"
           description: "Chain address for refunds. Empty for TEST."
+        retry:
+          $ref: "#/components/schemas/RetryLink"
     IntentResponse:
-      type: object
+      type: "object"
       additionalProperties: false
       required:
-        - method
-        - intent
+        - "method"
+        - "intent"
       properties:
         method:
-          type: string
+          type: "string"
           description: "The payment method the intent was created for."
         intent:
           description: "Method-specific intent."
           oneOf:
             - $ref: "#/components/schemas/DummyIntent"
             - $ref: "#/components/schemas/SuiIntent"
+        retry:
+          $ref: "#/components/schemas/RetryReceipt"
     DummyIntent:
       type: object
       description: "Intent of the TEST method. It records bookkeeping only and moves no funds."
@@ -4289,7 +5377,8 @@ components:
           enum:
             - "1.0"
             - "1.1"
-          description: "The dispatcher writes 1.1. Readers accept 1.0 files, which never carry provenance.vantage_point."
+            - "1.2"
+          description: "Ordinary results remain 1.1 (historical 1.0 is readable); 1.2 requires a valid immutable retry link in provenance. Unknown outcomes remain unchanged; the parent is never resumed or edited."
         run_id:
           type: "string"
           format: "uuid"
@@ -4307,7 +5396,7 @@ components:
           $ref: "#/components/schemas/ResultOutput"
         verification:
           $ref: "#/components/schemas/ResultVerification"
-      description: "Portable format 1.1 (1.0 remains readable). One consistent retained-run snapshot, not a signed attestation. Missing historical provenance remains null. The reader rejects unsupported versions and inconsistent run identities. Output may still be pending, unknown or truncated."
+      description: "Portable format 1.1 for ordinary runs and 1.2 for explicit retries; historical 1.0 remains readable. One consistent retained-run snapshot, not a signed attestation. Missing historical provenance remains null. Output may be pending, unknown or truncated."
     ResultProvenance:
       type: "object"
       additionalProperties: false
@@ -4371,6 +5460,8 @@ components:
           nullable: true
         vantage_point:
           $ref: "#/components/schemas/ResultVantagePoint"
+        retry:
+          $ref: "#/components/schemas/RetryLink"
       description: "Immutable facts recorded with admission in the same database transaction. Current executor metadata never replaces historical facts. Null for runs admitted before this record existed."
       nullable: true
     ResultVantagePoint:
@@ -4382,6 +5473,10 @@ components:
         - "source_ip"
         - "public_host"
       properties:
+        connectivity:
+          $ref: "#/components/schemas/ExecutorConnectivity"
+        reported_source_ip:
+          $ref: "#/components/schemas/ResultLabelledString"
         schema_version:
           type: "integer"
           enum:
@@ -4719,3 +5814,565 @@ components:
           type: "string"
           enum:
             - "unverified"
+    "ProfileProgram":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "sha256"
+        - "wasm"
+      "properties":
+        "sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+        "wasm":
+          "type": "string"
+          "format": "byte"
+    "TemplateReference":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "version"
+      "properties":
+        "id":
+          "type": "string"
+          "enum":
+            - "http"
+            - "tcp"
+            - "service"
+        "version":
+          "type": "integer"
+          "enum":
+            - 1
+    "ProfileConfig":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "version"
+        - "name"
+        - "program"
+        - "executor_id"
+        - "args"
+        - "policy"
+      "properties":
+        "version":
+          "type": "integer"
+          "enum":
+            - 1
+        "name":
+          "type": "string"
+          "description": "Bounds: minLength=1, maxLength=120."
+        "program":
+          "$ref": "#/components/schemas/ProfileProgram"
+        "executor_id":
+          "type": "string"
+          "description": "Bounds: minLength=1, maxLength=256."
+        "args":
+          "type": "array"
+          "items":
+            "type": "string"
+          "description": "Bounds: maxItems=256."
+        "policy":
+          "$ref": "#/components/schemas/DebugletPolicyRequest"
+        "template":
+          "$ref": "#/components/schemas/TemplateReference"
+    "MeasurementProfile":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "config"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "config":
+          "$ref": "#/components/schemas/ProfileConfig"
+    "ProfileSummary":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "name"
+        - "program_sha256"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "program_sha256":
+          "type": "string"
+    "TemplateArgument":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "type"
+        - "description"
+        - "default"
+      "properties":
+        "type":
+          "type": "string"
+          "enum":
+            - "string"
+        "description":
+          "type": "string"
+        "default":
+          "type": "string"
+    "TemplateArguments":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "type"
+        - "properties"
+        - "required"
+        - "additionalProperties"
+      "properties":
+        "type":
+          "type": "string"
+          "enum":
+            - "object"
+        "properties":
+          "type": "object"
+          "additionalProperties": false
+          "properties":
+            "target":
+              "$ref": "#/components/schemas/TemplateArgument"
+            "max_ms":
+              "$ref": "#/components/schemas/TemplateArgument"
+            "check":
+              "$ref": "#/components/schemas/TemplateArgument"
+            "contains":
+              "$ref": "#/components/schemas/TemplateArgument"
+        "required":
+          "type": "array"
+          "items":
+            "type": "string"
+        "additionalProperties":
+          "type": "boolean"
+          "enum":
+            - false
+    "MeasurementTemplate":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "version"
+        - "name"
+        - "description"
+        - "program_sha256"
+        - "program_asset"
+        - "arguments"
+        - "required_transports"
+        - "default_policy"
+      "properties":
+        "id":
+          "type": "string"
+        "version":
+          "type": "integer"
+          "enum":
+            - 1
+        "name":
+          "type": "string"
+        "description":
+          "type": "string"
+        "program_sha256":
+          "type": "string"
+        "program_asset":
+          "type": "string"
+        "arguments":
+          "$ref": "#/components/schemas/TemplateArguments"
+        "required_transports":
+          "type": "array"
+          "items":
+            "type": "string"
+        "default_policy":
+          "$ref": "#/components/schemas/DebugletPolicyRequest"
+    "SubmittedConfiguration":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "label"
+        - "program_name"
+        - "requested_start"
+        - "args"
+        - "policy"
+      "properties":
+        "label":
+          "type": "string"
+        "program_name":
+          "type": "string"
+        "requested_start":
+          "type": "integer"
+          "format": "int64"
+          "nullable": true
+        "args":
+          "type": "array"
+          "items":
+            "type": "string"
+        "policy":
+          "$ref": "#/components/schemas/DebugletPolicyRequest"
+      "nullable": true
+    "RunCost":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "currency"
+        - "unit"
+        - "reserved"
+        - "charged"
+        - "settlement"
+      "properties":
+        "currency":
+          "type": "string"
+        "unit":
+          "type": "string"
+        "reserved":
+          "type": "string"
+        "charged":
+          "type": "string"
+          "nullable": true
+        "settlement":
+          "type": "string"
+          "enum":
+            - "pending"
+            - "credited"
+            - "refunded"
+      "nullable": true
+    RunDetail:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "run_id"
+        - "executor_id"
+        - "batch_id"
+        - "order_id"
+        - "submitted"
+        - "provenance"
+        - "outcome"
+        - "timing"
+        - "cost"
+        - "execution"
+      properties:
+        run_id:
+          type: "string"
+          format: "uuid"
+        executor_id:
+          type: "string"
+        batch_id:
+          type: "string"
+        order_id:
+          type: "integer"
+          format: "int64"
+        submitted:
+          $ref: "#/components/schemas/SubmittedConfiguration"
+        provenance:
+          $ref: "#/components/schemas/ResultProvenance"
+        outcome:
+          $ref: "#/components/schemas/ResultOutcome"
+        timing:
+          $ref: "#/components/schemas/ResultTiming"
+        cost:
+          $ref: "#/components/schemas/RunCost"
+        execution:
+          $ref: "#/components/schemas/RunExecution"
+    "MeasurementSummary":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "label"
+        - "state"
+        - "children"
+        - "scheduled_start"
+      "properties":
+        "id":
+          "type": "string"
+        "label":
+          "type": "string"
+        "state":
+          "type": "string"
+          "enum":
+            - "running"
+            - "unknown"
+            - "failed"
+            - "succeeded"
+        "children":
+          "type": "integer"
+          "format": "int64"
+        "scheduled_start":
+          "type": "string"
+          "format": "date-time"
+    "MeasurementPage":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "measurements"
+        - "total"
+        - "counts"
+        - "limit"
+        - "offset"
+      "properties":
+        "measurements":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/MeasurementSummary"
+        "total":
+          "type": "integer"
+          "format": "int64"
+        "counts":
+          "type": "object"
+          "additionalProperties": false
+          "required":
+            - "running"
+            - "succeeded"
+            - "failed"
+            - "unknown"
+          "properties":
+            "running":
+              "type": "integer"
+              "format": "int64"
+            "succeeded":
+              "type": "integer"
+              "format": "int64"
+            "failed":
+              "type": "integer"
+              "format": "int64"
+            "unknown":
+              "type": "integer"
+              "format": "int64"
+        "limit":
+          "type": "integer"
+          "format": "int64"
+        "offset":
+          "type": "integer"
+          "format": "int64"
+    "Measurement":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "runs"
+        - "total"
+        - "limit"
+        - "offset"
+      "properties":
+        "id":
+          "type": "string"
+        "runs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/MeasurementRun"
+        "total":
+          "type": "integer"
+          "format": "int64"
+        "limit":
+          "type": "integer"
+          "format": "int64"
+        "offset":
+          "type": "integer"
+          "format": "int64"
+    Reachability:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "state"
+        - "reason"
+        - "source"
+        - "observed_at"
+        - "expires_at"
+        - "stale"
+      properties:
+        state:
+          type: "string"
+          description: "reachable, unreachable or untested; future values remain unknown to older clients."
+        reason:
+          type: "string"
+        source:
+          type: "string"
+        observed_at:
+          type: "integer"
+          format: "int64"
+          nullable: true
+        expires_at:
+          type: "integer"
+          format: "int64"
+          nullable: true
+        stale:
+          type: "boolean"
+        address:
+          type: "string"
+        endpoint:
+          type: "string"
+      description: "One bounded observation against an operator-controlled peer. A successful check does not prove universal reachability. Null times mean untested. Address and endpoint are omitted from public listings; operators and result owners may see them."
+    ExecutorConnectivity:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "schema_version"
+        - "ipv4"
+        - "ipv6"
+        - "tcp_listener"
+        - "udp_listener"
+        - "scion_listener"
+        - "scion_host"
+        - "scion_paths"
+        - "disagreements"
+      properties:
+        schema_version:
+          type: "integer"
+          enum:
+            - 1
+        ipv4:
+          $ref: "#/components/schemas/Reachability"
+        ipv6:
+          $ref: "#/components/schemas/Reachability"
+        tcp_listener:
+          $ref: "#/components/schemas/Reachability"
+        udp_listener:
+          $ref: "#/components/schemas/Reachability"
+        scion_listener:
+          $ref: "#/components/schemas/Reachability"
+        scion_host:
+          $ref: "#/components/schemas/ObservedString"
+        scion_paths:
+          $ref: "#/components/schemas/Reachability"
+        disagreements:
+          type: "array"
+          items:
+            type: "string"
+      description: "Optional controlled connectivity observations. Missing on earlier peers; observations keep their original timestamps and become stale. Unconfigured checks remain untested. Captured unchanged at admission in owned results."
+    ExecutorAdmissionLimits:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "scheduling"
+        - "min_timeout_ms"
+        - "max_timeout_ms"
+        - "max_bandwidth_bps"
+        - "price_unit"
+      properties:
+        scheduling:
+          type: "boolean"
+        min_timeout_ms:
+          type: "integer"
+          format: "int64"
+        max_timeout_ms:
+          type: "integer"
+          format: "int64"
+        max_bandwidth_bps:
+          type: "integer"
+          format: "int64"
+        price_unit:
+          type: "string"
+          description: "currency_per_bps_second: currency units per bit per second and per second of duration."
+      description: "Supported policy domain, not available scheduling capacity. Admission still checks the full reservation and current executor availability."
+    CapabilityObservation:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "state"
+        - "observed_at"
+        - "expires_at"
+      properties:
+        state:
+          type: "string"
+          description: "current, stale or unknown; absent or malformed reports are unknown."
+        observed_at:
+          type: "integer"
+          format: "int64"
+          nullable: true
+        expires_at:
+          type: "integer"
+          format: "int64"
+          nullable: true
+    "MeasurementRun":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "run_id"
+        - "executor_id"
+        - "order_id"
+        - "state"
+        - "label"
+        - "program_name"
+      "properties":
+        "run_id":
+          "type": "string"
+        "executor_id":
+          "type": "string"
+        "order_id":
+          "type": "integer"
+          "format": "int64"
+        "state":
+          "type": "string"
+        "label":
+          "type": "string"
+        "program_name":
+          "type": "string"
+
+    RetryLink:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "parent_run_id"
+        - "request_id"
+      properties:
+        parent_run_id:
+          type: "string"
+          format: "uuid"
+        request_id:
+          type: "string"
+          format: "uuid"
+    RetryReceipt:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "parent_run_id"
+        - "request_id"
+      properties:
+        parent_run_id:
+          type: "string"
+          format: "uuid"
+        request_id:
+          type: "string"
+          format: "uuid"
+        run_id:
+          type: "string"
+          format: "uuid"
+          description: "Present after admission; recovering this receipt does not upload again."
+    RunExecution:
+      type: "object"
+      additionalProperties: false
+      nullable: true
+      required:
+        - "time_source"
+        - "started_observed_at"
+        - "terminal_observed_at"
+        - "reported_exit_code"
+        - "tcp_listener"
+        - "listener_ready"
+      properties:
+        time_source:
+          type: "string"
+          enum:
+            - "dispatcher-observed"
+        started_observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        terminal_observed_at:
+          type: "string"
+          format: "date-time"
+          nullable: true
+        reported_exit_code:
+          type: "integer"
+          minimum: -2147483648
+          maximum: 2147483647
+          nullable: true
+        tcp_listener:
+          type: "string"
+          nullable: true
+        listener_ready:
+          type: "boolean"
+      description: "Dispatcher receipt times of authenticated, bound executor reports. These are not exact executor execution times. Reported exit code is the executor report. TCP endpoint is stored only after actual listener installation and checked against the admission public host/policy; listener_ready requires the latest retained started state before the reserved end, and does not prove external reachability. Retention deletion removes the endpoint. Historical runs without reports have null execution."

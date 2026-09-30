@@ -13,16 +13,20 @@ import (
 // documented default. Metadata remains after end acknowledgement, but its
 // spool charge and retained_runs slot are released.
 type OutputConfig struct {
-	RunBytes           int64 `toml:"run_bytes"`
-	RunFrames          int64 `toml:"run_frames"`
-	SpoolBytes         int64 `toml:"spool_bytes"`
-	RetainedRuns       int64 `toml:"retained_runs"`
-	RateBytesPerSecond int64 `toml:"rate_bytes_per_second"`
-	BurstBytes         int   `toml:"burst_bytes"`
+	ControlReserveBytes int64 `toml:"control_reserve_bytes"`
+	RunBytes            int64 `toml:"run_bytes"`
+	RunFrames           int64 `toml:"run_frames"`
+	SpoolBytes          int64 `toml:"spool_bytes"`
+	RetainedRuns        int64 `toml:"retained_runs"`
+	RateBytesPerSecond  int64 `toml:"rate_bytes_per_second"`
+	BurstBytes          int   `toml:"burst_bytes"`
 }
 
 func (c OutputConfig) Limits() outputstore.Limits {
 	l := outputstore.DefaultLimits()
+	if c.ControlReserveBytes != 0 {
+		l.ControlReserveBytes = c.ControlReserveBytes
+	}
 	if c.RunBytes != 0 {
 		l.RunBytes = c.RunBytes
 	}
@@ -51,8 +55,8 @@ func (c OutputConfig) Rate() (int64, int) {
 
 func (c OutputConfig) Validate() error {
 	l := c.Limits()
-	if l.RunBytes <= 0 || l.RunFrames <= 0 || l.NodeBytes < pb.OutputRunCharge || l.Runs <= 0 {
-		return fmt.Errorf("output storage limits must be positive and spool_bytes at least %d", pb.OutputRunCharge)
+	if l.ControlReserveBytes <= 0 || l.ControlReserveBytes > 1<<40 || l.RunBytes <= 0 || l.RunFrames <= 0 || l.NodeBytes < pb.OutputRunCharge || l.Runs <= 0 {
+		return fmt.Errorf("output storage limits must be positive, control_reserve_bytes at most 1099511627776, and spool_bytes at least %d", pb.OutputRunCharge)
 	}
 	r, b := c.Rate()
 	if r <= 0 || r > 1<<30 || b < pb.MaxOutputFrameBytes || b > 1<<20 {

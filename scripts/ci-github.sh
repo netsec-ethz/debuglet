@@ -137,3 +137,7 @@ docker run --rm --init --pull=never --name "$name" \
             *) make "ci-$1" ;;
         esac
     ' -- "$lane" "$profile" "$(id -u):$(id -g)"
+
+if [[ $lane == kernel ]]; then
+    bash scripts/ci-shared-workers.sh
+fi

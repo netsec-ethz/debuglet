@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
@@ -283,6 +284,9 @@ func TestAdmissionRejectsAWindowThatDoesNotFit(t *testing.T) {
 			f.mock.ExpectQuery(modeGetTransactionOrdersQuery).
 				WithArgs(modeChainTxID).
 				WillReturnRows(modeOrderRows(modeChainTxID, "TEST", models.Outstanding))
+			f.mock.ExpectExec("(?s)UPDATE transactions.*NOT EXISTS").
+				WithArgs(int64(models.Refunded), modeChainTxID, int64(models.Paid)).
+				WillReturnResult(sqlmock.NewResult(0, 1))
 			f.mock.ExpectQuery(modeUpdateOrderStateQuery).
 				WithArgs(int64(models.Refunded), modeChainTxID, modeOrderID).
 				WillReturnRows(modeOrderRows(modeChainTxID, "TEST", models.Refunded))

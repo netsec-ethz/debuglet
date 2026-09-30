@@ -15,6 +15,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/isolation"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
@@ -38,6 +39,7 @@ type Node struct {
 	schedule     *tesla.KeySchedule
 	packetCount  ratelimit.PacketCount
 	socketBudget *socket.DescriptorBudget
+	supervisor   *isolation.Supervisor
 	iface        *net.Interface
 	output       *outputstore.Store
 	outputFailed atomic.Bool
@@ -77,6 +79,19 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if err := cfg.Output.Validate(); err != nil {
 		return nil, sessionEnd(controlsession.LocalFailure, err)
 	}
+	if err := cfg.ValidateIsolation(); err != nil {
+		return nil, sessionEnd(controlsession.LocalFailure, err)
+	}
+	supervisor, err := isolation.New(cfg.Isolation)
+	if err != nil {
+		return nil, sessionEnd(controlsession.LocalFailure, err)
+	}
+	owned := false
+	defer func() {
+		if !owned {
+			_ = supervisor.Close()
+		}
+	}()
 	output, err := outputstore.New(db, cfg.Output.Limits())
 	if err != nil {
 		return nil, sessionEnd(controlsession.LocalFailure, err)
@@ -118,10 +133,11 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if pc == nil {
 		return nil, sessionEnd(controlsession.LocalFailure, errors.New("packet counter constructor returned nil"))
 	}
-	n := &Node{socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
+	n := &Node{supervisor: supervisor, socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()),
 		zap.Duration("TESLA_epoch_length", schedule.Config().EpochLength), zap.Int64("TESLA_disclosure_delay_epochs", schedule.DisclosureDelay()))
+	owned = true
 	return n, nil
 }
 
@@ -165,7 +181,7 @@ func (n *Node) Close() error {
 		return ErrNodeBusy
 	}
 	n.mu.Unlock()
-	n.closeOnce.Do(func() { n.closeErr = n.packetCount.Close() })
+	n.closeOnce.Do(func() { n.closeErr = errors.Join(n.packetCount.Close(), n.supervisor.Close()) })
 	return n.closeErr
 }
 

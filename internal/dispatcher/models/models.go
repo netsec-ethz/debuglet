@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"strings"
 	"time"
@@ -22,6 +23,8 @@ type DebugletSpec struct {
 	// TransactionID is required for refunding aborted debuglets
 	TransactionID string
 	OrderID       int64
+	Retry         *wire.RetryLink
+	Requested     *wire.SubmittedConfiguration
 }
 
 type DebugletPolicy struct {

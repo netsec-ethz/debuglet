@@ -158,14 +158,14 @@ func AppliedVersion(ctx context.Context, db *sql.DB) (int64, error) {
 	return version, nil
 }
 
-// TableColumns reports the tables the migrations produced and the columns of
-// each, excluding SQLite's own tables and goose's bookkeeping.
+// TableColumns reports the tables and views the migrations produced and the
+// columns of each, excluding SQLite's own tables and goose's bookkeeping.
 func TableColumns(ctx context.Context, db *sql.DB) (map[string][]string, error) {
 	tables, err := queryNames(ctx, db, `SELECT name FROM sqlite_schema
-	    WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'goose_db_version'
+	    WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name <> 'goose_db_version'
 	    ORDER BY name`)
 	if err != nil {
-		return nil, fmt.Errorf("list tables: %w", err)
+		return nil, fmt.Errorf("list tables and views: %w", err)
 	}
 	columns := make(map[string][]string, len(tables))
 	for _, table := range tables {
@@ -174,7 +174,7 @@ func TableColumns(ctx context.Context, db *sql.DB) (map[string][]string, error) 
 			return nil, fmt.Errorf("read columns of %s: %w", table, err)
 		}
 		if len(names) == 0 {
-			return nil, fmt.Errorf("table %s reports no columns", table)
+			return nil, fmt.Errorf("table or view %s reports no columns", table)
 		}
 		columns[table] = names
 	}

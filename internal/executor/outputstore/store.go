@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/storageheadroom"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
@@ -26,14 +27,15 @@ var (
 )
 
 type Limits struct {
-	RunBytes  int64
-	RunFrames int64
-	NodeBytes int64
-	Runs      int64
+	ControlReserveBytes int64
+	RunBytes            int64
+	RunFrames           int64
+	NodeBytes           int64
+	Runs                int64
 }
 
 func DefaultLimits() Limits {
-	return Limits{RunBytes: 8 << 20, RunFrames: 65536, NodeBytes: 64 << 20, Runs: 65536}
+	return Limits{ControlReserveBytes: storageheadroom.DefaultReserveBytes, RunBytes: 8 << 20, RunFrames: 65536, NodeBytes: 64 << 20, Runs: 65536}
 }
 
 type Store struct {
@@ -42,7 +44,10 @@ type Store struct {
 }
 
 func New(db *sql.DB, limits Limits) (*Store, error) {
-	if db == nil || limits.RunBytes <= 0 || limits.RunFrames <= 0 || limits.NodeBytes < pb.OutputRunCharge || limits.Runs <= 0 {
+	if limits.ControlReserveBytes == 0 {
+		limits.ControlReserveBytes = storageheadroom.DefaultReserveBytes
+	}
+	if limits.ControlReserveBytes < 0 || db == nil || limits.RunBytes <= 0 || limits.RunFrames <= 0 || limits.NodeBytes < pb.OutputRunCharge || limits.Runs <= 0 {
 		return nil, errors.New("invalid output storage limits or database")
 	}
 	return &Store{db: db, limits: limits}, nil
@@ -127,6 +132,9 @@ func (s *Store) AdmitTx(ctx context.Context, tx *sql.Tx, id uuid.UUID, binding c
 	if used > s.limits.NodeBytes-pb.OutputRunCharge || count >= s.limits.Runs {
 		return ErrSpoolLimit
 	}
+	if err := storageheadroom.Check(ctx, tx, s.limits.ControlReserveBytes, pb.OutputRunCharge); err != nil {
+		return errors.Join(ErrSpoolLimit, err)
+	}
 	if err := q.CreateOutputRun(ctx, database.CreateOutputRunParams{RunID: id.String(), DispatcherIncarnation: binding.Incarnation, SessionID: binding.SessionID, OutputVersion: int64(version)}); err != nil {
 		return err
 	}
@@ -164,6 +172,9 @@ func (s *Store) Append(ctx context.Context, id uuid.UUID, timestamp time.Time, d
 	charge := int64(len(data)) + pb.OutputFrameCharge
 	if charge > s.limits.NodeBytes || used > s.limits.NodeBytes-charge {
 		return Frame{}, ErrSpoolLimit
+	}
+	if err := storageheadroom.Check(ctx, tx, s.limits.ControlReserveBytes, int64(len(data))); err != nil {
+		return Frame{}, errors.Join(ErrSpoolLimit, err)
 	}
 	sequence := r.LastSequence + 1
 	if err := q.CreateOutputFrame(ctx, database.CreateOutputFrameParams{RunID: id.String(), Sequence: sequence, TimestampNs: timestamp.UnixNano(), Output: data}); err != nil {

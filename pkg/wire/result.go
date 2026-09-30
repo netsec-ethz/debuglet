@@ -6,11 +6,11 @@ package wire
 import "time"
 
 const (
-	ResultFormat  = "debuglet-result"
-	ResultVersion = "1.1"
-	// ResultVersion10 files predate vantage_point and remain readable.
-	ResultVersion10 = "1.0"
-	MaxResultBytes  = 32 << 20
+	ResultFormat       = "debuglet-result"
+	ResultVersion      = "1.1"
+	ResultVersion10    = "1.0"
+	RetryResultVersion = "1.2"
+	MaxResultBytes     = 32 << 20
 )
 
 // Result is a portable snapshot, not proof that a measurement is true. Missing
@@ -34,6 +34,7 @@ type Result struct {
 // AdmittedPolicy describes the dispatched request; actual host policy and
 // enforcement are unavailable to this record.
 type ResultProvenance struct {
+	Retry              *RetryLink     `json:"retry,omitempty"`
 	RunID              string         `json:"run_id"`
 	ExecutorID         string         `json:"executor_id"`
 	Attempt            ControlBinding `json:"attempt"`
@@ -61,11 +62,13 @@ const (
 // its own schema version so later facts (ASN, geolocation, reachability) are
 // additive. A value that was not recorded is null together with its source.
 type VantagePoint struct {
-	SchemaVersion int                 `json:"schema_version"`
-	IPMetadata    *IPMetadata         `json:"ip_metadata,omitempty"`
-	Capabilities  VantageCapabilities `json:"capabilities"`
-	SourceIP      LabelledString      `json:"source_ip"`
-	PublicHost    LabelledString      `json:"public_host"`
+	ReportedSourceIP *LabelledString     `json:"reported_source_ip,omitempty"`
+	Connectivity     *Connectivity       `json:"connectivity,omitempty"`
+	SchemaVersion    int                 `json:"schema_version"`
+	IPMetadata       *IPMetadata         `json:"ip_metadata,omitempty"`
+	Capabilities     VantageCapabilities `json:"capabilities"`
+	SourceIP         LabelledString      `json:"source_ip"`
+	PublicHost       LabelledString      `json:"public_host"`
 	// Added within schema 1; absent in earlier 1.1 files, which means null.
 	SCIONISDAS LabelledObservation `json:"scion_isd_as"`
 	Display    ExecutorDisplay     `json:"display"`

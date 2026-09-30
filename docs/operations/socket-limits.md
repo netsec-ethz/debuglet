@@ -45,5 +45,7 @@ processes on the same host.
 SCION remains disabled by the supported default network policy. Its registry
 now enforces its 16-destination capacity, including pending dials; this does not
 establish a descriptor bound for the external SCION stack. Enabling SCION is
-outside the supported shared-pilot socket accounting profile. These limits do
-not establish isolation for untrusted guest compilation or execution.
+outside the supported shared-pilot socket accounting profile. The optional
+[shared runtime profile](guest-isolation.md) separately contains compiler and
+WASI processes; these socket counters still do not impose kernel limits on the
+parent's networking code.

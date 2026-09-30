@@ -65,6 +65,12 @@ class LauncherTest(unittest.TestCase):
             target = self.root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / path, target)
+        # Record the host hook beside the fake Docker calls. These launcher
+        # fixtures verify ordering and status propagation, not real cgroups.
+        (self.root / 'scripts/ci-shared-workers.sh').write_text('''#!/usr/bin/env bash
+printf '["shared-workers"]\\n' >> "$DOCKER_CALLS"
+exit "${SHARED_WORKER_RESULT:-0}"
+''')
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         subprocess.run(['git', 'add', '.'], cwd=self.root, check=True)
         subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
@@ -117,6 +123,7 @@ elif sys.argv[1] == 'run':
         self.assertEqual(mounts[0], f'type=bind,source={self.root},target=/workspace')
         self.assertTrue(all(mount.startswith('type=volume,source=debuglet-ci-go-') for mount in mounts[1:]))
         self.assertNotIn('fixture-secret', json.dumps(args))
+        self.assertNotIn(['shared-workers'], self.arguments())
         self.assertEqual(self.arguments()[-1][0:2], ['rm', '--force'])
 
     def test_kernel_adds_only_required_capabilities(self):
@@ -130,6 +137,23 @@ elif sys.argv[1] == 'run':
         self.assertIn('deploy/ci/Dockerfile', build)
         self.assertIn('BASE_DIGEST=sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d', build)
         self.assertIn('DEBIAN_SNAPSHOT=20260918T000000Z', build)
+        calls = self.arguments()
+        self.assertEqual(calls.count(['shared-workers']), 1)
+        run_index = next(i for i, call in enumerate(calls) if call[0] == 'run')
+        self.assertEqual(calls[run_index + 1], ['shared-workers'])
+        self.assertEqual(calls[run_index + 2][0:2], ['rm', '--force'])
+
+    def test_kernel_failure_does_not_run_shared_workers(self):
+        result = self.launch('kernel', DOCKER_RESULT='42')
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertNotIn(['shared-workers'], self.arguments())
+        self.assertEqual(self.arguments()[-1][0:2], ['rm', '--force'])
+
+    def test_shared_worker_failure_is_preserved_after_cleanup(self):
+        result = self.launch('kernel', SHARED_WORKER_RESULT='44')
+        self.assertEqual(result.returncode, 44, result.stderr)
+        self.assertEqual(self.arguments().count(['shared-workers']), 1)
+        self.assertEqual(self.arguments()[-1][0:2], ['rm', '--force'])
 
     def test_rejects_untrusted_metadata_before_launch(self):
         for changes in ({'GITHUB_SHA': SHA}, {'GITHUB_EVENT_NAME': 'pull_request'},
@@ -166,6 +190,7 @@ elif sys.argv[1] == 'run':
                                       ('--memory', '4g'), ('--pids-limit', '512')):
                     self.assertEqual(args[args.index(option) + 1], value)
                 self.assertNotIn('--cap-add', args)
+                self.assertNotIn(['shared-workers'], self.arguments())
                 marker = 'FAULT' if lane == 'faults' else 'SOAK'
                 self.assertIn(f'DEBUGLET_{marker}_ISOLATED=1', args)
                 cleanup = json.loads((self.root / f'.cache/ci/{lane}/cleanup.json').read_text())

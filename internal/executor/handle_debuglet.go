@@ -148,8 +148,12 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, op *debugletOperation) 
 		if policyErr != nil {
 			return nil, fmt.Errorf("invalid operator network policy: %w", policyErr)
 		}
-		deb = debuglet.New(e.logger, spec.DebugletID, spec.TransactionID, spec.Policy, operator,
+		local := debuglet.New(e.logger, spec.DebugletID, spec.TransactionID, spec.Policy, operator,
 			e.teslaSchedule, e.limiter, e.packetCount, e.iface, e.portManager, socket.NewBudget(socket.DefaultLimits(), e.socketBudget))
+		deb = local
+		if e.supervisor != nil {
+			deb = debuglet.NewWorker(local, e.supervisor)
+		}
 	}
 	if deb == nil {
 		return nil, errors.New("debuglet runtime factory returned nil")
@@ -236,11 +240,16 @@ func (e *Executor) runDebuglet(ctx context.Context, spec scheduler.Spec, deb run
 	if err != nil {
 		return err
 	}
-	_, err = client.DebugletState(ctx, &pb.DebugletStateRequest{
-		DebugletId: spec.DebugletID.String(),
-		ExecutorId: e.cfg.Identity.ExecutorID,
-		State:      pb.RunState_RUN_STATE_STARTED,
-	})
+	request := &pb.DebugletStateRequest{
+		DebugletId: spec.DebugletID.String(), ExecutorId: e.cfg.Identity.ExecutorID,
+		State: pb.RunState_RUN_STATE_STARTED,
+	}
+	if ready, ok := deb.(interface{ TCPListenerEndpoint() string }); ok && spec.Policy.ListenTCP {
+		if address := ready.TCPListenerEndpoint(); address != "" {
+			request.TcpListener = &pb.ListenerEndpoint{Address: address}
+		}
+	}
+	_, err = client.DebugletState(ctx, request)
 	if err != nil {
 		return fmt.Errorf("failed to set state to 'started': %w", err)
 	}

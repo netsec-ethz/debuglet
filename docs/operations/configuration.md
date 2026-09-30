@@ -85,7 +85,7 @@ The optional `[output]` section uses the defaults shown in the [executor example
 
 The spool budget charges payload plus 64 bytes per frame and 256 bytes per retained run; it is a logical quota, not an upper bound on SQLite file size or WAL space. Acknowledged payload is released, and a run whose end the dispatcher acknowledged no longer counts against `retained_runs` or the per-run charge. No age-based deletion occurs. Existing data above a lowered cap remains readable; new admission can fail until capacity is raised or an explicit retention policy is applied. A storage write failure can make executor output admission unavailable until restart; a failed finality write stays pending.
 
-The dispatcher's `[output]` section bounds each run with `run_bytes` (8 MiB) and `run_frames` (16,384). Its `account_bytes` and `node_bytes` caps are off by default (`0`): the dispatcher does not yet delete retained output, so those charges only grow, and an upgrade counts output that is already stored. Set them only as a hard lifetime ceiling; reaching one refuses new submissions with `service_unavailable`.
+The dispatcher's `[output]` section bounds each run with `run_bytes` (8 MiB) and `run_frames` (16,384), plus `account_bytes` (64 MiB) and `node_bytes` (512 MiB), including 64 bytes per frame and 256 bytes per run. `control_reserve_bytes` (16 MiB) preserves advisory SQLite/filesystem headroom for control/final records. Shared deployments require positive aggregate caps; only explicit local TEST configurations may use zero to disable them. Reaching a cap refuses new payload; owner deletion or configured expiry releases its exact charge. See [account admission](account-admission.md) for separate queued-work/request limits and [retention](data-retention.md) for the default of no automatic measurement expiry.
 
 Durable output requires both peers to negotiate output version 1. Retained output may resume over a new control session only with the same still-enrolled TLS certificate and original run binding. Plaintext local sessions and executors without an enrolled certificate cannot resume output across control bindings: when such a session ends, the dispatcher finalizes that output as `truncated` with reason `executor_interrupted` at its committed prefix, and the executor releases its local copy. Workloads themselves are never restarted, and output completion remains separate from the guest's exit status.
 
@@ -98,12 +98,12 @@ binaries are installed; it does not change the state's contents or retention.
 
 | Location | Retained data and lifetime |
 | --- | --- |
-| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records, run identities and original bindings, result provenance, cancellation intent, and retained output/finality. Rows remain until an explicit supported removal or operator state retirement; no age-based result deletion runs automatically. |
+| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records, saved profiles, batch and retry identities, submitted configuration, account reservations, result provenance, cancellation intent, and retained output/finality. Payload expiry is disabled by default; configured expiry or owner deletion retains identity, accounting and verification references. Announced TESLA chains, verified disclosed keys and run intervals follow the separate attribution retention period. |
 | Executor `database.path` | Queued workload bytes and policy, original run bindings, retained terminal reports, TESLA chain descriptors and the durable output spool. Completed execution rows can be removed by normal cleanup; interrupted prior-binding rows remain quarantined for inspection and are never automatically resumed. Acknowledged output payload is released according to the output protocol. |
 | Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
 | Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
 | CLI configuration | Connection profiles and saved credentials in the configured CLI directory. These are separate from daemon state and are excluded from foreground state backups. |
-| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority; dispatcher destination limits and disclosed TESLA keys. These do not become durable merely because a database backup exists. |
+| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, dispatcher destination limits and undisclosed executor TESLA keys. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
 
 See [output limits](#executor-output-limits) for the configured byte, frame and
 record budgets, [daemon log retention](services.md#foreground-daemon-logs) for
@@ -117,7 +117,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 13 and executor schema 6 are the current schema boundaries.
+Dispatcher schema 16 and executor schema 6 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows

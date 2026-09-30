@@ -11,6 +11,11 @@ import (
 )
 
 func capabilityFlags(fs *flag.FlagSet, filter *client.ExecutorFilter) {
+	fs.Func("address-family", "required measured family: ipv4 or ipv6; repeatable", func(value string) error { filter.AddressFamilies = append(filter.AddressFamilies, value); return nil })
+	fs.Func("reachable-listener", "required measured listener: tcp, udp or scion; repeatable", func(value string) error {
+		filter.ReachableListeners = append(filter.ReachableListeners, value)
+		return nil
+	})
 	fs.Func("protocol", "required protocol; repeatable", func(value string) error {
 		filter.Protocols = append(filter.Protocols, value)
 		return nil

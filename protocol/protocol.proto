@@ -130,7 +130,9 @@ message DebugletStateRequest {
   string debuglet_id = 1;
   string executor_id = 2;
   RunState state = 3;
+  ListenerEndpoint tcp_listener = 4; // Bound run listener; not evidence of external reachability.
 }
+message ListenerEndpoint { string address = 1; }
 message DebugletStateResponse {}
 
 message DebugletAllocateRequest {
@@ -254,6 +256,9 @@ message InspectRetainedRunResponse {
 // ============================================================
 
 service DispatcherService {
+  // Optional address reflection on this dispatcher's authenticated listener.
+  // It returns only the caller's peer address; it cannot initiate a connection.
+  rpc ReflectAddress(ReflectAddressRequest) returns (ReflectAddressResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc Resources(ResourcesRequest) returns (ResourcesResponse);
 
@@ -345,6 +350,35 @@ message VantagePointReport {
   ClockState clock = 4;
   HostPlatform platform = 5; // Operator only; never in the public executor listing.
   bool location_opt_out = 6; // Suppress automatic GeoIP publication; false for older peers.
+  ConnectivityReport connectivity = 7; // Optional bounded observation attempt.
+  string scion_host = 8; // Local host selected toward the configured SCION control service.
+  string scion_path_target = 9; // Operator-configured remote ISD-AS; empty untested.
+  ProbeState scion_paths = 10; // Daemon path availability, not data-plane reachability.
+}
+
+message ReflectAddressRequest {
+  string executor_id = 1;
+  bytes nonce = 2; // 32 random bytes linking this receipt to one report; never published.
+}
+message ReflectAddressResponse { string address = 1; }
+
+message EgressTest {
+  string state = 1; // reachable, unreachable or untested.
+  string reason = 2;
+  bytes nonce = 3; // Correlated with a directly received ReflectAddress call.
+}
+message ListenerChallenge {
+  string transport = 1; // tcp or udp.
+  uint32 port = 2; // Sampled from the executor's actual guest listener pool.
+  bytes token = 3; // 32 random bytes proving this temporary listener; never published.
+}
+message ConnectivityReport {
+  EgressTest ipv4 = 1;
+  EgressTest ipv6 = 2;
+  repeated ListenerChallenge listeners = 3; // At most one TCP and one UDP sample.
+  bool listeners_enabled = 4; // False means no connect-back test was requested.
+  string tcp_reason = 5; // disabled or bind_failed when no challenge is present.
+  string udp_reason = 6;
 }
 
 // The kernel clock discipline as read by adjtimex without changing it.
