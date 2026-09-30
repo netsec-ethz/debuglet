@@ -1,6 +1,16 @@
 # Continuous integration
 
-GitHub Actions validates pull requests and `main` on fresh Linux amd64 runners. It builds, tests, packages, and runs Debuglet locally; it does not deploy any environment.
+GitHub Actions validates pull requests, `main`, and protected version-tag pushes on fresh Linux amd64 runners. It builds, tests, packages, and runs Debuglet locally; it does not deploy any environment.
+
+Version-tag pushes run the same complete validation workflow. Release versions
+require a valid `vMAJOR.MINOR.PATCH` tag (optionally a dotted prerelease suffix),
+a GitHub tag protection rule or ruleset reported as protected, and the fetched
+tag resolving to the workflow checkout. An unprotected or mismatched tag fails;
+manual dispatch cannot substitute for a protected tag push. Repository
+administrators must configure that protection before creating a release tag.
+The package job retains the existing full and role-specific archives, installers,
+checksums and compatibility metadata as CI artifacts. The workflow does not
+create tags, publish a GitHub release or upload release assets.
 
 ## Run the common checks
 

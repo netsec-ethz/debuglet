@@ -132,8 +132,14 @@ def github_metadata_checks(environ: Mapping[str, str], checkout_sha: str) -> lis
           f"repository {repository!r} must be netsec-ethz/debuglet")
 
     ref = environ.get("GITHUB_REF", "")
+    tag = ref.removeprefix("refs/tags/")
+    protected_tag = (
+        ref.startswith("refs/tags/") and environ.get("GITHUB_REF_PROTECTED") == "true"
+        and len(tag) <= 128
+        and re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?", tag) is not None
+    )
     allowed_ref = (
-        event == "push" and ref == "refs/heads/main"
+        event == "push" and (ref == "refs/heads/main" or protected_tag)
         or event == "workflow_dispatch" and ref.startswith("refs/heads/")
         or event == "pull_request" and re.fullmatch(r"refs/pull/[0-9]+/merge", ref) is not None
         and environ.get("GITHUB_BASE_REF") == "main"

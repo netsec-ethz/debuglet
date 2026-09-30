@@ -55,6 +55,18 @@ class MetadataTest(unittest.TestCase):
             with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
                 self.assertEqual(ISOLATION.enforcing(), expected)
 
+    def test_only_protected_version_tag_push_metadata_passes(self):
+        valid = dict(METADATA, GITHUB_REF='refs/tags/v1.2.3-rc.1', GITHUB_REF_PROTECTED='true')
+        self.assertTrue(all(item['status'] == 'pass' for item in ISOLATION.github_metadata_checks(valid, SHA)))
+        for changes in ({'GITHUB_REF_PROTECTED': 'false'}, {'GITHUB_REF_PROTECTED': ''},
+                        {'GITHUB_REF': 'refs/tags/v01.2.3'}, {'GITHUB_REF': 'refs/tags/v1.2.3-'},
+                        {'GITHUB_REF': 'refs/tags/v1.2.3-' + 'a' * 123},
+                        {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_BASE_REF': 'main'},
+                        {'GITHUB_EVENT_NAME': 'workflow_dispatch'}, {'GITHUB_SHA': 'b' * 40}):
+            with self.subTest(changes=changes):
+                results = ISOLATION.github_metadata_checks(dict(valid, **changes), SHA)
+                self.assertTrue(any(item['status'] == 'fail' for item in results), results)
+
 
 class LauncherTest(unittest.TestCase):
     def setUp(self):
@@ -104,6 +116,39 @@ elif sys.argv[1] == 'run':
     def arguments(self):
         return [json.loads(line) for line in self.calls.read_text().splitlines()]
 
+    def test_protected_lightweight_and_annotated_tags_reach_packager(self):
+        for tag, annotated in (('v1.2.3', False), ('v1.2.4-rc.1', True)):
+            with self.subTest(tag=tag):
+                self.calls.unlink(missing_ok=True)
+                args = ['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'tag']
+                args += ['-a', '-m', 'Fixture tag'] if annotated else []
+                subprocess.run(args + [tag], cwd=self.root, check=True)
+                result = self.launch('package', GITHUB_REF='refs/tags/' + tag, GITHUB_REF_PROTECTED='true')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                run = next(call for call in self.arguments() if call[0] == 'run')
+                self.assertIn('CI_COMMIT_TAG=' + tag, run)
+                self.assertIn('GITHUB_REF_PROTECTED', run)
+
+    def test_invalid_tag_authority_stops_before_docker(self):
+        subprocess.run(['git', 'tag', 'v1.2.3'], cwd=self.root, check=True)
+        valid = {'GITHUB_REF': 'refs/tags/v1.2.3', 'GITHUB_REF_PROTECTED': 'true'}
+        for changes in ({'GITHUB_REF_PROTECTED': 'false'}, {'GITHUB_REF_PROTECTED': ''},
+                        {'GITHUB_REF': 'refs/tags/v01.2.3'}, {'GITHUB_REF': 'refs/tags/v1.2.3-'},
+                        {'GITHUB_REF': 'refs/tags/v1.2.3-' + 'a' * 123},
+                        {'GITHUB_REF': 'refs/tags/v9.9.9'}, {'GITHUB_SHA': SHA},
+                        {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_BASE_REF': 'main'},
+                        {'GITHUB_EVENT_NAME': 'workflow_dispatch'}):
+            with self.subTest(changes=changes):
+                result = self.launch('package', **dict(valid, **changes))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.calls.exists())
+        subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                        'commit', '--allow-empty', '-qm', 'Next fixture revision'], cwd=self.root, check=True)
+        current = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.root, text=True).strip()
+        result = self.launch('package', **dict(valid, GITHUB_SHA=current))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls.exists(), 'tag pointing at a different commit reached Docker')
+
     def test_container_receives_only_public_metadata_and_scoped_mounts(self):
         result = self.launch(GITHUB_TOKEN='fixture-secret', SSH_AUTH_SOCK='/fixture/ssh-agent',
                              DEPLOY_PASSWORD='fixture-secret')
@@ -113,6 +158,7 @@ elif sys.argv[1] == 'run':
         for secret in ('GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'DEPLOY_PASSWORD'):
             self.assertNotIn(secret, forwarded)
         self.assertIn('GITHUB_SHA', forwarded)
+        self.assertIn('CI_COMMIT_TAG=', args)
         self.assertEqual(self.arguments()[0], ['pull', 'golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d'])
         self.assertFalse(any(call[0] == 'build' for call in self.arguments()))
         self.assertIn('--pull=never', args)
