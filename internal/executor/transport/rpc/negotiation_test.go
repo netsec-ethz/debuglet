@@ -180,6 +180,8 @@ func TestBidiStrictHello(t *testing.T) {
 		code codes.Code
 	}{
 		{"legacy", func(p *pb.HelloRequest) { p.ControlVersion = 0 }, codes.FailedPrecondition},
+		{"previous generation", func(p *pb.HelloRequest) { p.ControlVersion = controlsession.ProtocolVersion - 1 }, codes.FailedPrecondition},
+		{"future generation", func(p *pb.HelloRequest) { p.ControlVersion = controlsession.ProtocolVersion + 1 }, codes.FailedPrecondition},
 		{"identity", func(p *pb.HelloRequest) { p.SessionId = "private-invalid-session" }, codes.InvalidArgument},
 		{"token", func(p *pb.HelloRequest) { p.SessionToken = p.SessionToken[:31] }, codes.InvalidArgument},
 	} {
@@ -192,14 +194,14 @@ func TestBidiStrictHello(t *testing.T) {
 				binds.Add(1)
 				return &pb.BindSessionResponse{LeaseDurationMs: time.Minute.Milliseconds()}, nil
 			})
-			if got := f.helloResult(); status.Code(got.err) != tc.code && !(tc.name == "legacy" && status.Code(got.err) == codes.Unavailable) {
+			if got := f.helloResult(); status.Code(got.err) != tc.code && !(tc.code == codes.FailedPrecondition && status.Code(got.err) == codes.Unavailable) {
 				t.Fatalf("Hello status=%v want=%v", status.Code(got.err), tc.code)
 			}
 			awaitNegotiation(t, f.clientDone)
-			if tc.name == "legacy" {
+			if tc.code == codes.FailedPrecondition {
 				var ended *controlsession.EndError
 				if !errors.As(f.client.Cause(), &ended) || ended.Kind != controlsession.IncompatibleProfile {
-					t.Fatal("observed legacy offer lost structured cause")
+					t.Fatal("observed incompatible offer lost structured cause")
 				}
 			}
 			if err := f.client.WaitReadyContext(f.ctx); err == nil {

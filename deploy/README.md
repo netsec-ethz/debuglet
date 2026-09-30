@@ -393,7 +393,7 @@ supported for wallet-free TEST deployments. It does not restore usable paid
 state: migration 4 leaves existing earnings with an empty payout wallet that
 executor re-registration does not repair. Keep chain payments disabled and
 preserve paid databases and their backups for verified operator reconciliation
-before enabling payments, as [Stored state](../docs/operations/configuration.md)
+before enabling payments, as [Stored state](../docs/operations/configuration.md#stored-state)
 describes. Keep payments disabled when restarting upgraded paid-state
 deployments until that reconciliation is complete.
 
@@ -445,8 +445,8 @@ the dispatcher and then the executors, one executor at a time. On each host it:
 9. runs the candidate daemon with `-upgrade-database` (and
    `-accept-data-loss` when `upgrade_accept_data_loss=true`) as the service
    user through `runuser`, so the database keeps its owner; the daemon names
-   the database it upgrades, applies the release's migrations to it and checks
-   the result as a start does;
+   the database it upgrades, takes exclusive SQLite ownership across all
+   migration commits, and checks the result before releasing ownership;
 10. activates only the upgraded daemon's candidate link and starts that
     service again. Run the normal deployment command afterward to activate
     the CLI, record the complete deployment, install the candidate
@@ -470,7 +470,7 @@ When step 9 fails the play stops on that host: the service stays stopped, the
 backup and previous daemon link stay in place, the remaining executors are left
 untouched, and the database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
-[Stored state](../docs/operations/configuration.md) lists the versions whose
+[Stored state](../docs/operations/configuration.md#stored-state) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
 `upgrade-database.yml`, and `site.yml` never runs it.
 

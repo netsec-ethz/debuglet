@@ -101,12 +101,17 @@ dbl up --log-max-bytes 10485760 --log-files 3 --log-max-age 168h
 ```
 
 The limits can be configured up to 100 MiB per file, 16 files and 720 hours.
+The default total is at most 30 MiB per role (60 MiB for `dbl up`'s two roles).
 Age checks run when opening or writing logs, using file timestamps on restart;
-there is no background deletion while a role is stopped. Lowering a byte limit
-keeps the newest bytes of the active log and discards archives outside the new
-limits. New files are private (mode `0600`). A write failure is reported and stops
-the local operation through its normal child shutdown.
+there is no background deletion while a role is idle or stopped. Age applies to
+files, not individual entries. Lowering a byte limit keeps the newest bytes of
+an unexpired active log and discards archives outside the new limits. An expired
+active log is removed on restart even when the byte limit is also lowered.
+New files are private (mode `0600`). A write failure is reported and stops the
+local operation through its normal child shutdown; output continues to drain
+until children have joined, but bytes after the failure are not retained.
 
 These limits cover daemon diagnostics, not stored measurement output. Managed
 system services send diagnostics to the journal; configure its retention through
-the host's journal settings.
+the host's journal settings. See [data retention](data-retention.md) for access,
+export and deletion behavior and the remaining deployment policy decisions.

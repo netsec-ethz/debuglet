@@ -73,6 +73,42 @@ The dispatcher's `[output]` section bounds each run with `run_bytes` (8 MiB) and
 
 Durable output requires both peers to negotiate output version 1. Retained output may resume over a new control session only with the same still-enrolled TLS certificate and original run binding. Plaintext local sessions and executors without an enrolled certificate cannot resume output across control bindings: when such a session ends, the dispatcher finalizes that output as `truncated` with reason `executor_interrupted` at its committed prefix, and the executor releases its local copy. Workloads themselves are never restarted, and output completion remains separate from the guest's exit status.
 
+## Stored state
+
+State belongs to the service account and contains plaintext secrets. Protect the
+whole directory and backups, including SQLite WAL/journal companions, with the
+same access controls as the database. A component-only package changes which
+binaries are installed; it does not change the state's contents or retention.
+
+| Location | Retained data and lifetime |
+| --- | --- |
+| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records, run identities and original bindings, result provenance, cancellation intent, and retained output/finality. Rows remain until an explicit supported removal or operator state retirement; no age-based result deletion runs automatically. |
+| Executor `database.path` | Queued workload bytes and policy, original run bindings, retained terminal reports, TESLA chain descriptors and the durable output spool. Completed execution rows can be removed by normal cleanup; interrupted prior-binding rows remain quarantined for inspection and are never automatically resumed. Acknowledged output payload is released according to the output protocol. |
+| Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
+| Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
+| CLI configuration | Connection profiles and saved credentials in the configured CLI directory. These are separate from daemon state and are excluded from foreground state backups. |
+| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority; dispatcher destination limits and disclosed TESLA keys. These do not become durable merely because a database backup exists. |
+
+See [output limits](#executor-output-limits) for the configured byte, frame and
+record budgets, [daemon log retention](services.md#foreground-daemon-logs) for
+log rotation, and [recovery inspection](recovery-inspection.md) for retained
+interrupted work. Exported [portable results](../results.md) are copies under the
+exporter's control; exporting does not delete the server's record.
+
+The [foreground backup/restore procedure](backup-restore.md) supports only its
+listed local TEST layouts and matching full package. Direct daemon, systemd,
+OAuth, external TLS and SCION state need the deployment's complete backup plan;
+a database snapshot alone does not include every required credential or config.
+Never start original and restored copies with the same identity simultaneously.
+
+Dispatcher schema 13 and executor schema 6 are the current schema boundaries.
+Recognized older databases require the explicit upgrade below. Dispatcher
+schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
+`debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
+are not reconciled payment state: migration 4 leaves old earnings without a
+payout wallet, and re-registration does not repair it. Keep payments disabled
+and retain paid databases and backups for operator reconciliation.
+
 ## State and upgrades
 
 Daemons never migrate a database at startup. Back up the dispatcher database, use the release's explicit migration process, and deploy a single reviewed version across the service. An interrupted executor run is not resumed after restart.
@@ -104,7 +140,7 @@ The former goose CLI `make upgrade` and `make downgrade` targets are removed. Us
 | 4 | The database is outdated, and its upgrade drops the recorded runs and their logs; it needs `-accept-data-loss`. |
 | 1 | Any other refusal: the database is absent, unreadable, not this role's, newer than this build, or incompletely migrated. |
 
-To upgrade by hand, stop the daemon, back up the database file together with its `-wal` and `-shm` files when present, and run the new release's daemon with `-config FILE -upgrade-database` as the service account. It applies the packaged migrations and checks the result as a start does; on a current database it changes nothing. An upgrade from a dispatcher schema below version 3 or an executor schema below version 2 drops the tables `debuglets` and `debuglet_logs`, so the runs recorded there and their logs are lost; such an upgrade is refused unless `-accept-data-loss` is given as well. A deployment uses `deploy/ansible/upgrade-database.yml`, which runs these steps on every host and is described in [deploy/README.md](../../deploy/README.md).
+To upgrade by hand, stop the daemon, back up the database file together with its `-wal` and `-shm` files when present, and run the new release's daemon with `-config FILE -upgrade-database` as the service account. It takes exclusive SQLite ownership, applies the packaged migrations and checks the result before releasing ownership; another writer cannot interleave between migration commits. A held writer causes a bounded refusal. An idle daemon is not proof of shutdown: stop every process using the database first. On a current database the command changes nothing. An upgrade from a dispatcher schema below version 3 or an executor schema below version 2 drops the tables `debuglets` and `debuglet_logs`, so the runs recorded there and their logs are lost; such an upgrade is refused unless `-accept-data-loss` is given as well. A deployment uses `deploy/ansible/upgrade-database.yml`, which runs these steps on every host and is described in [deploy/README.md](../../deploy/README.md).
 
 Both modes act on the `database.path` of the configuration file given with `-config` and print the absolute path of the database they check or upgrade. A copied local-service directory keeps a `service.toml` whose `database.path` still names the original database, so edit that path, or write a separate configuration, before upgrading a copy. The daemons report the configuration's `server.version` (dispatcher) and `identity.version` (executor), which an upgrade does not change: after a hand-run upgrade, update those fields; a deployment re-renders them with the normal deployment command.
 

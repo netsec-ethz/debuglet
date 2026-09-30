@@ -26,6 +26,13 @@ the [connection topology](remote-deployment.md#required-topology) if a control
 listener is unreachable. Local roles use the endpoint printed by the dispatcher;
 see the [local-role commands](../cli.md#run-local-roles-separately).
 
+For account-owned enrollment, `unknown command` for `dbl executor join` means
+the installed CLI predates that workflow: published v0.2.0 does not contain it.
+Use the operator-recommended compatible package. If enrollment is refused, check
+the executor ID, token expiry and dispatcher URL in the
+[executor setup guide](executor-onboarding.md); request a fresh token from the
+account that owns the executor instead of editing an existing state directory.
+
 ## OAuth login fails, or a browser session expires
 
 Return to the deployment's sign-in page and start GitHub login again. Complete

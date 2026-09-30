@@ -146,7 +146,9 @@ func (l *rotatingLog) open() error {
 	l.file, l.size, l.opened = file, stat.Size(), stat.ModTime()
 	// A smaller configured limit also bounds pre-existing logs. Keep their
 	// newest diagnostics using a fixed-size buffer, then continue appending.
-	if l.size > l.options.MaxBytes {
+	// Leave expired files untouched for the constructor to rotate and remove:
+	// trimming would refresh their modification time and retain expired bytes.
+	if l.size > l.options.MaxBytes && time.Since(l.opened) < l.options.MaxAge {
 		start := l.size - l.options.MaxBytes
 		buffer := make([]byte, 32<<10)
 		for offset := int64(0); offset < l.options.MaxBytes; {
