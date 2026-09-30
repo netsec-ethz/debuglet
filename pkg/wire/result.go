@@ -62,6 +62,7 @@ const (
 // additive. A value that was not recorded is null together with its source.
 type VantagePoint struct {
 	SchemaVersion int                 `json:"schema_version"`
+	IPMetadata    *IPMetadata         `json:"ip_metadata,omitempty"`
 	Capabilities  VantageCapabilities `json:"capabilities"`
 	SourceIP      LabelledString      `json:"source_ip"`
 	PublicHost    LabelledString      `json:"public_host"`

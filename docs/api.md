@@ -40,6 +40,15 @@ API 1.9 also adds `admission`, operator `display` metadata, the executor-reporte
 
 `GET /debuglet/{id}/recovery` inspects a known run without changing its state, reservations or payments. It reports stored outcome, control availability and at most one dated executor observation separately. See [recovery inspection](operations/recovery-inspection.md) for classifications and nullable provenance. The route was added in API 1.5.
 
+Optional `ip_metadata` on `GET /executors` contains offline ASN and approximate
+country/city lookups for observed and advertised addresses. Each lookup records
+its database source/build epoch, registration observation time and an explicit
+unknown reason. Operator location takes precedence; executor opt-out suppresses
+automatic location. The same object is captured immutably as
+`provenance.vantage_point.ip_metadata`, additive within vantage-point schema 1
+and result format 1.1. Older files omit it. See
+[offline metadata and database updates](operations/executor-discovery.md#offline-asn-and-approximate-location).
+
 ## Cancellation inspection
 
 API 1.9 adds `GET /debuglet/{id}/cancellation` for an account's recorded cancellation request. It returns the stable `request_id`, original binding, first request and attempted-delivery times, nullable executor acknowledgement time, and the separately stored run result. `requested` and `delivery_attempted` do not confirm receipt. `unresolved` gives a bounded reason. `not_needed`, with reason `already_terminal`, means the run was already terminal and no delivery was needed. A local cancellation after session loss may be terminal while remote acknowledgement remains unknown. Repeated explicit cancellation reuses the first request and reason; a stored acknowledgement permits local completion without another Abort. There is no automatic replay or retargeting to a replacement. Inspection is read-only. A run without a cancellation request returns 404.

@@ -58,7 +58,7 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
 		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
-	vantage := &pb.VantagePointReport{SchemaVersion: 1, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
+	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	for _, transport := range []struct {
 		name    string
 		enabled bool

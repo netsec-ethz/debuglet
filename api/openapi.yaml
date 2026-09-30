@@ -3353,6 +3353,8 @@ components:
           description: "Added in API 1.9. offline: no heartbeat on the current control session yet; maintenance: the dispatcher operator stopped submission admission; ready otherwise. Executors whose control session ended are not listed. Normal admission still decides each submission. Absent from older dispatchers."
         display:
           $ref: "#/components/schemas/ExecutorDisplay"
+        ip_metadata:
+          $ref: "#/components/schemas/IPMetadata"
         scion_isd_as:
           $ref: "#/components/schemas/ObservedString"
         listeners:
@@ -3404,7 +3406,150 @@ components:
           $ref: "#/components/schemas/ResultLabelledString"
         network:
           $ref: "#/components/schemas/ResultLabelledString"
-      description: "Added in API 1.9. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Country is an ISO 3166-1 alpha-2 code; location is never finer than city and is never inferred. Unconfigured values are null. Not verified against the executor."
+      description: "Added in API 1.9. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Country is a two-letter country code. Location is never finer than city. Operator location takes precedence; otherwise an approximate offline database location is used, with its database source. Unknown values are null. Not verified against the executor."
+    IPMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - observed
+        - advertised
+        - location_opt_out
+        - disagreements
+      properties:
+        observed:
+          $ref: "#/components/schemas/AddressMetadata"
+        advertised:
+          $ref: "#/components/schemas/AddressMetadata"
+        location_opt_out:
+          type: boolean
+        disagreements:
+          type: array
+          items:
+            type: string
+            enum:
+              - observed_advertised_asn
+              - observed_advertised_location
+              - operator_location
+      description: "Offline lookups at registration. No DNS or online lookup; addresses themselves are private and remain in result source_ip/public_host. Reconnect replaces live observations; admission snapshots never change. Omitted in older responses and result 1.1 files."
+    AddressMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - address_source
+        - asn
+        - location
+      properties:
+        address_source:
+          type: string
+          enum:
+            - dispatcher-observed
+            - executor-reported
+        asn:
+          $ref: "#/components/schemas/ASNLookup"
+        location:
+          $ref: "#/components/schemas/LocationLookup"
+    ASNLookup:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+        - source
+        - observed_at
+        - reason
+      properties:
+        value:
+          $ref: "#/components/schemas/ASInfo"
+        source:
+          type: string
+          nullable: true
+          pattern: "^database:[^@[:space:]]+@[1-9][0-9]*$"
+        observed_at:
+          type: integer
+          format: int64
+          description: "Unix seconds at registration, retained in admission snapshots."
+        reason:
+          type: string
+          enum:
+            - ""
+            - no_database
+            - no_address
+            - not_ip
+            - non_global
+            - opted_out
+            - not_found
+            - lookup_error
+            - invalid_record
+      description: "Value is null when reason is nonempty. Source identifies the database even for a negative lookup, but is null when no lookup occurred."
+    LocationLookup:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+        - source
+        - observed_at
+        - reason
+      properties:
+        value:
+          $ref: "#/components/schemas/GeoLocation"
+        source:
+          type: string
+          nullable: true
+          pattern: "^database:[^@[:space:]]+@[1-9][0-9]*$"
+        observed_at:
+          type: integer
+          format: int64
+          description: "Unix seconds at registration, retained in admission snapshots."
+        reason:
+          type: string
+          enum:
+            - ""
+            - no_database
+            - no_address
+            - not_ip
+            - non_global
+            - opted_out
+            - not_found
+            - lookup_error
+            - invalid_record
+      description: "Value is null when reason is nonempty. Source identifies the database even for a negative lookup, but is null when no lookup occurred."
+    ASInfo:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - number
+        - name
+        - prefix
+      properties:
+        number:
+          type: integer
+          minimum: 1
+          maximum: 4294967295
+        name:
+          type: string
+        prefix:
+          type: string
+      description: "Origin ASN, organisation name and covering MMDB prefix."
+    GeoLocation:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - country
+        - city
+        - precision
+      properties:
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+        city:
+          type: string
+        precision:
+          type: string
+          enum:
+            - country
+            - city
+      description: "Approximate location, at most city. Empty city means country precision; no coordinates are exposed."
     ObservedString:
       type: object
       additionalProperties: false
@@ -3887,6 +4032,8 @@ components:
           $ref: "#/components/schemas/ResultLabelledString"
         public_host:
           $ref: "#/components/schemas/ResultLabelledString"
+        ip_metadata:
+          $ref: "#/components/schemas/IPMetadata"
         scion_isd_as:
           $ref: "#/components/schemas/ResultLabelledObservation"
         display:
@@ -3899,11 +4046,8 @@ components:
       nullable: true
     ResultSourceLabel:
       type: "string"
-      enum:
-        - "operator"
-        - "executor-reported"
-        - "dispatcher-observed"
-      description: "Who asserted the value. database:<name>@<version> is reserved for a later format. Null exactly when the value is null."
+      pattern: "^(operator|executor-reported|dispatcher-observed|database:[^@[:space:]]+@[1-9][0-9]*)$"
+      description: "Who asserted the value. database:<name>@<build_epoch> identifies an offline MMDB database by its embedded type and build epoch. Null exactly when the labelled value is null."
       nullable: true
     ResultLabelledString:
       type: "object"

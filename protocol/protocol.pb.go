@@ -2611,10 +2611,11 @@ type VantagePointReport struct {
 	Listeners     []string               `protobuf:"bytes,3,rep,name=listeners,proto3" json:"listeners,omitempty"`                       // Listener transports it can open: tcp, udp, scion.
 	// Additive within schema version 1; absent is unknown. The dispatcher
 	// clears a malformed field alone and keeps the rest of the report.
-	Clock         *ClockState   `protobuf:"bytes,4,opt,name=clock,proto3" json:"clock,omitempty"`
-	Platform      *HostPlatform `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"` // Operator only; never in the public executor listing.
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Clock          *ClockState   `protobuf:"bytes,4,opt,name=clock,proto3" json:"clock,omitempty"`
+	Platform       *HostPlatform `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`                                      // Operator only; never in the public executor listing.
+	LocationOptOut bool          `protobuf:"varint,6,opt,name=location_opt_out,json=locationOptOut,proto3" json:"location_opt_out,omitempty"` // Suppress automatic GeoIP publication; false for older peers.
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *VantagePointReport) Reset() {
@@ -2680,6 +2681,13 @@ func (x *VantagePointReport) GetPlatform() *HostPlatform {
 		return x.Platform
 	}
 	return nil
+}
+
+func (x *VantagePointReport) GetLocationOptOut() bool {
+	if x != nil {
+		return x.LocationOptOut
+	}
+	return false
 }
 
 // The kernel clock discipline as read by adjtimex without changing it.
@@ -3053,14 +3061,15 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x12disclosure_held_ms\x18\a \x01(\x03H\x02R\x10disclosureHeldMs\x88\x01\x01B\x12\n" +
 	"\x10_installed_epochB\x16\n" +
 	"\x14_last_refresh_age_msB\x15\n" +
-	"\x13_disclosure_held_ms\"\xed\x01\n" +
+	"\x13_disclosure_held_ms\"\x97\x02\n" +
 	"\x12VantagePointReport\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12 \n" +
 	"\fscion_isd_as\x18\x02 \x01(\tR\n" +
 	"scionIsdAs\x12\x1c\n" +
 	"\tlisteners\x18\x03 \x03(\tR\tlisteners\x123\n" +
 	"\x05clock\x18\x04 \x01(\v2\x1d.debuglet.protocol.ClockStateR\x05clock\x12;\n" +
-	"\bplatform\x18\x05 \x01(\v2\x1f.debuglet.protocol.HostPlatformR\bplatform\"\x80\x02\n" +
+	"\bplatform\x18\x05 \x01(\v2\x1f.debuglet.protocol.HostPlatformR\bplatform\x12(\n" +
+	"\x10location_opt_out\x18\x06 \x01(\bR\x0elocationOptOut\"\x80\x02\n" +
 	"\n" +
 	"ClockState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x121\n" +

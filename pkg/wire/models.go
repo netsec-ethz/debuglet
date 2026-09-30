@@ -51,7 +51,8 @@ type Executor struct {
 	Listeners ObservedList `json:"listeners"`
 	// Clock is the executor-reported kernel clock state. Host platform detail
 	// is operator-only and never part of this public listing.
-	Clock ObservedClock `json:"clock"`
+	Clock      ObservedClock `json:"clock"`
+	IPMetadata *IPMetadata   `json:"ip_metadata,omitempty"`
 }
 
 // State is a debuglet's reported state. Unknown state strings are preserved.
