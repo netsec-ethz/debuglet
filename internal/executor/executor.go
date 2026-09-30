@@ -89,6 +89,7 @@ type Executor struct {
 	outputKick    chan struct{}
 	iface         *net.Interface
 	portManager   *socket.PortManager
+	socketBudget  *socket.DescriptorBudget
 	// Tests can hold individual resource boundaries; nil uses the real runtime.
 	newRuntime func(scheduler.Spec) runtimeDebuglet
 	// clientFor is a construction-fixed seam for scripted direct gRPC peers, which
@@ -133,7 +134,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	}
 	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
-		packetCount: node.packetCount, iface: node.iface, portManager: ports,
+		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
 		delivering: make(map[uuid.UUID]struct{}), outputDelivering: make(map[uuid.UUID]struct{}),
 		reconcileKick: make(chan struct{}, 1),

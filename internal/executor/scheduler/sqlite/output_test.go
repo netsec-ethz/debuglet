@@ -27,7 +27,7 @@ func outputFixture(t *testing.T, limits outputstore.Limits) (*SqliteStorage, *ou
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewStorage(db, output, storageTestEligibility, scheduler.Admission{Insert: admissionPass, Start: admissionPass})
+	s, err := NewStorage(db, output, storageTestEligibility, scheduler.Admission{Insert: admissionPass, Start: admissionPass}, scheduler.DefaultQueueLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestQueuedOutputFinalizerCrashBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		s, err := NewStorage(db, output, storageTestEligibility, scheduler.Admission{Insert: admissionPass, Start: admissionPass})
+		s, err := NewStorage(db, output, storageTestEligibility, scheduler.Admission{Insert: admissionPass, Start: admissionPass}, scheduler.DefaultQueueLimits())
 		if err != nil {
 			t.Fatal(err)
 		}

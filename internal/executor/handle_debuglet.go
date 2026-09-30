@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"time"
@@ -148,7 +149,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, op *debugletOperation) 
 			return nil, fmt.Errorf("invalid operator network policy: %w", policyErr)
 		}
 		deb = debuglet.New(e.logger, spec.DebugletID, spec.TransactionID, spec.Policy, operator,
-			e.teslaSchedule, e.limiter, e.packetCount, e.iface, e.portManager)
+			e.teslaSchedule, e.limiter, e.packetCount, e.iface, e.portManager, socket.NewBudget(socket.DefaultLimits(), e.socketBudget))
 	}
 	if deb == nil {
 		return nil, errors.New("debuglet runtime factory returned nil")

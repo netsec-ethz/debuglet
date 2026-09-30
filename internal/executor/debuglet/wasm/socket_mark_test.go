@@ -318,7 +318,7 @@ func TestSocketMarkListenerBeforeListen(t *testing.T) {
 		t.Error("the listener was published before it was marked")
 	}
 	tg.onMark = nil
-	if err := env.InstallTCP(lis, port, addr); err != nil {
+	if err := env.InstallTCP(lis, port, addr, nil); err != nil {
 		t.Fatalf("InstallTCP: %v", err)
 	}
 	if got := len(tg.recorded()); got != 1 {
@@ -352,7 +352,7 @@ func TestSocketMarkUDPListenerBeforeBind(t *testing.T) {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	smRequireUnbound(t, tg)
-	if err := env.InstallUDP(conn, port, addr); err != nil {
+	if err := env.InstallUDP(conn, port, addr, nil); err != nil {
 		t.Fatalf("InstallUDP: %v", err)
 	}
 	if got := len(tg.recorded()); got != 1 {

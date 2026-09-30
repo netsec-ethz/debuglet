@@ -43,7 +43,7 @@ func ioResult(n int, err error) uint64 {
 		status = guestio.Closed
 	case errors.Is(err, syscall.ECONNREFUSED):
 		status = guestio.Refused
-	case errors.Is(err, netpolicy.ErrDenied), errors.Is(err, netpolicy.ErrNotInPolicy), errors.Is(err, netpolicy.ErrTransportUnavailable), errors.Is(err, netpolicy.ErrUntagged):
+	case errors.Is(err, socket.ErrQuota), errors.Is(err, netpolicy.ErrDenied), errors.Is(err, netpolicy.ErrNotInPolicy), errors.Is(err, netpolicy.ErrTransportUnavailable), errors.Is(err, netpolicy.ErrUntagged):
 		status = guestio.Denied
 	case errors.Is(err, io.ErrNoProgress):
 		status = guestio.NoProgress

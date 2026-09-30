@@ -24,7 +24,7 @@ func (t *closeTagger) Close() error { t.calls.Add(1); return t.err }
 func TestEnvCloseRejectsLateListenerAndPreservesSibling(t *testing.T) {
 	sentinel := errors.New("tagger close failure")
 	tag := &closeTagger{err: sentinel}
-	env := &WasmEnv{Tagger: tag, Registry: &socket.SocketRegistry{}, ScionConn: socket.NewSCIONConnRegistry(1)}
+	env := &WasmEnv{Tagger: tag, Registry: socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))), ScionConn: socket.NewSCIONConnRegistry(1)}
 	if err := env.Close(); !errors.Is(err, sentinel) {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestEnvCloseRejectsLateListenerAndPreservesSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sibling.Close()
-	if err := env.InstallTCP(late, 0, late.Addr().String()); !errors.Is(err, net.ErrClosed) {
+	if err := env.InstallTCP(late, 0, late.Addr().String(), nil); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("late install: %v", err)
 	}
 	if _, err := late.Accept(); !errors.Is(err, net.ErrClosed) {
@@ -74,7 +74,7 @@ func TestEnvFinalCloseIncludesLateListenerFailure(t *testing.T) {
 	unblock := func() { once.Do(func() { close(listener.release) }) }
 	done := make(chan struct{})
 	var got error
-	go func() { defer close(done); got = env.InstallSCION(listener) }()
+	go func() { defer close(done); got = env.InstallSCION(listener, nil) }()
 	t.Cleanup(func() {
 		unblock()
 		select {

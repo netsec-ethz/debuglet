@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"io"
 	"net"
 	"os"
@@ -209,7 +210,7 @@ func TestReadSemanticsWASM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("netpolicy.Parse: %v", err)
 	}
-	deb := debuglet.New(logger, id, "read-semantics-test", policy, operator, schedule, limiter, packetCount, nil, nil)
+	deb := debuglet.New(logger, id, "read-semantics-test", policy, operator, schedule, limiter, packetCount, nil, nil, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

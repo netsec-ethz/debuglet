@@ -69,7 +69,7 @@ func TestEBPFRunRefusesIPv6(t *testing.T) {
 	}
 	policy := scheduler.Policy{Addresses: []string{"::1", "127.0.0.1"}, ListenTCP: true, ListenUDP: true}
 	d := newWithBPFTagger(zap.NewNop(), uuid.New(), "transaction", policy, operator, taggingSchedule(t), nil, nil,
-		&net.Interface{Index: 17, Name: "fixture"}, ports,
+		&net.Interface{Index: 17, Name: "fixture"}, ports, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)),
 		func(*zap.Logger, *net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error) {
 			return &ebpf.BPFTagger{Attachment: "tcx"}, nil
 		})
@@ -129,7 +129,7 @@ func TestKernelTaggedRunBindsIPv4Only(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := scheduler.Policy{Addresses: []string{"::1", "127.0.0.1"}, ListenTCP: true, ListenUDP: true}
-	d := New(zap.NewNop(), uuid.New(), "transaction", policy, operator, schedule, nil, nil, lo, ports)
+	d := New(zap.NewNop(), uuid.New(), "transaction", policy, operator, schedule, nil, nil, lo, ports, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)))
 	t.Cleanup(func() {
 		if err := d.Close(context.Background()); err != nil {
 			t.Error(err)
