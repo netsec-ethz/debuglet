@@ -1163,7 +1163,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: "The batch was rejected by the dispatcher after admission (internal_error)."
+          description: "The dispatcher could not complete submission (internal_error). When admission committed, admitted_ids contains every durable run ID in request order. Inspect each run state or recovery record; these IDs do not prove upload, execution, cancellation or completion. A missing list leaves admission unknown; do not automatically replay the batch."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -2596,6 +2596,12 @@ components:
         message:
           type: string
           description: "Bounded human-readable diagnostic. Never carries a credential, a stack trace or internal database or transport detail."
+        admitted_ids:
+          type: array
+          description: "Present only on PUT /debuglet internal_error after durable admission, in request order. Inspect each run for its disposition; admission does not prove execution or completion. Clients must retain uncertainty when this list is absent or invalid."
+          items:
+            type: string
+            format: uuid
     VersionResponse:
       type: object
       additionalProperties: false

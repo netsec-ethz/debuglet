@@ -74,7 +74,12 @@ func (c *Client) SubmitTEST(ctx context.Context, batch *PreparedBatch) (Submissi
 	}
 	data, err = c.do(ctx, http.MethodPut, routeDebuglet, nil, body, http.StatusOK, authKey)
 	if err != nil {
-		return Submission{}, &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, OutcomeUnknown: outcomeUnknown(stageSubmit, err), Err: err}
+		failure := &SubmissionError{Stage: stageSubmit, TransactionID: transactionID, OutcomeUnknown: outcomeUnknown(stageSubmit, err), Err: err}
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusInternalServerError && httpErr.Code == CodeInternal && len(httpErr.admittedIDs) == batch.count {
+			failure.AdmittedIDs = append([]string(nil), httpErr.admittedIDs...)
+		}
+		return Submission{}, failure
 	}
 	var ids []string
 	if err := c.decode(http.MethodPut, routeDebuglet, data, &ids); err != nil {

@@ -13,11 +13,12 @@ import (
 // bodies use a generic diagnostic. Recognized auth_key fields and known
 // submission keys are redacted. Path never contains a query or request body.
 type HTTPError struct {
-	Method     string
-	Path       string
-	StatusCode int
-	Code       string
-	Message    string
+	Method      string
+	Path        string
+	StatusCode  int
+	Code        string
+	Message     string
+	admittedIDs []string // validated shape; submission also checks batch cardinality
 }
 
 func (e *HTTPError) Error() string {
@@ -88,8 +89,12 @@ const (
 // and so is a 503 that carries service_unavailable or payments_disabled at the
 // intent stage: nothing was priced or written.
 type SubmissionError struct {
-	Stage          string
-	TransactionID  string
+	Stage         string
+	TransactionID string
+	// AdmittedIDs are durable run identities in request order when a failed
+	// submission returned a valid complete list. They prove admission, not
+	// upload, execution, cancellation or completion. Inspect each run.
+	AdmittedIDs    []string
 	OutcomeUnknown bool
 	Err            error
 }
@@ -98,6 +103,9 @@ func (e *SubmissionError) Error() string {
 	outcome := "rejected"
 	if e.OutcomeUnknown {
 		outcome = "outcome unknown"
+		if len(e.AdmittedIDs) > 0 {
+			outcome = "admitted; outcome unknown"
+		}
 	}
 	if e.TransactionID != "" {
 		return fmt.Sprintf("submission %s at stage %s (transaction %s): %v", outcome, e.Stage, e.TransactionID, e.Err)

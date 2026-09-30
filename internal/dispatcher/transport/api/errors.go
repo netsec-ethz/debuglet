@@ -19,6 +19,9 @@ import (
 type ErrorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// AdmittedIDs appears only when submission failed after durable admission.
+	// IDs are in request order; inspect their state instead of replaying work.
+	AdmittedIDs []string `json:"admitted_ids,omitempty"`
 }
 
 // Documented failure codes. New codes may appear within a contract major
@@ -101,18 +104,10 @@ func apiErrorFrom(status int, code, message string, cause error) *echo.HTTPError
 	return failure
 }
 
-// bindError reports a request body Echo could not decode. Echo's own
-// description of the caller's bytes is kept, its wrapper and internal decoder
-// error are not.
-func bindError(err error) *echo.HTTPError {
-	message := "invalid request body"
-	var httpErr *echo.HTTPError
-	if errors.As(err, &httpErr) {
-		if detail, ok := httpErr.Message.(string); ok && strings.TrimSpace(detail) != "" {
-			message += ": " + echoed(detail)
-		}
-	}
-	return apiErrorFrom(http.StatusBadRequest, CodeInvalidRequest, message, err)
+// bindError reports a request body Echo could not decode. Decoder messages can
+// quote values from any field, including credentials, so none is public text.
+func bindError(_ error) *echo.HTTPError {
+	return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid request body")
 }
 
 // echoed bounds a caller-supplied value that a message repeats back, so that
@@ -167,9 +162,6 @@ func errorEnvelope(err error) (int, ErrorResponse, error) {
 		return http.StatusInternalServerError, ErrorResponse{Code: CodeInternal, Message: "internal server error"}, err
 	}
 	internal := httpErr.Internal
-	if inner, ok := internal.(*echo.HTTPError); ok {
-		httpErr, internal = inner, inner.Internal
-	}
 	status := httpErr.Code
 	if status < 100 || status > 599 {
 		status = http.StatusInternalServerError
@@ -181,7 +173,9 @@ func errorEnvelope(err error) (int, ErrorResponse, error) {
 		}
 		return status, message, internal
 	case string:
-		return status, ErrorResponse{Code: codeForStatus(status), Message: message}, internal
+		// Framework and third-party messages have no public-data contract.
+		// A deliberate client message must use ErrorResponse above.
+		return status, ErrorResponse{Code: codeForStatus(status), Message: http.StatusText(status)}, internal
 	default:
 		return status, ErrorResponse{Code: codeForStatus(status), Message: http.StatusText(status)}, err
 	}

@@ -140,7 +140,15 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		if errors.Is(err, dispatcher.ErrUnknownExecutor) {
 			return apiErrorFrom(http.StatusBadRequest, CodeUnknownExecutor, "the executor is not registered or not available", err)
 		}
-		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to initialize debuglets", err)
+		failure := apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to initialize debuglets", err)
+		if len(IDs) > 0 {
+			admitted := make([]string, len(IDs))
+			for i, id := range IDs {
+				admitted[i] = id.String()
+			}
+			failure.Message = ErrorResponse{Code: CodeInternal, Message: "failed to upload admitted debuglets; inspect their state", AdmittedIDs: admitted}
+		}
+		return failure
 	} else {
 		return c.JSON(http.StatusOK, IDs)
 	}
