@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 lane=${1:-}
 case "$lane" in
-    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline|vulnerabilities) ;;
+    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline|vulnerabilities|image-vulnerabilities) ;;
     *) echo "unknown CI lane: $lane" >&2; exit 2 ;;
 esac
 
@@ -51,6 +51,9 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
             --build-arg "DEBIAN_SNAPSHOT=$DEBUGLET_CI_DEBIAN_SNAPSHOT" \
             --build-arg "TOOLS_IMAGE=$DEBUGLET_CI_TOOLS_IMAGE" deploy/ci
     fi
+fi
+if [[ $lane == image-vulnerabilities ]]; then
+    bash scripts/ci-image-vulnerabilities.sh build
 fi
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 name="debuglet-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$lane-$$"
@@ -121,6 +124,7 @@ docker run --rm --init --pull=never --name "$name" \
             race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
             secrets) python3 -m unittest -v tools/test_ci_security.py; bash "scripts/ci-$1.sh" ;;
             vulnerabilities) python3 -m unittest -v tools/test_ci_vulnerabilities.py; bash scripts/ci-vulnerabilities.sh ;;
+            image-vulnerabilities) python3 -m unittest -v tools/test_ci_image_vulnerabilities.py; bash scripts/ci-image-vulnerabilities.sh scan ;;
             faults) bash scripts/ci-faults.sh ;;
             soak) bash scripts/ci-soak.sh ;;
             offline)

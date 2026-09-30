@@ -6,7 +6,7 @@
 #   2. reads the packaged version and source revision out of the image and
 #      compares them with the checkout the build came from,
 #   3. starts the image on a loopback-only network with an explicit temporary
-#      configuration and waits for the daemon's readiness record,
+#      configuration, waits for readiness and runs a sample through the CLI,
 #   4. removes every container and temporary file it created.
 #
 # Nothing is published to a host interface and nothing is deployed. The
@@ -46,7 +46,7 @@ containers=(
 logs=$(mktemp -d "${TMPDIR:-/tmp}/debuglet-smoke-logs.XXXXXXXX")
 work=$(mktemp -d "${TMPDIR:-/tmp}/debuglet-smoke.XXXXXXXX")
 chmod 700 "$work"
-mkdir -m 700 "$work/dispatcher" "$work/executor"
+mkdir -m 700 "$work/dispatcher" "$work/executor" "$work/client"
 ready_timeout=${DEBUGLET_SMOKE_TIMEOUT:-120}
 runtime_user="$(id -u):$(id -g)"
 failed=1
@@ -185,6 +185,27 @@ docker run --detach --name "$executor_daemon" --network "container:$dispatcher_d
 	--config /state/role/service.toml --ready-file /state/executor-ready.json >/dev/null
 await "$work/executor/executor-ready.json" "$executor_daemon"
 
+note "running a sample through the CLI-only and daemon-only images"
+docker run --rm --network none --entrypoint /bin/sh "$full_image" \
+	-c 'cat /opt/debuglet/lib/debuglet/*/share/debuglet/hello.wasm' >"$work/hello.wasm"
+cli() {
+	docker run --rm --network "container:$dispatcher_daemon" --user "$runtime_user" \
+		--volume "$work/client:/state" --volume "$work/hello.wasm:/sample/hello.wasm:ro" \
+		"$cli_image" --config /state/dbl.toml "$@"
+}
+cli --output json connect http://127.0.0.1:9000 --name smoke >"$logs/connect.json"
+receipt=$(cli --output json run --wasm /sample/hello.wasm --wait -- image-smoke)
+printf '%s\n' "$receipt" >"$logs/run.json"
+run_id=$(printf '%s' "$receipt" | json_string id)
+state=$(printf '%s' "$receipt" | json_string state)
+[ -n "$run_id" ] && [ "$state" = RunStateExited ] || {
+	printf 'smoke: sample did not complete successfully: %s\n' "$receipt" >&2
+	exit 1
+}
+cli logs --follow "$run_id" >"$logs/output.txt"
+grep -q 'Hello from Debuglet!' "$logs/output.txt"
+grep -q 'image-smoke' "$logs/output.txt"
+
 failed=0
-note "both images built, identified and reached readiness"
+note "all images built, identified and completed a sample with retained output"
 printf 'images: %s %s\n' "$dispatcher_image" "$executor_image"
