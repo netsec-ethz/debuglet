@@ -99,7 +99,8 @@ func TestRecoverableGuestIOContract(t *testing.T) {
 	if _, err := r.InstantiateModule(ctx, compiled, wazero.NewModuleConfig()); err == nil || !strings.Contains(err.Error(), guestio.Module) {
 		t.Fatalf("missing extension error: %v", err)
 	}
-	env := &host.WasmEnv{Registry: &socket.SocketRegistry{}, Logger: zap.NewNop().Sugar()}
+	budget := socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))
+	env := &host.WasmEnv{Budget: budget, Registry: socket.NewSocketRegistry(budget), Logger: zap.NewNop().Sugar()}
 	script := new(recoverableScript)
 	handle, err := env.Registry.Add(script)
 	if err != nil {
