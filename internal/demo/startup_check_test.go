@@ -4,6 +4,8 @@ package demo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,5 +44,23 @@ func TestRoleStartupRefusesUnsupportedSchema(t *testing.T) {
 	}
 	if len(f.children) != 0 {
 		t.Fatalf("started %d services on an unsupported database", len(f.children))
+	}
+}
+
+// TestStartupLeavesCrashRecoveryToTheDaemon keeps the launcher read-only on a
+// database a killed role left mid-write: the daemon it starts rolls the
+// journal back, logs that and checks the recovered database itself.
+func TestStartupLeavesCrashRecoveryToTheDaemon(t *testing.T) {
+	needsRecovery := dependencies{checkSchema: func(context.Context, storagecheck.Role, string) error {
+		return fmt.Errorf("%w: %w: journal sentinel", storagecheck.ErrUnreadable, storagecheck.ErrNeedsRecovery)
+	}}
+	if err := needsRecovery.verifySchema(context.Background(), storagecheck.Dispatcher, "dispatcher.sqlite"); err != nil {
+		t.Fatalf("hot journal: %v", err)
+	}
+	unreadable := dependencies{checkSchema: func(context.Context, storagecheck.Role, string) error {
+		return fmt.Errorf("%w: unreadable sentinel", storagecheck.ErrUnreadable)
+	}}
+	if err := unreadable.verifySchema(context.Background(), storagecheck.Dispatcher, "dispatcher.sqlite"); !errors.Is(err, storagecheck.ErrUnreadable) {
+		t.Fatalf("unreadable database: %v", err)
 	}
 }

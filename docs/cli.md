@@ -164,7 +164,8 @@ time. Other platforms report it `not_checked`.
 
 After stopping the daemon, add `--offline` to inspect its database schema without
 writing database state. Existing journals make that check inconclusive and are
-left unchanged. Report statuses are `pass`, `failure`, `unavailable` and
+left unchanged; a rollback journal left by a daemon killed mid-write is
+reported as needing crash recovery, which the daemon's next start performs. Report statuses are `pass`, `failure`, `unavailable` and
 `not_checked`; failures or unavailable checks exit 1. `not_checked` is not a
 successful verification.
 

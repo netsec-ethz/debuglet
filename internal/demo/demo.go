@@ -49,6 +49,13 @@ func (d dependencies) verifySchema(ctx context.Context, role storagecheck.Role, 
 		check = storagecheck.Check
 	}
 	if err := check(ctx, role, path); err != nil {
+		// A role killed mid-write leaves a journal that only a writer can
+		// roll back. The daemon does that when it starts, logs that it did
+		// and checks the recovered database before serving, so the launcher
+		// stays read-only and leaves recovery and the check to it.
+		if errors.Is(err, storagecheck.ErrNeedsRecovery) {
+			return nil
+		}
 		return fmt.Errorf("%s database: %w", role, err)
 	}
 	return nil

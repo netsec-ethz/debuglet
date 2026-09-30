@@ -95,7 +95,7 @@ The former goose CLI `make upgrade` and `make downgrade` targets are removed. Us
 
 ### Upgrading a database
 
-`debuglet-dispatcher -config FILE -check-database` (and the same for `debuglet-executor`) reports whether the configured database is supported by this build, then exits. It only reads the database, so it can run while the daemon serves it, as the file's owner. Its exit status is:
+`debuglet-dispatcher -config FILE -check-database` (and the same for `debuglet-executor`) reports whether the configured database is supported by this build, then exits. It only reads the database, so it can run while the daemon serves it, as the file's owner. It therefore refuses (status 1) a database a killed daemon left mid-write, which only a start or `-upgrade-database` recovers; see [troubleshooting](troubleshooting.md#a-role-was-killed-while-it-wrote-its-database). Its exit status is:
 
 | Status | Meaning |
 |---|---|

@@ -34,7 +34,9 @@ const versionTable = "goose_db_version"
 // Check verifies the database at path against the schema policy of the role.
 // It opens the file read-only and leaves its bytes unchanged even when it
 // refuses it, so a refused database can still be inspected or restored. A
-// database in WAL mode can still gain the usual -wal and -shm companions.
+// database in WAL mode can still gain the usual -wal and -shm companions. A
+// database left mid-write, whose journal only a writer can roll back, is
+// refused with ErrNeedsRecovery; CheckAtStart recovers it first.
 func Check(ctx context.Context, role Role, path string) error {
 	policy, err := PolicyFor(role)
 	if err != nil {
@@ -47,6 +49,9 @@ func Check(ctx context.Context, role Role, path string) error {
 func (p Policy) Check(ctx context.Context, path string) error {
 	absolute, err := p.locate(path)
 	if err != nil {
+		return err
+	}
+	if err := readable(ctx, absolute); err != nil {
 		return err
 	}
 	db, err := openReadOnly(absolute)

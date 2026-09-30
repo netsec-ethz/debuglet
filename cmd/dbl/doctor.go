@@ -213,10 +213,15 @@ func schemaCheck(ctx context.Context, role storagecheck.Role, path string) docto
 	}
 	// Immutable SQLite cannot see an active journal. Refuse that case rather
 	// than create WAL companions or accidentally inspect an older DB image.
-	for _, suffix := range []string{"-wal", "-journal"} {
-		if _, err := os.Stat(path + suffix); !errors.Is(err, os.ErrNotExist) {
-			return doctorCheck{"schema", "not_checked", "a database journal is present or cannot be inspected", "stop the daemon and checkpoint its database before this offline schema check"}
-		}
+	// A rollback journal next to a stopped daemon's database is the
+	// unfinished write of a process that was killed; only a writer may roll
+	// it back, and doctor never writes.
+	if _, err := os.Stat(path + "-journal"); !errors.Is(err, os.ErrNotExist) {
+		return doctorCheck{"schema", "not_checked", "database needs crash recovery: a rollback journal from an unfinished write is present or cannot be inspected",
+			"start the daemon, or run debuglet-" + string(role) + " -config FILE -upgrade-database, so SQLite rolls the write back; keep the journal and run doctor again"}
+	}
+	if _, err := os.Stat(path + "-wal"); !errors.Is(err, os.ErrNotExist) {
+		return doctorCheck{"schema", "not_checked", "a database journal is present or cannot be inspected", "stop the daemon and checkpoint its database before this offline schema check"}
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {

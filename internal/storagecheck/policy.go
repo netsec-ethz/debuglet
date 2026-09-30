@@ -2,7 +2,9 @@
 // and verifies a supplied SQLite file against that policy before a daemon
 // serves requests or restores work. The check never migrates or repairs a
 // database: an incompatible file is refused with the action its operator has
-// to take. Upgrade applies the packaged migrations only when an operator runs
+// to take. Only CheckAtStart and Upgrade, which run in the process about to
+// write the file, first let SQLite roll back the journal of a process killed
+// mid-write, which restores the last committed state. Upgrade applies the packaged migrations only when an operator runs
 // it explicitly. BootstrapFresh creates only new, private databases from those
 // same packaged migrations.
 package storagecheck

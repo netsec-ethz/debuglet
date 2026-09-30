@@ -101,7 +101,7 @@ func main() {
 	// A database is upgraded only when its operator asks for it, never at
 	// start: a normal start refuses an outdated schema instead.
 	if *upgrade {
-		var options []storagecheck.UpgradeOption
+		options := []storagecheck.UpgradeOption{storagecheck.ReportRecovery(printRecovery("executor"))}
 		if *acceptDataLoss {
 			options = append(options, storagecheck.AcceptDataLoss())
 		}
@@ -168,6 +168,24 @@ func absoluteDatabasePath(path string) string {
 	return path
 }
 
+// logRecovery warns once that SQLite rolled back the unfinished transaction a
+// process killed mid-write left in the database's journal.
+func logRecovery(logger *zap.Logger) func(storagecheck.Recovery) {
+	return func(r storagecheck.Recovery) {
+		logger.Warn("Database crash recovery ran: SQLite rolled back the unfinished transaction a stopped process left in the journal; the database holds its last committed state",
+			zap.String("database", r.Path), zap.String("journal", r.Journal))
+	}
+}
+
+// printRecovery is logRecovery for an administration mode, which reports on
+// standard error.
+func printRecovery(role string) func(storagecheck.Recovery) {
+	return func(r storagecheck.Recovery) {
+		fmt.Fprintf(os.Stderr, "%s: warning: database crash recovery ran: SQLite rolled back the unfinished transaction in journal %s; database %s holds its last committed state\n",
+			role, r.Journal, r.Path)
+	}
+}
+
 // configureSCIONEnvironment loads the SCION daemon address unless the operator
 // disabled it, in which case neither the load nor the variable it sets happens.
 // It isolates this process's configuration and decides no traffic policy.
@@ -192,7 +210,7 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 	}
 	// Refuse an unsupported schema before opening the database, constructing
 	// the node's resources or restoring queued work.
-	if err := storagecheck.Check(ctx, storagecheck.Executor, cfg.Database.Path); err != nil {
+	if err := storagecheck.CheckAtStart(ctx, storagecheck.Executor, cfg.Database.Path, logRecovery(logger)); err != nil {
 		return err
 	}
 	db, err := sqlitedb.Open(cfg.Database.Path)

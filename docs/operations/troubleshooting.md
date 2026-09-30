@@ -65,3 +65,27 @@ work, select a fresh `--state-dir` as above. For persistent services, stop the
 affected role, back up its state and follow the release's explicit
 [database upgrade procedure](../../deploy/README.md#upgrading-a-database).
 Changing the recorded version or deleting the database is not an upgrade.
+
+## A role was killed while it wrote its database
+
+The daemons keep their SQLite databases in rollback-journal mode. A daemon
+killed in the middle of a write (`SIGKILL`, OOM kill, host crash) leaves a
+`-journal` file next to the database that holds the committed content of the
+pages the unfinished transaction had already overwritten. The next start rolls
+that transaction back before the schema check, as SQLite does for any writer
+that opens the file, logs once at warn level `Database crash recovery ran` with
+the database and journal paths, and then checks and serves the last committed
+state. `-upgrade-database` does the same and prints the warning on standard
+error. Nothing committed is lost; the interrupted write is, as if it had never
+started.
+
+The read-only checks do not recover: `-check-database` refuses such a database
+as unreadable with `database needs crash recovery`, naming the journal, and
+`dbl doctor --offline` reports the schema `not_checked` with the same reason.
+Start the daemon, or run its `-upgrade-database`, and check again. Never delete
+the `-journal` file: the database without it may be corrupt. If recovery itself
+fails, for example because the service account cannot write the database or
+its directory, startup refuses with `SQLite could not roll back its journal`.
+Correct the ownership or permissions and start again; if that is not the cause,
+stop every process using the database, keep the database and its journal
+together, and restore the database from a backup.

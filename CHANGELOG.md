@@ -174,6 +174,17 @@ changes; the linked API and deployment documentation contains operational detail
   host-name rules documented in `docs/operations/configuration.md`.
 
 ### Fixed
+- A dispatcher or executor killed while writing its database starts again.
+  Its next start refused the database as unreadable (`attempt to write a
+  readonly database (776)`): the read-only schema check cannot roll back the
+  hot rollback journal the unfinished transaction left. Startup, including
+  `dbl dispatcher up`, `dbl executor up` and `-upgrade-database`, now lets
+  SQLite roll the journal back first, which restores the last committed state
+  and writes nothing else, logs `Database crash recovery ran` once, and then
+  runs the unchanged read-only check. `-check-database` and
+  `dbl doctor --offline` stay read-only and report that the database needs
+  crash recovery. A recovery that fails names the journal and asks for a
+  backup restore. See `docs/operations/troubleshooting.md#a-role-was-killed-while-it-wrote-its-database`.
 - A TESLA key is disclosed only after every kernel tagger has moved off it,
   including the last key at the end of the chain. The kernel key refresh runs
   at each epoch boundary instead of every half epoch; a delayed or failed

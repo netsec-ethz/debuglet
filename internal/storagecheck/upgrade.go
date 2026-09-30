@@ -15,6 +15,13 @@ type UpgradeOption func(*upgradeOptions)
 
 type upgradeOptions struct {
 	acceptDataLoss bool
+	recovered      func(Recovery)
+}
+
+// ReportRecovery has Upgrade call recovered when it lets SQLite roll back the
+// journal of a database left mid-write before upgrading it; see CheckAtStart.
+func ReportRecovery(recovered func(Recovery)) UpgradeOption {
+	return func(o *upgradeOptions) { o.recovered = recovered }
 }
 
 // AcceptDataLoss lets Upgrade apply a migration that drops the recorded runs
@@ -27,7 +34,7 @@ func AcceptDataLoss() UpgradeOption {
 // and returns the schema version it then records, once Check accepts it. It
 // first refuses, with Check's answers, a path that is absent, unreadable, not
 // this role's Debuglet database, or newer than this build, and writes nothing
-// to it. A database whose upgrade drops the recorded runs is refused the same
+// to it beyond the crash recovery CheckAtStart describes. A database whose upgrade drops the recorded runs is refused the same
 // way with ErrDataLoss unless the caller passes AcceptDataLoss. It takes no
 // backup and expects the daemon using the file to be stopped. Each migration
 // commits on its own, so a failed one leaves the earlier ones applied; Check
@@ -48,6 +55,12 @@ func Upgrade(ctx context.Context, role Role, path string, opts ...UpgradeOption)
 	}
 	absolute, err := policy.locate(path)
 	if err != nil {
+		return 0, err
+	}
+	// Rolling back an unfinished transaction restores the last committed
+	// state, as the migrations' own connection would on opening the file;
+	// the refusals below then still see the database as it was committed.
+	if err := recoverJournal(ctx, absolute, options.recovered); err != nil {
 		return 0, err
 	}
 	db, err := openReadOnly(absolute)

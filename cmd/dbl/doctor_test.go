@@ -183,6 +183,31 @@ func TestDoctorOfflineSchemaDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestDoctorOfflineSchemaReportsCrashRecovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "executor.sqlite")
+	db, err := sqlitedb.Open(path, sqlitedb.Create())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlitedb.Migrate(context.Background(), db, executordb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+"-journal", []byte("unfinished write"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check := schemaCheck(context.Background(), storagecheck.Executor, path)
+	if check.Status != "not_checked" || !strings.Contains(check.Detail, "needs crash recovery") ||
+		!strings.Contains(check.Next, "start the daemon") || !strings.Contains(check.Next, "debuglet-executor -config FILE -upgrade-database") {
+		t.Fatalf("hot journal: %+v", check)
+	}
+	if journal, _ := os.ReadFile(path + "-journal"); string(journal) != "unfinished write" {
+		t.Fatal("doctor changed the journal")
+	}
+}
+
 func TestDoctorConfigErrorsAreRedacted(t *testing.T) {
 	path := writeOperatorConfig(t, "executor", "[logging]\nlog_level='SECRET-CONFIG'\n")
 	for _, mode := range []string{outputHuman, outputJSON} {

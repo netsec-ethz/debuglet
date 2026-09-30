@@ -123,7 +123,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "dispatcher: -upgrade-database cannot be combined with another administration flag")
 			os.Exit(1)
 		}
-		var options []storagecheck.UpgradeOption
+		options := []storagecheck.UpgradeOption{storagecheck.ReportRecovery(printRecovery("dispatcher"))}
 		if *acceptDataLoss {
 			options = append(options, storagecheck.AcceptDataLoss())
 		}
@@ -210,6 +210,24 @@ func absoluteDatabasePath(path string) string {
 	return path
 }
 
+// logRecovery warns once that SQLite rolled back the unfinished transaction a
+// process killed mid-write left in the database's journal.
+func logRecovery(logger *zap.Logger) func(storagecheck.Recovery) {
+	return func(r storagecheck.Recovery) {
+		logger.Warn("Database crash recovery ran: SQLite rolled back the unfinished transaction a stopped process left in the journal; the database holds its last committed state",
+			zap.String("database", r.Path), zap.String("journal", r.Journal))
+	}
+}
+
+// printRecovery is logRecovery for an administration mode, which reports on
+// standard error.
+func printRecovery(role string) func(storagecheck.Recovery) {
+	return func(r storagecheck.Recovery) {
+		fmt.Fprintf(os.Stderr, "%s: warning: database crash recovery ran: SQLite rolled back the unfinished transaction in journal %s; database %s holds its last committed state\n",
+			role, r.Journal, r.Path)
+	}
+}
+
 func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile string, logger *zap.Logger) error {
 	// Refuse unusable TLS material and an unsupported schema before opening the
 	// database for service, restoring the scheduler or binding a listener.
@@ -229,7 +247,7 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 			return fmt.Errorf("configure executor onboarding: %w", err)
 		}
 	}
-	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
+	if err := storagecheck.CheckAtStart(ctx, storagecheck.Dispatcher, cfg.Database.Path, logRecovery(logger)); err != nil {
 		return err
 	}
 	db, err := sqlitedb.Open(cfg.Database.Path)
