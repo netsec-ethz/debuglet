@@ -6,7 +6,7 @@ not a general-purpose sandbox for hostile guests or a production payment
 system. This reference describes the current code. See [SECURITY.md](../SECURITY.md)
 for private vulnerability reporting and the
 [operator security guide](https://github.com/netsec-ethz/debuglet/wiki/Security-and-supported-scope)
-for abuse reports and destination opt-outs.
+for operational guidance.
 
 ## Actors, assets and data flows
 
@@ -93,9 +93,12 @@ and verify the reported outcome before claiming that traffic has stopped.
 ### Packet attribution and payment authority
 
 The [tag specification](tag-spec.md) defines `debuglet-tag-v1`, the fields it
-covers and the limits of its 16-bit tag. Attribution needs a functioning kernel
-tagger, retained evidence and the appropriate disclosed key; pure-Go fallback
-does not tag the socket data path. Current disclosed-key history is held in
+covers and the limits of its 16-bit tag. Attribution needs a working tagger, retained evidence and the appropriate
+disclosed key. Kernel mode tags marked IPv4 TCP/TLS, UDP and ICMP traffic.
+Userspace mode can tag IPv4 UDP/ICMP datagrams when its raw socket is available;
+TCP/TLS remains untagged in that mode. Neither mode tags IPv6 or SCION, and
+kernel-tagged runs refuse IPv6 destinations. Check the reported tagging mode
+and transport rather than treating fallback accounting as attribution. Current disclosed-key history is held in
 memory and is lost on dispatcher restart. Restarting the executor discards
 undisclosed keys; [key-schedule configuration](operations/configuration.md#executor-tesla-key-schedule)
 explains the disclosure window. A valid tag does not establish destination
