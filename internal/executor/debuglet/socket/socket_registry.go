@@ -74,8 +74,7 @@ func (r *SocketRegistry) Reserve(descriptors int) (*SocketReservation, error) {
 		return nil, net.ErrClosed
 	}
 	if r.budget == nil {
-		// A standalone zero-value registry has the same finite run bounds.
-		r.budget = NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors))
+		return nil, errors.New("socket registry requires a run budget")
 	}
 	reservation, err := r.budget.ReserveSocket(descriptors)
 	if err != nil {

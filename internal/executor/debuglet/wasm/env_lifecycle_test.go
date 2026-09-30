@@ -24,7 +24,7 @@ func (t *closeTagger) Close() error { t.calls.Add(1); return t.err }
 func TestEnvCloseRejectsLateListenerAndPreservesSibling(t *testing.T) {
 	sentinel := errors.New("tagger close failure")
 	tag := &closeTagger{err: sentinel}
-	env := &WasmEnv{Tagger: tag, Registry: &socket.SocketRegistry{}, ScionConn: socket.NewSCIONConnRegistry(1)}
+	env := &WasmEnv{Tagger: tag, Registry: socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))), ScionConn: socket.NewSCIONConnRegistry(1)}
 	if err := env.Close(); !errors.Is(err, sentinel) {
 		t.Fatal(err)
 	}

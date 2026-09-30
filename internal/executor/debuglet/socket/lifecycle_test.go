@@ -65,7 +65,7 @@ func (r *closeResult) wait(t *testing.T) error {
 }
 
 func TestRegistryCloseJoinsAndRejectsLateAdmission(t *testing.T) {
-	reg := &SocketRegistry{}
+	reg := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
@@ -127,7 +127,7 @@ func TestRegistryCloseJoinsAndRejectsLateAdmission(t *testing.T) {
 }
 
 func TestRegistryConcurrentCloseAndSibling(t *testing.T) {
-	reg, sibling := &SocketRegistry{}, &SocketRegistry{}
+	reg, sibling := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors))), NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 	socket, other := &lifecycleSocket{}, &lifecycleSocket{}
 	h, err := reg.Add(socket)
 	if err != nil {

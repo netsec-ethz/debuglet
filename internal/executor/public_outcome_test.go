@@ -14,7 +14,9 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -172,4 +174,36 @@ func TestPublicOutcomeOfFailedRuns(t *testing.T) {
 			t.Fatalf("rejected module reported exit %d %q", report.ExitCode, report.GetErrorMessage())
 		}
 	})
+}
+
+// The runtime wraps intentional Go host errors with %w. Exercise that real
+// boundary so a quota failure cannot regress to an opaque or private message.
+func TestSocketQuotaOutcomeSurvivesRuntimeWrap(t *testing.T) {
+	ctx := t.Context()
+	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter())
+	defer runtime.Close(ctx)
+	_, err := runtime.NewHostModuleBuilder("quota").NewFunctionBuilder().WithFunc(func() {
+		panic(fmt.Errorf("private socket detail 10.0.0.5: %w", socket.ErrQuota))
+	}).Export("exhaust").Instantiate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A guest calls the imported host function through the same runtime path
+	// as the production legacy socket imports.
+	guest, err := runtime.Instantiate(ctx, []byte("\x00asm\x01\x00\x00\x00"+
+		"\x01\x04\x01\x60\x00\x00"+
+		"\x02\x11\x01\x05quota\x07exhaust\x00\x00"+
+		"\x03\x02\x01\x00"+
+		"\x07\x07\x01\x03run\x00\x01"+
+		"\x0a\x06\x01\x04\x00\x10\x00\x0b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = guest.ExportedFunction("run").Call(ctx)
+	if !errors.Is(err, socket.ErrQuota) {
+		t.Fatalf("runtime lost quota cause: %v", err)
+	}
+	if got := publicOutcome(ranRuntime(err)); got != "guest socket quota exceeded" {
+		t.Fatalf("public quota outcome = %q", got)
+	}
 }

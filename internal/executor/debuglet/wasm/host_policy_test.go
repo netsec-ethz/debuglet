@@ -93,7 +93,7 @@ func policyEnv(t *testing.T, spec netpolicy.Spec, run netpolicy.Run, options ...
 		Limiter:     limiter,
 		Accountant:  ratelimit.NewAccountant(limiter, id),
 		PacketCount: counter,
-		Registry:    &socket.SocketRegistry{},
+		Registry:    socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))),
 		Logger:      zap.NewNop().Sugar(),
 	}
 	t.Cleanup(func() { _ = env.Close() })

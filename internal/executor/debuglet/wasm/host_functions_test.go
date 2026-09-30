@@ -120,7 +120,7 @@ func (s *scriptedSocket) RemoteAddr() string          { return "127.0.0.1:0" }
 // which is all HostReceiveData touches.
 func newReceiveEnv() *WasmEnv {
 	return &WasmEnv{
-		Registry: &socket.SocketRegistry{},
+		Registry: socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))),
 		Logger:   zap.NewNop().Sugar(),
 	}
 }

@@ -205,3 +205,17 @@ func TestSCIONCapacityCountsPendingDialsAndAllowsExistingKey(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRegistryRequiresExplicitBudget(t *testing.T) {
+	reg := NewSocketRegistry(nil)
+	if _, err := reg.Reserve(1); err == nil {
+		t.Fatal("missing budget allowed a reservation")
+	}
+	s := &lifecycleSocket{}
+	if _, err := reg.Add(s); err == nil {
+		t.Fatal("missing budget admitted socket")
+	}
+	if s.count.Load() != 1 {
+		t.Fatal("rejected socket was not consumed")
+	}
+}

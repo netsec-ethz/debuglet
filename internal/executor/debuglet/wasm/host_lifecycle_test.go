@@ -90,7 +90,7 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 					t.Error("peer observer did not join")
 				}
 			})
-			env := &WasmEnv{DebugletID: uuid.New(), Policy: scheduler.Policy{Addresses: []string{"127.0.0.1"}}, Limiter: app.NewLimiter(zap.NewNop()), Registry: &socket.SocketRegistry{}, Logger: zap.NewNop().Sugar()}
+			env := &WasmEnv{DebugletID: uuid.New(), Policy: scheduler.Policy{Addresses: []string{"127.0.0.1"}}, Limiter: app.NewLimiter(zap.NewNop()), Registry: socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))), Logger: zap.NewNop().Sugar()}
 			env.Net = testPolicy(t, netpolicy.Run{Addresses: env.Policy.Addresses})
 			t.Cleanup(func() { _ = env.Close() })
 			if phase != "missing_limit" {
@@ -169,7 +169,7 @@ func TestHostAcceptClosedRegistryDoesNotAccept(t *testing.T) {
 		Limiter:     limiter,
 		PacketCount: counter,
 		TcpServer:   listener,
-		Registry:    &socket.SocketRegistry{},
+		Registry:    socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))),
 		Logger:      zap.NewNop().Sugar(),
 	}
 	env.Net = testPolicy(t, netpolicy.Run{Addresses: []string{"127.0.0.1"}, ListenTCP: true})
@@ -229,7 +229,7 @@ func TestHostConnectLateConstructorCloseErrorReachesFinalCleanup(t *testing.T) {
 	}
 	defer listener.Close()
 	counter := &heldConstructorCounter{entered: make(chan struct{}), release: make(chan struct{}), constructorErr: errors.New("limit rejected"), closeErr: errors.New("late wrapper close failure")}
-	env := &WasmEnv{DebugletID: uuid.New(), Policy: scheduler.Policy{Addresses: []string{"127.0.0.1"}}, Limiter: app.NewLimiter(zap.NewNop()), PacketCount: counter, Registry: &socket.SocketRegistry{}, Logger: zap.NewNop().Sugar()}
+	env := &WasmEnv{DebugletID: uuid.New(), Policy: scheduler.Policy{Addresses: []string{"127.0.0.1"}}, Limiter: app.NewLimiter(zap.NewNop()), PacketCount: counter, Registry: socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))), Logger: zap.NewNop().Sugar()}
 	env.Net = testPolicy(t, netpolicy.Run{Addresses: env.Policy.Addresses})
 	env.Limiter.SetExecutorCapacity(bitrate.Gigabit)
 	env.Limiter.SetAddrCapacity("127.0.0.1", bitrate.Gigabit)

@@ -26,9 +26,11 @@ has spent its lifetime attempt budget must finish; it cannot reset that budget.
 Other runs have independent per-run counters and share only the node limit.
 Node reservations belong to the daemon and survive control-session replacement.
 
-Exhaustion fails immediately with `guest socket quota exceeded`. Legacy socket
-imports trap and fail the run; the recoverable `debuglet_io_v1` dial returns
-`Denied` with no usable handle. Already-open sockets and control/cleanup
+Exhaustion fails immediately with the public failure `guest socket quota
+exceeded`. Legacy socket imports trap and fail the run; the recoverable
+`debuglet_io_v1` dial returns `Denied` with no usable handle. The public terminal
+classification uses the quota error identity and does not expose the runtime's
+stack trace or connection details. Already-open sockets and control/cleanup
 operations remain available. The ordinary execution timeout and cancellation
 close blocked I/O through the existing joined cleanup path.
 

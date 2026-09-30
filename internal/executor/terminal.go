@@ -13,6 +13,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"github.com/tetratelabs/wazero/sys"
@@ -139,6 +140,8 @@ func publicOutcome(outcome error) string {
 		text = timeout.Error()
 	case errors.As(outcome, &exit) && exit.ExitCode() != sys.ExitCodeContextCanceled && exit.ExitCode() != sys.ExitCodeDeadlineExceeded:
 		text = fmt.Sprintf("debuglet exited with code %d", exit.ExitCode())
+	case errors.Is(outcome, socket.ErrQuota):
+		text = "guest socket quota exceeded"
 	case errors.Is(outcome, netpolicy.ErrNotInPolicy):
 		text = "destination refused: " + netpolicy.ErrNotInPolicy.Error()
 	case errors.Is(outcome, netpolicy.ErrDenied):
