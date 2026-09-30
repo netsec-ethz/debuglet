@@ -10,7 +10,8 @@ import (
 )
 
 // OutputConfig bounds emitted data and its retained spool. Zero selects the
-// documented default; acknowledged metadata still counts toward retained_runs.
+// documented default. Metadata remains after end acknowledgement, but its
+// spool charge and retained_runs slot are released.
 type OutputConfig struct {
 	RunBytes           int64 `toml:"run_bytes"`
 	RunFrames          int64 `toml:"run_frames"`
