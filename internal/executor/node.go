@@ -37,6 +37,7 @@ type Node struct {
 	logger       *zap.Logger
 	schedule     *tesla.KeySchedule
 	packetCount  ratelimit.PacketCount
+	socketBudget *socket.DescriptorBudget
 	iface        *net.Interface
 	output       *outputstore.Store
 	outputFailed atomic.Bool
@@ -117,7 +118,7 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if pc == nil {
 		return nil, sessionEnd(controlsession.LocalFailure, errors.New("packet counter constructor returned nil"))
 	}
-	n := &Node{cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
+	n := &Node{socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()),
 		zap.Duration("TESLA_epoch_length", schedule.Config().EpochLength), zap.Int64("TESLA_disclosure_delay_epochs", schedule.DisclosureDelay()))

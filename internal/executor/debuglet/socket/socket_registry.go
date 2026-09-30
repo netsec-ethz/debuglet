@@ -29,6 +29,7 @@ type ISocketRegistry interface {
 type SocketRegistry struct {
 	mu           sync.Mutex
 	sockets      []*socketEntry
+	budget       *Budget
 	closed       bool
 	closeOnce    sync.Once
 	closeErr     error
@@ -38,32 +39,105 @@ type SocketRegistry struct {
 // Each entry retains its immutable connection and its one close completion.
 // Detached handles cannot be retrieved, but another closer can still join them.
 type socketEntry struct {
-	socket   Socket
-	detached bool // protected by the registry mutex
-	once     sync.Once
-	err      error
+	socket      Socket
+	detached    bool // protected by the registry mutex
+	once        sync.Once
+	err         error
+	reservation *Reservation
 }
 
 func (e *socketEntry) close() error {
-	e.once.Do(func() { e.err = e.socket.Close() })
+	e.once.Do(func() {
+		e.err = e.socket.Close()
+		e.reservation.Release()
+	})
 	return e.err
 }
 
-// Add consumes s, including when terminal admission rejects it.
+// NewSocketRegistry gives every handle the same run budget as its listeners.
+func NewSocketRegistry(budget *Budget) *SocketRegistry {
+	return &SocketRegistry{budget: budget}
+}
+
+// SocketReservation also binds an attempt to its registry. A reservation can
+// publish one socket, and admission after terminal closure still consumes it.
+type SocketReservation struct {
+	registry    *SocketRegistry
+	reservation *Reservation
+	claimed     bool // protected by registry.mu
+}
+
+func (r *SocketRegistry) Reserve(descriptors int) (*SocketReservation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil, net.ErrClosed
+	}
+	if r.budget == nil {
+		// A standalone zero-value registry has the same finite run bounds.
+		r.budget = NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors))
+	}
+	reservation, err := r.budget.ReserveSocket(descriptors)
+	if err != nil {
+		return nil, err
+	}
+	return &SocketReservation{registry: r, reservation: reservation}, nil
+}
+
+// Release abandons an attempt that did not publish a socket.
+func (s *SocketReservation) Release() {
+	if s == nil {
+		return
+	}
+	s.registry.mu.Lock()
+	if !s.claimed {
+		s.claimed = true
+		s.reservation.Release()
+	}
+	s.registry.mu.Unlock()
+}
+
+// Add consumes s, including when quota or terminal admission rejects it.
+// Host operations reserve before creating a socket and use AddReserved.
 func (r *SocketRegistry) Add(s Socket) (int32, error) {
 	if s == nil {
 		return -1, errors.New("nil socket")
 	}
+	reservation, err := r.Reserve(1)
+	if err != nil {
+		return -1, errors.Join(err, r.closeRejected(s))
+	}
+	return r.AddReserved(s, reservation)
+}
+
+func (r *SocketRegistry) closeRejected(s Socket) error {
+	err := s.Close()
 	r.mu.Lock()
+	r.lateCloseErr = errors.Join(r.lateCloseErr, err)
+	r.mu.Unlock()
+	return err
+}
+
+// AddReserved consumes the socket and its reservation on every path.
+func (r *SocketRegistry) AddReserved(s Socket, reservation *SocketReservation) (int32, error) {
+	if s == nil {
+		reservation.Release()
+		return -1, errors.New("nil socket")
+	}
+	r.mu.Lock()
+	if reservation == nil || reservation.registry != r || reservation.claimed {
+		r.mu.Unlock()
+		reservation.Release()
+		return -1, errors.Join(errors.New("invalid socket reservation"), r.closeRejected(s))
+	}
+	reservation.claimed = true
 	if r.closed {
 		r.mu.Unlock()
-		err := s.Close()
-		r.mu.Lock()
-		r.lateCloseErr = errors.Join(r.lateCloseErr, err)
-		r.mu.Unlock()
+		err := r.closeRejected(s)
+		reservation.reservation.Release()
 		return -1, errors.Join(net.ErrClosed, err)
 	}
-	r.sockets = append(r.sockets, &socketEntry{socket: s})
+	r.sockets = append(r.sockets, &socketEntry{socket: s, reservation: reservation.reservation})
 	handle := int32(len(r.sockets) - 1)
 	r.mu.Unlock()
 	return handle, nil
@@ -143,6 +217,7 @@ type SCIONConn struct {
 type SCIONConnRegistry struct {
 	mu           sync.Mutex
 	conns        map[string]*scionEntry
+	capacity     int
 	closed       bool
 	closeOnce    sync.Once
 	closeErr     error
@@ -171,7 +246,10 @@ func (e *scionEntry) close() error {
 }
 
 func NewSCIONConnRegistry(capacity int) *SCIONConnRegistry {
-	return &SCIONConnRegistry{conns: make(map[string]*scionEntry, capacity)}
+	if capacity < 0 {
+		capacity = 0
+	}
+	return &SCIONConnRegistry{conns: make(map[string]*scionEntry, capacity), capacity: capacity}
 }
 
 func (r *SCIONConnRegistry) GetOrDial(ctx context.Context, addr string, sugar *zap.SugaredLogger, pktTagger tagger.TaggerInterface) (*SCIONConn, error) {
@@ -197,6 +275,10 @@ func (r *SCIONConnRegistry) GetOrDial(ctx context.Context, addr string, sugar *z
 			}
 			return entry.conn, entry.err
 		}
+	}
+	if len(r.conns) >= r.capacity {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("%w: SCION connection capacity", ErrQuota)
 	}
 	dialCtx, cancel := context.WithCancel(ctx)
 	entry := &scionEntry{done: make(chan struct{}), cancel: cancel}

@@ -63,8 +63,10 @@ type WasmEnv struct {
 
 	ScionServer pan.ListenConn
 
-	Registry  *socket.SocketRegistry
-	ScionConn *socket.SCIONConnRegistry
+	Budget                                           *socket.Budget
+	tcpReservation, udpReservation, scionReservation *socket.Reservation
+	Registry                                         *socket.SocketRegistry
+	ScionConn                                        *socket.SCIONConnRegistry
 }
 
 // DatagramTagger is the pure-Go tagger, which tags UDP and ICMP by sending
@@ -109,11 +111,12 @@ func markSocket(e *WasmEnv, conn syscall.Conn) error {
 // A listener arrives already marked: the PortManager marks it in its listen
 // control hook, before the socket is bound and listening, so no handshake
 // reply or datagram leaves it unattributed.
-func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error {
+func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string, reservation *socket.Reservation) error {
 	e.mu.Lock()
 	if e.closed || e.TcpServer != nil {
 		e.mu.Unlock()
 		err := lis.Close()
+		reservation.Release()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
@@ -121,14 +124,16 @@ func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error 
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.TcpServer, e.TcpServerPort, e.TcpServerAddr = lis, port, addr
+	e.tcpReservation = reservation
 	e.mu.Unlock()
 	return nil
 }
-func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
+func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string, reservation *socket.Reservation) error {
 	e.mu.Lock()
 	if e.closed || e.UdpServer != nil {
 		e.mu.Unlock()
 		err := conn.Close()
+		reservation.Release()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
@@ -136,18 +141,21 @@ func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.UdpServer, e.UdpServerPort, e.UdpServerAddr = conn, port, addr
+	e.udpReservation = reservation
 	e.mu.Unlock()
 	return nil
 }
-func (e *WasmEnv) InstallSCION(conn pan.ListenConn) error {
+func (e *WasmEnv) InstallSCION(conn pan.ListenConn, reservation *socket.Reservation) error {
 	e.mu.Lock()
 	if e.closed || e.ScionServer != nil {
 		e.mu.Unlock()
 		err := conn.Close()
+		reservation.Release()
 		e.RecordCleanupError(err)
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.ScionServer = conn
+	e.scionReservation = reservation
 	e.mu.Unlock()
 	return nil
 }
@@ -170,18 +178,21 @@ func (e *WasmEnv) Close() error {
 		e.mu.Unlock()
 		if tcp != nil {
 			e.closeErr = errors.Join(e.closeErr, tcp.Close())
+			e.tcpReservation.Release()
 			if e.PortManager != nil {
 				e.PortManager.Release(tcpPort)
 			}
 		}
 		if udp != nil {
 			e.closeErr = errors.Join(e.closeErr, udp.Close())
+			e.udpReservation.Release()
 			if e.PortManager != nil {
 				e.PortManager.Release(udpPort)
 			}
 		}
 		if scion != nil {
 			e.closeErr = errors.Join(e.closeErr, scion.Close())
+			e.scionReservation.Release()
 		}
 		if e.Registry != nil {
 			_ = e.Registry.CloseAll()

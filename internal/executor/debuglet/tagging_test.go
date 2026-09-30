@@ -6,6 +6,7 @@ package debuglet
 import (
 	"bytes"
 	"context"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"net"
 	"runtime"
 	"testing"
@@ -61,7 +62,7 @@ func TestUserspaceRunKeepsIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := newWithBPFTagger(zap.NewNop(), uuid.New(), "transaction", scheduler.Policy{Addresses: []string{"::1"}}, operator, schedule, nil, nil, nil, nil,
+	d := newWithBPFTagger(zap.NewNop(), uuid.New(), "transaction", scheduler.Policy{Addresses: []string{"::1"}}, operator, schedule, nil, nil, nil, nil, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)),
 		func(*zap.Logger, *net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error) {
 			t.Fatal("kernel tagger constructed without an interface")
 			return nil, nil

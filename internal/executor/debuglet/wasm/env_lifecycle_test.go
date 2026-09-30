@@ -38,7 +38,7 @@ func TestEnvCloseRejectsLateListenerAndPreservesSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sibling.Close()
-	if err := env.InstallTCP(late, 0, late.Addr().String()); !errors.Is(err, net.ErrClosed) {
+	if err := env.InstallTCP(late, 0, late.Addr().String(), nil); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("late install: %v", err)
 	}
 	if _, err := late.Accept(); !errors.Is(err, net.ErrClosed) {
@@ -74,7 +74,7 @@ func TestEnvFinalCloseIncludesLateListenerFailure(t *testing.T) {
 	unblock := func() { once.Do(func() { close(listener.release) }) }
 	done := make(chan struct{})
 	var got error
-	go func() { defer close(done); got = env.InstallSCION(listener) }()
+	go func() { defer close(done); got = env.InstallSCION(listener, nil) }()
 	t.Cleanup(func() {
 		unblock()
 		select {

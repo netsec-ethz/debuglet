@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"io"
 	"net"
 	"os"
@@ -94,7 +95,7 @@ func cancellationEngine(t *testing.T, data []byte) (*debuglet.Debuglet, <-chan s
 	if err != nil {
 		t.Fatal(err)
 	}
-	deb := debuglet.New(logger, id, "cancel-fixture", scheduler.Policy{CeilBW: int64(bitrate.Gigabit), Timeout: time.Minute, Addresses: []string{"127.0.0.1"}}, operator, schedule, limiter, observed, nil, nil)
+	deb := debuglet.New(logger, id, "cancel-fixture", scheduler.Policy{CeilBW: int64(bitrate.Gigabit), Timeout: time.Minute, Addresses: []string{"127.0.0.1"}}, operator, schedule, limiter, observed, nil, nil, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)))
 	t.Cleanup(func() {
 		if err := deb.Close(context.Background()); err != nil {
 			t.Error(err)

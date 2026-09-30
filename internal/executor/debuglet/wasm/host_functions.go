@@ -76,7 +76,7 @@ func guestBuffer(mod api.Module, ptr, length uint32) ([]byte, error) {
 // attachSocket puts an admitted, already marked connection under this run's
 // bandwidth accounting and registers it, returning its guest handle. It
 // consumes conn: every failure path releases it.
-func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, socketType socket.SocketType) (handle int32, err error) {
+func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, socketType socket.SocketType, reservation *socket.SocketReservation) (handle int32, err error) {
 	ownsRaw := true
 	defer func() {
 		if ownsRaw {
@@ -99,7 +99,7 @@ func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, 
 		env.RecordCleanupError(cleanup.Released(err))
 		return -1, fmt.Errorf("failed to create HostConn: %w", err)
 	}
-	return env.Registry.Add(hc)
+	return env.Registry.AddReserved(hc, reservation)
 }
 
 // writeAddr writes addr into the guest buffer at (bufPtr, bufLen) and returns
@@ -167,6 +167,18 @@ func connectSocket(ctx, dialCtx context.Context, env *WasmEnv, socketType socket
 		return -1, fmt.Errorf("connect: %w", err)
 	}
 
+	// Datagram tagging can hold the connected socket and one raw companion.
+	// Keep the conservative two-slot reservation even when tagging falls back.
+	descriptors := 1
+	if socketType == socket.SocketTypeUDP || socketType == socket.SocketTypeICMP4 {
+		descriptors = 2
+	}
+	reservation, err := env.Registry.Reserve(descriptors)
+	if err != nil {
+		return -1, fmt.Errorf("connect: %w", err)
+	}
+	defer reservation.Release()
+
 	// The dialer consults the same admitted destination again, in the
 	// control hook the operating system calls between creating the socket
 	// and connecting it, and marks the socket there for this run's packet
@@ -212,7 +224,7 @@ func connectSocket(ctx, dialCtx context.Context, env *WasmEnv, socketType socket
 	}
 
 	conn = tagDatagrams(env, conn, socketType)
-	handle, err := attachSocket(ctx, env, conn, destination.Key, socketType)
+	handle, err := attachSocket(ctx, env, conn, destination.Key, socketType, reservation)
 	if err != nil {
 		env.Logger.Warnw("hostConnect: failed to admit connection", "addr", dialed, "err", err)
 		return -1, fmt.Errorf("connect: %w", err)
@@ -371,8 +383,13 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 			if err := ctx.Err(); err != nil {
 				panic(fmt.Errorf("accept_tcp: %w", context.Cause(ctx)))
 			}
+			reservation, err := env.Registry.Reserve(1)
+			if err != nil {
+				panic(fmt.Errorf("accept_tcp: %w", err))
+			}
 			conn, err := env.TcpServer.AcceptTCP()
 			if err != nil {
+				reservation.Release()
 				env.Logger.Warnw("hostAcceptTCP: failed to accept", "err", err)
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
@@ -381,12 +398,14 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 			if !ok {
 				env.Logger.Warnw("hostAcceptTCP: peer has no readable address", "peer", conn.RemoteAddr())
 				env.RecordCleanupError(conn.Close())
+				reservation.Release()
 				continue
 			}
 			match, err := env.Net.AdmitAddr(ctx, netpolicy.Inbound, peer)
 			if err != nil {
 				env.Logger.Warnw("hostAcceptTCP: peer refused", "peer", peer.String(), "err", err)
 				env.RecordCleanupError(conn.Close())
+				reservation.Release()
 				continue
 			}
 
@@ -395,10 +414,12 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 			if err := markSocket(env, conn); err != nil {
 				env.Logger.Warnw("hostAcceptTCP: failed to mark connection", "peer", peer.String(), "err", err)
 				env.RecordCleanupError(conn.Close())
+				reservation.Release()
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
-			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP)
+			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP, reservation)
 			if err != nil {
+				reservation.Release()
 				env.Logger.Warnw("hostAcceptTCP: failed to admit connection", "peer", peer.String(), "err", err)
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}

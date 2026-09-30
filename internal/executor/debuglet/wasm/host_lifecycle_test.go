@@ -65,10 +65,17 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 				defer close(done)
 				conn, err := listener.Accept()
 				if err != nil {
+					if (phase == "closed_registry" || phase == "closed_registry_recoverable") && errors.Is(err, net.ErrClosed) {
+						return
+					}
 					peerErr = err
 					return
 				}
 				defer conn.Close()
+				if phase == "closed_registry" || phase == "closed_registry_recoverable" {
+					peerErr = errors.New("closed registry dialed a peer")
+					return
+				}
 				_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 				n, err := conn.Read(make([]byte, 1))
 				if n != 0 || !errors.Is(err, io.EOF) {
@@ -123,6 +130,9 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 					t.Errorf("registry rejection=%v", trap)
 				}
 			}
+			if phase == "closed_registry" || phase == "closed_registry_recoverable" {
+				_ = listener.Close()
+			}
 			select {
 			case <-done:
 				if peerErr != nil {
@@ -135,7 +145,7 @@ func TestHostConnectClosesRejectedConnection(t *testing.T) {
 	}
 }
 
-func TestHostAcceptClosesLateConnection(t *testing.T) {
+func TestHostAcceptClosedRegistryDoesNotAccept(t *testing.T) {
 	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
@@ -176,9 +186,13 @@ func TestHostAcceptClosesLateConnection(t *testing.T) {
 	if !errors.Is(trap, net.ErrClosed) {
 		t.Fatalf("late accept=%v", trap)
 	}
+	// Closing the environment releases the listener and its unaccepted peer.
+	if err := env.Close(); err != nil {
+		t.Fatal(err)
+	}
 	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
-	if n, err := peer.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
-		t.Fatalf("late accepted socket survived: %d,%v", n, err)
+	if n, err := peer.Read(make([]byte, 1)); n != 0 || err == nil {
+		t.Fatalf("unaccepted socket survived: %d,%v", n, err)
 	}
 }
 

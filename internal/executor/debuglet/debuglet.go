@@ -46,7 +46,7 @@ const (
 	// defaultExecTimeout is the maximum allowed runtime for a single debuglet.
 	defaultExecTimeout = 5 * time.Minute
 
-	// scionConnCapacity is the default pre-allocated capacity for the SCION
+	// scionConnCapacity is the enforced connection capacity for the SCION
 	// connection registry.
 	scionConnCapacity = 16
 )
@@ -79,13 +79,13 @@ type Debuglet struct {
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
 // operator is the executor's network policy; together with the run's declared
 // destinations it decides every transport the guest can use.
-func New(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager) *Debuglet {
-	return newWithBPFTagger(logger, debugletID, transactionID, policy, operator, schedule, limiter, pc, iface, portManager, ebpf.NewBPFTagger)
+func New(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, budget *socket.Budget) *Debuglet {
+	return newWithBPFTagger(logger, debugletID, transactionID, policy, operator, schedule, limiter, pc, iface, portManager, budget, ebpf.NewBPFTagger)
 }
 
 // The constructor dependency is per call; production and fixtures execute the
 // same fallback/environment path without a mutable package-wide factory.
-func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, newBPF func(*zap.Logger, *net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error)) *Debuglet {
+func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID string, policy scheduler.Policy, operator netpolicy.Operator, schedule *tesla.KeySchedule, limiter *app.Limiter, pc ratelimit.PacketCount, iface *net.Interface, portManager *socket.PortManager, budget *socket.Budget, newBPF func(*zap.Logger, *net.Interface, *tesla.KeySchedule, []byte) (*ebpf.BPFTagger, error)) *Debuglet {
 	// setup tagging
 	var pktTagger tagger.TaggerInterface
 	var constructorCleanup error
@@ -132,7 +132,8 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 		TlsCfg:      &tls.Config{},
 		Tagger:      pktTagger,
 
-		Registry:  &socket.SocketRegistry{},
+		Budget:    budget,
+		Registry:  socket.NewSocketRegistry(budget),
 		ScionConn: socket.NewSCIONConnRegistry(scionConnCapacity),
 
 		PortManager: portManager,
@@ -232,9 +233,8 @@ func IPv6PublicHost(host string) bool {
 	return err == nil && !netpolicy.Normalize(addr).Is4()
 }
 
-// startServers starts the network listeners required by this debuglet instance.
-// Currently only the SCION/UDP listener is active; TCP and plain UDP are
-// reserved for future use.
+// StartServers starts the network listeners required by this run after
+// reserving each listener against its run and node budgets.
 func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error {
 	if err := ctx.Err(); err != nil {
 		return context.Cause(ctx)
@@ -256,15 +256,20 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if err := d.checkListenerFamily(); err != nil {
 			return fmt.Errorf("startServers: TCP listener: %w", err)
 		}
+		reservation, err := d.env.Budget.ReserveListener()
+		if err != nil {
+			return fmt.Errorf("startServers: TCP listener: %w", err)
+		}
 		listen := d.env.PortManager.ListenTCP
 		if d.env.Net.RefusesIPv6() {
 			listen = d.env.PortManager.ListenTCP4
 		}
 		lis, port, addr, err := listen(markListener(d.env.Tagger))
 		if err != nil {
+			reservation.Release()
 			return fmt.Errorf("startServers: failed to start TCP listener: %w", err)
 		}
-		if err := d.env.InstallTCP(lis, port, addr); err != nil {
+		if err := d.env.InstallTCP(lis, port, addr, reservation); err != nil {
 			return err
 		}
 	}
@@ -280,15 +285,20 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if err := d.checkListenerFamily(); err != nil {
 			return fmt.Errorf("startServers: UDP listener: %w", err)
 		}
+		reservation, err := d.env.Budget.ReserveListener()
+		if err != nil {
+			return fmt.Errorf("startServers: UDP listener: %w", err)
+		}
 		listen := d.env.PortManager.ListenUDP
 		if d.env.Net.RefusesIPv6() {
 			listen = d.env.PortManager.ListenUDP4
 		}
 		conn, port, addr, err := listen(markListener(d.env.Tagger))
 		if err != nil {
+			reservation.Release()
 			return fmt.Errorf("startServers: failed to start UDP listener: %w", err)
 		}
-		if err := d.env.InstallUDP(conn, port, addr); err != nil {
+		if err := d.env.InstallUDP(conn, port, addr, reservation); err != nil {
 			return err
 		}
 	}
@@ -313,11 +323,16 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		}
 
 		d.env.Logger.Debug("startServers: starting scion UDP listener")
+		reservation, err := d.env.Budget.ReserveListener()
+		if err != nil {
+			return fmt.Errorf("startServers: SCION listener: %w", err)
+		}
 		scionServer, err := pan.ListenUDP(ctx, listen.Get(), nil)
 		if err != nil {
+			reservation.Release()
 			return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)
 		}
-		if err := d.env.InstallSCION(scionServer); err != nil {
+		if err := d.env.InstallSCION(scionServer, reservation); err != nil {
 			return err
 		}
 
