@@ -432,7 +432,7 @@ func strictCLIDocument(data []byte, out any) error {
 			return errors.New("invalid nodes JSON")
 		}
 		for _, node := range nodes {
-			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities", "admission", "display", "scion_isd_as", "listeners", "clock"}, map[string]bool{"tesla_anchor_key": true})
+			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities", "admission", "display", "scion_isd_as", "listeners", "clock", "ip_metadata"}, map[string]bool{"tesla_anchor_key": true})
 			if err != nil {
 				return err
 			}
@@ -483,9 +483,14 @@ func strictCLIDocument(data []byte, out any) error {
 	return nil
 }
 
-// The API 1.9 node fields keep their documented shape: each value travels
+// Node discovery fields keep their documented shape: each value travels
 // with its source label, and observations with their receipt time.
 func checkNodeVantage(fields map[string]json.RawMessage) error {
+	if raw, present := fields["ip_metadata"]; present {
+		if err := checkNodeIPMetadata(raw); err != nil {
+			return err
+		}
+	}
 	if raw, present := fields["display"]; present {
 		display, err := strictFields(raw, []string{"display_name", "city", "country", "network"}, nil, nil)
 		if err != nil {
@@ -502,6 +507,40 @@ func checkNodeVantage(fields map[string]json.RawMessage) error {
 			if _, err := strictFields(raw, []string{"value", "source", "observed_at"}, nil, map[string]bool{"value": true, "source": true, "observed_at": true}); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func checkNodeIPMetadata(raw json.RawMessage) error {
+	metadata, err := strictFields(raw, []string{"observed", "advertised", "location_opt_out", "disagreements"}, nil, nil)
+	if err != nil {
+		return err
+	}
+	for _, key := range []string{"observed", "advertised"} {
+		address, err := strictFields(metadata[key], []string{"address_source", "asn", "location"}, nil, nil)
+		if err != nil {
+			return err
+		}
+		for name, valueFields := range map[string][]string{"asn": {"number", "name", "prefix"}, "location": {"country", "city", "precision"}} {
+			lookup, err := strictFields(address[name], []string{"value", "source", "observed_at", "reason"}, nil, map[string]bool{"value": true, "source": true})
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(bytes.TrimSpace(lookup["value"]), []byte("null")) {
+				if _, err := strictFields(lookup["value"], valueFields, nil, nil); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	var disagreements []*string
+	if json.Unmarshal(metadata["disagreements"], &disagreements) != nil {
+		return errors.New("invalid IP metadata disagreements")
+	}
+	for _, disagreement := range disagreements {
+		if disagreement == nil {
+			return errors.New("invalid IP metadata disagreements")
 		}
 	}
 	return nil

@@ -41,6 +41,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/ipmetadata"
 	"sync"
 	"time"
 
@@ -61,6 +62,7 @@ type Dispatcher struct {
 	db           *sql.DB
 	outputLimits config.OutputConfig
 	display      map[string]config.ExecutorDisplay
+	ipMetadata   *ipmetadata.Databases
 
 	closed             bool
 	restored           bool // set under mu once a RestoreScheduler call has succeeded

@@ -98,7 +98,7 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	const header = "ID READY NAME LOCATION ISD_AS LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION"
+	const header = "ID READY NAME LOCATION ISD_AS ASN LOCATION_SOURCE LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION"
 	if len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != header {
 		t.Fatalf("table: %q", stdout)
 	}

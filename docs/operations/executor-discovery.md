@@ -6,6 +6,7 @@ Use filters to restrict the list to ready executors:
 ```sh
 dbl nodes --protocol icmp --enforcement fallback --min-capacity-bps 1000000
 dbl nodes --isd-as 1-ff00:0:110
+dbl nodes --asn 559 --country CH
 dbl run --wasm latency.wasm --protocol icmp --allow 192.0.2.1
 ```
 
@@ -195,9 +196,74 @@ Every key is optional. Text is printable UTF-8 of at most 64 characters without
 leading or trailing space; the dispatcher refuses to start otherwise. Changes
 take effect when the dispatcher restarts.
 
-No location is inferred from IP addresses, hostnames or account identity. This
-version provides no geographical filter; location is the operator's label,
-never finer than city.
+`--asn` matches a known origin ASN of either the observed control address or
+advertised literal address. `--country` matches the displayed country, including
+an operator override. SDK callers can use `Node.Location()` to obtain the
+source-labelled city/country pair without changing the wire response. Unknown values do not match. `dbl nodes` shows ASN and the
+location source; `--output json` includes the detailed lookup records below.
+
+### Offline ASN and approximate location
+
+The dispatcher can load optional operator-supplied MMDB files at startup:
+
+```toml
+[metadata]
+asn_database = "/var/lib/debuglet/GeoLite2-ASN.mmdb"
+city_database = "/var/lib/debuglet/GeoLite2-City.mmdb"
+```
+
+Debuglet bundles no database, downloads none and makes no online or DNS lookup.
+Acquire data under its provider's licence. Supported records use the
+GeoIP2-compatible MMDB keys `autonomous_system_number`,
+`autonomous_system_organization`, `country.iso_code` and `city.names.en`.
+Other MMDB layouts are not implicitly translated. The ASN record includes the
+covering database prefix. Location is approximate, at most country and city;
+coordinates are never read or published. Missing city means country precision.
+
+`ip_metadata.observed` and `.advertised` keep the two lookup results separate.
+`address_source` says whether the lookup key was dispatcher-observed or
+executor-reported; raw IPs are not in the public listing. Each `asn` and
+`location` has `value`, `source`, `observed_at` (registration time in Unix
+seconds) and `reason`. `source` is `database:<database_type>@<build_epoch>`,
+using the file's embedded metadata. It identifies the data, not its correctness.
+Lookups describe control/advertised addresses, not measured egress paths.
+
+A null value has a reason: `no_database`, `no_address`, `not_ip`, `non_global`,
+`not_found`, `invalid_record`, `lookup_error` or `opted_out`. A database source
+is retained for negative lookups; it is null when no lookup happened. Loopback,
+private, CGNAT, ULA, documentation and other special-purpose addresses stay
+unknown even if a database contains a record. Hostnames stay unknown.
+
+The existing `display` response stays operator-only for compatibility. New SDK
+and CLI clients derive a display location from `ip_metadata`: an operator city
+or country overrides the entire automatic display location;
+otherwise the observed address is preferred, then the advertised address.
+Automatic results remain visible alongside an override. `disagreements` flags
+conflicting observed/advertised ASNs or locations, or a conflicting operator
+location. A missing value is not treated as a disagreement.
+
+Executors can suppress all automatic location publication:
+
+```toml
+[metadata]
+location_opt_out = true
+```
+
+Restart the executor to publish a changed preference. It applies to public
+listings and new admission snapshots, including when an operator location is
+set. Existing immutable results are unchanged; explicitly configured operator
+location remains visible. Older executors default to allowing automatic lookup.
+
+To update databases, obtain and validate replacement files under the provider's
+licence, then atomically rename them into the configured paths and restart the
+dispatcher. Never overwrite or truncate an open MMDB file in place. Startup
+rejects missing, malformed or unverifiable configured databases; unset paths
+are supported and produce unknown values. Reconnecting executors are looked up
+again. Existing results retain the old source/version and values.
+
+`provenance.vantage_point.ip_metadata` adds these same lookup facts to schema 1
+of result format 1.1. Files predating the field remain readable. No separate
+live metadata table or database-update service is required.
 
 ## Host probes
 

@@ -45,6 +45,7 @@ type RegisteredExecutor struct {
 	vantage            *vantageReport
 	vantageObserved    time.Time
 	display            config.ExecutorDisplay
+	ipMetadata         *wire.IPMetadata
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -172,6 +173,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		cancel()
 		return ErrSessionRetired
 	}
+	display, metadataDB := d.display[owner.ExecutorID()], d.ipMetadata
 	d.registrations[op] = struct{}{}
 	d.registrationWG.Add(1)
 	d.mu.Unlock()
@@ -211,12 +213,13 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	record.capabilityObserved = record.LastSeen
 	record.vantage = vantageFromReport(hello.GetVantagePoint())
 	record.vantageObserved = record.LastSeen
+	record.display = display
+	record.collectIPMetadata(metadataDB, hello.GetVantagePoint().GetLocationOptOut())
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return ErrDispatcherClosed
 	}
-	record.display = d.display[record.ID]
 	old := d.executors[record.ID]
 	if old != nil {
 		record.history = cloneHistory(old.history)
@@ -265,6 +268,7 @@ func cloneHistory(history *debugletHistory) *debugletHistory {
 func snapshotLocked(entry *executorEntry, now time.Time) RegisteredExecutor {
 	out := *entry.RegisteredExecutor
 	out.Capabilities = capabilitySnapshot(entry, now)
+	out.ipMetadata = entry.IPMetadata()
 	if vantageExpired(entry.vantageObserved, now) {
 		out.vantage = nil
 	}

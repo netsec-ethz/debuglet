@@ -59,6 +59,7 @@ func admissionVantagePoint(entry *executorEntry, now time.Time) *wire.VantagePoi
 		host = *entry.publicHost
 	}
 	return &wire.VantagePoint{
+		IPMetadata:    entry.IPMetadata(),
 		SchemaVersion: 1, Capabilities: admissionCapabilities(entry, now),
 		SourceIP:   labelled(entry.sourceIp, ipSource),
 		PublicHost: labelled(host, wire.SourceExecutorReported),

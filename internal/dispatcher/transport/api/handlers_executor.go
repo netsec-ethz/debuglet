@@ -32,6 +32,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 			SCIONISDAS:             isdAS,
 			Listeners:              listeners,
 			Clock:                  e.Clock(),
+			IPMetadata:             e.IPMetadata(),
 			ID:                     e.ID,
 			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,

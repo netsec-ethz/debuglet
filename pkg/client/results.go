@@ -138,6 +138,9 @@ func validateResult(doc Result) error {
 // A value and its source are recorded together or not at all, and a source is
 // one of the defined labels; no label asserts verification.
 func validVantagePoint(v wire.VantagePoint) bool {
+	if !validIPMetadata(v.IPMetadata) {
+		return false
+	}
 	source := func(value *string) bool {
 		return value != nil && (*value == wire.SourceOperator || *value == wire.SourceExecutorReported || *value == wire.SourceDispatcherObserved)
 	}

@@ -25,6 +25,13 @@ type DispatcherConfig struct {
 	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
 	// Executors holds optional operator display metadata by executor ID.
 	Executors map[string]ExecutorDisplay `toml:"executors"`
+	Metadata  MetadataConfig             `toml:"metadata"`
+}
+
+// MetadataConfig names optional operator-supplied offline MMDB files.
+type MetadataConfig struct {
+	ASNDatabase  string `toml:"asn_database"`
+	CityDatabase string `toml:"city_database"`
 }
 
 type GitHubOAuthConfig struct {

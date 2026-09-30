@@ -336,6 +336,7 @@ message VantagePointReport {
   // clears a malformed field alone and keeps the rest of the report.
   ClockState clock = 4;
   HostPlatform platform = 5; // Operator only; never in the public executor listing.
+  bool location_opt_out = 6; // Suppress automatic GeoIP publication; false for older peers.
 }
 
 // The kernel clock discipline as read by adjtimex without changing it.

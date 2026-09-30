@@ -23,10 +23,13 @@ type ExecutorFilter struct {
 	// ISDAS requires the executor-reported SCION ISD-AS, such as 1-ff00:0:110.
 	// Equivalent spellings match; an unknown ISD-AS does not.
 	ISDAS string
+	// ASN matches either known address-derived origin; Country matches display location.
+	ASN     uint32
+	Country string
 }
 
 func (f ExecutorFilter) Empty() bool {
-	return len(f.Protocols) == 0 && f.EnforcementMode == "" && f.MinCapacityBPS == nil && f.ISDAS == ""
+	return len(f.Protocols) == 0 && f.EnforcementMode == "" && f.MinCapacityBPS == nil && f.ISDAS == "" && f.ASN == 0 && f.Country == ""
 }
 
 func (f ExecutorFilter) capabilityEmpty() bool {
@@ -49,6 +52,9 @@ func (f ExecutorFilter) Validate() error {
 	}
 	if _, ok := wire.CanonicalISDAS(f.ISDAS); f.ISDAS != "" && !ok {
 		return fmt.Errorf("ISD-AS filter %q must be a concrete SCION ISD-AS such as 1-ff00:0:110", f.ISDAS)
+	}
+	if f.Country != "" && (len(f.Country) != 2 || f.Country[0] < 'A' || f.Country[0] > 'Z' || f.Country[1] < 'A' || f.Country[1] > 'Z') {
+		return errors.New("country filter must be an upper-case two-letter country code")
 	}
 	return nil
 }
@@ -76,6 +82,16 @@ func (c *Client) DiscoverExecutors(ctx context.Context, filter ExecutorFilter) (
 				continue
 			}
 			if canonical, ok := wire.CanonicalISDAS(*got); !ok || canonical != want {
+				continue
+			}
+		}
+		_, country := node.Location()
+		if filter.Country != "" && (country.Value == nil || *country.Value != filter.Country) {
+			continue
+		}
+		if filter.ASN != 0 {
+			m := node.IPMetadata
+			if m == nil || !matchesASN(m.Observed.ASN, filter.ASN) && !matchesASN(m.Advertised.ASN, filter.ASN) {
 				continue
 			}
 		}
@@ -124,4 +140,8 @@ func (c *Client) SelectExecutor(ctx context.Context, id string, filter ExecutorF
 		return Node{}, ErrNoMatchingExecutor
 	}
 	return *selected, nil
+}
+
+func matchesASN(r wire.IPLookup[wire.ASInfo], number uint32) bool {
+	return r.Value != nil && r.Reason == "" && r.Value.Number == number
 }

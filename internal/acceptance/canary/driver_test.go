@@ -159,6 +159,7 @@ func (s *scriptedSession) Execute(ctx context.Context, args []string) commandRes
 		}
 		return doc([]client.Node{{ID: id, Ready: true, Version: s.opts.Assets.Manifest.Version, TeslaDelaySec: 2, Currency: "TEST",
 			Capabilities: &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: 1790598500, Protocols: []string{"tcp", "udp"}, EnforcementMode: "fallback", AdvertisedCapacityBPS: ptr(int64(1_000_000))},
+			IPMetadata:   scriptedIPMetadata(),
 		}})
 	case "run":
 		s.submissions++

@@ -2,12 +2,12 @@
 
 This note records how Debuglet will collect, store and expose an executor's
 network, location, platform and reachability context. It is a design; steps 1
-to 3 of the delivery order below have landed. Today results record an
+to 4 of the delivery order below have landed. Today results record an
 admission-time vantage point, executors report schema-1
 [capabilities](operations/executor-discovery.md), their SCION ISD-AS,
 listener transports and ICMP, clock and host-platform probes, and operators may
-label executors with a display name, city, country and network. No location is
-inferred. Keep this note in step with the code as each step below lands.
+label executors with a display name, city, country and network. Optional
+offline MMDB files now supply ASN and approximate country/city location. Keep this note in step with the code as each step below lands.
 
 ## Provenance
 
@@ -90,6 +90,10 @@ executor view. The admission snapshot keeps the last report and marks it
    dispatcher has no live operator executor view, so the host platform is
    stored with the registration and published only in result provenance. The
    bandwidth-estimate probe was dropped as disproportionate.
-4. Offline MMDB ASN and geolocation (#237, #238).
+4. Offline MMDB ASN and geolocation (#237, #238). Implemented; see
+   [configuration, opt-out and database updates](operations/executor-discovery.md#offline-asn-and-approximate-location).
+   IP metadata is collected at registration, includes negative lookup reasons,
+   and is retained in admission snapshots. SCION host-address reporting and
+   measured reachability remain outside this slice.
 5. Connect-back listener reachability and admission refusal (#239 part 1).
 6. Dual-stack egress discovery (#239 part 2).

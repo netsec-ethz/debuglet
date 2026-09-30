@@ -33,6 +33,12 @@ type ExecutorConfig struct {
 	Pricing     PricingConfig
 	Output      OutputConfig
 	Clock       ClockConfig
+	Metadata    MetadataConfig
+}
+
+// MetadataConfig controls publication of automatically derived location.
+type MetadataConfig struct {
+	LocationOptOut bool `toml:"location_opt_out"`
 }
 
 // ClockConfig bounds the kernel's estimated clock error the executor accepts
