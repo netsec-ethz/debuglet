@@ -61,6 +61,7 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	db           *sql.DB
 	outputLimits config.OutputConfig
+	attribution  config.AttributionConfig
 	display      map[string]config.ExecutorDisplay
 	ipMetadata   *ipmetadata.Databases
 
@@ -103,6 +104,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		newExpiryTicker: func(period time.Duration) expiryTicker { return realExpiryTicker{time.NewTicker(period)} },
 		leaseTiming:     leaseTiming,
 		keystore:        tag.NewKeyStore(),
+		attribution:     config.DefaultAttributionConfig(),
 		logger:          l,
 		db:              db,
 		outputLimits:    config.DefaultOutputConfig(),
@@ -112,6 +114,9 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		reservations:    make(map[uuid.UUID]schedule.Request),
 	}
 
+	if db != nil {
+		d.keystore = tag.NewPersistentKeyStore(attributionBackend{db: db})
+	}
 	d.initializeEarnings = func(ctx context.Context, exec *RegisteredExecutor) {
 		d.Payment.CreateEarningsIfNotExists(exec.ID, exec.Currency, exec.SuiWallet, database.New(d.db), ctx)
 	}

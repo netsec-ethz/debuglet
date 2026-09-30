@@ -230,10 +230,7 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 			return fmt.Errorf("configure executor onboarding: %w", err)
 		}
 	}
-	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
-		return err
-	}
-	db, err := sqlitedb.Open(cfg.Database.Path)
+	db, err := storagecheck.OpenForService(ctx, storagecheck.Dispatcher, cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -251,6 +248,9 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	defer d.Close()
 	if err := d.ConfigureOutputLimits(cfg.Output); err != nil {
 		return fmt.Errorf("configure output limits: %w", err)
+	}
+	if err := d.ConfigureAttribution(cfg.Attribution); err != nil {
+		return fmt.Errorf("configure attribution history: %w", err)
 	}
 	if err := d.ConfigureExecutorDisplay(cfg.Executors); err != nil {
 		return fmt.Errorf("configure executor display metadata: %w", err)
@@ -479,8 +479,13 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	// example, runs the API with authentication and authorization enforced. The
 	// cookie's Secure attribute comes from this daemon's own transport, never
 	// from a request header, for the reason recorded at the Serve call below.
+	trustedProxies, proxyErr := cfg.Attribution.TrustedProxyPrefixes()
+	if proxyErr != nil {
+		return proxyErr
+	}
 	handler := api.NewHandler(manager, db, logger,
 		api.ExecutorOnboarding(cfg.ExecutorOnboarding, issuer),
+		api.AttributionTrustedProxies(trustedProxies),
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
 		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),

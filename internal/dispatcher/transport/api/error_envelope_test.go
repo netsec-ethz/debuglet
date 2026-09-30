@@ -316,6 +316,7 @@ func TestSDKCodesMatchTheDocumentedCodes(t *testing.T) {
 		CodePayloadTooLarge:          client.CodePayloadTooLarge,
 		CodeInternal:                 client.CodeInternal,
 		CodeUnavailable:              client.CodeUnavailable,
+		CodeRateLimited:              client.CodeRateLimited,
 	}
 	for server, sdk := range pairs {
 		if server != sdk {

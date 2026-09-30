@@ -65,7 +65,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.vantage = vantageFromReport(req.VantagePoint)
 			exec.vantageObserved = seen
 		}
-		chain = tag.Chain{Anchor: bytes.Clone(exec.TeslaAnchorKey), Start: exec.TeslaAnchorTimestamp, Interval: exec.TeslaDelay, DisclosureDelay: exec.TeslaDisclosureDelay}
+		chain = exec.teslaChain()
 	} else {
 		d.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "executor session is unavailable")
@@ -78,6 +78,22 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			Currency:   "USDC",
 		})
 		entry.Write(zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
+	}
+	// A key for another chain of this executor is verified against that
+	// chain's recorded schedule, so the tail of a chain can be disclosed after
+	// the executor restarted onto a new one. An anchor not on record names no
+	// chain the dispatcher knows, and its key is dropped.
+	if anchor := req.GetTeslaKeyAnchor(); len(anchor) > 0 && len(req.GetTeslaKey()) > 0 && !bytes.Equal(anchor, chain.Anchor) {
+		recorded, ok, err := d.recordedChain(ctx, execID, anchor)
+		if err != nil {
+			d.logger.Warn("Failed to read the recorded TESLA chain of a disclosure", zap.String("executor_id", execID), zap.Error(err))
+			return &pb.HeartbeatResponse{}, nil
+		}
+		if !ok {
+			d.logger.Debug("Dropped a disclosed TESLA key for a chain not on record", zap.String("executor_id", execID), zap.String("chain", tag.ChainID(anchor)))
+			return &pb.HeartbeatResponse{}, nil
+		}
+		chain = recorded
 	}
 	// A disclosure that does not verify against the chain is dropped; the
 	// heartbeat still counts, and the chain is logged once rather than per beat.
@@ -93,7 +109,9 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			d.logger.Warn("Rejected disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
 		}
 	} else if err != nil {
-		return nil, fmt.Errorf("failed to store Tesla key: %w", err)
+		// The record could not be written; nothing was stored, and the
+		// executor's next heartbeat discloses the key again.
+		d.logger.Warn("Failed to record disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
 	}
 	return &pb.HeartbeatResponse{}, nil
 }
@@ -391,6 +409,7 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 		return &pb.DebugletExitResponse{}, nil
 	}
 
+	d.endRunActivity(ctx, id, d.now())
 	d.settleTerminalPayment(ctx, &deb, exitCode)
 	d.releaseTerminal(deb)
 	// Reserve the origin continuation and every exact recipient before this

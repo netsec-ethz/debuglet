@@ -51,7 +51,7 @@ func (p Policy) Check(ctx context.Context, path string) error {
 	}
 	db, err := openReadOnly(absolute)
 	if err != nil {
-		return fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, absolute, err)
+		return fmt.Errorf("%w: cannot read database %q: %w", ErrUnreadable, absolute, err)
 	}
 	defer db.Close()
 	return p.verify(ctx, db, absolute)
@@ -115,7 +115,7 @@ func (p Policy) verify(ctx context.Context, db *sql.DB, path string) error {
 func (p Policy) recognize(ctx context.Context, db *sql.DB, path string) (int64, map[string]struct{}, error) {
 	tables, err := tableNames(ctx, db)
 	if err != nil {
-		return 0, nil, fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
+		return 0, nil, fmt.Errorf("%w: cannot read database %q: %w", ErrUnreadable, path, err)
 	}
 	if _, ok := tables[versionTable]; !ok {
 		return 0, nil, fmt.Errorf("%w: %q has no %s table and was not created by Debuglet; "+
@@ -123,7 +123,7 @@ func (p Policy) recognize(ctx context.Context, db *sql.DB, path string) (int64, 
 	}
 	version, err := schemaVersion(ctx, db)
 	if err != nil {
-		return 0, nil, fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
+		return 0, nil, fmt.Errorf("%w: cannot read database %q: %w", ErrUnreadable, path, err)
 	}
 	if version == 0 {
 		return 0, nil, fmt.Errorf("%w: %q records no applied migration; the %s schema was never created. "+
@@ -224,7 +224,7 @@ func tableNames(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
 func (p Policy) columnNames(ctx context.Context, db *sql.DB, path, table string) (map[string]struct{}, error) {
 	columns, err := names(ctx, db, "SELECT name FROM pragma_table_info(?)", table)
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot read database %q: %v", ErrUnreadable, path, err)
+		return nil, fmt.Errorf("%w: cannot read database %q: %w", ErrUnreadable, path, err)
 	}
 	return columns, nil
 }

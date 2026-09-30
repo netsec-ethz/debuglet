@@ -12,7 +12,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
-	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"math/rand/v2"
 	"os"
@@ -192,10 +191,7 @@ func runExecutor(ctx context.Context, cfg *config.ExecutorConfig, readyFile stri
 	}
 	// Refuse an unsupported schema before opening the database, constructing
 	// the node's resources or restoring queued work.
-	if err := storagecheck.Check(ctx, storagecheck.Executor, cfg.Database.Path); err != nil {
-		return err
-	}
-	db, err := sqlitedb.Open(cfg.Database.Path)
+	db, err := storagecheck.OpenForService(ctx, storagecheck.Executor, cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

@@ -64,6 +64,8 @@ type cpPeer struct {
 	id       string
 	price    int64
 	currency string
+	// tesla, when set, is the TESLA schedule the peer announces.
+	tesla *pb.HelloResponse
 
 	mu         sync.Mutex
 	uploads    []*pb.UploadRequest
@@ -74,12 +76,19 @@ type cpPeer struct {
 }
 
 func (p *cpPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, error) {
-	return &pb.HelloResponse{
+	hello := &pb.HelloResponse{
 		ExecutorId:  p.id,
 		Version:     "client-peer",
 		Currency:    p.currency,
 		PricePerBwS: p.price,
-	}, nil
+	}
+	if p.tesla != nil {
+		hello.TeslaAnchorKey, hello.TeslaAnchorTimestampNs = p.tesla.TeslaAnchorKey, p.tesla.TeslaAnchorTimestampNs
+		hello.TeslaDelaySec, hello.TeslaDisclosureDelayEpochs = p.tesla.TeslaDelaySec, p.tesla.TeslaDisclosureDelayEpochs
+		hello.TeslaChainLength = p.tesla.TeslaChainLength
+		hello.Capabilities = p.tesla.Capabilities
+	}
+	return hello, nil
 }
 
 func (p *cpPeer) Upload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {

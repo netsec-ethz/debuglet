@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.10"
+  version: "1.11"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -1762,6 +1762,8 @@ paths:
     get:
       operationId: "getExecutorByIP"
       summary: "Identify the executor registered for a source IP."
+      deprecated: true
+      description: "Deprecated: use GET /attribution/candidates, which needs no credential and answers for a given time. This route keeps working within API major 1."
       parameters:
         - name: "ip"
           in: "query"
@@ -1843,6 +1845,8 @@ paths:
     get:
       operationId: "getExecutorTesla"
       summary: "Read an executor's TESLA key schedule parameters."
+      deprecated: true
+      description: "Deprecated: use the schedule of GET /attribution/candidates and the keys of GET /attribution/keys, which cover earlier chains and survive a dispatcher restart. This route keeps working within API major 1."
       parameters:
         - name: "id"
           in: "path"
@@ -1893,6 +1897,204 @@ paths:
                 $ref: "#/components/schemas/Error"
         "413":
           description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /attribution/candidates:
+    get:
+      operationId: "getAttributionCandidates"
+      summary: "List the runs active from a source address at a time."
+      description: "Added in API 1.11. Dated attribution lookup for probe verification (docs/verification.md). Public and rate-limited per client address. A candidate names the run and its executor, never the account that submitted it. It replaces GET /executors/by-ip."
+      parameters:
+        - name: "ip"
+          in: "query"
+          required: true
+          description: "Source address of the probe packets."
+          schema:
+            type: string
+        - name: "at"
+          in: "query"
+          required: true
+          description: "Capture time, RFC 3339 with optional fractional seconds. Runs whose active interval lies within one epoch of it are listed."
+          schema:
+            type: string
+            format: date-time
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The runs active from ip within one epoch of at, oldest first, at most 32. An empty list before retained_from is no evidence that no run was active."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionCandidates"
+        "400":
+          description: "ip or at is missing or malformed (invalid_request), or the Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "The client address sent more attribution requests than it admits (rate_limited): 10 per second with a burst of 40, counted per TCP peer address and per /64 for IPv6. Retry after Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+            Retry-After:
+              description: "Seconds to wait before retrying."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The attribution history could not be read (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /attribution/keys:
+    get:
+      operationId: "getAttributionKeys"
+      summary: "Read the disclosed keys of one chain."
+      description: "Added in API 1.11. One page of the disclosed TESLA keys of a chain, in ascending epoch order. Only keys that verified against the chain anchor are recorded, each once; undisclosed epochs are absent. A verifier checks every key against k0 itself. Public and rate-limited per client address. It replaces GET /executors/{id}/tesla."
+      parameters:
+        - name: "executor_id"
+          in: "query"
+          required: true
+          description: "Executor ID, as a candidate names it."
+          schema:
+            type: string
+        - name: "chain_id"
+          in: "query"
+          required: true
+          description: "Chain identifier, as a candidate's schedule names it."
+          schema:
+            type: string
+        - name: "from_epoch"
+          in: "query"
+          required: false
+          description: "First epoch of the page. Defaults to 1."
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: "to_epoch"
+          in: "query"
+          required: false
+          description: "Last epoch wanted. The page spans at most 1024 epochs from from_epoch; next_epoch continues it while keys beyond the page exist. Defaults to no bound."
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The disclosed keys of the page."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionKeys"
+        "400":
+          description: "executor_id or chain_id is missing, an epoch is not a non-negative integer or to_epoch is below from_epoch (invalid_request), or the Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No chain with that identifier of that executor is on record (not_found), for example because it was pruned."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "The client address sent more attribution requests than it admits (rate_limited): 10 per second with a burst of 40, counted per TCP peer address and per /64 for IPv6. Retry after Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+            Retry-After:
+              description: "Seconds to wait before retrying."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The attribution history could not be read (internal_error)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -2593,6 +2795,7 @@ components:
             - "payload_too_large"
             - "internal_error"
             - "service_unavailable"
+            - "rate_limited"
         message:
           type: string
           description: "Bounded human-readable diagnostic. Never carries a credential, a stack trace or internal database or transport detail."
@@ -3682,6 +3885,158 @@ components:
           type: integer
           format: int64
           description: "Earliest Unix nanoseconds the key of next_disclosure_epoch may be disclosed, anchor_timestamp_ns + (next_disclosure_epoch + d) * epoch_seconds with d = 1 for an executor that reported none; 0 when the schedule is unknown. Disclosure follows on the next executor heartbeat."
+    AttributionSchedule:
+      type: object
+      additionalProperties: false
+      description: "Added in API 1.11. Public TESLA schedule of one chain; the names follow GET /executors/{id}/tesla. The key of epoch t covers packets sent from t0_unix_ns + t * epoch_seconds to t0_unix_ns + (t + 1) * epoch_seconds and is disclosed no earlier than t0_unix_ns + (t + disclosure_delay_epochs) * epoch_seconds."
+      required:
+        - chain_id
+        - k0
+        - t0_unix_ns
+        - epoch_seconds
+        - disclosure_delay_epochs
+        - chain_length
+        - tag_spec
+      properties:
+        chain_id:
+          type: string
+          description: "Chain identifier, the lowercase hex of the first 16 bytes of SHA-256(k0)."
+        k0:
+          type: string
+          format: byte
+          description: "Base64-encoded chain anchor, the key of epoch 0. Every disclosed key hashes to it."
+        t0_unix_ns:
+          type: integer
+          format: int64
+          description: "Start of epoch 0 in Unix nanoseconds."
+        epoch_seconds:
+          type: integer
+          format: int64
+          description: "Epoch length I in seconds."
+        disclosure_delay_epochs:
+          type: integer
+          format: int64
+          description: "Disclosure delay d in epochs. 0 for an executor that predates it, whose tags a verifier must not accept."
+        chain_length:
+          type: integer
+          format: int64
+          description: "Chain length L: the chain tags epochs below it. 0 when the executor did not report it."
+        tag_spec:
+          type: integer
+          format: int64
+          minimum: 0
+          description: "Tag specification version the executor reported when it registered the chain: 1 is debuglet-tag-v1 (docs/tag-spec.md); 0 is legacy, an executor that did not report debuglet-tag-v1, including every executor that predates the report, whose pre-v1 tags a verifier of tag spec v1 must report as unsupported rather than as a mismatch. Clients must tolerate higher values."
+    AttributionCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - executor_id
+        - run_id
+        - active_from
+        - active_to
+        - ip_source
+        - schedule
+        - disclosed_through
+        - disclosed_through_at_ns
+        - next_disclosure_at_ns
+      properties:
+        executor_id:
+          type: string
+        run_id:
+          type: string
+          format: uuid
+          description: "Run identifier. It grants no access to owner routes; the account is never disclosed."
+        active_from:
+          type: string
+          format: date-time
+          description: "Start of the run's reserved window."
+        active_to:
+          type: string
+          format: date-time
+          description: "End of the run's reserved window, or the time the dispatcher recorded its exit if earlier."
+        ip_source:
+          type: string
+          enum:
+            - "observed"
+            - "advertised"
+          description: "observed when the address is the peer of the executor's control connection, advertised when it is the executor's own claim."
+        schedule:
+          $ref: "#/components/schemas/AttributionSchedule"
+        disclosed_through:
+          type: integer
+          format: int64
+          description: "Latest epoch of the chain whose disclosed key is on record, 0 when none is."
+        disclosed_through_at_ns:
+          type: integer
+          format: int64
+          description: "Unix nanoseconds at which the dispatcher recorded the key of disclosed_through; 0 when none is on record. The key may have been public from then on."
+        next_disclosure_at_ns:
+          type: integer
+          format: int64
+          description: "Earliest Unix nanoseconds the key of epoch disclosed_through + 1 may be disclosed, t0_unix_ns + (disclosed_through + 1 + d) * epoch_seconds with d = 1 for an executor that reported none; 0 when the schedule is unknown. Disclosure follows on the next executor heartbeat."
+    AttributionCandidates:
+      type: object
+      additionalProperties: false
+      required:
+        - ip
+        - at
+        - retained_from
+        - candidates
+        - truncated
+      properties:
+        ip:
+          type: string
+          description: "The queried address in canonical form."
+        at:
+          type: string
+          format: date-time
+        retained_from:
+          type: string
+          format: date-time
+          description: "Start of the retained attribution history. Before it the history was pruned or never recorded, so no candidate there is no evidence either way."
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionCandidate"
+        truncated:
+          type: boolean
+          description: "More than 32 runs matched; candidates lists the first 32."
+    AttributionKey:
+      type: object
+      additionalProperties: false
+      required:
+        - epoch
+        - key
+      properties:
+        epoch:
+          type: integer
+          format: int64
+        key:
+          type: string
+          format: byte
+          description: "Base64-encoded disclosed key k_epoch."
+    AttributionKeys:
+      type: object
+      additionalProperties: false
+      required:
+        - executor_id
+        - chain_id
+        - keys
+        - next_epoch
+      properties:
+        executor_id:
+          type: string
+        chain_id:
+          type: string
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionKey"
+        next_epoch:
+          type: integer
+          format: int64
+          nullable: true
+          description: "from_epoch of the next page; null on the last page."
     DestinationLimitRequest:
       type: object
       additionalProperties: false

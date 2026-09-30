@@ -150,6 +150,10 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 				return nil, fmt.Errorf("failed to associate debuglet with user in database: %w", err)
 			}
 		}
+		if err := recordRunActivity(ctx, qtx, row.ID, selected[i].entry, sreqs[i]); err != nil {
+			failLocked()
+			return nil, fmt.Errorf("record run attribution interval: %w", err)
+		}
 		if err := d.recordProvenance(ctx, qtx, row.ID, debugletIDS[i], specs[i], selected[i]); err != nil {
 			failLocked()
 			return nil, fmt.Errorf("record admission provenance: %w", err)
