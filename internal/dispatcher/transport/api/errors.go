@@ -106,8 +106,15 @@ func apiErrorFrom(status int, code, message string, cause error) *echo.HTTPError
 
 // bindError reports a request body Echo could not decode. Decoder messages can
 // quote values from any field, including credentials, so none is public text.
-func bindError(_ error) *echo.HTTPError {
-	return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid request body")
+func bindError(err error) *echo.HTTPError {
+	failure := apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid request body")
+	// Preserve only the typed size refusal so bodyLimitMiddleware can return
+	// its canonical 413 response without retaining decoder text.
+	var exceeded *http.MaxBytesError
+	if errors.As(err, &exceeded) {
+		failure.SetInternal(exceeded)
+	}
+	return failure
 }
 
 // echoed bounds a caller-supplied value that a message repeats back, so that
