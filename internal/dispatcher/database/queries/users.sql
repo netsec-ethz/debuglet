@@ -21,6 +21,7 @@ WHERE id IN (
     INNER JOIN users ON debuglet_users.user_id = users.id
     WHERE users.uuid=?
 )
+ORDER BY id DESC
 LIMIT ? OFFSET ?;
 
 -- name: InsertDebugletUser :exec
