@@ -445,8 +445,8 @@ the dispatcher and then the executors, one executor at a time. On each host it:
 9. runs the candidate daemon with `-upgrade-database` (and
    `-accept-data-loss` when `upgrade_accept_data_loss=true`) as the service
    user through `runuser`, so the database keeps its owner; the daemon names
-   the database it upgrades, applies the release's migrations to it and checks
-   the result as a start does;
+   the database it upgrades, takes exclusive SQLite ownership across all
+   migration commits, and checks the result before releasing ownership;
 10. activates only the upgraded daemon's candidate link and starts that
     service again. Run the normal deployment command afterward to activate
     the CLI, record the complete deployment, install the candidate
