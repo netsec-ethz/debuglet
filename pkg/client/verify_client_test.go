@@ -4,11 +4,13 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -116,5 +118,140 @@ func TestVerifyRetriesRateLimitsAndNamesMissingRoutes(t *testing.T) {
 	g := newFakeServer(t, "")
 	if _, err := g.client(t, Options{}).Verify(t.Context(), packetsAt(testT0, probe(srcA, 60, 0)), VerifyOptions{}); !errors.Is(err, ErrNoAttributionHistory) {
 		t.Fatalf("dispatcher without the routes: %v", err)
+	}
+}
+
+func TestVerifyHonoursRetryAfter(t *testing.T) {
+	f := newFakeServer(t, "")
+	var calls atomic.Int32
+	var first, second atomic.Int64
+	f.handle("GET /attribution/candidates", func(w http.ResponseWriter, r *http.Request) {
+		switch calls.Add(1) {
+		case 1:
+			first.Store(time.Now().UnixNano())
+			w.Header().Set("Retry-After", "1")
+			jsonHandler(http.StatusTooManyRequests, `{"code":"rate_limited","message":"slow down"}`)(w, r)
+			return
+		case 2:
+			second.Store(time.Now().UnixNano())
+		}
+		jsonHandler(http.StatusOK, `{"ip":"192.0.2.7","at":"2026-09-29T10:00:00Z","retained_from":"2026-01-01T00:00:00Z","truncated":false,"candidates":[]}`)(w, r)
+	})
+	if _, err := f.client(t, Options{}).Verify(t.Context(), packetsAt(testT0, probe(srcA, 60, 0)), VerifyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if gap := time.Duration(second.Load() - first.Load()); gap < 900*time.Millisecond {
+		t.Fatalf("retried %v after a Retry-After of 1 s", gap)
+	}
+}
+
+// A dispatcher that keeps answering 429 holds the verification until the
+// context ends; the error says so and how much is left unchecked.
+func TestVerifyRateLimitedUntilDeadline(t *testing.T) {
+	f := newFakeServer(t, "")
+	var calls atomic.Int32
+	f.handle("GET /attribution/candidates", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "1")
+		jsonHandler(http.StatusTooManyRequests, `{"code":"rate_limited","message":"slow down"}`)(w, r)
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 2500*time.Millisecond)
+	defer cancel()
+	pkts := append(packetsAt(testT0, probe(srcA, 60, 0), probe(srcA, 61, 0)), packetsAt(testT0, probe(srcB, 60, 0))...)
+	start := time.Now()
+	_, err := f.client(t, Options{}).Verify(ctx, pkts, VerifyOptions{})
+	var rl *RateLimitedError
+	if !errors.As(err, &rl) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error %v, want a RateLimitedError", err)
+	}
+	if elapsed := time.Since(start); elapsed < 2*time.Second {
+		t.Fatalf("gave up after %v, before the deadline", elapsed)
+	}
+	if n := calls.Load(); n < 2 || n > 4 || rl.Throttled != int(n) {
+		t.Fatalf("%d requests, %d throttled; want one per Retry-After", n, rl.Throttled)
+	}
+	if rl.UncheckedGroups != 2 || rl.UncheckedPackets != 3 || !rl.Partial ||
+		!strings.Contains(err.Error(), "rate-limited the verification") || !strings.Contains(err.Error(), "at least 2 groups (3 packets) remain unchecked") {
+		t.Fatalf("error %+v: %v", rl, err)
+	}
+}
+
+func TestVerifyPacesRequests(t *testing.T) {
+	f := newFakeServer(t, "")
+	f.handle("GET /attribution/candidates", jsonHandler(http.StatusOK,
+		`{"ip":"192.0.2.7","at":"2026-09-29T10:00:00Z","retained_from":"2026-01-01T00:00:00Z","truncated":false,"candidates":[]}`))
+	var pkts []CapturedPacket
+	for i := range 6 {
+		pkts = append(pkts, CapturedPacket{Data: probe(netip.AddrFrom4([4]byte{10, 0, 0, byte(i)}), 60, 0), CapturedAt: testT0})
+	}
+	start := time.Now()
+	if _, err := f.client(t, Options{}).Verify(t.Context(), pkts, VerifyOptions{RequestRate: 20, RequestBurst: 2}); err != nil {
+		t.Fatal(err)
+	}
+	// Two requests from the burst, four more at 20 per second.
+	if elapsed := time.Since(start); elapsed < 190*time.Millisecond {
+		t.Fatalf("6 requests in %v at 20 per second, burst 2", elapsed)
+	}
+	if _, err := f.client(t, Options{}).Verify(t.Context(), pkts, VerifyOptions{RequestRate: -1}); err != nil {
+		t.Fatalf("unpaced: %v", err)
+	}
+	if _, err := f.client(t, Options{}).Verify(t.Context(), pkts, VerifyOptions{RequestBurst: -1}); err == nil {
+		t.Fatal("negative burst accepted")
+	}
+}
+
+func TestPacerTokenBucket(t *testing.T) {
+	now := time.Unix(1000, 0)
+	p := newPacer(10, 3, func() time.Time { return now })
+	ctx := t.Context()
+	for range 3 {
+		if err := p.wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.tokens >= 1 {
+		t.Fatalf("%v tokens after the burst", p.tokens)
+	}
+	now = now.Add(100 * time.Millisecond)
+	if err := p.wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	p.limited(5 * time.Second)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	var paced *errPaced
+	if err := p.wait(cancelled); !errors.As(err, &paced) || paced.throttled != 1 {
+		t.Fatalf("wait during a hold: %v", err)
+	}
+	now = now.Add(5 * time.Second)
+	if err := p.wait(ctx); err != nil {
+		t.Fatalf("after the hold: %v", err)
+	}
+}
+
+func TestRetryAfterHeader(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		header string
+		want   time.Duration
+	}{
+		{429, "3", 3 * time.Second},
+		{429, "", 0},
+		{429, "-1", 0},
+		{429, "soon", 0},
+		{503, "86400", maxRetryAfter},
+		{400, "3", 0},
+	} {
+		resp := &http.Response{StatusCode: tc.status, Header: http.Header{}}
+		if tc.header != "" {
+			resp.Header.Set("Retry-After", tc.header)
+		}
+		if got := retryAfter(resp); got != tc.want {
+			t.Errorf("%d Retry-After %q: %v, want %v", tc.status, tc.header, got, tc.want)
+		}
+	}
+	resp := &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)}}}
+	if got := retryAfter(resp); got < 28*time.Second || got > 30*time.Second {
+		t.Errorf("HTTP-date Retry-After: %v", got)
 	}
 }

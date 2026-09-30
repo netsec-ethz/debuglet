@@ -95,19 +95,21 @@ type EvidencePacket struct {
 // EvidenceGroup is the recorded verdict of one group. Schedule and Keys are
 // those of the named run's chain for the epochs the verdict used.
 type EvidenceGroup struct {
-	Verdict      Verdict           `json:"verdict"`
-	Reason       string            `json:"reason,omitempty"`
-	Method       VerifyMethod      `json:"method,omitempty"`
-	Source       string            `json:"source,omitempty"`
-	RunID        string            `json:"run_id,omitempty"`
-	ExecutorID   string            `json:"executor_id,omitempty"`
-	Epoch        int64             `json:"epoch,omitempty"`
-	PendingUntil *time.Time        `json:"pending_until,omitempty"`
-	Packets      []int             `json:"packets"`
-	Matched      int               `json:"matched"`
-	Unmatched    int               `json:"unmatched"`
-	Schedule     *EvidenceSchedule `json:"schedule,omitempty"`
-	Keys         []EvidenceKey     `json:"keys,omitempty"`
+	Verdict      Verdict      `json:"verdict"`
+	Reason       string       `json:"reason,omitempty"`
+	Method       VerifyMethod `json:"method,omitempty"`
+	Source       string       `json:"source,omitempty"`
+	RunID        string       `json:"run_id,omitempty"`
+	ExecutorID   string       `json:"executor_id,omitempty"`
+	Epoch        int64        `json:"epoch,omitempty"`
+	PendingUntil *time.Time   `json:"pending_until,omitempty"`
+	Packets      []int        `json:"packets"`
+	Matched      int          `json:"matched"`
+	Unmatched    int          `json:"unmatched"`
+	// Split records the group an entry was split from (VerifyGroup.Split).
+	Split    *VerifySplit      `json:"split,omitempty"`
+	Schedule *EvidenceSchedule `json:"schedule,omitempty"`
+	Keys     []EvidenceKey     `json:"keys,omitempty"`
 }
 
 // EvidenceSchedule is the public TESLA schedule of one executor chain: the
@@ -247,7 +249,7 @@ func (r VerifyReport) Evidence() Evidence {
 		eg := EvidenceGroup{
 			Verdict: g.Verdict, Reason: g.Reason, Method: g.Method, Source: g.Source, RunID: g.RunID,
 			ExecutorID: g.ExecutorID, Epoch: g.Epoch, PendingUntil: g.PendingUntil, Packets: g.Packets,
-			Matched: g.Matched, Unmatched: g.Unmatched,
+			Matched: g.Matched, Unmatched: g.Unmatched, Split: g.Split,
 		}
 		if g.RunID != "" && g.lookup >= 0 {
 			for _, c := range m.lookups[g.lookup].Candidates {

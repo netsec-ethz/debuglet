@@ -184,6 +184,8 @@ func TestVerifyCommandVerdictsAndExitCodes(t *testing.T) {
 			[]string{"invalid      192.0.2.99", "no_run", "Filter the capture"}},
 		{"tag mismatch", []verifyPacket{{v.at(100), v.probe(probeSrc, -1, 1)}}, verifyExitInvalid,
 			[]string{"tag_mismatch", "not sent by Debuglet"}},
+		{"partly unmatched", []verifyPacket{{v.at(100), v.probe(probeSrc, 100, 1)}, {v.at(100), v.probe(probeSrc, -1, 2)}}, verifyExitInconclusive,
+			[]string{"verified     run 6f1c2b1d…", "1 of 2 packets  via offline", "unmatched: no run's tag", "unsupported (unmatched)"}},
 		{"pending", []verifyPacket{{v.at(now), v.probe(probeSrc, now, 1)}}, verifyExitInconclusive,
 			[]string{"pending      192.0.2.7", "until ", "Retry after "}},
 		{"unsupported", []verifyPacket{{v.at(100), append([]byte{0x60}, make([]byte, 47)...)}}, verifyExitInconclusive,

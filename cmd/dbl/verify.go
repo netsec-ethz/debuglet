@@ -25,7 +25,9 @@ const verifyUsage = `Usage:
 
 Checks which Debuglet run, if any, sent the packets of a pcap or pcapng
 capture. Packets are grouped by source address and epoch; each group is
-verified, invalid, pending, missing or unsupported. No account is needed:
+verified, invalid, pending, missing or unsupported; a group whose packets
+reproduce different runs (two measurements toward one recipient at once) is
+split into an entry per run. No account is needed:
 the runs and disclosed keys come from the dispatcher's public attribution
 history, and the tags are checked here (offline). Packets are never uploaded.
 
@@ -326,6 +328,10 @@ func plural(n int, word string) string {
 // groupLine is the one-line view of a group (docs/verification.md#command).
 func groupLine(g client.VerifyGroup) string {
 	packets := plural(len(g.Packets), "packet")
+	if g.Split != nil {
+		// A split group: say how much of the address and epoch it is.
+		packets = fmt.Sprintf("%d of %s", len(g.Packets), plural(g.Split.Packets, "packet"))
+	}
 	source := g.Source
 	if source == "" {
 		source = "(no IP)"
@@ -377,6 +383,8 @@ func reasonPhrase(reason string) string {
 		return "key may already have been public at capture time"
 	case client.ReasonAmbiguous:
 		return "ambiguous: several runs match"
+	case client.ReasonUnmatched:
+		return "unmatched: no run's tag, unlike the rest of their group"
 	case client.ReasonTooManyCandidates:
 		return "too many candidates"
 	case client.ReasonWorkCap:
@@ -394,8 +402,8 @@ func nextStep(g client.VerifyGroup) string {
 		return "invalid (tag_mismatch): some packets carry no valid tag of any run active from their address. They were not sent by Debuglet, or were changed on the way (NAT, segmentation offload); capture with GRO/LRO off."
 	case client.ReasonNoRun:
 		return "invalid (no_run): no Debuglet run was active from these addresses at that time, so Debuglet did not send those packets. Filter the capture to the probe traffic you want to check with --source ADDRESS."
-	case client.ReasonMixedRuns:
-		return "invalid (mixed_runs): packets of one address and epoch carry tags of different runs; verify each destination's traffic separately."
+	case client.ReasonUnmatched:
+		return "unsupported (unmatched): some packets carry no valid tag of any run active from their address, while others of the same address and epoch do. They are attributed to no run: they were changed on the way (NAT, segmentation offload; capture with GRO/LRO off) or sent by other software from that address."
 	case client.ReasonNotDisclosed:
 		return "" // summarized with the retry time
 	case client.ReasonNotRetained, client.ReasonKeysMissing:

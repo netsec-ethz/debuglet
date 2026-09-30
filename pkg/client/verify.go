@@ -19,7 +19,9 @@ import (
 
 // Probe verification (docs/verification.md): which Debuglet run, if any, sent
 // the packets of a capture. Packets are grouped by source address and epoch;
-// every group gets one verdict.
+// every group gets one verdict, unless its packets reproduce different runs
+// or only some reproduce any: then it is split into an entry per run, one
+// for the ambiguous and one for the unmatched packets.
 
 // Verdict is the outcome of one packet group.
 type Verdict string
@@ -29,7 +31,7 @@ const (
 	// the named epoch (or the epoch before it).
 	VerdictVerified Verdict = "verified"
 	// VerdictInvalid: the history covers the time and no candidate run
-	// reproduces the tags (Reason tag_mismatch, no_run or mixed_runs).
+	// reproduces any of the tags (Reason tag_mismatch or no_run).
 	VerdictInvalid Verdict = "invalid"
 	// VerdictPending: the key is not disclosed yet; retry after PendingUntil.
 	VerdictPending Verdict = "pending"
@@ -56,9 +58,8 @@ const (
 
 // Machine reasons of a group verdict.
 const (
-	ReasonTagMismatch = "tag_mismatch" // invalid: some packet matches no candidate run
+	ReasonTagMismatch = "tag_mismatch" // invalid: no packet of the group matches a candidate run
 	ReasonNoRun       = "no_run"       // invalid: no run was active from the address
-	ReasonMixedRuns   = "mixed_runs"   // invalid: the packets match different runs
 
 	ReasonNotDisclosed = "not_disclosed" // pending: a needed key is not disclosed yet
 
@@ -78,6 +79,7 @@ const (
 	ReasonNoSigningKey      = "no_signing_key"      // captured in epoch 0 or after the chain ran out
 	ReasonKeyPublic         = "key_public"          // every candidate key may have been public at capture time
 	ReasonAmbiguous         = "ambiguous"           // more than one run reproduces every tag
+	ReasonUnmatched         = "unmatched"           // no candidate reproduces these packets, but others of their group match
 	ReasonTooManyCandidates = "too_many_candidates" // the lookup named more than 32 runs
 	ReasonWorkCap           = "work_cap"            // over a verification work cap
 )
@@ -128,6 +130,14 @@ type VerifyOptions struct {
 	// time. A key is used only if it was still secret at the capture time
 	// plus this. Zero is DefaultClockTolerance.
 	ClockTolerance time.Duration
+	// RequestRate (requests per second) and RequestBurst pace the history
+	// requests of Client.Verify as a token bucket, to stay within the
+	// dispatcher's per-client rate limit. Zero is the documented limit,
+	// DefaultVerifyRequestRate and DefaultVerifyRequestBurst; a negative
+	// rate disables pacing. After a 429 every request waits for the
+	// Retry-After either way.
+	RequestRate  float64
+	RequestBurst int
 }
 
 // VerifyGroup is the verdict of the packets of one source address in one
@@ -156,7 +166,9 @@ type VerifyGroup struct {
 	Packets []int `json:"packets"`
 	// Matched counts the packets whose tag some candidate run reproduces,
 	// Unmatched those it does not; a count of matches is only meaningful
-	// together with the non-matches (docs/tag-spec.md §7).
+	// together with the non-matches (docs/tag-spec.md §7). For an entry of
+	// a split group they count the entry's own packets; Split has the
+	// group's.
 	Matched   int `json:"matched"`
 	Unmatched int `json:"unmatched"`
 	// Candidates counts the runs the group was checked against.
@@ -164,16 +176,36 @@ type VerifyGroup struct {
 	// AmbiguousRuns lists the runs that each reproduce every tag.
 	AmbiguousRuns []string `json:"ambiguous_runs,omitempty"`
 	// FalseMatchBound bounds the probability that packets not sent by the
-	// run match it by chance: N·(E·2⁻¹⁶)^k for N candidates, E = 2 epochs
-	// and k packets (docs/tag-spec.md §7). It underflows to zero for large k.
+	// run match it by chance: N·C(n,k)·(E·2⁻¹⁶)^k for N candidates, E = 2
+	// epochs and k of the group's n packets, which is N·(E·2⁻¹⁶)^n for an
+	// unsplit group (docs/tag-spec.md §7). It underflows to zero for large k.
 	FalseMatchBound float64 `json:"false_match_bound,omitempty"`
 	// DisclosedAt is when the latest key the verdict used became due for
 	// disclosure; packets captured before it (by a trustworthy clock) cannot
 	// have been forged with that key.
 	DisclosedAt *time.Time `json:"disclosed_at,omitempty"`
+	// Split describes the address-and-epoch group this entry was split
+	// from, when not all its packets reproduce one run; nil otherwise.
+	Split *VerifySplit `json:"split,omitempty"`
 
 	lookup int     // index of the lookup answer that formed the group
 	keys   []int64 // epochs of the named run's chain the verdict used
+}
+
+// VerifySplit describes a packet group that was split: its packets of each
+// run, those several runs reproduce (ambiguous) and those no run reproduces
+// (unmatched) are reported as separate entries, each carrying this record,
+// so that every entry's match count can be read against the whole group's
+// (docs/tag-spec.md §7).
+type VerifySplit struct {
+	// Packets counts the packets of the whole group.
+	Packets int `json:"packets"`
+	// Matched counts those some candidate run reproduces, Unmatched those
+	// no candidate does.
+	Matched   int `json:"matched"`
+	Unmatched int `json:"unmatched"`
+	// Runs lists the runs packets were attributed to.
+	Runs []string `json:"runs"`
 }
 
 // VerifyCounts counts groups by verdict.
@@ -396,7 +428,23 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 			at := v.times[q.idx[0]]
 			answer, err := src.candidates(ctx, q.addr, at)
 			if err != nil {
-				return VerifyReport{}, err
+				// The groups formed so far, this source's and those of
+				// every source not reached yet in this round or the next.
+				groups, pkts := len(pending), 0
+				for _, g := range pending {
+					pkts += len(g.indices)
+				}
+				rest := map[*sourceQueue]bool{}
+				for _, r := range append(slices.Clone(active), next...) {
+					if len(r.idx) > 0 {
+						rest[r] = true
+					}
+				}
+				for r := range rest {
+					groups++
+					pkts += len(r.idx)
+				}
+				return VerifyReport{}, rateLimited(err, groups, pkts, true)
 			}
 			answer.IP, answer.At = q.addr.String(), at.UTC()
 			v.lookups = append(v.lookups, answer)
@@ -466,7 +514,11 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 	})
 	for _, r := range refs {
 		if err := v.resolveChain(ctx, r, v.chains[r]); err != nil {
-			return VerifyReport{}, err
+			pkts := 0
+			for _, g := range pending {
+				pkts += len(g.indices)
+			}
+			return VerifyReport{}, rateLimited(err, len(pending), pkts, false)
 		}
 	}
 
@@ -478,7 +530,9 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 			groups = append(groups, v.finish(d))
 			continue
 		}
-		groups = append(groups, v.finish(v.decide(g)))
+		for _, d := range v.decide(g) {
+			groups = append(groups, v.finish(d))
+		}
 	}
 
 	rank := map[Verdict]int{VerdictVerified: 0, VerdictInvalid: 1, VerdictPending: 2, VerdictMissing: 3, VerdictUnsupported: 4}
@@ -522,4 +576,14 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 		}
 	}
 	return rep, nil
+}
+
+// rateLimited turns a request that waited for the rate limit until the
+// context ended into a *RateLimitedError naming the unchecked groups.
+func rateLimited(err error, groups, packets int, partial bool) error {
+	var p *errPaced
+	if !errors.As(err, &p) {
+		return err
+	}
+	return &RateLimitedError{Throttled: p.throttled, UncheckedGroups: groups, UncheckedPackets: packets, Partial: partial, Err: p.err}
 }

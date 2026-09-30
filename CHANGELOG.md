@@ -50,9 +50,20 @@ changes; the linked API and deployment documentation contains operational detail
   lookups, one hash walk per chain); `--source` restricts a capture to the
   probe addresses before any lookup. `--evidence` writes a format-1 evidence
   bundle, which `dbl verify evidence.json` and `client.VerifyEvidence` check
-  again offline; its schedules are not authenticated until #71(b). Exit
-  status 0 verified, 1 error (including usage errors), 2 invalid, 3
+  again offline; its schedules are not authenticated until #71(b). Exit  status 0 verified, 1 error (including usage errors), 2 invalid, 3
   inconclusive, 124 timeout.
+  A group whose packets reproduce different runs (one executor measuring
+  toward one recipient twice at once) is split into a verified entry per
+  run instead of being rejected; packets of a split group that match no run
+  are `unsupported: unmatched`, and a group is `invalid` only when none of
+  its packets matches. Split entries carry the whole group's counts
+  (`split`, additive within evidence format 1), and the false-match bound
+  N·C(n, k)·(2·2⁻¹⁶)^k counts the candidates tried and the packets picked.
+  Lookups are paced to the dispatcher's rate limit (10 per second, burst
+  40, configurable in `VerifyOptions`); a `429` is retried after its
+  `Retry-After` until the context ends, and then `Verify` returns a
+  `RateLimitedError` naming the unchecked groups. `HTTPError.RetryAfter`
+  carries the delay of a 429 or 503.
   The pure tag functions moved to `pkg/tagspec`, which the taggers and the
   verifier share; tests cross-check the shared vectors with `verify_pcap.py`.
 - API 1.10: account-owned executor enrollment and `dbl executor join`, with

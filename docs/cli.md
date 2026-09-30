@@ -194,7 +194,12 @@ pending      198.51.100.4  2026-09-29T10:20Z  5 packets  until 2026-09-29T10:36Z
 Keys are disclosed about 15 minutes after use, so a fresh capture is
 `pending`; run the command again after the time it names. `invalid` means the
 packets were not sent by the named address's runs (`no_run`: no run was
-active; `tag_mismatch`: the tags do not match); `missing` means the
+active; `tag_mismatch`: no packet's tag matches). A group whose packets
+carry tags of different runs, as when one executor runs two measurements
+toward the same recipient at once, is split into a `verified` line per run
+("3 of 5 packets"); its packets that match no run are `unsupported
+(unmatched)`, not `invalid`, since the rest of the group does match.
+`missing` means the
 dispatcher no longer keeps history for that time and proves nothing either
 way; `unsupported` names what cannot be checked (IPv6, fragments, a snap
 length below 64 bytes, a legacy executor). `--output json` prints the full
@@ -206,6 +211,10 @@ lookups (one per second of its traffic without a run), and one check makes
 at most 1024. Exit status: 0 all verified, 1 error (usage errors included:
 unlike other commands, `dbl verify` never exits 2 for one), 2 some invalid,
 3 otherwise inconclusive, 124 timed out. The default timeout is 5 minutes.
+Lookups are paced to the dispatcher's rate limit (10 per second, burst 40);
+when the dispatcher still answers `429`, `verify` waits for its
+`Retry-After` and retries until the timeout, then says how many groups
+remain unchecked.
 See [probe verification](verification.md).
 
 ## Command groups

@@ -240,24 +240,40 @@ func (v *verifier) ak(c EvidenceCandidate, e int64, chainKey []byte) []byte {
 	return ak
 }
 
+// packetCheck is the outcome of checking one packet against the candidates.
+type packetCheck struct {
+	// runs maps each run that reproduces the tag to the epoch whose key did.
+	runs map[string]int64
+	// definite: every candidate epoch was checked with a key that was still
+	// secret at capture time, and none reproduced the tag.
+	definite bool
+	// The reasons a candidate epoch could not be checked.
+	pending, missing, badKey, capped bool
+	pendingUntil                     time.Time
+	public, noKey                    bool
+}
+
 // decide checks the tags of one group against the candidates of its lookup.
-func (v *verifier) decide(g pendingGroup) VerifyGroup {
+// A group whose packets do not all reproduce one run is split: the packets
+// of each run, the ambiguous and the unmatched ones become entries of their
+// own (docs/verification.md#results).
+func (v *verifier) decide(g pendingGroup) []VerifyGroup {
 	answer := v.lookups[g.lookup]
 	out := VerifyGroup{Source: g.source, Packets: g.indices, lookup: g.lookup, Epoch: g.epoch}
 	first := v.times[g.indices[0]]
 	if answer.Truncated || len(answer.Candidates) > maxVerifyCandidates {
 		out.Verdict, out.Reason = VerdictUnsupported, ReasonTooManyCandidates
-		return out
+		return []VerifyGroup{out}
 	}
 	if len(answer.Candidates) == 0 {
 		out.Epoch = 0
 		if first.Before(answer.RetainedFrom) {
 			out.Verdict, out.Reason = VerdictMissing, ReasonNotRetained
-			return out
+			return []VerifyGroup{out}
 		}
 		out.Verdict, out.Reason, out.Method = VerdictInvalid, ReasonNoRun, VerifyMethodOffline
 		out.Unmatched = len(g.indices)
-		return out
+		return []VerifyGroup{out}
 	}
 	usable := v.usableCandidates(g.lookup)
 	unusable := ""
@@ -269,7 +285,7 @@ func (v *verifier) decide(g pendingGroup) VerifyGroup {
 	out.Candidates = len(usable)
 	if len(usable) == 0 {
 		out.Verdict, out.Reason = VerdictUnsupported, unusable
-		return out
+		return []VerifyGroup{out}
 	}
 	cost := 0
 	for _, i := range g.indices {
@@ -281,140 +297,251 @@ func (v *verifier) decide(g pendingGroup) VerifyGroup {
 	if cost > v.tagBudget {
 		out.Verdict, out.Reason = VerdictUnsupported, ReasonWorkCap
 		out.Detail = fmt.Sprintf("checking this group would exceed the cap of %d tag computations; split or filter the capture", MaxVerifyTagComputations)
-		return out
+		return []VerifyGroup{out}
 	}
 	v.tagBudget -= cost
 
-	// matches[k] maps each run that reproduces packet k's tag to the epoch
-	// whose key did.
-	matches := make([]map[string]int64, len(g.indices))
-	var definiteFailure, blockedPending, blockedMissing, blockedBadKey, blockedCap bool
-	var excludedPublic, excludedNoKey bool
-	var pendingUntil time.Time
+	checks := make([]packetCheck, len(g.indices))
+	var matchedIdx, unmatchedIdx []int // positions in g.indices
 	for k, i := range g.indices {
-		pkt := v.packets[i].Data
-		id, _ := tagspec.PacketID(pkt)
-		in, _ := tagspec.HashInput(pkt)
-		runs := map[string]int64{}
-		checked, blocked, public := false, false, false
-		for _, c := range usable {
-			st := v.chains[chainRef{c.ExecutorID, c.Schedule.ChainID}]
-			epochs, excluded := v.epochPlan(c.Schedule, v.times[i])
-			switch excluded {
-			case ReasonKeyPublic:
-				excludedPublic, public = true, true
-			case ReasonNoSigningKey:
-				excludedNoKey = true
-			}
-			for _, e := range epochs {
-				key, ok := st.keys[e]
-				if !ok {
-					blocked = true
-					switch st.status[e] {
-					case ReasonNotDisclosed:
-						blockedPending = true
-						if due := c.Schedule.dueAt(e); due.After(pendingUntil) {
-							pendingUntil = due
-						}
-					case ReasonBadKey:
-						blockedBadKey = true
-					case ReasonWorkCap:
-						blockedCap = true
-					default:
-						blockedMissing = true
-					}
-					continue
-				}
-				checked = true
-				if tag, err := tagspec.ComputeTag(v.ak(c, e, key), in); err == nil && tag == id {
-					if _, seen := runs[c.RunID]; !seen {
-						runs[c.RunID] = e
-					}
-				}
-			}
-		}
-		matches[k] = runs
-		if len(runs) > 0 {
-			out.Matched++
-			continue
-		}
-		out.Unmatched++
-		// A packet whose tag may be valid under a key that was already
-		// public when it was captured is no evidence against the run.
-		if checked && !blocked && !public {
-			definiteFailure = true
+		checks[k] = v.checkPacket(usable, i)
+		if len(checks[k].runs) > 0 {
+			matchedIdx = append(matchedIdx, k)
+		} else {
+			unmatchedIdx = append(unmatchedIdx, k)
 		}
 	}
+	if len(matchedIdx) == 0 {
+		out.Unmatched = len(g.indices)
+		v.unmatchedVerdict(&out, checks, unmatchedIdx, unusable, false)
+		return []VerifyGroup{out}
+	}
 
-	if out.Unmatched == 0 {
-		var runs []string
-		for run := range matches[0] {
-			all := true
-			for _, m := range matches[1:] {
-				if _, ok := m[run]; !ok {
-					all = false
-					break
-				}
-			}
-			if all {
-				runs = append(runs, run)
-			}
-		}
-		sort.Strings(runs)
-		switch {
-		case len(runs) == 1:
-			out.Verdict, out.Method, out.RunID = VerdictVerified, VerifyMethodOffline, runs[0]
-			for _, c := range usable {
-				if c.RunID != runs[0] {
-					continue
-				}
-				out.ExecutorID = c.ExecutorID
-				out.Epoch = c.Schedule.epochOf(first)
-				seen := map[int64]bool{}
-				for _, m := range matches {
-					seen[m[runs[0]]] = true
-				}
-				for e := range seen {
-					out.keys = append(out.keys, e)
-				}
-				slices.Sort(out.keys)
-				due := c.Schedule.dueAt(out.keys[len(out.keys)-1]).Add(-disclosureSkew).UTC()
-				out.DisclosedAt = &due
+	// The runs that reproduce every matched packet.
+	var common []string
+	for run := range checks[matchedIdx[0]].runs {
+		all := true
+		for _, k := range matchedIdx[1:] {
+			if _, ok := checks[k].runs[run]; !ok {
+				all = false
 				break
 			}
-			bound := float64(len(usable)) * math.Pow(2.0/65536, float64(len(g.indices)))
-			out.FalseMatchBound = math.Min(bound, 1)
-		case len(runs) > 1:
-			out.Verdict, out.Reason, out.AmbiguousRuns = VerdictUnsupported, ReasonAmbiguous, runs
-		default:
-			out.Verdict, out.Reason, out.Method = VerdictInvalid, ReasonMixedRuns, VerifyMethodOffline
 		}
-		return out
+		if all {
+			common = append(common, run)
+		}
+	}
+	sort.Strings(common)
+	if len(unmatchedIdx) == 0 && len(common) > 0 {
+		out.Matched = len(g.indices)
+		if len(common) > 1 {
+			out.Verdict, out.Reason, out.AmbiguousRuns = VerdictUnsupported, ReasonAmbiguous, common
+			return []VerifyGroup{out}
+		}
+		v.verifiedEntry(&out, usable, common[0], checks, matchedIdx, len(g.indices))
+		return []VerifyGroup{out}
+	}
+
+	// Split. Every matched packet goes to the one run that every matched
+	// packet reproduces, if there is one, and otherwise to the one run it
+	// reproduces; a packet that reproduces several runs stays ambiguous.
+	byRun := map[string][]int{}
+	var ambiguous []int
+	ambiguousRuns := map[string]bool{}
+	for _, k := range matchedIdx {
+		switch {
+		case len(common) == 1:
+			byRun[common[0]] = append(byRun[common[0]], k)
+		case len(common) == 0 && len(checks[k].runs) == 1:
+			for run := range checks[k].runs {
+				byRun[run] = append(byRun[run], k)
+			}
+		default:
+			ambiguous = append(ambiguous, k)
+			for run := range checks[k].runs {
+				if len(common) == 0 || slices.Contains(common, run) {
+					ambiguousRuns[run] = true
+				}
+			}
+		}
+	}
+	split := &VerifySplit{Packets: len(g.indices), Matched: len(matchedIdx), Unmatched: len(unmatchedIdx)}
+	runs := make([]string, 0, len(byRun))
+	for run := range byRun {
+		runs = append(runs, run)
+	}
+	sort.Strings(runs)
+	split.Runs = runs
+	entry := func(ks []int) VerifyGroup {
+		e := VerifyGroup{Source: g.source, lookup: g.lookup, Epoch: g.epoch, Candidates: len(usable), Split: split}
+		for _, k := range ks {
+			e.Packets = append(e.Packets, g.indices[k])
+		}
+		return e
+	}
+	var entries []VerifyGroup
+	for _, run := range runs {
+		e := entry(byRun[run])
+		e.Matched = len(byRun[run])
+		v.verifiedEntry(&e, usable, run, checks, byRun[run], len(g.indices))
+		entries = append(entries, e)
+	}
+	if len(ambiguous) > 0 {
+		e := entry(ambiguous)
+		e.Matched = len(ambiguous)
+		e.Verdict, e.Reason = VerdictUnsupported, ReasonAmbiguous
+		for run := range ambiguousRuns {
+			e.AmbiguousRuns = append(e.AmbiguousRuns, run)
+		}
+		sort.Strings(e.AmbiguousRuns)
+		entries = append(entries, e)
+	}
+	if len(unmatchedIdx) > 0 {
+		e := entry(unmatchedIdx)
+		e.Unmatched = len(unmatchedIdx)
+		v.unmatchedVerdict(&e, checks, unmatchedIdx, unusable, true)
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+// checkPacket checks the tag of packet i against every usable candidate.
+func (v *verifier) checkPacket(usable []EvidenceCandidate, i int) packetCheck {
+	pkt := v.packets[i].Data
+	id, _ := tagspec.PacketID(pkt)
+	in, _ := tagspec.HashInput(pkt)
+	pc := packetCheck{runs: map[string]int64{}}
+	checked, blocked := false, false
+	for _, c := range usable {
+		st := v.chains[chainRef{c.ExecutorID, c.Schedule.ChainID}]
+		epochs, excluded := v.epochPlan(c.Schedule, v.times[i])
+		switch excluded {
+		case ReasonKeyPublic:
+			pc.public = true
+		case ReasonNoSigningKey:
+			pc.noKey = true
+		}
+		for _, e := range epochs {
+			key, ok := st.keys[e]
+			if !ok {
+				blocked = true
+				switch st.status[e] {
+				case ReasonNotDisclosed:
+					pc.pending = true
+					if due := c.Schedule.dueAt(e); due.After(pc.pendingUntil) {
+						pc.pendingUntil = due
+					}
+				case ReasonBadKey:
+					pc.badKey = true
+				case ReasonWorkCap:
+					pc.capped = true
+				default:
+					pc.missing = true
+				}
+				continue
+			}
+			checked = true
+			if tag, err := tagspec.ComputeTag(v.ak(c, e, key), in); err == nil && tag == id {
+				if _, seen := pc.runs[c.RunID]; !seen {
+					pc.runs[c.RunID] = e
+				}
+			}
+		}
+	}
+	// A packet whose tag may be valid under a key that was already public
+	// when it was captured is no evidence against the run.
+	pc.definite = len(pc.runs) == 0 && checked && !blocked && !pc.public
+	return pc
+}
+
+// verifiedEntry makes e the verified entry of run over the packets at
+// positions ks of a group of n packets. The false-match bound is that of
+// the best of N candidates matching some k of the n packets by chance:
+// N·C(n, k)·(2·2⁻¹⁶)^k, which is N·(2·2⁻¹⁶)^n for an unsplit group.
+func (v *verifier) verifiedEntry(e *VerifyGroup, usable []EvidenceCandidate, run string, checks []packetCheck, ks []int, n int) {
+	e.Verdict, e.Method, e.RunID = VerdictVerified, VerifyMethodOffline, run
+	for _, c := range usable {
+		if c.RunID != run {
+			continue
+		}
+		e.ExecutorID = c.ExecutorID
+		e.Epoch = c.Schedule.epochOf(v.times[e.Packets[0]])
+		seen := map[int64]bool{}
+		for _, k := range ks {
+			seen[checks[k].runs[run]] = true
+		}
+		for ep := range seen {
+			e.keys = append(e.keys, ep)
+		}
+		slices.Sort(e.keys)
+		due := c.Schedule.dueAt(e.keys[len(e.keys)-1]).Add(-disclosureSkew).UTC()
+		e.DisclosedAt = &due
+		break
+	}
+	e.FalseMatchBound = falseMatchBound(len(usable), n, len(ks))
+}
+
+// falseMatchBound is min(1, N·C(n, k)·(2·2⁻¹⁶)^k), computed in logarithms.
+func falseMatchBound(candidates, n, k int) float64 {
+	lc := func(x int) float64 { r, _ := math.Lgamma(float64(x) + 1); return r }
+	choose := 0.0
+	if k < n {
+		choose = lc(n) - lc(k) - lc(n-k)
+	}
+	return math.Min(math.Exp(math.Log(float64(candidates))+choose+float64(k)*math.Log(2.0/65536)), 1)
+}
+
+// unmatchedVerdict sets the verdict of the packets at positions ks, none of
+// which any candidate reproduces. partial tells that other packets of the
+// group do match: the unmatched ones are then not attributed, but they are
+// no evidence that the group was not sent by Debuglet either (they may have
+// been altered on the way), so they are unsupported, not invalid.
+func (v *verifier) unmatchedVerdict(out *VerifyGroup, checks []packetCheck, ks []int, unusable string, partial bool) {
+	var definite, pending, missing, badKey, capped, public, noKey bool
+	var until time.Time
+	for _, k := range ks {
+		c := checks[k]
+		definite = definite || c.definite
+		pending = pending || c.pending
+		missing = missing || c.missing
+		badKey = badKey || c.badKey
+		capped = capped || c.capped
+		public = public || c.public
+		noKey = noKey || c.noKey
+		if c.pendingUntil.After(until) {
+			until = c.pendingUntil
+		}
+	}
+	mismatch := func() {
+		if partial {
+			out.Verdict, out.Reason, out.Method = VerdictUnsupported, ReasonUnmatched, VerifyMethodOffline
+		} else {
+			out.Verdict, out.Reason, out.Method = VerdictInvalid, ReasonTagMismatch, VerifyMethodOffline
+		}
 	}
 	switch {
 	case unusable != "":
 		// A candidate that cannot be checked may be the sender.
 		out.Verdict, out.Reason = VerdictUnsupported, unusable
-	case definiteFailure:
-		out.Verdict, out.Reason, out.Method = VerdictInvalid, ReasonTagMismatch, VerifyMethodOffline
-	case blockedPending:
+	case definite:
+		mismatch()
+	case pending:
 		out.Verdict, out.Reason = VerdictPending, ReasonNotDisclosed
-		until := pendingUntil.UTC()
-		out.PendingUntil = &until
-	case blockedMissing:
+		u := until.UTC()
+		out.PendingUntil = &u
+	case missing:
 		out.Verdict, out.Reason = VerdictMissing, ReasonKeysMissing
-	case blockedBadKey:
+	case badKey:
 		out.Verdict, out.Reason = VerdictUnsupported, ReasonBadKey
-	case blockedCap:
+	case capped:
 		out.Verdict, out.Reason = VerdictUnsupported, ReasonWorkCap
-	case excludedPublic:
+	case public:
 		out.Verdict, out.Reason = VerdictUnsupported, ReasonKeyPublic
-	case excludedNoKey:
+	case noKey:
 		out.Verdict, out.Reason = VerdictUnsupported, ReasonNoSigningKey
 	default:
-		out.Verdict, out.Reason, out.Method = VerdictInvalid, ReasonTagMismatch, VerifyMethodOffline
+		mismatch()
 	}
-	return out
 }
 
 // reasonPriority orders the reasons a candidate is unusable.
@@ -454,14 +581,22 @@ func (v *verifier) explain(g VerifyGroup) string {
 			d += fmt.Sprintf("; this shows the run sent them if they were captured before %s, when the key became public",
 				g.DisclosedAt.Format(time.RFC3339))
 		}
+		if g.Split != nil {
+			d += fmt.Sprintf(". The packets of this address and epoch reproduce different runs or not all match: these %d of its %d packets are attributed to this run, the others are reported separately",
+				len(g.Packets), g.Split.Packets)
+		}
 		return d
 	case ReasonTagMismatch:
 		return fmt.Sprintf("%d of %d packets carry no valid tag of the %d run(s) active from this address: they were not sent by Debuglet, or were altered on the way (for example by NAT or segmentation offload)",
 			g.Unmatched, n, g.Candidates)
 	case ReasonNoRun:
 		return "no Debuglet run was active from this address at that time, so these packets were not sent by Debuglet"
-	case ReasonMixedRuns:
-		return "the packets carry tags of different runs; verify the traffic of each destination separately"
+	case ReasonUnmatched:
+		d := fmt.Sprintf("%d packets of this address and epoch carry no valid tag of the %d run(s) active from it", g.Unmatched, g.Candidates)
+		if g.Split != nil {
+			d = fmt.Sprintf("%d of the %d packets of this address and epoch carry no valid tag of the %d run(s) active from it, while the other %d do", g.Unmatched, g.Split.Packets, g.Candidates, g.Split.Matched)
+		}
+		return d + ": they are attributed to no run. They were altered on the way (for example by NAT or segmentation offload) or sent by other software from the same address"
 	case ReasonNotDisclosed:
 		if g.PendingUntil != nil {
 			return fmt.Sprintf("the key for this epoch is disclosed at %s; retry after then", g.PendingUntil.Format(time.RFC3339))
@@ -500,6 +635,9 @@ func (v *verifier) explain(g VerifyGroup) string {
 	case ReasonKeyPublic:
 		return "every key that could have tagged these packets may already have been public at the capture time, so the tags prove nothing"
 	case ReasonAmbiguous:
+		if g.Split != nil {
+			return fmt.Sprintf("each of these packets reproduces more than one of the runs %s; capture more packets of the flow to tell them apart", strings.Join(g.AmbiguousRuns, ", "))
+		}
 		return fmt.Sprintf("%d runs each reproduce every tag; capture more packets of the flow to tell them apart", len(g.AmbiguousRuns))
 	case ReasonTooManyCandidates:
 		return fmt.Sprintf("more than %d runs were active from this address; the dispatcher's answer is incomplete", maxVerifyCandidates)

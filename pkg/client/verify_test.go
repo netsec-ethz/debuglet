@@ -72,6 +72,22 @@ func (c *testChain) tag(e int64, run string, pkt []byte) []byte {
 	return out
 }
 
+// colliding returns a variant of pkt whose tag both runs reproduce at e.
+func (c *testChain) colliding(e int64, runX, runY string, pkt []byte) []byte {
+	akX, _ := tagspec.DeriveAK(c.keys[e], []byte(runX))
+	akY, _ := tagspec.DeriveAK(c.keys[e], []byte(runY))
+	for i := 0; ; i++ {
+		p := bytes.Clone(pkt)
+		binary.BigEndian.PutUint32(p[28:], uint32(i))
+		a, _ := tagspec.PacketTag(akX, p)
+		if b, _ := tagspec.PacketTag(akY, p); a == b {
+			binary.BigEndian.PutUint16(p[4:], a)
+			p[6] |= 0x40
+			return p
+		}
+	}
+}
+
 type fakeRun struct {
 	ip       netip.Addr
 	run      string
@@ -207,19 +223,7 @@ func TestVerifyVerdicts(t *testing.T) {
 		}
 		return out
 	}
-	// A packet whose tag both runA and runB reproduce.
-	var collide []byte
-	akA, _ := tagspec.DeriveAK(chain.keys[e], []byte(runA))
-	akB, _ := tagspec.DeriveAK(chain.keys[e], []byte(runB))
-	for i := 0; collide == nil; i++ {
-		p := probe(srcA, 64, 0)
-		binary.BigEndian.PutUint32(p[28:], uint32(i))
-		a, _ := tagspec.PacketTag(akA, p)
-		if b, _ := tagspec.PacketTag(akB, p); a == b {
-			binary.BigEndian.PutUint16(p[4:], a)
-			collide = p
-		}
-	}
+	collide := chain.colliding(e, runA, runB, probe(srcA, 64, 0))
 	for _, tc := range []struct {
 		name    string
 		src     fakeSource
@@ -257,21 +261,18 @@ func TestVerifyVerdicts(t *testing.T) {
 		{name: "key public at capture", src: fakeSource{runs: []fakeRun{active(srcA, runA, chain)}},
 			// Late in e+1 the key of e is due within skew plus tolerance.
 			pkts: packetsAt(chain.at(e+1, 7*time.Second), good(1)...), verdict: VerdictUnsupported, reason: ReasonKeyPublic},
-		{name: "one bad packet", src: fakeSource{runs: []fakeRun{active(srcA, runA, chain)}},
-			pkts:    packetsAt(chain.at(e, time.Second), append(good(2), probe(srcA, 80, 9))...),
+		{name: "no packet matches", src: fakeSource{runs: []fakeRun{active(srcA, runA, chain), active(srcA, runB, chain)}},
+			pkts:    packetsAt(chain.at(e, time.Second), probe(srcA, 80, 9), probe(srcA, 81, 9)),
 			verdict: VerdictInvalid, reason: ReasonTagMismatch,
 			check: func(t *testing.T, g VerifyGroup) {
-				if g.Matched != 2 || g.Unmatched != 1 {
-					t.Errorf("matched %d unmatched %d", g.Matched, g.Unmatched)
+				if g.Matched != 0 || g.Unmatched != 2 || g.Candidates != 2 || g.Split != nil {
+					t.Errorf("group %+v", g)
 				}
 			}},
 		{name: "no run", src: fakeSource{runs: []fakeRun{active(srcB, runA, chain)}},
 			pkts: packetsAt(chain.at(e, time.Second), good(2)...), verdict: VerdictInvalid, reason: ReasonNoRun},
 		{name: "before retained history", src: fakeSource{retainedFrom: chain.at(e+10, 0)},
 			pkts: packetsAt(chain.at(e, time.Second), good(2)...), verdict: VerdictMissing, reason: ReasonNotRetained},
-		{name: "mixed runs", src: fakeSource{runs: []fakeRun{active(srcA, runA, chain), active(srcA, runB, chain)}},
-			pkts:    packetsAt(chain.at(e, time.Second), chain.tag(e, runA, probe(srcA, 60, 1)), chain.tag(e, runB, probe(srcA, 61, 2))),
-			verdict: VerdictInvalid, reason: ReasonMixedRuns},
 		{name: "ambiguous", src: fakeSource{runs: []fakeRun{active(srcA, runA, chain), active(srcA, runB, chain)}},
 			pkts: packetsAt(chain.at(e, time.Second), collide), verdict: VerdictUnsupported, reason: ReasonAmbiguous,
 			check: func(t *testing.T, g VerifyGroup) {
@@ -330,6 +331,96 @@ func lostFrom(e int64) map[int64]bool {
 		out[i] = true
 	}
 	return out
+}
+
+// One executor running two measurements toward one recipient at once sends
+// packets of both runs from one address in one epoch: the group is split per
+// run instead of rejected.
+func TestVerifySplitsGroupsByRun(t *testing.T) {
+	chain := newTestChain("exec-zrh-1", 1, 1000, 2)
+	const e = 100
+	both := &fakeSource{runs: []fakeRun{
+		{ip: srcA, run: runA, chain: chain, from: testT0, to: testNow},
+		{ip: srcA, run: runB, chain: chain, from: testT0, to: testNow},
+	}}
+	tagged := func(run string, n int, fill byte) [][]byte {
+		var out [][]byte
+		for i := range n {
+			out = append(out, chain.tag(e, run, probe(srcA, 60+i, fill+byte(i))))
+		}
+		return out
+	}
+	bound := func(candidates, n, k int) float64 {
+		choose := 1.0
+		for i := range k {
+			choose = choose * float64(n-i) / float64(i+1)
+		}
+		return float64(candidates) * choose * math.Pow(2.0/65536, float64(k))
+	}
+	near := func(got, want float64) bool { return math.Abs(got-want) <= want*1e-9 }
+
+	t.Run("two runs", func(t *testing.T) {
+		data := append(tagged(runA, 3, 0), tagged(runB, 2, 50)...)
+		// Interleave, as concurrent measurements do.
+		data[1], data[3] = data[3], data[1]
+		rep := runOffline(t, both, packetsAt(chain.at(e, time.Second), data...), VerifyOptions{})
+		if rep.Counts != (VerifyCounts{Verified: 2}) || len(rep.Groups) != 2 {
+			t.Fatalf("counts %+v groups %+v", rep.Counts, rep.Groups)
+		}
+		a, b := rep.Groups[0], rep.Groups[1]
+		if a.RunID != runA || b.RunID != runB || a.Matched != 3 || b.Matched != 2 || a.Unmatched != 0 ||
+			fmt.Sprint(a.Packets) != "[0 2 3]" || fmt.Sprint(b.Packets) != "[1 4]" {
+			t.Fatalf("entries %+v %+v", a, b)
+		}
+		want := VerifySplit{Packets: 5, Matched: 5, Unmatched: 0, Runs: []string{runA, runB}}
+		for _, g := range rep.Groups {
+			if g.Split == nil || fmt.Sprint(*g.Split) != fmt.Sprint(want) || g.Candidates != 2 || g.Epoch != e {
+				t.Fatalf("entry %+v split %+v", g, g.Split)
+			}
+		}
+		if !near(a.FalseMatchBound, bound(2, 5, 3)) || !near(b.FalseMatchBound, bound(2, 5, 2)) {
+			t.Fatalf("false-match bounds %g %g, want %g %g", a.FalseMatchBound, b.FalseMatchBound, bound(2, 5, 3), bound(2, 5, 2))
+		}
+		if !strings.Contains(a.Detail, "3 of its 5 packets") {
+			t.Errorf("detail %q", a.Detail)
+		}
+	})
+	t.Run("one run and an unmatched packet", func(t *testing.T) {
+		src := &fakeSource{runs: both.runs[:1]}
+		rep := runOffline(t, src, packetsAt(chain.at(e, time.Second), append(tagged(runA, 2, 0), probe(srcA, 80, 9))...), VerifyOptions{})
+		if rep.Counts != (VerifyCounts{Verified: 1, Unsupported: 1}) {
+			t.Fatalf("counts %+v groups %+v", rep.Counts, rep.Groups)
+		}
+		v, u := rep.Groups[0], rep.Groups[1]
+		if v.Matched != 2 || v.Unmatched != 0 || !near(v.FalseMatchBound, bound(1, 3, 2)) {
+			t.Fatalf("verified entry %+v", v)
+		}
+		if u.Reason != ReasonUnmatched || u.Unmatched != 1 || u.Matched != 0 || fmt.Sprint(u.Packets) != "[2]" ||
+			!strings.Contains(u.Detail, "1 of the 3 packets") {
+			t.Fatalf("unmatched entry %+v", u)
+		}
+		if want := (VerifySplit{Packets: 3, Matched: 2, Unmatched: 1, Runs: []string{runA}}); fmt.Sprint(*u.Split) != fmt.Sprint(want) {
+			t.Fatalf("split %+v", u.Split)
+		}
+	})
+	t.Run("ambiguous packet stays ambiguous", func(t *testing.T) {
+		data := append(tagged(runA, 2, 0), tagged(runB, 1, 50)...)
+		data = append(data, chain.colliding(e, runA, runB, probe(srcA, 64, 0)), probe(srcA, 80, 9))
+		rep := runOffline(t, both, packetsAt(chain.at(e, time.Second), data...), VerifyOptions{})
+		if rep.Counts != (VerifyCounts{Verified: 2, Unsupported: 2}) {
+			t.Fatalf("counts %+v groups %+v", rep.Counts, rep.Groups)
+		}
+		var amb *VerifyGroup
+		for i := range rep.Groups {
+			if rep.Groups[i].Reason == ReasonAmbiguous {
+				amb = &rep.Groups[i]
+			}
+		}
+		if amb == nil || fmt.Sprint(amb.Packets) != "[3]" || len(amb.AmbiguousRuns) != 2 || amb.Matched != 1 ||
+			amb.Split.Matched != 4 || amb.Split.Unmatched != 1 {
+			t.Fatalf("ambiguous entry %+v", amb)
+		}
+	})
 }
 
 func TestVerifyGroupsBySourceAndEpoch(t *testing.T) {
@@ -550,4 +641,78 @@ func TestVerifyEvidenceRoundTrip(t *testing.T) {
 			t.Fatal("format_version 2 accepted")
 		}
 	})
+}
+
+func TestVerifyEvidenceRoundTripOfSplitGroups(t *testing.T) {
+	chain := newTestChain("exec-zrh-1", 1, 1000, 2)
+	src := &fakeSource{runs: []fakeRun{
+		{ip: srcA, run: runA, chain: chain, from: testT0, to: testNow},
+		{ip: srcA, run: runB, chain: chain, from: testT0, to: testNow},
+	}, retainedFrom: testT0}
+	pkts := packetsAt(chain.at(100, time.Second),
+		chain.tag(100, runA, probe(srcA, 60, 1)), chain.tag(100, runB, probe(srcA, 61, 2)),
+		chain.tag(100, runA, probe(srcA, 62, 3)), chain.colliding(100, runA, runB, probe(srcA, 64, 0)),
+		probe(srcA, 80, 9))
+	rep := runOffline(t, src, pkts, VerifyOptions{})
+	if rep.Counts != (VerifyCounts{Verified: 2, Unsupported: 2}) {
+		t.Fatalf("counts %+v", rep.Counts)
+	}
+	ev := rep.Evidence()
+	if ev.FormatVersion != 1 {
+		t.Fatalf("format_version %d", ev.FormatVersion)
+	}
+	for _, g := range ev.Groups {
+		if g.Split == nil || g.Split.Packets != 5 || g.Split.Unmatched != 1 {
+			t.Fatalf("evidence group %+v", g)
+		}
+		if g.Verdict == VerdictVerified && (g.Schedule == nil || len(g.Keys) != 1) {
+			t.Fatalf("verified evidence group %+v", g)
+		}
+	}
+	var buf bytes.Buffer
+	if err := WriteEvidence(&buf, ev); err != nil {
+		t.Fatal(err)
+	}
+	encoded := buf.Bytes()
+	if !bytes.Contains(encoded, []byte(`"split"`)) {
+		t.Fatal("bundle records no split")
+	}
+	read, err := ReadEvidence(bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := VerifyEvidence(context.Background(), read)
+	if err != nil {
+		t.Fatalf("VerifyEvidence: %v", err)
+	}
+	a, _ := json.Marshal(rep.Groups)
+	b, _ := json.Marshal(again.Groups)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("recomputed groups differ:\n%s\n%s", a, b)
+	}
+	for name, change := range map[string]func(ev *Evidence){
+		"split count": func(ev *Evidence) { ev.Groups[0].Split.Unmatched = 0 },
+		"merged runs": func(ev *Evidence) {
+			ev.Groups[0].Packets = append(ev.Groups[0].Packets, ev.Groups[1].Packets...)
+			ev.Groups = append(ev.Groups[:1], ev.Groups[2:]...)
+		},
+		"unmatched made invalid": func(ev *Evidence) {
+			for i := range ev.Groups {
+				if ev.Groups[i].Reason == ReasonUnmatched {
+					ev.Groups[i].Verdict, ev.Groups[i].Reason = VerdictInvalid, ReasonTagMismatch
+				}
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ev, err := ReadEvidence(bytes.NewReader(encoded))
+			if err != nil {
+				t.Fatal(err)
+			}
+			change(&ev)
+			if _, err := VerifyEvidence(context.Background(), ev); err == nil {
+				t.Fatal("tampered evidence checks out")
+			}
+		})
+	}
 }
