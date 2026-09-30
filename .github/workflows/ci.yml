@@ -45,7 +45,7 @@ jobs:
             .cache/ci/tests.json
             .cache/ci/race-tests.json
             .cache/ci/kernel-tests.json
-            .cache/ci/ebpf-objects-*.sha256
+            .cache/ci/ebpf-*.sha256
             .cache/ci/generation/
             .cache/ci/vulnerabilities/
             .cache/ci/ci-image-evidence/

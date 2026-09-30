@@ -40,6 +40,19 @@ type countTbState struct {
 	_ [4]byte
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	countMapDebugletSkMap     = "debuglet_sk_map"
+	countMapExecPacketSizeMap = "exec_packet_size_map"
+	countMapExecRatesMap      = "exec_rates_map"
+	countMapPacketSizeMap     = "packet_size_map"
+	countMapRatesMap          = "rates_map"
+	countProgHandleEgress     = "handle_egress"
+	countProgHandleIngress    = "handle_ingress"
+)
+
 // loadCount returns the embedded CollectionSpec for count.
 func loadCount() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_CountBytes)
@@ -60,7 +73,7 @@ func loadCount() (*ebpf.CollectionSpec, error) {
 //	*countMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadCountObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+func loadCountObjects(obj any, opts *ebpf.CollectionOptions) error {
 	spec, err := loadCount()
 	if err != nil {
 		return err
