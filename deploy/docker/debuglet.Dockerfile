@@ -5,10 +5,10 @@
 
 # Both base images are pinned by digest so a rebuild of one source revision
 # resolves the same bytes. The builder digest is the same one the pipeline
-# images use; move deploy/ci/images.env and this line together. The only
-# unpinned input below is the ca-certificates package apt installs.
+# images use; move deploy/ci/images.env and this line together. The runtime
+# keeps the CA bundle and shell already installed in its pinned base.
 ARG GO_IMAGE=golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d
-ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+ARG RUNTIME_IMAGE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 FROM ${GO_IMAGE} AS payload
 ENV GOTOOLCHAIN=local
@@ -41,10 +41,10 @@ RUN set -eu; \
 	done
 
 FROM ${RUNTIME_IMAGE} AS runtime
-RUN set -eu; \
-	apt-get update; \
-	apt-get install -y --no-install-recommends ca-certificates; \
-	rm -rf /var/lib/apt/lists/*
+# The payload's CGO-disabled binaries need no libc or package manager.
+# Explicitly retain CA roots before removing apk and its unused dependencies;
+# use normal package operations so the remaining inventory stays accurate.
+RUN apk add --no-network ca-certificates-bundle && apk del --no-network apk-tools
 ENV PATH=/opt/debuglet/bin:$PATH
 
 FROM runtime AS full

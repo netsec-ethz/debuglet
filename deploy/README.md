@@ -42,6 +42,15 @@ self-service enrollment are described under
 
 ## Container images
 
+The application images use the digest-pinned Alpine runtime in
+[`docker/debuglet.Dockerfile`](docker/debuglet.Dockerfile). They retain CA roots
+and BusyBox shell utilities for the documented container commands. The static
+Go payload is installed and verified in the Debian build stage; runtime images
+have no package manager or build toolchain. Update them by rebuilding and
+replacing the image. The required image vulnerability lane scans all four
+application targets and retains every finding, including findings below its
+blocking threshold; see [CI image checks](../docs/development/ci-images.md#runtime-image-vulnerability-checks).
+
 [`docker/debuglet.Dockerfile`](docker/debuglet.Dockerfile) builds both role
 images from a single payload stage:
 
