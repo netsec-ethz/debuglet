@@ -119,3 +119,6 @@ remain unchanged.
 An export contains retained data, not a backup of deleted history. Unknown
 historical facts are never reconstructed from current executor settings. Keep
 saved files according to your own retention requirements.
+Export does not delete the server's record, and cancellation does not erase it.
+See [data retention and deletion](operations/data-retention.md) for the current
+cleanup behavior and policy limits.

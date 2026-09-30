@@ -27,6 +27,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Run Debuglet across hosts](operations/remote-deployment.md)
 - [Add your executor](operations/executor-onboarding.md) — console enrollment, shell-only setup and persistent installation.
 - [Managed services](operations/services.md)
+- [Data retention, export and deletion](operations/data-retention.md)
 - [Executor recovery](operations/executor-recovery.md)
 - [Inspect an interrupted run](operations/recovery-inspection.md)
 - [Local validation checks](operations/local-checks.md)
