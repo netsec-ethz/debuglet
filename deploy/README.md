@@ -479,6 +479,13 @@ When step 9 fails the play stops on that host: the service stays stopped, the
 backup and previous daemon link stay in place, the remaining executors are left
 untouched, and the database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
+For rollback, stop every daemon using the database and keep the failed database
+and its companions separately for diagnosis. Restore the complete offline
+backup as a unit before restarting the previous package: an older database
+must never be combined with a newer `-wal` or `-shm` file. The published v0.2.0
+daemons refuse a newer schema at startup; they do not have the candidate's
+`-check-database` flag. Verify the restored service's readiness and retained
+results with the previous package before admitting fresh work.
 [Stored state](../docs/operations/configuration.md#stored-state) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
 `upgrade-database.yml`, and `site.yml` never runs it.

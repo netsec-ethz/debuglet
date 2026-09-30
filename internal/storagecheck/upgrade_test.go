@@ -5,6 +5,8 @@ package storagecheck
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -126,5 +128,49 @@ func TestUpgradePreservesPreviousPopulatedSchemas(t *testing.T) {
 				t.Fatalf("historical chain descriptors=%d", got)
 			}
 		})
+	}
+}
+
+func TestUpgradeMigrationFailureCanResumeOrRestore(t *testing.T) {
+	path := fixture(t, Dispatcher, 9)
+	// A local fixture trigger aborts the third pending migration's commit.
+	// Earlier canonical migrations must remain recorded, and the failed
+	// transaction must roll back both its schema and version record.
+	modify(t, path, `CREATE TRIGGER fixture_fail_migration BEFORE INSERT ON goose_db_version
+		WHEN NEW.version_id = 12 BEGIN SELECT RAISE(ABORT, 'fixture migration failure'); END`)
+	backup, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Upgrade(t.Context(), Dispatcher, path)
+	if err == nil || !strings.Contains(err.Error(), "fixture migration failure") || !strings.Contains(err.Error(), "records version 11") {
+		t.Fatalf("migration failure lacks durable progress: %v", err)
+	}
+	if got := schemaVersionOf(t, path); got != 11 {
+		t.Fatalf("failed migration recorded schema %d", got)
+	}
+	if err := Check(t.Context(), Dispatcher, path); !errors.Is(err, ErrOutdated) {
+		t.Fatalf("partly upgraded state must not start: %v", err)
+	}
+	if got := count(t, path, "SELECT count(*) FROM sqlite_schema WHERE name='debuglet_cancellations'"); got != 0 {
+		t.Fatal("failed migration left its table behind")
+	}
+	modify(t, path, "DROP TRIGGER fixture_fail_migration")
+	if _, err := Upgrade(t.Context(), Dispatcher, path); err != nil {
+		t.Fatal("resume from durable progress:", err)
+	}
+	if err := Check(t.Context(), Dispatcher, path); err != nil {
+		t.Fatal("completed retry rejected:", err)
+	}
+	// Recovery may instead restore the offline backup. No migration marker
+	// outside the database prevents a previously supported package using it.
+	if err := os.WriteFile(path, backup, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := schemaVersionOf(t, path); got != 9 {
+		t.Fatalf("restored backup records schema %d", got)
+	}
+	if err := Check(t.Context(), Dispatcher, path); !errors.Is(err, ErrOutdated) {
+		t.Fatalf("restored backup should request its original upgrade: %v", err)
 	}
 }
