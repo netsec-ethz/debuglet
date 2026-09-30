@@ -19,8 +19,8 @@ func TestRetryRequiresVersionAndLineageReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := f.client(t, Options{})
-	key := "9a8ddf26-205a-48a4-8c93-42e384f1e611"
-	if _, err := c.RetryTEST(testContext(t), fixtureID, key, batch); err == nil {
+	requestID := "9a8ddf26-205a-48a4-8c93-42e384f1e611"
+	if _, err := c.RetryTEST(testContext(t), fixtureID, requestID, batch); err == nil {
 		t.Fatal("old intent response accepted")
 	}
 	f.mu.Lock()
@@ -31,7 +31,7 @@ func TestRetryRequiresVersionAndLineageReceipt(t *testing.T) {
 	var body struct {
 		Retry wire.RetryLink `json:"retry"`
 	}
-	if err := json.Unmarshal(f.reqs[0].Body, &body); err != nil || body.Retry.ParentRunID != fixtureID || body.Retry.RequestID != key {
+	if err := json.Unmarshal(f.reqs[0].Body, &body); err != nil || body.Retry.ParentRunID != fixtureID || body.Retry.RequestID != requestID {
 		t.Fatal("missing frozen retry identity")
 	}
 }

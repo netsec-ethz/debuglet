@@ -11,3 +11,5 @@ internal/dispatcher/transport/api/auth_test.go:generic-api-key:28
 85aaeb395edd6e2d1218e787f60969868eaf362b:pkg/client/attribution.go:generic-api-key:29
 # The first version of the comment above quoted that constant.
 4c8bff9a52672b7f127f92ae8e93f02a3634d4d1:.gitleaksignore:generic-api-key:9
+# A synthetic retry request UUID, originally named key; it grants no authority.
+88f4434083ea2cc7dfeaaed673b01fe83579947a:pkg/client/retry_test.go:generic-api-key:22
