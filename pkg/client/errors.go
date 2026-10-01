@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // HTTPError reports a response the client did not accept: any status other
@@ -18,6 +19,9 @@ type HTTPError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	// RetryAfter is the delay a 429 or 503 response asked for in its
+	// Retry-After header; zero when it named none.
+	RetryAfter time.Duration
 }
 
 func (e *HTTPError) Error() string {

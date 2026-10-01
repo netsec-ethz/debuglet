@@ -92,6 +92,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/pkg/tagspec"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -111,7 +112,7 @@ const DefaultEpochLength = 10 * time.Second
 // MinDisclosureDelay is the shortest disclosure delay d, in epochs, a schedule
 // accepts. A verifier tries a packet's epoch t and t-1; with d = 1 the key of
 // t-1 is already public during epoch t (see Disclosure).
-const MinDisclosureDelay = 2
+const MinDisclosureDelay = tagspec.MinDisclosureDelay
 
 // DefaultDisclosureWindow is the wall-clock time a default disclosure delay
 // covers: d defaults to the smallest number of epochs, and at least
@@ -561,15 +562,9 @@ func DeriveFromDisclosed(disclosedKey []byte, disclosedEpoch, targetEpoch int64)
 //
 //	ak = HKDF-SHA256(secret=k, info=measurementID, length=32)
 //
-// measurementID should be the raw bytes of the UUID (or any stable byte
-// representation of the measurement identifier).
+// measurementID is the ASCII of the run's canonical UUID (tagspec.DeriveAK).
 func DeriveAK(k []byte, measurementID []byte) ([]byte, error) {
-	r := hkdf.New(sha256.New, k, nil, measurementID)
-	ak := make([]byte, 32)
-	if _, err := io.ReadFull(r, ak); err != nil {
-		return nil, fmt.Errorf("tesla: HKDF failed: %w", err)
-	}
-	return ak, nil
+	return tagspec.DeriveAK(k, measurementID)
 }
 
 // ChainSeed derives the tail k_L of one chain from a configured seed:

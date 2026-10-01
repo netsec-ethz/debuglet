@@ -56,6 +56,8 @@ func defaultCommandTimeout(command string, args ...string) time.Duration {
 		return 5 * time.Minute
 	case "demo":
 		return 60 * time.Second
+	case "verify":
+		return verifyCommandTimeout
 	default:
 		return 30 * time.Second
 	}
@@ -114,6 +116,8 @@ func dispatch(ctx context.Context, command string, args []string, options global
 		return cancelCommand(ctx, args, options, stdout, stderr)
 	case "version":
 		return versionCommand(ctx, args, options, stdout, stderr)
+	case "verify":
+		return verifyCommand(ctx, args, options, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "dbl: unknown command %q\n", command)
 		return exitUsage
