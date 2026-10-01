@@ -229,10 +229,7 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 			return fmt.Errorf("configure executor onboarding: %w", err)
 		}
 	}
-	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
-		return err
-	}
-	db, err := sqlitedb.Open(cfg.Database.Path)
+	db, err := storagecheck.OpenForService(ctx, storagecheck.Dispatcher, cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

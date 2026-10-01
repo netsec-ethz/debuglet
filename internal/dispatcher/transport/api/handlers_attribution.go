@@ -70,7 +70,14 @@ func (h *Handler) GetAttributionCandidates(c echo.Context) error {
 		return apiError(http.StatusBadRequest, CodeInvalidRequest, "at is not an RFC 3339 time: "+echoed(rawAt))
 	}
 	ctx := c.Request().Context()
-	queries := database.New(h.db)
+	// Retention and candidates must describe the same snapshot: a concurrent
+	// prune must not pair an old coverage marker with newly removed runs.
+	tx, err := h.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the attribution history", err)
+	}
+	defer tx.Rollback()
+	queries := database.New(tx)
 	retainedFrom, err := queries.GetAttributionRetention(ctx)
 	if err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the attribution history", err)
@@ -79,6 +86,9 @@ func (h *Handler) GetAttributionCandidates(c echo.Context) error {
 		SourceIp: ip, AtNs: at.UnixNano(), MaxRows: maxAttributionCandidates + 1,
 	})
 	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the attribution history", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the attribution history", err)
 	}
 	resp := AttributionCandidatesResponse{
