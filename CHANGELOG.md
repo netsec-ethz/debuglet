@@ -46,7 +46,7 @@ changes; the linked API and deployment documentation contains operational detail
   verified against it (once), and each run's interval and source address. A
   dispatcher restart no longer loses disclosed keys, and earlier chains stay
   verifiable. The history is pruned after `[attribution] retention_days`
-  (default 90); upgrade the database explicitly before starting this build.
+  (default 90; 0 or unset also means 90); upgrade the database explicitly before starting this build.
   - API 1.11: `GET /attribution/candidates?ip=&at=` lists the runs active
     from an address within one epoch of a time (at most 32) with their chain
     schedule `{chain_id, k0, t0_unix_ns, epoch_seconds,
