@@ -179,8 +179,15 @@ func TestRecordedChainCarriesTheReportedTagSpec(t *testing.T) {
 
 func TestPruneAttributionAdvancesRetainedFrom(t *testing.T) {
 	d, db, _ := newRegistryFixture(t)
-	if err := d.ConfigureAttribution(config.AttributionConfig{RetentionDays: 0}); err == nil {
-		t.Fatal("a zero retention was accepted")
+	if err := d.ConfigureAttribution(config.AttributionConfig{RetentionDays: -1}); err == nil {
+		t.Fatal("a negative retention was accepted")
+	}
+	// A configuration built in code without the field keeps the default.
+	if err := d.ConfigureAttribution(config.AttributionConfig{}); err != nil {
+		t.Fatalf("an unset retention was refused: %v", err)
+	}
+	if got, want := (config.AttributionConfig{}).Retention(), config.DefaultAttributionRetentionDays*24*time.Hour; got != want {
+		t.Fatalf("unset retention = %v; want the default %v", got, want)
 	}
 	if err := d.ConfigureAttribution(config.AttributionConfig{RetentionDays: 1}); err != nil {
 		t.Fatal(err)

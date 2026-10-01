@@ -15,7 +15,8 @@ import (
 type AttributionConfig struct {
 	// RetentionDays is how long the history is kept. Older records are pruned
 	// periodically, and GET /attribution/candidates reports the resulting
-	// retained_from. Omitted means DefaultAttributionRetentionDays.
+	// retained_from. Omitted or 0 means DefaultAttributionRetentionDays, so
+	// a configuration built in code without it keeps the documented default.
 	RetentionDays int `toml:"retention_days"`
 	// TrustedProxies lists the addresses or CIDR prefixes of reverse proxies
 	// in front of the HTTP API that set X-Forwarded-For. The attribution
@@ -42,12 +43,21 @@ func DefaultAttributionConfig() AttributionConfig {
 
 // Retention is the configured retention as a duration.
 func (cfg AttributionConfig) Retention() time.Duration {
-	return time.Duration(cfg.RetentionDays) * 24 * time.Hour
+	return time.Duration(cfg.retentionDays()) * 24 * time.Hour
+}
+
+// retentionDays resolves 0 to the default.
+func (cfg AttributionConfig) retentionDays() int {
+	if cfg.RetentionDays == 0 {
+		return DefaultAttributionRetentionDays
+	}
+	return cfg.RetentionDays
 }
 
 func (cfg AttributionConfig) Validate() error {
-	if cfg.RetentionDays < 1 || cfg.RetentionDays > MaxAttributionRetentionDays {
-		return fmt.Errorf("attribution.retention_days must be between 1 and %d, got %d", MaxAttributionRetentionDays, cfg.RetentionDays)
+	if cfg.RetentionDays < 0 || cfg.RetentionDays > MaxAttributionRetentionDays {
+		return fmt.Errorf("attribution.retention_days must be 0 (the default of %d days) or between 1 and %d, got %d",
+			DefaultAttributionRetentionDays, MaxAttributionRetentionDays, cfg.RetentionDays)
 	}
 	_, err := cfg.TrustedProxyPrefixes()
 	return err
