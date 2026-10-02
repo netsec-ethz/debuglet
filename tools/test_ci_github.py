@@ -99,7 +99,13 @@ if sys.argv[1] == os.environ.get('DOCKER_FAIL_COMMAND'):
 if sys.argv[1:3] == ['image', 'inspect']:
     print('sha256:fixture')
 elif sys.argv[1] == 'run':
-    sys.exit(int(os.environ.get('DOCKER_RESULT', '0')))
+    result_key = 'DOCKER_PREPARE_RESULT' if sys.argv[-3:] == ['go', 'mod', 'download'] else 'DOCKER_RESULT'
+    sys.exit(int(os.environ.get(result_key, os.environ.get('DOCKER_RESULT', '0'))))
+elif sys.argv[1:3] == ['container', 'ls'] and os.environ.get('DOCKER_REMAINING'):
+    with open(os.environ['DOCKER_CALLS']) as calls:
+        removals = [call for call in map(json.loads, calls) if call[:2] == ['rm', '--force']]
+    index = 2 if os.environ['DOCKER_REMAINING'] == 'runtime' else 3
+    print(removals[-1][index])
 ''')
         docker.chmod(0o755)
         self.calls = self.root / 'calls.jsonl'
@@ -250,6 +256,71 @@ elif sys.argv[1] == 'run':
                 cleanup = json.loads((self.root / f'.cache/ci/{lane}/cleanup.json').read_text())
                 self.assertEqual(cleanup['test_status'], 42)
                 self.assertTrue(cleanup['removed'])
+
+    def test_evaluation_uses_tools_and_only_its_isolated_runtime_capability(self):
+        result = self.launch('evaluation', GITHUB_EVENT_NAME='workflow_dispatch',
+                             GITHUB_TOKEN='fixture-secret', SSH_AUTH_SOCK='/fixture/agent')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        runs = [call for call in self.arguments() if call[0] == 'run']
+        self.assertEqual(len(runs), 2)
+        prepare, runtime = runs
+        self.assertEqual(prepare[-3:], ['go', 'mod', 'download'])
+        self.assertIn(f'type=bind,source={self.root},target=/workspace,readonly', prepare)
+        self.assertNotIn('--cap-add', prepare)
+        self.assertNotIn('DEBUGLET_EVALUATION_ISOLATED=1', prepare)
+        self.assertTrue(any(call[0] == 'build' for call in self.arguments()))
+        for args in runs:
+            self.assertIn('debuglet-ci-tools:20261002-1', args)
+            self.assertNotIn('--privileged', args)
+            self.assertNotIn('fixture-secret', json.dumps(args))
+            self.assertNotIn('GITHUB_TOKEN', args)
+            self.assertNotIn('SSH_AUTH_SOCK', args)
+        for option, value in (('--network', 'none'), ('--cpus', '4'),
+                              ('--memory', '4g'), ('--pids-limit', '512')):
+            self.assertEqual(runtime[runtime.index(option) + 1], value)
+        self.assertEqual([runtime[i + 1] for i, arg in enumerate(runtime) if arg == '--cap-add'],
+                         ['NET_ADMIN'])
+        self.assertIn('DEBUGLET_EVALUATION_ISOLATED=1', runtime)
+        self.assertNotIn('DEBUGLET_FAULT_ISOLATED=1', runtime)
+        self.assertEqual(runtime[-3:-1], ['evaluation', 'local'])
+        self.assertIn('evaluation) bash scripts/ci-evaluation.sh ;;', runtime[-5])
+        cleanup = json.loads((self.root / '.cache/ci/evaluation/cleanup.json').read_text())
+        self.assertEqual(cleanup['test_status'], 0)
+        self.assertTrue(cleanup['removed'])
+        names = [args[args.index('--name') + 1] for args in runs]
+        removal = next(call for call in self.arguments() if call[:2] == ['rm', '--force'])
+        self.assertEqual(set(removal[2:]), set(names))
+        self.assertEqual(self.arguments()[-1][:3], ['container', 'ls', '--all'])
+        self.assertFalse((self.root / '.cache/ci/faults/cleanup.json').exists())
+
+    def test_evaluation_preparation_and_runtime_failures_keep_status_after_cleanup(self):
+        for changes, count in (({'DOCKER_PREPARE_RESULT': '41'}, 1),
+                               ({'DOCKER_PREPARE_RESULT': '0', 'DOCKER_RESULT': '42'}, 2)):
+            with self.subTest(changes=changes):
+                self.calls.unlink(missing_ok=True)
+                result = self.launch('evaluation', **changes)
+                self.assertEqual(result.returncode, 40 + count, result.stderr)
+                runs = [call for call in self.arguments() if call[0] == 'run']
+                self.assertEqual(len(runs), count)
+                cleanup = json.loads((self.root / '.cache/ci/evaluation/cleanup.json').read_text())
+                self.assertTrue(cleanup['removed'])
+                self.assertEqual(cleanup['test_status'], result.returncode)
+                removal = next(call for call in self.arguments() if call[:2] == ['rm', '--force'])
+                self.assertEqual(removal[2:], [cleanup['container'], cleanup['preparation_container']])
+                self.assertEqual(self.arguments()[-1][:3], ['container', 'ls', '--all'])
+
+    def test_evaluation_cannot_claim_cleanup_with_either_container_left_or_unknown(self):
+        evidence = self.root / '.cache/ci/evaluation/cleanup.json'
+        for changes in ({'DOCKER_REMAINING': 'runtime'}, {'DOCKER_REMAINING': 'preparation'},
+                        {'DOCKER_FAIL_COMMAND': 'container'}):
+            with self.subTest(changes=changes):
+                self.calls.unlink(missing_ok=True)
+                evidence.parent.mkdir(parents=True, exist_ok=True)
+                evidence.write_text('{"removed":true}')
+                result = self.launch('evaluation', **changes)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('cleanup could not be verified', result.stderr)
+                self.assertFalse(evidence.exists(), 'stale successful cleanup evidence survived')
 
     def test_image_preparation_failure_stops_before_container(self):
         for command in ('pull', 'build'):
