@@ -58,6 +58,7 @@ func (c *Client) StartDeviceLogin(ctx context.Context,label string,scopes []stri
  if parseErr!=nil||verify.User!=nil||verify.RawQuery!=""||verify.Fragment!=""||verify.Scheme+"://"+verify.Host!=c.origin||login.Audience!=c.origin+c.basePath||!strings.HasPrefix(login.DeviceCode,"dbd_")||len(login.DeviceCode)>128||login.UserCode==""||len(login.UserCode)>20||login.Interval<5||login.Interval>60||login.ExpiresAt<=time.Now().Unix()||login.ExpiresAt>time.Now().Add(15*time.Minute).Unix()||!slices.Equal(slices.Compact(gotScopes),slices.Compact(wantScopes)){
   return DeviceLogin{},c.protocolErr(http.MethodPost,route,"invalid browser login request")
  }
+ for _,ch:=range login.UserCode{if !(ch>='A'&&ch<='Z'||ch>='2'&&ch<='7'||ch=='-'){return DeviceLogin{},c.protocolErr(http.MethodPost,route,"invalid user code")}}
  return login,nil
 }
 

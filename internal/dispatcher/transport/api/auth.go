@@ -343,6 +343,7 @@ func requireCaller(c echo.Context) (*caller, error) {
 		return nil, established.Failure
 	}
 	if !established.Authenticated && !established.Local {
+		c.Response().Header().Set("WWW-Authenticate", `Bearer realm="Debuglet"`)
 		return nil, unauthorized()
 	}
 	if established.API && !credentialAllows(established.Scopes, c.Request().Method, c.Path()) {
