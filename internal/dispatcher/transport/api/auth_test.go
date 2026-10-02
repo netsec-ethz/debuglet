@@ -723,6 +723,17 @@ type authRoutePolicy struct {
 // It is the one place the expected policy is written down, and both the
 // runtime test below and the contract test compare against it.
 var authAccessMatrix = map[string]authRoutePolicy{
+	"GET /auth/credential": {anonymous: http.StatusUnauthorized, target: "/auth/credential"},
+	"GET /me/credentials": {anonymous: http.StatusUnauthorized, target: "/me/credentials"},
+	"POST /me/credentials": {anonymous: http.StatusUnauthorized, target: "/me/credentials", body: []byte(`{}`)},
+	"DELETE /me/credentials/:id": {anonymous: http.StatusUnauthorized, target: "/me/credentials/missing"},
+	"DELETE /me/credentials": {anonymous: http.StatusUnauthorized, target: "/me/credentials"},
+	"POST /auth/device/start": {anonymous: http.StatusNotFound, target: "/auth/device/start", body: []byte(`{}`), public:true},
+	"POST /auth/device/poll": {anonymous: http.StatusUnauthorized, target: "/auth/device/poll", body: []byte(`{}`), public:true},
+	"POST /auth/device/cancel": {anonymous: http.StatusUnauthorized, target: "/auth/device/cancel", body: []byte(`{}`), public:true},
+	"POST /auth/device/inspect": {anonymous: http.StatusUnauthorized, target: "/auth/device/inspect", body: []byte(`{}`)},
+	"POST /auth/device/approve": {anonymous: http.StatusUnauthorized, target: "/auth/device/approve", body: []byte(`{}`)},
+	"POST /auth/device/deny": {anonymous: http.StatusUnauthorized, target: "/auth/device/deny", body: []byte(`{}`)},
 	"GET /metrics":                                  {anonymous: http.StatusUnauthorized, target: "/metrics"},
 	"GET /version":                                  {anonymous: http.StatusOK, target: "/version", public: true},
 	"GET /openapi.yaml":                             {anonymous: http.StatusOK, target: "/openapi.yaml", public: true},

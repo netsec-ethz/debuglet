@@ -293,7 +293,7 @@ func diagnosticJSON(dec *json.Decoder, secrets *[]string) (any, error) {
 				return nil, err
 			}
 			name := key.(string) // A decoder token in object-key position is a string.
-			if strings.EqualFold(name, "auth_key") {
+			if sensitiveCredentialField(name) {
 				if s, ok := value.(string); ok && s != "" {
 					*secrets = append(*secrets, s)
 				}
@@ -316,6 +316,15 @@ func diagnosticJSON(dec *json.Decoder, secrets *[]string) (any, error) {
 		return array, err
 	default:
 		return token, nil
+	}
+}
+
+func sensitiveCredentialField(name string) bool {
+	switch strings.ToLower(name) {
+	case "auth_key", "token", "account_key", "recovery_code", "csrf_token", "device_code":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -200,7 +200,7 @@ func unauthorized() *echo.HTTPError {
 // local operator, which is the documented development bypass. It is off unless
 // the deployment explicitly asked for it.
 func AuthMiddleware(db *sql.DB, localDevelopment bool, audience ...string) echo.MiddlewareFunc {
-	failedAttempts := newAuthLimiter()
+	failedAttempts := newAddressLimiter(1, 100)
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if healthRoutes[c.Path()] {

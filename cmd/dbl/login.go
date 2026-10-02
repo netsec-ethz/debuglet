@@ -17,9 +17,15 @@ import (
 const loginUsage = `Usage:
   dbl [--dispatcher NAME] login [--account-key-file FILE] [--register NAME]
       [--recovery-file FILE]
+  dbl [--dispatcher NAME] login --browser [--no-browser] [--scopes LIST]
   dbl [--dispatcher NAME] logout
 
 Obtain a session for the selected dispatcher and store it for that connection.
+Remote dispatchers use browser approval when no account key is supplied. The
+verification URL and code also work from another device for a headless shell.
+--no-browser prints the instructions without opening a local browser.
+--scopes is a comma-separated list; executors:write must be requested explicitly
+when this machine will register or renew an executor.
 Without --account-key-file, the key is read from the DEBUGLET_ACCOUNT_KEY
 environment variable; with neither, a dispatcher serving the local development
 profile issues a credential for its own local account.
@@ -47,6 +53,9 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	keyFile := fs.String("account-key-file", "", "file holding the account key, or receiving it with --register")
 	register := fs.String("register", "", "create an account with this name first")
 	recoveryFile := fs.String("recovery-file", "", "file the new account's recovery code is written to")
+	browser := fs.Bool("browser", false, "approve this CLI in a browser")
+	noBrowser := fs.Bool("no-browser", false, "print the browser approval URL without opening it")
+	scopes := fs.String("scopes", "account:read,executors:read,measurements:read,measurements:write", "comma-separated API scopes")
 	if code, ok := parseCommandFlags(fs, args, loginUsage, stdout, stderr); !ok {
 		return code
 	}
@@ -55,6 +64,9 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	if *recoveryFile != "" && *register == "" {
 		return usageError("dbl login", loginUsage, stderr, "--recovery-file only applies to --register")
+	}
+	if (*browser || *noBrowser) && (*keyFile != "" || *register != "" || strings.TrimSpace(os.Getenv(accountKeyEnv)) != "") {
+		return usageError("dbl login", loginUsage, stderr, "browser approval cannot be combined with account-key login or registration")
 	}
 
 	c, profile, code, ok := connectProfileWithoutCredential("dbl login", options, stderr)
@@ -70,6 +82,9 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	// successful remote login into an avoidable local persistence failure.
 	if _, err := connections.LoadCredentials(options.ConfigPath); err != nil {
 		return reportFailure(ctx, "dbl login: read credential store", stderr, err)
+	}
+	if *browser || *noBrowser || (*register == "" && *keyFile == "" && strings.TrimSpace(os.Getenv(accountKeyEnv)) == "" && remoteLoginEndpoint(profile.Endpoint)) {
+		return browserLoginCommand(ctx, c, profile, options, strings.Split(*scopes, ","), *noBrowser, stdout, stderr)
 	}
 
 	accountKey := ""

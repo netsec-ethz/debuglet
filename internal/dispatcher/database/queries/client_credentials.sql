@@ -50,3 +50,9 @@ DELETE FROM device_logins WHERE expires_at <= ?;
 
 -- name: CountDeviceLogins :one
 SELECT COUNT(*) FROM device_logins;
+
+-- name: GetCredentialUser :one
+SELECT id, uuid, name, role FROM users WHERE id = ?;
+
+-- name: LockDeviceLogin :exec
+UPDATE device_logins SET state = state WHERE selector = ?;
