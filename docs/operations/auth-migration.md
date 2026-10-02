@@ -30,12 +30,13 @@ schemas below 3 require a destructive migration and need a separate export and
 operator decision. Do not add `-accept-data-loss` to this procedure.
 
 Run the following on the dispatcher host. Substitute the actual service account,
-configuration and state paths; the backup root must be private. These commands
+group, configuration and state paths; the backup root must be private. These commands
 assume the managed service is the only database writer. Stop other writers too.
 
 ```sh
 sudo systemctl stop debuglet-dispatcher
 sudo systemctl is-active debuglet-dispatcher # must report inactive
+sudo install -d -m 700 -o debuglet -g debuglet /srv/debuglet-backups
 sudo -u debuglet sh
 set -eu
 umask 077
