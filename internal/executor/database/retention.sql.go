@@ -90,6 +90,7 @@ WHERE dispatcher_incarnation = ?1
   AND session_id = ?2
   AND dispatcher_incarnation <> '' AND session_id <> ''
   AND rejected = FALSE
+  AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglet_exits.debuglet_id)
 ORDER BY recorded_at, debuglet_id
 LIMIT ?3
 `

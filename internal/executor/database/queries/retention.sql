@@ -45,6 +45,7 @@ WHERE dispatcher_incarnation = sqlc.arg(dispatcher_incarnation)
   AND session_id = sqlc.arg(session_id)
   AND dispatcher_incarnation <> '' AND session_id <> ''
   AND rejected = FALSE
+  AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglet_exits.debuglet_id)
 ORDER BY recorded_at, debuglet_id
 LIMIT sqlc.arg(limit);
 

@@ -210,6 +210,7 @@ func (q *Queries) GetOutputUsage(ctx context.Context) (int64, error) {
 
 const interruptOpenOutputRuns = `-- name: InterruptOpenOutputRuns :exec
 UPDATE output_runs SET status = 'truncated', reason = 'executor_interrupted' WHERE status = 'open'
+AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id)
 `
 
 func (q *Queries) InterruptOpenOutputRuns(ctx context.Context) error {
@@ -256,7 +257,9 @@ func (q *Queries) ListOutputFrames(ctx context.Context, arg ListOutputFramesPara
 }
 
 const listPendingOutputRuns = `-- name: ListPendingOutputRuns :many
-SELECT run_id, dispatcher_incarnation, session_id, output_version, last_sequence, acknowledged_sequence, emitted_bytes, queued_bytes, queued_frames, status, reason, end_acknowledged, receipt_sequence, receipt_reason FROM output_runs WHERE NOT end_acknowledged AND run_id > ? ORDER BY run_id LIMIT ?
+SELECT run_id, dispatcher_incarnation, session_id, output_version, last_sequence, acknowledged_sequence, emitted_bytes, queued_bytes, queued_frames, status, reason, end_acknowledged, receipt_sequence, receipt_reason FROM output_runs WHERE NOT end_acknowledged AND output_runs.run_id > ?
+AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id)
+ORDER BY output_runs.run_id LIMIT ?
 `
 
 type ListPendingOutputRunsParams struct {

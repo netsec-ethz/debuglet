@@ -34,8 +34,10 @@ import (
 	drpc "github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	edb "github.com/netsec-ethz/debuglet/internal/executor/database"
+	esqlite "github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
+	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
@@ -235,6 +237,107 @@ func TestExecutorCommandReconnectWithRealGuest(t *testing.T) {
 	t.Log("actual command reconnected once; old socket closed, readiness withdrawn, due queue retained, fresh real guest output and terminal verified")
 }
 
+// This owns the real command and its dispatcher/guest sockets. Service-manager
+// authority is tested by the managed-command tests; here the command's actual
+// return certifies shutdown before maintenance and a fresh executor lifetime.
+func TestExecutorCommandArchiveRestartWithRealGuest(t *testing.T) {
+	dir, err := os.MkdirTemp("", "debuglet-command-archive-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f *commandRecovery
+	t.Cleanup(func() {
+		if f != nil && f.retained {
+			return
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	guest := commandRecoveryGuest(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	f = &commandRecovery{t: t, ctx: ctx, cancel: cancel, ready: filepath.Join(dir, "ready.json")}
+	t.Cleanup(f.close)
+	f.open(dir)
+	first := f.connected()
+	f.awaitReady(first)
+	queuedTarget := f.target("queued")
+	future := time.Now().Add(2*commandRequestTimeout + time.Second + commandRetireMargin).Unix()
+	queued := f.submit(guest, queuedTarget, &future)
+	before := f.executorRow(queued.IDs[0], commandRowWait)
+	if !before.StartedAt.IsZero() {
+		t.Fatal("queued control already started")
+	}
+	f.executorCancel()
+	f.await(f.done, "real command joined before archive")
+	if f.runErr != nil {
+		t.Fatal(f.runErr)
+	}
+	path := f.config.Database.Path
+	if err := f.executorDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.executorDB = nil
+	db, err := storagecheck.OpenExclusive(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storagecheck.CheckOpen(ctx, storagecheck.Executor, db, path); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	decision, err := esqlite.ArchiveRun(ctx, db, uuid.MustParse(queued.IDs[0]), "restart-recovery")
+	closeErr := db.Close()
+	if err != nil || closeErr != nil || decision.ArchivedAt == nil {
+		t.Fatalf("archive=%+v %v %v", decision, err, closeErr)
+	}
+	f.executorDB, err = sqlitedb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.adapter.unblock()
+	f.startExecutor()
+	second := f.connected()
+	f.awaitReady(second)
+	if first.Binding() == second.Binding() {
+		t.Fatal("restart reused session authority")
+	}
+	freshTarget := f.target("fresh")
+	fresh := f.submit(guest, freshTarget, nil)
+	f.await(freshTarget.done, "fresh guest after archive/restart")
+	if freshTarget.err != nil {
+		t.Fatal(freshTarget.err)
+	}
+	f.awaitResult(fresh.IDs[0], freshTarget.nonce)
+	if delay := time.Until(time.Unix(future, 0)); delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatal("restart observation timed out")
+		}
+	}
+	// Join again, so evidence comparison cannot race finalization.
+	f.executorCancel()
+	f.await(f.done, "restarted command joined")
+	if f.runErr != nil {
+		t.Fatal(f.runErr)
+	}
+	if after := f.executorRow(queued.IDs[0], commandRowWait); !reflect.DeepEqual(before, after) {
+		t.Fatal("archive/restart rewrote original execution evidence")
+	}
+	if after, err := esqlite.InspectArchive(ctx, f.executorDB, uuid.MustParse(queued.IDs[0])); err != nil || !reflect.DeepEqual(decision, after) {
+		t.Fatalf("decision changed after restart: %+v %v", after, err)
+	}
+	select {
+	case <-queuedTarget.accepted:
+		t.Fatal("archived guest reached its target")
+	default:
+	}
+	t.Log("joined actual command, archived one queued run, restarted with a fresh session, preserved evidence and ran a fresh guest")
+}
+
 type commandRegistration struct {
 	drpc.DispatcherState
 	readyPath        string
@@ -269,24 +372,26 @@ func (a *commandRegistration) OnExecutorConnected(ctx context.Context, owner *dr
 }
 
 type commandRecovery struct {
-	t            *testing.T
-	ctx          context.Context
-	cancel       context.CancelFunc
-	ready        string
-	id           string
-	dispatcherDB *sql.DB
-	executorDB   *sql.DB // Independent observer; runExecutor owns its actual pool.
-	dispatcher   *dispatcher.Dispatcher
-	adapter      *commandRegistration
-	sdk          *client.Client
-	http         *httptest.Server
-	listeners    []net.Listener
-	serves       sync.WaitGroup
-	targets      []*commandGuestTarget
-	started      bool
-	retained     bool
-	done         chan struct{}
-	runErr       error
+	t              *testing.T
+	ctx            context.Context
+	cancel         context.CancelFunc
+	ready          string
+	id             string
+	dispatcherDB   *sql.DB
+	executorDB     *sql.DB // Independent observer; runExecutor owns its actual pool.
+	dispatcher     *dispatcher.Dispatcher
+	adapter        *commandRegistration
+	sdk            *client.Client
+	http           *httptest.Server
+	listeners      []net.Listener
+	serves         sync.WaitGroup
+	targets        []*commandGuestTarget
+	started        bool
+	retained       bool
+	done           chan struct{}
+	runErr         error
+	executorCancel context.CancelFunc
+	config         *config.ExecutorConfig
 }
 
 func (f *commandRecovery) open(dir string) {
@@ -367,8 +472,17 @@ func (f *commandRecovery) open(dir string) {
 		Database: config.DatabaseConfig{Path: filepath.Join(dir, "executor.sqlite")},
 		Pricing:  config.PricingConfig{PricePerBwS: 1, Currency: "TEST"},
 	}
+	f.config = cfg
+	f.startExecutor()
+}
+
+func (f *commandRecovery) startExecutor() {
+	ctx, cancel := context.WithCancel(f.ctx)
+	f.executorCancel = cancel
 	f.started = true
-	go func() { defer close(f.done); f.runErr = runExecutor(f.ctx, cfg, f.ready, logger) }()
+	f.done = make(chan struct{})
+	f.runErr = nil
+	go func() { defer close(f.done); f.runErr = runExecutor(ctx, f.config, f.ready, zap.NewNop()) }()
 }
 
 func (f *commandRecovery) connected() *drpc.SessionOwner {

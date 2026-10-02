@@ -43,6 +43,16 @@ func Check(ctx context.Context, role Role, path string) error {
 	return policy.Check(ctx, path)
 }
 
+// CheckOpen validates an already-open connection, for maintenance that must
+// recheck the schema while holding exclusive database ownership.
+func CheckOpen(ctx context.Context, role Role, db *sql.DB, path string) error {
+	policy, err := PolicyFor(role)
+	if err != nil {
+		return err
+	}
+	return policy.verify(ctx, db, path)
+}
+
 // Check verifies one database against this policy.
 func (p Policy) Check(ctx context.Context, path string) error {
 	absolute, err := p.locate(path)
