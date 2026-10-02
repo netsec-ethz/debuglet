@@ -56,3 +56,6 @@ SELECT id, uuid, name, role FROM users WHERE id = ?;
 
 -- name: LockDeviceLogin :exec
 UPDATE device_logins SET state = state WHERE selector = ?;
+
+-- name: LockCredentialSession :exec
+UPDATE sessions SET revoked = revoked WHERE selector = ?;

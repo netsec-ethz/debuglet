@@ -103,7 +103,7 @@ func TestCredentialManagementRequiresRecentCookieAndPreservesOwnership(t *testin
 	if s, _ := authAs(t, f, issued.Token, http.MethodGet, "/debuglet/"+authSampleID+"/state", nil); s != 404 {
 		t.Fatalf("missing run %d", s)
 	}
-	if _, err := f.db.Exec("UPDATE sessions SET created_at = datetime('now', '-11 minutes') WHERE kind='browser'"); err != nil {
+	if _, err := f.db.Exec("UPDATE sessions SET authenticated_at = datetime('now', '-11 minutes') WHERE kind='browser'"); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := authStatus(t, f, http.MethodPost, "/me/credentials", credentialJSON(t, CredentialRequest{Audience: credentialTestAudience, Scopes: []string{"account:read"}, Label: "stale"}), browser); s != 403 {

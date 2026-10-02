@@ -317,7 +317,11 @@ func (h *Handler) decideDeviceLogin(c echo.Context, approve bool) error {
 		return apiError(http.StatusBadRequest, CodeInvalidRequest, "review the dispatcher, device, code and scopes before confirming")
 	}
 	ctx := c.Request().Context()
-	q := database.New(h.db)
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil { return credentialFailure(err) }
+	defer tx.Rollback()
+	q := database.New(tx)
+	if err := recheckBrowserSession(ctx, q, account); err != nil { return err }
 	row, err := deviceApprovalRow(q, c, hash, req.Audience)
 	if err != nil {
 		return err
@@ -338,6 +342,7 @@ func (h *Handler) decideDeviceLogin(c echo.Context, approve bool) error {
 	if changed != 1 {
 		return apiError(http.StatusNotFound, CodeNotFound, "login request not found or expired")
 	}
+	if err := tx.Commit(); err != nil { return credentialFailure(err) }
 	h.logger.Info("Device login decision", zap.String("account", account.UserUUID.String()), zap.Bool("approved", approve))
 	return c.NoContent(http.StatusNoContent)
 }

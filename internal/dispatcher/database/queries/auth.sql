@@ -23,12 +23,12 @@ SESSIONS
 */
 
 -- name: CreateSession :exec
-INSERT INTO sessions (selector, verifier_hash, csrf_hash, user_id, created_at, expires_at, revoked)
-VALUES (?, ?, ?, ?, ?, ?, 0);
+INSERT INTO sessions (selector, verifier_hash, csrf_hash, user_id, created_at, expires_at, authenticated_at, revoked)
+VALUES (?, ?, ?, ?, ?, ?, ?, 0);
 
 -- name: GetSessionBySelector :one
 SELECT sessions.verifier_hash, sessions.csrf_hash, sessions.expires_at, sessions.revoked,
-       sessions.kind, sessions.audience, sessions.scopes, sessions.created_at,
+       sessions.kind, sessions.audience, sessions.scopes, sessions.created_at, sessions.authenticated_at,
        users.uuid, users.name, users.role
 FROM sessions
 INNER JOIN users ON users.id = sessions.user_id

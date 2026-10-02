@@ -115,6 +115,7 @@ type caller struct {
 	Audience string
 	Scopes []string
 	CreatedAt time.Time
+	AuthenticatedAt time.Time
 	// Failure is the rejection a presented credential earned. Public routes
 	// ignore it; every protected route returns it.
 	Failure error
@@ -310,6 +311,7 @@ func authenticate(c echo.Context, db *sql.DB, presented string, fromCookie bool,
 		Audience: row.Audience,
 		Scopes: strings.Fields(row.Scopes),
 		CreatedAt: row.CreatedAt.Time,
+		AuthenticatedAt: row.AuthenticatedAt.Time,
 	}, nil
 }
 
@@ -454,8 +456,10 @@ func transactionNotFound() *echo.HTTPError {
 
 // issueSession stores a new session for one account and returns the printed
 // token together with its CSRF token and expiry.
-func issueSession(ctx context.Context, queries *database.Queries, userID int64) (token, csrf string, expires time.Time, err error) {
+func issueSession(ctx context.Context, queries *database.Queries, userID int64, authenticatedAt ...time.Time) (token, csrf string, expires time.Time, err error) {
 	now := time.Now().UTC()
+	authenticated := now
+	if len(authenticatedAt) != 0 { authenticated = authenticatedAt[0] }
 	// Housekeeping at the one moment a session is created keeps the table from
 	// growing without a separate scheduled job.
 	if err := queries.DeleteExpiredSessions(ctx, models.NewUTCTime(now.Add(-SessionLifetime))); err != nil {
@@ -480,6 +484,7 @@ func issueSession(ctx context.Context, queries *database.Queries, userID int64) 
 		UserID:       userID,
 		CreatedAt:    models.NewUTCTime(now),
 		ExpiresAt:    models.NewUTCTime(expires),
+		AuthenticatedAt: models.NewUTCTime(authenticated),
 	}); err != nil {
 		return "", "", time.Time{}, err
 	}
