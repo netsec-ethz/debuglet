@@ -142,6 +142,38 @@
         quiet: true
       when: dispatcher_github_oauth_enabled | bool
 
+    - name: Require complete browser credential URLs
+      ansible.builtin.assert:
+        that:
+          - (dispatcher_authentication_public_url | length > 0) == (dispatcher_authentication_device_verification_url | length > 0)
+        fail_msg: Set both dispatcher_authentication_public_url and dispatcher_authentication_device_verification_url, or leave both empty.
+        quiet: true
+
+    - name: Require a supported CILogon issuer
+      ansible.builtin.assert:
+        that:
+          - dispatcher_cilogon_oidc_issuer in ['https://cilogon.org', 'https://test.cilogon.org']
+        fail_msg: dispatcher_cilogon_oidc_issuer must be an approved CILogon production or test issuer.
+        quiet: true
+      when: dispatcher_cilogon_oidc_enabled | bool
+
+    - name: Inspect local CILogon credentials
+      ansible.builtin.stat:
+        path: "{{ dispatcher_cilogon_oidc_env_file }}"
+      delegate_to: localhost
+      register: cilogon_oidc_credentials
+      when: dispatcher_cilogon_oidc_enabled | bool
+
+    - name: Require private CILogon credentials
+      ansible.builtin.assert:
+        that:
+          - cilogon_oidc_credentials.stat.exists
+          - cilogon_oidc_credentials.stat.isreg
+          - cilogon_oidc_credentials.stat.mode in ['0600', '0400']
+        fail_msg: Create the selected cilogon-oidc.env from cilogon-oidc.env.example and chmod it 600. Never commit this file.
+        quiet: true
+      when: dispatcher_cilogon_oidc_enabled | bool
+
     - name: Require an authority for client certificates
       ansible.builtin.assert:
         that:

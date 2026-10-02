@@ -321,6 +321,41 @@ applications' callback URLs as
 the selected file to the dispatcher with mode 0600 and systemd reads it as an
 environment file; neither the secret nor the real file belongs in Git.
 
+CILogon and browser-approved CLI credentials are opt-in. First obtain separate
+approved CILogon registrations for staging and production, using the exact HTTPS
+`/api/auth/cilogon/callback` URLs. Copy `ansible/cilogon-oidc.env.example` to
+`ansible/secrets/<env>/cilogon-oidc.env`, fill in that environment's credentials,
+and set mode 0600. No deployment or test creates a provider registration.
+
+Add these nonsecret settings to the chosen environment's variables, substituting
+its actual public origin:
+
+```yaml
+dispatcher_cilogon_oidc_enabled: true
+dispatcher_cilogon_oidc_issuer: https://cilogon.org
+dispatcher_authentication_public_url: https://dispatcher.example/api
+dispatcher_authentication_device_verification_url: https://dispatcher.example/console/device
+```
+
+The CILogon callback and success URLs default to the configured
+`dispatcher_base_url`. Use `https://test.cilogon.org` only with a separately
+approved test client. Leave CILogon disabled until registration and real staging
+sign-in have been verified. Both authentication URLs default empty; set both to
+enable CLI approval, which also works with GitHub alone. The matching console
+must serve `/console/device`.
+
+The dispatcher role installs the CILogon environment file with mode 0600 and
+`no_log`; generated TOML and units contain no client secret. `update-config.yml`
+also copies changed credentials, refreshes the service's environment-file list,
+reloads systemd when needed and restarts the dispatcher. To rotate a secret,
+replace the private source file with the provider-approved value and run the
+normal configuration update in staging first. To stop new CILogon logins, disable
+`dispatcher_cilogon_oidc_enabled` and update configuration; retain another usable
+sign-in method. Disabling the provider does not revoke existing local sessions.
+See [authentication operations](../docs/operations/authentication.md) for session
+revocation and provider-failure handling. Offline render/provider fixtures do not
+establish real CILogon or production acceptance.
+
 The selected vars file supplies the official public API origin. Set these
 inputs for any other deployment:
 
