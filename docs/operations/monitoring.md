@@ -17,7 +17,7 @@ notification destination or grant anyone access to Debuglet.
    a target URL or alert labels. An expired or revoked session makes the scrape
    fail and fires the availability alert.
 3. Run `promtool check config prometheus.yml` and
-   `promtool test rules alerts.test.yml` before reloading. The repository records
+   `promtool test rules alerts.test.yml health-alerts.test.yml` before reloading. The repository records
    the tested Prometheus version and archive checksum in
    [prometheus-version.env](../../deploy/monitoring/prometheus-version.env).
 4. Route `owner=debuglet-operator` to the team's existing on-call destination in
@@ -81,6 +81,54 @@ When it fires:
 Do not repair an availability alert by deleting the database, journals, WAL
 files, executor identity or active package directory. Keep stopped state and
 logs for diagnosis; use the documented upgrade/recovery operations where needed.
+
+## Executor health
+
+Enable [health-alerts.yml](../../deploy/monitoring/health-alerts.yml) alongside the
+availability rule. Both rules use the same 45-second pending period and refuse
+missing, failed or stale observations. The executor's capability report expires
+after 90 seconds without refresh; allow that additional interval for a silent
+reporting failure. Test their controlled failure/recovery fixtures with
+`promtool test rules deploy/monitoring/health-alerts.test.yml`.
+
+`DebugletRequiredCounterUnavailable` is opt-in: set the collector target label
+`require_ebpf: "true"` only when **every registered executor** is required to select
+eBPF. Otherwise a supported fallback does not raise this alert. The rule fires
+when any selection is fallback/unknown or the observations cannot be collected.
+This is a collector policy, not a new executor enforcement setting. A reported
+eBPF selection does not prove its hook remains attached or that a particular
+traffic path is policed; independent packet validation is still required.
+
+`DebugletDisclosureUnhealthy` fires when any registered executor reports failed
+key refresh, an excessive disclosure hold, an exhausted/not-yet-started signing
+chain, an expired announced schedule or unknown state. It remains firing when
+an unhealthy report expires. Resolution requires fresh positive subsystem
+reports and unexpired schedules; a heartbeat alone is insufficient. This does
+not prove that disclosed keys reached durable storage or validate captured tags.
+
+When either alert fires:
+
+- Use the operator executor listing to identify the affected executor and its
+  capability, attribution and clock fields; metrics intentionally omit its ID.
+- For fallback, inspect `enforcement_reason` and daemon logs. Check the service's
+  configured interface and permitted capabilities. `configured` is deliberate;
+  `not_permitted`, `unsupported` and `attach_failed` require different repairs.
+  Do not grant broad privileges or switch off a required policy just to clear an alert.
+- For failed refresh or held disclosure, inspect the executor's tagger errors
+  and clock state. Drain affected work before repairing/restarting the service;
+  preserve its identity, database and logs. Do not manually disclose a key that
+  a kernel slot might still use, or treat a reconnect as cleanup evidence.
+- For chain exhaustion, stop admission and follow the daemon's logged
+  `final_disclosure_at` before restart. Increase the next chain's configured
+  lifetime if needed. An early restart can lose disclosure of its final epochs.
+- Confirm new reports show the intended counter, available attribution and
+  positive remaining lifetime. Validate traffic separately when claiming
+  enforcement or attribution. Alert resolution does not repair historical runs.
+
+These rules monitor the current registry. Removing a failed executor can clear
+its aggregate condition; it does not prove that host recovered. Maintain the
+expected executor inventory separately. The availability rule covers a missing
+scrape job; retain it rather than using these health rules alone.
 
 ## Local drill
 

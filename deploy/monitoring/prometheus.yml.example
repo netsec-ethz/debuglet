@@ -8,6 +8,7 @@ global:
   evaluation_interval: 15s
 rule_files:
   - alerts.yml
+  - health-alerts.yml
 scrape_configs:
   - job_name: debuglet-dispatcher
     scheme: https
@@ -19,5 +20,9 @@ scrape_configs:
       ca_file: /etc/prometheus/certs/dispatcher-ca.pem
     static_configs:
       - targets: [dispatcher.example:443]
+        # Set only when every registered executor must select eBPF. Leave
+        # absent for deployments where the supported fallback is acceptable.
+        # labels:
+        #   require_ebpf: "true"
 # Configure an existing Alertmanager route for owner=debuglet-operator. This
 # example makes no contact with a notification service and contains no secret.
