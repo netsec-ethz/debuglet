@@ -14,14 +14,15 @@ type ControlBinding struct {
 // Recovery separates stored outcome from control availability and an optional
 // dated executor observation. No classification authorizes replay.
 type Recovery struct {
-	ID              string              `json:"id"`
-	ExecutorID      string              `json:"executor_id"`
-	State           string              `json:"state"`
-	Error           string              `json:"error"`
-	CheckedAt       time.Time           `json:"checked_at"`
-	OriginalBinding *ControlBinding     `json:"original_binding"`
-	ControlStatus   string              `json:"control_status"`
-	Observation     RecoveryObservation `json:"observation"`
+	ID                    string              `json:"id"`
+	ExecutorID            string              `json:"executor_id"`
+	State                 string              `json:"state"`
+	Error                 string              `json:"error"`
+	CheckedAt             time.Time           `json:"checked_at"`
+	OriginalBinding       *ControlBinding     `json:"original_binding"`
+	ControlStatus         string              `json:"control_status"`
+	Observation           RecoveryObservation `json:"observation"`
+	AllocationReclaimedAt *time.Time          `json:"allocation_reclaimed_at,omitempty"`
 }
 
 // RecoveryObservation carries provenance only for a validated executor reply.

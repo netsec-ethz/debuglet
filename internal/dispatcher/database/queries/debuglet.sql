@@ -11,12 +11,8 @@ OFFSET ?;
 
 -- name: ListDebugletsEndAfter :many
 SELECT * FROM debuglets
-WHERE end_time > ?;
-
--- name: ListUnfinishedDebugletsEndBefore :many
-SELECT * FROM debuglets
-WHERE state <> sqlc.arg(exited_state) AND end_time < sqlc.arg(end_time)
-  AND dispatcher_incarnation <> '' AND session_id <> '';
+WHERE end_time > ?
+  AND NOT EXISTS (SELECT 1 FROM allocation_reclamations WHERE debuglet_id = debuglets.id);
 
 -- name: GetDebugletByUUID :one
 SELECT * FROM debuglets

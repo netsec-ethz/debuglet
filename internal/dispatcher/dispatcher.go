@@ -149,16 +149,16 @@ func (d *Dispatcher) ControlLeaseDuration() time.Duration { return d.leaseTiming
 //
 // A restored run bound to a previous dispatcher lifetime is logged as a
 // warning with its ID: its control session ended with that lifetime, so it
-// will not execute, and its reservation lasts until the run is cancelled or it
-// is classified with outcome unknown after its window ends. A run without a
-// complete stored binding cannot be cancelled or classified; its reservation
+// cannot be replayed, and its reservation lasts until the run is cancelled or
+// its local allocation is reclaimed after its window ends. A run without a
+// complete stored binding cannot be cancelled or reclaimed; its reservation
 // lasts until its window ends.
 //
 // Reservations are restored once per dispatcher lifetime: after a restore has
 // succeeded, a further call reserves nothing and returns an error, so no run is
 // counted twice. A call that fails has reserved nothing and may be repeated. A
 // successful restore also starts the expiry loop if no executor registration
-// has started it yet, so a restarted dispatcher classifies ended windows
+// has started it yet, so a restarted dispatcher reclaims ended windows
 // before any executor connects.
 func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	// mu is held from the check to the mark, so two calls cannot both restore.
@@ -186,7 +186,7 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 			continue
 		}
 		if !deb.EndTime.Time.After(now) {
-			msg := "Not reserving debuglet whose window has ended; it will be classified with outcome unknown"
+			msg := "Not reserving debuglet whose window has ended; allocation reclamation will be recorded"
 			if deb.DispatcherIncarnation == "" || deb.SessionID == "" {
 				msg = "Not reserving debuglet whose window has ended; it has no complete control binding and keeps its stored state"
 			}
@@ -247,6 +247,8 @@ func (d *Dispatcher) Close() {
 func (d *Dispatcher) GetVersion() string         { return d.version }
 func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
 
+var ErrOrderedBandwidthUnsupported = errors.New("executor upgrade required for ordered destination updates")
+
 // SetDestinationLimit records the limit of destination and sends the share it
 // recomputes to every executor holding an allocation there, waiting up to
 // five seconds, on a context of its own, for those deliveries. A limit below
@@ -268,5 +270,6 @@ func (d *Dispatcher) SetDestinationLimit(destination string, limit bitrate.Bitra
 	if err != nil {
 		return err
 	}
+	work.requireOrdered = true
 	return work.send(ctx)
 }

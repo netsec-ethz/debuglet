@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.13"
+  version: "1.14"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -3699,7 +3699,7 @@ paths:
     patch:
       operationId: "setDestinationLimit"
       summary: "Set the bandwidth limit of one destination."
-      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Pushes are unversioned: concurrent updates can arrive out of order, so an older share can overwrite a newer, lower one at an executor. This route does not guarantee revocation."
+      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Current executors apply acknowledged full snapshots in session revision order, so an older delivery cannot overwrite a newer one. Failed application stays pending and is retried on that exact session’s heartbeat. Legacy executors may receive the limit but cannot confirm ordered application; the response instructs the operator to upgrade them. This route does not guarantee workload revocation."
       requestBody:
         required: true
         content:
@@ -3777,7 +3777,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: "The limit was recorded but at least one executor holding an allocation on the destination did not acknowledge the recomputed share (internal_error). The request may be repeated."
+          description: "The limit was recorded but at least one executor did not acknowledge ordered application (internal_error). Pending delivery is retried on heartbeat; the request may also be repeated. Legacy peers require an executor upgrade first."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -5975,7 +5975,7 @@ components:
       properties:
         state:
           type: string
-          description: "Opaque run state. RunStateExited is terminal. RunStateUnreconciled means the dispatcher failed the submission the run belongs to and could not confirm the run's cancellation, because the executor refused it or it was not delivered; the run may still execute, a later report from its executor supersedes the state, and nothing is replayed. A RunStateUploading or RunStateUploaded that no longer changes is of the same uncertain outcome. Any run with a stored control binding that is not terminal about two minutes after the end of its reserved window (start plus timeout plus a ten-second grace) is classified as RunStateExited with the error 'outcome unknown: ...'; a run recorded without a binding keeps its stored state; no success is ever inferred."
+          description: "Opaque run state. RunStateExited is terminal. RunStateUnreconciled means the dispatcher failed the submission the run belongs to and could not confirm the run's cancellation, because the executor refused it or it was not delivered; the run may still execute, a later report from its executor supersedes the state, and nothing is replayed. A RunStateUploading or RunStateUploaded that no longer changes is of the same uncertain outcome. Window expiry reclaims local allocation capacity without changing the stored state or outcome. Recovery.allocation_reclaimed_at records that separate accounting fact; it does not permit replay or settle payments. A run recorded without a binding is not reclaimed automatically."
         error:
           type: string
           description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Empty when the run has not failed."
@@ -6070,6 +6070,10 @@ components:
         control_status:
           type: string
           description: "current: original session available at check; unavailable: original session unavailable; legacy: no complete original binding. Unknown future strings do not authorize replay."
+        allocation_reclaimed_at:
+          type: string
+          format: date-time
+          description: "Added in API 1.14. Local allocation/floor capacity was reclaimed after the reserved window; this does not assert a workload outcome, permit replay, release retained-work quotas or settle payment. Absent until recorded."
         observation:
           $ref: "#/components/schemas/RecoveryObservation"
     RecoveryOriginalBinding:
@@ -6170,7 +6174,7 @@ components:
       properties:
         state:
           type: string
-          description: "Opaque run state at the time of the query, with the meaning described for DebugletStateResponse.state: RunStateUnreconciled, or a RunStateUploading or RunStateUploaded that no longer changes, is of uncertain outcome, and a run with a stored control binding that is not terminal about two minutes after the end of its reserved window is classified as RunStateExited with the error 'outcome unknown: ...'."
+          description: "Opaque run state at the time of the query, with the meaning described for DebugletStateResponse.state: RunStateUnreconciled, or a RunStateUploading or RunStateUploaded that no longer changes, is of uncertain outcome, and local allocation reclamation after the reserved window does not change that stored outcome."
         error:
           type: string
           description: "Recorded workload error: one line of at most 512 bytes, followed by '...' when it was cut, for results recorded by this version; earlier results are returned as stored. Absent when empty."

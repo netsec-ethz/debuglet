@@ -19,6 +19,11 @@ type AccountRunReservation struct {
 	LastRetirementCheck int64
 }
 
+type AllocationReclamation struct {
+	DebugletID  int64
+	ReclaimedAt models.UTCTime
+}
+
 type AttributionChain struct {
 	ExecutorID  string
 	ChainID     string

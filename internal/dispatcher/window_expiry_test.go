@@ -53,32 +53,41 @@ func (l *weLoop) tick(t *testing.T) {
 	}
 }
 
-// weAssertLate checks that late reports for runs classified at the end of
-// their window change nothing.
+// A replacement cannot turn local reclamation into a report from the old run.
 func weAssertLate(t *testing.T, f *tgFixture, runs ...tgDebuglet) {
 	t.Helper()
 	before := f.snapshot(t)
 	for _, run := range runs {
-		_ = f.exit(t, run.id, 3, nil)
-		_ = f.state(t, run.id, pb.RunState_RUN_STATE_STARTED)
-		tgAssertSnapshot(t, f, before, "late report")
+		if err := f.exit(t, run.id, 3, nil); status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("replacement terminal: %v", err)
+		}
+		if err := f.state(t, run.id, pb.RunState_RUN_STATE_STARTED); status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("replacement state: %v", err)
+		}
+		tgAssertSnapshot(t, f, before, "late replacement report")
 		tgAssertReserved(t, f, run, 0)
 	}
 }
 
-func weAssertUnknown(t *testing.T, f *tgFixture, runs ...tgDebuglet) {
+func weAssertReclaimed(t *testing.T, f *tgFixture, runs ...tgDebuglet) {
 	t.Helper()
 	for _, run := range runs {
-		tgAssertRow(t, f.row(t, run.id), models.RunStateExited, tgText(outcomeUnknown))
+		row := f.row(t, run.id)
+		if row.State == models.RunStateExited || row.Error.Valid {
+			t.Fatalf("reclamation manufactured outcome: %+v", row)
+		}
+		if _, err := f.q.GetAllocationReclamation(f.ctx, run.id); err != nil {
+			t.Fatalf("missing durable reclamation: %v", err)
+		}
 		tgAssertOrder(t, f, run, models.Outstanding)
 	}
 }
 
-// TestWindowEndClassifiesFailedBatchRuns covers the entry path "failed batch,
+// TestWindowEndReclaimsFailedBatchRuns covers the entry path "failed batch,
 // cancellation refused or undelivered": the run is stored as unreconciled and
 // keeps its reservation, and once its window has ended by expiredWindowGrace
-// the next sweep classifies it with outcome unknown and releases it once.
-func TestWindowEndClassifiesFailedBatchRuns(t *testing.T) {
+// the next sweep records reclamation without changing its outcome and releases it once.
+func TestWindowEndReclaimsFailedBatchRuns(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		refusal error
@@ -104,10 +113,18 @@ func TestWindowEndClassifiesFailedBatchRuns(t *testing.T) {
 
 			loop.set(end.Add(expiredWindowGrace + windowSweepInterval))
 			loop.tick(t)
-			weAssertUnknown(t, f, a)
+			weAssertReclaimed(t, f, a)
 			tgAssertReserved(t, f, a, 0)
 			tgAssertEarnings(t, f, 0)
-			weAssertLate(t, f, a)
+			// Actual late evidence under the same binding still decides the outcome.
+			if err := f.exit(t, a.id, 3, nil); err != nil {
+				t.Fatal(err)
+			}
+			tgAssertRow(t, f.row(t, a.id), models.RunStateExited, tgText("debuglet exited with code 3"))
+			tgAssertReserved(t, f, a, 0)
+			if _, err := f.q.GetAllocationReclamation(f.ctx, a.id); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
@@ -157,7 +174,7 @@ func weSeedRestart(t *testing.T) (*tgFixture, tgDebuglet, tgDebuglet) {
 	return f, a, plain
 }
 
-func TestWindowEndClassifiesRunsAfterRestart(t *testing.T) {
+func TestWindowEndReclaimsRunsAfterRestart(t *testing.T) {
 	t.Run("window open at restart", func(t *testing.T) {
 		f, a, plain := weSeedRestart(t)
 		loop := newWELoop()
@@ -168,7 +185,7 @@ func TestWindowEndClassifiesRunsAfterRestart(t *testing.T) {
 		tgAssertReserved(t, g, a, tgFloorA+tgFloorB)
 		loop.set(a.row.EndTime.Time.Add(expiredWindowGrace + time.Second))
 		loop.tick(t)
-		weAssertUnknown(t, g, a, plain)
+		weAssertReclaimed(t, g, a, plain)
 		tgAssertReserved(t, g, a, 0)
 		weAssertLate(t, g, a, plain)
 	})
@@ -183,7 +200,7 @@ func TestWindowEndClassifiesRunsAfterRestart(t *testing.T) {
 			t.Fatalf("restore: %v", err)
 		}
 		tgAssertReserved(t, g, a, 0)
-		ended := logs.FilterMessage("Not reserving debuglet whose window has ended; it will be classified with outcome unknown")
+		ended := logs.FilterMessage("Not reserving debuglet whose window has ended; allocation reclamation will be recorded")
 		for _, run := range []tgDebuglet{a, plain} {
 			if ended.FilterField(zap.String("debugletID", run.id.String())).Len() != 1 {
 				t.Fatalf("restore did not name %s once: %v", run.id, ended.All())
@@ -191,7 +208,7 @@ func TestWindowEndClassifiesRunsAfterRestart(t *testing.T) {
 		}
 		loop.set(a.row.EndTime.Time.Add(expiredWindowGrace + time.Second))
 		loop.tick(t)
-		weAssertUnknown(t, g, a, plain)
+		weAssertReclaimed(t, g, a, plain)
 		tgAssertReserved(t, g, a, 0)
 		weAssertLate(t, g, a, plain)
 	})
@@ -199,8 +216,8 @@ func TestWindowEndClassifiesRunsAfterRestart(t *testing.T) {
 
 // TestWindowEndSweepsWithoutExecutor restarts the dispatcher with no executor
 // registering: the restore alone starts the loop. A run with a complete
-// binding (entry path "session ended before the run started") is classified;
-// a run stored without one admits no terminal write and keeps its state and
+// binding (entry path "session ended before the run started") is reclaimed;
+// a run stored without one admits no reclamation and keeps its state and
 // its reservation.
 func TestWindowEndSweepsWithoutExecutor(t *testing.T) {
 	f := newTGFixture(t, nil)
@@ -217,7 +234,7 @@ func TestWindowEndSweepsWithoutExecutor(t *testing.T) {
 	tgAssertReserved(t, g, bound, tgFloorA+tgFloorB)
 	loop.set(bound.row.EndTime.Time.Add(expiredWindowGrace + time.Second))
 	loop.tick(t)
-	weAssertUnknown(t, g, bound)
+	weAssertReclaimed(t, g, bound)
 	tgAssertRow(t, g.row(t, unbound.id), models.RunStateUploaded, tgNull)
 	tgAssertReserved(t, g, bound, tgFloorB)
 }

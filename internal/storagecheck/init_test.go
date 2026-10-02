@@ -48,6 +48,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"measurement_requests":       "debuglet_id document",
 					"measurement_execution":      "debuglet_id started_observed_ns terminal_observed_ns exit_code tcp_endpoint",
 					"retry_requests":             "caller_scope request_id parent_run_id transaction_id request_hash intent_metadata",
+					"allocation_reclamations":    "debuglet_id reclaimed_at",
 					"account_run_reservations":   "debuglet_id account_id queued_bytes retired_at last_retirement_check",
 					"payload_tombstones":         "debuglet_id deleted_at reason workload_sha256 certificate_sha256",
 					"debuglets":                  "id uuid start_time end_time usage ceil_bw executor_id addresses state error transaction_id order_id dispatcher_incarnation session_id",
@@ -73,7 +74,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18})
+				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

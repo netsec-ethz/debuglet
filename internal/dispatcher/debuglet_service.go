@@ -215,8 +215,8 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			// the call failed in transport or no client was captured, keeps
 			// its reservation and is marked unreconciled; nothing is retried.
 			// Its executor's later report supersedes the mark, and a run still
-			// unfinished when its window ends is classified with outcome
-			// unknown, see sweepEndedWindows.
+			// unfinished when its window ends has its allocation reclaimed
+			// without changing the outcome, see sweepEndedWindows.
 			err := d.abortCaptured(cleanupCtx, selected[i].mutation, selected[i].client, id, reason)
 			if err == nil {
 				continue

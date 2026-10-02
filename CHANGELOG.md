@@ -158,6 +158,15 @@ changes; the linked API and deployment documentation contains operational detail
   runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
 
 ### Changed
+- Ended run windows now record local allocation reclamation separately from
+  workload outcomes and payment settlement. Recovery inspection exposes the
+  optional `allocation_reclaimed_at` timestamp (API 1.14); dispatcher databases
+  require the explicit upgrade to schema 19. Retained-work quotas stay charged
+  until actual retirement is confirmed.
+- Destination updates use acknowledged session revisions with current executor
+  releases, retry pending application on heartbeat, and report allocation
+  delivery failures. Legacy peers can still allocate runs but require an upgrade
+  to confirm ordered live destination changes.
 - **Breaking: packet tags follow the versioned specification
   `debuglet-tag-v1`** ([docs/tag-spec.md](docs/tag-spec.md)); tags written by
   earlier builds do not verify under it and v1 tags do not verify with earlier

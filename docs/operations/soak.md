@@ -45,7 +45,7 @@ The SDK may report an unknown batch upload outcome. The fixture records that
 response, locates both run IDs and reserved ends in the owned database, and
 records their public states immediately and after the observation interval.
 It does not retry, fabricate terminal results, or claim to validate later
-window-expiry classification. Missing identities, query errors, unexpected or
+window-expiry reclamation. Missing identities, query errors, unexpected or
 successful expiry outcomes, and two uncertain results fail the fixture.
 
 The workflow uploads configuration, per-run timing, resource samples, outcomes,

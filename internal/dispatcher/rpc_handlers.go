@@ -81,6 +81,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		return nil, status.Error(codes.FailedPrecondition, "executor session is unavailable")
 	}
 	d.mu.Unlock()
+	defer d.reconcileFairshare(ctx, mutation)
 
 	if entry := d.logger.Check(zap.DebugLevel, "Earnings"); entry != nil {
 		earnings, _ := database.New(d.db).GetEarningsIn(ctx, database.GetEarningsInParams{
@@ -215,12 +216,10 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, mutation *rpc.Mutation
 	return &pb.DebugletStateResponse{}, nil
 }
 
-// OnDebugletAllocate charges the admitted policy of a run on its destinations
-// and sends the recomputed shares to every executor holding them. The
-// executor that allocated keeps its own outcome: a share that does not reach
-// it or a sibling is logged with the executor that missed it and does not
-// fail the allocation; the recipient that missed the update is corrected by
-// the next update on that destination or by its session end.
+// OnDebugletAllocate records the admitted run's idempotent allocation, then
+// waits for delivery to every affected recipient. A failed delivery is returned
+// to the executor and retried on the recipient's next heartbeat. The caller
+// owns run failure/terminal reporting; a repeated allocation never charges twice.
 func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutation, req *pb.DebugletAllocateRequest) (*pb.DebugletAllocateResponse, error) {
 	if req.GetExecutorId() == "" {
 		return nil, status.Error(codes.PermissionDenied, "executor identity does not match session")
@@ -289,6 +288,18 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutat
 		d.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "run is terminal")
 	}
+	if !current.EndTime.Time.After(d.now()) {
+		d.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "run allocation window has ended")
+	}
+	_, reclaimed := database.New(d.db).GetAllocationReclamation(ctx, id)
+	if reclaimed == nil || !errors.Is(reclaimed, sql.ErrNoRows) {
+		d.mu.Unlock()
+		if reclaimed != nil {
+			return nil, status.Error(codes.Internal, "allocation reclamation could not be checked")
+		}
+		return nil, status.Error(codes.FailedPrecondition, "run allocation was reclaimed")
+	}
 	allocErr := d.destinations.Allocate(id, deb.ExecutorID, destinations, floorBW, ceilBW)
 	d.mu.Unlock()
 	if allocErr != nil {
@@ -297,6 +308,7 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutat
 	if err := d.sendFairshare(ctx, mutation, destinations); err != nil {
 		d.logger.Error("Failed to send fairshare update", zap.String("debugletID", debugletID))
 		d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", debugletID), zap.String("operation", "Failed to send fairshare update"), zap.String("error", daemonlog.Diagnostic(err)))
+		return nil, status.Error(codes.Unavailable, "destination allocation delivery is pending")
 	}
 	return &pb.DebugletAllocateResponse{}, nil
 }
@@ -587,15 +599,18 @@ type fairshareRecipient struct {
 	mutation *rpc.Mutation
 	client   rpc.BoundExecutorClient
 	updates  []*pb.DestinationLimit
+	revision uint64
+	ordered  bool
 	// wait and done order the deliveries to one executor; see
 	// executorEntry.bandwidthTail. Both are nil without a registry entry.
 	wait, done chan struct{}
 }
 type fairshareWork struct {
-	d          *Dispatcher
-	origin     *rpc.Mutation
-	recipients []fairshareRecipient
-	err        error
+	d              *Dispatcher
+	origin         *rpc.Mutation
+	recipients     []fairshareRecipient
+	err            error
+	requireOrdered bool
 }
 
 func (d *Dispatcher) captureFairshare(ctx context.Context, origin *rpc.Mutation, dests []string) (*fairshareWork, error) {
@@ -641,6 +656,16 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		var ticket *rpc.Mutation
 		var admitErr error
 		entry := d.executors[id]
+		var revision uint64
+		ordered := entry != nil && entry.bandwidthVersion == 1
+		if entry != nil && (owner == nil || id != owner.ExecutorID() || entry.owner == owner) {
+			entry.bandwidthPending = true
+			entry.bandwidthRevision++
+			revision = entry.bandwidthRevision
+			if ordered {
+				updates = d.allocationSnapshot(id)
+			}
+		}
 		if owner != nil && id == owner.ExecutorID() {
 			recipient = owner
 			ticket, admitErr = work.origin.Fork(ctx)
@@ -654,8 +679,8 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 			work.err = errors.Join(work.err, fmt.Errorf("executor %s: %w", id, admitErr))
 			continue
 		}
-		r := fairshareRecipient{owner: recipient, mutation: ticket, updates: updates}
-		if entry != nil {
+		r := fairshareRecipient{owner: recipient, mutation: ticket, updates: updates, revision: revision, ordered: ordered}
+		if entry != nil && entry.owner == recipient {
 			r.wait, r.done = entry.bandwidthTail, make(chan struct{})
 			entry.bandwidthTail = r.done
 		}
@@ -676,22 +701,10 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 	return work, nil
 }
 
-// send delivers each recipient's updates in a goroutine of its own. A
-// recipient holding a ticket first waits until the delivery captured before it
-// to the same executor ended, or its own context ended, so an executor
-// receives the updates in the order the destination changes were made and
-// applies the newest last. Its ticket is released when its delivery ends:
-// delivered, refused, skipped for lack of a client, or cut off by the context.
-// A failed or late older delivery thus delays the next one at most until its
-// own bound and never suppresses it, and one executor's failure does not
-// cancel the delivery to another. Every failure names its executor.
-//
-// The order does not survive a cut-off: a delivery whose call ends at its
-// bound while the executor is still processing it releases its ticket before
-// its share is applied, so that older share can be applied after its
-// successor's and stay in force until the next update on the destination or
-// the end of the session. The updates carry no version the executor could
-// compare, so this bound remains.
+// send joins every recipient's delivery. Legacy peers are serialized; revised
+// peers also reject a superseded snapshot when a timed-out RPC applies late.
+// Only an acknowledgement of the current exact session's current snapshot
+// clears pending reconciliation.
 func (work *fairshareWork) send(ctx context.Context) error {
 	if work.origin != nil {
 		defer work.origin.Finish()
@@ -729,13 +742,74 @@ func (work *fairshareWork) send(ctx context.Context) error {
 			if r.client == nil {
 				return // Reported at capture.
 			}
-			if _, err := r.client.Bandwidth(callCtx, &pb.BandwidthRequest{Limits: r.updates}); err != nil {
-				errs[i] = fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), err)
+			wireRevision := r.revision
+			if !r.ordered {
+				wireRevision = 0
 			}
+			response, err := r.client.Bandwidth(callCtx, &pb.BandwidthRequest{Limits: r.updates, Revision: wireRevision})
+			if err == nil && r.ordered && response.GetRevision() < r.revision {
+				err = status.Error(codes.FailedPrecondition, "executor did not acknowledge allocation revision")
+			}
+			if err == nil && work.requireOrdered && !r.ordered {
+				err = ErrOrderedBandwidthUnsupported
+			}
+			if err != nil {
+				errs[i] = fmt.Errorf("executor %s: %w", r.owner.ExecutorID(), err)
+				return
+			}
+			work.d.mu.Lock()
+			if entry := work.d.executors[r.owner.ExecutorID()]; entry != nil && entry.owner == r.owner && entry.bandwidthRevision == r.revision {
+				entry.bandwidthPending = false
+			}
+			work.d.mu.Unlock()
 		})
 	}
 	g.Wait()
 	return errors.Join(work.err, errors.Join(errs...))
+}
+
+// allocationSnapshot reads the current shares under d.mu. An omitted address
+// has no allocation on this executor; its old limiter cache is unused until a
+// fresh allocation supplies another snapshot.
+func (d *Dispatcher) allocationSnapshot(executorID string) []*pb.DestinationLimit {
+	var updates []*pb.DestinationLimit
+	for address, limit := range d.destinations.ForExecutor(executorID) {
+		updates = append(updates, &pb.DestinationLimit{Address: address, BitsLimit: int64(limit)})
+	}
+	return updates
+}
+
+func (d *Dispatcher) reconcileFairshare(ctx context.Context, origin *rpc.Mutation) {
+	owner, err := requireMutation(origin, "")
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	d.mu.Lock()
+	entry := d.executors[owner.ExecutorID()]
+	if d.closed || entry == nil || entry.owner != owner || !entry.bandwidthPending {
+		d.mu.Unlock()
+		return
+	}
+	mutation, err := origin.Fork(ctx)
+	if err != nil {
+		d.mu.Unlock()
+		return
+	}
+	entry.bandwidthRevision++
+	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion == 1, wait: entry.bandwidthTail, done: make(chan struct{})}
+	r.revision = entry.bandwidthRevision
+	entry.bandwidthTail = r.done
+	d.mu.Unlock()
+	r.client, _ = d.Bidi.GetClientFor(owner)
+	work := &fairshareWork{d: d, recipients: []fairshareRecipient{r}}
+	if r.client == nil {
+		work.err = rpc.ErrSessionUnavailable
+	}
+	if err := work.send(ctx); err != nil {
+		d.logger.Warn("Destination allocation reconciliation remains pending", zap.String("executor_id", owner.ExecutorID()))
+	}
 }
 
 func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, dests []string) error {
