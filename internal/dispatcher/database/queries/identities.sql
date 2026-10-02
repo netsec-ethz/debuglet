@@ -19,7 +19,7 @@ DELETE FROM oauth_identities WHERE provider = ? AND user_id = ?;
 SELECT COUNT(*) FROM user_credentials WHERE user_id = ? AND kind IN ('account', 'recovery');
 
 -- name: GetIdentitySession :one
-SELECT sessions.user_id, sessions.created_at, sessions.expires_at, sessions.revoked, users.uuid
+SELECT sessions.user_id, sessions.created_at, sessions.authenticated_at, sessions.expires_at, sessions.revoked, users.uuid
 FROM sessions INNER JOIN users ON users.id = sessions.user_id WHERE selector = ?;
 
 -- name: CreateOAuthAttempt :execrows

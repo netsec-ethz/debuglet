@@ -70,6 +70,8 @@ const (
 	CodeForbidden = "forbidden"
 	// CodeNotFound is a debuglet, user or executor that does not exist.
 	CodeNotFound = "not_found"
+	// CodeIdentityConflict refuses an unsafe sign-in method change.
+	CodeIdentityConflict = "identity_conflict"
 	// CodeCapacityExhausted is a batch the scheduler cannot admit.
 	CodeCapacityExhausted = "capacity_exhausted"
 	// CodeAccountQuota is a request exceeding the account's configured

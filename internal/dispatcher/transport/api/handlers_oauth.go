@@ -138,7 +138,7 @@ func (h *Handler) providerCallback(c echo.Context, provider string) error {
 	c.Response().Header().Set("Referrer-Policy", "no-referrer")
 	state := c.QueryParam("state")
 	if cookieErr != nil || verifierErr != nil || len(state) < 43 || len(state) > 128 || subtle.ConstantTimeCompare([]byte(state), []byte(stateCookie.Value)) != 1 {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid or expired sign-in state; start sign-in again")
+		return h.oauthFailure(c, provider, "expired")
 	}
 	stateHash := sha256.Sum256([]byte(state))
 	ctx := c.Request().Context()
@@ -170,6 +170,10 @@ func (h *Handler) providerCallback(c echo.Context, provider string) error {
 	}
 	defer tx.Rollback()
 	queries := database.New(tx)
+	// Serialize first sign-in and linking against concurrent identity changes.
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET name = name WHERE id = 0"); err != nil {
+		return err
+	}
 	if attempt.Purpose == "link" {
 		session, err := recentIdentitySession(ctx, queries, attempt.SessionSelector)
 		if err != nil {
@@ -250,7 +254,7 @@ func externalIdentityUser(ctx context.Context, queries *database.Queries, profil
 func recentIdentitySession(ctx context.Context, queries *database.Queries, selector string) (database.GetIdentitySessionRow, error) {
 	session, err := queries.GetIdentitySession(ctx, selector)
 	now := time.Now().UTC()
-	if err != nil || session.Revoked != 0 || !now.Before(session.ExpiresAt.Time) || now.Sub(session.CreatedAt.Time) > oauthLifetime {
+	if err != nil || session.Revoked != 0 || !now.Before(session.ExpiresAt.Time) || now.Sub(session.AuthenticatedAt.Time) > oauthLifetime {
 		return database.GetIdentitySessionRow{}, unauthorized()
 	}
 	return session, nil

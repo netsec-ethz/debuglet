@@ -1,6 +1,19 @@
 -- +goose up
-ALTER TABLE oauth_identities ADD COLUMN issuer TEXT NOT NULL DEFAULT 'https://github.com';
-CREATE UNIQUE INDEX oauth_identity_issuer_subject ON oauth_identities (issuer, subject);
+ALTER TABLE oauth_identities RENAME TO oauth_identities_previous;
+CREATE TABLE oauth_identities (
+    provider TEXT NOT NULL,
+    issuer TEXT NOT NULL DEFAULT 'https://github.com',
+    subject TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    login TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (issuer, subject),
+    UNIQUE (provider, user_id)
+);
+INSERT INTO oauth_identities (provider, subject, user_id, login, created_at, updated_at)
+SELECT provider, subject, user_id, login, created_at, updated_at FROM oauth_identities_previous;
+DROP TABLE oauth_identities_previous;
 
 CREATE TABLE oauth_login_attempts (
     state_hash BLOB PRIMARY KEY,
@@ -27,5 +40,16 @@ CREATE TABLE pending_identity_links (
 -- +goose down
 DROP TABLE pending_identity_links;
 DROP TABLE oauth_login_attempts;
-DROP INDEX oauth_identity_issuer_subject;
-ALTER TABLE oauth_identities DROP COLUMN issuer;
+ALTER TABLE oauth_identities RENAME TO oauth_identities_current;
+CREATE TABLE oauth_identities (
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    login TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (provider, subject),
+    UNIQUE (provider, user_id)
+);
+INSERT INTO oauth_identities SELECT provider, subject, user_id, login, created_at, updated_at FROM oauth_identities_current;
+DROP TABLE oauth_identities_current;

@@ -2,23 +2,15 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
-)
-
-const (
-	githubOAuthStateCookie = "github_oauth_state"
-	githubOAuthPKCECookie  = "github_oauth_pkce"
 )
 
 var githubOAuthHTTPClient = &http.Client{Timeout: 10 * time.Second}
@@ -86,8 +78,4 @@ func (h *Handler) githubProfile(ctx context.Context, code, verifier string) (git
 		return githubUser{}, fmt.Errorf("user lookup returned status %d", response.StatusCode)
 	}
 	return profile, nil
-}
-
-func githubOAuthUser(ctx context.Context, tx *sql.Tx, profile githubUser) (int64, error) {
-	return externalIdentityUser(ctx, database.New(tx), externalProfile{Provider: "github", Issuer: "https://github.com", Subject: strconv.FormatInt(profile.ID, 10), Login: profile.Login, Name: profile.Name})
 }

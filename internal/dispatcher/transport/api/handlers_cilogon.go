@@ -58,7 +58,11 @@ func (h *Handler) cilogonClient(provider *oidc.Provider) oauth2.Config {
 }
 
 func (h *Handler) GetCILogonLogin(c echo.Context) error {
-	return h.startProviderLogin(c, "cilogon", "login", "")
+	session := ""
+	if caller := requestCaller(c); caller.Authenticated && caller.Cookie && !caller.API {
+		session = caller.Session
+	}
+	return h.startProviderLogin(c, "cilogon", "login", session)
 }
 func (h *Handler) GetCILogonCallback(c echo.Context) error { return h.providerCallback(c, "cilogon") }
 

@@ -12,32 +12,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
-const createOAuthIdentity = `-- name: CreateOAuthIdentity :exec
-INSERT INTO oauth_identities (provider, subject, user_id, login, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-`
-
-type CreateOAuthIdentityParams struct {
-	Provider  string
-	Subject   string
-	UserID    int64
-	Login     string
-	CreatedAt models.UTCTime
-	UpdatedAt models.UTCTime
-}
-
-func (q *Queries) CreateOAuthIdentity(ctx context.Context, arg CreateOAuthIdentityParams) error {
-	_, err := q.db.ExecContext(ctx, createOAuthIdentity,
-		arg.Provider,
-		arg.Subject,
-		arg.UserID,
-		arg.Login,
-		arg.CreatedAt,
-		arg.UpdatedAt,
-	)
-	return err
-}
-
 const createSession = `-- name: CreateSession :exec
 /*
 
@@ -45,17 +19,18 @@ SESSIONS
 
 */
 
-INSERT INTO sessions (selector, verifier_hash, csrf_hash, user_id, created_at, expires_at, revoked)
-VALUES (?, ?, ?, ?, ?, ?, 0)
+INSERT INTO sessions (selector, verifier_hash, csrf_hash, user_id, created_at, expires_at, authenticated_at, revoked)
+VALUES (?, ?, ?, ?, ?, ?, ?, 0)
 `
 
 type CreateSessionParams struct {
-	Selector     string
-	VerifierHash []byte
-	CsrfHash     []byte
-	UserID       int64
-	CreatedAt    models.UTCTime
-	ExpiresAt    models.UTCTime
+	Selector        string
+	VerifierHash    []byte
+	CsrfHash        []byte
+	UserID          int64
+	CreatedAt       models.UTCTime
+	ExpiresAt       models.UTCTime
+	AuthenticatedAt models.UTCTime
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
@@ -66,6 +41,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.UserID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
+		arg.AuthenticatedAt,
 	)
 	return err
 }
@@ -94,32 +70,9 @@ func (q *Queries) GetDebugletOwnerUUID(ctx context.Context, argUuid uuid.UUID) (
 	return uuid_2, err
 }
 
-const getOAuthIdentity = `-- name: GetOAuthIdentity :one
-/*
-
-OAUTH IDENTITIES
-
-*/
-
-SELECT user_id FROM oauth_identities
-WHERE provider = ?1 AND subject = ?2
-`
-
-type GetOAuthIdentityParams struct {
-	Provider string
-	Subject  string
-}
-
-func (q *Queries) GetOAuthIdentity(ctx context.Context, arg GetOAuthIdentityParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getOAuthIdentity, arg.Provider, arg.Subject)
-	var user_id int64
-	err := row.Scan(&user_id)
-	return user_id, err
-}
-
 const getSessionBySelector = `-- name: GetSessionBySelector :one
 SELECT sessions.verifier_hash, sessions.csrf_hash, sessions.expires_at, sessions.revoked,
-       sessions.kind, sessions.audience, sessions.scopes, sessions.created_at,
+       sessions.kind, sessions.audience, sessions.scopes, sessions.created_at, sessions.authenticated_at,
        users.uuid, users.name, users.role
 FROM sessions
 INNER JOIN users ON users.id = sessions.user_id
@@ -127,17 +80,18 @@ WHERE sessions.selector = ?
 `
 
 type GetSessionBySelectorRow struct {
-	VerifierHash []byte
-	CsrfHash     []byte
-	ExpiresAt    models.UTCTime
-	Revoked      int64
-	Kind         string
-	Audience     string
-	Scopes       string
-	CreatedAt    models.UTCTime
-	Uuid         uuid.UUID
-	Name         string
-	Role         string
+	VerifierHash    []byte
+	CsrfHash        []byte
+	ExpiresAt       models.UTCTime
+	Revoked         int64
+	Kind            string
+	Audience        string
+	Scopes          string
+	CreatedAt       models.UTCTime
+	AuthenticatedAt models.UTCTime
+	Uuid            uuid.UUID
+	Name            string
+	Role            string
 }
 
 func (q *Queries) GetSessionBySelector(ctx context.Context, selector string) (GetSessionBySelectorRow, error) {
@@ -152,6 +106,7 @@ func (q *Queries) GetSessionBySelector(ctx context.Context, selector string) (Ge
 		&i.Audience,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.AuthenticatedAt,
 		&i.Uuid,
 		&i.Name,
 		&i.Role,
@@ -263,28 +218,6 @@ func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected()
-}
-
-const updateOAuthIdentityLogin = `-- name: UpdateOAuthIdentityLogin :exec
-UPDATE oauth_identities SET login = ?1, updated_at = ?2
-WHERE provider = ?3 AND subject = ?4
-`
-
-type UpdateOAuthIdentityLoginParams struct {
-	Login     string
-	UpdatedAt models.UTCTime
-	Provider  string
-	Subject   string
-}
-
-func (q *Queries) UpdateOAuthIdentityLogin(ctx context.Context, arg UpdateOAuthIdentityLoginParams) error {
-	_, err := q.db.ExecContext(ctx, updateOAuthIdentityLogin,
-		arg.Login,
-		arg.UpdatedAt,
-		arg.Provider,
-		arg.Subject,
-	)
-	return err
 }
 
 const upsertUserCredential = `-- name: UpsertUserCredential :exec

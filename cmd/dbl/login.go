@@ -61,7 +61,11 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 		return code
 	}
 	scopesRequested := false
-	fs.Visit(func(f *flag.Flag) { if f.Name == "scopes" { scopesRequested = true } })
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "scopes" {
+			scopesRequested = true
+		}
+	})
 	if fs.NArg() != 0 {
 		return usageError("dbl login", loginUsage, stderr, "login takes no positional arguments; supply a key with --account-key-file")
 	}

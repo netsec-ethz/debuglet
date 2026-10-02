@@ -39,7 +39,7 @@ const (
 	recoveryPrefix = "dbr"
 	// sessionPrefix marks an issued session token. It is what a request
 	// presents, as a bearer token or in the session cookie.
-	sessionPrefix = "dbs"
+	sessionPrefix       = "dbs"
 	apiCredentialPrefix = "dbt"
 )
 
@@ -110,11 +110,11 @@ type caller struct {
 	Session string
 	// Cookie reports that the credential arrived in the session cookie, which
 	// is the only case that needs CSRF proof.
-	Cookie bool
-	API bool
-	Audience string
-	Scopes []string
-	CreatedAt time.Time
+	Cookie          bool
+	API             bool
+	Audience        string
+	Scopes          []string
+	CreatedAt       time.Time
 	AuthenticatedAt time.Time
 	// Failure is the rejection a presented credential earned. Public routes
 	// ignore it; every protected route returns it.
@@ -300,17 +300,17 @@ func authenticate(c echo.Context, db *sql.DB, presented string, fromCookie bool,
 		}
 	}
 	return &caller{
-		UserUUID:      row.Uuid,
-		Name:          row.Name,
-		Role:          row.Role,
-		Operator:      row.Role == RoleOperator,
-		Authenticated: true,
-		Session:       selector,
-		Cookie:        fromCookie,
-		API: isAPI,
-		Audience: row.Audience,
-		Scopes: strings.Fields(row.Scopes),
-		CreatedAt: row.CreatedAt.Time,
+		UserUUID:        row.Uuid,
+		Name:            row.Name,
+		Role:            row.Role,
+		Operator:        row.Role == RoleOperator,
+		Authenticated:   true,
+		Session:         selector,
+		Cookie:          fromCookie,
+		API:             isAPI,
+		Audience:        row.Audience,
+		Scopes:          strings.Fields(row.Scopes),
+		CreatedAt:       row.CreatedAt.Time,
 		AuthenticatedAt: row.AuthenticatedAt.Time,
 	}, nil
 }
@@ -460,7 +460,9 @@ func transactionNotFound() *echo.HTTPError {
 func issueSession(ctx context.Context, queries *database.Queries, userID int64, authenticatedAt ...time.Time) (token, csrf string, expires time.Time, err error) {
 	now := time.Now().UTC()
 	authenticated := now
-	if len(authenticatedAt) != 0 { authenticated = authenticatedAt[0] }
+	if len(authenticatedAt) != 0 {
+		authenticated = authenticatedAt[0]
+	}
 	// Housekeeping at the one moment a session is created keeps the table from
 	// growing without a separate scheduled job.
 	if err := queries.DeleteExpiredSessions(ctx, models.NewUTCTime(now.Add(-SessionLifetime))); err != nil {
@@ -479,12 +481,12 @@ func issueSession(ctx context.Context, queries *database.Queries, userID int64, 
 	}
 	expires = now.Add(SessionLifetime)
 	if err := queries.CreateSession(ctx, database.CreateSessionParams{
-		Selector:     selector,
-		VerifierHash: digest,
-		CsrfHash:     csrfDigest,
-		UserID:       userID,
-		CreatedAt:    models.NewUTCTime(now),
-		ExpiresAt:    models.NewUTCTime(expires),
+		Selector:        selector,
+		VerifierHash:    digest,
+		CsrfHash:        csrfDigest,
+		UserID:          userID,
+		CreatedAt:       models.NewUTCTime(now),
+		ExpiresAt:       models.NewUTCTime(expires),
 		AuthenticatedAt: models.NewUTCTime(authenticated),
 	}); err != nil {
 		return "", "", time.Time{}, err

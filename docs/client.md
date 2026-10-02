@@ -54,3 +54,13 @@ merely because output is pending, unknown, or truncated.
 `client.ReadCapture(r)` reads a pcap or pcapng capture (Ethernet with VLAN tags, raw IP, Linux cooked SLL and SLL2, BSD loopback; microsecond, nanosecond and pcapng `if_tsresol` timestamps) of at most 64 MiB and 1 000 000 packets; a larger, malformed or truncated capture is a `*client.CaptureError`, never a partial read. `Client.Verify(ctx, packets, client.VerifyOptions{At, Offline, ClockTolerance})` attributes those packets to runs as [probe verification](verification.md) describes: it groups them by source address and epoch, looks each group up in the attribution history above and checks the tags offline against the disclosed keys, with the tag functions of [`pkg/tagspec`](../pkg/tagspec) that the executor's taggers use. It needs no credential and uploads no packets. The `VerifyReport` has one `VerifyGroup` per group with its `Verdict` (`verified`, `invalid`, `pending`, `missing`, `unsupported`), machine `Reason`, `Detail`, `Method`, `RunID`, `ExecutorID`, `Epoch`, `Time`, `PendingUntil`, `Packets`, the `Matched`/`Unmatched` counts and, when verified, `FalseMatchBound` and `DisclosedAt`. Only a capture or dispatcher that cannot be read is an error; `ErrNoAttributionHistory` names a dispatcher older than API 1.11. `report.Evidence()` returns the [evidence bundle](verification.md#evidence), `client.WriteEvidence` and `client.ReadEvidence` store it, and `client.VerifyEvidence(ctx, ev)` repeats the check offline from the bundle alone, failing with `ErrEvidenceDigest` or an `*EvidenceMismatchError` when it was altered.
 
 `Client.Cancellation(ctx, id)` inspects a durable cancellation request on API 1.9 or newer. It does not retry delivery. `AcknowledgedAt == nil` means the executor acknowledgement is unknown, including when the run has a local terminal result. Older dispatchers can return 404 for this optional route; `Client.Cancel` retains its existing signature and compatibility.
+
+## Browser-approved credentials
+
+`StartDeviceLogin` requests explicit scopes for the client's configured dispatcher.
+Display its `VerificationURI` and `UserCode`; keep `DeviceCode` private. Call
+`PollDeviceLogin` no faster than the returned interval, honor `slow_down`, and stop
+on denial, expiry or consumption. Pass the approved token to `WithCredential`.
+`CancelDeviceLogin` ends an abandoned request, `CredentialStatus` reports its
+audience and permissions, and `Logout` revokes it. Provider tokens never belong in
+`Credential`. See [authentication](operations/authentication.md).

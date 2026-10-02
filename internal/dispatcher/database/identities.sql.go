@@ -194,16 +194,17 @@ func (q *Queries) FindExternalIdentity(ctx context.Context, arg FindExternalIden
 }
 
 const getIdentitySession = `-- name: GetIdentitySession :one
-SELECT sessions.user_id, sessions.created_at, sessions.expires_at, sessions.revoked, users.uuid
+SELECT sessions.user_id, sessions.created_at, sessions.authenticated_at, sessions.expires_at, sessions.revoked, users.uuid
 FROM sessions INNER JOIN users ON users.id = sessions.user_id WHERE selector = ?
 `
 
 type GetIdentitySessionRow struct {
-	UserID    int64
-	CreatedAt models.UTCTime
-	ExpiresAt models.UTCTime
-	Revoked   int64
-	Uuid      uuid.UUID
+	UserID          int64
+	CreatedAt       models.UTCTime
+	AuthenticatedAt models.UTCTime
+	ExpiresAt       models.UTCTime
+	Revoked         int64
+	Uuid            uuid.UUID
 }
 
 func (q *Queries) GetIdentitySession(ctx context.Context, selector string) (GetIdentitySessionRow, error) {
@@ -212,6 +213,7 @@ func (q *Queries) GetIdentitySession(ctx context.Context, selector string) (GetI
 	err := row.Scan(
 		&i.UserID,
 		&i.CreatedAt,
+		&i.AuthenticatedAt,
 		&i.ExpiresAt,
 		&i.Revoked,
 		&i.Uuid,

@@ -11,6 +11,11 @@ import (
 	"testing"
 )
 
+const (
+	githubOAuthStateCookie = "github_oauth_state"
+	githubOAuthPKCECookie  = "github_oauth_pkce"
+)
+
 func TestGitHubOAuthLoginCreatesAndReusesAccount(t *testing.T) {
 	var exchangedVerifier string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,12 +119,13 @@ func TestGitHubOAuthRejectsMismatchedState(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, f.root.URL+"/auth/github/callback?code=one-time&state=wrong", nil)
 	req.AddCookie(&http.Cookie{Name: githubOAuthStateCookie, Value: "right"})
 	req.AddCookie(&http.Cookie{Name: githubOAuthPKCECookie, Value: strings.Repeat("v", 43)})
-	response, err := http.DefaultClient.Do(req)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusBadRequest {
+	if response.StatusCode != http.StatusFound || response.Header.Get("Location") != "https://example.test/console/?auth_error=expired" {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
 }

@@ -105,7 +105,9 @@ func (h *Handler) CreateCredential(c echo.Context) error {
 	}
 	defer tx.Rollback()
 	q := database.New(tx)
-	if err := recheckBrowserSession(ctx, q, account); err != nil { return err }
+	if err := recheckBrowserSession(ctx, q, account); err != nil {
+		return err
+	}
 	user, err := q.GetUserByUUID(ctx, account.UserUUID)
 	if err != nil {
 		return credentialFailure(err)

@@ -7,7 +7,9 @@ is needed. The supported host is Linux amd64; macOS/Windows Docker Desktop and
 Apple Silicon emulation remain unvalidated. See the [platform matrix](../../README-install.md#supported-platforms).
 
 The registration and re-login commands below are for local or legacy account-key
-deployments. They do not sign in to a managed browser account through OAuth.
+deployments. For a managed browser account, run `dbl login --no-browser` in the
+container and approve the printed code using a browser on another machine. See
+[browser accounts and CLI access](authentication.md).
 
 ## Build the client image
 

@@ -297,6 +297,15 @@ func (q *Queries) ListAccountCredentials(ctx context.Context, arg ListAccountCre
 	return items, nil
 }
 
+const lockCredentialSession = `-- name: LockCredentialSession :exec
+UPDATE sessions SET revoked = revoked WHERE selector = ?
+`
+
+func (q *Queries) LockCredentialSession(ctx context.Context, selector string) error {
+	_, err := q.db.ExecContext(ctx, lockCredentialSession, selector)
+	return err
+}
+
 const lockDeviceLogin = `-- name: LockDeviceLogin :exec
 UPDATE device_logins SET state = state WHERE selector = ?
 `

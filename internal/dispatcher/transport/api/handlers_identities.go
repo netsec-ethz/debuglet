@@ -60,7 +60,7 @@ func (h *Handler) GetIdentities(c echo.Context) error {
 		Identities               []identity        `json:"identities"`
 		Pending                  []pendingIdentity `json:"pending"`
 		ReauthenticationRequired bool              `json:"reauthentication_required"`
-	}{identities, pending, time.Since(caller.CreatedAt) > oauthLifetime})
+	}{identities, pending, time.Since(caller.AuthenticatedAt) > oauthLifetime})
 }
 
 func (h *Handler) PostIdentityLink(c echo.Context) error {
@@ -183,7 +183,7 @@ func (h *Handler) changeIdentity(c echo.Context, linking bool) error {
 	if err := queries.RevokeUserSessions(ctx, caller.UserUUID); err != nil {
 		return err
 	}
-	token, csrf, expires, err := issueSession(ctx, queries, session.UserID)
+	token, csrf, expires, err := issueSession(ctx, queries, session.UserID, session.AuthenticatedAt.Time)
 	if err != nil {
 		return err
 	}

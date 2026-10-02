@@ -191,12 +191,12 @@ type MeasurementSummary struct {
 
 type OauthIdentity struct {
 	Provider  string
+	Issuer    string
 	Subject   string
 	UserID    int64
 	Login     string
 	CreatedAt models.UTCTime
 	UpdatedAt models.UTCTime
-	Issuer    string
 }
 
 type OauthLoginAttempt struct {
@@ -256,18 +256,19 @@ type RetryRequest struct {
 }
 
 type Session struct {
-	ID           int64
-	Selector     string
-	VerifierHash []byte
-	CsrfHash     []byte
-	UserID       int64
-	CreatedAt    models.UTCTime
-	ExpiresAt    models.UTCTime
-	Revoked      int64
-	Kind         string
-	Audience     string
-	Scopes       string
-	Label        string
+	ID              int64
+	Selector        string
+	VerifierHash    []byte
+	CsrfHash        []byte
+	UserID          int64
+	CreatedAt       models.UTCTime
+	ExpiresAt       models.UTCTime
+	Revoked         int64
+	Kind            string
+	Audience        string
+	Scopes          string
+	Label           string
+	AuthenticatedAt models.UTCTime
 }
 
 type Transaction struct {

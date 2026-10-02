@@ -87,12 +87,16 @@ func requireRecentBrowserSession(c echo.Context) (*caller, error) {
 // Recheck in the write transaction so revocation and issuance have a definite
 // order. A browser revoked while a request waited cannot grant new access.
 func recheckBrowserSession(ctx context.Context, q *database.Queries, account *caller) error {
-	if err := q.LockCredentialSession(ctx, account.Session); err != nil { return credentialFailure(err) }
+	if err := q.LockCredentialSession(ctx, account.Session); err != nil {
+		return credentialFailure(err)
+	}
 	row, err := q.GetSessionBySelector(ctx, account.Session)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && (row.Revoked != 0 || row.Kind != "browser" || row.Uuid != account.UserUUID || !time.Now().Before(row.ExpiresAt.Time) || time.Since(row.AuthenticatedAt.Time) > 10*time.Minute) {
 		return unauthorized()
 	}
-	if err != nil { return credentialFailure(err) }
+	if err != nil {
+		return credentialFailure(err)
+	}
 	return nil
 }
 
