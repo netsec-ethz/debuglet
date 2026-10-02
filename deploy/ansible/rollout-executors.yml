@@ -1,0 +1,240 @@
+---
+# Promote one retained release to existing managed executors. A failed host
+# ends the rollout; later inventory hosts are never touched.
+- import_playbook: preflight.yml
+
+- name: Confirm the selected release and canary
+  hosts: executors
+  connection: local
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+  tasks:
+    - name: Require an explicit environment and release confirmation
+      ansible.builtin.assert:
+        that:
+          - rollout_confirm | default('') == debuglet_env ~ ':' ~ deploy_version ~ ':' ~ release_source_sha
+          - release_source_sha is match('^[0-9a-f]{40}$')
+          - rollout_canary | default('') == ansible_play_hosts_all[0]
+          - rollout_operator | default('') | trim | length > 0
+          - rollout_cli is match('^/')
+          - rollout_client_config is match('^/')
+          - debuglet_manage_services | bool
+          - inventory_hostname not in (groups['dispatcher'] | default([]))
+        fail_msg: >-
+          Select the environment, exact release/source, and first inventory host
+          as rollout_canary. Set rollout_confirm=ENV:VERSION:SOURCE, name the
+          authorizing operator in rollout_operator, and provide
+          the controller's full installed CLI and authenticated connections file.
+          Co-located dispatchers need a separate maintenance plan.
+        quiet: true
+
+- name: Promote the canary and then each remaining executor
+  hosts: executors
+  order: inventory
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: true
+  become: true
+  vars:
+    payload_require_signature: true
+    payload_activate: false
+    payload_restart_services: false
+  tasks:
+    - name: Inspect the existing executor service
+      ansible.builtin.command:
+        argv: [systemctl, show, "{{ executor_service }}", --property=LoadState, --property=ActiveState]
+      register: rollout_initial
+      changed_when: false
+
+    - name: Require an installed executor outside a failed or transitional state
+      ansible.builtin.assert:
+        that:
+          - "'LoadState=loaded' in rollout_initial.stdout_lines"
+          - "'ActiveState=active' in rollout_initial.stdout_lines or 'ActiveState=inactive' in rollout_initial.stdout_lines"
+        quiet: true
+
+    - name: Read the previous deployment identity
+      ansible.builtin.slurp:
+        src: "{{ config_dir }}/deployment-{{ debuglet_env }}.json"
+      register: rollout_previous
+
+    - name: Stage the exact signed package without changing command links
+      ansible.builtin.include_role:
+        name: payload
+
+    - name: Preserve the executor's required kernel capabilities
+      community.general.capabilities:
+        path: "{{ payload_prefix }}/lib/debuglet/{{ deploy_version }}/bin/debuglet-executor"
+        capability: cap_net_admin,cap_bpf+ep
+        state: present
+      when: executor_enable_bpf | default(true) | bool and not (executor_ambient_caps | default(false) | bool)
+
+    - name: Refuse a release incompatible with the current schema
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - -u
+          - "{{ executor_user }}"
+          - --
+          - "{{ payload_prefix }}/lib/debuglet/{{ deploy_version }}/bin/debuglet-executor"
+          - -config
+          - "{{ executor_config_dir }}/executor.toml"
+          - -check-database
+      changed_when: false
+
+    - name: Stop admission and join the executor
+      ansible.builtin.systemd:
+        name: "{{ executor_service }}"
+        state: stopped
+
+    - name: Inspect the completed shutdown
+      ansible.builtin.command:
+        argv: [systemctl, show, "{{ executor_service }}", --property=Result, --property=ExecMainStatus, --property=ActiveState]
+      register: rollout_stop
+      changed_when: false
+
+    - name: Refuse backup or activation after an incomplete drain
+      ansible.builtin.assert:
+        that:
+          - "'Result=success' in rollout_stop.stdout_lines"
+          - "'ExecMainStatus=0' in rollout_stop.stdout_lines"
+          - "'ActiveState=inactive' in rollout_stop.stdout_lines"
+        fail_msg: "The executor did not stop cleanly. Keep its state intact and inspect the service before continuing."
+        quiet: true
+
+    - name: Create a private rollback directory outside the live state
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ executor_state_dir | dirname }}"
+        prefix: rollout-backup-
+      register: rollout_backup
+
+    - name: Preserve the stopped state and deployment configuration
+      ansible.builtin.command:
+        argv: [tar, --create, --file, "{{ rollout_backup.path }}/{{ item.name }}.tar", --directory, "{{ item.source }}", .]
+      loop:
+        - {source: "{{ executor_state_dir }}", name: state}
+        - {source: "{{ config_dir }}", name: config}
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Verify the stopped backup against its sources
+      ansible.builtin.command:
+        argv: [tar, --compare, --file, "{{ rollout_backup.path }}/{{ item.name }}.tar", --directory, "{{ item.source }}"]
+      changed_when: false
+      loop:
+        - {source: "{{ executor_state_dir }}", name: state}
+        - {source: "{{ config_dir }}", name: config}
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Record backup digests for a later restore
+      ansible.builtin.stat:
+        path: "{{ rollout_backup.path }}/{{ item }}.tar"
+        checksum_algorithm: sha256
+      loop: [state, config]
+      register: rollout_backup_files
+
+    - name: Record the authorization, backup and prepared release
+      ansible.builtin.copy:
+        content: |
+          {{ {
+            'host': inventory_hostname, 'executor_id': executor_id,
+            'environment': debuglet_env, 'confirmation': rollout_confirm, 'operator': rollout_operator,
+            'canary': rollout_canary, 'previous': rollout_previous.content | b64decode | from_json,
+            'candidate': debuglet_release, 'drain_joined': true,
+            'schema': 'compatible; no migration performed',
+            'backup': rollout_backup.path,
+            'backup_sha256': dict(rollout_backup_files.results | map(attribute='item') | zip(rollout_backup_files.results | map(attribute='stat.checksum'))),
+            'status': 'prepared'
+          } | to_nice_json }}
+        dest: "{{ rollout_backup.path }}/rollout.json"
+        mode: "0600"
+
+    - name: Activate the verified package without rebuilding
+      ansible.builtin.include_role:
+        name: payload
+      vars:
+        payload_activate: true
+
+    - name: Render the active executor version without changing its identity
+      ansible.builtin.template:
+        src: roles/executor/templates/executor.toml.j2
+        dest: "{{ executor_config_dir }}/executor.toml"
+        owner: "{{ executor_user }}"
+        group: "{{ executor_group }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Start the selected release
+      ansible.builtin.systemd:
+        name: "{{ executor_service }}"
+        state: started
+
+    - name: Check service health before submitting a measurement
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ executor_service }}"]
+      changed_when: false
+
+    - name: Wait for the selected executor to reconnect with the expected version
+      ansible.builtin.command:
+        argv: ["{{ rollout_cli }}", --config, "{{ rollout_client_config }}", --output, json, --timeout, 10s, nodes]
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      register: rollout_nodes
+      until: >-
+        rollout_nodes.rc == 0 and
+        rollout_nodes.stdout | from_json | selectattr('id', 'equalto', executor_id)
+        | selectattr('ready', 'equalto', true) | selectattr('version', 'equalto', deploy_version)
+        | list | length == 1
+      retries: 12
+      delay: 5
+
+    - name: Require a fresh completed measurement on this executor
+      ansible.builtin.command:
+        argv:
+          - "{{ rollout_cli }}"
+          - --config
+          - "{{ rollout_client_config }}"
+          - --output
+          - json
+          - --timeout
+          - 60s
+          - run
+          - --sample
+          - hello
+          - --executor
+          - "{{ executor_id }}"
+          - --wait
+          - --allow-remote-test
+      delegate_to: localhost
+      become: false
+      register: rollout_measurement
+      changed_when: false
+
+    - name: Confirm the measurement's executor and terminal success
+      ansible.builtin.assert:
+        that:
+          - (rollout_measurement.stdout | from_json).executor_id == executor_id
+          - (rollout_measurement.stdout | from_json).state == 'RunStateExited'
+          - (rollout_measurement.stdout | from_json).id | length > 0
+        quiet: true
+
+    - name: Record the accepted measurement before advancing to the next host
+      ansible.builtin.copy:
+        content: |
+          {{ {
+            'host': inventory_hostname, 'executor_id': executor_id,
+            'environment': debuglet_env, 'confirmation': rollout_confirm, 'operator': rollout_operator,
+            'canary': rollout_canary, 'previous': rollout_previous.content | b64decode | from_json,
+            'candidate': debuglet_release, 'drain_joined': true,
+            'schema': 'compatible; no migration performed',
+            'backup': rollout_backup.path,
+            'backup_sha256': dict(rollout_backup_files.results | map(attribute='item') | zip(rollout_backup_files.results | map(attribute='stat.checksum'))),
+            'status': 'verified',
+            'measurement': rollout_measurement.stdout | from_json
+          } | to_nice_json }}
+        dest: "{{ rollout_backup.path }}/rollout.json"
+        mode: "0600"

@@ -723,3 +723,11 @@ never in an inventory and is removed with the run.
 ```sh
 deploy/test/host-key-verification.sh
 ```
+
+### Promote an existing signed release
+
+For a canary-first serial update of existing executors without rebuilding,
+use the [signed release rollout and rollback procedure](../docs/operations/release-rollout.md).
+It requires a complete retained signed bundle and separately provisioned trust.
+It refuses schema changes, preserves a stopped backup, and requires a fresh
+measurement before progressing to the next host.
