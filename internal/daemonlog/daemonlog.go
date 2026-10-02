@@ -44,7 +44,9 @@ func Run(logger *zap.Logger, role string, run func(context.Context) error) error
 		logger.Info("Shutdown requested; stopping and joining local work", zap.String("role", role))
 	})
 	err := run(ctx)
-	if !stopNotice() {
+	// Cancellation may precede the callback starting; stopping it then would
+	// discard the shutdown notice the completed run is waiting for.
+	if ctx.Err() != nil || !stopNotice() {
 		<-requested
 	}
 	return err
