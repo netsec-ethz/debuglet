@@ -92,6 +92,11 @@ file-backed logins remain readable. Logging in again with a different store
 replaces the selected profile's credential; it does not revoke previously
 issued credentials. Use the console **Credentials** page to retire old access.
 
+Before downgrading the CLI, use the current version to log out or log in with
+`--credential-store file` for every system-backed profile. Older CLIs reject a
+credential file containing system-store references, including its file-backed
+profiles; conversion of the last system-backed profile restores the older format.
+
 `dbl logout` revokes the current credential and removes its local entry. If
 system cleanup fails, use your desktop keyring manager to remove the affected
 **Debuglet CLI** entry and revoke it from the console. A saved system credential
