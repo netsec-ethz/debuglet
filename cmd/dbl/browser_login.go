@@ -25,7 +25,7 @@ func remoteLoginEndpoint(endpoint string) bool {
 	return err != nil || net.ParseIP(u.Hostname()) == nil || !net.ParseIP(u.Hostname()).IsLoopback()
 }
 
-func browserLoginCommand(ctx context.Context, c *client.Client, profile connections.Profile, options globalOptions, scopes []string, noBrowser bool, stdout, stderr io.Writer) int {
+func browserLoginCommand(ctx context.Context, c *client.Client, profile connections.Profile, options globalOptions, scopes []string, noBrowser bool, storage string, stdout, stderr io.Writer) int {
 	for i := range scopes {
 		scopes[i] = strings.TrimSpace(scopes[i])
 	}
@@ -93,15 +93,12 @@ func browserLoginCommand(ctx context.Context, c *client.Client, profile connecti
 				_ = authenticated.Logout(cleanup)
 				return reportFailure(ctx, "dbl login", stderr, errors.New("browser login cancelled; run dbl login again"))
 			}
-			if err = connections.SaveCredential(options.ConfigPath, profile.Name, connections.Credential{Endpoint: profile.Endpoint, Token: credential.Token, ExpiresAt: credential.ExpiresAt, AccountID: credential.ID}); err != nil {
-				cleanup, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cleanupCancel()
-				_ = authenticated.Logout(cleanup)
+			if err = saveLoginCredential(waiting, c, options.ConfigPath, profile.Name, connections.Credential{Endpoint: profile.Endpoint, Token: credential.Token, ExpiresAt: credential.ExpiresAt, AccountID: credential.ID}, storage, stderr); err != nil {
 				return reportFailure(ctx, "dbl login: store credential", stderr, err)
 			}
 			complete = true
-			return emitReported(ctx, "dbl login", options.Output, stdout, stderr, map[string]any{"dispatcher": profile.Name, "endpoint": profile.Endpoint, "account_id": credential.ID, "expires_at": credential.ExpiresAt, "scopes": credential.Scopes, "credential_store": "owner-only file"}, func(w io.Writer) error {
-				_, err := fmt.Fprintf(w, "Logged in to %s. Credential saved in the owner-only local credential file; expires %s.\n", profile.Name, time.Unix(credential.ExpiresAt, 0).UTC().Format(time.RFC3339))
+			return emitReported(ctx, "dbl login", options.Output, stdout, stderr, map[string]any{"dispatcher": profile.Name, "endpoint": profile.Endpoint, "account_id": credential.ID, "expires_at": credential.ExpiresAt, "scopes": credential.Scopes, "credential_store": storage}, func(w io.Writer) error {
+				_, err := fmt.Fprintf(w, "Logged in to %s. Credential store: %s; expires %s.\n", profile.Name, credentialStorageLabel(storage), time.Unix(credential.ExpiresAt, 0).UTC().Format(time.RFC3339))
 				return err
 			})
 		case "access_denied":

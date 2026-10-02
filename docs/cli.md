@@ -62,11 +62,48 @@ dbl --dispatcher research nodes
 ```
 
 Registration prints the locations of the account key and recovery code, not
-their contents. Keep private backups of both. `credentials.json` holds the
-session and must remain mode `0600`; do not fix a permission error by making
-it world-readable. `dbl --dispatcher research logout` revokes the current
+their contents. Keep private backups of both. `credentials.json` holds either
+the session or its system-store reference and must remain mode `0600`; do not
+fix a permission error by making it world-readable. `dbl --dispatcher research logout` revokes the current
 session when reachable and forgets it locally. It does not delete the account
 or its account-key file.
+
+### Choose credential storage
+
+`dbl login --credential-store auto` is the default. On Linux desktops with
+`secret-tool` and a D-Bus session, it saves the issued credential in Secret
+Service (for example, GNOME Keyring). Install your distribution's
+`libsecret-tools` package to provide `secret-tool`. A locked or failing keyring
+is an error: unlock it and retry, or explicitly choose file storage.
+
+Without that desktop facility, `auto` uses the existing owner-only `0600` file.
+The login result always names the selected store; JSON output contains
+`credential_store: "system"` or `"file"`. Use `--credential-store system` to
+require Secret Service, or choose the headless/container path explicitly:
+
+```sh
+dbl --dispatcher research login --no-browser --credential-store file
+```
+
+System storage keeps only an opaque reference in `credentials.json`. The
+secret is bound to the profile name, config directory, dispatcher URL and
+account: moving the profile to another path requires a fresh login. Existing
+file-backed logins remain readable. Logging in again with a different store
+replaces the selected profile's credential; it does not revoke previously
+issued credentials. Use the console **Credentials** page to retire old access.
+
+Before downgrading the CLI, use the current version to log out or log in with
+`--credential-store file` for every system-backed profile. Older CLIs reject a
+credential file containing system-store references, including its file-backed
+profiles; conversion of the last system-backed profile restores the older format.
+
+`dbl logout` revokes the current credential and removes its local entry. If
+system cleanup fails, use your desktop keyring manager to remove the affected
+**Debuglet CLI** entry and revoke it from the console. A saved system credential
+cannot be read on a headless host without its original Secret Service session;
+use a fresh browser-approved login with file storage there. Native macOS and
+Windows secret stores are not supported; supported native packages remain
+Linux amd64.
 
 ### Recover a lost account key
 

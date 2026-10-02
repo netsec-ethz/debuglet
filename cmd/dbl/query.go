@@ -70,7 +70,7 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	if err := filter.Validate(); err != nil {
 		return usageError("dbl nodes", nodesUsage, stderr, "%v", err)
 	}
-	c, code, ok := connect("dbl nodes", options, false, stderr)
+	c, code, ok := connect(ctx, "dbl nodes", options, false, stderr)
 	if !ok {
 		return code
 	}
@@ -193,7 +193,7 @@ func statusCommand(ctx context.Context, args []string, options globalOptions, st
 	if msg != "" {
 		return usageError("dbl status", statusUsage, stderr, "%s", msg)
 	}
-	c, code, ok := connect("dbl status", options, false, stderr)
+	c, code, ok := connect(ctx, "dbl status", options, false, stderr)
 	if !ok {
 		return code
 	}
@@ -227,7 +227,7 @@ func cancelCommand(ctx context.Context, args []string, options globalOptions, st
 	if msg != "" {
 		return usageError("dbl cancel", cancelUsage, stderr, "%s", msg)
 	}
-	c, code, ok := connect("dbl cancel", options, false, stderr)
+	c, code, ok := connect(ctx, "dbl cancel", options, false, stderr)
 	if !ok {
 		return code
 	}
@@ -321,7 +321,7 @@ func versionCommand(ctx context.Context, args []string, options globalOptions, s
 	}
 	v := localVersion()
 	if server {
-		c, code, ok := connect("dbl version", options, false, stderr)
+		c, code, ok := connect(ctx, "dbl version", options, false, stderr)
 		if !ok {
 			return code
 		}

@@ -252,14 +252,14 @@ func reportFailure(ctx context.Context, name string, stderr io.Writer, err error
 // whole-command timeout, which the command context already enforces, and
 // client.New only validates the operator's endpoint, so its failure is a usage
 // error rather than a transport one.
-func connect(name string, options globalOptions, allowRemoteTEST bool, stderr io.Writer) (*client.Client, int, bool) {
-	c, _, code, ok := connectProfile(name, options, allowRemoteTEST, stderr)
+func connect(ctx context.Context, name string, options globalOptions, allowRemoteTEST bool, stderr io.Writer) (*client.Client, int, bool) {
+	c, _, code, ok := connectProfile(ctx, name, options, allowRemoteTEST, stderr)
 	return c, code, ok
 }
 
 // connectProfile is connect plus the saved profile it selected, for the
 // commands that have to record or forget that profile's credential.
-func connectProfile(name string, options globalOptions, allowRemoteTEST bool, stderr io.Writer) (*client.Client, connections.Profile, int, bool) {
+func connectProfile(ctx context.Context, name string, options globalOptions, allowRemoteTEST bool, stderr io.Writer) (*client.Client, connections.Profile, int, bool) {
 	profile, err := selectedProfile(options)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", name, err)
@@ -271,10 +271,9 @@ func connectProfile(name string, options globalOptions, allowRemoteTEST bool, st
 	// connection, so nothing is read and the client configuration directory is
 	// never located: dbl version --server against an explicit endpoint works
 	// where there is no configuration directory at all.
-	credential, err := connections.CredentialFor(options.ConfigPath, profile.Name, profile.Endpoint)
+	credential, err := connections.CredentialFor(ctx, options.ConfigPath, profile.Name, profile.Endpoint)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", name, err)
-		return nil, profile, exitFailure, false
+		return nil, profile, reportFailure(ctx, name, stderr, err), false
 	}
 	c, err := newClient(profile.Endpoint, client.Options{
 		RequestTimeout:  options.Timeout,

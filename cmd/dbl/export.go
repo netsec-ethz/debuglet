@@ -29,7 +29,7 @@ func exportCommand(ctx context.Context, args []string, options globalOptions, st
 	if msg != "" {
 		return usageError("dbl export", exportUsage, stderr, "%s", msg)
 	}
-	c, code, ok := connect("dbl export", options, false, stderr)
+	c, code, ok := connect(ctx, "dbl export", options, false, stderr)
 	if !ok {
 		return code
 	}

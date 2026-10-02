@@ -100,12 +100,39 @@ dbl --dispatcher research whoami --credential
 dbl --dispatcher research logout
 ```
 
-The CLI stores the credential in the existing owner-only `0600` profile file; OS
-keychain integration is not implemented. The console's **Credentials** page shows
+The CLI defaults to Linux Secret Service when `secret-tool` and a desktop D-Bus
+session are available, otherwise to an owner-only `0600` file. Use
+`--credential-store system` to require the keyring or `--credential-store file`
+on headless hosts. A failing or locked keyring never silently downgrades to file
+storage. See [credential storage](../cli.md#choose-credential-storage) and the
+[upgrade guide](auth-migration.md) for existing dispatchers.
+
+The console's **Credentials** page shows
 active browser/API credentials and can revoke one or all of them immediately.
 Manually created API secrets are shown once. If an approved polling response is
 lost, revoke the resulting entry in the console and start again; approval is
 consumed once, not replayed to recover a secret.
+
+## Respond to a copied credential
+
+From an uncompromised browser session, open **Credentials** and revoke the
+affected entry. If the exposed credential is unknown, revoke all credentials,
+sign in again and issue only the permissions each client needs. Confirm that
+the old credential is refused; never paste its value into an incident report.
+
+If a provider account is compromised, recover it through that provider and use
+an uncompromised linked method where available. Disabling a provider does not
+revoke existing Debuglet credentials. For an exposed legacy account key, follow
+[account recovery](../cli.md#recover-a-lost-account-key); recovery replaces the
+key and recovery code and revokes existing sessions.
+
+Record the account, credential identifier, times, actions and observed outcome
+in the deployment's private incident records. Revocation prevents future
+authenticated requests; it does not cancel already admitted measurements.
+Handle active work separately and verify its observed outcome before claiming
+traffic has stopped.
+
+## Authentication request limits
 
 Authentication issuance and polling have bounded per-client rate limits and a
 maximum of 4,096 pending device transactions. These limits complement reverse

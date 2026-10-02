@@ -143,7 +143,7 @@ func logsCommand(ctx context.Context, args []string, options globalOptions, stdo
 	if !ok {
 		return code
 	}
-	c, code, ok := connect("dbl logs", options, false, stderr)
+	c, code, ok := connect(ctx, "dbl logs", options, false, stderr)
 	if !ok {
 		return code
 	}

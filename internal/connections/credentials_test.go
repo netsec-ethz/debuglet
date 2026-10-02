@@ -80,7 +80,7 @@ func TestCredentialFileReadableByOthersIsRefused(t *testing.T) {
 
 func TestCredentialGoesOnlyToTheEndpointItWasIssuedFor(t *testing.T) {
 	config, _ := savedCredential(t)
-	credential, err := CredentialFor(config, "local", credTestEndpoint)
+	credential, err := CredentialFor(t.Context(), config, "local", credTestEndpoint)
 	if err != nil {
 		t.Fatalf("CredentialFor: %v", err)
 	}
@@ -90,14 +90,14 @@ func TestCredentialGoesOnlyToTheEndpointItWasIssuedFor(t *testing.T) {
 
 	// The same profile pointed at another dispatcher: the token stays put and
 	// the caller is told why.
-	if _, err := CredentialFor(config, "local", credTestOther); err == nil {
+	if _, err := CredentialFor(t.Context(), config, "local", credTestOther); err == nil {
 		t.Fatal("a credential was offered to another endpoint")
 	} else if !strings.Contains(err.Error(), "another dispatcher endpoint") {
 		t.Fatalf("the refusal is not actionable: %v", err)
 	}
 
 	// Another profile has its own credential or none; it never inherits one.
-	other, err := CredentialFor(config, "other", credTestEndpoint)
+	other, err := CredentialFor(t.Context(), config, "other", credTestEndpoint)
 	if err != nil {
 		t.Fatalf("CredentialFor(other): %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCredentialGoesOnlyToTheEndpointItWasIssuedFor(t *testing.T) {
 
 	// An endpoint the operator named directly belongs to no saved connection,
 	// so it presents no credential at all.
-	unnamed, err := CredentialFor(config, "", credTestEndpoint)
+	unnamed, err := CredentialFor(t.Context(), config, "", credTestEndpoint)
 	if err != nil {
 		t.Fatalf("CredentialFor(no name): %v", err)
 	}
@@ -128,7 +128,7 @@ func TestCredentialForWithoutASavedConnectionReadsNothing(t *testing.T) {
 	}
 	// The default path is deliberately used: an unnamed lookup must not even
 	// resolve it.
-	credential, err := CredentialFor("", "", credTestEndpoint)
+	credential, err := CredentialFor(t.Context(), "", "", credTestEndpoint)
 	if err != nil {
 		t.Fatalf("CredentialFor without a saved connection: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestCredentialForWithoutASavedConnectionReadsNothing(t *testing.T) {
 		t.Fatalf("an unnamed lookup produced %+v", credential)
 	}
 	// A named lookup does need the directory and says so.
-	if _, err := CredentialFor("", "local", credTestEndpoint); err == nil {
+	if _, err := CredentialFor(t.Context(), "", "local", credTestEndpoint); err == nil {
 		t.Fatal("a named lookup resolved without a configuration directory")
 	}
 }

@@ -278,7 +278,7 @@ func executeSubmission(ctx context.Context, o runOptions, options globalOptions,
 	if addresses == nil {
 		addresses = []string{}
 	}
-	c, code, ok := connect(command, options, o.allowRemoteTEST, stderr)
+	c, code, ok := connect(ctx, command, options, o.allowRemoteTEST, stderr)
 	if !ok {
 		return code
 	}

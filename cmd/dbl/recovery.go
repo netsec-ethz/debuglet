@@ -27,7 +27,7 @@ func recoveryCommand(ctx context.Context, args []string, options globalOptions, 
 	if msg != "" {
 		return usageError("dbl recovery", recoveryUsage, stderr, "%s", msg)
 	}
-	c, code, ok := connect("dbl recovery", options, false, stderr)
+	c, code, ok := connect(ctx, "dbl recovery", options, false, stderr)
 	if !ok {
 		return code
 	}

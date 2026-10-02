@@ -74,7 +74,7 @@ func rendezvousCommand(ctx context.Context, args []string, options globalOptions
 	if err != nil {
 		return reportFailure(ctx, "dbl rendezvous: client program", stderr, err)
 	}
-	c, code, ok := connect("dbl rendezvous", options, remote, stderr)
+	c, code, ok := connect(ctx, "dbl rendezvous", options, remote, stderr)
 	if !ok {
 		return code
 	}

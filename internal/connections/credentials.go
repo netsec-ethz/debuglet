@@ -1,6 +1,8 @@
 package connections
 
 import (
+	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +39,9 @@ const maxCredentialFile = 1 << 20
 // rather than permanent access to the account.
 type Credential struct {
 	Endpoint  string `json:"endpoint"`
-	Token     string `json:"token"`
+	Token     string `json:"token,omitempty"`
+	Storage   string `json:"storage,omitempty"`
+	SecretID  string `json:"secret_id,omitempty"`
 	ExpiresAt int64  `json:"expires_at,omitempty"`
 	AccountID string `json:"account_id,omitempty"`
 }
@@ -95,15 +99,23 @@ func LoadCredentials(path string) (CredentialStore, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return CredentialStore{}, errors.New("trailing credential file JSON")
 	}
-	if store.SchemaVersion != 1 {
+	if store.SchemaVersion != 1 && store.SchemaVersion != 2 {
 		return CredentialStore{}, errors.New("unsupported credential file schema")
 	}
 	if store.Credentials == nil {
 		store.Credentials = map[string]Credential{}
 	}
-	for name := range store.Credentials {
+	for name, credential := range store.Credentials {
 		if err := ValidateName(name); err != nil {
 			return CredentialStore{}, err
+		}
+		if credential.Storage == "system" {
+			id, err := hex.DecodeString(credential.SecretID)
+			if store.SchemaVersion != 2 || err != nil || len(id) != 32 || credential.Token != "" || credential.Endpoint == "" {
+				return CredentialStore{}, errors.New("invalid system credential metadata")
+			}
+		} else if credential.Storage != "" || credential.SecretID != "" {
+			return CredentialStore{}, errors.New("unsupported credential storage")
 		}
 	}
 	return store, nil
@@ -114,6 +126,12 @@ func writeCredentials(path string, store CredentialStore) error {
 	file, err := CredentialPath(path)
 	if err != nil {
 		return err
+	}
+	store.SchemaVersion = 1
+	for _, credential := range store.Credentials {
+		if credential.Storage == "system" {
+			store.SchemaVersion = 2
+		}
 	}
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
@@ -128,18 +146,8 @@ func writeCredentials(path string, store CredentialStore) error {
 
 // SaveCredential records the credential of one profile, replacing its own.
 func SaveCredential(path, name string, credential Credential) error {
-	if err := ValidateName(name); err != nil {
-		return err
-	}
-	if credential.Endpoint == "" || credential.Token == "" {
-		return errors.New("a stored credential needs both its endpoint and its token")
-	}
-	store, err := LoadCredentials(path)
-	if err != nil {
-		return err
-	}
-	store.Credentials[name] = credential
-	return writeCredentials(path, store)
+	_, err := SaveCredentialWithStorage(context.Background(), path, name, credential, "file")
+	return err
 }
 
 // RemoveCredential forgets the credential of one profile. Forgetting one that
@@ -152,11 +160,20 @@ func RemoveCredential(path, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, found := store.Credentials[name]; !found {
+	credential, found := store.Credentials[name]
+	if !found {
 		return nil
 	}
 	delete(store.Credentials, name)
-	return writeCredentials(path, store)
+	if err := writeCredentials(path, store); err != nil {
+		return err
+	}
+	if credential.Storage == "system" {
+		if _, err := secretTool(context.Background(), "clear", credential.SecretID, nil); err != nil {
+			return errors.New("local profile cleared, but system secret cleanup failed; remove the Debuglet CLI entry from your desktop keyring and revoke it from the console Credentials page")
+		}
+	}
+	return nil
 }
 
 // CredentialFor returns the credential to present at endpoint for one saved
@@ -168,7 +185,7 @@ func RemoveCredential(path, name string) error {
 // operator named directly, so nothing is looked up and the client
 // configuration directory is not even located: commands that need no saved
 // connection keep working where there is no such directory.
-func CredentialFor(path, name, endpoint string) (Credential, error) {
+func CredentialFor(ctx context.Context, path, name, endpoint string) (Credential, error) {
 	if name == "" {
 		return Credential{}, nil
 	}
@@ -182,6 +199,12 @@ func CredentialFor(path, name, endpoint string) (Credential, error) {
 	}
 	if credential.Endpoint != endpoint {
 		return Credential{}, fmt.Errorf("%w: the stored credential for %q was issued for another dispatcher endpoint; run dbl login", ErrCredentialEndpointMismatch, name)
+	}
+	if credential.Storage == "system" {
+		credential.Token, err = loadSystemCredential(ctx, path, name, credential)
+		if err != nil {
+			return Credential{}, err
+		}
 	}
 	return credential, nil
 }

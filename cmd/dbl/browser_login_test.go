@@ -17,46 +17,53 @@ import (
 )
 
 func TestBrowserLoginHeadlessStoresOnlyLocalCredential(t *testing.T) {
-	const accountID = "c4d022cb-5bdf-47f9-ab0f-314bb8f0c7c2"
-	const deviceSecret = "dbd_selector.DEVICE-SECRET"
-	const accessSecret = "dbt_selector.ACCESS-SECRET"
-	config := filepath.Join(t.TempDir(), "config.json")
-	mux := http.NewServeMux()
-	var endpoint string
-	scopes := []string{"account:read", "executors:read", "measurements:read", "measurements:write"}
-	mux.HandleFunc("POST /auth/device/start", func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResponse(w, 201, client.DeviceLogin{DeviceCode: deviceSecret, UserCode: "ABCDE-F2345", VerificationURI: endpoint + "/device", Audience: endpoint, Scopes: scopes, ExpiresAt: time.Now().Add(10 * time.Minute).Unix(), Interval: 5})
-	})
-	mux.HandleFunc("POST /auth/device/poll", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			DeviceCode string `json:"device_code"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.DeviceCode != deviceSecret {
-			t.Error("poll secret missing")
-		}
-		writeJSONResponse(w, 200, client.DeviceLoginPoll{State: "authorized", Credential: &client.APICredential{Token: accessSecret, CredentialID: "selector", Audience: endpoint, Scopes: scopes, ExpiresAt: time.Now().Add(time.Hour).Unix(), ID: accountID, Name: "Alice", Role: "user"}})
-	})
-	fx := newFixture(t, mux)
-	endpoint = fx.endpoint()
-	if err := connections.Save(config, connections.Profile{Name: "saved", Endpoint: endpoint}, true); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	code, out, errout := runCLI(ctx, "--config", config, "--output", outputJSON, "login", "--no-browser")
-	assertCode(t, code, exitOK, out, errout)
-	if !strings.Contains(errout, "ABCDE-F2345") || !strings.Contains(errout, endpoint+"/device") {
-		t.Fatal("headless instructions missing")
-	}
-	for _, secret := range []string{deviceSecret, accessSecret} {
-		if strings.Contains(out+errout, secret) {
-			t.Fatal("credential in CLI output")
-		}
-	}
-	saved, err := connections.CredentialFor(config, "saved", endpoint)
-	if err != nil || saved.Token != accessSecret || saved.AccountID != accountID {
-		t.Fatalf("saved credential %v", err)
+	for _, storage := range []string{"file", "system"} {
+		t.Run(storage, func(t *testing.T) {
+			if storage == "system" {
+				cliSecretToolFixture(t)
+			}
+			const accountID = "c4d022cb-5bdf-47f9-ab0f-314bb8f0c7c2"
+			const deviceSecret = "dbd_selector.DEVICE-SECRET"
+			const accessSecret = "dbt_selector.ACCESS-SECRET"
+			config := filepath.Join(t.TempDir(), "config.json")
+			mux := http.NewServeMux()
+			var endpoint string
+			scopes := []string{"account:read", "executors:read", "measurements:read", "measurements:write"}
+			mux.HandleFunc("POST /auth/device/start", func(w http.ResponseWriter, r *http.Request) {
+				writeJSONResponse(w, 201, client.DeviceLogin{DeviceCode: deviceSecret, UserCode: "ABCDE-F2345", VerificationURI: endpoint + "/device", Audience: endpoint, Scopes: scopes, ExpiresAt: time.Now().Add(10 * time.Minute).Unix(), Interval: 5})
+			})
+			mux.HandleFunc("POST /auth/device/poll", func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					DeviceCode string `json:"device_code"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				if req.DeviceCode != deviceSecret {
+					t.Error("poll secret missing")
+				}
+				writeJSONResponse(w, 200, client.DeviceLoginPoll{State: "authorized", Credential: &client.APICredential{Token: accessSecret, CredentialID: "selector", Audience: endpoint, Scopes: scopes, ExpiresAt: time.Now().Add(time.Hour).Unix(), ID: accountID, Name: "Alice", Role: "user"}})
+			})
+			fx := newFixture(t, mux)
+			endpoint = fx.endpoint()
+			if err := connections.Save(config, connections.Profile{Name: "saved", Endpoint: endpoint}, true); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			code, out, errout := runCLI(ctx, "--config", config, "--output", outputJSON, "login", "--no-browser", "--credential-store", storage)
+			assertCode(t, code, exitOK, out, errout)
+			if !strings.Contains(errout, "ABCDE-F2345") || !strings.Contains(errout, endpoint+"/device") {
+				t.Fatal("headless instructions missing")
+			}
+			for _, secret := range []string{deviceSecret, accessSecret} {
+				if strings.Contains(out+errout, secret) {
+					t.Fatal("credential in CLI output")
+				}
+			}
+			saved, err := connections.CredentialFor(t.Context(), config, "saved", endpoint)
+			if err != nil || saved.Token != accessSecret || saved.AccountID != accountID {
+				t.Fatalf("saved credential %v", err)
+			}
+		})
 	}
 }
 
@@ -82,7 +89,7 @@ func TestBrowserLoginInterruptionCancelsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := browserLoginCommand(ctx, c, connections.Profile{Name: "saved", Endpoint: endpoint}, options, []string{"account:read", "executors:read", "measurements:read", "measurements:write"}, true, cancelLoginWriter{cancel}, &strings.Builder{})
+	code := browserLoginCommand(ctx, c, connections.Profile{Name: "saved", Endpoint: endpoint}, options, []string{"account:read", "executors:read", "measurements:read", "measurements:write"}, true, "file", cancelLoginWriter{cancel}, &strings.Builder{})
 	if code == exitOK {
 		t.Fatal("interrupted login succeeded")
 	}
@@ -91,7 +98,7 @@ func TestBrowserLoginInterruptionCancelsTransaction(t *testing.T) {
 	default:
 		t.Fatal("transaction not cancelled")
 	}
-	saved, err := connections.CredentialFor(config, "saved", endpoint)
+	saved, err := connections.CredentialFor(t.Context(), config, "saved", endpoint)
 	if err != nil || saved.Token != "" {
 		t.Fatal("interruption saved a credential")
 	}

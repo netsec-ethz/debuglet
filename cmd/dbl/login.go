@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/connections"
 	"github.com/netsec-ethz/debuglet/pkg/client"
@@ -17,8 +18,9 @@ import (
 
 const loginUsage = `Usage:
   dbl [--dispatcher NAME] login [--account-key-file FILE] [--register NAME]
-      [--recovery-file FILE]
+      [--recovery-file FILE] [--credential-store auto|system|file]
   dbl [--dispatcher NAME] login --browser [--no-browser] [--scopes LIST]
+      [--credential-store auto|system|file]
   dbl [--dispatcher NAME] logout
 
 Obtain a session for the selected dispatcher and store it for that connection.
@@ -37,9 +39,13 @@ yet: the account key to --account-key-file (default account-key-PROFILE.txt
 beside the connections file) and the recovery code to --recovery-file (default
 recovery-PROFILE.txt). Keep both; the dispatcher cannot show either again.
 
-Only the session is stored, in credentials.json beside the connections file,
-mode 0600, and it is only ever sent to the endpoint it was issued for. logout
-revokes the session at the dispatcher and forgets it locally.
+Only the session is stored. --credential-store auto (default) uses Linux Secret
+Service when secret-tool and a desktop D-Bus session are available; otherwise it
+uses credentials.json beside the connections file, mode 0600. An available but
+locked or failing system store is an error, not a silent fallback. Use system to
+require Secret Service, or file explicitly on headless hosts. Tokens are only
+sent to the issuing endpoint. logout revokes the session and removes its local
+file or system-store entry.
 `
 
 // accountKeyEnv names the environment variable an account key may be supplied
@@ -56,6 +62,7 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	recoveryFile := fs.String("recovery-file", "", "file the new account's recovery code is written to")
 	browser := fs.Bool("browser", false, "approve this CLI in a browser")
 	noBrowser := fs.Bool("no-browser", false, "print the browser approval URL without opening it")
+	storageMode := fs.String("credential-store", "auto", "credential storage: auto, system or file")
 	scopes := fs.String("scopes", "account:read,executors:read,measurements:read,measurements:write", "comma-separated API scopes")
 	if code, ok := parseCommandFlags(fs, args, loginUsage, stdout, stderr); !ok {
 		return code
@@ -76,6 +83,10 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 		return usageError("dbl login", loginUsage, stderr, "browser approval cannot be combined with account-key login or registration")
 	}
 
+	storage, err := connections.ResolveCredentialStorage(*storageMode)
+	if err != nil {
+		return usageError("dbl login", loginUsage, stderr, "%v", err)
+	}
 	c, profile, code, ok := connectProfileWithoutCredential("dbl login", options, stderr)
 	if !ok {
 		return code
@@ -91,7 +102,7 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 		return reportFailure(ctx, "dbl login: read credential store", stderr, err)
 	}
 	if *browser || *noBrowser || scopesRequested || (*register == "" && *keyFile == "" && strings.TrimSpace(os.Getenv(accountKeyEnv)) == "" && remoteLoginEndpoint(profile.Endpoint)) {
-		return browserLoginCommand(ctx, c, profile, options, strings.Split(*scopes, ","), *noBrowser, stdout, stderr)
+		return browserLoginCommand(ctx, c, profile, options, strings.Split(*scopes, ","), *noBrowser, storage, stdout, stderr)
 	}
 
 	accountKey := ""
@@ -148,25 +159,50 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	if err != nil {
 		return reportFailure(ctx, "dbl login", stderr, loginHint(err))
 	}
-	if err := connections.SaveCredential(options.ConfigPath, profile.Name, connections.Credential{
+	if err := saveLoginCredential(ctx, c, options.ConfigPath, profile.Name, connections.Credential{
 		Endpoint:  profile.Endpoint,
 		Token:     session.Token,
 		ExpiresAt: session.ExpiresAt,
-	}); err != nil {
+	}, storage, stderr); err != nil {
 		return reportFailure(ctx, "dbl login: store credential", stderr, err)
 	}
-	// Nothing printed here is a credential: the session token and the account
-	// key stay in the owner-only credential file.
+	// Neither the session token nor the account key is printed.
 	return emitReported(ctx, "dbl login", options.Output, stdout, stderr, map[string]any{
-		"dispatcher": profile.Name,
-		"endpoint":   profile.Endpoint,
-		"account":    session.Name,
-		"role":       session.Role,
-		"expires_at": session.ExpiresAt,
+		"dispatcher":       profile.Name,
+		"endpoint":         profile.Endpoint,
+		"account":          session.Name,
+		"role":             session.Role,
+		"expires_at":       session.ExpiresAt,
+		"credential_store": storage,
 	}, func(w io.Writer) error {
-		_, err := fmt.Fprintf(w, "Logged in to %s (%s) as %s.\nTry: dbl executor list\n", profile.Name, profile.Endpoint, session.Name)
+		_, err := fmt.Fprintf(w, "Logged in to %s (%s) as %s.\nCredential store: %s.\nTry: dbl executor list\n", profile.Name, profile.Endpoint, session.Name, credentialStorageLabel(storage))
 		return err
 	})
+}
+
+func saveLoginCredential(ctx context.Context, c *client.Client, path, name string, credential connections.Credential, storage string, stderr io.Writer) error {
+	result, err := connections.SaveCredentialWithStorage(ctx, path, name, credential, storage)
+	if err != nil {
+		if authenticated, clientErr := c.WithCredential(credential.Token); clientErr == nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if revokeErr := authenticated.Logout(cleanup); revokeErr != nil && !alreadyUnauthenticated(revokeErr) {
+				return fmt.Errorf("%w; automatic revocation failed; revoke the new credential from the console Credentials page", err)
+			}
+		}
+		return err
+	}
+	if result.Warning != "" {
+		fmt.Fprintln(stderr, result.Warning)
+	}
+	return nil
+}
+
+func credentialStorageLabel(storage string) string {
+	if storage == "system" {
+		return "Linux Secret Service"
+	}
+	return "owner-only file (mode 0600)"
 }
 
 func logoutCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
@@ -185,10 +221,12 @@ func logoutCommand(ctx context.Context, args []string, options globalOptions, st
 		return usageError("dbl logout", loginUsage, stderr,
 			"logout ends the session of a saved connection; select one with --dispatcher NAME")
 	}
-	credential, err := connections.CredentialFor(options.ConfigPath, profile.Name, profile.Endpoint)
+	credential, err := connections.CredentialFor(ctx, options.ConfigPath, profile.Name, profile.Endpoint)
 	mismatched := errors.Is(err, connections.ErrCredentialEndpointMismatch)
 	if err != nil && !mismatched {
-		return reportFailure(ctx, "dbl logout", stderr, err)
+		cleanupErr := connections.RemoveCredential(options.ConfigPath, profile.Name)
+		return reportFailure(ctx, "dbl logout", stderr,
+			fmt.Errorf("credential could not be read for remote revocation; revoke it from the console Credentials page: %w", errors.Join(err, cleanupErr)))
 	}
 	c, err := newClient(profile.Endpoint, client.Options{RequestTimeout: options.Timeout, Credential: credential.Token})
 	if err != nil {
