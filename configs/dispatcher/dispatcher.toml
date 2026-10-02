@@ -29,7 +29,7 @@ node_bytes = 536870912
 
 # Attribution history for probe verification: executor TESLA chains, their
 # disclosed keys and which runs were active from which source address. It is
-# pruned after retention_days (1 to 3650); verifiers see the cutoff as
+# pruned after retention_days (1 to 3650; 0 means the default of 90); verifiers see the cutoff as
 # retained_from.
 [attribution]
 retention_days = 90

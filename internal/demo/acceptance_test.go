@@ -5,12 +5,10 @@ package demo
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
@@ -379,13 +378,14 @@ func (h *installedHarness) libraryCase(t *testing.T, fault string) {
 }
 
 func (h *installedHarness) inspectObservation(ctx context.Context, o observation) (map[string]any, error) {
-	u := url.URL{Scheme: "file", Path: o.DispatcherDB}
-	db, err := sql.Open("sqlite", u.String()+"?mode=ro")
+	// The dispatcher keeps writing while it is observed (a run's exit, its
+	// attribution interval, disclosed keys on each heartbeat), so the reader
+	// waits for its locks as the dispatcher's own connections do.
+	db, err := sqlitedb.Open(o.DispatcherDB, sqlitedb.ReadOnly())
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 	q := database.New(db)
 	tx, err := q.GetTransactionByID(ctx, o.Submission.TransactionID)
 	if err != nil {

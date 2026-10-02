@@ -14,7 +14,7 @@ The dispatcher keeps the history that probe verification needs in its database: 
 
 | Key | Unit | Default | Allowed |
 | --- | --- | --- | --- |
-| `retention_days` | days | 90 | 1–3,650 |
+| `retention_days` | days | 90 | 0 (default) or 1–3,650 |
 | `trusted_proxies` | IP addresses or CIDR prefixes | empty | at most 64 |
 
 The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, and keys whose epoch ended, more than one epoch before the cutoff (a lookup at the cutoff lists runs within one epoch of it), and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 14; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.

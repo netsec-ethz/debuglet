@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
@@ -22,6 +23,9 @@ type HTTPError struct {
 	Message     string
 	FieldErrors []wire.FieldError
 	admittedIDs []string // validated shape; submission also checks batch cardinality
+	// RetryAfter is the delay a 429 or 503 response asked for in its
+	// Retry-After header; zero when it named none.
+	RetryAfter time.Duration
 }
 
 func (e *HTTPError) Error() string {

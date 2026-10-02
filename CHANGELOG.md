@@ -35,6 +35,37 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- `dbl verify` and `client.Verify`: offline probe verification (#73,
+  `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
+  and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and
+  1 000 000 packets and rejects malformed or truncated captures. Packets are
+  grouped by source address and epoch and checked against the public
+  attribution history (API 1.11) without an account and without uploading
+  them; each group is `verified`, `invalid`, `pending` (with the disclosure
+  time to retry after), `missing` or `unsupported`, with a machine reason,
+  match and non-match counts, a false-match bound and ambiguity reported.
+  Tag spec section 6 applies: epochs t and t-1 only, d < 2 and legacy
+  (tag_spec 0) chains refused, and no key that could have been public at
+  capture time plus 1 s. Work is capped (1 000 000 tag computations, 1024
+  lookups, one hash walk per chain); `--source` restricts a capture to the
+  probe addresses before any lookup. `--evidence` writes a format-1 evidence
+  bundle, which `dbl verify evidence.json` and `client.VerifyEvidence` check
+  again offline; its schedules are not authenticated until #71(b). Exit  status 0 verified, 1 error (including usage errors), 2 invalid, 3
+  inconclusive, 124 timeout.
+  A group whose packets reproduce different runs (one executor measuring
+  toward one recipient twice at once) is split into a verified entry per
+  run instead of being rejected; packets of a split group that match no run
+  are `unsupported: unmatched`, and a group is `invalid` only when none of
+  its packets matches. Split entries carry the whole group's counts
+  (`split`, additive within evidence format 1), and the false-match bound
+  N·C(n, k)·(2·2⁻¹⁶)^k counts the candidates tried and the packets picked.
+  Lookups are paced to the dispatcher's rate limit (10 per second, burst
+  40, configurable in `VerifyOptions`); a `429` is retried after its
+  `Retry-After` until the context ends, and then `Verify` returns a
+  `RateLimitedError` naming the unchecked groups. `HTTPError.RetryAfter`
+  carries the delay of a 429 or 503.
+  The pure tag functions moved to `pkg/tagspec`, which the taggers and the
+  verifier share; tests cross-check the shared vectors with `verify_pcap.py`.
 - API 1.10: account-owned executor enrollment and `dbl executor join`, with
   optional systemd installation that preserves the enrolled identity. Enrollment
   stays disabled until configured. This build requires dispatcher schema 13,
@@ -46,7 +77,7 @@ changes; the linked API and deployment documentation contains operational detail
   verified against it (once), and each run's interval and source address. A
   dispatcher restart no longer loses disclosed keys, and earlier chains stay
   verifiable. The history is pruned after `[attribution] retention_days`
-  (default 90); upgrade the database explicitly before starting this build.
+  (default 90; 0 or unset also means 90); upgrade the database explicitly before starting this build.
   - API 1.11: `GET /attribution/candidates?ip=&at=` lists the runs active
     from an address within one epoch of a time (at most 32) with their chain
     schedule `{chain_id, k0, t0_unix_ns, epoch_seconds,

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/netsec-ethz/debuglet/pkg/wire"
@@ -121,6 +122,7 @@ func (c *Client) doWithLimit(ctx context.Context, method, route string, query ur
 			Message:     message,
 			FieldErrors: fields,
 			admittedIDs: admittedIDs,
+			RetryAfter:  retryAfter(resp),
 		}
 	}
 	if want == http.StatusNoContent {
@@ -378,4 +380,29 @@ func marshalJSON(v any) ([]byte, error) {
 		return nil, fmt.Errorf("client: encoding request: %w", err)
 	}
 	return data, nil
+}
+
+// maxRetryAfter bounds the Retry-After delay the client honours.
+const maxRetryAfter = 10 * time.Minute
+
+// retryAfter is the delay of a 429 or 503 response's Retry-After header (in
+// seconds, or an HTTP date), or zero.
+func retryAfter(resp *http.Response) time.Duration {
+	if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable {
+		return 0
+	}
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	var d time.Duration
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if n <= 0 {
+			return 0
+		}
+		d = time.Duration(min(n, int64(maxRetryAfter/time.Second))) * time.Second
+	} else if t, err := http.ParseTime(v); err == nil {
+		d = time.Until(t)
+	}
+	return min(max(d, 0), maxRetryAfter)
 }
