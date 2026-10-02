@@ -61,6 +61,12 @@ install host tools, load kernel modules or alter a host interface. Unsupported
 kernels fail with a recorded explanation rather than silently skipping work.
 Do not invoke its integration test on a shared host network namespace.
 
+Prepare the pinned tools image using the [CI image instructions](../development/ci-images.md), then run from the repository root:
+
+```sh
+bash scripts/ci-github.sh evaluation
+```
+
 The lane builds and verifies the installed candidate, builds both probes, and
 writes a directory under `.cache/ci/evaluation/`. Each WASM trial saves the real
 versioned SDK result export. After both services have joined, reproduce the

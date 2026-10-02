@@ -270,7 +270,7 @@ elif sys.argv[1:3] == ['container', 'ls'] and os.environ.get('DOCKER_REMAINING')
         self.assertNotIn('DEBUGLET_EVALUATION_ISOLATED=1', prepare)
         self.assertTrue(any(call[0] == 'build' for call in self.arguments()))
         for args in runs:
-            self.assertIn('debuglet-ci-tools:20260623-2', args)
+            self.assertIn('debuglet-ci-tools:20261002-1', args)
             self.assertNotIn('--privileged', args)
             self.assertNotIn('fixture-secret', json.dumps(args))
             self.assertNotIn('GITHUB_TOKEN', args)
