@@ -30,7 +30,7 @@ func (d *Dispatcher) releaseFloor(id uuid.UUID) {
 }
 
 // releaseTerminalResources frees the in-memory destination allocations and
-// floor reservation of a terminal run. Every release is keyed by run identity,
+// floor reservation of a terminal or reclaimed run. Every release is keyed by run identity,
 // so it is idempotent: a winner, a duplicate delivery after an earlier failure
 // and a window sweep may all call it, and a run that was never reserved in this
 // lifetime releases nothing. Payment handling is deliberately separate and is

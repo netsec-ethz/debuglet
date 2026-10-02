@@ -60,10 +60,11 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	}
 	capabilities, vantage := e.capabilityReport(ctx, true)
 	resp := &pb.HelloResponse{
-		ExecutorId:   e.cfg.Identity.ExecutorID,
-		Version:      e.cfg.Identity.Version,
-		Capabilities: capabilities,
-		VantagePoint: vantage,
+		ExecutorId:       e.cfg.Identity.ExecutorID,
+		BandwidthVersion: 1,
+		Version:          e.cfg.Identity.Version,
+		Capabilities:     capabilities,
+		VantagePoint:     vantage,
 		// The dispatcher records the address it observes on the control
 		// connection, which is what probe recipients see. Reporting an
 		// address here would only be a hint, so leave it empty.
@@ -222,14 +223,21 @@ func (e *Executor) applyBandwidth(binding controlsession.Binding, req *pb.Bandwi
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if req.GetRevision() < e.bandwidthRevision {
+		return &pb.BandwidthResponse{Revision: e.bandwidthApplied}, nil
+	}
+	e.bandwidthRevision = req.GetRevision()
 	destinations := make([]string, 0, len(req.GetLimits()))
 	for _, up := range req.GetLimits() {
 		e.limiter.SetAddrCapacity(up.GetAddress(), bitrate.Bitrate(up.GetBitsLimit()))
 		destinations = append(destinations, up.GetAddress())
 	}
-	e.publishLimitsLocked(destinations)
+	if err := e.publishLimitsLocked(destinations); err != nil {
+		return nil, status.Error(codes.Unavailable, "destination allocation could not be applied")
+	}
+	e.bandwidthApplied = req.GetRevision()
 
-	return &pb.BandwidthResponse{}, nil
+	return &pb.BandwidthResponse{Revision: e.bandwidthApplied}, nil
 }
 
 // publishLimits applies every limit a capacity or membership change can move to
@@ -243,7 +251,8 @@ func (e *Executor) publishLimits(destinations []string) {
 	e.publishLimitsLocked(destinations)
 }
 
-func (e *Executor) publishLimitsLocked(destinations []string) {
+func (e *Executor) publishLimitsLocked(destinations []string) error {
+	var failures error
 	for _, running := range e.running {
 		for _, addr := range destinations {
 			limit, _, err := e.limiter.GetAddrLimit(running.id, addr)
@@ -251,6 +260,7 @@ func (e *Executor) publishLimitsLocked(destinations []string) {
 				continue // The run does not use this destination.
 			}
 			if err := e.packetCount.SetLimit(addr, running.id, limit); err != nil {
+				failures = errors.Join(failures, err)
 				e.logger.Warn("Failed to apply destination limit", zap.String("debugletID", running.id.String()))
 				e.logger.Debug("Private destination limit diagnostic", zap.String("debugletID", running.id.String()),
 					zap.String("address", daemonlog.Diagnostic(errors.New(addr))), zap.String("error", daemonlog.Diagnostic(err)))
@@ -261,8 +271,10 @@ func (e *Executor) publishLimitsLocked(destinations []string) {
 			continue
 		}
 		if err := e.packetCount.SetExecLimit(running.id, execLimit); err != nil {
+			failures = errors.Join(failures, err)
 			e.logger.Warn("Failed to apply executor limit", zap.String("debugletID", running.id.String()))
 			e.logger.Debug("Private executor limit diagnostic", zap.String("debugletID", running.id.String()), zap.String("error", daemonlog.Diagnostic(err)))
 		}
 	}
+	return failures
 }

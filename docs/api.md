@@ -154,7 +154,7 @@ The OpenAPI document contains the complete status-code and schema reference. Dep
 | `RunStateUnreconciled` | The submission the run belongs to failed and the dispatcher could not confirm the run's cancellation: the executor refused it or it was not delivered. The run may still execute. |
 | `RunStateExited` | Terminal. `error` is empty for a successful run. |
 
-A later report from the executor supersedes `RunStateUnreconciled`, as it does any earlier state. A run that is not terminal about two minutes after the end of its reserved window (its start plus its timeout plus a ten-second grace) is classified as `RunStateExited` with an `error` that starts with `outcome unknown:`; this also covers a `RunStateUploading` or `RunStateUploaded` that no longer changes, for example because the control session of its executor ended before the run started. A run recorded before control bindings were stored has no binding; it is neither cancellable nor classified and keeps its stored state. Nothing is replayed, and no success is ever inferred: only the executor's own report records one.
+A later report from the executor supersedes `RunStateUnreconciled`, as it does any earlier state. After the reserved window ends plus one minute of grace, the dispatcher records local allocation reclamation and releases bandwidth allocations and scheduler floors. The sweep runs every thirty seconds in bounded batches. Recovery inspection exposes `allocation_reclaimed_at` (API 1.14). This does not change the stored state/error, infer that the guest stopped, settle payments, authorize replay, delete retained work, or release account retained-work quotas. A late real terminal report may still establish an outcome under its original control binding. A run stored without a complete binding is neither cancellable nor reclaimed automatically. Older terminal records whose error begins `outcome unknown:` remain readable.
 
 ## Provider identities and scoped credentials (API 1.13)
 
@@ -167,3 +167,18 @@ provides browser-approved CLI login. Account management uses cookie sessions plu
 CSRF, and API tokens cannot authorize these operations. All existing account
 ownership checks still apply. See [authentication](operations/authentication.md)
 for permission scopes, expiry, provider setup and current limits.
+
+### Destination allocation delivery
+
+Allocation delivery failures return `Unavailable` to the executor; the recorded
+allocation is idempotent and stays until normal release or window reclamation.
+Each exact session retries pending delivery on its heartbeat, with no separate
+notification worker. Executors advertising bandwidth version 1 apply complete
+allocation snapshots in revision order, including after an older RPC times out.
+An acknowledgement means the current packet-counter updates succeeded.
+
+`PATCH /destination` records its accepted admission cap even if delivery fails.
+A failed response means some executors have not confirmed it; inspect the named
+executor in dispatcher diagnostics. Legacy executors remain compatible for run
+allocation but cannot confirm ordered live changes: this operation reports that
+an executor upgrade is required. Reconnection never retargets an old update.

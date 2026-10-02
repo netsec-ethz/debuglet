@@ -63,7 +63,10 @@ func TestSkippedReservationCannotReleaseCurrentRun(t *testing.T) {
 				sweep()
 			case "sweep before cancel":
 				sweep()
-				tgAssertRow(t, g.row(t, old.id), models.RunStateExited, tgText(outcomeUnknown))
+				weAssertReclaimed(t, g, old)
+				if err := g.abort(t, old.id, "cancelled via API"); err != nil {
+					t.Fatal(err)
+				}
 			case "concurrent cancel and sweep":
 				done := make(chan error, 1)
 				go func() { done <- g.d.AbortDebuglet(g.ctx, tgExecutorID, old.id, "cancelled via API") }()
@@ -72,7 +75,7 @@ func TestSkippedReservationCannotReleaseCurrentRun(t *testing.T) {
 					t.Fatal(err)
 				}
 				row := g.row(t, old.id)
-				if row.State != models.RunStateExited || row.Error != tgText(deadCancelError) && row.Error != tgText(outcomeUnknown) {
+				if row.State != models.RunStateExited || row.Error != tgText(deadCancelError) {
 					t.Fatalf("no terminal winner: %+v", row)
 				}
 			}
@@ -129,7 +132,7 @@ func TestCurrentReservationReleasesAfterClockRollback(t *testing.T) {
 			} else {
 				loop.set(run.row.EndTime.Time.Add(expiredWindowGrace + time.Second))
 				f.d.sweepEndedWindows(time.Time{})
-				weAssertUnknown(t, f, run)
+				weAssertReclaimed(t, f, run)
 			}
 			tgAssertReserved(t, f, run, 0)
 			if got := f.d.scheduler.QueryMaxDest("192.0.2.77", run.row.StartTime.Time, run.row.EndTime.Time); got != 0 {

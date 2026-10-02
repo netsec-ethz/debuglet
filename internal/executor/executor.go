@@ -80,19 +80,21 @@ type Executor struct {
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
-	scheduler     scheduler.Scheduler
-	running       map[uuid.UUID]RunningDebuglet
-	mu            sync.RWMutex
-	limiter       *app.Limiter
-	packetCount   ratelimit.PacketCount
-	output        *outputstore.Store
-	outputFailed  *atomic.Bool
-	outputVersion atomic.Uint32
-	outputKick    chan struct{}
-	iface         *net.Interface
-	portManager   *socket.PortManager
-	socketBudget  *socket.DescriptorBudget
-	supervisor    *isolation.Supervisor
+	scheduler         scheduler.Scheduler
+	bandwidthRevision uint64 // highest snapshot received, protected by mu
+	bandwidthApplied  uint64 // highest snapshot successfully published
+	running           map[uuid.UUID]RunningDebuglet
+	mu                sync.RWMutex
+	limiter           *app.Limiter
+	packetCount       ratelimit.PacketCount
+	output            *outputstore.Store
+	outputFailed      *atomic.Bool
+	outputVersion     atomic.Uint32
+	outputKick        chan struct{}
+	iface             *net.Interface
+	portManager       *socket.PortManager
+	socketBudget      *socket.DescriptorBudget
+	supervisor        *isolation.Supervisor
 	// Tests can hold individual resource boundaries; nil uses the real runtime.
 	newRuntime func(scheduler.Spec) runtimeDebuglet
 	// clientFor is a construction-fixed seam for scripted direct gRPC peers, which

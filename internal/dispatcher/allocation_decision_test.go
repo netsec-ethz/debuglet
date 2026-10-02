@@ -228,7 +228,7 @@ func TestAllocateRetryKeepsFencing(t *testing.T) {
 	defer cancel()
 
 	mutation := effectTestMutation(t, f.d, tgExecutorID)
-	if _, err := f.d.OnDebugletAllocate(ctx, mutation, req); err != nil {
+	if _, err := f.d.OnDebugletAllocate(ctx, mutation, req); status.Code(err) != codes.Unavailable {
 		t.Fatalf("first allocation: %v", err)
 	}
 	decision := allocationFairshare(t, f.d, destination)
@@ -237,7 +237,7 @@ func TestAllocateRetryKeepsFencing(t *testing.T) {
 	}
 	// The ambiguous response is retried on a fresh ticket of the same session.
 	retry := effectTestMutation(t, f.d, tgExecutorID)
-	if _, err := f.d.OnDebugletAllocate(ctx, retry, req); err != nil {
+	if _, err := f.d.OnDebugletAllocate(ctx, retry, req); status.Code(err) != codes.Unavailable {
 		t.Fatalf("retry under the original session: %v", err)
 	}
 	if got := allocationFairshare(t, f.d, destination); !maps.Equal(got, decision) {

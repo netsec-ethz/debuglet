@@ -5,6 +5,8 @@ package dispatcher
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +31,11 @@ func (d *Dispatcher) Recovery(ctx context.Context, id uuid.UUID) (wire.Recovery,
 	}
 	original := controlsession.Binding{Incarnation: row.DispatcherIncarnation, SessionID: row.SessionID}
 	doc := wire.Recovery{ID: id.String(), ExecutorID: row.ExecutorID, State: row.State.String(), Error: PublicTerminalError(row.Error.String), OriginalBinding: recoveryBinding(original)}
+	if reclaimed, err := database.New(d.db).GetAllocationReclamation(ctx, id); err == nil {
+		doc.AllocationReclaimedAt = &reclaimed.Time
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return wire.Recovery{}, err
+	}
 	doc.Observation.Classification = "unavailable"
 
 	d.mu.RLock()

@@ -260,6 +260,23 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, bitr
 	}
 }
 
+// ForExecutor returns current destination shares for one executor. Like
+// Fairshare, callers hold the destination store's lock while consuming it.
+func (d *DestinationsUsage) ForExecutor(executorID string) iter.Seq2[string, bitrate.Bitrate] {
+	return func(yield func(string, bitrate.Bitrate) bool) {
+		for key := range d.store {
+			if key.ID != executorID {
+				continue
+			}
+			for id, limit := range d.Fairshare(key.destination) {
+				if id == executorID && !yield(key.destination, limit) {
+					return
+				}
+			}
+		}
+	}
+}
+
 // SetLimit records the total capacity of a destination. A limit below the
 // floors already charged there is refused and nothing is recorded: those
 // floors were admitted and stay, so the limit can be lowered once they end.

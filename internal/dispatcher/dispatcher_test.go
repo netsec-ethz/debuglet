@@ -42,7 +42,7 @@ var debugletColumns = []string{
 }
 
 var listDebugletsEndAfterQuery = regexp.QuoteMeta(
-	"SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets WHERE end_time > ?",
+	"SELECT id, uuid, start_time, end_time, usage, ceil_bw, executor_id, addresses, state, error, transaction_id, order_id, dispatcher_incarnation, session_id FROM debuglets WHERE end_time > ? AND NOT EXISTS (SELECT 1 FROM allocation_reclamations WHERE debuglet_id = debuglets.id)",
 )
 
 // RegisterExecutor calls PaymentHandler.CreateEarningsIfNotExists, which looks

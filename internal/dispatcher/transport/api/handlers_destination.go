@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 
 	"github.com/labstack/echo/v4"
@@ -41,6 +42,10 @@ func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 		if errors.Is(err, resource.ErrCapacityFull) {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted,
 				"limit is below the floors admitted on the destination, active or reserved", err)
+		}
+		if errors.Is(err, dispatcher.ErrOrderedBandwidthUnsupported) {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
+				"destination limit recorded; upgrade legacy executors to confirm ordered application", err)
 		}
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
 			"destination limit recorded but not delivered to every executor", err)

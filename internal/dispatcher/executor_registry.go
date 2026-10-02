@@ -142,16 +142,12 @@ func (e *RegisteredExecutor) AppendDebugletID(id uuid.UUID) {
 type executorEntry struct {
 	*RegisteredExecutor
 	owner *rpc.SessionOwner
-	// bandwidthTail is the done channel of the last bandwidth delivery
-	// captured for this executor, nil before the first. Each capture, under
-	// d.mu and in the order of the destination changes, waits for the
-	// previous tail and becomes the new one, so deliveries reach the executor
-	// in capture order and the newest share is applied last. A delivery always
-	// closes its channel when it ends, however it ends; one cut off at its
-	// bound while the executor still processes it closes the channel before
-	// its share is applied, so that share may land after its successor's and
-	// stay until the next update on the destination or the session end.
-	bandwidthTail chan struct{}
+	// Legacy peers require ordered sends; revised peers also fence application
+	// after a timed-out RPC. Pending work is retried by this session's heartbeat.
+	bandwidthTail     chan struct{}
+	bandwidthVersion  uint32
+	bandwidthRevision uint64
+	bandwidthPending  bool
 }
 
 type registrationOperation struct{ cancel context.CancelFunc }
@@ -265,7 +261,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 			commitErr = err
 			return
 		}
-		d.executors[record.ID] = &executorEntry{RegisteredExecutor: record, owner: owner}
+		d.executors[record.ID] = &executorEntry{RegisteredExecutor: record, owner: owner, bandwidthVersion: hello.GetBandwidthVersion()}
 		if d.expiryDone == nil {
 			d.expiryDone = make(chan struct{})
 			startExpiry = d.expiryDone
@@ -405,7 +401,7 @@ type realExpiryTicker struct{ *time.Ticker }
 func (t realExpiryTicker) C() <-chan time.Time { return t.Ticker.C }
 
 // runExpiry is the sole expiry loop: on each tick it retires the owners whose
-// lease has run out and then classifies the runs whose window has ended. It
+// lease has run out and then reclaims allocations whose window has ended. It
 // also prunes the attribution history, on its first tick and hourly after.
 func (d *Dispatcher) runExpiry(done chan struct{}) {
 	defer close(done)

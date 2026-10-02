@@ -96,10 +96,11 @@ type tgPeer struct {
 	bandwidth    []*pb.BandwidthRequest
 	beforeUpload func(ctx context.Context, req *pb.UploadRequest) error
 	abortErr     error
+	bandwidthErr error
 }
 
 func (p *tgPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, error) {
-	return &pb.HelloResponse{ExecutorId: tgExecutorID, Version: "tg-peer", Currency: tgCurrency, PricePerBwS: tgPrice}, nil
+	return &pb.HelloResponse{ExecutorId: tgExecutorID, Version: "tg-peer", BandwidthVersion: 1, Currency: tgCurrency, PricePerBwS: tgPrice}, nil
 }
 
 func (p *tgPeer) Upload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {
@@ -129,8 +130,12 @@ func (p *tgPeer) Abort(_ context.Context, req *pb.AbortRequest) (*pb.AbortRespon
 func (p *tgPeer) Bandwidth(_ context.Context, req *pb.BandwidthRequest) (*pb.BandwidthResponse, error) {
 	p.mu.Lock()
 	p.bandwidth = append(p.bandwidth, req)
+	err := p.bandwidthErr
 	p.mu.Unlock()
-	return &pb.BandwidthResponse{}, nil
+	if err != nil {
+		return nil, err
+	}
+	return &pb.BandwidthResponse{Revision: req.GetRevision()}, nil
 }
 
 func (p *tgPeer) scriptUpload(hook func(ctx context.Context, req *pb.UploadRequest) error) {

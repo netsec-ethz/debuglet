@@ -292,7 +292,8 @@ type HelloResponse struct {
 	TeslaDisclosureDelayEpochs int64 `protobuf:"varint,20,opt,name=tesla_disclosure_delay_epochs,json=teslaDisclosureDelayEpochs,proto3" json:"tesla_disclosure_delay_epochs,omitempty"`
 	// TESLA chain length L: the chain serves epochs below it. Zero from an
 	// executor that predates it; the schedule's length is then unknown.
-	TeslaChainLength int64 `protobuf:"varint,21,opt,name=tesla_chain_length,json=teslaChainLength,proto3" json:"tesla_chain_length,omitempty"`
+	TeslaChainLength int64  `protobuf:"varint,21,opt,name=tesla_chain_length,json=teslaChainLength,proto3" json:"tesla_chain_length,omitempty"`
+	BandwidthVersion uint32 `protobuf:"varint,22,opt,name=bandwidth_version,json=bandwidthVersion,proto3" json:"bandwidth_version,omitempty"` // 1 supports ordered full allocation snapshots.
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -470,6 +471,13 @@ func (x *HelloResponse) GetTeslaDisclosureDelayEpochs() int64 {
 func (x *HelloResponse) GetTeslaChainLength() int64 {
 	if x != nil {
 		return x.TeslaChainLength
+	}
+	return 0
+}
+
+func (x *HelloResponse) GetBandwidthVersion() uint32 {
+	if x != nil {
+		return x.BandwidthVersion
 	}
 	return 0
 }
@@ -845,6 +853,7 @@ func (x *DestinationLimit) GetBitsLimit() int64 {
 type BandwidthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Limits        []*DestinationLimit    `protobuf:"bytes,1,rep,name=limits,proto3" json:"limits,omitempty"`
+	Revision      uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"` // Session-local full snapshot revision; zero is legacy.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -886,8 +895,16 @@ func (x *BandwidthRequest) GetLimits() []*DestinationLimit {
 	return nil
 }
 
+func (x *BandwidthRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
 type BandwidthResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Revision      uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"` // Latest full snapshot applied by this session.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -920,6 +937,13 @@ func (x *BandwidthResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use BandwidthResponse.ProtoReflect.Descriptor instead.
 func (*BandwidthResponse) Descriptor() ([]byte, []int) {
 	return file_protocol_protocol_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *BandwidthResponse) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
 }
 
 type HeartbeatRequest struct {
@@ -3278,7 +3302,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12#\n" +
 	"\rsession_token\x18\x04 \x01(\fR\fsessionToken\x12*\n" +
 	"\x11lease_duration_ms\x18\x05 \x01(\x03R\x0fleaseDurationMs\x12%\n" +
-	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\xe2\a\n" +
+	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\x8f\b\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -3305,7 +3329,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\fcapabilities\x18\x12 \x01(\v2'.debuglet.protocol.ExecutorCapabilitiesR\fcapabilities\x12J\n" +
 	"\rvantage_point\x18\x13 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\x12A\n" +
 	"\x1dtesla_disclosure_delay_epochs\x18\x14 \x01(\x03R\x1ateslaDisclosureDelayEpochs\x12,\n" +
-	"\x12tesla_chain_length\x18\x15 \x01(\x03R\x10teslaChainLengthB\x0e\n" +
+	"\x12tesla_chain_length\x18\x15 \x01(\x03R\x10teslaChainLength\x12+\n" +
+	"\x11bandwidth_version\x18\x16 \x01(\rR\x10bandwidthVersionB\x0e\n" +
 	"\f_public_hostB\r\n" +
 	"\v_sui_walletB\x13\n" +
 	"\x11_enrollment_token\"\x85\x02\n" +
@@ -3340,10 +3365,12 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x10DestinationLimit\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x1d\n" +
 	"\n" +
-	"bits_limit\x18\x02 \x01(\x03R\tbitsLimit\"O\n" +
+	"bits_limit\x18\x02 \x01(\x03R\tbitsLimit\"k\n" +
 	"\x10BandwidthRequest\x12;\n" +
-	"\x06limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x06limits\"\x13\n" +
-	"\x11BandwidthResponse\"\xde\x02\n" +
+	"\x06limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x06limits\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\"/\n" +
+	"\x11BandwidthResponse\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\"\xde\x02\n" +
 	"\x10HeartbeatRequest\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12!\n" +

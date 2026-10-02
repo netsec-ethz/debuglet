@@ -1,6 +1,7 @@
 package api
 
 import (
+	"go.uber.org/zap"
 	"net/http"
 	"strings"
 	"testing"
@@ -159,4 +160,18 @@ func TestDestinationLimitBelowTheReservedFloorsAnswersConflict(t *testing.T) {
 		t.Fatalf("a refused limit sent %v", pushed)
 	}
 	patch("limit equal to the reserved floors", ccFloorBW, http.StatusNoContent)
+}
+
+func TestDestinationLimitLegacyPeerReturnsUpgradeInstruction(t *testing.T) {
+	peer := &cpPeer{id: ccExecutorID, price: ccPricePerBwS, currency: "TEST", legacyBandwidth: true}
+	f := ccNewFixturePeer(t, zap.NewNop(), peer, LocalDevelopment(true))
+	dlAllocate(t, f, "127.0.0.1")
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: "127.0.0.1", Limit: 2 * ccFloorBW})
+	wfExpect(t, "legacy ordered update", status, http.StatusInternalServerError, body)
+	envelope := envelopeOf(t, "legacy ordered update", body)
+	if envelope.Code != CodeInternal || !strings.Contains(envelope.Message, "upgrade legacy executors") {
+		t.Fatalf("no actionable legacy outcome: %+v", envelope)
+	}
+	oaCheckResponse(t, oaContract(t), http.MethodPatch, "/destination", status, body)
 }

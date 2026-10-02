@@ -31,7 +31,7 @@ type fairsharePeer struct {
 }
 
 func (p *fairsharePeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, error) {
-	return &pb.HelloResponse{ExecutorId: fairshareExecutorID, Currency: "TEST", PricePerBwS: 1}, nil
+	return &pb.HelloResponse{ExecutorId: fairshareExecutorID, BandwidthVersion: 1, Currency: "TEST", PricePerBwS: 1}, nil
 }
 
 func (p *fairsharePeer) Bandwidth(_ context.Context, req *pb.BandwidthRequest) (*pb.BandwidthResponse, error) {
@@ -43,7 +43,7 @@ func (p *fairsharePeer) Bandwidth(_ context.Context, req *pb.BandwidthRequest) (
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
 	p.mu.Unlock()
-	return &pb.BandwidthResponse{}, nil
+	return &pb.BandwidthResponse{Revision: req.GetRevision()}, nil
 }
 
 func (p *fairsharePeer) recorded() []*pb.BandwidthRequest {
