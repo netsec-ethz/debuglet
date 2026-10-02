@@ -85,7 +85,7 @@ logs for diagnosis; use the documented upgrade/recovery operations where needed.
 ## Executor health
 
 Enable [health-alerts.yml](../../deploy/monitoring/health-alerts.yml) alongside the
-availability rule. Both rules use the same 45-second pending period and refuse
+availability rule. These rules use the same 45-second pending period and refuse
 missing, failed or stale observations. The executor's capability report expires
 after 90 seconds without refresh; allow that additional interval for a silent
 reporting failure. Test their controlled failure/recovery fixtures with
@@ -93,11 +93,15 @@ reporting failure. Test their controlled failure/recovery fixtures with
 
 `DebugletRequiredCounterUnavailable` is opt-in: set the collector target label
 `require_ebpf: "true"` only when **every registered executor** is required to select
-eBPF. Otherwise a supported fallback does not raise this alert. The rule fires
-when any selection is fallback/unknown or the observations cannot be collected.
-This is a collector policy, not a new executor enforcement setting. A reported
-eBPF selection does not prove its hook remains attached or that a particular
-traffic path is policed; independent packet validation is still required.
+eBPF with its owned ingress and egress TCX links present. Otherwise a supported
+fallback does not raise this alert. The rule fires when any selection is
+fallback/unknown, either attachment is missing/unknown, or observations cannot
+be collected. Recovery requires a fresh positive attachment report from every
+registered executor, so old executors without this observation remain unknown.
+This is a collector policy, not a new executor enforcement setting. Attachment
+presence does not verify packet coverage, accounting or effective policing.
+Allow the 30-second report cadence before the normal scrape/evaluation budget;
+silent report loss can instead take the 90-second report expiry above.
 
 `DebugletDisclosureUnhealthy` fires when any registered executor reports failed
 key refresh, an excessive disclosure hold, an exhausted/not-yet-started signing
@@ -106,7 +110,13 @@ an unhealthy report expires. Resolution requires fresh positive subsystem
 reports and unexpired schedules; a heartbeat alone is insufficient. This does
 not prove that disclosed keys reached durable storage or validate captured tags.
 
-When either alert fires:
+`DebugletExecutorStateStorageLow` fires below 10% available space on any executor
+state filesystem, or when the aggregate is incomplete. It uses each executor's
+available/capacity ratio rather than dividing unrelated extrema. RSS and FD
+metrics describe the executor daemon, excluding guest workers; set thresholds
+suited to your service limits using host monitoring for the whole service.
+
+When an executor health alert fires:
 
 - Use the operator executor listing to identify the affected executor and its
   capability, attribution and clock fields; metrics intentionally omit its ID.
@@ -121,7 +131,15 @@ When either alert fires:
 - For chain exhaustion, stop admission and follow the daemon's logged
   `final_disclosure_at` before restart. Increase the next chain's configured
   lifetime if needed. An early restart can lose disclosure of its final epochs.
-- Confirm new reports show the intended counter, available attribution and
+- For a missing attachment, inspect the configured interface and the service's
+  owned TCX links. Drain and repair/restart the affected service; this observer
+  does not reattach programs. Preserve its identity and state. A fresh selection
+  alone cannot clear the alert; both attachment observations must recover.
+- For storage pressure, inspect each executor's database filesystem and recover
+  space without removing active state, identity, journals or guest output.
+  Confirm a fresh complete ratio above the threshold. Missing measurements do
+  not establish recovery.
+- Confirm new reports show the intended counter, present attachments, available attribution and
   positive remaining lifetime. Validate traffic separately when claiming
   enforcement or attribution. Alert resolution does not repair historical runs.
 
@@ -166,7 +184,7 @@ Enable [storage-alerts.yml](../../deploy/monitoring/storage-alerts.yml) and the
 the supported offline backup profile. `DebugletStateStorageLow` checks the
 **dispatcher's state filesystem**, firing below 10% space available to
 unprivileged writes, or when that observation is missing. This does not cover
-executor disks, filesystem quotas or inode exhaustion; retain host monitoring
+executor disks (use the executor health rule above), filesystem quotas or inode exhaustion; retain host monitoring
 for those. A failed dispatcher scrape is covered by `DebugletUnavailable`.
 
 Backups currently require a clean, joined foreground shutdown and `--offline`.

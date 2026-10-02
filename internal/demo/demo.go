@@ -46,7 +46,7 @@ type dependencies struct {
 func (d dependencies) verifySchema(ctx context.Context, role storagecheck.Role, path string) error {
 	check := d.checkSchema
 	if check == nil {
-		check = storagecheck.Check
+		check = storagecheck.CheckForService
 	}
 	if err := check(ctx, role, path); err != nil {
 		return fmt.Errorf("%s database: %w", role, err)
@@ -65,7 +65,7 @@ func productionDependencies() dependencies {
 	return dependencies{
 		resolveAssets: ResolveAssets,
 		bootstrap:     storagecheck.BootstrapFresh,
-		checkSchema:   storagecheck.Check,
+		checkSchema:   storagecheck.CheckForService,
 		startChild:    func(spec ChildSpec) (ChildProcess, error) { return StartChild(spec) },
 		startTarget:   startTarget,
 	}

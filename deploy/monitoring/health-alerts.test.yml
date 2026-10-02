@@ -21,6 +21,8 @@ tests:
   - &id005
     series: debuglet_executors_enforcement_mode{job="debuglet-dispatcher",instance="owned:9000",state="ebpf"}
     values: 0+0x7 1+0x4
+  - series: debuglet_executors_counter_attachment{job="debuglet-dispatcher",instance="owned:9000",state="present"}
+    values: 0+0x7 1+0x4
   - &id006
     series: debuglet_executors_enforcement_mode{job="debuglet-dispatcher",instance="owned:9000",state="fallback"}
     values: 1+0x3 0+0x8
@@ -43,8 +45,8 @@ tests:
         owner: debuglet-operator
         require_ebpf: 'true'
       exp_annotations:
-        summary: Required executor packet-counter selection is unavailable or unknown
-        description: Inspect fresh executor capabilities and daemon logs. Fallback is allowed unless this collector target explicitly requires eBPF. Selected eBPF is not proof of continuous packet enforcement.
+        summary: Required executor packet-counter attachment is unavailable or unknown
+        description: Inspect fresh executor capabilities, owned TCX attachment observations and daemon logs. Fallback is allowed unless this collector target explicitly requires eBPF. Attachment presence is not proof of continuous packet enforcement.
         runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#executor-health
   - eval_time: 105s
     alertname: DebugletRequiredCounterUnavailable
@@ -186,3 +188,66 @@ tests:
   - *id019
   alert_rule_test:
   - *id020
+
+- name: required attachment loss stays firing through unknown until fresh recovery
+  interval: 15s
+  input_series:
+  - series: up{job="debuglet-dispatcher",instance="owned:9000",require_ebpf="true"}
+    values: 1+0x16
+  - *id002
+  - *id003
+  - series: debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher",instance="owned:9000"}
+    values: 0+15x16
+  - series: debuglet_executors_enforcement_mode{job="debuglet-dispatcher",instance="owned:9000",state="ebpf"}
+    values: 1+0x16
+  - series: debuglet_executors_counter_attachment{job="debuglet-dispatcher",instance="owned:9000",state="present"}
+    values: 1 0+0x10 1+0x4
+  - series: debuglet_executors_counter_attachment{job="debuglet-dispatcher",instance="owned:9000",state="missing"}
+    values: 0 1+0x4 0+0x10
+  - series: debuglet_executors_counter_attachment{job="debuglet-dispatcher",instance="owned:9000",state="unknown"}
+    values: 0+0x5 1+0x5 0+0x4
+  alert_rule_test:
+  - *id008
+  - eval_time: 75s
+    alertname: DebugletRequiredCounterUnavailable
+    exp_alerts:
+    - *id001
+  - eval_time: 150s
+    alertname: DebugletRequiredCounterUnavailable
+    exp_alerts:
+    - *id001
+  - eval_time: 195s
+    alertname: DebugletRequiredCounterUnavailable
+    exp_alerts: []
+
+- name: executor storage pressure remains firing through missing observation and failed scrape
+  interval: 15s
+  input_series:
+  - series: up{job="debuglet-dispatcher",instance="owned:9000"}
+    values: 1+0x5 0+0x1 1+0x4
+  - *id004
+  - series: debuglet_observation_available{job="debuglet-dispatcher",instance="owned:9000",observation="executor_state_available_ratio_min",reason=""}
+    values: 1+0x3 0+0x3 1+0x4
+  - series: debuglet_executor_state_available_ratio_min{job="debuglet-dispatcher",instance="owned:9000"}
+    values: 0.05+0x3 stale _ _ _ 0.2+0x4
+  alert_rule_test:
+  - eval_time: 60s
+    alertname: DebugletExecutorStateStorageLow
+    exp_alerts:
+    - &storage_alert
+      exp_labels:
+        job: debuglet-dispatcher
+        instance: owned:9000
+        severity: warning
+        owner: debuglet-operator
+      exp_annotations:
+        summary: Executor state storage is low or cannot be observed
+        description: A registered executor has less than ten percent available filesystem space, or a fresh complete observation is unavailable. Check each executor's local storage; quotas and inodes require host monitoring.
+        runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#executor-health
+  - eval_time: 105s
+    alertname: DebugletExecutorStateStorageLow
+    exp_alerts:
+    - *storage_alert
+  - eval_time: 135s
+    alertname: DebugletExecutorStateStorageLow
+    exp_alerts: []

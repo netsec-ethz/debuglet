@@ -120,3 +120,36 @@ func TestMetricsConcurrentCollectionRefusesWithoutWaiting(t *testing.T) {
 		t.Fatalf("busy scrape: %d %s", recorder.Code, recorder.Body)
 	}
 }
+
+func TestMetricsResourcesOmitPartialAggregates(t *testing.T) {
+	rss, ratio := 1024.0, .05
+	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 2, Health: dispatcher.ExecutorHealthMetrics{
+		AttachmentPresent: 1, AttachmentUnknown: 1,
+		RSS:                 dispatcher.ExecutorResourceMetric{Value: &rss, Unknown: 1},
+		StateAvailableRatio: dispatcher.ExecutorResourceMetric{Value: &ratio},
+	}}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	for _, want := range []string{
+		`debuglet_executors_counter_attachment{state="unknown"} 1`,
+		`debuglet_executor_process_rss_bytes_max_unknown 1`,
+		`debuglet_observation_available{observation="executor_process_rss_bytes_max",reason="incomplete"} 0`,
+		`debuglet_executor_state_available_ratio_min 0.05`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if strings.Contains(out, "\ndebuglet_executor_process_rss_bytes_max ") {
+		t.Fatal("partial maximum appeared complete")
+	}
+	c.Health.RSS.Unknown = 0
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if !strings.Contains(out, "\ndebuglet_executor_process_rss_bytes_max 1024\n") {
+		t.Fatal("complete maximum missing")
+	}
+	c.Registered = 0
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, "\ndebuglet_executor_process_rss_bytes_max ") || !strings.Contains(out, `observation="executor_process_rss_bytes_max",reason="no_executors"`) {
+		t.Fatal("empty registry appeared numeric")
+	}
+}

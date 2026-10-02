@@ -91,12 +91,34 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 			counts     []int
 		}{
 			{"executors_enforcement_mode", "Registered executors by freshly reported counter selection, not proof of continuous enforcement.", []string{"ebpf", "fallback", "unknown"}, []int{h.EBPF, h.Fallback, h.EnforcementUnknown}},
+			{"executors_counter_attachment", "Registered executors by fresh owned TCX attachment observations; presence does not prove packet policing.", []string{"present", "missing", "unknown", "not_required"}, []int{h.AttachmentPresent, h.AttachmentMissing, h.AttachmentUnknown, h.AttachmentNotRequired}},
 			{"executors_attribution_state", "Registered executors by fresh attribution report; unknown includes stale or disconnected observations.", []string{"available", "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "unknown"}, []int{h.AttributionAvailable, h.EpochZero, h.ChainExhausted, h.RefreshFailing, h.DisclosureHeld, h.AttributionUnknown}},
 			{"executors_clock_readiness", "Registered executors by freshly reported kernel clock readiness, not an independently measured bound.", []string{"ready", "degraded", "unknown"}, []int{h.ClockReady, h.ClockDegraded, h.ClockUnknown}},
 		} {
 			fmt.Fprintf(&out, "# HELP debuglet_%s %s\n# TYPE debuglet_%s gauge\n", group.name, group.help, group.name)
 			for i, state := range group.states {
 				fmt.Fprintf(&out, "debuglet_%s{state=%q} %d\n", group.name, state, group.counts[i])
+			}
+		}
+		for _, metric := range []struct {
+			name, help string
+			value      dispatcher.ExecutorResourceMetric
+		}{
+			{"executor_process_rss_bytes_max", "Maximum reported executor daemon resident bytes; excludes worker processes.", h.RSS},
+			{"executor_process_open_fds_max", "Maximum reported executor daemon open descriptor count; excludes worker processes.", h.FDs},
+			{"executor_state_available_bytes_min", "Minimum reported executor state-filesystem bytes available to unprivileged writes; excludes quotas.", h.StateAvailable},
+			{"executor_state_capacity_bytes_min", "Minimum reported executor state-filesystem capacity; not a sum across distinct filesystems.", h.StateCapacity},
+			{"executor_state_available_ratio_min", "Minimum reported available fraction of an executor state filesystem; excludes quotas.", h.StateAvailableRatio},
+		} {
+			reason := ""
+			if control.Registered == 0 {
+				reason = "no_executors"
+			} else if metric.value.Unknown > 0 || metric.value.Value == nil {
+				reason = "incomplete"
+			}
+			gauge(metric.name+"_unknown", "Registered executors without a usable current observation for this aggregate.", metric.value.Unknown)
+			if available(metric.name, reason) {
+				gauge(metric.name, metric.help, *metric.value.Value)
 			}
 		}
 		gauge("executors_schedule_unknown", "Registered executors without a usable current schedule observation.", h.ScheduleUnknown)
@@ -149,7 +171,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 	}
 	// These require timestamps, finality or authoritative subsystem contracts
 	// that the current process does not persist or expose. Silence is not zero.
-	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds", "disclosure_lag_seconds", "executor_host_resources", "settlement_backlog"} {
+	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds", "disclosure_lag_seconds", "settlement_backlog"} {
 		available(name, "unsupported")
 	}
 	return out.String() + availability.String()
