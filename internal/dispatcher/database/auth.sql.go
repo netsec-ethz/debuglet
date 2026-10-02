@@ -119,6 +119,7 @@ func (q *Queries) GetOAuthIdentity(ctx context.Context, arg GetOAuthIdentityPara
 
 const getSessionBySelector = `-- name: GetSessionBySelector :one
 SELECT sessions.verifier_hash, sessions.csrf_hash, sessions.expires_at, sessions.revoked,
+       sessions.kind, sessions.audience, sessions.scopes, sessions.created_at,
        users.uuid, users.name, users.role
 FROM sessions
 INNER JOIN users ON users.id = sessions.user_id
@@ -130,6 +131,10 @@ type GetSessionBySelectorRow struct {
 	CsrfHash     []byte
 	ExpiresAt    models.UTCTime
 	Revoked      int64
+	Kind         string
+	Audience     string
+	Scopes       string
+	CreatedAt    models.UTCTime
 	Uuid         uuid.UUID
 	Name         string
 	Role         string
@@ -143,6 +148,10 @@ func (q *Queries) GetSessionBySelector(ctx context.Context, selector string) (Ge
 		&i.CsrfHash,
 		&i.ExpiresAt,
 		&i.Revoked,
+		&i.Kind,
+		&i.Audience,
+		&i.Scopes,
+		&i.CreatedAt,
 		&i.Uuid,
 		&i.Name,
 		&i.Role,

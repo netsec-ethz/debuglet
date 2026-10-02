@@ -6,7 +6,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
@@ -21,6 +20,8 @@ type DispatcherConfig struct {
 	Sui                SuiConfig                `toml:"sui"`
 	CORS               CORSConfig               `toml:"cors"`
 	GitHubOAuth        GitHubOAuthConfig        `toml:"github_oauth"`
+	CILogonOIDC        CILogonConfig            `toml:"cilogon_oidc"`
+	Authentication     AuthenticationConfig     `toml:"authentication"`
 	Output             OutputConfig             `toml:"output"`
 	Admission          AdmissionConfig          `toml:"admission"`
 	Retention          RetentionConfig          `toml:"retention"`
@@ -257,18 +258,7 @@ func (cfg *DispatcherConfig) Validate() error {
 			return err
 		}
 	}
-	if cfg.GitHubOAuth.Enabled {
-		if cfg.TLS.Disable && !cfg.Server.BehindTLSTerminator {
-			return errors.New("github_oauth.enabled requires dispatcher TLS or server.behind_tls_terminator so browser credentials use Secure cookies")
-		}
-		for field, value := range map[string]string{"github_oauth.callback_url": cfg.GitHubOAuth.CallbackURL, "github_oauth.success_url": cfg.GitHubOAuth.SuccessURL} {
-			parsed, err := url.Parse(value)
-			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-				return fmt.Errorf("%s must be an absolute HTTPS URL without credentials or a fragment", field)
-			}
-		}
-	}
-	return nil
+	return cfg.validateAuthentication()
 }
 
 // validateTLS checks that the HTTP API names the certificate files it needs. A
