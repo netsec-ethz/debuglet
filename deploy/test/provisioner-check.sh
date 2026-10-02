@@ -16,7 +16,8 @@
 #   4. a changed dependency digest stops a deployment in the preflight,
 #   5. a provisioner without a record stops a deployment in the preflight,
 #   6. deploy/test/ansible-render.sh passes inside it, which renders and
-#      applies the roles and checks that a repeat run changes nothing.
+#      applies the roles and checks that a repeat run changes nothing,
+#   7. signed serial-promotion fixtures stop at failed canaries and unsafe state.
 #
 # It needs a built release package in deploy/dist:
 #
@@ -188,6 +189,12 @@ if provision "$DEBUGLET_PROVISIONER_IMAGE" bash deploy/test/ansible-render.sh; t
 	check 'the deployment render checks pass in the provisioner' pass
 else
 	check 'the deployment render checks pass in the provisioner' fail
+fi
+
+if provision "$DEBUGLET_PROVISIONER_IMAGE" python3 -m unittest deploy.test.test_rollout -v; then
+	check 'signed serial promotion and refusal checks pass' pass
+else
+	check 'signed serial promotion and refusal checks pass' fail
 fi
 
 if [ "$failures" -ne 0 ]; then
