@@ -251,7 +251,7 @@ func dispatcherCheck(ctx context.Context, options globalOptions) doctorCheck {
 	check := doctorCheck{"dispatcher_connection", "failure", "the selected dispatcher could not be reached", "check the selected endpoint, service availability and TLS trust"}
 	// Connection errors may contain configured URLs; the report uses only
 	// fixed diagnostics, not arbitrary server or credential-store text.
-	c, _, ok := connect("dbl doctor", options, false, io.Discard)
+	c, _, ok := connect(ctx, "dbl doctor", options, false, io.Discard)
 	if !ok {
 		check.Detail, check.Next = "the saved connection could not be loaded", "select a valid saved connection with dbl dispatcher use NAME, or pass --endpoint URL"
 		return check

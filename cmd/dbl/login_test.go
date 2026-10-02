@@ -72,7 +72,7 @@ func TestLoginRegisterOutput(t *testing.T) {
 					t.Fatalf("credential file is not owner-only: %v", err)
 				}
 			}
-			credential, err := connections.CredentialFor(config, "saved", fx.endpoint())
+			credential, err := connections.CredentialFor(t.Context(), config, "saved", fx.endpoint())
 			if err != nil || credential.Token != token {
 				t.Fatalf("session was not stored: %v", err)
 			}
@@ -148,7 +148,7 @@ func TestLoginReplacesCredentialAfterProfileEndpointChanges(t *testing.T) {
 	if loginCalls != 1 {
 		t.Fatalf("login requests=%d, want 1", loginCalls)
 	}
-	credential, err := connections.CredentialFor(config, "saved", fx.endpoint())
+	credential, err := connections.CredentialFor(t.Context(), config, "saved", fx.endpoint())
 	if err != nil || credential.Token != "new-session" {
 		t.Fatalf("new endpoint credential was not stored: credential=%+v err=%v", credential, err)
 	}

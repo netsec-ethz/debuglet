@@ -20,8 +20,9 @@ import (
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
-// Never consult the account's real saved dispatcher while testing defaults.
+// Never consult the account's real saved dispatcher or desktop keyring while testing defaults.
 func TestMain(m *testing.M) {
+	_ = os.Unsetenv("DBUS_SESSION_BUS_ADDRESS")
 	dir, err := os.MkdirTemp("", "dbl-client-tests-*")
 	if err != nil {
 		os.Exit(1)

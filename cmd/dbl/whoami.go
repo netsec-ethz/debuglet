@@ -32,7 +32,7 @@ func whoamiCommand(ctx context.Context, args []string, options globalOptions, st
 	if err != nil {
 		return reportFailure(ctx, "dbl whoami", stderr, err)
 	}
-	credential, err := connections.CredentialFor(options.ConfigPath, profile.Name, profile.Endpoint)
+	credential, err := connections.CredentialFor(ctx, options.ConfigPath, profile.Name, profile.Endpoint)
 	if err != nil {
 		return reportFailure(ctx, "dbl whoami", stderr, err)
 	}
