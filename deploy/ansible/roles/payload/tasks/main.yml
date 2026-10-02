@@ -46,6 +46,51 @@
     debuglet_release: "{{ lookup('ansible.builtin.file', dist_dir ~ '/release.json') | from_json }}"
   run_once: true
 
+- name: Require a signed release for promotion
+  ansible.builtin.assert:
+    that: debuglet_release.files is defined
+    fail_msg: "Serial promotion requires a complete retained signed release bundle."
+    quiet: true
+  when: payload_require_signature | default(false) | bool
+  run_once: true
+
+- name: Verify a signed release before copying or executing its payload
+  when: debuglet_release.files is defined
+  run_once: true
+  block:
+    - name: Audit the independently trusted release and its complete inventory
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../tools/release.py"
+          - audit
+          - --directory
+          - "{{ dist_dir }}"
+          - --version
+          - "{{ deploy_version }}"
+          - --source
+          - "{{ release_source_sha }}"
+          - --trust
+          - "{{ release_trust_file }}"
+          - --signer
+          - "{{ release_signer }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Select the authenticated full package
+      vars:
+        archive: "debuglet-{{ debuglet_release.version }}-linux-amd64.tar.gz"
+      ansible.builtin.set_fact:
+        debuglet_release:
+          schema_version: 1
+          version: "{{ debuglet_release.version }}"
+          source_sha: "{{ debuglet_release.source_sha }}"
+          archive: "{{ archive }}"
+          archive_sha256: "{{ debuglet_release.files[archive].sha256 }}"
+          installer_sha256: "{{ debuglet_release.files['install.sh'].sha256 }}"
+          go_version: "{{ (lookup('ansible.builtin.file', dist_dir ~ '/build-inputs.json') | from_json).build_record.metadata.go_version }}"
+
 - name: Require a complete release record
   ansible.builtin.assert:
     that:
@@ -147,8 +192,9 @@
       {{ '' if payload_activate | bool else '--stage-only' }}
     creates: >-
       {{ payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/share/debuglet/manifest.json'
-         if not payload_activate | bool or payload_cli_link.stat.lnk_source | default('') ==
-            payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/bin/dbl'
+         if not (payload_require_signature | default(false) | bool)
+            and (not payload_activate | bool or payload_cli_link.stat.lnk_source | default('') ==
+            payload_prefix ~ '/lib/debuglet/' ~ debuglet_release.version ~ '/bin/dbl')
          else omit }}
   notify: Restart debuglet services
 
