@@ -72,7 +72,8 @@ class BootstrapTest(unittest.TestCase):
                         DEBUGLET_PREFIX=str(self.prefix), TEST_ASSETS=str(self.assets),
                         TEST_CURL_LOG=str(self.curl_log), TEST_INSTALL_LOG=str(self.install_log))
         for key in ('TEST_HTTP_STATUS', 'TEST_CURL_EXIT', 'TEST_FAILURE_ASSET', 'TEST_INSTALL_EXIT',
-                    'DEBUGLET_RELEASE_TRUST', 'DEBUGLET_RELEASE_SIGNER', 'DEBUGLET_RELEASE_DIR', 'DEBUGLET_COMPONENT'):
+                    'DEBUGLET_RELEASE_TRUST', 'DEBUGLET_RELEASE_SIGNER', 'DEBUGLET_RELEASE_DIR', 'DEBUGLET_COMPONENT',
+                    'DEBUGLET_REQUIRE_SIGNATURE'):
             self.env.pop(key, None)
         self.make_assets()
 
@@ -238,14 +239,28 @@ class BootstrapTest(unittest.TestCase):
                         DEBUGLET_RELEASE_SIGNER=identity)
         return key, trust
 
-    def test_unsigned_legacy_install_requires_explicit_mode(self):
+    def test_existing_install_command_remains_usable_without_signing_setup(self):
         result = self.run_bootstrap({'DEBUGLET_ALLOW_UNSIGNED': ''})
-        self.assert_not_installed(result)
-        self.assertIn('explicit DEBUGLET_ALLOW_UNSIGNED=1', result.stderr)
-        self.assertFalse(self.curl_log.exists())
-        result = self.run_bootstrap()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('unsigned legacy/development package', result.stderr)
+        self.assertIn('checksums do not authenticate a release signer', result.stderr)
+        self.assertEqual([call['url'].rsplit('/', 1)[1] for call in self.calls()],
+                         [ARCHIVE, 'install.sh', 'SHA256SUMS'])
+
+    def test_signature_requirement_and_partial_trust_fail_before_download(self):
+        for settings in ({'DEBUGLET_REQUIRE_SIGNATURE': '1'},
+                         {'DEBUGLET_RELEASE_TRUST': str(self.root / 'missing')},
+                         {'DEBUGLET_RELEASE_SIGNER': 'release@example.test'}):
+            with self.subTest(settings=settings):
+                result = self.run_bootstrap(dict(settings, DEBUGLET_ALLOW_UNSIGNED=''))
+                self.assert_not_installed(result)
+                self.assertIn('independently provisioned', result.stderr)
+                self.assertFalse(self.curl_log.exists())
+
+    def test_unsigned_mode_cannot_override_required_signature(self):
+        result = self.run_bootstrap({'DEBUGLET_REQUIRE_SIGNATURE': '1'})
+        self.assert_not_installed(result)
+        self.assertIn('must not be combined', result.stderr)
+        self.assertFalse(self.curl_log.exists())
 
     def test_signed_release_and_offline_install(self):
         self.sign_assets()

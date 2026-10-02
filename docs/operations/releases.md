@@ -6,8 +6,10 @@ signature also binds the complete release inventory, provenance, build inputs,
 gate results and notices to one version and source revision.
 
 This workflow requires administrator setup before its first release. Existing
-v0.2.0 assets are unsigned; they remain usable through the explicit legacy mode
-below. Preparing a signed Actions artifact does not publish a GitHub release or
+v0.2.0 assets are unsigned; the existing installation command continues to check hashes and
+prints an unsigned-installation warning. Signature verification is enabled when
+trust settings or `DEBUGLET_REQUIRE_SIGNATURE=1` are supplied. It never falls
+back to unsigned installation after a verification failure. Preparing a signed Actions artifact does not publish a GitHub release or
 provide durable retention.
 
 ## Install with provisioned trust
@@ -31,6 +33,7 @@ bootstrap from the checkout:
 
 ```sh
 export DEBUGLET_VERSION=v1.2.3
+export DEBUGLET_REQUIRE_SIGNATURE=1
 export DEBUGLET_RELEASE_TRUST=/etc/debuglet/release-allowed-signers
 export DEBUGLET_RELEASE_SIGNER=releases@example.org
 export DEBUGLET_PREFIX="$HOME/.local"
@@ -62,17 +65,21 @@ overlap. Never change verification to unsigned mode to bypass a bad signature.
 
 ## Explicit unsigned legacy or development install
 
-For an unsigned package such as v0.2.0, unset both trust settings and opt in:
+Until signing is provisioned, an invocation without trust settings preserves
+the existing checksum-only installation policy. To make that choice explicit
+for an unsigned package such as v0.2.0:
 
 ```sh
-unset DEBUGLET_RELEASE_TRUST DEBUGLET_RELEASE_SIGNER DEBUGLET_RELEASE_DIR
+unset DEBUGLET_RELEASE_TRUST DEBUGLET_RELEASE_SIGNER DEBUGLET_RELEASE_DIR DEBUGLET_REQUIRE_SIGNATURE
 DEBUGLET_VERSION=v0.2.0 DEBUGLET_ALLOW_UNSIGNED=1 sh scripts/bootstrap.sh
 ```
 
 This prints an unsigned-installation warning and checks the downloaded hashes.
 It does not authenticate a release signer. Local development packages can use
 `DEBUGLET_RELEASE_DIR` with the same explicit opt-in. Unsigned mode rejects
-configured trust settings rather than silently ignoring them.
+configured trust settings or a signature requirement rather than ignoring them.
+Set `DEBUGLET_REQUIRE_SIGNATURE=1` in managed installation environments to refuse
+installation when trust has not yet been provisioned.
 
 ## Prepare a release
 

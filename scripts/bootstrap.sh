@@ -68,20 +68,27 @@ if [ -z "$release_dir" ]; then
 else
 	[ -d "$release_dir" ] && [ ! -L "$release_dir" ] || fail 'DEBUGLET_RELEASE_DIR must name a local release directory'
 fi
+verify_signature=false
+case "${DEBUGLET_REQUIRE_SIGNATURE:-}" in
+	'') ;;
+	1) verify_signature=true ;;
+	*) fail 'DEBUGLET_REQUIRE_SIGNATURE must be empty or exactly 1' ;;
+esac
+[ -z "${DEBUGLET_RELEASE_TRUST:-}${DEBUGLET_RELEASE_SIGNER:-}" ] || verify_signature=true
 case "${DEBUGLET_ALLOW_UNSIGNED:-}" in
-	'')
-		[ -n "${DEBUGLET_RELEASE_TRUST:-}" ] && [ -f "$DEBUGLET_RELEASE_TRUST" ] &&
-			[ -n "${DEBUGLET_RELEASE_SIGNER:-}" ] || fail 'signed installation requires independently provisioned DEBUGLET_RELEASE_TRUST and DEBUGLET_RELEASE_SIGNER; unsigned legacy/development packages require explicit DEBUGLET_ALLOW_UNSIGNED=1'
-		for command in ssh-keygen python3; do
-			command -v "$command" >/dev/null 2>&1 || fail "required signature verification command is missing: $command"
-		done
-		;;
-	1)
-		[ -z "${DEBUGLET_RELEASE_TRUST:-}${DEBUGLET_RELEASE_SIGNER:-}" ] || fail 'unsigned mode must not be combined with release trust settings'
-		printf '%s\n' 'WARNING: explicitly installing an unsigned legacy/development package; checksums do not authenticate a release signer.' >&2
-		;;
+	'') ;;
+	1) [ "$verify_signature" = false ] || fail 'unsigned mode must not be combined with signature or trust settings' ;;
 	*) fail 'DEBUGLET_ALLOW_UNSIGNED must be empty or exactly 1' ;;
 esac
+if [ "$verify_signature" = true ]; then
+	[ -n "${DEBUGLET_RELEASE_TRUST:-}" ] && [ -f "$DEBUGLET_RELEASE_TRUST" ] &&
+		[ -n "${DEBUGLET_RELEASE_SIGNER:-}" ] || fail 'signed installation requires independently provisioned DEBUGLET_RELEASE_TRUST and DEBUGLET_RELEASE_SIGNER; no installer was run'
+	for command in ssh-keygen python3; do
+		command -v "$command" >/dev/null 2>&1 || fail "required signature verification command is missing: $command"
+	done
+else
+	printf '%s\n' 'WARNING: installing an unsigned legacy/development package; checksums do not authenticate a release signer. Set DEBUGLET_REQUIRE_SIGNATURE=1 and provision release trust for signed installation.' >&2
+fi
 
 download() {
 	name=$1
@@ -103,7 +110,7 @@ download() {
 	esac
 }
 
-if [ "${DEBUGLET_ALLOW_UNSIGNED:-}" != 1 ]; then
+if [ "$verify_signature" = true ]; then
 	download release.json
 	download release.json.sig
 	ssh-keygen -Y verify -f "$DEBUGLET_RELEASE_TRUST" -I "$DEBUGLET_RELEASE_SIGNER" \
@@ -111,7 +118,7 @@ if [ "${DEBUGLET_ALLOW_UNSIGNED:-}" != 1 ]; then
 		> /dev/null 2>&1 || fail 'release signature is missing, invalid or from an untrusted signer; no installer was run'
 fi
 for name in "$archive_name" "$installer_name" "$checksums_name"; do download "$name"; done
-if [ "${DEBUGLET_ALLOW_UNSIGNED:-}" != 1 ]; then
+if [ "$verify_signature" = true ]; then
 	python3 - "$work" "$version" "$DEBUGLET_RELEASE_SIGNER" "$archive_name" "$installer_name" "$checksums_name" <<'VERIFY_RELEASE'
 import hashlib, json, re, sys
 from pathlib import Path
