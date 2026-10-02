@@ -16,7 +16,7 @@ func TestOutputLimits(t *testing.T) {
 	if r, b := c.Rate(); r != 1<<20 || b != 64<<10 {
 		t.Fatal("rate defaults")
 	}
-	for _, c := range []OutputConfig{{RunBytes: -1}, {RunFrames: -1}, {SpoolBytes: 1}, {RetainedRuns: -1}, {RateBytesPerSecond: -1}, {BurstBytes: 1}, {BurstBytes: 2 << 20}} {
+	for _, c := range []OutputConfig{{ControlReserveBytes: -1}, {ControlReserveBytes: (1 << 40) + 1}, {RunBytes: -1}, {RunFrames: -1}, {SpoolBytes: 1}, {RetainedRuns: -1}, {RateBytesPerSecond: -1}, {BurstBytes: 1}, {BurstBytes: 2 << 20}} {
 		if c.Validate() == nil {
 			t.Fatalf("invalid output limits accepted: %+v", c)
 		}

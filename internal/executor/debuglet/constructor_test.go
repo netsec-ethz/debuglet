@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,7 @@ func TestDebugletConstructorFallbackCleanup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			d := newWithBPFTagger(zap.NewNop(), id, "transaction", scheduler.Policy{}, operator, schedule, nil, nil, iface, nil,
+			d := newWithBPFTagger(zap.NewNop(), id, "transaction", scheduler.Policy{}, operator, schedule, nil, nil, iface, nil, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)),
 				func(_ *zap.Logger, gotIface *net.Interface, gotSchedule *tesla.KeySchedule, measurement []byte) (*ebpf.BPFTagger, error) {
 					constructors.Add(1)
 					if gotIface != iface || gotSchedule != schedule || string(measurement) != id.String() {

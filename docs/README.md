@@ -15,6 +15,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 
 ## Understand the system
 
+- [Threat model and supported scope](security.md) — actors, boundaries, identifier guarantees and conditions for untrusted use.
 - [Architecture](architecture.md) — components, trust boundaries, protocol flow, and storage.
 - [Vantage-point metadata](vantage-points.md) — design for network, location and reachability context with provenance.
 - [Packet tag specification](tag-spec.md) — `debuglet-tag-v1`: authenticated bytes, key derivation, verification and false-match bounds.
@@ -26,6 +27,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Run Debuglet across hosts](operations/remote-deployment.md)
 - [Add your executor](operations/executor-onboarding.md) — console enrollment, shell-only setup and persistent installation.
 - [Managed services](operations/services.md)
+- [Data retention, export and deletion](operations/data-retention.md)
 - [Executor recovery](operations/executor-recovery.md)
 - [Inspect an interrupted run](operations/recovery-inspection.md)
 - [Local validation checks](operations/local-checks.md)

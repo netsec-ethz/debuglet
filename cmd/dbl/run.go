@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
+	"github.com/netsec-ethz/debuglet/internal/ids"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
 
@@ -50,11 +51,12 @@ Options:
 // receipt is the single stdout document of `run`. Unknown IDs are omitted;
 // an ID is never invented.
 type receipt struct {
-	ID            string `json:"id,omitempty"`
-	TransactionID string `json:"transaction_id,omitempty"`
-	ExecutorID    string `json:"executor_id"`
-	State         string `json:"state"`
-	Error         string `json:"error,omitempty"`
+	Retry         *client.RetryLink `json:"retry,omitempty"`
+	ID            string            `json:"id,omitempty"`
+	TransactionID string            `json:"transaction_id,omitempty"`
+	ExecutorID    string            `json:"executor_id"`
+	State         string            `json:"state"`
+	Error         string            `json:"error,omitempty"`
 }
 
 // write emits the receipt once in the selected output mode.
@@ -64,6 +66,9 @@ func (r receipt) write(w io.Writer, output string) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "state: %s\n", r.State)
+	if r.Retry != nil {
+		fmt.Fprintf(&b, "parent_run_id: %s\nrequest_id: %s\n", r.Retry.ParentRunID, r.Retry.RequestID)
+	}
 	if r.ID != "" {
 		fmt.Fprintf(&b, "id: %s\n", r.ID)
 	}
@@ -86,6 +91,7 @@ func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 // runOptions are the validated inputs of one `run` invocation.
 type runOptions struct {
+	retry           *client.RetryLink
 	wasmPath        string
 	sample          string
 	executor        string
@@ -114,8 +120,20 @@ func splitGuestArgs(args []string) (flags, guest []string) {
 // parseRunOptions parses and validates every option before any file read or
 // request. A nonempty message is a usage error.
 func parseRunOptions(args []string, stdout, stderr io.Writer) (runOptions, int, bool) {
+	return parseSubmissionOptions(args, "", stdout, stderr)
+}
+
+func parseSubmissionOptions(args []string, parentID string, stdout, stderr io.Writer) (runOptions, int, bool) {
 	var o runOptions
-	fs := newCommandFlagSet("run")
+	var requestID string
+	command, usage := "run", runUsage
+	if parentID != "" {
+		command, usage = "retry", retryUsage
+	}
+	fs := newCommandFlagSet(command)
+	if parentID != "" {
+		fs.StringVar(&requestID, "request-id", "", "")
+	}
 	capabilityFlags(fs, &o.filter)
 	fs.StringVar(&o.wasmPath, "wasm", "", "")
 	fs.StringVar(&o.sample, "sample", "", "")
@@ -128,15 +146,15 @@ func parseRunOptions(args []string, stdout, stderr io.Writer) (runOptions, int, 
 	fs.BoolVar(&o.allowRemoteTEST, "allow-remote-test", false, "")
 
 	flagArgs, guest := splitGuestArgs(args)
-	if code, ok := parseCommandFlags(fs, flagArgs, runUsage, stdout, stderr); !ok {
+	if code, ok := parseCommandFlags(fs, flagArgs, usage, stdout, stderr); !ok {
 		return o, code, false
 	}
 	if err := o.filter.Validate(); err != nil {
-		return o, usageError("dbl run", runUsage, stderr, "%v", err), false
+		return o, usageError("dbl "+command, usage, stderr, "%v", err), false
 	}
 	o.guestArgs = guest
 	fail := func(format string, a ...any) (runOptions, int, bool) {
-		return o, usageError("dbl run", runUsage, stderr, format, a...), false
+		return o, usageError("dbl "+command, usage, stderr, format, a...), false
 	}
 	switch {
 	case fs.NArg() > 0:
@@ -164,6 +182,18 @@ func parseRunOptions(args []string, stdout, stderr io.Writer) (runOptions, int, 
 		if strings.TrimSpace(a) == "" {
 			return fail("--allow must not be blank")
 		}
+	}
+	if parentID != "" {
+		if _, ok := ids.ParseCanonical(parentID); !ok {
+			return fail("parent must be a canonical nonzero UUID")
+		}
+		if _, ok := ids.ParseCanonical(requestID); !ok {
+			return fail("--request-id must be a fixed canonical nonzero UUID")
+		}
+		if o.executor == "auto" || !o.filter.Empty() {
+			return fail("retry requires --executor ID without discovery filters")
+		}
+		o.retry = &client.RetryLink{ParentRunID: parentID, RequestID: requestID}
 	}
 	return o, exitOK, true
 }
@@ -220,27 +250,35 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 	if !ok {
 		return code
 	}
+	return executeSubmission(ctx, o, options, stdout, stderr)
+}
+
+func executeSubmission(ctx context.Context, o runOptions, options globalOptions, stdout, stderr io.Writer) int {
+	command, usage := "dbl run", runUsage
+	if o.retry != nil {
+		command, usage = "dbl retry", retryUsage
+	}
 	wasmPath := o.wasmPath
 	if o.sample != "" {
 		executable, err := os.Executable()
 		if err != nil {
-			return reportFailure(ctx, "dbl run: locate installed sample", stderr, err)
+			return reportFailure(ctx, command+": locate installed sample", stderr, err)
 		}
 		assets, err := demo.ResolveAssets(executable)
 		if err != nil {
-			return reportFailure(ctx, "dbl run: --sample requires the full installed package", stderr, err)
+			return reportFailure(ctx, command+": --sample requires the full installed package", stderr, err)
 		}
 		wasmPath = filepath.Join(assets.Root, "share", "debuglet", "hello.wasm")
 	}
 	wasm, err := readWasm(wasmPath)
 	if err != nil {
-		return usageError("dbl run", runUsage, stderr, "--wasm: %v", err)
+		return usageError(command, usage, stderr, "--wasm: %v", err)
 	}
 	addresses := []string(o.allow)
 	if addresses == nil {
 		addresses = []string{}
 	}
-	c, code, ok := connect("dbl run", options, o.allowRemoteTEST, stderr)
+	c, code, ok := connect(command, options, o.allowRemoteTEST, stderr)
 	if !ok {
 		return code
 	}
@@ -254,7 +292,7 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 			err = errNoReadyExecutor
 		}
 		if err != nil {
-			return reportFailure(ctx, "dbl run: discover executor", stderr, err)
+			return reportFailure(ctx, command+": discover executor", stderr, err)
 		}
 		o.executor = node.ID
 	}
@@ -272,19 +310,38 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 		},
 	}})
 	if err != nil {
-		return usageError("dbl run", runUsage, stderr, "invalid request: %v", err)
+		return usageError(command, usage, stderr, "invalid request: %v", err)
 	}
-	submission, err := c.SubmitTEST(ctx, batch)
+	var submission client.Submission
+	if o.retry == nil {
+		submission, err = c.SubmitTEST(ctx, batch)
+	} else {
+		submission, err = c.RetryTEST(ctx, o.retry.ParentRunID, o.retry.RequestID, batch)
+	}
 	if err != nil {
+		if o.retry != nil {
+			r := receipt{ExecutorID: o.executor, Retry: o.retry, State: stateSubmissionFailed}
+			var subErr *client.SubmissionError
+			if errors.As(err, &subErr) {
+				r.TransactionID = subErr.TransactionID
+				if subErr.OutcomeUnknown {
+					r.State = stateSubmissionUnknown
+				}
+			}
+			if werr := r.write(stdout, options.Output); werr != nil {
+				fmt.Fprintf(stderr, "dbl retry: write receipt: %v\n", werr)
+			}
+			return reportFailure(ctx, "dbl retry: retain this request ID and unchanged request to recover the attempt", stderr, err)
+		}
 		return reportSubmissionFailure(ctx, err, o.executor, options.Output, stdout, stderr)
 	}
-	r := receipt{ExecutorID: o.executor, TransactionID: submission.TransactionID, State: stateSubmitted}
+	r := receipt{ExecutorID: o.executor, TransactionID: submission.TransactionID, State: stateSubmitted, Retry: o.retry}
 	if len(submission.IDs) > 0 {
 		r.ID = submission.IDs[0]
 	}
 	if !o.wait {
 		if err := r.write(stdout, options.Output); err != nil {
-			fmt.Fprintf(stderr, "dbl run: write receipt: %v\n", err)
+			fmt.Fprintf(stderr, command+": write receipt: %v\n", err)
 			return exitFailure
 		}
 		return exitOK
@@ -293,21 +350,21 @@ func runCommand(ctx context.Context, args []string, options globalOptions, stdou
 		// Cannot happen with a conforming SDK, which requires one ID per
 		// request; without an ID there is nothing to poll.
 		_ = r.write(stdout, options.Output)
-		fmt.Fprintln(stderr, "dbl run: submission returned no debuglet ID; cannot wait")
+		fmt.Fprintln(stderr, command+": submission returned no debuglet ID; cannot wait")
 		return exitFailure
 	}
 	code, waitErr := waitForExit(ctx, func(ctx context.Context) (client.State, error) {
 		return c.Status(ctx, r.ID)
 	}, &r)
 	if err := r.write(stdout, options.Output); err != nil {
-		fmt.Fprintf(stderr, "dbl run: write receipt: %v\n", err)
+		fmt.Fprintf(stderr, command+": write receipt: %v\n", err)
 		return exitFailure
 	}
 	switch {
 	case waitErr != nil:
-		return reportFailure(ctx, "dbl run: submitted; waiting failed", stderr, waitErr)
+		return reportFailure(ctx, command+": submitted; waiting failed", stderr, waitErr)
 	case code == exitWorkloadFailed:
-		fmt.Fprintf(stderr, "dbl run: debuglet %s failed: %s\n", r.ID, r.Error)
+		fmt.Fprintf(stderr, command+": debuglet %s failed: %s\n", r.ID, r.Error)
 	}
 	return code
 }
@@ -319,6 +376,9 @@ func reportSubmissionFailure(ctx context.Context, err error, executor, output st
 	var subErr *client.SubmissionError
 	if errors.As(err, &subErr) && subErr.Stage == "submit" && subErr.TransactionID != "" {
 		r := receipt{ExecutorID: executor, TransactionID: subErr.TransactionID, State: stateSubmissionFailed}
+		if len(subErr.AdmittedIDs) == 1 {
+			r.ID = subErr.AdmittedIDs[0]
+		}
 		if subErr.OutcomeUnknown {
 			r.State = stateSubmissionUnknown
 		}

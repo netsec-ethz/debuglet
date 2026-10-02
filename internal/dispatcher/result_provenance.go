@@ -25,7 +25,7 @@ func (d *Dispatcher) recordProvenance(ctx context.Context, q *database.Queries, 
 		version = d.version
 	}
 	p := wire.ResultProvenance{
-		RunID: id.String(), ExecutorID: spec.ExecutorID,
+		RunID: id.String(), ExecutorID: spec.ExecutorID, Retry: spec.Retry,
 		Attempt:    wire.ControlBinding{DispatcherIncarnation: binding.Incarnation, SessionID: binding.SessionID},
 		AdmittedAt: time.Now().UTC(), WorkloadSHA256: hex.EncodeToString(hash[:]),
 		Arguments: append([]string{}, spec.Args...),
@@ -58,8 +58,16 @@ func admissionVantagePoint(entry *executorEntry, now time.Time) *wire.VantagePoi
 	if entry.publicHost != nil {
 		host = *entry.publicHost
 	}
+	var reported *wire.LabelledString
+	if entry.reportedSourceIP != "" && entry.reportedSourceIP != entry.sourceIp {
+		value := labelled(entry.reportedSourceIP, wire.SourceExecutorReported)
+		reported = &value
+	}
 	return &wire.VantagePoint{
-		SchemaVersion: 1, Capabilities: admissionCapabilities(entry, now),
+		ReportedSourceIP: reported,
+		Connectivity:     wire.CloneConnectivity(entry.connectivity, now, true),
+		IPMetadata:       entry.IPMetadata(),
+		SchemaVersion:    1, Capabilities: admissionCapabilities(entry, now),
 		SourceIP:   labelled(entry.sourceIp, ipSource),
 		PublicHost: labelled(host, wire.SourceExecutorReported),
 		SCIONISDAS: admissionISDAS(entry, now), Display: entry.Display(),

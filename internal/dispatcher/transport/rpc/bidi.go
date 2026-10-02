@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlrpc"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"net"
 	"net/netip"
 	"sync"
@@ -80,7 +81,7 @@ func NewBidiServerWithClock(l *zap.Logger, state DispatcherState, incarnation st
 		return nil, err
 	}
 	b := &BidiServer{
-		grpcServer:  grpc.NewServer(grpc.WaitForHandlers(true), grpc.Creds(terminatedTLS{})),
+		grpcServer:  grpc.NewServer(grpc.WaitForHandlers(true), grpc.Creds(terminatedTLS{}), grpc.ChainUnaryInterceptor(daemonlog.UnaryErrors(l)), grpc.ChainStreamInterceptor(daemonlog.StreamErrors(l))),
 		logger:      l,
 		state:       state,
 		incarnation: incarnation,
@@ -415,7 +416,7 @@ func (b *BidiServer) handleSession(parent context.Context, raw net.Conn) {
 
 func (b *BidiServer) acceptYamux(conn net.Conn) (*yamux.Session, error) {
 	b.logger.Debug("Accepted connection", zap.String("remote_addr", conn.RemoteAddr().String()))
-	session, err := yamux.Server(conn, nil)
+	session, err := yamux.Server(conn, daemonlog.YamuxConfig(b.logger))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create yamux session: %w", err)
 	}

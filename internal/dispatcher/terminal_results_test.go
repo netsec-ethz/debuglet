@@ -838,9 +838,11 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(d.Close)
+			mock.ExpectBegin()
 			mock.ExpectQuery(tgCompleteQuery).
 				WithArgs(int64(models.RunStateExited), "debuglet exited with code 4", id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
 				WillReturnError(sql.ErrNoRows)
+			mock.ExpectRollback()
 			mock.ExpectQuery(tgOwnedGetQuery).
 				WithArgs(id.String(), tgExecutorID, tgMockBinding.Incarnation, tgMockBinding.SessionID).
 				WillReturnRows(sqlmock.NewRows(tgDebugletColumns).AddRow(
@@ -1059,7 +1061,7 @@ func TestTerminalResultGuards(t *testing.T) {
 
 			// A failing Abort RPC performs no terminal write.
 			peer.scriptAbort(errors.New("executor refused the abort"))
-			if err := f.abort(t, b.id, "refused"); err == nil || !strings.Contains(err.Error(), "executor refused the abort") {
+			if err := f.abort(t, b.id, "refused"); !errors.Is(err, ErrAbortRefused) || strings.Contains(err.Error(), "executor refused the abort") {
 				t.Fatalf("abort with a failing RPC returned %v", err)
 			}
 			tgAssertRow(t, f.row(t, b.id), models.RunStateUploaded, tgNull)

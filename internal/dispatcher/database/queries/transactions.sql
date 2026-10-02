@@ -12,6 +12,15 @@ UPDATE transactions
 SET status = ?
 WHERE id = ?;
 
+-- name: RefundUnadmittedTransaction :execrows
+UPDATE transactions
+SET status = sqlc.arg(refunded_status)
+WHERE id = sqlc.arg(transaction_id) AND status = sqlc.arg(paid_status)
+  AND NOT EXISTS (
+    SELECT 1 FROM debuglet_order
+    WHERE debuglet_order.transaction_id = transactions.id AND debuglet_id IS NOT NULL
+  );
+
 -- name: GetTransactionState :one
 SELECT * FROM transaction_states
 WHERE key = ?;
@@ -48,8 +57,14 @@ RETURNING *;
 
 -- name: ClaimDebugletOrder :execrows
 UPDATE debuglet_order
-SET debuglet_id = ?
-WHERE transaction_id = ? AND order_id = ? AND debuglet_id IS NULL;
+SET debuglet_id = sqlc.narg(debuglet_id)
+WHERE transaction_id = sqlc.arg(transaction_id) AND order_id = sqlc.arg(order_id)
+  AND debuglet_id IS NULL AND state = sqlc.arg(outstanding_state)
+  AND EXISTS (
+    SELECT 1 FROM transactions
+    WHERE transactions.id = debuglet_order.transaction_id
+      AND transactions.status = sqlc.arg(paid_status)
+  );
 
 -- name: GetAdmittedRuns :many
 SELECT o.order_id, d.uuid FROM debuglet_order o

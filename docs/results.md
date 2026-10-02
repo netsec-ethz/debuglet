@@ -22,12 +22,18 @@ result, err = client.ReadResult(file)
 `GET /debuglet/{id}/result` is available from HTTP API 1.8. Access follows the
 same ownership rules as logs. The standalone file identifies itself with
 `"format":"debuglet-result"` and `"version":"1.1"`; this file version is
-independent of the HTTP API version. The reader accepts versions 1.0 and 1.1 and
+independent of the HTTP API version. The reader accepts versions 1.0, 1.1 and 1.2 and
 rejects other versions, malformed records and inconsistent run, node or attempt
 identities. Version 1.1 adds `provenance.vantage_point` and nothing else; a 1.0
 file that carries one is rejected, so a 1.0 file keeps its original meaning. The
 retained `v1.0.json` and `v1.1.json` fixtures are the compatibility baseline.
 Readers from before 1.1 reject 1.1 exports as an unsupported version.
+
+An explicitly linked retry is exported as version 1.2 with
+`provenance.retry.parent_run_id` and `request_id`. Both identify the deliberate
+retry request; the parent differs from the new run. Ordinary runs continue to
+export as 1.1. A 1.2 record requires valid lineage, while 1.0/1.1 records cannot
+claim it. Older readers reject 1.2 rather than discarding the relationship.
 
 ## What the record means
 
@@ -85,11 +91,11 @@ Readers from before 1.1 reject 1.1 exports as an unsupported version.
   says actual host enforcement was not measured. An enrolled identity does not
   establish that a measurement is true.
 - `outcome` preserves the stored workload state and bounded error classification.
-  `exit_code` is always null in formats 1.0 and 1.1, which do not record it. An exited workload
+  `exit_code` is always null in portable formats 1.0–1.2, which do not record it. An exited workload
   must not be interpreted as exit code zero.
 - `timing.scheduled_start` and `reserved_until` are the reserved window, not
   measured execution times. Actual start, finish and clock uncertainty are always
-  null in formats 1.0 and 1.1; the reader rejects a file that sets them. The
+  null in portable formats 1.0–1.2; the reader rejects a file that sets them. The
   kernel error estimate in `vantage_point.clock` is the executor's report at
   admission, not a bound on any run timestamp, so it does not fill
   `clock_uncertainty_ns`. `observed_at` is the dispatcher time of the export snapshot;
@@ -119,3 +125,6 @@ remain unchanged.
 An export contains retained data, not a backup of deleted history. Unknown
 historical facts are never reconstructed from current executor settings. Keep
 saved files according to your own retention requirements.
+Export does not delete the server's record, and cancellation does not erase it.
+See [data retention and deletion](operations/data-retention.md) for the current
+cleanup behavior and policy limits.

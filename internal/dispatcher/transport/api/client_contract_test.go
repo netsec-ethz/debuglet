@@ -552,7 +552,7 @@ func TestClientHTTPContract(t *testing.T) {
 			t.Fatal("abort RPC did not reach the peer")
 		}
 		st, err := rootClient.Status(ctx, sub.IDs[0])
-		if err != nil || st.State != client.StateExited || st.Error != "cancelled via API" {
+		if err != nil || st.State != client.StateExited || st.Error != "debuglet cancelled" {
 			t.Fatalf("status after cancel: %+v (err %v)", st, err)
 		}
 

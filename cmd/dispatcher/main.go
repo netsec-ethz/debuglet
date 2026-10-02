@@ -36,6 +36,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/ipmetadata"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
@@ -234,6 +235,11 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+	metadataDB, err := ipmetadata.Open(cfg.Metadata.ASNDatabase, cfg.Metadata.CityDatabase)
+	if err != nil {
+		return err
+	}
+	defer metadataDB.Close()
 	paymentHandler := payments.NewPaymentHandler(db, cfg, logger)
 	d, err := dispatcher.New(logger, db, cfg.Server.Version, time.Duration(cfg.Scheduler.ExecutorTimeout)*time.Second, time.Duration(cfg.Scheduler.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
 	if err != nil {
@@ -243,11 +249,17 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 	if err := d.ConfigureOutputLimits(cfg.Output); err != nil {
 		return fmt.Errorf("configure output limits: %w", err)
 	}
+	if err := d.ConfigureDataLimits(cfg.Admission, cfg.Retention); err != nil {
+		return fmt.Errorf("configure account and retention limits: %w", err)
+	}
 	if err := d.ConfigureAttribution(cfg.Attribution); err != nil {
 		return fmt.Errorf("configure attribution history: %w", err)
 	}
 	if err := d.ConfigureExecutorDisplay(cfg.Executors); err != nil {
 		return fmt.Errorf("configure executor display metadata: %w", err)
+	}
+	if err := d.ConfigureIPMetadata(metadataDB); err != nil {
+		return err
 	}
 	// An executor ID is bound to a node credential only where the listeners
 	// actually verify one; with no client certificate there is nothing to bind.

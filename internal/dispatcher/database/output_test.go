@@ -32,7 +32,7 @@ func TestOutputMigrationChargesHistoricalLogsWithoutInventingFinality(t *testing
 			t.Fatal(err)
 		}
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 14 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), 13); err != nil || version != 13 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	node, err := q.GetOutputNodeUsage(ctx)

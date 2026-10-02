@@ -224,7 +224,7 @@ See [probe verification](verification.md).
 | Run local roles | `demo`, `up`, `dispatcher up`, `executor up` |
 | Manage connections | `connect`, `dispatcher list`, `dispatcher use`, `dispatcher remove` |
 | Manage credentials | `login`, `logout`, `whoami` |
-| Submit work | `validate`, `run`, `cancel` |
+| Submit work | `validate`, `run`, `retry`, `rendezvous`, `cancel` |
 | Read results | `nodes`, `status`, `logs`, `recovery` |
 | Verify received probes | `verify` |
 | Manage system services | `service`, `drain` |
@@ -232,6 +232,10 @@ See [probe verification](verification.md).
 | Inspect local setup | `config`, `doctor` |
 
 `dbl recovery ID` separates the last stored outcome from control availability and a dated executor observation. See [recovery inspection](operations/recovery-inspection.md); no result authorizes replay.
+
+See [measurement workflows](measurements.md) for a deliberate linked retry and
+the installed two-executor echo command. Both preserve run identities when a
+submission or cleanup response is uncertain.
 
 ## Common options
 

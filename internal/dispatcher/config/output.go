@@ -3,25 +3,31 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/storageheadroom"
+)
 
 // OutputConfig bounds retained output. Account and node limits include a fixed
 // per-frame charge, so tiny writes consume capacity as well as large writes.
-// The dispatcher does not yet delete retained output, so account and node
-// charges only grow; those two caps are therefore opt-in (zero disables them)
-// until a retention policy can release capacity.
+// Payload deletion releases the exact charge once; reference metadata remains.
+// Zero explicitly disables an aggregate cap only in the local TEST profile.
 type OutputConfig struct {
-	RunBytes     int64 `toml:"run_bytes"`
-	RunFrames    int64 `toml:"run_frames"`
-	AccountBytes int64 `toml:"account_bytes"`
-	NodeBytes    int64 `toml:"node_bytes"`
+	ControlReserveBytes int64 `toml:"control_reserve_bytes"`
+	RunBytes            int64 `toml:"run_bytes"`
+	RunFrames           int64 `toml:"run_frames"`
+	AccountBytes        int64 `toml:"account_bytes"`
+	NodeBytes           int64 `toml:"node_bytes"`
 }
 
 func DefaultOutputConfig() OutputConfig {
-	return OutputConfig{RunBytes: 8 << 20, RunFrames: 16384, AccountBytes: 0, NodeBytes: 0}
+	return OutputConfig{ControlReserveBytes: storageheadroom.DefaultReserveBytes, RunBytes: 8 << 20, RunFrames: 16384, AccountBytes: 64 << 20, NodeBytes: 512 << 20}
 }
 
 func (cfg OutputConfig) Validate() error {
+	if cfg.ControlReserveBytes <= 0 || cfg.ControlReserveBytes > 1<<40 {
+		return fmt.Errorf("output.control_reserve_bytes must be positive and at most 1 TiB")
+	}
 	if cfg.RunBytes <= 0 {
 		return fmt.Errorf("output.run_bytes must be positive")
 	}

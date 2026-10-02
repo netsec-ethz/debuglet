@@ -36,6 +36,7 @@ trap release_ownership EXIT
 
 # Test the committed objects: these are the bytes ci-build embeds.
 sha256sum internal/executor/{ratelimit,tagger}/ebpf/*.o > .cache/ci/ebpf-objects-before.sha256
+sha256sum internal/executor/{ratelimit,tagger}/ebpf/*_bpfel.{o,go} > .cache/ci/ebpf-generated-before.sha256
 "$ci_go" test -json -count=1 -timeout="${CI_TEST_TIMEOUT:-2m}" \
     ./internal/executor/tagger ./internal/executor/tagger/ebpf ./internal/executor/ratelimit/ebpf \
     | tee .cache/ci/kernel-tests.json
@@ -82,20 +83,27 @@ if skips or missing:
 print("Tagger load, kernel/Go tag parity, debuglet-tag-v1 kernel vectors, legacy tc, receiver-verified TCP tagging, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter, heterogeneous capability-selection and IPv4-only tagged-run listener checks passed with zero skipped tests.")
 PY
 
-# Separately prove that the checked-in C sources compile with this toolchain.
-# Compiler-version differences can change the bytecode. Record both hashes;
-# generated objects are not substituted into ci-build's diagnostic artifacts.
+# Regenerate only after loading the committed objects. The pinned tools image
+# and module's bpf2go pin must reproduce both object bytes and Go wrappers.
+# A failure remains generation drift, separate from the retained load evidence.
 "$ci_go" generate ./internal/executor/ratelimit/ebpf ./internal/executor/tagger/ebpf
 sha256sum internal/executor/{ratelimit,tagger}/ebpf/*.o > .cache/ci/ebpf-objects-after.sha256
+sha256sum internal/executor/{ratelimit,tagger}/ebpf/*_bpfel.{o,go} > .cache/ci/ebpf-generated-after.sha256
 
-# Say plainly whether this image's compiler reproduced the committed bytes, so
-# a changed toolchain input is visible in the job log instead of only in two
-# hash files.
 mkdir -p .cache/ci/ci-image-evidence
-if diff -u .cache/ci/ebpf-objects-before.sha256 .cache/ci/ebpf-objects-after.sha256 \
+if diff -u .cache/ci/ebpf-generated-before.sha256 .cache/ci/ebpf-generated-after.sha256 \
     > .cache/ci/ci-image-evidence/ebpf-objects-reproduced.txt; then
-    echo "Regenerating the eBPF objects reproduced the committed bytes."
+    echo "Regenerating the eBPF objects and Go wrappers reproduced the committed bytes."
 else
-    echo "Regenerated eBPF objects differ from the committed bytes; see" \
-        ".cache/ci/ci-image-evidence/ebpf-objects-reproduced.txt."
+    echo "eBPF generated-source drift: regenerate the objects and Go wrappers in the pinned tools image." >&2
+    echo "See .cache/ci/ci-image-evidence/ebpf-objects-reproduced.txt; kernel-load results are recorded separately." >&2
+    exit 1
 fi
+
+# The shared-worker witnesses need a delegated cgroup, which is deliberately
+# absent from this eBPF container. Build with the same pinned toolchain here;
+# ci-github.sh runs only these binaries in a bounded, owned host unit afterward.
+mkdir -p .cache/ci/shared-workers
+"$ci_go" test -race -c -o .cache/ci/shared-workers/debuglet.test ./internal/executor/debuglet
+"$ci_go" test -race -c -o .cache/ci/shared-workers/executor.test ./internal/executor
+cp "$("$ci_go" tool -n test2json)" .cache/ci/shared-workers/test2json

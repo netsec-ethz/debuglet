@@ -19,6 +19,14 @@ type taggerAkEntry struct {
 	K1 uint64
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	taggerMapAkMap        = "ak_map"
+	taggerProgDebugletTag = "debuglet_tag"
+)
+
 // loadTagger returns the embedded CollectionSpec for tagger.
 func loadTagger() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_TaggerBytes)
@@ -39,7 +47,7 @@ func loadTagger() (*ebpf.CollectionSpec, error) {
 //	*taggerMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadTaggerObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+func loadTaggerObjects(obj any, opts *ebpf.CollectionOptions) error {
 	spec, err := loadTagger()
 	if err != nil {
 		return err

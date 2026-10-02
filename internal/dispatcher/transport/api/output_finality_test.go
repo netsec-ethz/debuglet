@@ -95,6 +95,7 @@ func TestLogSnapshotFailuresDoNotReturnOutput(t *testing.T) {
 			if phase == "begin" {
 				begin.WillReturnError(failure)
 			} else {
+				mock.ExpectQuery(`SELECT (.+) FROM payload_tombstones`).WillReturnError(sql.ErrNoRows)
 				mock.ExpectQuery(logsPaginationListQuery).WithArgs(id, int64(0), int64(100)).WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}))
 				mock.ExpectQuery(logsPaginationGetQuery).WithArgs(id).WillReturnRows(debugletPaginationRow(id))
 				metadata := mock.ExpectQuery(logsPaginationOutputQuery).WithArgs(id)

@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/ci-install-candidate.sh
 bash scripts/package.sh
+(cd "${CI_PACKAGE_DIR:-.cache/ci/packages}" && sha256sum --check --strict SHA256SUMS-compatibility)
 work="$(mktemp -d "${TMPDIR:-/tmp}/debuglet-package-check.XXXXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 prefix="$work/prefix with spaces"

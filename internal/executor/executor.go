@@ -38,6 +38,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/isolation"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
@@ -61,8 +62,9 @@ import (
 )
 
 type Executor struct {
-	capabilityMu   sync.Mutex
-	capabilityNext time.Time
+	capabilityMu     sync.Mutex
+	capabilityNext   time.Time
+	connectivityNext time.Time
 	// capabilityReason is the attribution reason of the last report sent.
 	capabilityReason string
 	// capabilityTagging is the tagging mode of the last report sent.
@@ -89,6 +91,8 @@ type Executor struct {
 	outputKick    chan struct{}
 	iface         *net.Interface
 	portManager   *socket.PortManager
+	socketBudget  *socket.DescriptorBudget
+	supervisor    *isolation.Supervisor
 	// Tests can hold individual resource boundaries; nil uses the real runtime.
 	newRuntime func(scheduler.Spec) runtimeDebuglet
 	// clientFor is a construction-fixed seam for scripted direct gRPC peers, which
@@ -133,7 +137,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	}
 	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
-		packetCount: node.packetCount, iface: node.iface, portManager: ports,
+		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget, supervisor: node.supervisor,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
 		delivering: make(map[uuid.UUID]struct{}), outputDelivering: make(map[uuid.UUID]struct{}),
 		reconcileKick: make(chan struct{}, 1),
@@ -352,6 +356,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			}
 			epoch, key, _ := e.teslaSchedule.DisclosedKey(now)
 			capabilities, vantage := e.capabilityReport(ctx, false)
+			finishConnectivity := e.probeConnectivity(ctx, binding, vantage)
 			req := &protocol.HeartbeatRequest{
 				ExecutorId:    e.cfg.Identity.ExecutorID,
 				TimestampNs:   now.UnixNano(),
@@ -371,6 +376,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			if err != nil {
 				e.logger.Error("Failed to send heartbeat", zap.Error(err))
 			}
+			finishConnectivity()
 			e.kickReconcile()
 		}
 	}

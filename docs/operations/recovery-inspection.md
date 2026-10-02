@@ -27,14 +27,16 @@ remain unchanged. `control_status`, dated by `checked_at`, is:
 | `unavailable` | The stored binding exists, but its session is no longer available. A successor does not inherit it. |
 | `legacy` | The dispatcher row has no complete original binding. Original control availability cannot be established. |
 
-When original control is available, inspection needs no retained-row query.
-Otherwise the dispatcher captures at most one eligible current session for the
-same executor and asks it for metadata about the known run. It waits at most five
+When original control is available and the run is not terminal, inspection needs
+no retained-row query. For a terminal run or unavailable original control, the
+dispatcher captures at most one eligible current session for the same executor
+and asks it for metadata about the known run. Terminal state alone does not prove
+that executor cleanup has finished. The lookup waits at most five
 seconds, subject to the request's own deadline, and never follows a replacement.
 
 | Observation classification | Meaning |
 | --- | --- |
-| `not_attempted` | The original control session was available when the request captured it. |
+| `not_attempted` | The original control session was available and the stored run was not terminal when the request captured it. |
 | `unavailable` | No captured eligible session could be queried. |
 | `retained_unstarted` | The observer retained a matching row without a start marker. This does not authorize replay. |
 | `started_unknown` | A matching retained row has a start marker. The marker does not prove the guest ran or finished. |

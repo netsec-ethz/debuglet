@@ -54,7 +54,7 @@ func defaultCommandTimeout(command string, args ...string) time.Duration {
 		// A managed operation waits for a service manager and for local
 		// work to join, both of which are bounded in seconds, not requests.
 		return 5 * time.Minute
-	case "demo":
+	case "demo", "rendezvous":
 		return 60 * time.Second
 	case "verify":
 		return verifyCommandTimeout
@@ -102,6 +102,10 @@ func dispatch(ctx context.Context, command string, args []string, options global
 		return nodesCommand(ctx, args, options, stdout, stderr)
 	case "validate":
 		return validateCommand(ctx, args, options, stdout, stderr)
+	case "rendezvous":
+		return rendezvousCommand(ctx, args, options, stdout, stderr)
+	case "retry":
+		return retryCommand(ctx, args, options, stdout, stderr)
 	case "run":
 		return runCommand(ctx, args, options, stdout, stderr)
 	case "export":

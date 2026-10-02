@@ -11,6 +11,80 @@ import (
 	"github.com/google/uuid"
 )
 
+const createBoundedDebuglet = `-- name: CreateBoundedDebuglet :execrows
+INSERT INTO debuglets (
+    uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms,
+    addresses, require_icmp, listen_udp, listen_tcp, listen_scion,
+    dispatcher_incarnation, session_id
+)
+SELECT ?1, ?2, ?3, ?4,
+       ?5, ?6, ?7,
+       ?8, ?9, ?10,
+       ?11, ?12, ?13,
+       ?14, ?15
+WHERE EXISTS (SELECT 1 FROM debuglets WHERE uuid = ?1)
+   OR ((SELECT COUNT(*) FROM debuglets) < CAST(?16 AS INTEGER)
+       AND (SELECT COALESCE(SUM(
+           length(wasm) + COALESCE(length(CAST(args AS BLOB)), 0)
+           + COALESCE(length(CAST(addresses AS BLOB)), 0)
+           + length(CAST(transaction_id AS BLOB))
+           + length(CAST(dispatcher_incarnation AS BLOB))
+           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets)
+           <= CAST(?17 AS INTEGER) - CAST(?18 AS INTEGER))
+`
+
+type CreateBoundedDebugletParams struct {
+	Uuid                  uuid.UUID
+	StartTime             UTCTime
+	Args                  CommaSeparatedList
+	Wasm                  []byte
+	TransactionID         string
+	FloorBw               int64
+	CeilBw                int64
+	TimeoutMs             int64
+	Addresses             CommaSeparatedList
+	RequireIcmp           bool
+	ListenUdp             bool
+	ListenTcp             bool
+	ListenScion           bool
+	DispatcherIncarnation string
+	SessionID             string
+	MaxQueuedRuns         int64
+	MaxQueuedBytes        int64
+	QueueBytes            int64
+}
+
+// The durable rows are the reservations. Keeping the quota predicate inside
+// this INSERT makes concurrent admission and crash recovery use the same
+// accounting, without a separate counter that can drift from retained work.
+// Existing UUIDs still reach the UNIQUE constraint even when the queue is full.
+func (q *Queries) CreateBoundedDebuglet(ctx context.Context, arg CreateBoundedDebugletParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createBoundedDebuglet,
+		arg.Uuid,
+		arg.StartTime,
+		arg.Args,
+		arg.Wasm,
+		arg.TransactionID,
+		arg.FloorBw,
+		arg.CeilBw,
+		arg.TimeoutMs,
+		arg.Addresses,
+		arg.RequireIcmp,
+		arg.ListenUdp,
+		arg.ListenTcp,
+		arg.ListenScion,
+		arg.DispatcherIncarnation,
+		arg.SessionID,
+		arg.MaxQueuedRuns,
+		arg.MaxQueuedBytes,
+		arg.QueueBytes,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createDebuglet = `-- name: CreateDebuglet :exec
 INSERT INTO debuglets (
     uuid,

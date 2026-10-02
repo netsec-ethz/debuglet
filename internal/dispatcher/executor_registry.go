@@ -14,6 +14,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -49,12 +50,18 @@ type RegisteredExecutor struct {
 	// predate the report.
 	TeslaTagSpec int64
 
-	ICMPEnabled        bool
-	Capabilities       *wire.ExecutorCapabilities
-	capabilityObserved time.Time
-	vantage            *vantageReport
-	vantageObserved    time.Time
-	display            config.ExecutorDisplay
+	ICMPEnabled           bool
+	Capabilities          *wire.ExecutorCapabilities
+	capabilityObserved    time.Time
+	capabilityObservation *wire.CapabilityObservation
+	vantage               *vantageReport
+	vantageObserved       time.Time
+	display               config.ExecutorDisplay
+	ipMetadata            *wire.IPMetadata
+	connectivity          *wire.Connectivity
+	connectivityObserved  time.Time
+	connectivityNext      time.Time
+	reflections           [2]reflectionReceipt
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -68,6 +75,7 @@ type RegisteredExecutor struct {
 	sourceIp string
 	// sourceIPObserved is false when sourceIp is the executor's own hello claim.
 	sourceIPObserved bool
+	reportedSourceIP string
 	publicHost       *string
 }
 
@@ -182,6 +190,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		cancel()
 		return ErrSessionRetired
 	}
+	display, metadataDB := d.display[owner.ExecutorID()], d.ipMetadata
 	d.registrations[op] = struct{}{}
 	d.registrationWG.Add(1)
 	d.mu.Unlock()
@@ -213,6 +222,9 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		Currency: hello.GetCurrency(), SuiWallet: hello.GetSuiWallet(),
 		sourceIp: sourceIP, sourceIPObserved: observedIP, history: &debugletHistory{},
 	}
+	if claimed, err := netip.ParseAddr(hello.GetSourceIp()); err == nil && claimed.Zone() == "" {
+		record.reportedSourceIP = claimed.Unmap().String()
+	}
 	if host := hello.GetPublicHost(); host != "" {
 		record.publicHost = &host
 	}
@@ -232,12 +244,16 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	record.capabilityObserved = record.LastSeen
 	record.vantage = vantageFromReport(hello.GetVantagePoint())
 	record.vantageObserved = record.LastSeen
+	if hello.GetVantagePoint().GetSchemaVersion() == 1 {
+		record.connectivity = connectivitySCION(initialConnectivity(hello.GetVantagePoint().GetConnectivity()), record.vantage, record.LastSeen)
+	}
+	record.display = display
+	record.collectIPMetadata(metadataDB, hello.GetVantagePoint().GetLocationOptOut())
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return ErrDispatcherClosed
 	}
-	record.display = d.display[record.ID]
 	old := d.executors[record.ID]
 	if old != nil {
 		record.history = cloneHistory(old.history)
@@ -286,6 +302,18 @@ func cloneHistory(history *debugletHistory) *debugletHistory {
 func snapshotLocked(entry *executorEntry, now time.Time) RegisteredExecutor {
 	out := *entry.RegisteredExecutor
 	out.Capabilities = capabilitySnapshot(entry, now)
+	out.capabilityObservation = &wire.CapabilityObservation{State: "unknown"}
+	if entry.Capabilities != nil {
+		at, expiry := entry.capabilityObserved.Unix(), entry.capabilityObserved.Add(capabilityLifetime).Unix()
+		state := "current"
+		if vantageExpired(entry.capabilityObserved, now) {
+			state = "stale"
+		}
+		out.capabilityObservation = &wire.CapabilityObservation{State: state, ObservedAt: &at, ExpiresAt: &expiry}
+	}
+	out.ipMetadata = entry.IPMetadata()
+	out.connectivity = wire.CloneConnectivity(entry.connectivity, now, true)
+	out.reflections = [2]reflectionReceipt{}
 	if vantageExpired(entry.vantageObserved, now) {
 		out.vantage = nil
 	}
@@ -383,7 +411,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 	defer close(done)
 	ticker := d.newExpiryTicker(d.leaseTiming.WatchdogInterval)
 	defer ticker.Stop()
-	var lastSweep, lastPrune time.Time
+	var lastSweep, lastRetention, lastPrune time.Time
 	for {
 		select {
 		case <-d.expiryStop:
@@ -393,6 +421,10 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 				d.expireOwner(owner)
 			}
 			lastSweep = d.sweepEndedWindows(lastSweep)
+			if now := d.now(); lastRetention.IsZero() || now.Sub(lastRetention) >= 10*time.Second {
+				d.sweepPayloadRetention()
+				lastRetention = now
+			}
 			lastPrune = d.pruneAttributionDue(lastPrune)
 		}
 	}

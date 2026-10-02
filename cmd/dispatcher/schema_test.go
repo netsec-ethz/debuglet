@@ -72,6 +72,7 @@ func TestDispatcherRefusesUnsupportedSchema(t *testing.T) {
 func dispatcherConfig(path string) *config.DispatcherConfig {
 	return &config.DispatcherConfig{
 		Output:      config.DefaultOutputConfig(),
+		Admission:   config.DefaultAdmissionConfig(),
 		Attribution: config.DefaultAttributionConfig(),
 		Server:      config.ServerConfig{BindHost: "127.0.0.1", Version: "schema-test"},
 		Logging:     config.LoggingConfig{LogLevel: "info"},

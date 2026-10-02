@@ -441,6 +441,30 @@ func TestRunsAndOrdersAreReachableOnlyByTheirOwner(t *testing.T) {
 	})
 }
 
+func TestRunListNewestFirstAcrossPages(t *testing.T) {
+	f := ccNewFixtureWith(t)
+	_, ownerToken, owner := authAccount(t, f, "list owner")
+	_, _, other := authAccount(t, f, "another list owner")
+	first := f.submit(owner, nil).IDs[0]
+	f.submit(other, nil)
+	second := f.submit(owner, nil).IDs[0]
+	third := f.submit(owner, nil).IDs[0]
+	for _, page := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{third, second, first}},
+		{"?limit=2&offset=0", []string{third, second}},
+		{"?limit=2&offset=2", []string{first}},
+		{"?limit=2&offset=3", []string{}},
+	} {
+		got := authListDebuglets(t, f, ownerToken, page.query)
+		if strings.Join(got, ",") != strings.Join(page.want, ",") {
+			t.Fatalf("list%s = %v, want newest-first %v", page.query, got, page.want)
+		}
+	}
+}
+
 // authListDebuglets reads one account's own runs.
 func authListDebuglets(t *testing.T, f *ccFixture, token, query string) []string {
 	t.Helper()
@@ -730,8 +754,18 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"GET /user-ids":                                 {anonymous: http.StatusUnauthorized, target: "/user-ids"},
 	// Registering an account is the credential issuer: it has to be
 	// reachable by a caller that has no credential yet.
-	"PUT /user":           {anonymous: http.StatusOK, target: "/user", body: []byte(`{"name":"matrix"}`), public: true},
-	"GET /list-debuglets": {anonymous: http.StatusUnauthorized, target: "/list-debuglets"},
+	"PUT /user":                        {anonymous: http.StatusOK, target: "/user", body: []byte(`{"name":"matrix"}`), public: true},
+	"GET /list-debuglets":              {anonymous: http.StatusUnauthorized, target: "/list-debuglets"},
+	"GET /measurement-templates":       {anonymous: http.StatusUnauthorized, target: "/measurement-templates"},
+	"GET /measurement-profiles":        {anonymous: http.StatusUnauthorized, target: "/measurement-profiles"},
+	"POST /measurement-profiles":       {anonymous: http.StatusUnauthorized, target: "/measurement-profiles", body: []byte(`{}`)},
+	"GET /measurement-profiles/:id":    {anonymous: http.StatusUnauthorized, target: "/measurement-profiles/" + authSampleID},
+	"PUT /measurement-profiles/:id":    {anonymous: http.StatusUnauthorized, target: "/measurement-profiles/" + authSampleID, body: []byte(`{}`)},
+	"DELETE /measurement-profiles/:id": {anonymous: http.StatusUnauthorized, target: "/measurement-profiles/" + authSampleID},
+	"GET /measurements":                {anonymous: http.StatusUnauthorized, target: "/measurements"},
+	"GET /measurements/:id":            {anonymous: http.StatusUnauthorized, target: "/measurements/none"},
+	"GET /debuglet/:id/detail":         {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/detail"},
+	"DELETE /debuglet/:id/payload":     {anonymous: http.StatusUnauthorized, target: "/debuglet/" + authSampleID + "/payload"},
 	// The health routes answer an unauthenticated prober: they carry no run
 	// data, and whoever runs a deployment has to reach them before it has
 	// issued anybody a credential.

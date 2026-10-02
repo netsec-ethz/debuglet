@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -189,28 +190,32 @@ func TestLocalLogFailureJoinsChildren(t *testing.T) {
 }
 
 func TestDaemonLogExpiredActiveFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dispatcher.log")
-	if err := os.WriteFile(path, []byte("expired"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	past := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(path, past, past); err != nil {
-		t.Fatal(err)
-	}
-	log, err := newRotatingLog(path, LogOptions{MaxAge: time.Hour}, func(error) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
-	if _, err := io.WriteString(log, "fresh"); err != nil {
-		t.Fatal(err)
-	}
-	files, _ := filepath.Glob(path + "*")
-	if len(files) != 1 {
-		t.Fatalf("expired file remained: %v", files)
-	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "fresh" {
-		t.Fatalf("active file: %q, %v", got, err)
+	for _, maxBytes := range []int64{0, 5} {
+		t.Run(fmt.Sprintf("max-bytes-%d", maxBytes), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "dispatcher.log")
+			if err := os.WriteFile(path, []byte("expired"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			past := time.Now().Add(-2 * time.Hour)
+			if err := os.Chtimes(path, past, past); err != nil {
+				t.Fatal(err)
+			}
+			log, err := newRotatingLog(path, LogOptions{MaxBytes: maxBytes, MaxAge: time.Hour}, func(error) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer log.Close()
+			if _, err := io.WriteString(log, "fresh"); err != nil {
+				t.Fatal(err)
+			}
+			files, _ := filepath.Glob(path + "*")
+			if len(files) != 1 {
+				t.Fatalf("expired file remained: %v", files)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != "fresh" {
+				t.Fatalf("active file: %q, %v", got, err)
+			}
+		})
 	}
 }
 

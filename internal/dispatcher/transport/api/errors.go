@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"go.uber.org/zap"
 )
 
@@ -17,8 +18,12 @@ import (
 // parse. Internal diagnostics are never part of it; they stay in the
 // dispatcher's log. api/openapi.yaml lists the codes.
 type ErrorResponse struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code        string            `json:"code"`
+	Message     string            `json:"message"`
+	FieldErrors []wire.FieldError `json:"field_errors,omitempty"`
+	// AdmittedIDs appears only when submission failed after durable admission.
+	// IDs are in request order; inspect their state instead of replaying work.
+	AdmittedIDs []string `json:"admitted_ids,omitempty"`
 }
 
 // Documented failure codes. New codes may appear within a contract major
@@ -104,18 +109,17 @@ func apiErrorFrom(status int, code, message string, cause error) *echo.HTTPError
 	return failure
 }
 
-// bindError reports a request body Echo could not decode. Echo's own
-// description of the caller's bytes is kept, its wrapper and internal decoder
-// error are not.
+// bindError reports a request body Echo could not decode. Decoder messages can
+// quote values from any field, including credentials, so none is public text.
 func bindError(err error) *echo.HTTPError {
-	message := "invalid request body"
-	var httpErr *echo.HTTPError
-	if errors.As(err, &httpErr) {
-		if detail, ok := httpErr.Message.(string); ok && strings.TrimSpace(detail) != "" {
-			message += ": " + echoed(detail)
-		}
+	failure := apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid request body")
+	// Preserve only the typed size refusal so bodyLimitMiddleware can return
+	// its canonical 413 response without retaining decoder text.
+	var exceeded *http.MaxBytesError
+	if errors.As(err, &exceeded) {
+		failure.SetInternal(exceeded)
 	}
-	return apiErrorFrom(http.StatusBadRequest, CodeInvalidRequest, message, err)
+	return failure
 }
 
 // echoed bounds a caller-supplied value that a message repeats back, so that
@@ -147,18 +151,41 @@ func (h *Handler) errorHandler(err error, c echo.Context) {
 	}
 	status, body, internal := errorEnvelope(err)
 	if internal != nil && h.logger != nil {
-		h.logger.Warn("request failed",
+		fields := []zap.Field{
 			zap.String("request_id", daemonlog.RequestID(c.Request().Context())),
-			zap.String("route", c.Path()),
-			zap.Int("status", status),
-			zap.String("code", body.Code),
-			zap.Error(internal))
+			zap.String("route", c.Path()), zap.Int("status", status), zap.String("code", body.Code),
+		}
+		h.logger.Warn("request failed", fields...)
+		h.logger.Debug("Private request diagnostic", append(fields, zap.String("error", requestDiagnostic(c, internal)))...)
+
 	}
 	if c.Request().Method == http.MethodHead {
 		_ = c.NoContent(status)
 		return
 	}
 	_ = c.JSON(status, body)
+}
+
+// requestDiagnostic redacts credentials known to this request before writing
+// bounded detail to the existing private Debug sink.
+func requestDiagnostic(c echo.Context, cause error, additional ...string) string {
+	if cause == nil {
+		return ""
+	}
+	detail := cause.Error()
+	secrets := append(additional, c.Request().Header.Get("Authorization"), c.Request().Header.Get("X-CSRF-Token"))
+	if scheme, token, ok := strings.Cut(c.Request().Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
+		secrets = append(secrets, token)
+	}
+	for _, cookie := range c.Request().Cookies() {
+		secrets = append(secrets, cookie.Value)
+	}
+	for _, secret := range secrets {
+		if secret != "" {
+			detail = strings.ReplaceAll(detail, secret, "[redacted]")
+		}
+	}
+	return daemonlog.Diagnostic(errors.New(detail))
 }
 
 // errorEnvelope classifies one failure into the response envelope and the
@@ -170,9 +197,6 @@ func errorEnvelope(err error) (int, ErrorResponse, error) {
 		return http.StatusInternalServerError, ErrorResponse{Code: CodeInternal, Message: "internal server error"}, err
 	}
 	internal := httpErr.Internal
-	if inner, ok := internal.(*echo.HTTPError); ok {
-		httpErr, internal = inner, inner.Internal
-	}
 	status := httpErr.Code
 	if status < 100 || status > 599 {
 		status = http.StatusInternalServerError
@@ -184,7 +208,9 @@ func errorEnvelope(err error) (int, ErrorResponse, error) {
 		}
 		return status, message, internal
 	case string:
-		return status, ErrorResponse{Code: codeForStatus(status), Message: message}, internal
+		// Framework and third-party messages have no public-data contract.
+		// A deliberate client message must use ErrorResponse above.
+		return status, ErrorResponse{Code: codeForStatus(status), Message: http.StatusText(status)}, internal
 	default:
 		return status, ErrorResponse{Code: codeForStatus(status), Message: http.StatusText(status)}, err
 	}

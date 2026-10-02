@@ -42,6 +42,15 @@ self-service enrollment are described under
 
 ## Container images
 
+The application images use the digest-pinned Alpine runtime in
+[`docker/debuglet.Dockerfile`](docker/debuglet.Dockerfile). They retain CA roots
+and BusyBox shell utilities for the documented container commands. The static
+Go payload is installed and verified in the Debian build stage; runtime images
+have no package manager or build toolchain. Update them by rebuilding and
+replacing the image. The required image vulnerability lane scans all four
+application targets and retains every finding, including findings below its
+blocking threshold; see [CI image checks](../docs/development/ci-images.md#runtime-image-vulnerability-checks).
+
 [`docker/debuglet.Dockerfile`](docker/debuglet.Dockerfile) builds both role
 images from a single payload stage:
 
@@ -60,7 +69,7 @@ together.
 The build context is the repository root and must be a clean committed
 checkout including `.git`. The payload stage runs the same two steps as the
 build and package jobs — `internal/packaging build` with the pinned Go
-1.25.11 toolchain, then `scripts/ci-package.sh` — and installs the resulting
+1.26.8 toolchain, then `scripts/ci-package.sh` — and installs the resulting
 candidate with the package's own installer. Both steps refuse a modified or
 unidentified checkout, so there is no separate image build, no separate
 version stamping, and nothing to keep in step with the package contract by
@@ -393,7 +402,7 @@ supported for wallet-free TEST deployments. It does not restore usable paid
 state: migration 4 leaves existing earnings with an empty payout wallet that
 executor re-registration does not repair. Keep chain payments disabled and
 preserve paid databases and their backups for verified operator reconciliation
-before enabling payments, as [Stored state](../docs/operations/configuration.md)
+before enabling payments, as [Stored state](../docs/operations/configuration.md#stored-state)
 describes. Keep payments disabled when restarting upgraded paid-state
 deployments until that reconciliation is complete.
 
@@ -445,8 +454,8 @@ the dispatcher and then the executors, one executor at a time. On each host it:
 9. runs the candidate daemon with `-upgrade-database` (and
    `-accept-data-loss` when `upgrade_accept_data_loss=true`) as the service
    user through `runuser`, so the database keeps its owner; the daemon names
-   the database it upgrades, applies the release's migrations to it and checks
-   the result as a start does;
+   the database it upgrades, takes exclusive SQLite ownership across all
+   migration commits, and checks the result before releasing ownership;
 10. activates only the upgraded daemon's candidate link and starts that
     service again. Run the normal deployment command afterward to activate
     the CLI, record the complete deployment, install the candidate
@@ -470,7 +479,14 @@ When step 9 fails the play stops on that host: the service stays stopped, the
 backup and previous daemon link stay in place, the remaining executors are left
 untouched, and the database is at the last migration that completed. Running the playbook again
 continues from there; restoring the backup files returns to the previous state.
-[Stored state](../docs/operations/configuration.md) lists the versions whose
+For rollback, stop every daemon using the database and keep the failed database
+and its companions separately for diagnosis. Restore the complete offline
+backup as a unit before restarting the previous package: an older database
+must never be combined with a newer `-wal` or `-shm` file. The published v0.2.0
+daemons refuse a newer schema at startup; they do not have the candidate's
+`-check-database` flag. Verify the restored service's readiness and retained
+results with the previous package before admitting fresh work.
+[Stored state](../docs/operations/configuration.md#stored-state) lists the versions whose
 upgrade loses recorded runs. No deployment playbook and no role imports
 `upgrade-database.yml`, and `site.yml` never runs it.
 

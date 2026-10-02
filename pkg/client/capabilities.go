@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
@@ -17,16 +18,22 @@ import (
 // not match requested filters. Capacity is advertised total bandwidth, not a
 // reservation or a promise that a particular run can be admitted.
 type ExecutorFilter struct {
-	Protocols       []string
-	EnforcementMode string
-	MinCapacityBPS  *int64
+	AddressFamilies    []string // ipv4 or ipv6 with a fresh successful controlled observation.
+	ReachableListeners []string // tcp, udp or scion; declared support alone is not a match.
+	Protocols          []string
+	EnforcementMode    string
+	MinCapacityBPS     *int64
 	// ISDAS requires the executor-reported SCION ISD-AS, such as 1-ff00:0:110.
 	// Equivalent spellings match; an unknown ISD-AS does not.
 	ISDAS string
+	// ASN matches dispatcher-observed control or advertised-host origin. The
+	// separate, unverified hello claim never adds a match. Country matches display location.
+	ASN     uint32
+	Country string
 }
 
 func (f ExecutorFilter) Empty() bool {
-	return len(f.Protocols) == 0 && f.EnforcementMode == "" && f.MinCapacityBPS == nil && f.ISDAS == ""
+	return len(f.AddressFamilies) == 0 && len(f.ReachableListeners) == 0 && len(f.Protocols) == 0 && f.EnforcementMode == "" && f.MinCapacityBPS == nil && f.ISDAS == "" && f.ASN == 0 && f.Country == ""
 }
 
 func (f ExecutorFilter) capabilityEmpty() bool {
@@ -34,6 +41,16 @@ func (f ExecutorFilter) capabilityEmpty() bool {
 }
 
 func (f ExecutorFilter) Validate() error {
+	for _, family := range f.AddressFamilies {
+		if family != "ipv4" && family != "ipv6" {
+			return errors.New("address-family filter must be ipv4 or ipv6")
+		}
+	}
+	for _, listener := range f.ReachableListeners {
+		if listener != "tcp" && listener != "udp" && listener != "scion" {
+			return errors.New("reachable-listener filter must be tcp, udp or scion")
+		}
+	}
 	for _, protocol := range f.Protocols {
 		switch protocol {
 		case "tcp", "tls", "udp", "icmp", "scion":
@@ -49,6 +66,9 @@ func (f ExecutorFilter) Validate() error {
 	}
 	if _, ok := wire.CanonicalISDAS(f.ISDAS); f.ISDAS != "" && !ok {
 		return fmt.Errorf("ISD-AS filter %q must be a concrete SCION ISD-AS such as 1-ff00:0:110", f.ISDAS)
+	}
+	if f.Country != "" && (len(f.Country) != 2 || f.Country[0] < 'A' || f.Country[0] > 'Z' || f.Country[1] < 'A' || f.Country[1] > 'Z') {
+		return errors.New("country filter must be an upper-case two-letter country code")
 	}
 	return nil
 }
@@ -66,7 +86,10 @@ func (c *Client) DiscoverExecutors(ctx context.Context, filter ExecutorFilter) (
 	}
 	matched := []Node{}
 	for _, node := range nodes {
-		if !node.Ready || strings.TrimSpace(node.ID) == "" {
+		if !node.Ready || node.Admission == wire.AdmissionMaintenance || node.Admission == wire.AdmissionOffline || strings.TrimSpace(node.ID) == "" {
+			continue
+		}
+		if !matchesConnectivity(node.Connectivity, filter, time.Now()) {
 			continue
 		}
 		if filter.ISDAS != "" {
@@ -76,6 +99,16 @@ func (c *Client) DiscoverExecutors(ctx context.Context, filter ExecutorFilter) (
 				continue
 			}
 			if canonical, ok := wire.CanonicalISDAS(*got); !ok || canonical != want {
+				continue
+			}
+		}
+		_, country := node.Location()
+		if filter.Country != "" && (country.Value == nil || *country.Value != filter.Country) {
+			continue
+		}
+		if filter.ASN != 0 {
+			m := node.IPMetadata
+			if m == nil || !matchesASN(m.Observed.ASN, filter.ASN) && !matchesASN(m.Advertised.ASN, filter.ASN) {
 				continue
 			}
 		}
@@ -124,4 +157,39 @@ func (c *Client) SelectExecutor(ctx context.Context, id string, filter ExecutorF
 		return Node{}, ErrNoMatchingExecutor
 	}
 	return *selected, nil
+}
+
+func matchesASN(r wire.IPLookup[wire.ASInfo], number uint32) bool {
+	return r.Value != nil && r.Reason == "" && r.Value.Number == number
+}
+
+func matchesConnectivity(c *wire.Connectivity, f ExecutorFilter, now time.Time) bool {
+	if len(f.AddressFamilies) == 0 && len(f.ReachableListeners) == 0 {
+		return true
+	}
+	if c == nil || c.SchemaVersion != 1 {
+		return false
+	}
+	for _, family := range f.AddressFamilies {
+		r := c.IPv4
+		if family == "ipv6" {
+			r = c.IPv6
+		}
+		if !r.FreshReachable(now) {
+			return false
+		}
+	}
+	for _, listener := range f.ReachableListeners {
+		r := c.TCPListener
+		if listener == "udp" {
+			r = c.UDPListener
+		}
+		if listener == "scion" {
+			r = c.SCIONListener
+		}
+		if !r.FreshReachable(now) {
+			return false
+		}
+	}
+	return true
 }

@@ -3,7 +3,7 @@
 
 // Package wasm contains the WASM host function implementations that are
 // imported by WASM modules at runtime. Each host function follows the wazero
-// calling convention: (ctx context.Context, mod api.Module, params []uint64) →
+// calling convention: (ctx context.Context, mod Memory, params []uint64) →
 // []uint64.
 //
 // Go function names use camelCase with a "host" prefix. The WASM-visible
@@ -21,6 +21,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
@@ -28,7 +29,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
-	"github.com/tetratelabs/wazero/api"
 )
 
 // =============================================================================
@@ -66,8 +66,8 @@ func addrPortOf(addr net.Addr) (netip.AddrPort, bool) {
 // admitted after they are read, so they are read into the host's memory: a
 // sender the policy refuses must leave nothing behind in the guest's buffer,
 // and no part of a refused payload may survive as the tail of an admitted one.
-func guestBuffer(mod api.Module, ptr, length uint32) ([]byte, error) {
-	if _, err := ExtractMem[byte](mod, ptr, length); err != nil {
+func guestBuffer(mod Memory, ptr, length uint32) ([]byte, error) {
+	if _, err := extractMem[byte](mod, ptr, length); err != nil {
 		return nil, err
 	}
 	return make([]byte, min(length, MAX_SLICE_LENGTH)), nil
@@ -76,7 +76,7 @@ func guestBuffer(mod api.Module, ptr, length uint32) ([]byte, error) {
 // attachSocket puts an admitted, already marked connection under this run's
 // bandwidth accounting and registers it, returning its guest handle. It
 // consumes conn: every failure path releases it.
-func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, socketType socket.SocketType) (handle int32, err error) {
+func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, socketType socket.SocketType, reservation *socket.SocketReservation) (handle int32, err error) {
 	ownsRaw := true
 	defer func() {
 		if ownsRaw {
@@ -99,13 +99,13 @@ func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, 
 		env.RecordCleanupError(cleanup.Released(err))
 		return -1, fmt.Errorf("failed to create HostConn: %w", err)
 	}
-	return env.Registry.Add(hc)
+	return env.Registry.AddReserved(hc, reservation)
 }
 
 // writeAddr writes addr into the guest buffer at (bufPtr, bufLen) and returns
 // its length, or -1 if addr is empty, the buffer is too small, or the write
 // fails.
-func writeAddr(mod api.Module, bufPtr, bufLen uint32, addr string) int32 {
+func writeAddr(mod Memory, bufPtr, bufLen uint32, addr string) int32 {
 	if addr == "" {
 		return -1
 	}
@@ -113,7 +113,7 @@ func writeAddr(mod api.Module, bufPtr, bufLen uint32, addr string) int32 {
 	if bufLen < uint32(len(b)) {
 		return -1
 	}
-	if !mod.Memory().Write(bufPtr, b) {
+	if !mod.Write(bufPtr, b) {
 		return -1
 	}
 	return int32(len(b))
@@ -131,9 +131,9 @@ func writeAddr(mod api.Module, bufPtr, bufLen uint32, addr string) int32 {
 // name, so nothing else can be reached in between. A refused destination is
 // never contacted. Returns the socket handle as I32.
 // WASM key: "connect_tcp", "connect_ip", "connect_udp", "connect_tls"
-func HostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
-		addr, err := ExtractStr(mod, addrp, addrLen)
+func hostConnect(env *WasmEnv, socketType socket.SocketType) func(ctx context.Context, mod Memory, addrp, addrLen uint32) int32 {
+	return func(ctx context.Context, mod Memory, addrp, addrLen uint32) int32 {
+		addr, err := extractStr(mod, addrp, addrLen)
 		if err != nil {
 			panic(err)
 		}
@@ -163,9 +163,23 @@ func connectSocket(ctx, dialCtx context.Context, env *WasmEnv, socketType socket
 
 	destination, err := env.Net.AdmitDestination(dialCtx, transport, addr)
 	if err != nil {
-		env.Logger.Warnw("hostConnect: destination refused", "addr", addr, "transport", transport.String(), "err", err)
+		env.Logger.Warnw("hostConnect: destination refused", "debugletID", env.DebugletID.String(), "transport", transport.String())
+		env.Logger.Debugw("Private host destination diagnostic", "debugletID", env.DebugletID.String(), "transport", transport.String(),
+			"address", daemonlog.Diagnostic(errors.New(addr)), "error", daemonlog.Diagnostic(err))
 		return -1, fmt.Errorf("connect: %w", err)
 	}
+
+	// Datagram tagging can hold the connected socket and one raw companion.
+	// Keep the conservative two-slot reservation even when tagging falls back.
+	descriptors := 1
+	if socketType == socket.SocketTypeUDP || socketType == socket.SocketTypeICMP4 {
+		descriptors = 2
+	}
+	reservation, err := env.Registry.Reserve(descriptors)
+	if err != nil {
+		return -1, fmt.Errorf("connect: %w", err)
+	}
+	defer reservation.Release()
 
 	// The dialer consults the same admitted destination again, in the
 	// control hook the operating system calls between creating the socket
@@ -173,7 +187,8 @@ func connectSocket(ctx, dialCtx context.Context, env *WasmEnv, socketType socket
 	// attribution.
 	dialer, err := hostconn.NewDialer(destination, env.Tagger)
 	if err != nil {
-		env.Logger.Warnw("hostConnect: failed to create dialer", "err", err)
+		env.Logger.Warnw("hostConnect: failed to create dialer", "debugletID", env.DebugletID.String(), "transport", transport.String())
+		env.Logger.Debugw("Private host dialer diagnostic", "debugletID", env.DebugletID.String(), "transport", transport.String(), "error", daemonlog.Diagnostic(err))
 		return -1, fmt.Errorf("connect: %w", err)
 	}
 
@@ -207,14 +222,18 @@ func connectSocket(ctx, dialCtx context.Context, env *WasmEnv, socketType socket
 		if failures == nil {
 			failures = errors.New("no admitted address to dial")
 		}
-		env.Logger.Warnw("hostConnect: failed to dial", "addr", addr, "err", failures)
+		env.Logger.Warnw("hostConnect: failed to dial", "debugletID", env.DebugletID.String(), "transport", transport.String())
+		env.Logger.Debugw("Private host connection diagnostic", "debugletID", env.DebugletID.String(), "transport", transport.String(),
+			"address", daemonlog.Diagnostic(errors.New(addr)), "error", daemonlog.Diagnostic(failures))
 		return -1, fmt.Errorf("connect: %w", failures)
 	}
 
 	conn = tagDatagrams(env, conn, socketType)
-	handle, err := attachSocket(ctx, env, conn, destination.Key, socketType)
+	handle, err := attachSocket(ctx, env, conn, destination.Key, socketType, reservation)
 	if err != nil {
-		env.Logger.Warnw("hostConnect: failed to admit connection", "addr", dialed, "err", err)
+		env.Logger.Warnw("hostConnect: failed to admit connection", "debugletID", env.DebugletID.String(), "transport", transport.String())
+		env.Logger.Debugw("Private host connection admission diagnostic", "debugletID", env.DebugletID.String(), "transport", transport.String(),
+			"address", daemonlog.Diagnostic(errors.New(dialed)), "error", daemonlog.Diagnostic(err))
 		return -1, fmt.Errorf("connect: %w", err)
 	}
 	return handle, nil
@@ -250,21 +269,27 @@ func isStreamSocket(t socket.SocketType) bool {
 // UDP/ICMP sockets a zero-length datagram returns 0 and EOF remains an error.
 // Any other error, on any socket type, traps per the host-function convention.
 // WASM key: "receive_tcp_data", "receive_udp_data", "receive_icmp4_data"
-func HostReceiveData(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) int32 {
-	return func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) int32 {
+func hostReceiveData(env *WasmEnv) func(ctx context.Context, mod Memory, sockID int32, bufp, bufLen uint32) int32 {
+	return func(ctx context.Context, mod Memory, sockID int32, bufp, bufLen uint32) int32 {
 		sock, err := env.Registry.Get(sockID)
 		if err != nil {
-			env.Logger.Warnw("hostReceiveData: invalid handle", "handle", sockID, "err", err)
+			env.warnPrivate("hostReceiveData: invalid handle", fmt.Errorf("handle %d: %w", sockID, err))
 			panic(fmt.Errorf("receive_data: %w", err))
 		}
 
-		buf, err := ExtractMem[byte](mod, bufp, bufLen)
+		buf, err := extractMem[byte](mod, bufp, bufLen)
 		if err != nil {
 			panic(err)
 		}
 
 		stream := isStreamSocket(sock.Type())
 		n, err := sock.Read(buf)
+		if n < 0 || n > len(buf) {
+			panic("invalid socket read count")
+		}
+		if n > 0 && !mod.Write(bufp, buf[:n]) {
+			panic("failed to write received bytes")
+		}
 		if err != nil {
 			if stream && errors.Is(err, io.EOF) {
 				// Normal end of stream: any bytes read alongside EOF are
@@ -272,11 +297,11 @@ func HostReceiveData(env *WasmEnv) func(ctx context.Context, mod api.Module, soc
 				// EOF) and let the guest interpret it.
 				return int32(n)
 			}
-			env.Logger.Warnw("hostReceiveData: read error", "err", err)
+			env.warnPrivate("hostReceiveData: read error", err)
 			panic(fmt.Errorf("receive_data: read error: %w", err))
 		}
 		if stream && n == 0 && len(buf) > 0 {
-			env.Logger.Warnw("hostReceiveData: no progress on stream read", "handle", sockID, "len", len(buf))
+			env.Logger.Warnw("hostReceiveData: no progress on stream read", "debugletID", env.DebugletID.String(), "handle", sockID, "len", len(buf))
 			panic(fmt.Errorf("receive_data: read error: no progress on stream read into %d-byte buffer: %w", len(buf), io.ErrNoProgress))
 		}
 
@@ -287,22 +312,22 @@ func HostReceiveData(env *WasmEnv) func(ctx context.Context, mod api.Module, soc
 // HostSendData writes size bytes starting at offset ptr from the WASM
 // memory to the socket at sockID.
 // WASM key: "send_tcp_data", "send_icmp4_data"
-func HostSendData(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) {
-	return func(ctx context.Context, mod api.Module, sockID int32, bufp, bufLen uint32) {
+func hostSendData(env *WasmEnv) func(ctx context.Context, mod Memory, sockID int32, bufp, bufLen uint32) {
+	return func(ctx context.Context, mod Memory, sockID int32, bufp, bufLen uint32) {
 		sock, err := env.Registry.Get(sockID)
 		if err != nil {
-			env.Logger.Warnw("hostSendData: invalid handle", "handle", sockID, "err", err)
+			env.warnPrivate("hostSendData: invalid handle", fmt.Errorf("handle %d: %w", sockID, err))
 			panic(fmt.Errorf("send_data: %w", err))
 		}
 
-		message, err := ExtractMem[byte](mod, bufp, bufLen)
+		message, err := extractMem[byte](mod, bufp, bufLen)
 		if err != nil {
 			panic(err)
 		}
 		env.Logger.Debugw("hostSendData: sending message", "len", len(message))
 
 		if _, err = sock.Write(message); err != nil {
-			env.Logger.Warnw("hostSendData: write error", "err", err)
+			env.warnPrivate("hostSendData: write error", err)
 			panic(fmt.Errorf("send_data: write error: %w", err))
 		}
 	}
@@ -313,7 +338,7 @@ func HostSendData(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID
 func HostClose(env *WasmEnv) func(ctx context.Context, sockID int32) {
 	return func(ctx context.Context, sockID int32) {
 		if err := env.Registry.Close(sockID); err != nil {
-			env.Logger.Warnw("hostClose: close error", "handle", sockID, "err", err)
+			env.warnPrivate("hostClose: close error", fmt.Errorf("handle %d: %w", sockID, err))
 			panic(fmt.Errorf("close_tcp: %w", err))
 		}
 	}
@@ -323,7 +348,7 @@ func HostDrain(env *WasmEnv) func(ctx context.Context, sockID int32) {
 	return func(ctx context.Context, sockID int32) {
 		sock, err := env.Registry.Get(sockID)
 		if err != nil {
-			env.Logger.Warnw("hostDrain: invalid handle", "handle", sockID, "err", err)
+			env.warnPrivate("hostDrain: invalid handle", fmt.Errorf("handle %d: %w", sockID, err))
 			panic(fmt.Errorf("drain_connection: %w", err))
 		}
 		if d, ok := sock.(Drainable); ok {
@@ -335,11 +360,11 @@ func HostDrain(env *WasmEnv) func(ctx context.Context, sockID int32) {
 // HostGetRemoteAddr writes the socket peer's full "host:port" address into the
 // guest buffer and returns its length, or -1 if unavailable/too small.
 // WASM key: "get_remote_addr"
-func HostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, sockID int32, bufPtr, bufLen uint32) int32 {
-	return func(ctx context.Context, mod api.Module, sockID int32, bufPtr, bufLen uint32) int32 {
+func hostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod Memory, sockID int32, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod Memory, sockID int32, bufPtr, bufLen uint32) int32 {
 		sock, err := env.Registry.Get(sockID)
 		if err != nil {
-			env.Logger.Warnw("hostGetRemoteAddr: invalid handle", "handle", sockID, "err", err)
+			env.warnPrivate("hostGetRemoteAddr: invalid handle", fmt.Errorf("handle %d: %w", sockID, err))
 			panic(fmt.Errorf("get_remote_addr: %w", err))
 		}
 
@@ -361,7 +386,7 @@ func HostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, s
 func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 	return func(ctx context.Context) int32 {
 		if err := env.Net.AvailableListener(netpolicy.TCP); err != nil {
-			env.Logger.Warnw("hostAcceptTCP: inbound refused", "err", err)
+			env.warnPrivate("hostAcceptTCP: inbound refused", err)
 			panic(fmt.Errorf("accept_tcp: %w", err))
 		}
 		if env.TcpServer == nil {
@@ -371,35 +396,44 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 			if err := ctx.Err(); err != nil {
 				panic(fmt.Errorf("accept_tcp: %w", context.Cause(ctx)))
 			}
+			reservation, err := env.Registry.Reserve(1)
+			if err != nil {
+				panic(fmt.Errorf("accept_tcp: %w", err))
+			}
 			conn, err := env.TcpServer.AcceptTCP()
 			if err != nil {
-				env.Logger.Warnw("hostAcceptTCP: failed to accept", "err", err)
+				reservation.Release()
+				env.warnPrivate("hostAcceptTCP: failed to accept", err)
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
 
 			peer, ok := addrPortOf(conn.RemoteAddr())
 			if !ok {
-				env.Logger.Warnw("hostAcceptTCP: peer has no readable address", "peer", conn.RemoteAddr())
+				env.warnPrivate("hostAcceptTCP: peer has no readable address", fmt.Errorf("peer %v", conn.RemoteAddr()))
 				env.RecordCleanupError(conn.Close())
+				reservation.Release()
 				continue
 			}
 			match, err := env.Net.AdmitAddr(ctx, netpolicy.Inbound, peer)
 			if err != nil {
-				env.Logger.Warnw("hostAcceptTCP: peer refused", "peer", peer.String(), "err", err)
+				env.warnPrivate("hostAcceptTCP: peer refused", fmt.Errorf("peer %s: %w", peer, err))
 				env.RecordCleanupError(conn.Close())
+				reservation.Release()
 				continue
 			}
 
 			// Linux copies the listener's mark to the connections it accepts;
 			// marking again does not rely on that.
 			if err := markSocket(env, conn); err != nil {
-				env.Logger.Warnw("hostAcceptTCP: failed to mark connection", "peer", peer.String(), "err", err)
+				env.warnPrivate("hostAcceptTCP: failed to mark connection", fmt.Errorf("peer %s: %w", peer, err))
 				env.RecordCleanupError(conn.Close())
+				reservation.Release()
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
-			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP)
+			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP, reservation)
 			if err != nil {
-				env.Logger.Warnw("hostAcceptTCP: failed to admit connection", "peer", peer.String(), "err", err)
+				reservation.Release()
+				env.warnPrivate("hostAcceptTCP: failed to admit connection", fmt.Errorf("peer %s: %w", peer, err))
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
 			return handle
@@ -410,8 +444,8 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 // HostGetTCPAddr writes the public "host:port" of the TCP listener into the
 // guest buffer and returns its length, or -1 if unavailable/too small.
 // WASM key: "get_tcp_addr"
-func HostGetTCPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
-	return func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+func hostGetTCPAddr(env *WasmEnv) func(ctx context.Context, mod Memory, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod Memory, bufPtr, bufLen uint32) int32 {
 		return writeAddr(mod, bufPtr, bufLen, env.TcpServerAddr)
 	}
 }
@@ -425,8 +459,8 @@ func HostGetTCPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufP
 // HostGetUDPAddr writes the public "host:port" of the UDP listener into the
 // guest buffer and returns its length, or -1 if unavailable/too small.
 // WASM key: "get_udp_addr"
-func HostGetUDPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
-	return func(ctx context.Context, mod api.Module, bufPtr, bufLen uint32) int32 {
+func hostGetUDPAddr(env *WasmEnv) func(ctx context.Context, mod Memory, bufPtr, bufLen uint32) int32 {
+	return func(ctx context.Context, mod Memory, bufPtr, bufLen uint32) int32 {
 		return writeAddr(mod, bufPtr, bufLen, env.UdpServerAddr)
 	}
 }
@@ -441,15 +475,15 @@ func HostGetUDPAddr(env *WasmEnv) func(ctx context.Context, mod api.Module, bufP
 // convention. No deadline handling is applied: the executor's debuglet timeout
 // closes UdpServer, which unblocks a pending read.
 // WASM key: "receive_udp_from"
-func HostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod api.Module, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
-	return func(ctx context.Context, mod api.Module, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
+func hostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod Memory, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
+	return func(ctx context.Context, mod Memory, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
 		if err := env.Net.AvailableListener(netpolicy.UDP); err != nil {
-			env.Logger.Warnw("hostReceiveUDPFrom: inbound refused", "err", err)
+			env.warnPrivate("hostReceiveUDPFrom: inbound refused", err)
 			panic(fmt.Errorf("receive_udp_from: %w", err))
 		}
 		buf, err := guestBuffer(mod, recvp, recvLen)
 		if err != nil {
-			env.Logger.Warnw("hostReceiveUDPFrom: failed to extract buffer", "err", err)
+			env.warnPrivate("hostReceiveUDPFrom: failed to extract buffer", err)
 			panic(fmt.Errorf("receive_udp_from: failed to extract buffer: %w", err))
 		}
 		if env.UdpServer == nil {
@@ -462,38 +496,38 @@ func HostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod api.Module, 
 			}
 			n, from, err := env.UdpServer.ReadFrom(buf)
 			if err != nil {
-				env.Logger.Warnw("hostReceiveUDPFrom: read error", "err", err, "n", n)
+				env.warnPrivate("hostReceiveUDPFrom: read error", fmt.Errorf("received %d bytes: %w", n, err))
 				panic(fmt.Errorf("receive_udp_from: read error: %w", err))
 			}
 
 			peer, ok := addrPortOf(from)
 			if !ok {
-				env.Logger.Warnw("hostReceiveUDPFrom: sender has no readable address", "from", from)
+				env.warnPrivate("hostReceiveUDPFrom: sender has no readable address", fmt.Errorf("sender %v", from))
 				continue
 			}
 			match, err := env.Net.AdmitAddr(ctx, netpolicy.Inbound, peer)
 			if err != nil {
-				env.Logger.Warnw("hostReceiveUDPFrom: sender refused", "from", peer.String(), "err", err)
+				env.warnPrivate("hostReceiveUDPFrom: sender refused", fmt.Errorf("sender %s: %w", peer, err))
 				continue
 			}
 			if err := env.Accountant.Account(ctx, app.TransferIn, match.Key, n); err != nil {
-				env.Logger.Warnw("hostReceiveUDPFrom: failed to account datagram", "from", peer.String(), "err", err)
+				env.warnPrivate("hostReceiveUDPFrom: failed to account datagram", fmt.Errorf("sender %s: %w", peer, err))
 				panic(fmt.Errorf("receive_udp_from: %w", err))
 			}
 
-			if n > 0 && !mod.Memory().Write(recvp, buf[:n]) {
-				env.Logger.Warnw("hostReceiveUDPFrom: failed to write the datagram", "n", n)
+			if n > 0 && !mod.Write(recvp, buf[:n]) {
+				env.Logger.Warnw("hostReceiveUDPFrom: failed to write the datagram", "debugletID", env.DebugletID.String(), "n", n)
 				panic(fmt.Errorf("receive_udp_from: failed to write %d bytes into the guest buffer", n))
 			}
 
 			fromAddr := from.String()
 			addrLen := writeAddr(mod, senderp, senderLen, fromAddr)
 			if addrLen < 0 {
-				env.Logger.Warnw("hostReceiveUDPFrom: failed to write sender address", "from", fromAddr)
+				env.warnPrivate("hostReceiveUDPFrom: failed to write sender address", fmt.Errorf("sender %s", fromAddr))
 				panic(fmt.Errorf("receive_udp_from: sender buffer too small for %q", fromAddr))
 			}
-			if !mod.Memory().WriteUint32Le(addrLenp, uint32(addrLen)) {
-				env.Logger.Warnw("hostReceiveUDPFrom: failed to write sender address length", "from", fromAddr)
+			if !mod.WriteUint32Le(addrLenp, uint32(addrLen)) {
+				env.warnPrivate("hostReceiveUDPFrom: failed to write sender address length", fmt.Errorf("sender %s", fromAddr))
 				panic(fmt.Errorf("receive_udp_from: failed to write sender address length"))
 			}
 			return int32(n)
@@ -546,22 +580,22 @@ func scionConn(ctx context.Context, env *WasmEnv, addr string) (*socket.SCIONCon
 // not an unmetered path around the ordinary socket wrappers.
 // Returns the send timestamp as I64.
 // WASM key: "send_scion_udp_packet"
-func HostSendSCIONUDPPacket(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
-		addr, err := ExtractStr(mod, addrp, addrLen)
+func hostSendSCIONUDPPacket(env *WasmEnv) func(ctx context.Context, mod Memory, addrp, addrLen, sendp, sendLen uint32) int64 {
+	return func(ctx context.Context, mod Memory, addrp, addrLen, sendp, sendLen uint32) int64 {
+		addr, err := extractStr(mod, addrp, addrLen)
 		if err != nil {
 			panic(err)
 		}
 
 		sc, match, err := scionConn(ctx, env, addr)
 		if err != nil {
-			env.Logger.Warnw("hostSendSCIONUDPPacket: destination refused", "addr", addr, "err", err)
+			env.warnPrivate("hostSendSCIONUDPPacket: destination refused", fmt.Errorf("address %s: %w", addr, err))
 			panic(fmt.Errorf("send_scion_udp_packet: %w", err))
 		}
 
-		data, err := ExtractMem[byte](mod, sendp, sendLen)
+		data, err := extractMem[byte](mod, sendp, sendLen)
 		if err != nil {
-			env.Logger.Warnw("hostSendSCIONUDPPacket: failed to extract buffer", "err", err)
+			env.warnPrivate("hostSendSCIONUDPPacket: failed to extract buffer", err)
 			panic(fmt.Errorf("send_scion_udp_packet: failed to extract udp_send_buffer: %w", err))
 		}
 
@@ -572,11 +606,11 @@ func HostSendSCIONUDPPacket(env *WasmEnv) func(ctx context.Context, mod api.Modu
 		(*sc.Conn).SetDeadline(deadline)
 
 		if err := env.Accountant.Account(ctx, app.TransferOut, match.Key, len(data)); err != nil {
-			env.Logger.Warnw("hostSendSCIONUDPPacket: failed to account packet", "err", err)
+			env.warnPrivate("hostSendSCIONUDPPacket: failed to account packet", err)
 			panic(fmt.Errorf("send_scion_udp_packet: %w", err))
 		}
 		if _, err = (*sc.Conn).Write(data); err != nil {
-			env.Logger.Warnw("hostSendSCIONUDPPacket: write failed", "err", err)
+			env.warnPrivate("hostSendSCIONUDPPacket: write failed", err)
 			panic(fmt.Errorf("send_scion_udp_packet: write failed: %w", err))
 		}
 		return time.Now().UnixNano()
@@ -589,15 +623,15 @@ func HostSendSCIONUDPPacket(env *WasmEnv) func(ctx context.Context, mod api.Modu
 // read continues until the deadline. Returns (bytesRead I32, timestamp I64).
 // lastReceived is updated in place.
 // WASM key: "receive_scion_server_udp_packet"
-func HostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod api.Module, recvp, recvLen uint32, timeout int32) (int32, int64) {
-	return func(ctx context.Context, mod api.Module, recvp, recvLen uint32, timeout int32) (int32, int64) {
+func hostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod Memory, recvp, recvLen uint32, timeout int32) (int32, int64) {
+	return func(ctx context.Context, mod Memory, recvp, recvLen uint32, timeout int32) (int32, int64) {
 		if err := env.Net.AvailableListener(netpolicy.SCION); err != nil {
-			env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: inbound refused", "err", err)
+			env.warnPrivate("hostReceiveSCIONServerUDPPacket: inbound refused", err)
 			panic(fmt.Errorf("receive_scion_server_udp_packet: %w", err))
 		}
 		buf, err := guestBuffer(mod, recvp, recvLen)
 		if err != nil {
-			env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: failed to extract buffer", "err", err)
+			env.warnPrivate("hostReceiveSCIONServerUDPPacket: failed to extract buffer", err)
 			panic(fmt.Errorf("receive_scion_server_udp_packet: failed to extract udp_receive_buffer: %w", err))
 		}
 
@@ -607,7 +641,7 @@ func HostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod
 		}
 
 		if err = env.ScionServer.SetReadDeadline(deadline); err != nil {
-			env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: failed to set deadline", "err", err)
+			env.warnPrivate("hostReceiveSCIONServerUDPPacket: failed to set deadline", err)
 			panic(fmt.Errorf("receive_scion_server_udp_packet: failed to set read deadline: %w", err))
 		}
 
@@ -619,21 +653,21 @@ func HostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod
 					env.LastReceived = nil
 					return 0, time.Now().UnixNano()
 				}
-				env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: read error", "err", err, "n", n)
+				env.warnPrivate("hostReceiveSCIONServerUDPPacket: read error", fmt.Errorf("received %d bytes: %w", n, err))
 				panic(fmt.Errorf("receive_scion_server_udp_packet: read error: %w", err))
 			}
 
 			match, err := scionPeer(ctx, env, from)
 			if err != nil {
-				env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: sender refused", "from", from, "err", err)
+				env.warnPrivate("hostReceiveSCIONServerUDPPacket: sender refused", fmt.Errorf("sender %v: %w", from, err))
 				continue
 			}
 			if err := env.Accountant.Account(ctx, app.TransferIn, match.Key, n); err != nil {
-				env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: failed to account packet", "err", err)
+				env.warnPrivate("hostReceiveSCIONServerUDPPacket: failed to account packet", err)
 				panic(fmt.Errorf("receive_scion_server_udp_packet: %w", err))
 			}
-			if n > 0 && !mod.Memory().Write(recvp, buf[:n]) {
-				env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: failed to write the packet", "n", n)
+			if n > 0 && !mod.Write(recvp, buf[:n]) {
+				env.Logger.Warnw("hostReceiveSCIONServerUDPPacket: failed to write the packet", "debugletID", env.DebugletID.String(), "n", n)
 				panic(fmt.Errorf("receive_scion_server_udp_packet: failed to write %d bytes into the guest buffer", n))
 			}
 			env.LastReceived = from
@@ -659,18 +693,18 @@ func scionPeer(ctx context.Context, env *WasmEnv, from net.Addr) (netpolicy.Matc
 // Either way the peer is admitted again and the reply is accounted, so the
 // answer path carries the same policy and limits as an ordinary send.
 // WASM key: "answer_scion_udp_packet"
-func HostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen, sendp, sendLen uint32) int64 {
-		data, err := ExtractMem[byte](mod, sendp, sendLen)
+func hostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context.Context, mod Memory, addrp, addrLen, sendp, sendLen uint32) int64 {
+	return func(ctx context.Context, mod Memory, addrp, addrLen, sendp, sendLen uint32) int64 {
+		data, err := extractMem[byte](mod, sendp, sendLen)
 		if err != nil {
-			env.Logger.Warnw("hostAnswerSCIONUDPPacket: failed to extract buffer", "err", err)
+			env.warnPrivate("hostAnswerSCIONUDPPacket: failed to extract buffer", err)
 			panic(fmt.Errorf("answer_scion_udp_packet: failed to extract buffer: %w", err))
 		}
 
 		if env.LastReceived != nil {
 			lastReceivedAddr, ok := env.LastReceived.(pan.UDPAddr)
 			if !ok {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: could not cast lastReceived to UDPAddr", "addr", env.LastReceived)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: could not cast lastReceived to UDPAddr", fmt.Errorf("sender %v", env.LastReceived))
 				panic(fmt.Errorf("answer_scion_udp_packet: could not cast lastReceived to UDPAddr"))
 			}
 
@@ -689,36 +723,36 @@ func HostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 
 			match, err := scionPeer(ctx, env, lastReceivedAddr)
 			if err != nil {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: peer refused", "dst", lastReceivedAddr, "err", err)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: peer refused", fmt.Errorf("destination %v: %w", lastReceivedAddr, err))
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 			}
 			if err := env.Accountant.Account(ctx, app.TransferOut, match.Key, len(data)); err != nil {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: failed to account packet", "err", err)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: failed to account packet", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 			}
 
 			env.Logger.Debugw("hostAnswerSCIONUDPPacket: writing", "dst", lastReceivedAddr)
 			if _, err = env.ScionServer.WriteTo(data, lastReceivedAddr); err != nil {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: write failed", "err", err)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: write failed", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: write failed: %w", err))
 			}
 		} else {
-			env.Logger.Warnln("hostAnswerSCIONUDPPacket: lastReceived is nil, falling back to dial")
-			addr, err := ExtractStr(mod, addrp, addrLen)
+			env.Logger.Warnw("hostAnswerSCIONUDPPacket: lastReceived is nil, falling back to dial", "debugletID", env.DebugletID.String())
+			addr, err := extractStr(mod, addrp, addrLen)
 			if err != nil {
 				panic(err)
 			}
 			sc, match, err := scionConn(ctx, env, addr)
 			if err != nil {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: destination refused", "addr", addr, "err", err)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: destination refused", fmt.Errorf("address %s: %w", addr, err))
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 			}
 			if err := env.Accountant.Account(ctx, app.TransferOut, match.Key, len(data)); err != nil {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: failed to account packet", "err", err)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: failed to account packet", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 			}
 			if _, err = (*sc.Conn).Write(data); err != nil {
-				env.Logger.Warnw("hostAnswerSCIONUDPPacket: write failed", "err", err)
+				env.warnPrivate("hostAnswerSCIONUDPPacket: write failed", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: write failed: %w", err))
 			}
 		}
@@ -729,15 +763,15 @@ func HostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 // HostSCIONAvailablePaths returns the number of available SCION paths to the
 // admitted destination.
 // WASM key: "scion_available_paths"
-func HostSCIONAvailablePaths(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32) int32 {
-		addr, err := ExtractStr(mod, addrp, addrLen)
+func hostSCIONAvailablePaths(env *WasmEnv) func(ctx context.Context, mod Memory, addrp, addrLen uint32) int32 {
+	return func(ctx context.Context, mod Memory, addrp, addrLen uint32) int32 {
+		addr, err := extractStr(mod, addrp, addrLen)
 		if err != nil {
 			panic(err)
 		}
 		sc, _, err := scionConn(ctx, env, addr)
 		if err != nil {
-			env.Logger.Warnw("hostSCIONAvailablePaths: destination refused", "addr", addr, "err", err)
+			env.warnPrivate("hostSCIONAvailablePaths: destination refused", fmt.Errorf("address %s: %w", addr, err))
 			panic(fmt.Errorf("scion_available_paths: %w", err))
 		}
 
@@ -779,15 +813,15 @@ func pathInterface(paths []*pan.Path, pathIdx, ifIdx int32) (int64, int64) {
 // the connection to the admitted destination, or -1 when there is no such
 // path or its interfaces are unknown.
 // WASM key: "scion_path_length"
-func HostSCIONPathLength(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) int32 {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) int32 {
-		addr, err := ExtractStr(mod, addrp, addrLen)
+func hostSCIONPathLength(env *WasmEnv) func(ctx context.Context, mod Memory, addrp, addrLen uint32, pathIdx int32) int32 {
+	return func(ctx context.Context, mod Memory, addrp, addrLen uint32, pathIdx int32) int32 {
+		addr, err := extractStr(mod, addrp, addrLen)
 		if err != nil {
 			panic(err)
 		}
 		sc, _, err := scionConn(ctx, env, addr)
 		if err != nil {
-			env.Logger.Warnw("hostSCIONPathLength: destination refused", "addr", addr, "err", err)
+			env.warnPrivate("hostSCIONPathLength: destination refused", fmt.Errorf("address %s: %w", addr, err))
 			panic(fmt.Errorf("scion_path_length: %w", err))
 		}
 
@@ -799,15 +833,15 @@ func HostSCIONPathLength(env *WasmEnv) func(ctx context.Context, mod api.Module,
 // on path pathIdx for the connection to the admitted destination, or zeros
 // when there is no such interface.
 // WASM key: "scion_get_interface_details"
-func HostSCIONGetInterfaceDetails(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
-		addr, err := ExtractStr(mod, addrp, addrLen)
+func hostSCIONGetInterfaceDetails(env *WasmEnv) func(ctx context.Context, mod Memory, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
+	return func(ctx context.Context, mod Memory, addrp, addrLen uint32, pathIdx int32, ifIdx int32) (int64, int64) {
+		addr, err := extractStr(mod, addrp, addrLen)
 		if err != nil {
 			panic(err)
 		}
 		sc, _, err := scionConn(ctx, env, addr)
 		if err != nil {
-			env.Logger.Warnw("hostSCIONGetInterfaceDetails: destination refused", "addr", addr, "err", err)
+			env.warnPrivate("hostSCIONGetInterfaceDetails: destination refused", fmt.Errorf("address %s: %w", addr, err))
 			panic(fmt.Errorf("scion_get_interface_details: %w", err))
 		}
 
@@ -819,15 +853,15 @@ func HostSCIONGetInterfaceDetails(env *WasmEnv) func(ctx context.Context, mod ap
 // HostSCIONSelectPath forces the path selector for the admitted destination to
 // use path index pathIdx.
 // WASM key: "scion_select_path"
-func HostSCIONSelectPath(env *WasmEnv) func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) {
-	return func(ctx context.Context, mod api.Module, addrp, addrLen uint32, pathIdx int32) {
-		addr, err := ExtractStr(mod, addrp, addrLen)
+func hostSCIONSelectPath(env *WasmEnv) func(ctx context.Context, mod Memory, addrp, addrLen uint32, pathIdx int32) {
+	return func(ctx context.Context, mod Memory, addrp, addrLen uint32, pathIdx int32) {
+		addr, err := extractStr(mod, addrp, addrLen)
 		if err != nil {
 			panic(err)
 		}
 		sc, _, err := scionConn(ctx, env, addr)
 		if err != nil {
-			env.Logger.Warnw("hostSCIONSelectPath: destination refused", "addr", addr, "err", err)
+			env.warnPrivate("hostSCIONSelectPath: destination refused", fmt.Errorf("address %s: %w", addr, err))
 			panic(fmt.Errorf("scion_select_path: %w", err))
 		}
 

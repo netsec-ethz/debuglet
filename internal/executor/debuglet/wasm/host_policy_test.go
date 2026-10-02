@@ -26,11 +26,14 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
@@ -93,11 +96,45 @@ func policyEnv(t *testing.T, spec netpolicy.Spec, run netpolicy.Run, options ...
 		Limiter:     limiter,
 		Accountant:  ratelimit.NewAccountant(limiter, id),
 		PacketCount: counter,
-		Registry:    &socket.SocketRegistry{},
+		Registry:    socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))),
 		Logger:      zap.NewNop().Sugar(),
 	}
 	t.Cleanup(func() { _ = env.Close() })
 	return env
+}
+
+func TestHostConnectDiagnosticBoundary(t *testing.T) {
+	spec := localSpec()
+	spec.TCP = false // Refuse before resolution or any network operation.
+	env := policyEnv(t, spec, netpolicy.Run{})
+	core, logs := observer.New(zapcore.DebugLevel)
+	env.Logger = zap.New(core).Sugar()
+	address := "private-target-sentinel\n" + strings.Repeat("a", 4096)
+	handle, err := connectSocket(t.Context(), t.Context(), env, socket.SocketTypeTCP, address)
+	if handle != -1 || !errors.Is(err, netpolicy.ErrTransportUnavailable) {
+		t.Fatalf("policy refusal changed: %d %v", handle, err)
+	}
+	routine := logs.FilterMessage("hostConnect: destination refused").All()
+	if len(routine) != 1 || routine[0].Level != zapcore.WarnLevel {
+		t.Fatal("routine refusal missing")
+	}
+	fields := routine[0].ContextMap()
+	if len(fields) != 2 || fields["debugletID"] != env.DebugletID.String() || fields["transport"] != "tcp" {
+		t.Fatalf("routine refusal must retain only run/transport correlation: %v", fields)
+	}
+	private := logs.FilterMessage("Private host destination diagnostic").All()
+	if len(private) != 1 || private[0].Level != zapcore.DebugLevel {
+		t.Fatal("private diagnostic missing")
+	}
+	for _, key := range []string{"address", "error"} {
+		text, ok := private[0].ContextMap()[key].(string)
+		if !ok || len(text) == 0 || len(text) > 2051 || strings.Contains(text, "\n") {
+			t.Fatalf("unbounded private %s", key)
+		}
+	}
+	if !strings.Contains(private[0].ContextMap()["address"].(string), "private-target-sentinel") {
+		t.Fatal("private destination context missing")
+	}
 }
 
 // requireSecondLoopback ends the test unless this host lets a socket bind the

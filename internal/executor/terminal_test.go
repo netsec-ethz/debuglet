@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +15,9 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -81,9 +86,11 @@ func TestTerminalReportRetainsUnacknowledgedResult(t *testing.T) {
 	storage, _ := newTerminalStorage(t)
 	peer := newOperationPeer()
 	peer.exit = func(context.Context, *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error) {
-		return nil, errors.New("dispatcher rejected the report")
+		return nil, errors.New("private-terminal-stack-sentinel\n" + strings.Repeat("x", 4096))
 	}
 	e, _ := newExecutorRPCFixture(t, peer, storage)
+	core, logs := observer.New(zapcore.DebugLevel)
+	e.logger = zap.New(core)
 	spec := operationSpec()
 	terminalFailure(t, e, spec)
 
@@ -105,6 +112,18 @@ func TestTerminalReportRetainsUnacknowledgedResult(t *testing.T) {
 	events, err := storage.ListRetainedTerminals(ctx, spec.Binding, 8)
 	if err != nil || len(events) != 1 || events[0].DebugletID != spec.DebugletID {
 		t.Fatalf("unreconciled event was not inspectable: %d error=%v", len(events), err)
+	}
+	if logs.FilterMessage("Failed to notify debuglet exit").Len() != 1 || logs.FilterMessage("Private terminal delivery diagnostic").Len() != 1 {
+		t.Fatal("terminal failure or private diagnostic missing")
+	}
+	for _, entry := range logs.All() {
+		fields := entry.ContextMap()
+		if entry.Level >= zapcore.InfoLevel && strings.Contains(fmt.Sprint(fields), "private-terminal-stack-sentinel") {
+			t.Fatal("private terminal failure reached routine logs")
+		}
+		if detail, ok := fields["error"].(string); ok && (len(detail) > 2051 || strings.Contains(detail, "\n")) {
+			t.Fatal("private terminal diagnostic is not bounded")
+		}
 	}
 }
 

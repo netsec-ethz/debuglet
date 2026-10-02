@@ -140,6 +140,9 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 			ListenSCION: policy.GetListenScion(),
 		},
 	}
+	if _, err := scheduler.StoredRunBytes(spec); err != nil {
+		return nil, status.Error(codes.ResourceExhausted, "executor upload size limit reached")
+	}
 	// Nothing a new run sends could be tagged, so it is not admitted. Runs
 	// admitted earlier continue untagged.
 	if e.teslaSchedule.Exhausted(time.Now()) {
@@ -149,6 +152,12 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")
 	}
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
+		if errors.Is(err, scheduler.ErrUploadLimit) {
+			return nil, status.Error(codes.ResourceExhausted, "executor upload size limit reached")
+		}
+		if errors.Is(err, scheduler.ErrQueueLimit) {
+			return nil, status.Error(codes.ResourceExhausted, "executor retained queue limit reached")
+		}
 		if errors.Is(err, outputstore.ErrSpoolLimit) {
 			return nil, status.Error(codes.ResourceExhausted, "executor output storage limit reached")
 		}
@@ -242,8 +251,9 @@ func (e *Executor) publishLimitsLocked(destinations []string) {
 				continue // The run does not use this destination.
 			}
 			if err := e.packetCount.SetLimit(addr, running.id, limit); err != nil {
-				e.logger.Warn("Failed to apply destination limit", zap.String("debugletID", running.id.String()),
-					zap.String("address", addr), zap.Error(err))
+				e.logger.Warn("Failed to apply destination limit", zap.String("debugletID", running.id.String()))
+				e.logger.Debug("Private destination limit diagnostic", zap.String("debugletID", running.id.String()),
+					zap.String("address", daemonlog.Diagnostic(errors.New(addr))), zap.String("error", daemonlog.Diagnostic(err)))
 			}
 		}
 		execLimit, _, err := e.limiter.GetExecLimit(running.id)
@@ -251,7 +261,8 @@ func (e *Executor) publishLimitsLocked(destinations []string) {
 			continue
 		}
 		if err := e.packetCount.SetExecLimit(running.id, execLimit); err != nil {
-			e.logger.Warn("Failed to apply executor limit", zap.String("debugletID", running.id.String()), zap.Error(err))
+			e.logger.Warn("Failed to apply executor limit", zap.String("debugletID", running.id.String()))
+			e.logger.Debug("Private executor limit diagnostic", zap.String("debugletID", running.id.String()), zap.String("error", daemonlog.Diagnostic(err)))
 		}
 	}
 }

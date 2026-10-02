@@ -14,7 +14,10 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/isolation"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -81,9 +84,14 @@ func TestPublicOutcomeClassification(t *testing.T) {
 			"destination refused: transport unavailable", []string{"icmp"}},
 		{"untagged IPv6", refusedHostCall(fmt.Errorf("%w: tcp: 2001:db8::9 is an IPv6 address and this executor's kernel tagger tags IPv4 only", netpolicy.ErrUntagged)),
 			"destination refused: IPv6 not tagged on this executor", []string{"2001:db8::9"}},
-		{"module that does not compile", uncompiled("invalid magic number"), "module does not compile: invalid magic number", nil},
-		{"long compile detail", uncompiled(longDetail), ("module does not compile: " + longDetail)[:256] + "...", nil},
-		{"compile detail cut on a rune boundary", uncompiled(splitDetail), "module does not compile: " + strings.Repeat("x", 230) + "...", nil},
+		{"module that does not compile", uncompiled("invalid magic number"), "module does not compile", nil},
+		{"long compile detail", uncompiled(longDetail), "module does not compile", nil},
+		{"compile detail cut on a rune boundary", uncompiled(splitDetail), "module does not compile", nil},
+		{"compiler budget", isolation.ErrCompileBudget, "compilation resource budget exceeded", nil},
+		{"compiler failure", isolation.ErrCompileWorker, "compiler worker failed", nil},
+		{"execution budget", isolation.ErrExecutionBudget, "execution resource budget exceeded", nil},
+		{"compiler admission", isolation.ErrAdmission, "compiler capacity unavailable", nil},
+		{"worker failure", isolation.ErrWorker, "guest worker failed", nil},
 		{"cancellation", context.Canceled, "debuglet cancelled", nil},
 		{"cancellation during allocation", fmt.Errorf("failed to allocate debuglet: %w", context.Canceled), "debuglet cancelled", nil},
 		{"host function failure", ranRuntime(hostFailure()), genericOutcome,
@@ -116,12 +124,12 @@ func TestPublicOutcomeClassification(t *testing.T) {
 }
 
 // A failed run reports its classified result to the dispatcher, while the
-// executor log keeps the whole outcome under the run ID.
+// explicit private debug log keeps bounded diagnostic detail under the run ID.
 func TestPublicOutcomeOfFailedRuns(t *testing.T) {
 	t.Run("host failure", func(t *testing.T) {
 		peer := newOperationPeer()
 		e, _ := newExecutorRPCFixture(t, peer, nil)
-		core, logs := observer.New(zapcore.ErrorLevel)
+		core, logs := observer.New(zapcore.DebugLevel)
 		e.logger = zap.New(core)
 		spec := operationSpec()
 		installOperationRuntime(e, spec, &operationRuntime{run: func(context.Context, chan<- []byte) error { return hostFailure() }})
@@ -136,8 +144,12 @@ func TestPublicOutcomeOfFailedRuns(t *testing.T) {
 		if len(entries) != 1 {
 			t.Fatalf("executor logged %d handler failures, want 1", len(entries))
 		}
-		if fields := entries[0].ContextMap(); fields["debugletID"] != spec.DebugletID.String() || !strings.Contains(fmt.Sprint(fields["error"]), "token=SENTINEL-TOKEN") {
-			t.Fatalf("executor log lost the full outcome: %v", fields)
+		if fields := entries[0].ContextMap(); fields["debugletID"] != spec.DebugletID.String() || fields["outcome"] != genericOutcome || strings.Contains(fmt.Sprint(fields), "SENTINEL-TOKEN") {
+			t.Fatalf("routine log exposes private diagnostic: %v", fields)
+		}
+		details := logs.FilterMessage("Private debuglet diagnostic").All()
+		if len(details) != 1 || details[0].Level != zapcore.DebugLevel || !strings.Contains(fmt.Sprint(details[0].ContextMap()["error"]), "token=SENTINEL-TOKEN") {
+			t.Fatalf("private diagnostic missing: %v", details)
 		}
 	})
 
@@ -168,8 +180,40 @@ func TestPublicOutcomeOfFailedRuns(t *testing.T) {
 		if !operationAwait(t, call.done, "rejected module") {
 			return
 		}
-		if report := operationReport(t, peer, spec.DebugletID); report.ExitCode != -1 || report.GetErrorMessage() != "module does not compile: invalid magic number" {
+		if report := operationReport(t, peer, spec.DebugletID); report.ExitCode != -1 || report.GetErrorMessage() != "module does not compile" {
 			t.Fatalf("rejected module reported exit %d %q", report.ExitCode, report.GetErrorMessage())
 		}
 	})
+}
+
+// The runtime wraps intentional Go host errors with %w. Exercise that real
+// boundary so a quota failure cannot regress to an opaque or private message.
+func TestSocketQuotaOutcomeSurvivesRuntimeWrap(t *testing.T) {
+	ctx := t.Context()
+	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter())
+	defer runtime.Close(ctx)
+	_, err := runtime.NewHostModuleBuilder("quota").NewFunctionBuilder().WithFunc(func() {
+		panic(fmt.Errorf("private socket detail 10.0.0.5: %w", socket.ErrQuota))
+	}).Export("exhaust").Instantiate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A guest calls the imported host function through the same runtime path
+	// as the production legacy socket imports.
+	guest, err := runtime.Instantiate(ctx, []byte("\x00asm\x01\x00\x00\x00"+
+		"\x01\x04\x01\x60\x00\x00"+
+		"\x02\x11\x01\x05quota\x07exhaust\x00\x00"+
+		"\x03\x02\x01\x00"+
+		"\x07\x07\x01\x03run\x00\x01"+
+		"\x0a\x06\x01\x04\x00\x10\x00\x0b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = guest.ExportedFunction("run").Call(ctx)
+	if !errors.Is(err, socket.ErrQuota) {
+		t.Fatalf("runtime lost quota cause: %v", err)
+	}
+	if got := publicOutcome(ranRuntime(err)); got != "guest socket quota exceeded" {
+		t.Fatalf("public quota outcome = %q", got)
+	}
 }

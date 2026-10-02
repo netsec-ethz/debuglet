@@ -117,6 +117,7 @@ func TestGetDebugletLogsPaginationDefaultsAndBounds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e, mock := newLogsPaginationServer(t)
 			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT (.+) FROM payload_tombstones`).WillReturnError(sql.ErrNoRows)
 			mock.ExpectQuery(logsPaginationListQuery).
 				WithArgs(id, tt.wantAfter, tt.wantLimit).
 				WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}))
@@ -149,6 +150,7 @@ func TestGetDebugletLogsPreservesValidPaginationAndOpaqueOutput(t *testing.T) {
 	id := uuid.MustParse(logsPaginationID)
 	wantOutput := []byte{0x00, 0xff, '\n'}
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT (.+) FROM payload_tombstones`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(logsPaginationListQuery).
 		WithArgs(id, int64(7), int64(2)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "debuglet_id", "timestamp", "output", "source_sequence"}).

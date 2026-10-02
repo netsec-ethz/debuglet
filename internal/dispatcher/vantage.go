@@ -6,6 +6,7 @@ package dispatcher
 import (
 	"errors"
 	"maps"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -17,10 +18,13 @@ import (
 // vantageReport is a validated executor VantagePointReport. It is replaced,
 // never mutated, so snapshots may share it.
 type vantageReport struct {
-	isdAS     string // Canonical; empty unknown.
-	listeners []string
-	clock     *wire.ClockReport  // Nil unknown.
-	platform  *wire.HostPlatform // Nil unknown; operator-only.
+	scionHost       string
+	scionPathTarget string
+	scionPaths      *wire.ProbeState
+	isdAS           string // Canonical; empty unknown.
+	listeners       []string
+	clock           *wire.ClockReport  // Nil unknown.
+	platform        *wire.HostPlatform // Nil unknown; operator-only.
 }
 
 // Unknown versions and malformed ISD-AS or listeners discard the whole report,
@@ -153,6 +157,15 @@ func networkFromReport(report *pb.VantagePointReport) *vantageReport {
 		return nil
 	}
 	out := &vantageReport{listeners: []string{}}
+	if ip, err := netip.ParseAddr(report.GetScionHost()); err == nil && !ip.IsUnspecified() && !ip.IsMulticast() && ip.Zone() == "" {
+		out.scionHost = ip.Unmap().String()
+	}
+	if target, ok := wire.CanonicalISDAS(report.GetScionPathTarget()); ok && report.ScionPaths != nil {
+		p := report.ScionPaths
+		if p.State == "available" && p.Reason == "" || p.State == "unavailable" && slices.Contains([]string{"invalid_target", "daemon_failed", "no_path"}, p.Reason) {
+			out.scionPathTarget, out.scionPaths = target, &wire.ProbeState{State: p.State, Reason: p.Reason}
+		}
+	}
 	if text := report.GetScionIsdAs(); text != "" {
 		canonical, ok := wire.CanonicalISDAS(text)
 		if !ok {

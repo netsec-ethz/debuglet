@@ -98,7 +98,7 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	const header = "ID READY NAME LOCATION ISD_AS LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION"
+	const header = "ID READY NAME LOCATION ISD_AS ASN LOCATION_SOURCE LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION IPV4 IPV6 TCP_LISTENER UDP_LISTENER"
 	if len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != header {
 		t.Fatalf("table: %q", stdout)
 	}
@@ -120,7 +120,7 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	var nodes []struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &nodes); err != nil || len(nodes) != 1 || nodes[0].ID != "lab" {
+	if err := json.Unmarshal([]byte(stdout), &nodes); err != nil || len(nodes) != 0 {
 		t.Fatalf("filtered nodes: %s %v", stdout, err)
 	}
 	requests := fx.total()
@@ -145,12 +145,12 @@ func TestNodesShowAttribution(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 5 || !strings.HasSuffix(strings.TrimSpace(lines[0]), "ATTRIBUTION") {
+	if len(lines) != 5 || !strings.HasSuffix(strings.TrimSpace(lines[0]), "UDP_LISTENER") {
 		t.Fatalf("nodes table:\n%s", stdout)
 	}
 	for i, want := range []string{"unknown", "available", "unavailable(refresh_failing)", "unavailable"} {
-		if fields := strings.Fields(lines[i+1]); fields[len(fields)-1] != want {
-			t.Errorf("row %d attribution %q, want %q", i, fields[len(fields)-1], want)
+		if fields := strings.Fields(lines[i+1]); fields[len(fields)-5] != want {
+			t.Errorf("row %d attribution %q, want %q", i, fields[len(fields)-5], want)
 		}
 	}
 	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "nodes")

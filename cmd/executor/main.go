@@ -24,12 +24,14 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/executor"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 
 	scionFlag "github.com/scionproto/scion/private/app/flag"
 )
 
 func main() {
+	debuglet.WorkerMain()
 	version := flag.Bool("version", false, "Print build identity as JSON and exit")
 	cfgPath := flag.String("config", "/etc/debuglet/executor/executor.toml", "Path to executor configuration file")
 	readyFile := flag.String("ready-file", "", "Publish startup record at an absent path in an owned private directory")

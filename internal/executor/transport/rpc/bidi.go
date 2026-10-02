@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlrpc"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"io"
 	"net"
@@ -95,6 +96,8 @@ func NewBidiClient(opts BidiOptions, state ExecutorState) (*BidiClient, error) {
 	}
 	grpcServer := grpc.NewServer(
 		grpc.WaitForHandlers(true),
+		grpc.ChainUnaryInterceptor(daemonlog.UnaryErrors(opts.Logger)),
+		grpc.ChainStreamInterceptor(daemonlog.StreamErrors(opts.Logger)),
 		grpc.MaxRecvMsgSize(32*1024*1024),
 		grpc.MaxSendMsgSize(32*1024*1024),
 	)
@@ -293,7 +296,7 @@ func (b *BidiClient) ConnectAndServe(parent context.Context) (result error) {
 	}
 	ioDone = make(chan struct{})
 	go func() { defer close(ioDone); <-ctx.Done(); conn.Close() }()
-	session, err = yamux.Client(conn, nil)
+	session, err = yamux.Client(conn, daemonlog.YamuxConfig(b.opts.Logger))
 	if err != nil {
 		return fmt.Errorf("create yamux session: %w", err)
 	}

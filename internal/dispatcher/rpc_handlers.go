@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ids"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"io"
 	"maps"
@@ -44,8 +46,12 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		return nil, err
 	}
 	execID := owner.ExecutorID()
-	d.logger.Debug("Heartbeat received", zap.String("executor_id", execID))
+	d.logger.Debug("Heartbeat received", zap.String("executor_id", daemonlog.Identifier(execID)))
 	seen := d.now()
+	var connectivity *wire.Connectivity
+	if req.GetVantagePoint().GetSchemaVersion() == 1 {
+		connectivity = d.observeConnectivity(ctx, owner, req.GetVantagePoint().GetConnectivity(), seen)
+	}
 	// The anchor names the chain the disclosed key belongs to; a re-registered
 	// executor announces a new one.
 	var chain tag.Chain
@@ -57,6 +63,9 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 			exec.LastSeen = seen
 		}
 		exec.Ready = true
+		if connectivity != nil && !seen.Before(exec.connectivityObserved) {
+			exec.connectivity, exec.connectivityObserved = connectivity, seen
+		}
 		if req.Capabilities != nil && !seen.Before(exec.capabilityObserved) {
 			exec.Capabilities = capabilitiesFromReport(req.Capabilities, seen)
 			exec.capabilityObserved = seen
@@ -64,6 +73,7 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		if req.VantagePoint != nil && !seen.Before(exec.vantageObserved) {
 			exec.vantage = vantageFromReport(req.VantagePoint)
 			exec.vantageObserved = seen
+			exec.connectivity = connectivitySCION(exec.connectivity, exec.vantage, seen)
 		}
 		chain = exec.teslaChain()
 	} else {
@@ -104,9 +114,11 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		case rejected.First && rejected.Early:
 			// A key published before its schedule allows lets anyone forge
 			// tags that verifiers still attribute to this executor.
-			d.logger.Error("Executor disclosed a TESLA key early; it is misbehaving", zap.String("executor_id", execID), zap.Error(err))
+			d.logger.Error("Executor disclosed a TESLA key early; it is misbehaving", zap.String("executor_id", daemonlog.Identifier(execID)))
+			d.logger.Debug("Private runtime diagnostic", zap.String("executor_id", daemonlog.Identifier(execID)), zap.String("operation", "Executor disclosed a TESLA key early; it is misbehaving"), zap.String("error", daemonlog.Diagnostic(err)))
 		case rejected.First:
-			d.logger.Warn("Rejected disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
+			d.logger.Warn("Rejected disclosed TESLA key", zap.String("executor_id", daemonlog.Identifier(execID)))
+			d.logger.Debug("Private runtime diagnostic", zap.String("executor_id", daemonlog.Identifier(execID)), zap.String("operation", "Rejected disclosed TESLA key"), zap.String("error", daemonlog.Diagnostic(err)))
 		}
 	} else if err != nil {
 		// The record could not be written; nothing was stored, and the
@@ -126,7 +138,7 @@ func (d *Dispatcher) OnResources(ctx context.Context, mutation *rpc.Mutation, re
 	}
 	execID := owner.ExecutorID()
 	bw := bitrate.Bitrate(req.GetBandwidthCapacity())
-	d.logger.Debug("Resource update received", zap.String("executor_id", execID), zap.String("capacity", bw.String()))
+	d.logger.Debug("Resource update received", zap.String("executor_id", daemonlog.Identifier(execID)), zap.String("capacity", bw.String()))
 	d.mu.Lock()
 	if exec, ok := d.executors[execID]; d.closed || !ok || exec.owner != owner {
 		d.mu.Unlock()
@@ -186,16 +198,7 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, mutation *rpc.Mutation
 	// Ordinary states only ever come from GrpcToRunState, never RunStateExited,
 	// so the guard cannot be satisfied by an ordinary update itself: a terminal
 	// row is never overwritten by a late state report.
-	queries := database.New(d.db)
-	if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
-		State:                 state,
-		StateRank:             state.SemanticRank(),
-		Uuid:                  id,
-		ExitedState:           models.RunStateExited,
-		ExecutorID:            owner.ExecutorID(),
-		DispatcherIncarnation: owner.Binding().Incarnation,
-		SessionID:             owner.Binding().SessionID,
-	}); err != nil {
+	if _, err := d.recordStateObservation(ctx, owner, id, state, req.GetTcpListener()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// A terminal, duplicate, reordered or missing row is acknowledged.
 			_, classifyErr := d.ownedDebuglet(ctx, owner, id)
@@ -204,7 +207,8 @@ func (d *Dispatcher) OnDebugletState(ctx context.Context, mutation *rpc.Mutation
 			}
 			return &pb.DebugletStateResponse{}, nil
 		}
-		d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID), zap.Error(err))
+		d.logger.Error("Failed to update debuglet state in database", zap.String("debugletID", debugletID))
+		d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", debugletID), zap.String("operation", "Failed to update debuglet state in database"), zap.String("error", daemonlog.Diagnostic(err)))
 		return nil, fmt.Errorf("failed to update debuglet state in database: %w", err)
 	}
 
@@ -291,7 +295,8 @@ func (d *Dispatcher) OnDebugletAllocate(ctx context.Context, mutation *rpc.Mutat
 		return nil, fmt.Errorf("allocate destinations: %w", allocErr)
 	}
 	if err := d.sendFairshare(ctx, mutation, destinations); err != nil {
-		d.logger.Error("Failed to send fairshare update", zap.String("debugletID", debugletID), zap.Error(err))
+		d.logger.Error("Failed to send fairshare update", zap.String("debugletID", debugletID))
+		d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", debugletID), zap.String("operation", "Failed to send fairshare update"), zap.String("error", daemonlog.Diagnostic(err)))
 	}
 	return &pb.DebugletAllocateResponse{}, nil
 }
@@ -369,7 +374,7 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 	debugletID := req.GetDebugletId()
 	exitCode := req.GetExitCode()
 	errMsg := req.ErrorMessage
-	d.logger.Debug("Received debuglet exit", zap.String("debugletID", debugletID), zap.Int32("exitCode", exitCode), zap.Stringp("errMsg", errMsg))
+	d.logger.Debug("Received debuglet exit", zap.String("debugletID", debugletID), zap.Int32("exitCode", exitCode), zap.Bool("has_error", errMsg != nil && *errMsg != ""))
 
 	id, err := parseRunID(debugletID)
 	if err != nil {
@@ -378,15 +383,7 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 
 	// Write the terminal result immediately; there is no read-before-write
 	// decision. The returned row is the one this caller won.
-	queries := database.New(d.db)
-	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
-		ExitedState:           models.RunStateExited,
-		Error:                 terminalError(exitCode, errMsg),
-		Uuid:                  id,
-		ExecutorID:            owner.ExecutorID(),
-		DispatcherIncarnation: owner.Binding().Incarnation,
-		SessionID:             owner.Binding().SessionID,
-	})
+	deb, err := d.recordTerminalObservation(ctx, owner, id, exitCode, errMsg)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("failed to mark debuglet exited: %w", err)
@@ -418,12 +415,14 @@ func (d *Dispatcher) OnDebugletExit(ctx context.Context, mutation *rpc.Mutation,
 	work, captureErr := d.captureFairshare(notifyCtx, mutation, deb.Addresses)
 	if captureErr != nil {
 		cancel()
-		d.logger.Error("Failed to reserve fairshare update", zap.Error(captureErr))
+		d.logger.Error("Failed to reserve fairshare update")
+		d.logger.Debug("Private runtime diagnostic", zap.String("operation", "Failed to reserve fairshare update"), zap.String("error", daemonlog.Diagnostic(captureErr)))
 	} else {
 		go func() {
 			defer cancel()
 			if err := work.send(notifyCtx); err != nil {
-				d.logger.Error("Failed to send fairshare update", zap.Error(err))
+				d.logger.Error("Failed to send fairshare update")
+				d.logger.Debug("Private runtime diagnostic", zap.String("operation", "Failed to send fairshare update"), zap.String("error", daemonlog.Diagnostic(err)))
 			}
 		}()
 	}
@@ -448,7 +447,8 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 		if err != nil {
 			if identified && ctx.Err() == nil && status.Code(err) != codes.Canceled {
 				// Delivery failure does not establish a guest terminal outcome.
-				d.logger.Warn("Debuglet output stream failed", zap.String("debugletID", runID.String()), zap.Error(err))
+				d.logger.Warn("Debuglet output stream failed", zap.String("debugletID", runID.String()))
+				d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", runID.String()), zap.String("operation", "Debuglet output stream failed"), zap.String("error", daemonlog.Diagnostic(err)))
 			}
 			return err
 		}
@@ -497,7 +497,8 @@ func (d *Dispatcher) OnDebugletStream(owner *rpc.SessionOwner, stream grpc.BidiS
 			if status.Code(frameErr) != codes.Unknown {
 				return frameErr
 			}
-			d.logger.Warn("Debuglet output storage failed", zap.String("debugletID", runID.String()), zap.Error(frameErr))
+			d.logger.Warn("Debuglet output storage failed", zap.String("debugletID", runID.String()))
+			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", runID.String()), zap.String("operation", "Debuglet output storage failed"), zap.String("error", daemonlog.Diagnostic(frameErr)))
 			return status.Error(codes.Unavailable, "output storage unavailable")
 		}
 		if writer.version == pb.OutputVersion {
@@ -753,13 +754,15 @@ func (d *Dispatcher) settleTerminalPayment(ctx context.Context, deb *database.De
 		//credit executor
 		d.logger.Debug("Debuglet Completed. Credit executor")
 		if err := d.Payment.SetDebugletOrderComplete(deb, ctx); err != nil {
-			d.logger.Warn("Failed to credit executor for debuglet", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
+			d.logger.Warn("Failed to credit executor for debuglet", zap.String("debugletID", deb.Uuid.String()))
+			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", deb.Uuid.String()), zap.String("operation", "Failed to credit executor for debuglet"), zap.String("error", daemonlog.Diagnostic(err)))
 		}
 	default:
 		//refund
 		d.logger.Debug("Debuglet Aborted. Refund Buyer")
 		if err := d.Payment.RefundDebugletOrder(deb, "", ctx); err != nil {
-			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()), zap.Error(err))
+			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()))
+			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", deb.Uuid.String()), zap.String("operation", "Failed to refund debuglet order"), zap.String("error", daemonlog.Diagnostic(err)))
 		}
 	}
 }

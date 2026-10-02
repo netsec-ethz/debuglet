@@ -340,23 +340,21 @@ func TestDurableOutputEmptyFramesAndOversizedInput(t *testing.T) {
 	}
 }
 
-// An upgrade charges output that is already stored. With the default, disabled
-// account and node caps, that history must not refuse new work.
-func TestDurableOutputDefaultLimitsIgnoreRetainedHistory(t *testing.T) {
+// Retained history counts against the default shared-deployment limits.
+// Only an explicit local configuration can disable aggregate accounting caps.
+func TestDurableOutputDefaultLimitsCountRetainedHistory(t *testing.T) {
 	d := newTerminalPeerDispatcher(t)
+	outputTestRun(t, d, outputTestWriter(), nil)
 	if _, err := d.db.ExecContext(t.Context(), "UPDATE output_node_usage SET charged_bytes = ?", int64(1)<<40); err != nil {
 		t.Fatal(err)
 	}
-	outputTestRun(t, d, outputTestWriter(), nil)
-	limits := config.DefaultOutputConfig()
-	limits.NodeBytes = 1 << 30
-	full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge)
-	if err != nil || full {
-		t.Fatalf("default caps refused admission: full=%v err=%v", full, err)
-	}
-	d.outputLimits = limits
 	if full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge); err != nil || !full {
-		t.Fatalf("explicit node cap ignored: full=%v err=%v", full, err)
+		t.Fatalf("default cap ignored history: %v %v", full, err)
+	}
+	d.outputLimits.AccountBytes = 0
+	d.outputLimits.NodeBytes = 0
+	if full, err := d.outputStorageFull(t.Context(), database.New(d.db), 0, pb.OutputRunCharge); err != nil || full {
+		t.Fatalf("explicit local cap disablement: %v %v", full, err)
 	}
 }
 

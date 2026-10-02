@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -178,5 +181,36 @@ func TestLocalStateDefaultsAndUnknownDatabase(t *testing.T) {
 	}
 	if localCancellationOnly(errors.Join(context.Canceled, errors.New("cleanup failed"))) {
 		t.Fatal("joined cleanup failure classified as normal cancellation")
+	}
+}
+
+func TestLocalCancellationOnly(t *testing.T) {
+	parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx, stop := signal.NotifyContext(parent, syscall.SIGUSR1)
+	defer stop()
+	if err := syscall.Kill(os.Getpid(), syscall.SIGUSR1); err != nil {
+		t.Fatal(err)
+	}
+	<-ctx.Done()
+	cause := context.Cause(ctx)
+	if !errors.Is(cause, context.Canceled) {
+		t.Fatalf("signal was not delivered: %v", cause)
+	}
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{context.Canceled, true},
+		{cause, true},
+		{fmt.Errorf("startup: %w", cause), true},
+		{errors.Join(cause, errors.New("cleanup failed")), false},
+		{fmt.Errorf("startup: %w", errors.Join(cause, errors.New("cleanup failed"))), false},
+		{context.DeadlineExceeded, false},
+		{nil, false},
+	} {
+		if got := localCancellationOnly(tc.err); got != tc.want {
+			t.Errorf("localCancellationOnly(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

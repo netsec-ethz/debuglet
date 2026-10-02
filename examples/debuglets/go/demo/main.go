@@ -18,10 +18,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "demo exchange:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("DEBUGLET_DEMO_OK %s\n", os.Args[1])
+	if os.Args[0] != "echo-server" && os.Args[0] != "echo-client" {
+		fmt.Printf("DEBUGLET_DEMO_OK %s\n", os.Args[1])
+	}
 }
 
 func run(args []string) error {
+	if len(args) > 0 && (args[0] == "echo-server" || args[0] == "echo-client") {
+		return echo(args)
+	}
+
 	if len(args) != 2 || args[0] == "" || !validNonce(args[1]) {
 		return errors.New("expected exactly target address and 32 lowercase hex nonce")
 	}
@@ -79,4 +85,44 @@ func validNonce(nonce string) bool {
 		}
 	}
 	return true
+}
+
+// echo exchanges a caller-selected nonce across two actual guest sockets. The
+// original local demo protocol above remains unchanged.
+func echo(args []string) error {
+	server := args[0] == "echo-server"
+	if (server && len(args) != 2) || (!server && len(args) != 3) || !validNonce(args[len(args)-1]) {
+		return errors.New("invalid echo arguments")
+	}
+	var conn *debuglet.Conn
+	var err error
+	if server {
+		conn, err = debuglet.AcceptTCP()
+	} else {
+		conn, err = debuglet.ConnectTCP(args[1])
+	}
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	expected := []byte("DEBUGLET_ECHO " + args[len(args)-1] + "\n")
+	if !server {
+		if err = conn.Write(expected); err != nil {
+			return err
+		}
+	}
+	received := make([]byte, len(expected))
+	if _, err = io.ReadFull(conn, received); err != nil {
+		return err
+	}
+	if !bytes.Equal(received, expected) {
+		return errors.New("echo response does not match request")
+	}
+	if server {
+		if err = conn.Write(expected); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("DEBUGLET_ECHO_OK %s %s\n", args[0], args[len(args)-1])
+	return nil
 }

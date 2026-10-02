@@ -35,6 +35,12 @@ func (p *outputPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse
 	return &pb.HelloResponse{ExecutorId: "output-executor", Version: "output-v1", Currency: "TEST", PricePerBwS: 1, EnrollmentToken: &p.token, OutputVersion: pb.OutputVersion}, nil
 }
 
+// This scripted peer retains no scheduler rows; a successful metadata lookup
+// therefore attests absence for retirement fixtures using this transport.
+func (p *outputPeer) InspectRetainedRun(context.Context, *pb.InspectRetainedRunRequest) (*pb.InspectRetainedRunResponse, error) {
+	return &pb.InspectRetainedRunResponse{Status: pb.RetainedRunStatus_RETAINED_RUN_STATUS_ABSENT}, nil
+}
+
 // outputTLSFixture uses the real transport, enrollment database and stream
 // handler. Reconnection changes the control binding without changing the node.
 type outputTLSFixture struct {

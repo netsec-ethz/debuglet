@@ -26,6 +26,8 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 )
@@ -120,8 +122,36 @@ func (s *scriptedSocket) RemoteAddr() string          { return "127.0.0.1:0" }
 // which is all HostReceiveData touches.
 func newReceiveEnv() *WasmEnv {
 	return &WasmEnv{
-		Registry: &socket.SocketRegistry{},
+		Registry: socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors))),
 		Logger:   zap.NewNop().Sugar(),
+	}
+}
+
+func TestHostReadDiagnosticBoundary(t *testing.T) {
+	env := newReceiveEnv()
+	t.Cleanup(func() { _ = env.Close() })
+	core, logs := observer.New(zapcore.DebugLevel)
+	env.Logger = zap.New(core).Sugar()
+	private := errors.New("private-network-stack-sentinel\n" + strings.Repeat("x", 4096))
+	handle, err := env.Registry.Add(&scriptedSocket{typ: socket.SocketTypeTCP, results: []readResult{{err: private}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, trap := callReceive(HostReceiveData(env), newGuestModule(t), handle, 1024, 16)
+	if !errors.Is(trap, private) {
+		t.Fatalf("logging changed the host failure: %v", trap)
+	}
+	routine := logs.FilterMessage("hostReceiveData: read error").All()
+	if len(routine) != 1 || len(routine[0].ContextMap()) != 1 || routine[0].ContextMap()["debugletID"] != env.DebugletID.String() {
+		t.Fatalf("routine log exposed private details or lost correlation: %v", routine)
+	}
+	details := logs.FilterMessage("Private guest host diagnostic").All()
+	if len(details) != 1 || details[0].Level != zapcore.DebugLevel {
+		t.Fatal("private network diagnostic missing")
+	}
+	text, ok := details[0].ContextMap()["error"].(string)
+	if !ok || !strings.Contains(text, "private-network-stack-sentinel") || len(text) > 2051 || strings.Contains(text, "\n") {
+		t.Fatal("private network diagnostic is not bounded")
 	}
 }
 

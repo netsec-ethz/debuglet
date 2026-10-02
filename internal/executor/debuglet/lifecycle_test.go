@@ -31,7 +31,7 @@ func (s *heldRuntimeSocket) Close() error {
 }
 
 func TestDebugletCloseJoinsHeldResource(t *testing.T) {
-	reg := &socket.SocketRegistry{}
+	reg := socket.NewSocketRegistry(socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)))
 	held := &heldRuntimeSocket{entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("held close error")}
 	if _, err := reg.Add(held); err != nil {
 		t.Fatal(err)

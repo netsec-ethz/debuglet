@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 14
+	MinimumDispatcherVersion int64 = 16
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -70,6 +70,12 @@ func PolicyFor(role Role) (Policy, error) {
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
+			"measurement_profiles":       {"id", "user_id", "document"},
+			"measurement_requests":       {"debuglet_id", "document"},
+			"measurement_execution":      {"debuglet_id", "started_observed_ns", "terminal_observed_ns", "exit_code", "tcp_endpoint"},
+			"retry_requests":             {"caller_scope", "request_id", "parent_run_id", "transaction_id", "request_hash", "intent_metadata"},
+			"account_run_reservations":   {"debuglet_id", "account_id", "queued_bytes", "retired_at", "last_retirement_check"},
+			"payload_tombstones":         {"debuglet_id", "deleted_at", "reason", "workload_sha256", "certificate_sha256"},
 			"attribution_chains":         {"executor_id", "chain_id", "anchor", "t0_ns", "interval_ns", "delay_epochs", "chain_length", "tag_spec", "first_seen_ns", "last_seen_ns"},
 			"attribution_keys":           {"executor_id", "chain_id", "epoch", "key", "disclosed_at_ns"},
 			"attribution_runs":           {"debuglet_id", "chain_id", "source_ip", "source_ip_observed", "active_from_ns", "active_to_ns"},

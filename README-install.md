@@ -41,7 +41,7 @@ not establish support for Docker Desktop or emulation there.
 
 ## Build from source
 
-On Linux amd64 with Go 1.25.11, Git, Make, Bash, GNU tar, and coreutils:
+On Linux amd64 with Go 1.26.8, Git, Make, Bash, GNU tar, and coreutils:
 
 ```sh
 git clone https://github.com/netsec-ethz/debuglet.git
@@ -51,6 +51,13 @@ make ci-package
 ```
 
 The full bundle is under `.cache/ci/packages/`. Use it with the same installer command above. The build also produces the component packages below.
+
+The package output includes `compatibility.json` and
+`SHA256SUMS-compatibility`. This separate record identifies the core package,
+source revision, API version and OpenAPI digest together with the console
+repository and commit selected in `configs/release-compatibility.json`. Review
+that selection and the matching acceptance results when preparing a release.
+The console remains a separate build and deployment.
 
 ## Install one component
 

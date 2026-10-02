@@ -301,7 +301,8 @@ func TestCompatibilityChecksBytesBeforeInstaller(t *testing.T) {
 }
 
 func TestSelectedCompilerVersion(t *testing.T) {
-	for _, version := range []string{"go version go1.25.11 linux/amd64", "go version go1.24.0 linux/amd64"} {
+	pinned := "go version " + artifact.Toolchain + " linux/amd64"
+	for _, version := range []string{pinned, "go version go1.25.11 linux/amd64", "go version go1.24.0 linux/amd64"} {
 		t.Run(version, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "compiler")
 			body := "#!/bin/sh\nprintf '%s\\n' '" + version + "'\n"
@@ -311,7 +312,7 @@ func TestSelectedCompilerVersion(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			err := verifyCompiler(ctx, path)
-			if (err == nil) != (version == "go version go1.25.11 linux/amd64") {
+			if (err == nil) != (version == pinned) {
 				t.Fatalf("compiler result %v", err)
 			}
 		})
@@ -366,5 +367,47 @@ func TestComponentArchive(t *testing.T) {
 				t.Fatalf("members: %v", seen)
 			}
 		})
+	}
+}
+
+func TestInstalledCandidateRequiresCurrentCompiler(t *testing.T) {
+	root := t.TempDir()
+	m := artifact.Manifest{SchemaVersion: 1, Version: "v1.2.3", SourceSHA: strings.Repeat("a", 40), GoVersion: artifact.Toolchain, GOOS: "linux", GOARCH: "amd64", GuestABI: artifact.GuestABI, Files: map[string]artifact.File{}}
+	for name, mode := range artifact.PayloadModes() {
+		if name == artifact.ManifestPath {
+			continue
+		}
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		data := []byte(name)
+		if name == "bin/dbl" {
+			data = []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '{\"module\":\"github.com/netsec-ethz/debuglet\",\"version\":\"%s\",\"revision\":\"%s\",\"modified\":false}'\n", m.Version, m.SourceSHA))
+		}
+		if err := os.WriteFile(path, data, mode); err != nil {
+			t.Fatal(err)
+		}
+		file, err := artifact.HashFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Files[name] = file
+	}
+	for _, compiler := range []string{artifact.Toolchain, "go1.25.11"} {
+		m.GoVersion = compiler
+		if err := writeJSON(filepath.Join(root, artifact.ManifestPath), m); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := artifact.Verify(root); err != nil {
+			t.Fatalf("valid installation rejected: %v", err)
+		}
+		err := verifyInstalled(context.Background(), root, m.SourceSHA)
+		if compiler == artifact.Toolchain && err != nil {
+			t.Fatalf("current candidate rejected: %v", err)
+		}
+		if compiler != artifact.Toolchain && (err == nil || !strings.Contains(err.Error(), "installed candidate")) {
+			t.Fatalf("prior compiler must fail candidate identity: %v", err)
+		}
 	}
 }

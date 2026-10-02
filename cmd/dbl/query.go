@@ -20,11 +20,13 @@ import (
 const (
 	nodesUsage = `Usage:
   dbl nodes [--protocol NAME ...] [--enforcement ebpf|fallback] [--min-capacity-bps N]
-            [--isd-as ISD-AS]
+            [--isd-as ISD-AS] [--asn NUMBER] [--country CODE]
+            [--address-family ipv4|ipv6] [--reachable-listener tcp|udp|scion]
 
 Filters return ready matching executors only. Unknown capability reports and an
 unknown ISD-AS do not match. Capacity means advertised total bandwidth, not free
-admission capacity. NAME and LOCATION are the dispatcher operator's labels;
+admission capacity. NAME is the dispatcher operator's label; LOCATION prefers
+operator location and otherwise shows approximate database location with its source;
 ISD_AS is the executor's own report. --output json also carries admission, the
 operator's network label and the reported listener transports.
 
@@ -87,8 +89,10 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION")
+		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION\tIPV4\tIPV6\tTCP_LISTENER\tUDP_LISTENER")
 		for _, n := range nodes {
+			location := n.Display
+			location.City, location.Country = n.Location()
 			lastSeen := "-"
 			if n.LastSeen > 0 {
 				lastSeen = time.Unix(n.LastSeen, 0).UTC().Format(time.RFC3339)
@@ -104,12 +108,26 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 				}
 				attribution = attributionColumn(report.Attribution)
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
-				labelText(n.Display.DisplayName), nodeLocation(n.Display), observedText(n.SCIONISDAS),
-				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution)
+			connectivity := n.Connectivity
+			if connectivity == nil {
+				connectivity = &wire.Connectivity{}
+			}
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
+				labelText(n.Display.DisplayName), nodeLocation(location), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata), locationSource(location),
+				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution, reachabilityColumn(connectivity.IPv4), reachabilityColumn(connectivity.IPv6), reachabilityColumn(connectivity.TCPListener), reachabilityColumn(connectivity.UDPListener))
 		}
 		return tw.Flush()
 	})
+}
+
+func reachabilityColumn(r wire.Reachability) string {
+	if r.Stale || r.ExpiresAt != nil && time.Now().Unix() >= *r.ExpiresAt {
+		return "stale"
+	}
+	if r.State == "" {
+		return "unknown"
+	}
+	return r.State
 }
 
 // Operator labels are optional: "-" is not configured, not unknown.
@@ -321,4 +339,32 @@ func versionCommand(ctx context.Context, args []string, options globalOptions, s
 		}
 		return err
 	})
+}
+
+func nodeASN(m *wire.IPMetadata) string {
+	if m == nil {
+		return "unknown"
+	}
+	values := []string{}
+	for _, r := range []wire.IPLookup[wire.ASInfo]{m.Observed.ASN, m.Advertised.ASN} {
+		if r.Value == nil {
+			continue
+		}
+		v := "AS" + strconv.FormatUint(uint64(r.Value.Number), 10)
+		if len(values) == 0 || values[0] != v {
+			values = append(values, v)
+		}
+	}
+	if len(values) == 0 {
+		return "unknown"
+	}
+	return strings.Join(values, ",")
+}
+func locationSource(d wire.ExecutorDisplay) string {
+	for _, v := range []wire.LabelledString{d.Country, d.City} {
+		if v.Source != nil {
+			return *v.Source
+		}
+	}
+	return "unknown"
 }

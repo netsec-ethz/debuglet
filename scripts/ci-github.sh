@@ -4,10 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 lane=${1:-}
 case "$lane" in
-    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline) ;;
+    fmt|vet|generate|build|test|race|package|demo|compatibility|local|kernel|secrets|faults|soak|offline|vulnerabilities|image-vulnerabilities) ;;
     *) echo "unknown CI lane: $lane" >&2; exit 2 ;;
 esac
 
+release_tag=""
 if [[ ${GITHUB_ACTIONS:-} == true ]]; then
     [[ ${GITHUB_REPOSITORY:-} == netsec-ethz/debuglet &&
        ${RUNNER_ENVIRONMENT:-} == github-hosted &&
@@ -17,6 +18,20 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
     case "${GITHUB_EVENT_NAME:-}:${GITHUB_REF:-}" in
         push:refs/heads/main|schedule:refs/heads/main|\
         workflow_dispatch:refs/heads/*) ;;
+        push:refs/tags/*)
+            release_tag=${GITHUB_REF#refs/tags/}
+            # Match the packager's bounded version grammar. GitHub supplies
+            # protection status; tag spelling alone grants no release authority.
+            version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+            [[ ${GITHUB_REF_PROTECTED:-} == true && ${#release_tag} -le 128 &&
+               $release_tag =~ $version_pattern ]] || {
+                echo 'release CI requires a valid protected version tag' >&2; exit 1;
+            }
+            tagged=$(git rev-parse --verify "$GITHUB_REF^{commit}")
+            [[ $tagged == "${GITHUB_SHA:-}" ]] || {
+                echo 'release tag does not identify the workflow commit' >&2; exit 1;
+            }
+            ;;
         pull_request:refs/pull/*/merge)
             [[ ${GITHUB_REF:-} =~ ^refs/pull/[0-9]+/merge$ &&
                ${GITHUB_BASE_REF:-} == main ]] || {
@@ -51,6 +66,9 @@ if [[ ${GITHUB_ACTIONS:-} == true ]]; then
             --build-arg "DEBIAN_SNAPSHOT=$DEBUGLET_CI_DEBIAN_SNAPSHOT" \
             --build-arg "TOOLS_IMAGE=$DEBUGLET_CI_TOOLS_IMAGE" deploy/ci
     fi
+fi
+if [[ $lane == image-vulnerabilities ]]; then
+    bash scripts/ci-image-vulnerabilities.sh build
 fi
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 name="debuglet-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$lane-$$"
@@ -106,11 +124,11 @@ docker run --rm --init --pull=never --name "$name" \
     --env GOTOOLCHAIN=local --env GOMAXPROCS=4 \
     --env GOMODCACHE=/go/pkg/mod --env GOCACHE=/go/build-cache \
     --env "DEBUGLET_CI_JOB_IMAGE=$image" --env "DEBUGLET_CI_IMAGE_ID=$image_id" \
+    --env "CI_COMMIT_TAG=$release_tag" \
     "${forward[@]+"${forward[@]}"}" "${options[@]+"${options[@]}"}" "$image" bash -ceu '
         trap '\''chown -R "$3" /workspace'\'' EXIT
         git config --global --add safe.directory /workspace
         if [[ ${GITHUB_ACTIONS:-} == true ]]; then
-            export CI_COMMIT_TAG=""
             export CI_COMMIT_REF_PROTECTED="$GITHUB_REF_PROTECTED"
             export CI_PIPELINE_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
         fi
@@ -120,6 +138,8 @@ docker run --rm --init --pull=never --name "$name" \
             generate) bash scripts/ci-generate.sh check ;;
             race) python3 -m unittest -v tools/test_check_evidence.py; make ci-race ;;
             secrets) python3 -m unittest -v tools/test_ci_security.py; bash "scripts/ci-$1.sh" ;;
+            vulnerabilities) python3 -m unittest -v tools/test_ci_vulnerabilities.py; bash scripts/ci-vulnerabilities.sh ;;
+            image-vulnerabilities) python3 -m unittest -v tools/test_ci_image_vulnerabilities.py; bash scripts/ci-image-vulnerabilities.sh scan ;;
             faults) bash scripts/ci-faults.sh ;;
             soak) bash scripts/ci-soak.sh ;;
             offline)
@@ -132,3 +152,7 @@ docker run --rm --init --pull=never --name "$name" \
             *) make "ci-$1" ;;
         esac
     ' -- "$lane" "$profile" "$(id -u):$(id -g)"
+
+if [[ $lane == kernel ]]; then
+    bash scripts/ci-shared-workers.sh
+fi

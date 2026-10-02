@@ -12,7 +12,9 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -23,15 +25,20 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 	executors := h.dispatcher.ListExecutors()
 	// The maintenance switch is dispatcher-wide; read it once per listing.
 	paused := dispatcher.AdmissionPaused() != nil
+	caller := requestCaller(c)
 	var resp []ExecutorResponse
 	for _, e := range executors {
 		isdAS, listeners := e.Vantage()
 		resp = append(resp, ExecutorResponse{
+			Connectivity:           e.Connectivity(caller.Operator),
+			CapabilityObservation:  e.CapabilityObservation(),
+			AdmissionLimits:        &wire.ExecutorAdmissionLimits{Scheduling: true, MinTimeoutMS: 1, MaxTimeoutMS: models.MaxPolicyTimeoutMS, MaxBandwidthBPS: models.MaxPolicyBandwidthBPS, PriceUnit: "currency_per_bps_second"},
 			Admission:              e.Admission(paused),
 			Display:                e.Display(),
 			SCIONISDAS:             isdAS,
 			Listeners:              listeners,
 			Clock:                  e.Clock(),
+			IPMetadata:             e.IPMetadata(),
 			ID:                     e.ID,
 			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,

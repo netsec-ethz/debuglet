@@ -184,8 +184,8 @@ func fbSubmitFailedBatch(t *testing.T, f *tgFixture, peer *fbPeer, refusal, ownU
 		}
 	})
 	got, err := f.d.SubmitDebuglets(f.ctx, []models.DebugletSpec{specA, specB}, nil)
-	if err == nil || got != nil {
-		t.Fatalf("SubmitDebuglets = %v, %v; want no IDs and an error", got, err)
+	if err == nil || len(got) != 2 {
+		t.Fatalf("SubmitDebuglets = %v, %v; want both admitted IDs and an error", got, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -194,6 +194,9 @@ func fbSubmitFailedBatch(t *testing.T, f *tgFixture, peer *fbPeer, refusal, ownU
 		id, parseErr := parseRunID(ids[spec.TransactionID])
 		if parseErr != nil {
 			t.Fatalf("run of %s was not uploaded: %v", spec.TransactionID, parseErr)
+		}
+		if got[i] != id {
+			t.Fatalf("admitted ID %d = %s, want committed run %s", i, got[i], id)
 		}
 		runs[i] = tgDebuglet{id: id, txID: spec.TransactionID, orderID: spec.OrderID, floor: spec.Policy.FloorBW, row: f.row(t, id)}
 	}

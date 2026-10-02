@@ -168,7 +168,7 @@ func TestContractVersionNegotiation(t *testing.T) {
 	t.Run("accepted requirements reach the handler", func(t *testing.T) {
 		// An absent or blank header states no requirement, which is what every
 		// client written before the contract was versioned sends.
-		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11"} {
+		for _, required := range []string{"absent", "", " ", "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "1.12"} {
 			headers := map[string]string{}
 			if required != "absent" {
 				headers[apispec.VersionHeader] = required
@@ -350,6 +350,44 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			if _, err := authenticated.Whoami(ctx); err != nil {
 				t.Fatalf("Whoami: %v", err)
 			}
+			if _, err := authenticated.MeasurementTemplates(ctx); err != nil {
+				t.Fatalf("MeasurementTemplates: %v", err)
+			}
+			profile, err := authenticated.SaveProfile(ctx, "", sampleProfile())
+			if err != nil {
+				t.Fatalf("SaveProfile: %v", err)
+			}
+			if _, err := authenticated.Profiles(ctx); err != nil {
+				t.Fatalf("Profiles: %v", err)
+			}
+			if _, err := authenticated.Profile(ctx, profile.ID); err != nil {
+				t.Fatalf("Profile: %v", err)
+			}
+			profile.Config.Name = "Updated contract profile"
+			if _, err := authenticated.SaveProfile(ctx, profile.ID, profile.Config); err != nil {
+				t.Fatalf("UpdateProfile: %v", err)
+			}
+			if err := authenticated.DeleteProfile(ctx, profile.ID); err != nil {
+				t.Fatalf("DeleteProfile: %v", err)
+			}
+			owned, err := authenticated.SubmitTEST(ctx, batch)
+			if err != nil {
+				t.Fatalf("owned SubmitTEST: %v", err)
+			}
+			if _, err := authenticated.Measurements(ctx, client.MeasurementOptions{Limit: 5}); err != nil {
+				t.Fatalf("Measurements: %v", err)
+			}
+			if _, err := authenticated.Measurement(ctx, owned.TransactionID); err != nil {
+				t.Fatalf("Measurement: %v", err)
+			}
+			if _, err := authenticated.RunDetail(ctx, owned.IDs[0]); err != nil {
+				t.Fatalf("RunDetail: %v", err)
+			}
+			// Deletion is owner-scoped and separate from cancellation. An active
+			// run exercises the documented retained-payload refusal.
+			oaRawWith(t, &http.Client{Transport: recorder, Timeout: ccRequestBound}, http.MethodDelete,
+				deployment.url+"/debuglet/"+owned.IDs[0]+"/payload", nil,
+				map[string]string{"Authorization": "Bearer " + session.Token})
 			if err := authenticated.Logout(ctx); err != nil {
 				t.Fatalf("Logout: %v", err)
 			}

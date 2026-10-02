@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // HTTPError reports a response the client did not accept: any status other
@@ -14,11 +16,13 @@ import (
 // bodies use a generic diagnostic. Recognized auth_key fields and known
 // submission keys are redacted. Path never contains a query or request body.
 type HTTPError struct {
-	Method     string
-	Path       string
-	StatusCode int
-	Code       string
-	Message    string
+	Method      string
+	Path        string
+	StatusCode  int
+	Code        string
+	Message     string
+	FieldErrors []wire.FieldError
+	admittedIDs []string // validated shape; submission also checks batch cardinality
 	// RetryAfter is the delay a 429 or 503 response asked for in its
 	// Retry-After header; zero when it named none.
 	RetryAfter time.Duration
@@ -68,6 +72,15 @@ const (
 	CodeNotFound = "not_found"
 	// CodeCapacityExhausted is a batch the scheduler cannot admit.
 	CodeCapacityExhausted = "capacity_exhausted"
+	// CodeAccountQuota is a request exceeding the account's configured
+	// run, reserved concurrency or queued-byte allowance.
+	CodeAccountQuota = "account_quota_exceeded"
+	// CodePayloadDeleted means the requested payload was deleted; the run's
+	// identity and original outcome are still retained.
+	CodePayloadDeleted = "payload_deleted"
+	// CodePayloadNotDeletable means completed output or confirmed executor
+	// retirement is missing, so the payload must remain retained.
+	CodePayloadNotDeletable = "payload_not_deletable"
 	// CodeCancelRefused is a cancellation the dispatcher did not accept.
 	CodeCancelRefused = "cancel_refused"
 	// CodeMethodNotAllowed is a method the route does not serve.
@@ -95,8 +108,12 @@ const (
 // and so is a 503 that carries service_unavailable or payments_disabled at the
 // intent stage: nothing was priced or written.
 type SubmissionError struct {
-	Stage          string
-	TransactionID  string
+	Stage         string
+	TransactionID string
+	// AdmittedIDs are durable run identities in request order when a failed
+	// submission returned a valid complete list. They prove admission, not
+	// upload, execution, cancellation or completion. Inspect each run.
+	AdmittedIDs    []string
 	OutcomeUnknown bool
 	Err            error
 }
@@ -105,6 +122,9 @@ func (e *SubmissionError) Error() string {
 	outcome := "rejected"
 	if e.OutcomeUnknown {
 		outcome = "outcome unknown"
+		if len(e.AdmittedIDs) > 0 {
+			outcome = "admitted; outcome unknown"
+		}
 	}
 	if e.TransactionID != "" {
 		return fmt.Sprintf("submission %s at stage %s (transaction %s): %v", outcome, e.Stage, e.TransactionID, e.Err)

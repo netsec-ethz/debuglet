@@ -40,6 +40,16 @@ func TestBootstrapFresh(t *testing.T) {
 			db := openSchemaDB(t, path)
 			if role == Dispatcher {
 				assertSchema(t, db, map[string]string{
+					"attribution_chains":         "executor_id chain_id anchor t0_ns interval_ns delay_epochs chain_length tag_spec first_seen_ns last_seen_ns",
+					"attribution_keys":           "executor_id chain_id epoch key disclosed_at_ns",
+					"attribution_runs":           "debuglet_id chain_id source_ip source_ip_observed active_from_ns active_to_ns",
+					"attribution_retention":      "singleton retained_from_ns",
+					"measurement_profiles":       "id user_id document",
+					"measurement_requests":       "debuglet_id document",
+					"measurement_execution":      "debuglet_id started_observed_ns terminal_observed_ns exit_code tcp_endpoint",
+					"retry_requests":             "caller_scope request_id parent_run_id transaction_id request_hash intent_metadata",
+					"account_run_reservations":   "debuglet_id account_id queued_bytes retired_at last_retirement_check",
+					"payload_tombstones":         "debuglet_id deleted_at reason workload_sha256 certificate_sha256",
 					"debuglets":                  "id uuid start_time end_time usage ceil_bw executor_id addresses state error transaction_id order_id dispatcher_incarnation session_id",
 					"debuglet_logs":              "id debuglet_id timestamp output source_sequence",
 					"debuglet_output":            "debuglet_id output_version owner_fingerprint account_id committed_sequence byte_count frame_count last_log_id final_sequence final_cursor status reason",
@@ -60,11 +70,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
 					"owned_executors":            "executor_id user_id name created_at",
 					"oauth_identities":           "provider subject user_id login created_at updated_at",
-					"attribution_chains":         "executor_id chain_id anchor t0_ns interval_ns delay_epochs chain_length tag_spec first_seen_ns last_seen_ns",
-					"attribution_keys":           "executor_id chain_id epoch key disclosed_at_ns",
-					"attribution_runs":           "debuglet_id chain_id source_ip source_ip_observed active_from_ns active_to_ns",
-					"attribution_retention":      "singleton retained_from_ns",
-				}, []string{"attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14})
+				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

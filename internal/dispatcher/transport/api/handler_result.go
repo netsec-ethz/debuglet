@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
@@ -38,6 +39,9 @@ func (h *Handler) GetDebugletResult(c echo.Context) error {
 	}
 	defer tx.Rollback()
 	q := database.New(tx)
+	if err := requireRetainedPayload(ctx, q, id); err != nil {
+		return err
+	}
 	run, err := q.GetDebugletByUUID(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return debugletNotFound()
@@ -48,7 +52,7 @@ func (h *Handler) GetDebugletResult(c echo.Context) error {
 	doc := wire.Result{
 		Format: wire.ResultFormat, Version: wire.ResultVersion,
 		RunID: id.String(), ExecutorID: run.ExecutorID,
-		Outcome:      wire.ResultOutcome{State: run.State.String(), Error: run.Error.String},
+		Outcome:      wire.ResultOutcome{State: run.State.String(), Error: dispatcher.PublicTerminalError(run.Error.String)},
 		Timing:       wire.ResultTiming{ObservedAt: time.Now().UTC()},
 		Output:       wire.ResultOutput{Status: wire.OutputStatus{State: "unknown"}, Entries: []wire.LogEntry[[]byte]{}},
 		Verification: wire.ResultVerification{Attribution: "unknown", PacketEvidence: "unverified", MeasurementTruth: "unverified"},
@@ -90,6 +94,9 @@ func (h *Handler) GetDebugletResult(c echo.Context) error {
 		}
 		if doc.Provenance == nil || doc.Provenance.RunID != doc.RunID || doc.Provenance.ExecutorID != doc.ExecutorID || doc.Attempt == nil || doc.Provenance.Attempt != *doc.Attempt {
 			return fail(errors.New("inconsistent admission provenance"))
+		}
+		if doc.Provenance.Retry != nil {
+			doc.Version = wire.RetryResultVersion
 		}
 		doc.Verification.Attribution = "unenrolled_session"
 		if doc.Provenance.CertificateSHA256 != nil {

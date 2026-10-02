@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/labstack/echo/v4"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -70,20 +73,18 @@ func dcAssertPrivate(t *testing.T, what string, logs *observer.ObservedLogs, bod
 	}
 }
 
-// dcAssertLoggedCause fails unless the sentinel is absent from the response
-// and present in the request failure the API logged for route.
+// dcAssertLoggedCause checks the routine entry retains actionable correlation
+// while keeping the private diagnostic out of both the response and Info logs.
 func dcAssertLoggedCause(t *testing.T, what string, logs *observer.ObservedLogs, body []byte, route, sentinel string) {
 	t.Helper()
-	if strings.Contains(string(body), sentinel) {
-		t.Fatalf("%s: the database diagnostic reached the client: %s", what, body)
-	}
+	dcAssertPrivate(t, what, logs, body, sentinel)
 	for _, entry := range logs.FilterMessage("request failed").All() {
 		fields := entry.ContextMap()
-		if fields["route"] == route && strings.Contains(fmt.Sprint(fields["error"]), sentinel) {
+		if fields["route"] == route && fields["code"] != "" && fields["status"] != nil {
 			return
 		}
 	}
-	t.Fatalf("%s: no request failure for %s logged the database diagnostic", what, route)
+	t.Fatalf("%s: missing correlated request failure for %s", what, route)
 }
 
 func dcExpect(t *testing.T, what string, status int, body []byte, wantStatus int, wantCode, wantMessage string) {
@@ -355,11 +356,10 @@ func TestDatabaseFailuresReachOnlyTheLog(t *testing.T) {
 		drop()
 		for name, err := range map[string]error{"state": stateErr, "exit": exitErr} {
 			message := grpcstatus.Convert(err).Message()
-			if err == nil || !strings.Contains(message, sentinel) {
-				t.Fatalf("%s report: the executor did not receive the database diagnostic: %v", name, err)
+			if err == nil || strings.Contains(message, sentinel) || message != "operation failed; operator diagnostics have the details" {
+				t.Fatalf("%s report lost failure classification or exposed private detail: %v", name, err)
 			}
-			// The diagnostic is about the executor's own report: it names
-			// no payment order and carries no credential.
+			// Private SQL causes name no public payment order or credential.
 			if strings.Contains(message, txID) || strings.Contains(message, token) {
 				t.Fatalf("%s report carries more than the database diagnostic: %s", name, message)
 			}
@@ -369,7 +369,7 @@ func TestDatabaseFailuresReachOnlyTheLog(t *testing.T) {
 		if status != http.StatusOK || json.Unmarshal(body, &state) != nil || state.State == models.RunStateExited.String() || state.Error != "" {
 			t.Fatalf("owner read after the refused reports: status %d, body %s", status, body)
 		}
-		dcAssertPrivate(t, "owner read", logs.FilterMessage("request failed"), body, sentinel)
+		dcAssertPrivate(t, "owner read", logs, body, sentinel)
 	})
 
 	t.Run("reads", func(t *testing.T) {
@@ -458,12 +458,75 @@ func TestCapabilityRefusalsOmitRegisteredExecutorID(t *testing.T) {
 					txID := dcIntent(t, f, token, debuglets)
 					status, _, body, _ := authRequest(t, f, http.MethodPut, "/debuglet", dcSubmitBody(t, txID, "", debuglets), authBearer(token))
 					dcExpect(t, capability.name, status, body, http.StatusBadRequest, CodeInvalidPolicy,
-						"invalid debuglet spec (i=0): "+capability.message+": invalid policy")
+						"invalid policy (order 0): "+capability.message)
+					var response ErrorResponse
+					if err := json.Unmarshal(body, &response); err != nil {
+						t.Fatal(err)
+					}
+					wantField := "policy.require_icmp"
+					if capability.policy.ListenTCP {
+						wantField = "policy.listen_tcp"
+					}
+					if capability.policy.ListenUDP {
+						wantField = "policy.listen_udp"
+					}
+					if len(response.FieldErrors) != 1 || response.FieldErrors[0].Field != wantField || response.FieldErrors[0].Code != "unsupported" {
+						t.Fatalf("missing capability field: %s", body)
+					}
 					if peer.uploadCount() != 0 {
 						t.Fatal("a refused policy reached the executor")
 					}
 				})
 			}
 		})
+	}
+}
+
+func TestHistoricalTerminalTextIsPrivateAcrossReadSurfaces(t *testing.T) {
+	f, logs := dcNewFixture(t, LocalDevelopment(true))
+	c := f.client(f.root.URL, false)
+	sub := f.submit(c, nil)
+	id := uuid.MustParse(sub.IDs[0])
+	secret := dcSentinel(t, "terminal")
+	if _, err := f.db.Exec("UPDATE debuglets SET state=?,error=? WHERE uuid=?", models.RunStateExited, "private stack "+secret, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO debuglet_cancellations(debuglet_id,request_id,reason,requested_at) SELECT id,?,'cancelled via API',1 FROM debuglets WHERE uuid=?`, uuid.NewString(), id); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"state", "logs", "result", "recovery", "cancellation"} {
+		status, _, body, _ := authRequest(t, f, http.MethodGet, "/debuglet/"+id.String()+"/"+suffix, nil, nil)
+		if status != http.StatusOK {
+			t.Fatalf("%s: %d %s", suffix, status, body)
+		}
+		dcAssertPrivate(t, suffix, logs, body, secret)
+		if !strings.Contains(string(body), "debuglet failed; operator diagnostics have the details") {
+			t.Fatalf("%s erased failure: %s", suffix, body)
+		}
+	}
+}
+
+func TestPrivateHTTPDiagnosticsRedactPresentedCredentials(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	request := httptest.NewRequest(http.MethodGet, "/fixture", nil)
+	request.Header.Set("Authorization", "Bearer bearer-sentinel")
+	request.AddCookie(&http.Cookie{Name: "session_token", Value: "cookie-sentinel"})
+	response := httptest.NewRecorder()
+	c := echo.New().NewContext(request, response)
+	c.SetPath("/fixture")
+	h := NewHandler(nil, nil, zap.New(core))
+	h.errorHandler(apiErrorFrom(http.StatusInternalServerError, CodeInternal, "operation failed", errors.New("private SQL diagnostic bearer-sentinel cookie-sentinel\nsecond line")), c)
+	for _, entry := range logs.All() {
+		rendered := dcRender(entry)
+		if strings.Contains(rendered, "bearer-sentinel") || strings.Contains(rendered, "cookie-sentinel") {
+			t.Fatal("private diagnostic retained a credential")
+		}
+		if entry.Level >= zapcore.InfoLevel && strings.Contains(rendered, "private SQL diagnostic") {
+			t.Fatal("routine diagnostic exposed internal cause")
+		}
+	}
+	private := logs.FilterMessage("Private request diagnostic").All()
+	if len(private) != 1 || !strings.Contains(dcRender(private[0]), "private SQL diagnostic") || strings.Contains(fmt.Sprint(private[0].ContextMap()["error"]), "\n") {
+		t.Fatal("operator diagnostic lost or unbounded")
 	}
 }

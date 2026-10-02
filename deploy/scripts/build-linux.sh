@@ -6,7 +6,7 @@
 #
 # Nothing is compiled here. The package comes from the payload stage of
 # deploy/docker/debuglet.Dockerfile: the packaging tool compiles the binaries
-# with the pinned Go 1.25.11 toolchain from a clean committed checkout, the
+# with the pinned Go 1.26.8 toolchain from a clean committed checkout, the
 # candidate is verified against its own SHA256SUMS, and the package's own
 # installer installs it. This script copies that package out, so a managed
 # host receives the same bytes, verified the same way, as an installed package

@@ -2,6 +2,7 @@ package storagecheck
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 
@@ -29,10 +30,12 @@ func AcceptDataLoss() UpgradeOption {
 // this role's Debuglet database, or newer than this build, and writes nothing
 // to it. A database whose upgrade drops the recorded runs is refused the same
 // way with ErrDataLoss unless the caller passes AcceptDataLoss. It takes no
-// backup and expects the daemon using the file to be stopped. Each migration
-// commits on its own, so a failed one leaves the earlier ones applied; Check
-// then reports the version reached as outdated and a later Upgrade continues
-// from it.
+// backup and expects the daemon using the file to be stopped. It holds an
+// exclusive SQLite connection across every migration and the final check, so
+// another writer cannot interleave between migration commits. Each migration
+// commits on its own; a failed one leaves the earlier ones applied and a later
+// Upgrade continues from the recorded version. The deployment procedure keeps
+// the original backup and leaves the service stopped after a failed upgrade.
 func Upgrade(ctx context.Context, role Role, path string, opts ...UpgradeOption) (int64, error) {
 	var options upgradeOptions
 	for _, opt := range opts {
@@ -67,29 +70,60 @@ func Upgrade(ctx context.Context, role Role, path string, opts ...UpgradeOption)
 			"-accept-data-loss (upgrade_accept_data_loss=true for deploy/ansible/upgrade-database.yml) to accept it",
 			ErrDataLoss, role, absolute, version)
 	}
-	version, err = applyPending(ctx, absolute, migrations)
+	if version == policy.Current {
+		return version, policy.Check(ctx, absolute)
+	}
+	db, err = openUpgrade(ctx, absolute)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	// Recognition before taking ownership is only a read-only preflight. Check
+	// again on the exclusive connection so another upgrader cannot invalidate
+	// the decision while this caller waits for the lock.
+	version, _, err = policy.recognize(ctx, db, absolute)
+	if err != nil {
+		return 0, err
+	}
+	if policy.dropsData(version) && !options.acceptDataLoss {
+		return 0, fmt.Errorf("%w: database version changed before exclusive ownership; nothing was migrated; check the database and explicitly accept any required data loss", ErrDataLoss)
+	}
+	version, err = applyPending(ctx, db, migrations)
 	if err != nil {
 		return 0, fmt.Errorf("upgrade %s database %q: %w", role, absolute, err)
 	}
-	if err := policy.Check(ctx, absolute); err != nil {
+	if err := policy.verify(ctx, db, absolute); err != nil {
 		return 0, err
+	}
+	if err := db.Close(); err != nil {
+		return 0, fmt.Errorf("close upgraded database %q: %w", absolute, err)
 	}
 	return version, nil
 }
 
-// applyPending applies every pending migration to an existing database and
-// reports the version it records afterwards. sqlitedb.Open never creates a
-// missing file.
-func applyPending(ctx context.Context, path string, migrations fs.FS) (version int64, err error) {
+// openUpgrade takes SQLite ownership before the first migration. With one
+// connection in EXCLUSIVE locking mode, COMMIT retains the database lock until
+// Close; goose can still use its normal per-migration transactions. This also
+// applies to WAL databases and does not rely on every writer using a sidecar
+// lock. It cannot establish that an idle daemon has stopped; operators must
+// still stop the service before upgrading it.
+func openUpgrade(ctx context.Context, path string) (*sql.DB, error) {
 	db, err := sqlitedb.Open(path)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer func() {
-		if closeErr := db.Close(); err == nil && closeErr != nil {
-			err = closeErr
+	for _, statement := range []string{"PRAGMA locking_mode = EXCLUSIVE", "BEGIN EXCLUSIVE", "COMMIT"} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("cannot acquire exclusive database access for %q: stop every daemon using it and retry the upgrade: %w", path, err)
 		}
-	}()
+	}
+	return db, nil
+}
+
+// applyPending retains the caller's exclusive connection while the canonical
+// migrations commit, then reports their durable progress if one fails.
+func applyPending(ctx context.Context, db *sql.DB, migrations fs.FS) (version int64, err error) {
 	version, err = sqlitedb.Migrate(ctx, db, migrations, sqlitedb.Latest)
 	if err != nil {
 		if version >= 0 {

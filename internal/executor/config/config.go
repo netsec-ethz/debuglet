@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/isolation"
 	"log"
 	"net"
 	"os"
@@ -21,18 +22,26 @@ import (
 
 // ExecutorConfig represents the structure of executor.toml
 type ExecutorConfig struct {
-	Identity    IdentityConfig
-	Dispatcher  DispatcherConfig
-	TLS         TLSConfig
-	Resources   ResourcesConfig
-	Tesla       TeslaConfig
-	Network     NetworkConfig
-	Logging     LoggingConfig
-	Credentials CredentialConfig
-	Database    DatabaseConfig
-	Pricing     PricingConfig
-	Output      OutputConfig
-	Clock       ClockConfig
+	Identity     IdentityConfig
+	Dispatcher   DispatcherConfig
+	TLS          TLSConfig
+	Resources    ResourcesConfig
+	Tesla        TeslaConfig
+	Network      NetworkConfig
+	Logging      LoggingConfig
+	Credentials  CredentialConfig
+	Database     DatabaseConfig
+	Pricing      PricingConfig
+	Output       OutputConfig
+	Isolation    isolation.Config
+	Clock        ClockConfig
+	Metadata     MetadataConfig
+	Connectivity ConnectivityConfig
+}
+
+// MetadataConfig controls publication of automatically derived location.
+type MetadataConfig struct {
+	LocationOptOut bool `toml:"location_opt_out"`
 }
 
 // ClockConfig bounds the kernel's estimated clock error the executor accepts
@@ -353,8 +362,14 @@ func (cfg *ExecutorConfig) Validate() error {
 	if err := cfg.Network.Validate(); err != nil {
 		return err
 	}
+	if err := cfg.Connectivity.Validate(cfg.TLS.Disable); err != nil {
+		return err
+	}
 	if err := cfg.validateCredentials(); err != nil {
 		return err
+	}
+	if err := cfg.ValidateIsolation(); err != nil {
+		return fmt.Errorf("isolation: %w", err)
 	}
 	if err := cfg.Output.Validate(); err != nil {
 		return err
@@ -528,4 +543,16 @@ func (cfg NetworkConfig) ValidatePacketCounter() error {
 	default:
 		return fmt.Errorf("invalid network.packet_counter %q: expected auto or fallback", cfg.PacketCounter)
 	}
+}
+
+// ValidateIsolation keeps unsupported parent transports outside the shared
+// resource profile, including when Node is constructed without loading a file.
+func (cfg *ExecutorConfig) ValidateIsolation() error {
+	if err := cfg.Isolation.Validate(); err != nil {
+		return err
+	}
+	if cfg.Isolation.Shared() && cfg.Network.Policy.SCION != nil && *cfg.Network.Policy.SCION {
+		return errors.New("shared isolation requires network.policy.scion = false")
+	}
+	return nil
 }

@@ -27,6 +27,8 @@ var (
 	// ErrUnsupportedPaymentMethod is wrapped by CheckPaymentMethod for methods
 	// other than TEST, USDC and SUI.
 	ErrUnsupportedPaymentMethod = errors.New("unsupported payment method")
+	// ErrTransactionClaimed means an unadmitted-only refund found admitted work.
+	ErrTransactionClaimed = errors.New("payment transaction has admitted runs")
 )
 
 // chainBackend is the subset of *sui.SuiPaymentHandler that PaymentHandler
@@ -348,7 +350,20 @@ func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refund
 	return tx.Commit()
 }
 
+// RefundTransaction retains transaction-wide refunds, including claimed orders.
+// A submission caller uses it only after its own admission committed.
 func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Context) error {
+	return p.refundTransaction(transactionId, ctx, false)
+}
+
+// RefundUnadmittedTransaction refunds a paid intent only while none of its
+// orders has been claimed. Its SQL write excludes a concurrent admission before
+// any refund is sent to the chain backend.
+func (p *PaymentHandler) RefundUnadmittedTransaction(transactionId string, ctx context.Context) error {
+	return p.refundTransaction(transactionId, ctx, true)
+}
+
+func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Context, unadmittedOnly bool) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("Failed to begin transaction: %s", err.Error())
@@ -377,6 +392,17 @@ func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Con
 	if err := p.requireChain(currency, "refund transaction"); err != nil {
 		return err
 	}
+	if unadmittedOnly {
+		changed, err := queries.RefundUnadmittedTransaction(ctx, database.RefundUnadmittedTransactionParams{
+			RefundedStatus: int64(models.Refunded), TransactionID: transactionId, PaidStatus: int64(models.Paid),
+		})
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return ErrTransactionClaimed
+		}
+	}
 	totalRefundValue := int64(0)
 	for _, order := range orders {
 		if order.Currency != currency || order.RefundAddress != refundAddress {
@@ -400,10 +426,12 @@ func (p *PaymentHandler) RefundTransaction(transactionId string, ctx context.Con
 	// admitted on the transaction's status, so a transaction left Paid after
 	// its money went back would admit the same batch again and have the work
 	// done a second time for a payment that no longer exists.
-	if err := queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
-		Status: int64(models.Refunded), ID: transactionId,
-	}); err != nil {
-		return err
+	if !unadmittedOnly {
+		if err := queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
+			Status: int64(models.Refunded), ID: transactionId,
+		}); err != nil {
+			return err
+		}
 	}
 
 	switch currency {

@@ -33,18 +33,32 @@ func (q *Queries) AddEarnings(ctx context.Context, arg AddEarningsParams) error 
 
 const claimDebugletOrder = `-- name: ClaimDebugletOrder :execrows
 UPDATE debuglet_order
-SET debuglet_id = ?
-WHERE transaction_id = ? AND order_id = ? AND debuglet_id IS NULL
+SET debuglet_id = ?1
+WHERE transaction_id = ?2 AND order_id = ?3
+  AND debuglet_id IS NULL AND state = ?4
+  AND EXISTS (
+    SELECT 1 FROM transactions
+    WHERE transactions.id = debuglet_order.transaction_id
+      AND transactions.status = ?5
+  )
 `
 
 type ClaimDebugletOrderParams struct {
-	DebugletID    sql.NullInt64
-	TransactionID string
-	OrderID       int64
+	DebugletID       sql.NullInt64
+	TransactionID    string
+	OrderID          int64
+	OutstandingState int64
+	PaidStatus       int64
 }
 
 func (q *Queries) ClaimDebugletOrder(ctx context.Context, arg ClaimDebugletOrderParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, claimDebugletOrder, arg.DebugletID, arg.TransactionID, arg.OrderID)
+	result, err := q.db.ExecContext(ctx, claimDebugletOrder,
+		arg.DebugletID,
+		arg.TransactionID,
+		arg.OrderID,
+		arg.OutstandingState,
+		arg.PaidStatus,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -389,6 +403,30 @@ func (q *Queries) GetTransactionState(ctx context.Context, key string) (Transact
 	var i TransactionState
 	err := row.Scan(&i.Key, &i.Value)
 	return i, err
+}
+
+const refundUnadmittedTransaction = `-- name: RefundUnadmittedTransaction :execrows
+UPDATE transactions
+SET status = ?1
+WHERE id = ?2 AND status = ?3
+  AND NOT EXISTS (
+    SELECT 1 FROM debuglet_order
+    WHERE debuglet_order.transaction_id = transactions.id AND debuglet_id IS NOT NULL
+  )
+`
+
+type RefundUnadmittedTransactionParams struct {
+	RefundedStatus int64
+	TransactionID  string
+	PaidStatus     int64
+}
+
+func (q *Queries) RefundUnadmittedTransaction(ctx context.Context, arg RefundUnadmittedTransactionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refundUnadmittedTransaction, arg.RefundedStatus, arg.TransactionID, arg.PaidStatus)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setRefundAddress = `-- name: SetRefundAddress :exec

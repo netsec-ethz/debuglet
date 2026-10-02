@@ -53,3 +53,28 @@ WHERE uuid = ?;
 -- name: GetDebugletStarted :one
 SELECT started_at FROM debuglets
 WHERE uuid = ?;
+
+-- name: CreateBoundedDebuglet :execrows
+-- The durable rows are the reservations. Keeping the quota predicate inside
+-- this INSERT makes concurrent admission and crash recovery use the same
+-- accounting, without a separate counter that can drift from retained work.
+-- Existing UUIDs still reach the UNIQUE constraint even when the queue is full.
+INSERT INTO debuglets (
+    uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms,
+    addresses, require_icmp, listen_udp, listen_tcp, listen_scion,
+    dispatcher_incarnation, session_id
+)
+SELECT sqlc.arg(uuid), sqlc.narg(start_time), sqlc.narg(args), sqlc.arg(wasm),
+       sqlc.arg(transaction_id), sqlc.arg(floor_bw), sqlc.arg(ceil_bw),
+       sqlc.arg(timeout_ms), sqlc.narg(addresses), sqlc.arg(require_icmp),
+       sqlc.arg(listen_udp), sqlc.arg(listen_tcp), sqlc.arg(listen_scion),
+       sqlc.arg(dispatcher_incarnation), sqlc.arg(session_id)
+WHERE EXISTS (SELECT 1 FROM debuglets WHERE uuid = sqlc.arg(uuid))
+   OR ((SELECT COUNT(*) FROM debuglets) < CAST(sqlc.arg(max_queued_runs) AS INTEGER)
+       AND (SELECT COALESCE(SUM(
+           length(wasm) + COALESCE(length(CAST(args AS BLOB)), 0)
+           + COALESCE(length(CAST(addresses AS BLOB)), 0)
+           + length(CAST(transaction_id AS BLOB))
+           + length(CAST(dispatcher_incarnation AS BLOB))
+           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets)
+           <= CAST(sqlc.arg(max_queued_bytes) AS INTEGER) - CAST(sqlc.arg(queue_bytes) AS INTEGER));

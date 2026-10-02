@@ -73,6 +73,7 @@ type cpPeer struct {
 	bandwidths []*pb.BandwidthRequest
 	onUpload   func(ctx context.Context, req *pb.UploadRequest) error
 	onAbort    func(ctx context.Context, req *pb.AbortRequest) error
+	onInspect  func(context.Context, *pb.InspectRetainedRunRequest) (*pb.InspectRetainedRunResponse, error)
 }
 
 func (p *cpPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, error) {
@@ -120,6 +121,16 @@ func (p *cpPeer) Abort(ctx context.Context, req *pb.AbortRequest) (*pb.AbortResp
 		}
 	}
 	return &pb.AbortResponse{}, nil
+}
+
+func (p *cpPeer) InspectRetainedRun(ctx context.Context, req *pb.InspectRetainedRunRequest) (*pb.InspectRetainedRunResponse, error) {
+	p.mu.Lock()
+	hook := p.onInspect
+	p.mu.Unlock()
+	if hook == nil {
+		return nil, status.Error(codes.Unimplemented, "fixture does not inspect retained work")
+	}
+	return hook(ctx, req)
 }
 
 func (p *cpPeer) Bandwidth(_ context.Context, req *pb.BandwidthRequest) (*pb.BandwidthResponse, error) {

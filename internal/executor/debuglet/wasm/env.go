@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm/hostconn"
@@ -63,8 +64,18 @@ type WasmEnv struct {
 
 	ScionServer pan.ListenConn
 
-	Registry  *socket.SocketRegistry
-	ScionConn *socket.SCIONConnRegistry
+	Budget                                           *socket.Budget
+	tcpReservation, udpReservation, scionReservation *socket.Reservation
+	Registry                                         *socket.SocketRegistry
+	ScionConn                                        *socket.SCIONConnRegistry
+}
+
+// warnPrivate keeps per-run host failures correlated without putting raw
+// network/library diagnostics in the routine log. Event names are fixed here.
+func (e *WasmEnv) warnPrivate(event string, diagnostic error) {
+	e.Logger.Warnw(event, "debugletID", e.DebugletID.String())
+	e.Logger.Debugw("Private guest host diagnostic", "event", event, "debugletID", e.DebugletID.String(),
+		"error", daemonlog.Diagnostic(diagnostic))
 }
 
 // DatagramTagger is the pure-Go tagger, which tags UDP and ICMP by sending
@@ -84,7 +95,7 @@ func tagDatagrams(e *WasmEnv, conn net.Conn, socketType socket.SocketType) net.C
 	wrapped, err := datagrams.WrapDatagram(conn)
 	if err != nil {
 		e.untaggedOnce.Do(func() {
-			e.Logger.Warnw("Datagrams of this run leave untagged", "remote", conn.RemoteAddr().String(), "err", err)
+			e.warnPrivate("Datagrams of this run leave untagged", fmt.Errorf("remote %s: %w", conn.RemoteAddr(), err))
 		})
 		return conn
 	}
@@ -109,11 +120,12 @@ func markSocket(e *WasmEnv, conn syscall.Conn) error {
 // A listener arrives already marked: the PortManager marks it in its listen
 // control hook, before the socket is bound and listening, so no handshake
 // reply or datagram leaves it unattributed.
-func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error {
+func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string, reservation *socket.Reservation) error {
 	e.mu.Lock()
 	if e.closed || e.TcpServer != nil {
 		e.mu.Unlock()
 		err := lis.Close()
+		reservation.Release()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
@@ -121,14 +133,16 @@ func (e *WasmEnv) InstallTCP(lis *net.TCPListener, port int, addr string) error 
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.TcpServer, e.TcpServerPort, e.TcpServerAddr = lis, port, addr
+	e.tcpReservation = reservation
 	e.mu.Unlock()
 	return nil
 }
-func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
+func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string, reservation *socket.Reservation) error {
 	e.mu.Lock()
 	if e.closed || e.UdpServer != nil {
 		e.mu.Unlock()
 		err := conn.Close()
+		reservation.Release()
 		if e.PortManager != nil {
 			e.PortManager.Release(port)
 		}
@@ -136,18 +150,21 @@ func (e *WasmEnv) InstallUDP(conn *net.UDPConn, port int, addr string) error {
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.UdpServer, e.UdpServerPort, e.UdpServerAddr = conn, port, addr
+	e.udpReservation = reservation
 	e.mu.Unlock()
 	return nil
 }
-func (e *WasmEnv) InstallSCION(conn pan.ListenConn) error {
+func (e *WasmEnv) InstallSCION(conn pan.ListenConn, reservation *socket.Reservation) error {
 	e.mu.Lock()
 	if e.closed || e.ScionServer != nil {
 		e.mu.Unlock()
 		err := conn.Close()
+		reservation.Release()
 		e.RecordCleanupError(err)
 		return errors.Join(net.ErrClosed, err)
 	}
 	e.ScionServer = conn
+	e.scionReservation = reservation
 	e.mu.Unlock()
 	return nil
 }
@@ -170,18 +187,21 @@ func (e *WasmEnv) Close() error {
 		e.mu.Unlock()
 		if tcp != nil {
 			e.closeErr = errors.Join(e.closeErr, tcp.Close())
+			e.tcpReservation.Release()
 			if e.PortManager != nil {
 				e.PortManager.Release(tcpPort)
 			}
 		}
 		if udp != nil {
 			e.closeErr = errors.Join(e.closeErr, udp.Close())
+			e.udpReservation.Release()
 			if e.PortManager != nil {
 				e.PortManager.Release(udpPort)
 			}
 		}
 		if scion != nil {
 			e.closeErr = errors.Join(e.closeErr, scion.Close())
+			e.scionReservation.Release()
 		}
 		if e.Registry != nil {
 			_ = e.Registry.CloseAll()

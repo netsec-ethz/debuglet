@@ -222,7 +222,7 @@ func startGuest(t *testing.T, wasm []byte, opts hostOptions) *guestRun {
 	if err != nil {
 		t.Fatalf("netpolicy.Parse: %v", err)
 	}
-	deb := hostdebuglet.New(logger, id, "guest-compatibility", policy, operator, schedule, limiter, packetCount, nil, ports)
+	deb := hostdebuglet.New(logger, id, "guest-compatibility", policy, operator, schedule, limiter, packetCount, nil, ports, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)))
 	initCtx, cancelInit := context.WithTimeout(context.Background(), initTimeout)
 	g := &guestRun{t: t, deb: deb, cancelInit: cancelInit, errCh: make(chan error, 1)}
 	t.Cleanup(g.stop)

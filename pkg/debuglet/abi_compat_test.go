@@ -244,8 +244,8 @@ func retainedGuest(t *testing.T) ([]byte, guestRecord) {
 	if record.GuestABI != abiV1 {
 		t.Fatalf("retained guest records ABI %q, want %q", record.GuestABI, abiV1)
 	}
-	if record.Toolchain != artifact.Toolchain {
-		t.Fatalf("retained guest was built with %q, want the pinned %q", record.Toolchain, artifact.Toolchain)
+	if record.Toolchain != "go1.25.11" {
+		t.Fatalf("retained guest was built with %q, want the original go1.25.11", record.Toolchain)
 	}
 	if record.Bytes != int64(len(wasm)) {
 		t.Fatalf("retained guest is %d bytes, its record says %d", len(wasm), record.Bytes)

@@ -1,6 +1,16 @@
 # Continuous integration
 
-GitHub Actions validates pull requests and `main` on fresh Linux amd64 runners. It builds, tests, packages, and runs Debuglet locally; it does not deploy any environment.
+GitHub Actions validates pull requests, `main`, and protected version-tag pushes on fresh Linux amd64 runners. It builds, tests, packages, and runs Debuglet locally; it does not deploy any environment.
+
+Version-tag pushes run the same complete validation workflow. Release versions
+require a valid `vMAJOR.MINOR.PATCH` tag (optionally a dotted prerelease suffix),
+a GitHub tag protection rule or ruleset reported as protected, and the fetched
+tag resolving to the workflow checkout. An unprotected or mismatched tag fails;
+manual dispatch cannot substitute for a protected tag push. Repository
+administrators must configure that protection before creating a release tag.
+The package job retains the existing full and role-specific archives, installers,
+checksums and compatibility metadata as CI artifacts. The workflow does not
+create tags, publish a GitHub release or upload release assets.
 
 ## Run the common checks
 
@@ -24,6 +34,14 @@ and installer checksums before installing, then verify the installed payload.
 missing selections, malformed events and failed tests cannot pass as coverage.
 
 ## Security and offline checks
+
+The required vulnerability lane pins govulncheck and rejects known vulnerabilities
+reachable from native package symbols. It retains the tool/database versions and
+call paths. Findings limited to an uncalled module are informational. Any temporary
+exception in `tools/vulnerability-exceptions.json` must name one advisory and
+module, a review URL, a reason, and an expiry no more than 30 days away. Expired
+exceptions fail. This gate currently covers Go dependencies, not container OS
+packages.
 
 The secret lane scans proposed commits, every tracked file at `HEAD`, and the
 produced archives using pinned Gitleaks with its default rules. Reports contain

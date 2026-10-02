@@ -41,7 +41,7 @@ func (f *fakeSocket) RemoteAddr() string { return "fake.com:1234" }
 // TestSocketRegistryAddAndGet verifies that sockets can be added and retrieved
 // by their returned handle.
 func TestSocketRegistryAddAndGet(t *testing.T) {
-	reg := &SocketRegistry{}
+	reg := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 
 	tcp := &fakeSocket{socketType: SocketTypeTCP}
 	tls := &fakeSocket{socketType: SocketTypeTLS}
@@ -82,7 +82,7 @@ func TestSocketRegistryAddAndGet(t *testing.T) {
 // TestSocketRegistryInvalidHandle verifies that Get and Close return an error
 // for out-of-range handles.
 func TestSocketRegistryInvalidHandle(t *testing.T) {
-	reg := &SocketRegistry{}
+	reg := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 
 	if _, err := reg.Get(0); err == nil {
 		t.Error("expected error for empty registry, got nil")
@@ -98,7 +98,7 @@ func TestSocketRegistryInvalidHandle(t *testing.T) {
 // TestSocketRegistryClose verifies that closing a handle marks the socket as
 // closed and prevents subsequent access.
 func TestSocketRegistryClose(t *testing.T) {
-	reg := &SocketRegistry{}
+	reg := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 	sock := &fakeSocket{socketType: SocketTypeTCP}
 	h, addErr := reg.Add(sock)
 	if addErr != nil {
@@ -125,7 +125,7 @@ func TestSocketRegistryClose(t *testing.T) {
 
 // TestSocketRegistryCloseAll verifies that CloseAll closes every open socket.
 func TestSocketRegistryCloseAll(t *testing.T) {
-	reg := &SocketRegistry{}
+	reg := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 
 	sockets := []*fakeSocket{
 		{socketType: SocketTypeTCP},
@@ -148,7 +148,7 @@ func TestSocketRegistryCloseAll(t *testing.T) {
 // TestSocketRegistryCloseAllIdempotent verifies that CloseAll on an empty or
 // already-closed registry is safe.
 func TestSocketRegistryCloseAllIdempotent(t *testing.T) {
-	reg := &SocketRegistry{}
+	reg := NewSocketRegistry(NewBudget(DefaultLimits(), NewDescriptorBudget(DefaultNodeDescriptors)))
 	reg.CloseAll() // must not panic
 
 	sock := &fakeSocket{socketType: SocketTypeTCP}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
+	"github.com/netsec-ethz/debuglet/internal/storageheadroom"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"golang.org/x/sys/unix"
 )
@@ -49,7 +50,9 @@ func TestSpoolPhysicalDiskFullPreservesCommittedPrefix(t *testing.T) {
 	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(db, DefaultLimits())
+	limits := DefaultLimits()
+	limits.ControlReserveBytes = 4096
+	s, err := New(db, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +82,12 @@ func TestSpoolPhysicalDiskFullPreservesCommittedPrefix(t *testing.T) {
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	// This frame must grow the database rather than fit a preexisting small page.
+	// The headroom guard refuses this payload before attempting a database write.
 	_, err = s.Append(t.Context(), id, time.Now().UTC(), bytes.Repeat([]byte("x"), pb.MaxOutputFrameBytes))
-	if err == nil || errors.Is(err, ErrOutputLimit) || errors.Is(err, ErrSpoolLimit) {
-		t.Fatalf("expected physical SQLite write failure: %v", err)
+	if !errors.Is(err, ErrSpoolLimit) || !errors.Is(err, storageheadroom.ErrLowSpace) {
+		t.Fatalf("expected storage headroom refusal on exhausted mount: %v", err)
 	}
-	var coded interface{ Code() int }
-	if !errors.As(err, &coded) || coded.Code()&255 != 13 {
-		t.Fatalf("expected SQLITE_FULL on the exhausted mount: %v", err)
-	}
+
 	after, err := s.Get(t.Context(), id)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("failed append altered prefix/end: before=%+v after=%+v err=%v", before, after, err)
@@ -106,7 +106,7 @@ func TestSpoolPhysicalDiskFullPreservesCommittedPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err = New(db, DefaultLimits())
+	s, err = New(db, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

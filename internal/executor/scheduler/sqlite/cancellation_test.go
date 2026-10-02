@@ -42,7 +42,7 @@ func (db *cancellationDB) decorate(conn database.DBTX) database.DBTX {
 	return &cancellationConnection{conn, db}
 }
 func (db *cancellationConnection) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	create := strings.Contains(query, "-- name: CreateDebuglet")
+	create := strings.Contains(query, "-- name: CreateBoundedDebuglet")
 	if create {
 		db.creates.Add(1)
 	}

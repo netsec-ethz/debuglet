@@ -152,6 +152,13 @@ func TestRestoreSchedulerAdmission(t *testing.T) {
 				// inserts the debuglet. The sentinel error aborts the flow
 				// before any upload; the deferred tx.Rollback follows.
 				mock.ExpectBegin()
+				for _, read := range []struct {
+					name  string
+					value int64
+				}{{"page_size", 4096}, {"page_count", 32}, {"max_page_count", 1 << 30}, {"freelist_count", 0}} {
+					mock.ExpectQuery(regexp.QuoteMeta("PRAGMA main." + read.name)).WillReturnRows(sqlmock.NewRows([]string{read.name}).AddRow(read.value))
+				}
+				mock.ExpectQuery(regexp.QuoteMeta("PRAGMA database_list")).WillReturnRows(sqlmock.NewRows([]string{"seq", "name", "file"}).AddRow(0, "main", ""))
 				mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO debuglets")).WillReturnError(errSentinelInsert)
 				mock.ExpectRollback()
 			}

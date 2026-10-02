@@ -142,9 +142,10 @@ static __always_inline __u8 ipv6_walk_ext_headers(struct ipv6hdr *ip6, void *dat
 
 // Returns NULL if no matching socket is found. Caller must bpf_sk_release() the result.
 static __always_inline struct bpf_sock *lookup_ingress_sk(
-    struct __sk_buff *skb, struct ethhdr *eth, struct iphdr *ip,
-    struct ipv6hdr *ip6, void *data_end) {
+    struct __sk_buff *skb, struct ethhdr *eth, void *data_end) {
 
+  struct iphdr *ip = (void *)(eth + 1);
+  struct ipv6hdr *ip6 = (void *)(eth + 1);
   __u8 ipproto;
   void *transport_hdr;
 
@@ -266,7 +267,7 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
   int action = TCX_NEXT;
   // --- INGRESS: look up socket via 5-tuple ---
   if (is_ingress) {
-    looked_up_sk = lookup_ingress_sk(skb, eth, ip, ip6, data_end);
+    looked_up_sk = lookup_ingress_sk(skb, eth, data_end);
     if (looked_up_sk)
       uuid = bpf_sk_storage_get(&debuglet_sk_map, looked_up_sk, 0, 0);
   }

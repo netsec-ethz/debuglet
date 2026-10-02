@@ -269,14 +269,14 @@ func removeLocalFile(path string) error {
 // (possibly annotated by a single wrapping error) is a successful signal stop.
 func localCancellationOnly(err error) bool {
 	for err != nil {
-		if err == context.Canceled {
-			return true
-		}
-		wrapped, ok := err.(interface{ Unwrap() error })
-		if !ok {
+		switch wrapped := err.(type) {
+		case interface{ Unwrap() []error }:
 			return false
+		case interface{ Unwrap() error }:
+			err = wrapped.Unwrap()
+		default:
+			return errors.Is(err, context.Canceled)
 		}
-		err = wrapped.Unwrap()
 	}
 	return false
 }

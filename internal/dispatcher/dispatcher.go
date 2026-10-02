@@ -41,6 +41,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/ipmetadata"
 	"sync"
 	"time"
 
@@ -60,8 +61,11 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	db           *sql.DB
 	outputLimits config.OutputConfig
+	admission    *accountAdmission
+	retention    config.RetentionConfig
 	attribution  config.AttributionConfig
 	display      map[string]config.ExecutorDisplay
+	ipMetadata   *ipmetadata.Databases
 
 	closed             bool
 	restored           bool // set under mu once a RestoreScheduler call has succeeded
@@ -106,6 +110,7 @@ func New(l *zap.Logger, db *sql.DB, version string, execTimeout, granularity tim
 		logger:          l,
 		db:              db,
 		outputLimits:    config.DefaultOutputConfig(),
+		admission:       newAccountAdmission(),
 		destinations:    resource.NewDestinations(bitrate.Gigabit),
 		Payment:         paymentHandler,
 		scheduler:       schedule.New(granularity),
