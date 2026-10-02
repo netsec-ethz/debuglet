@@ -102,7 +102,7 @@ class ReleaseTests(unittest.TestCase):
     def test_subject_checksums_and_source_are_bound(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            expected = release.package_names(VERSION) | release.METADATA
+            expected = release.package_names(VERSION) | release.METADATA | release.EVIDENCE_FILES
             for name in expected:
                 (root / name).write_bytes(name.encode())
             subject = {'schema_version': 1, 'version': VERSION, 'source_sha': SOURCE, 'builder': BUILDER,
