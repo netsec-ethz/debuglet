@@ -48,13 +48,18 @@ func browserLoginCommand(ctx context.Context,c *client.Client,profile connection
  for {
   timer:=time.NewTimer(interval)
   select{case <-waiting.Done():timer.Stop();return reportFailure(ctx,"dbl login",stderr,errors.New("browser login cancelled or expired; run dbl login again"));case <-timer.C:}
-  poll,err:=c.PollDeviceLogin(waiting,login)
-  if err!=nil{return reportFailure(ctx,"dbl login: check browser approval",stderr,err)}
+ poll,err:=c.PollDeviceLogin(waiting,login)
+  if err!=nil{
+   var httpErr *client.HTTPError
+   if errors.As(err,&httpErr)&&(httpErr.StatusCode==429||httpErr.StatusCode==503){interval=max(interval+5*time.Second,httpErr.RetryAfter);continue}
+   return reportFailure(ctx,"dbl login: check browser approval",stderr,err)
+  }
   switch poll.State {
   case "authorization_pending","slow_down":interval=time.Duration(poll.Interval)*time.Second
   case "authorized":
    credential:=poll.Credential
    authenticated,err:=c.WithCredential(credential.Token);if err!=nil{return reportFailure(ctx,"dbl login",stderr,err)}
+   if waiting.Err()!=nil{cleanup,cleanupCancel:=context.WithTimeout(context.Background(),5*time.Second);defer cleanupCancel();_=authenticated.Logout(cleanup);return reportFailure(ctx,"dbl login",stderr,errors.New("browser login cancelled; run dbl login again"))}
    if err=connections.SaveCredential(options.ConfigPath,profile.Name,connections.Credential{Endpoint:profile.Endpoint,Token:credential.Token,ExpiresAt:credential.ExpiresAt,AccountID:credential.ID});err!=nil{
     cleanup,cleanupCancel:=context.WithTimeout(context.Background(),5*time.Second);defer cleanupCancel();_=authenticated.Logout(cleanup)
     return reportFailure(ctx,"dbl login: store credential",stderr,err)
@@ -70,7 +75,8 @@ func browserLoginCommand(ctx context.Context,c *client.Client,profile connection
 func openLoginBrowser(address string)error{
  var name string
  switch runtime.GOOS{case "darwin":name="open";case "linux":name="xdg-open";default:return errors.New("browser opening unavailable")}
- cmd:=exec.Command(name,address)
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
+ cmd:=exec.CommandContext(ctx,name,address)
  cmd.Stdout=io.Discard;cmd.Stderr=io.Discard
  return cmd.Run()
 }

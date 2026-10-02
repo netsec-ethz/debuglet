@@ -109,5 +109,7 @@ func(c *Client) CredentialStatus(ctx context.Context)(CredentialStatus,error){
  data,err:=c.do(ctx,http.MethodGet,route,nil,nil,http.StatusOK);if err!=nil{return CredentialStatus{},err}
  var result CredentialStatus
  if err=c.decode(http.MethodGet,route,data,&result);err!=nil{return CredentialStatus{},err}
+ encoded,_:=json.Marshal(result)
+ if c.credential!=""&&strings.Contains(string(encoded),c.credential){return CredentialStatus{},c.protocolErr(http.MethodGet,route,"credential material in status response")}
  return result,nil
 }

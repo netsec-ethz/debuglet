@@ -273,3 +273,27 @@ func TestDeviceLoginStartIsRateLimited(t *testing.T) {
 		t.Fatal("device issuance was not rate limited")
 	}
 }
+
+func TestScopedBearerAndBrowserApplySameRunOwnership(t *testing.T) {
+ f:=credentialFixture(t);ownerBrowser:=credentialBrowser(t,f);otherBrowser:=credentialBrowser(t,f)
+ owner:=createTestCredential(t,f,ownerBrowser,"account:read","measurements:read","measurements:write")
+ other:=createTestCredential(t,f,otherBrowser,"account:read","measurements:read","measurements:write")
+ ownerClient,err:=f.client(f.root.URL,false).WithCredential(owner.Token);if err!=nil{t.Fatal(err)}
+ run:=f.submit(ownerClient,[]string{"owned"}).IDs[0]
+ for _,headers:=range []map[string]string{ownerBrowser,authBearer(owner.Token)}{
+  if s,_:=authStatus(t,f,http.MethodGet,"/debuglet/"+run+"/state",nil,headers);s!=200{t.Fatalf("owner read %d",s)}
+ }
+ for _,headers:=range []map[string]string{otherBrowser,authBearer(other.Token)}{
+  for _,target:=range []string{"/debuglet/"+run+"/state","/debuglet/"+authSampleID+"/state"}{
+   if s,_:=authStatus(t,f,http.MethodGet,target,nil,headers);s!=404{t.Fatalf("unowned/unknown run read %d",s)}
+  }
+ }
+}
+
+func TestRevokingApprovalSessionCancelsUnconsumedLogin(t *testing.T) {
+ f:=credentialFixture(t);browser:=credentialBrowser(t,f);login:=startTestDevice(t,f)
+ if s,_:=authStatus(t,f,http.MethodPost,"/auth/device/approve",credentialJSON(t,DeviceApprovalRequest{UserCode:login.UserCode,Audience:login.Audience,Confirm:true}),browser);s!=204{t.Fatalf("approve %d",s)}
+ if s,_:=authStatus(t,f,http.MethodPost,"/auth/logout",[]byte(`{}`),browser);s!=204{t.Fatalf("logout %d",s)}
+ readyDevicePoll(t,f)
+ if poll:=pollTestDevice(t,f,login);poll.State!="access_denied"||poll.Credential!=nil{t.Fatal("revoked browser approval issued a credential")}
+}
