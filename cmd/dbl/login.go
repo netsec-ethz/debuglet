@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,13 +60,15 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	if code, ok := parseCommandFlags(fs, args, loginUsage, stdout, stderr); !ok {
 		return code
 	}
+	scopesRequested := false
+	fs.Visit(func(f *flag.Flag) { if f.Name == "scopes" { scopesRequested = true } })
 	if fs.NArg() != 0 {
 		return usageError("dbl login", loginUsage, stderr, "login takes no positional arguments; supply a key with --account-key-file")
 	}
 	if *recoveryFile != "" && *register == "" {
 		return usageError("dbl login", loginUsage, stderr, "--recovery-file only applies to --register")
 	}
-	if (*browser || *noBrowser) && (*keyFile != "" || *register != "" || strings.TrimSpace(os.Getenv(accountKeyEnv)) != "") {
+	if (*browser || *noBrowser || scopesRequested) && (*keyFile != "" || *register != "" || strings.TrimSpace(os.Getenv(accountKeyEnv)) != "") {
 		return usageError("dbl login", loginUsage, stderr, "browser approval cannot be combined with account-key login or registration")
 	}
 
@@ -83,7 +86,7 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	if _, err := connections.LoadCredentials(options.ConfigPath); err != nil {
 		return reportFailure(ctx, "dbl login: read credential store", stderr, err)
 	}
-	if *browser || *noBrowser || (*register == "" && *keyFile == "" && strings.TrimSpace(os.Getenv(accountKeyEnv)) == "" && remoteLoginEndpoint(profile.Endpoint)) {
+	if *browser || *noBrowser || scopesRequested || (*register == "" && *keyFile == "" && strings.TrimSpace(os.Getenv(accountKeyEnv)) == "" && remoteLoginEndpoint(profile.Endpoint)) {
 		return browserLoginCommand(ctx, c, profile, options, strings.Split(*scopes, ","), *noBrowser, stdout, stderr)
 	}
 

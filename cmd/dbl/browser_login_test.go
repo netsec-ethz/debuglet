@@ -63,3 +63,8 @@ func TestBrowserLoginInterruptionCancelsTransaction(t *testing.T){
 
 type cancelLoginWriter struct{cancel context.CancelFunc}
 func(w cancelLoginWriter)Write(p []byte)(int,error){w.cancel();return len(p),nil}
+
+func TestScopedLoginCannotSilentlyIssueLegacySession(t *testing.T) {
+ code,out,errout:=runCLI(t.Context(),"login","--account-key-file","unused","--scopes","account:read")
+ if code!=exitUsage||!strings.Contains(errout,"cannot be combined"){t.Fatalf("scoped account-key login accepted: %d %s %s",code,out,errout)}
+}
