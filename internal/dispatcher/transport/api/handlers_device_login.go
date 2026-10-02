@@ -115,6 +115,13 @@ func (h *Handler) PollDeviceLogin(c echo.Context) error {
   if _,err=q.UpdateDeviceLoginPoll(ctx,database.UpdateDeviceLoginPollParams{NextPollAt:now+row.PollInterval,PollInterval:row.PollInterval,Selector:selector});err!=nil{return credentialFailure(err)}
   response=DeviceLoginPoll{State:"authorization_pending",Interval:row.PollInterval}
  case row.State=="approved"&&row.UserID.Valid:
+  approval,err:=q.GetSessionBySelector(ctx,row.ApproverSession)
+  if errors.Is(err,sql.ErrNoRows)||err==nil&&(approval.Revoked!=0||approval.Kind!="browser"||!time.Now().Before(approval.ExpiresAt.Time)) {
+   if err=q.CancelDeviceLogin(ctx,selector);err!=nil{return credentialFailure(err)}
+   response.State="access_denied"
+   break
+  }
+  if err!=nil{return credentialFailure(err)}
   changed,err:=q.ConsumeDeviceLogin(ctx,database.ConsumeDeviceLoginParams{Selector:selector,Now:now});if err!=nil{return credentialFailure(err)}
   if changed!=1{return unauthorized()}
   credential,err:=issueAPICredential(ctx,q,row.UserID.Int64,row.Audience,row.Scopes,row.Label);if err!=nil{return err}
@@ -184,7 +191,7 @@ func (h *Handler) decideDeviceLogin(c echo.Context,approve bool) error {
  var changed int64
  if approve {
   user,lookupErr:=q.GetUserByUUID(ctx,account.UserUUID);if lookupErr!=nil{return credentialFailure(lookupErr)}
-  changed,err=q.ApproveDeviceLogin(ctx,database.ApproveDeviceLoginParams{Selector:row.Selector,UserID:sql.NullInt64{Int64:user.ID,Valid:true},Now:time.Now().Unix()})
+  changed,err=q.ApproveDeviceLogin(ctx,database.ApproveDeviceLoginParams{Selector:row.Selector,UserID:sql.NullInt64{Int64:user.ID,Valid:true},ApproverSession:account.Session,Now:time.Now().Unix()})
  }else{changed,err=q.DenyDeviceLogin(ctx,database.DenyDeviceLoginParams{Selector:row.Selector,Now:time.Now().Unix()})}
  if err!=nil{return credentialFailure(err)}
  if changed!=1{return apiError(http.StatusNotFound,CodeNotFound,"login request not found or expired")}

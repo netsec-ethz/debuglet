@@ -15,6 +15,7 @@ CREATE TABLE device_logins (
     next_poll_at INTEGER NOT NULL,
     poll_interval INTEGER NOT NULL DEFAULT 5,
     state TEXT NOT NULL DEFAULT 'pending',
+    approver_session TEXT NOT NULL DEFAULT '',
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX device_logins_expiry ON device_logins(expires_at);

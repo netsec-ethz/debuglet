@@ -31,7 +31,7 @@ UPDATE device_logins SET next_poll_at = sqlc.arg(next_poll_at), poll_interval = 
 WHERE selector = sqlc.arg(selector) AND state IN ('pending', 'approved');
 
 -- name: ApproveDeviceLogin :execrows
-UPDATE device_logins SET state = 'approved', user_id = sqlc.arg(user_id)
+UPDATE device_logins SET state = 'approved', user_id = sqlc.arg(user_id), approver_session = sqlc.arg(approver_session)
 WHERE selector = sqlc.arg(selector) AND state = 'pending' AND expires_at > sqlc.arg(now);
 
 -- name: DenyDeviceLogin :execrows
