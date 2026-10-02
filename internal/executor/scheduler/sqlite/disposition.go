@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
@@ -30,38 +29,42 @@ var dispositionBindingLimit int64 = 1000
 // has joined and before an operator decides whether the node may be upgraded
 // or rebuilt, so it never opens a database a daemon is still serving on
 // purpose: a caller must prove the join first.
-func InspectDisposition(ctx context.Context, path string) (scheduler.Disposition, error) {
-	var d scheduler.Disposition
-	absolute, err := filepath.Abs(path)
+func InspectDisposition(ctx context.Context, path string) (d scheduler.Disposition, err error) {
+	err = PreserveDatabaseOwnership(path, func() error {
+		var readErr error
+		d, readErr = inspect(ctx, path)
+		return readErr
+	})
+	return d, err
+}
+
+// PreserveDatabaseOwnership gives any newly created SQLite sidecars the
+// database owner's identity. The operation must close all handles before it
+// returns. Existing sidecars are untouched and no locking file is unlinked.
+func PreserveDatabaseOwnership(path string, operation func() error) error {
+	info, err := os.Lstat(path)
 	if err != nil {
-		return d, err
-	}
-	info, err := os.Lstat(absolute)
-	if err != nil {
-		return d, err
+		return err
 	}
 	if !info.Mode().IsRegular() {
-		return d, fmt.Errorf("executor database %q is not a regular file", absolute)
+		return fmt.Errorf("executor database %q is not a regular file", path)
 	}
-	// Reading a write-ahead log makes SQLite build the database's
-	// shared-memory index, creating that file when it is absent. This
-	// command runs as an administrator over a directory that belongs to
-	// the service account, so a file it creates there would belong to the
-	// wrong account and the daemon could not write it at its next start.
-	// An index that was not there before is therefore given to whoever owns
-	// the database. It is handed over rather than removed: a daemon started
-	// since this read may already be serving on it, and unlinking a live
-	// database's index takes the locking state its connections share away
-	// from them. It is a scratch file either way.
-	index := absolute + "-shm"
-	_, indexErr := os.Lstat(index)
-	d, err = inspect(ctx, absolute)
-	if errors.Is(indexErr, fs.ErrNotExist) {
-		if ownErr := ownLike(info, index); ownErr != nil {
-			return d, errors.Join(err, fmt.Errorf("hand the shared-memory index of %q to the database's owner: %w", absolute, ownErr))
+	var missing []string
+	for _, suffix := range []string{"-shm", "-wal"} {
+		sidecar := path + suffix
+		if _, err := os.Lstat(sidecar); errors.Is(err, fs.ErrNotExist) {
+			missing = append(missing, sidecar)
+		} else if err != nil {
+			return err
 		}
 	}
-	return d, err
+	err = operation()
+	for _, sidecar := range missing {
+		if ownErr := ownLike(info, sidecar); ownErr != nil {
+			err = errors.Join(err, fmt.Errorf("preserve database sidecar ownership: %w", ownErr))
+		}
+	}
+	return err
 }
 
 // ownLike gives the file at index the owner of the file owner describes,
@@ -142,7 +145,13 @@ func inspectRuns(ctx context.Context, db *sql.DB, d *scheduler.Disposition) erro
 	d.Queued = d.Retained - d.Started
 	// Every stored binding belongs to a session that no longer exists, and
 	// this build restores none of them.
-	d.Quarantined = d.Retained
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM operator_dispositions`).Scan(&d.Archived); err != nil {
+		return err
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM debuglets
+		WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)`).Scan(&d.Quarantined); err != nil {
+		return err
+	}
 	// Counting sessions is the only bounded part, and the order makes the
 	// bound a deterministic prefix rather than whichever rows came first.
 	var bindings int64

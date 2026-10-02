@@ -6,7 +6,9 @@ VALUES (?, ?, ?, ?);
 SELECT * FROM output_runs WHERE run_id = sqlc.arg(run_id);
 
 -- name: ListPendingOutputRuns :many
-SELECT * FROM output_runs WHERE NOT end_acknowledged AND run_id > ? ORDER BY run_id LIMIT ?;
+SELECT * FROM output_runs WHERE NOT end_acknowledged AND output_runs.run_id > ?
+AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id)
+ORDER BY output_runs.run_id LIMIT ?;
 
 -- name: CountOutputRuns :one
 -- A run whose end the dispatcher acknowledged holds no further spool capacity.
@@ -33,7 +35,8 @@ UPDATE output_runs SET last_sequence = last_sequence + 1,
 UPDATE output_runs SET status = ?, reason = ? WHERE run_id = ? AND status = 'open';
 
 -- name: InterruptOpenOutputRuns :exec
-UPDATE output_runs SET status = 'truncated', reason = 'executor_interrupted' WHERE status = 'open';
+UPDATE output_runs SET status = 'truncated', reason = 'executor_interrupted' WHERE status = 'open'
+AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id);
 
 -- name: SumAcknowledgedOutput :one
 SELECT CAST(COALESCE(SUM(length(output)), 0) AS INTEGER) AS byte_count, COUNT(*) AS frame_count
