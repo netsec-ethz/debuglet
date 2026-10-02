@@ -170,10 +170,20 @@ func TestFairshareDetachesBeforeLoggingAndRPC(t *testing.T) {
 	if len(requests) != 1 || len(requests[0].Limits) != len(dests) {
 		t.Fatalf("detached updates = %v", requests)
 	}
-	for i, limit := range requests[0].Limits {
-		if limit.Address != dests[i] || limit.BitsLimit != 80 {
-			t.Fatalf("detached update %d = %v, want %s at 80", i, limit, dests[i])
+	want := make(map[string]int64, len(dests))
+	for _, dest := range dests {
+		want[dest] = 80
+	}
+	for _, limit := range requests[0].Limits {
+		address := limit.GetAddress()
+		bits, exists := want[address]
+		if !exists || limit.GetBitsLimit() != bits {
+			t.Fatalf("unexpected, duplicated or changed detached update: %v", limit)
 		}
+		delete(want, address)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing detached updates: %v", want)
 	}
 	d.mu.Lock()
 	remaining := d.destinations.Len()

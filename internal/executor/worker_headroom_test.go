@@ -139,7 +139,9 @@ func TestSharedGuestReceivesCopiedBytesAndEOF(t *testing.T) {
 
 func TestSharedCompilerBudgetKeepsGuestAndControlResponsive(t *testing.T) {
 	cfg := sharedWorkerConfig(t)
-	cfg.CompileWallMS = 1000
+	// Match the race-instrumented kernel lane's compiler deadline witness.
+	// With a full second, this fixture can compile and run on faster hosts.
+	cfg.CompileWallMS = 250
 	supervisor, err := isolation.New(cfg)
 	if err != nil {
 		t.Fatal(err)
