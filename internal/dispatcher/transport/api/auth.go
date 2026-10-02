@@ -40,6 +40,7 @@ const (
 	// sessionPrefix marks an issued session token. It is what a request
 	// presents, as a bearer token or in the session cookie.
 	sessionPrefix = "dbs"
+	apiCredentialPrefix = "dbt"
 )
 
 // Credential kinds as stored in user_credentials.
@@ -110,6 +111,10 @@ type caller struct {
 	// Cookie reports that the credential arrived in the session cookie, which
 	// is the only case that needs CSRF proof.
 	Cookie bool
+	API bool
+	Audience string
+	Scopes []string
+	CreatedAt time.Time
 	// Failure is the rejection a presented credential earned. Public routes
 	// ignore it; every protected route returns it.
 	Failure error
@@ -194,7 +199,8 @@ func unauthorized() *echo.HTTPError {
 // localDevelopment admits a request that presents no credential at all as the
 // local operator, which is the documented development bypass. It is off unless
 // the deployment explicitly asked for it.
-func AuthMiddleware(db *sql.DB, localDevelopment bool) echo.MiddlewareFunc {
+func AuthMiddleware(db *sql.DB, localDevelopment bool, audience ...string) echo.MiddlewareFunc {
+	failedAttempts := newAuthLimiter()
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if healthRoutes[c.Path()] {
@@ -216,8 +222,12 @@ func AuthMiddleware(db *sql.DB, localDevelopment bool) echo.MiddlewareFunc {
 				c.Set(callerKey, anonymous)
 				return next(c)
 			}
-			established, err := authenticate(c, db, presented, fromCookie)
+			established, err := authenticate(c, db, presented, fromCookie, audience...)
 			if err != nil {
+				if limited := failedAttempts.allow(c); limited != nil {
+					err = apiError(http.StatusTooManyRequests, CodeRateLimited, "too many failed authentication attempts; retry later")
+				}
+				c.Response().Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 				c.Set(callerKey, &caller{Failure: err})
 				return next(c)
 			}
@@ -249,8 +259,13 @@ func presentedCredential(c echo.Context) (token string, fromCookie bool) {
 }
 
 // authenticate verifies a presented session token against the stored session.
-func authenticate(c echo.Context, db *sql.DB, presented string, fromCookie bool) (*caller, error) {
-	selector, verifier, ok := parseCredential(sessionPrefix, presented)
+func authenticate(c echo.Context, db *sql.DB, presented string, fromCookie bool, audience ...string) (*caller, error) {
+	prefix := sessionPrefix
+	isAPI := strings.HasPrefix(presented, apiCredentialPrefix+"_")
+	if isAPI {
+		prefix = apiCredentialPrefix
+	}
+	selector, verifier, ok := parseCredential(prefix, presented)
 	if !ok {
 		return nil, unauthorized()
 	}
@@ -270,6 +285,13 @@ func authenticate(c echo.Context, db *sql.DB, presented string, fromCookie bool)
 	if !time.Now().UTC().Before(row.ExpiresAt.Time) {
 		return nil, unauthorized()
 	}
+	if isAPI {
+		if fromCookie || row.Kind != "api" || len(audience) == 0 || audience[0] == "" || row.Audience != audience[0] {
+			return nil, unauthorized()
+		}
+	} else if row.Kind != "browser" {
+		return nil, unauthorized()
+	}
 	if fromCookie && !safeMethod(c.Request().Method) {
 		if !verifierMatches(row.CsrfHash, strings.TrimSpace(c.Request().Header.Get(csrfHeaderName))) {
 			return nil, apiError(http.StatusForbidden, CodeForbidden,
@@ -284,6 +306,10 @@ func authenticate(c echo.Context, db *sql.DB, presented string, fromCookie bool)
 		Authenticated: true,
 		Session:       selector,
 		Cookie:        fromCookie,
+		API: isAPI,
+		Audience: row.Audience,
+		Scopes: strings.Fields(row.Scopes),
+		CreatedAt: row.CreatedAt.Time,
 	}, nil
 }
 
@@ -316,6 +342,10 @@ func requireCaller(c echo.Context) (*caller, error) {
 	}
 	if !established.Authenticated && !established.Local {
 		return nil, unauthorized()
+	}
+	if established.API && !credentialAllows(established.Scopes, c.Request().Method, c.Path()) {
+		c.Response().Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope"`)
+		return nil, apiError(http.StatusForbidden, CodeForbidden, "credential does not permit this operation")
 	}
 	return established, nil
 }

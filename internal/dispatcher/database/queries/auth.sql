@@ -28,6 +28,7 @@ VALUES (?, ?, ?, ?, ?, ?, 0);
 
 -- name: GetSessionBySelector :one
 SELECT sessions.verifier_hash, sessions.csrf_hash, sessions.expires_at, sessions.revoked,
+       sessions.kind, sessions.audience, sessions.scopes, sessions.created_at,
        users.uuid, users.name, users.role
 FROM sessions
 INNER JOIN users ON users.id = sessions.user_id
