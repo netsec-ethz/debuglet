@@ -15,3 +15,7 @@ internal/dispatcher/transport/api/auth_test.go:generic-api-key:28
 88f4434083ea2cc7dfeaaed673b01fe83579947a:pkg/client/retry_test.go:generic-api-key:22
 # Generated public OpenAPI SHA256 digest in the release compatibility record.
 .cache/ci/packages/compatibility.json:generic-api-key:6
+# Removed localhost TLS fixtures: both local configs disabled TLS. Their removal
+# and lack of runtime authority are recorded in 209765cb7c74d04e70ef68ac289d7c1c4b764421.
+11cfc7430a18964e308e5cd2426badc5630de19f:local-config/dispatcher/key:private-key:1
+11cfc7430a18964e308e5cd2426badc5630de19f:local-config/executor/key:private-key:1

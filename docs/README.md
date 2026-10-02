@@ -31,6 +31,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Executor recovery](operations/executor-recovery.md)
 - [Inspect an interrupted run](operations/recovery-inspection.md)
 - [Local validation checks](operations/local-checks.md)
+- [Signed releases and offline verification](operations/releases.md)
 
 Use the [deployment guide](../deploy/README.md) for the maintained Ansible procedures and upgrade inputs.
 
