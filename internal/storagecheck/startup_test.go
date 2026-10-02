@@ -86,6 +86,12 @@ func TestServiceStartupRecoversInterruptedWriter(t *testing.T) {
 			}
 			unchangedBytes(t, path, before)
 			unchangedBytes(t, path+"-journal", journalBefore)
+			if err := CheckForService(t.Context(), role, path); err != nil {
+				t.Fatalf("launcher preflight refused recoverable state: %v", err)
+			}
+			unchangedBytes(t, path, before)
+			unchangedBytes(t, path+"-journal", journalBefore)
+			assertNoRecoveryCopy(t, path)
 			db, err := OpenForService(t.Context(), role, path)
 			if err != nil {
 				t.Fatal(err)
@@ -119,6 +125,11 @@ func TestServiceStartupRefusesInterruptedUnsupportedDatabase(t *testing.T) {
 			modify(t, path, tc.change)
 			interruptedWriter(t, path)
 			before, journalBefore := digest(t, path), digest(t, path+"-journal")
+			if err := CheckForService(t.Context(), Dispatcher, path); !errors.Is(err, tc.want) {
+				t.Fatalf("launcher preflight=%v; want %v", err, tc.want)
+			}
+			unchangedBytes(t, path, before)
+			unchangedBytes(t, path+"-journal", journalBefore)
 			db, err := OpenForService(t.Context(), Dispatcher, path)
 			if db != nil {
 				db.Close()
