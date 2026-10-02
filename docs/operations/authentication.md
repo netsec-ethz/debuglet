@@ -60,7 +60,8 @@ Forwarded scheme and host headers cannot choose that origin or cookie security.
 Both `[authentication]` URLs may be omitted to leave browser-assisted credential
 issuance disabled. Existing browser and account-key login remain available as
 configured. Upgrade the dispatcher database deliberately before running this
-version; migrations preserve existing accounts and sessions.
+version, which requires dispatcher schema 18; migrations preserve existing accounts
+and sessions. Older schemas are refused with the explicit upgrade command.
 
 CILogon discovery refreshes hourly; signing keys refresh when an unknown key is
 encountered. Failed discovery, exchange or verification cannot create a session.
