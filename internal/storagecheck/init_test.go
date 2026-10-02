@@ -64,13 +64,16 @@ func TestBootstrapFresh(t *testing.T) {
 					"users":                      "id uuid name role",
 					"debuglet_users":             "debuglet_id user_id",
 					"user_credentials":           "user_id kind selector secret_hash created_at",
-					"sessions":                   "id selector verifier_hash csrf_hash user_id created_at expires_at revoked",
+					"sessions":                   "id selector verifier_hash csrf_hash user_id created_at expires_at revoked kind audience scopes label authenticated_at",
 					"transaction_users":          "transaction_id user_id",
 					"executor_enrollments":       "executor_id fingerprint enrolled_at",
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
 					"owned_executors":            "executor_id user_id name created_at",
-					"oauth_identities":           "provider subject user_id login created_at updated_at",
-				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+					"oauth_identities":           "provider issuer subject user_id login created_at updated_at",
+					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
+					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
+					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
+				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

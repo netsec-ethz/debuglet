@@ -882,3 +882,27 @@ func TestDispatcherRequiresAdmissionProvenanceSchema(t *testing.T) {
 	}
 	unchanged(t, path, before)
 }
+
+func TestDispatcherRequiresIdentitySchema(t *testing.T) {
+	for _, version := range []int64{16, 17} {
+		t.Run(strconv.FormatInt(version, 10), func(t *testing.T) {
+			path := fixture(t, Dispatcher, version)
+			before := digest(t, path)
+			if err := Check(t.Context(), Dispatcher, path); !errors.Is(err, ErrOutdated) || !strings.Contains(err.Error(), "-upgrade-database") {
+				t.Fatalf("identity schema must require explicit upgrade: %v", err)
+			}
+			unchanged(t, path, before)
+		})
+	}
+	for _, change := range []string{"DROP TABLE device_logins", "ALTER TABLE sessions DROP COLUMN authenticated_at", "DROP TABLE pending_identity_links"} {
+		t.Run(change, func(t *testing.T) {
+			path := fixture(t, Dispatcher, 0)
+			modify(t, path, change)
+			before := digest(t, path)
+			if err := Check(t.Context(), Dispatcher, path); !errors.Is(err, ErrIncomplete) {
+				t.Fatalf("incomplete identity schema accepted: %v", err)
+			}
+			unchanged(t, path, before)
+		})
+	}
+}

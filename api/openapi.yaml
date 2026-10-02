@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.12"
+  version: "1.13"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -737,6 +737,1560 @@ paths:
               description: "Contract version this dispatcher implements."
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/providers:
+    get:
+      operationId: "getAuthProviders"
+      summary: "List enabled sign-in providers and the configured API audience."
+      description: "Added in API 1.13. Public authentication transaction. No provider token is accepted as a local credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security: []
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthProviders"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/cilogon:
+    get:
+      operationId: "startCILogonLogin"
+      summary: "Start browser sign-in with CILogon."
+      description: "Added in API 1.13. Public authentication transaction. No provider token is accepted as a local credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security: []
+      responses:
+        "302":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/cilogon/callback:
+    get:
+      operationId: "completeCILogonLogin"
+      summary: "Verify CILogon and issue a local browser session."
+      description: "Added in API 1.13. Public authentication transaction. No provider token is accepted as a local credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security: []
+      responses:
+        "302":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/identities:
+    get:
+      operationId: "listIdentities"
+      summary: "List your linked and pending sign-in methods."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityList"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/identities/{provider}/link:
+    post:
+      operationId: "startIdentityLink"
+      summary: "Challenge a provider before linking its identity."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+        - name: "provider"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityAuthorization"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/identities/{provider}/confirm:
+    post:
+      operationId: "confirmIdentityLink"
+      summary: "Explicitly confirm the pending sign-in method."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+        - name: "provider"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityConfirmation"
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/identities/{provider}:
+    delete:
+      operationId: "unlinkIdentity"
+      summary: "Remove a sign-in method while preserving access."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+        - name: "provider"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityConfirmation"
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/credential:
+    get:
+      operationId: "credentialStatus"
+      summary: "Inspect the current credential without revealing its secret."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialStatus"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/credentials:
+    get:
+      operationId: "listCredentials"
+      summary: "List your active browser and API credentials."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialList"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: "createCredential"
+      summary: "Create an audience-bound scoped API credential."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialRequest"
+      responses:
+        "201":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedCredential"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: "revokeAllCredentials"
+      summary: "Revoke all your sessions and API credentials."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/credentials/{id}:
+    delete:
+      operationId: "revokeCredential"
+      summary: "Revoke one of your credentials immediately."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/device/start:
+    post:
+      operationId: "startDeviceLogin"
+      summary: "Start a short-lived browser approval request."
+      description: "Added in API 1.13. Public authentication transaction. No provider token is accepted as a local credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialRequest"
+      responses:
+        "201":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceLoginStart"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/device/poll:
+    post:
+      operationId: "pollDeviceLogin"
+      summary: "Poll at the returned interval and consume approval once."
+      description: "Added in API 1.13. Public authentication transaction. No provider token is accepted as a local credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceLoginRequest"
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceLoginPoll"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/device/cancel:
+    post:
+      operationId: "cancelDeviceLogin"
+      summary: "Cancel the pending device login."
+      description: "Added in API 1.13. Public authentication transaction. No provider token is accepted as a local credential."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceLoginRequest"
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/device/inspect:
+    post:
+      operationId: "inspectDeviceLogin"
+      summary: "Inspect a device code before deciding to grant access."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceApprovalRequest"
+      responses:
+        "200":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceLoginInfo"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/device/approve:
+    post:
+      operationId: "approveDeviceLogin"
+      summary: "Approve only the displayed account, audience and scopes."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceApprovalRequest"
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/device/deny:
+    post:
+      operationId: "denyDeviceLogin"
+      summary: "Deny a device login without granting a credential."
+      description: "Added in API 1.13. Account management requires a recent browser session; API credentials cannot grant credentials or change sign-in methods."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "X-Debuglet-CSRF"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+          description: "Required with a cookie session."
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceApprovalRequest"
+      responses:
+        "204":
+          description: "Request completed."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+        "400":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "Request refused; see the error code and message."
+          headers:
+            Debuglet-API-Version:
+              schema:
+                type: "string"
           content:
             application/json:
               schema:
@@ -3805,6 +5359,344 @@ components:
         yamux_address:
           type: "string"
           description: "Deployment-configured host:port for the reverse control connection."
+    AuthProviders:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "providers"
+        - "audience"
+        - "device_verification_uri"
+      properties:
+        providers:
+          type: "array"
+          items:
+            type: "object"
+            additionalProperties: false
+            required:
+              - "id"
+              - "name"
+              - "login_url"
+              - "enabled"
+            properties:
+              id:
+                type: "string"
+              name:
+                type: "string"
+              login_url:
+                type: "string"
+              enabled:
+                type: "boolean"
+        audience:
+          type: "string"
+        device_verification_uri:
+          type: "string"
+    IdentityList:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "identities"
+        - "pending"
+        - "reauthentication_required"
+      properties:
+        identities:
+          type: "array"
+          items:
+            type: "object"
+            additionalProperties: false
+            required:
+              - "provider"
+              - "issuer"
+              - "login"
+              - "linked_at"
+              - "enabled"
+            properties:
+              provider:
+                type: "string"
+              issuer:
+                type: "string"
+              login:
+                type: "string"
+              linked_at:
+                type: "integer"
+                format: "int64"
+              enabled:
+                type: "boolean"
+        pending:
+          type: "array"
+          items:
+            type: "object"
+            additionalProperties: false
+            required:
+              - "provider"
+              - "login"
+              - "expires_at"
+            properties:
+              provider:
+                type: "string"
+              login:
+                type: "string"
+              expires_at:
+                type: "integer"
+                format: "int64"
+        reauthentication_required:
+          type: "boolean"
+    IdentityConfirmation:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "confirm"
+      properties:
+        confirm:
+          type: "boolean"
+    IdentityAuthorization:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "authorization_url"
+      properties:
+        authorization_url:
+          type: "string"
+    CredentialRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "audience"
+        - "scopes"
+        - "label"
+      properties:
+        audience:
+          type: "string"
+        scopes:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "account:read"
+              - "executors:read"
+              - "executors:write"
+              - "measurements:read"
+              - "measurements:write"
+        label:
+          type: "string"
+    CredentialInfo:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "kind"
+        - "audience"
+        - "scopes"
+        - "label"
+        - "created_at"
+        - "expires_at"
+        - "current"
+      properties:
+        id:
+          type: "string"
+        kind:
+          type: "string"
+        audience:
+          type: "string"
+        scopes:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "account:read"
+              - "executors:read"
+              - "executors:write"
+              - "measurements:read"
+              - "measurements:write"
+        label:
+          type: "string"
+        created_at:
+          type: "integer"
+          format: "int64"
+        expires_at:
+          type: "integer"
+          format: "int64"
+        current:
+          type: "boolean"
+    CredentialStatus:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "kind"
+        - "audience"
+        - "scopes"
+        - "created_at"
+        - "expires_at"
+      properties:
+        id:
+          type: "string"
+        kind:
+          type: "string"
+        audience:
+          type: "string"
+        scopes:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "account:read"
+              - "executors:read"
+              - "executors:write"
+              - "measurements:read"
+              - "measurements:write"
+        created_at:
+          type: "integer"
+          format: "int64"
+        expires_at:
+          type: "integer"
+          format: "int64"
+    CredentialList:
+      type: "array"
+      items:
+        $ref: "#/components/schemas/CredentialInfo"
+    IssuedCredential:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "token"
+        - "credential_id"
+        - "audience"
+        - "scopes"
+        - "expires_at"
+        - "id"
+        - "name"
+        - "role"
+      properties:
+        token:
+          type: "string"
+        credential_id:
+          type: "string"
+        audience:
+          type: "string"
+        scopes:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "account:read"
+              - "executors:read"
+              - "executors:write"
+              - "measurements:read"
+              - "measurements:write"
+        expires_at:
+          type: "integer"
+          format: "int64"
+        id:
+          type: "string"
+        name:
+          type: "string"
+        role:
+          type: "string"
+    DeviceLoginStart:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "device_code"
+        - "user_code"
+        - "verification_uri"
+        - "audience"
+        - "scopes"
+        - "expires_at"
+        - "interval"
+      properties:
+        device_code:
+          type: "string"
+        user_code:
+          type: "string"
+        verification_uri:
+          type: "string"
+        audience:
+          type: "string"
+        scopes:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "account:read"
+              - "executors:read"
+              - "executors:write"
+              - "measurements:read"
+              - "measurements:write"
+        expires_at:
+          type: "integer"
+          format: "int64"
+        interval:
+          type: "integer"
+          format: "int64"
+    DeviceLoginRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "device_code"
+        - "audience"
+      properties:
+        device_code:
+          type: "string"
+        audience:
+          type: "string"
+    DeviceApprovalRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "user_code"
+        - "audience"
+      properties:
+        user_code:
+          type: "string"
+        audience:
+          type: "string"
+        confirm:
+          type: "boolean"
+    DeviceLoginInfo:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "user_code"
+        - "audience"
+        - "scopes"
+        - "label"
+        - "expires_at"
+        - "state"
+      properties:
+        user_code:
+          type: "string"
+        audience:
+          type: "string"
+        scopes:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+              - "account:read"
+              - "executors:read"
+              - "executors:write"
+              - "measurements:read"
+              - "measurements:write"
+        label:
+          type: "string"
+        expires_at:
+          type: "integer"
+          format: "int64"
+        state:
+          type: "string"
+    DeviceLoginPoll:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "state"
+      properties:
+        state:
+          type: "string"
+        interval:
+          type: "integer"
+          format: "int64"
+        credential:
+          $ref: "#/components/schemas/IssuedCredential"
     Error:
       type: "object"
       description: "Error envelope of every failure. Branch on code; message is a bounded diagnostic for a human and must not be parsed. A minor version may add codes, so treat an unknown code as a plain failure of the status it arrived with."
@@ -3828,6 +5720,7 @@ components:
             - "unauthorized"
             - "forbidden"
             - "not_found"
+            - "identity_conflict"
             - "capacity_exhausted"
             - "cancel_refused"
             - "method_not_allowed"

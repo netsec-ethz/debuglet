@@ -409,6 +409,22 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/metrics", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/auth/github/callback", nil)
+			for _, route := range []string{"/auth/providers", "/auth/cilogon", "/auth/cilogon/callback", "/auth/credential", "/me/identities", "/me/credentials"} {
+				oaRaw(t, raw, http.MethodGet, deployment.url+route, nil)
+			}
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/me/identities/github/link", nil)
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/me/identities/github/confirm", []byte(`{"confirm":true}`))
+			oaRaw(t, raw, http.MethodDelete, deployment.url+"/me/identities/github", []byte(`{"confirm":true}`))
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/me/credentials", []byte(`{"audience":"https://example.test/api","scopes":["account:read"],"label":"contract"}`))
+			oaRaw(t, raw, http.MethodDelete, deployment.url+"/me/credentials/missing", nil)
+			oaRaw(t, raw, http.MethodDelete, deployment.url+"/me/credentials", nil)
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/auth/device/start", []byte(`{"audience":"https://example.test/api","scopes":["account:read"],"label":"contract"}`))
+			for _, action := range []string{"poll", "cancel"} {
+				oaRaw(t, raw, http.MethodPost, deployment.url+"/auth/device/"+action, []byte(`{"device_code":"invalid","audience":"https://example.test/api"}`))
+			}
+			for _, action := range []string{"inspect", "approve", "deny"} {
+				oaRaw(t, raw, http.MethodPost, deployment.url+"/auth/device/"+action, []byte(`{"user_code":"invalid","audience":"https://example.test/api","confirm":true}`))
+			}
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip?ip=127.0.0.1&n=5", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip?ip=203.0.113.7", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/by-ip", nil)

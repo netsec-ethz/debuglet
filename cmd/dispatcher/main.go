@@ -475,6 +475,9 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	if cfg.GitHubOAuth.Enabled && (os.Getenv("GITHUB_OAUTH_CLIENT_ID") == "" || os.Getenv("GITHUB_OAUTH_CLIENT_SECRET") == "") {
 		return errors.New("github_oauth.enabled requires GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET")
 	}
+	if cfg.CILogonOIDC.Enabled && (os.Getenv("CILOGON_CLIENT_ID") == "" || os.Getenv("CILOGON_CLIENT_SECRET") == "") {
+		return errors.New("cilogon_oidc.enabled requires CILOGON_CLIENT_ID and CILOGON_CLIENT_SECRET")
+	}
 	// The local development profile of the HTTP API needs both the operator's
 	// explicit opt-in and an environment this command recognises as local:
 	// blockchain payments disabled, the TLS listener disabled and both listeners
@@ -492,6 +495,8 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
 		api.LocalDevelopment(localDevelopmentProfile(cfg, connection)),
 		api.CookieSecure(!cfg.TLS.Disable || cfg.Server.BehindTLSTerminator),
+		api.Authentication(cfg.Authentication.PublicURL, cfg.Authentication.DeviceVerificationURL),
+		api.CILogon(api.CILogonConfig{Enabled: cfg.CILogonOIDC.Enabled, Issuer: cfg.CILogonOIDC.Issuer, ClientID: os.Getenv("CILOGON_CLIENT_ID"), ClientSecret: os.Getenv("CILOGON_CLIENT_SECRET"), CallbackURL: cfg.CILogonOIDC.CallbackURL, SuccessURL: cfg.CILogonOIDC.SuccessURL}),
 		api.GitHubOAuth(api.GitHubOAuthConfig{
 			Enabled: cfg.GitHubOAuth.Enabled, ClientID: os.Getenv("GITHUB_OAUTH_CLIENT_ID"),
 			ClientSecret: os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"),

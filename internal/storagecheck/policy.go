@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 16
+	MinimumDispatcherVersion int64 = 18
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -93,8 +93,11 @@ func PolicyFor(role Role) (Policy, error) {
 			"executor_enrollments":       {"executor_id", "fingerprint"},
 			"executor_enrollment_tokens": {"selector", "executor_id", "secret_hash", "expires_at"},
 			"owned_executors":            {"executor_id", "user_id", "name", "created_at"},
-			"oauth_identities":           {"provider", "subject", "user_id", "login", "created_at", "updated_at"},
-			"sessions":                   {"selector", "verifier_hash", "csrf_hash", "user_id", "expires_at", "revoked"},
+			"oauth_identities":           {"provider", "issuer", "subject", "user_id", "login", "created_at", "updated_at"},
+			"oauth_login_attempts":       {"state_hash", "provider", "verifier", "nonce", "purpose", "session_selector", "expires_at"},
+			"pending_identity_links":     {"user_id", "provider", "issuer", "subject", "login", "session_selector", "expires_at"},
+			"device_logins":              {"selector", "verifier_hash", "user_code_hash", "audience", "scopes", "label", "expires_at", "next_poll_at", "poll_interval", "state", "approver_session", "user_id"},
+			"sessions":                   {"selector", "verifier_hash", "csrf_hash", "user_id", "expires_at", "revoked", "kind", "audience", "scopes", "label", "authenticated_at"},
 			"transaction_users":          {"transaction_id", "user_id"},
 			"transactions":               {"currency", "status"},
 			"user_credentials":           {"user_id", "kind", "selector", "secret_hash"},

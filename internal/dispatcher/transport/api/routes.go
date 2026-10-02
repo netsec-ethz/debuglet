@@ -43,10 +43,15 @@ type Handler struct {
 	// LocalDevelopment.
 	localDevelopment bool
 	// cookieSecure marks the session cookies Secure. See CookieSecure.
-	cookieSecure bool
-	githubOAuth  GitHubOAuthConfig
-	onboarding   config.ExecutorOnboardingConfig
-	issuer       *enrollment.Signer
+	cookieSecure          bool
+	githubOAuth           GitHubOAuthConfig
+	cilogonOIDC           CILogonConfig
+	cilogonDiscovery      cilogonDiscovery
+	authPublicURL         string
+	deviceVerificationURL string
+	authLimiter           *addressLimiter
+	onboarding            config.ExecutorOnboardingConfig
+	issuer                *enrollment.Signer
 	// health holds the last health observation. See handlers_health.go.
 	health  healthMemo
 	metrics metricsMemo
@@ -63,6 +68,10 @@ type GitHubOAuthConfig struct {
 
 func GitHubOAuth(cfg GitHubOAuthConfig) Option {
 	return func(h *Handler) { h.githubOAuth = cfg }
+}
+
+func Authentication(publicURL, verificationURL string) Option {
+	return func(h *Handler) { h.authPublicURL, h.deviceVerificationURL = publicURL, verificationURL }
 }
 
 // ExecutorOnboarding enables account-owned machines using an explicitly
@@ -110,6 +119,7 @@ func NewHandler(d *dispatcher.Dispatcher, db *sql.DB, l *zap.Logger, options ...
 		db:                 db,
 		logger:             l,
 		attributionLimiter: newAddressLimiter(attributionRate, attributionBurst),
+		authLimiter:        newAuthLimiter(),
 	}
 	for _, option := range options {
 		option(h)
@@ -123,7 +133,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.HTTPErrorHandler = h.errorHandler
 	e.Use(APIVersionMiddleware())
 	e.Use(bodyLimitMiddleware())
-	e.Use(AuthMiddleware(h.db, h.localDevelopment))
+	e.Use(AuthMiddleware(h.db, h.localDevelopment, h.authPublicURL))
 
 	// contract
 	e.GET(routeVersion, h.GetVersion)
@@ -134,11 +144,19 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET(routeHealth, h.GetHealth)
 	e.GET("/metrics", h.GetMetrics)
 	// session
+	h.registerCredentialRoutes(e)
 	e.POST("/auth/login", h.PostLogin)
 	e.POST("/auth/logout", h.PostLogout)
 	e.POST("/auth/recover", h.PostRecover)
+	e.GET("/auth/providers", h.GetAuthProviders)
 	e.GET("/auth/github", h.GetGitHubLogin)
 	e.GET("/auth/github/callback", h.GetGitHubCallback)
+	e.GET("/auth/cilogon", h.GetCILogonLogin)
+	e.GET("/auth/cilogon/callback", h.GetCILogonCallback)
+	e.GET("/me/identities", h.GetIdentities)
+	e.POST("/me/identities/:provider/link", h.PostIdentityLink)
+	e.POST("/me/identities/:provider/confirm", h.ConfirmIdentityLink)
+	e.DELETE("/me/identities/:provider", h.DeleteIdentity)
 	// debuglet
 	e.PUT("/debuglet", h.PutDebuglets)
 	e.GET("/debuglet/:id/logs", h.GetDebugletLogs)

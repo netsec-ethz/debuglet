@@ -39,6 +39,7 @@ type Credential struct {
 	Endpoint  string `json:"endpoint"`
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
 }
 
 // CredentialStore is the on-disk credential file.

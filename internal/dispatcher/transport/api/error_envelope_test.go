@@ -310,6 +310,7 @@ func TestSDKCodesMatchTheDocumentedCodes(t *testing.T) {
 		CodeUnauthorized:             client.CodeUnauthorized,
 		CodeForbidden:                client.CodeForbidden,
 		CodeNotFound:                 client.CodeNotFound,
+		CodeIdentityConflict:         client.CodeIdentityConflict,
 		CodeCapacityExhausted:        client.CodeCapacityExhausted,
 		CodeAccountQuota:             client.CodeAccountQuota,
 		CodePayloadDeleted:           client.CodePayloadDeleted,

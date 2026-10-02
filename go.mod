@@ -6,7 +6,9 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/block-vision/sui-go-sdk v1.2.1
 	github.com/cilium/ebpf v0.22.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/florianl/go-tc v0.4.8
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/yamux v0.1.2
 	github.com/labstack/echo/v4 v4.15.4
@@ -19,6 +21,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.55.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0

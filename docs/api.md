@@ -155,3 +155,15 @@ The OpenAPI document contains the complete status-code and schema reference. Dep
 | `RunStateExited` | Terminal. `error` is empty for a successful run. |
 
 A later report from the executor supersedes `RunStateUnreconciled`, as it does any earlier state. A run that is not terminal about two minutes after the end of its reserved window (its start plus its timeout plus a ten-second grace) is classified as `RunStateExited` with an `error` that starts with `outcome unknown:`; this also covers a `RunStateUploading` or `RunStateUploaded` that no longer changes, for example because the control session of its executor ended before the run started. A run recorded before control bindings were stored has no binding; it is neither cancellable nor classified and keeps its stored state. Nothing is replayed, and no success is ever inferred: only the executor's own report records one.
+
+## Provider identities and scoped credentials (API 1.13)
+
+`GET /auth/providers` lists enabled providers, the exact API audience and the
+configured device-approval page. CILogon and GitHub callbacks create local browser
+sessions; provider tokens are never API credentials. `/me/identities` supports
+explicit linking and removal after recent browser authentication. `/me/credentials`
+lists and revokes sessions or creates scoped API credentials; `/auth/device/*`
+provides browser-approved CLI login. Account management uses cookie sessions plus
+CSRF, and API tokens cannot authorize these operations. All existing account
+ownership checks still apply. See [authentication](operations/authentication.md)
+for permission scopes, expiry, provider setup and current limits.

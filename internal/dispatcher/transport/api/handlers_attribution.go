@@ -346,5 +346,8 @@ func AttributionTrustedProxies(prefixes []netip.Prefix) Option {
 		if h.attributionLimiter != nil {
 			h.attributionLimiter.trusted = slices.Clone(prefixes)
 		}
+		if h.authLimiter != nil {
+			h.authLimiter.trusted = slices.Clone(prefixes)
+		}
 	}
 }

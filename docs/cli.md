@@ -30,8 +30,9 @@ dbl logs ID
 ### Use an account-key connection
 
 These CLI login commands apply to local or legacy account-key deployments.
-Managed browser deployments use their configured OAuth sign-in flow; `dbl login`
-does not perform browser OAuth login.
+For a managed browser account, use `dbl login` (or `dbl login --no-browser` on a
+headless host) to approve the printed device code in the console. See
+[browser accounts and CLI access](operations/authentication.md).
 
 ```sh
 dbl connect https://dispatcher.example --name research
@@ -45,7 +46,8 @@ Use [capability filters](operations/executor-discovery.md) on `nodes` and `run` 
 ### Return to an existing account
 
 For a local or legacy account-key account, use the workflow below. Renew a
-managed browser session by signing in through its OAuth provider again.
+managed API credential with `dbl login`; approve it through either configured
+browser provider.
 
 A saved session is reused until it expires or is revoked; using it does not
 extend its lifetime. Do not register a second account when login expires.

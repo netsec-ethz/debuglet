@@ -125,6 +125,21 @@ type DebugletUser struct {
 	UserID     int64
 }
 
+type DeviceLogin struct {
+	Selector        string
+	VerifierHash    []byte
+	UserCodeHash    []byte
+	Audience        string
+	Scopes          string
+	Label           string
+	ExpiresAt       int64
+	NextPollAt      int64
+	PollInterval    int64
+	State           string
+	ApproverSession string
+	UserID          sql.NullInt64
+}
+
 type Earning struct {
 	ExecutorID       string
 	Currency         string
@@ -176,11 +191,22 @@ type MeasurementSummary struct {
 
 type OauthIdentity struct {
 	Provider  string
+	Issuer    string
 	Subject   string
 	UserID    int64
 	Login     string
 	CreatedAt models.UTCTime
 	UpdatedAt models.UTCTime
+}
+
+type OauthLoginAttempt struct {
+	StateHash       []byte
+	Provider        string
+	Verifier        string
+	Nonce           string
+	Purpose         string
+	SessionSelector string
+	ExpiresAt       models.UTCTime
 }
 
 type OutputAccountUsage struct {
@@ -210,6 +236,16 @@ type PayloadTombstone struct {
 	CertificateSha256 sql.NullString
 }
 
+type PendingIdentityLink struct {
+	UserID          int64
+	Provider        string
+	Issuer          string
+	Subject         string
+	Login           string
+	SessionSelector string
+	ExpiresAt       models.UTCTime
+}
+
 type RetryRequest struct {
 	CallerScope    string
 	RequestID      string
@@ -220,14 +256,19 @@ type RetryRequest struct {
 }
 
 type Session struct {
-	ID           int64
-	Selector     string
-	VerifierHash []byte
-	CsrfHash     []byte
-	UserID       int64
-	CreatedAt    models.UTCTime
-	ExpiresAt    models.UTCTime
-	Revoked      int64
+	ID              int64
+	Selector        string
+	VerifierHash    []byte
+	CsrfHash        []byte
+	UserID          int64
+	CreatedAt       models.UTCTime
+	ExpiresAt       models.UTCTime
+	Revoked         int64
+	Kind            string
+	Audience        string
+	Scopes          string
+	Label           string
+	AuthenticatedAt models.UTCTime
 }
 
 type Transaction struct {
