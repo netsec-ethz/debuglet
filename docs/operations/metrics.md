@@ -70,11 +70,43 @@ structured interruption reason. Accordingly `queue_age_seconds`,
 unsupported. The supported scheduled-start overdue gauge does not substitute
 for these observations.
 
-Enforcement mode, denied traffic, TESLA clock uncertainty/disclosure freshness,
-remaining schedule lifetime and settlement backlog also remain unsupported by
-this exporter. It does not read executor host resources or infer enforcement
-from a heartbeat. Collection never changes admission, packet enforcement,
-terminal state, payment or readiness decisions.
+Denied traffic, independently verified enforcement, TESLA clock uncertainty,
+end-to-end disclosure delivery lag and settlement backlog remain unsupported.
+The exporter does not read executor host resources. Collection never changes
+admission, packet enforcement, terminal state, payment or readiness decisions.
+
+## Executor health
+
+The existing authenticated control reports also provide the following aggregate
+gauges. They cover **all registered executors**, including those whose control
+session is unavailable. Each `state` label is from the fixed list below; there
+are no executor or error-text labels. A mode is the executor's selected packet
+counter, not evidence that the kernel still enforces every packet.
+
+| Metric | Meaning |
+| --- | --- |
+| `executors_enforcement_mode{state="..."}` | Counts for `ebpf`, `fallback` and `unknown`. |
+| `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held` and `unknown`. |
+| `executors_clock_readiness{state="..."}` | Counts for `ready`, `degraded` and `unknown`, from the kernel clock report and its configured error threshold. |
+| `executors_schedule_unknown` | Executors without a usable fresh schedule observation. |
+| `executors_schedule_expired` | Announced signing schedules whose expiry has passed on the dispatcher's clock. |
+| `executor_schedule_remaining_seconds` | Minimum nonnegative remaining signing lifetime, using the announced start, epoch length and chain length on the dispatcher's clock. |
+| `executor_clock_estimated_error_seconds` | Maximum reported kernel error estimate; this is not a measured uncertainty bound. |
+| `executor_disclosure_held_seconds` | Maximum reported age of an installed-key disclosure hold. It does not measure delivery or durable storage of keys at the dispatcher. |
+
+Mode, attribution and clock groups each partition `executors_registered`.
+Missing, malformed, future-dated or 90-second-old reports become `unknown`, as
+do reports from disconnected sessions. A missing report does not clear a known
+problem by claiming recovery. New valid reports restore the current observation.
+The `executor_health` availability sample says whether registry aggregation
+completed, not whether the executors are healthy.
+
+The three numeric extrema are omitted with `reason="incomplete"` if any required
+executor observation is unknown, and with `reason="no_executors"` when none is
+registered. State counts remain available, so a partial report cannot masquerade
+as a healthy zero. A fresh attribution report with no installed-key hold has an
+observed hold of zero. Clock estimates and schedule expiry can disagree between
+machines with bad clocks; inspect clock readiness before interpreting timings.
 
 ## Collection limits
 
@@ -99,6 +131,8 @@ unavailable. These are collection limits only and do not change registration.
 Registry locks are released before storage and filesystem I/O. Registry, run
 rows and host resources are sequential observations, not a single atomic
 snapshot. A concurrent transition can therefore appear on the next scrape.
+Executor health reads only the bounded registry snapshot; it makes no remote
+calls, opens no sockets and changes no packet-counter or key-schedule state.
 
 Linux host collection limits RSS input to 32 KiB and descriptor enumeration to
 65,536. Beyond those bounds it reports `limit`; missing files and permission

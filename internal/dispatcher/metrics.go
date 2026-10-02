@@ -25,6 +25,7 @@ type ControlMetrics struct {
 	Registered, Ready          int
 	ReadyCapacityBitsPerSecond float64
 	RegistryUnavailable        string
+	Health                     ExecutorHealthMetrics
 	Runs                       RetainedRunMetrics
 }
 
@@ -58,7 +59,9 @@ func (d *Dispatcher) CollectMetrics(ctx context.Context) ControlMetrics {
 					break
 				}
 				report.Registered++
-				if entry.owner.Available() {
+				available := entry.owner.Available()
+				report.Health.observe(entry, now, available)
+				if available {
 					report.Ready++
 					report.ReadyCapacityBitsPerSecond += float64(entry.capacity)
 					bindings[runBinding{entry.ID, entry.owner.Binding()}] = struct{}{}

@@ -47,7 +47,7 @@ func TestMetricsRequireOperator(t *testing.T) {
 }
 
 func TestMetricsUnavailableAndFixedLabels(t *testing.T) {
-	empty := dispatcher.ControlMetrics{ObservedAt: time.Unix(100, 0)}
+	empty := dispatcher.ControlMetrics{ObservedAt: time.Unix(100, 0), Registered: 1}
 	full := empty
 	full.Ready, full.Registered = 1000, 1000
 	full.Runs.Admitted, full.Runs.ReportedSuccess = 10000, 10000
@@ -75,6 +75,36 @@ func TestMetricsUnavailableAndFixedLabels(t *testing.T) {
 	}
 	if !strings.Contains(out, `debuglet_observation_available{observation="retained_runs",reason="limit"} 0`) {
 		t.Fatal("missing history limit signal")
+	}
+}
+
+func TestMetricsHealthOmitsIncompleteValuesAndPrivateDetails(t *testing.T) {
+	remaining := 50.0
+	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 2, Health: dispatcher.ExecutorHealthMetrics{
+		EBPF: 1, EnforcementUnknown: 1, AttributionAvailable: 1, AttributionUnknown: 1,
+		ScheduleUnknown: 1, ScheduleRemainingSeconds: &remaining,
+	}}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	for _, want := range []string{
+		`debuglet_executors_enforcement_mode{state="ebpf"} 1`,
+		`debuglet_executors_enforcement_mode{state="unknown"} 1`,
+		`debuglet_executors_attribution_state{state="unknown"} 1`,
+		`debuglet_observation_available{observation="executor_schedule_remaining_seconds",reason="incomplete"} 0`,
+		`debuglet_observation_available{observation="executor_disclosure_held_seconds",reason="incomplete"} 0`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	for _, absent := range []string{"\ndebuglet_executor_schedule_remaining_seconds ", "\ndebuglet_executor_disclosure_held_seconds ", "refresh_error="} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("unexpected %s", absent)
+		}
+	}
+	c.RegistryUnavailable = "limit"
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, "\ndebuglet_executors_enforcement_mode{") || !strings.Contains(out, `debuglet_observation_available{observation="executor_health",reason="limit"} 0`) {
+		t.Fatalf("limited registry exported a partial health total: %s", out)
 	}
 }
 

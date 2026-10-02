@@ -83,6 +83,44 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 		gauge("executors_ready", "Executor entries whose control session is available.", control.Ready)
 		gauge("ready_capacity_bits_per_second", "Total advertised capacity of ready executors, before reservations.", control.ReadyCapacityBitsPerSecond)
 	}
+	if available("executor_health", control.RegistryUnavailable) {
+		h := control.Health
+		for _, group := range []struct {
+			name, help string
+			states     []string
+			counts     []int
+		}{
+			{"executors_enforcement_mode", "Registered executors by freshly reported counter selection, not proof of continuous enforcement.", []string{"ebpf", "fallback", "unknown"}, []int{h.EBPF, h.Fallback, h.EnforcementUnknown}},
+			{"executors_attribution_state", "Registered executors by fresh attribution report; unknown includes stale or disconnected observations.", []string{"available", "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "unknown"}, []int{h.AttributionAvailable, h.EpochZero, h.ChainExhausted, h.RefreshFailing, h.DisclosureHeld, h.AttributionUnknown}},
+			{"executors_clock_readiness", "Registered executors by freshly reported kernel clock readiness, not an independently measured bound.", []string{"ready", "degraded", "unknown"}, []int{h.ClockReady, h.ClockDegraded, h.ClockUnknown}},
+		} {
+			fmt.Fprintf(&out, "# HELP debuglet_%s %s\n# TYPE debuglet_%s gauge\n", group.name, group.help, group.name)
+			for i, state := range group.states {
+				fmt.Fprintf(&out, "debuglet_%s{state=%q} %d\n", group.name, state, group.counts[i])
+			}
+		}
+		gauge("executors_schedule_unknown", "Registered executors without a usable current schedule observation.", h.ScheduleUnknown)
+		gauge("executors_schedule_expired", "Registered executors whose announced signing schedule expired on the dispatcher clock.", h.ScheduleExpired)
+		for _, metric := range []struct {
+			name, help string
+			value      *float64
+			unknown    int
+		}{
+			{"executor_schedule_remaining_seconds", "Minimum remaining signing lifetime of announced executor schedules, using the dispatcher clock.", h.ScheduleRemainingSeconds, h.ScheduleUnknown},
+			{"executor_clock_estimated_error_seconds", "Maximum reported kernel clock error estimate; not an independently verified uncertainty bound.", h.ClockEstimatedErrorSeconds, h.ClockEstimateUnknown},
+			{"executor_disclosure_held_seconds", "Maximum reported installed-key disclosure hold age; not end-to-end key delivery lag.", &h.DisclosureHeldSeconds, h.AttributionUnknown},
+		} {
+			reason := ""
+			if control.Registered == 0 {
+				reason = "no_executors"
+			} else if metric.unknown > 0 || metric.value == nil {
+				reason = "incomplete"
+			}
+			if available(metric.name, reason) {
+				gauge(metric.name, metric.help, *metric.value)
+			}
+		}
+	}
 	if available("retained_runs", control.Runs.Unavailable) {
 		gauge("retained_runs_admitted", "Retained run rows admitted to storage; includes failed uploads and unknown outcomes.", control.Runs.Admitted)
 		gauge("retained_runs_pending", "Retained pre-start runs bound to an available session with an unexpired window.", control.Runs.Pending)
@@ -111,7 +149,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 	}
 	// These require timestamps, finality or authoritative subsystem contracts
 	// that the current process does not persist or expose. Silence is not zero.
-	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_mode", "denied_traffic", "clock_uncertainty_seconds", "disclosure_lag_seconds", "schedule_remaining_seconds", "settlement_backlog"} {
+	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds", "disclosure_lag_seconds", "executor_host_resources", "settlement_backlog"} {
 		available(name, "unsupported")
 	}
 	return out.String() + availability.String()
