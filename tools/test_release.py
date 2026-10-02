@@ -47,6 +47,7 @@ class ReleaseTests(unittest.TestCase):
         gates = release.check_gates(run_fixture(), job_fixture(), VERSION, SOURCE)
         release.validate_gates(gates, VERSION, SOURCE, BUILDER)
         self.assertEqual(set(gates['jobs']), release.LANES)
+        self.assertIn('image-vulnerabilities', gates['jobs'])
 
     def test_untrusted_or_different_runs_cannot_be_signed(self):
         changes = {'repository': {'full_name': 'other/debuglet'},

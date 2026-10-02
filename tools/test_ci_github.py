@@ -37,7 +37,7 @@ class MetadataTest(unittest.TestCase):
     def test_untrusted_or_incomplete_metadata_fails(self):
         changes = {
             'GITHUB_ACTIONS': '', 'GITHUB_REPOSITORY': 'fork/debuglet',
-            'GITHUB_EVENT_NAME': 'pull_request_target', 'GITHUB_REF': 'refs/tags/v1.2.3',
+            'GITHUB_EVENT_NAME': 'pull_request_target', 'GITHUB_REF': 'refs/heads/unreviewed',
             'GITHUB_SHA': 'b' * 40,
             'RUNNER_ENVIRONMENT': 'self-hosted', 'RUNNER_OS': 'Darwin',
             'RUNNER_ARCH': 'ARM64',

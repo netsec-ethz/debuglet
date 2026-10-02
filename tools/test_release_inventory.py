@@ -52,6 +52,14 @@ class InventoryTests(unittest.TestCase):
         self.inputs['materials'] += [{'name': n, **inv.digest(b'input bytes')}
                                     for n in (*inv.SOURCE_INPUTS, 'bpf/filter.o')
                                     if n not in ('LICENSE', 'NOTICE')]
+        compatibility = {'schema_version': 1, 'core_version': VERSION, 'core_source_sha': SOURCE,
+                         'core_api_version': '1.12', 'core_openapi_sha256': inv.digest(b'input bytes')['sha256'],
+                         'console_repository': 'https://gitlab.inf.ethz.ch/OU-PERRIG/yimin/debuglet/debuglet-dashboard',
+                         'console_revision': 'd' * 40}
+        compatibility_bytes = inv.encoded(compatibility)
+        (self.root / 'compatibility.json').write_bytes(compatibility_bytes)
+        (self.root / 'SHA256SUMS-compatibility').write_text(
+            inv.digest(compatibility_bytes)['sha256'] + '  compatibility.json\n')
         self.gates = {'source_sha': SOURCE, 'version': VERSION, 'builder': BUILDER,
                       'run_id': 123, 'run_attempt': 1}
         (self.root / 'gates.json').write_bytes(inv.encoded(self.gates))
@@ -98,8 +106,26 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual((self.root / 'NOTICE').read_text(), self.inputs['notices']['NOTICE'])
         provenance = inv.read_json(self.root / 'provenance.json')
         self.assertEqual(provenance['predicateType'], 'https://slsa.dev/provenance/v1')
-        self.assertEqual(len(provenance['subject']), 13)
+        self.assertEqual(len(provenance['subject']), 15)
         self.assertEqual(provenance['predicate']['runDetails']['builder']['id'], inv.BUILDER)
+
+    def test_compatibility_is_signed_and_must_match_source_and_api(self):
+        self.generate()
+        provenance = inv.read_json(self.root / 'provenance.json')
+        self.assertIn('compatibility.json', {s['name'] for s in provenance['subject']})
+        original = (self.root / 'compatibility.json').read_bytes()
+        for field, value in [('core_source_sha', 'b' * 40), ('core_version', 'v9.0.0'),
+                             ('core_openapi_sha256', 'c' * 64)]:
+            with self.subTest(field=field):
+                changed = inv.decode(original)
+                changed[field] = value
+                (self.root / 'compatibility.json').write_bytes(inv.encoded(changed))
+                with self.assertRaisesRegex(ValueError, 'compatibility'):
+                    self.verify()
+        (self.root / 'compatibility.json').write_bytes(original)
+        (self.root / 'SHA256SUMS-compatibility').write_text('not the sidecar checksum')
+        with self.assertRaisesRegex(ValueError, 'compatibility checksum'):
+            self.verify()
 
     def test_verifier_rejects_changed_identity_inventory_and_evidence(self):
         self.generate()

@@ -22,7 +22,8 @@ GUESTS = {'hello.wasm': 'hello-local', 'demo.wasm': 'demo', 'ping.wasm': 'ping',
 COMPONENTS = {'dbl', 'debuglet-dispatcher', 'debuglet-executor'} | GUESTS.keys()
 SOURCE_INPUTS = ('go.mod', 'go.sum', 'LICENSE', 'NOTICE', 'deploy/ci/images.env',
                  'deploy/ci/packages.txt', 'deploy/ci/Dockerfile',
-                 'deploy/docker/debuglet.Dockerfile', 'scripts/ci-kernel.sh')
+                 'deploy/docker/debuglet.Dockerfile', 'scripts/ci-kernel.sh',
+                 'configs/release-compatibility.json', 'api/openapi.yaml')
 
 
 def require(condition, message):
@@ -222,6 +223,22 @@ class BoundedTarReader:
 
 
 def payloads(directory, version, source, builder, inputs):
+    compatibility = read_json(directory / 'compatibility.json')
+    require(set(compatibility) == {'schema_version', 'core_version', 'core_source_sha',
+            'core_api_version', 'core_openapi_sha256', 'console_repository', 'console_revision'}
+            and compatibility['schema_version'] == 1 and compatibility['core_version'] == version
+            and compatibility['core_source_sha'] == source
+            and re.fullmatch(r'[0-9]+\.[0-9]+', compatibility['core_api_version'])
+            and re.fullmatch(r'[0-9a-f]{64}', compatibility['core_openapi_sha256'])
+            and compatibility['console_repository'] ==
+                'https://gitlab.inf.ethz.ch/OU-PERRIG/yimin/debuglet/debuglet-dashboard'
+            and re.fullmatch(r'[0-9a-f]{40}', compatibility['console_revision'])
+            and compatibility['console_revision'] != '0' * 40, 'release compatibility identity differs')
+    api_digest = next(m['sha256'] for m in inputs['materials'] if m['name'] == 'api/openapi.yaml')
+    require(compatibility['core_openapi_sha256'] == api_digest, 'release compatibility API digest differs')
+    checksum = digest(regular(directory / 'compatibility.json'))['sha256'] + '  compatibility.json\n'
+    require(regular(directory / 'SHA256SUMS-compatibility') == checksum.encode(),
+            'release compatibility checksum differs')
     expected = inputs['build_record']['compiled_files']
     archives = sorted(directory.glob('*.tar.gz'))
     require(len(archives) == 4, 'release requires full, CLI, dispatcher and executor archives')
@@ -372,7 +389,8 @@ def documents(directory, version, source, builder, inputs):
                          'properties': properties(source_sha=source, builder=builder)},
             'components': components, 'dependencies': edges}
     subject_files = sorted(p for p in directory.iterdir() if p.is_file() and
-                           (p.name.endswith(('.tar.gz', '.sh')) or p.name.startswith('SHA256SUMS')))
+                           (p.name.endswith(('.tar.gz', '.sh')) or p.name.startswith('SHA256SUMS')
+                            or p.name == 'compatibility.json'))
     subjects = [{'name': p.name, 'digest': {'sha256': digest(regular(p))['sha256']}} for p in subject_files]
     subjects.append({'name': 'sbom.cdx.json', 'digest': {'sha256': digest(encoded(sbom))['sha256']}})
     provenance = {'_type': 'https://in-toto.io/Statement/v1', 'subject': subjects,

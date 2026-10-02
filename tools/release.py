@@ -17,7 +17,7 @@ NAMESPACE = 'debuglet-release'
 SUBJECT = 'release.json'
 METADATA = {'build-inputs.json', 'sbom.cdx.json', 'provenance.json', 'gates.json', 'LICENSE', 'NOTICE'}
 LANES = {'fmt', 'vet', 'generate', 'test', 'race', 'kernel', 'build', 'package',
-         'demo', 'compatibility', 'local', 'secrets', 'offline', 'vulnerabilities', 'required'}
+         'demo', 'compatibility', 'local', 'secrets', 'offline', 'vulnerabilities', 'image-vulnerabilities', 'required'}
 VERSION = re.compile(r'v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?\Z')
 SOURCE = re.compile(r'[0-9a-f]{40}\Z')
 BUILDER = re.compile(r'https://github\.com/netsec-ethz/debuglet/actions/runs/[1-9][0-9]*\Z')
@@ -57,7 +57,7 @@ def digest(path):
 
 
 def package_names(version):
-    names = set()
+    names = {'compatibility.json', 'SHA256SUMS-compatibility'}
     for component in ('', 'cli', 'executor', 'dispatcher'):
         suffix = '-' + component if component else ''
         names.update({f'debuglet{suffix}-{version}-linux-amd64.tar.gz',
