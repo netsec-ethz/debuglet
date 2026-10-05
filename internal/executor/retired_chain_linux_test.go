@@ -7,16 +7,24 @@ package executor
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
+	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
 	"github.com/florianl/go-tc"
 	"github.com/florianl/go-tc/core"
+	executordb "github.com/netsec-ethz/debuglet/internal/executor/database"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
+	taggerebpf "github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -129,5 +137,73 @@ func TestRestartRetiresAStaleTaggerFilterBeforeTheTail(t *testing.T) {
 	}
 	if !node.schedule.Config().ClockUnready && (node.retired.schedule == nil || !bytes.Equal(node.retired.schedule.Anchor(), first.Anchor())) {
 		t.Fatal("the retired chain was not derived after the stale filter was removed")
+	}
+}
+
+// The previous attachment is not recorded, so changing or clearing the
+// interface must not treat an unchecked surviving signer as retired.
+func TestRestartWithChangedNetworkWithholdsRetiredTail(t *testing.T) {
+	for _, tc := range []struct{ name, mode, iface string }{
+		{"changed interface", "auto", "lo"},
+		{"fallback", "fallback", "previous"},
+		{"no interface", "auto", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := fmt.Sprintf("dret%d", os.Getpid())
+			if _, err := exec.LookPath("ip"); err != nil {
+				t.Skip("iproute2 is required to create an isolated interface fixture")
+			}
+			if out, err := exec.Command("ip", "link", "add", name, "type", "dummy").CombinedOutput(); err != nil {
+				if strings.Contains(string(out), "Operation not permitted") {
+					t.Skip("CAP_NET_ADMIN is required to create an isolated interface fixture")
+				}
+				t.Fatalf("create interface: %v: %s", err, out)
+			}
+			t.Cleanup(func() {
+				if out, err := exec.Command("ip", "link", "delete", name).CombinedOutput(); err != nil {
+					t.Errorf("delete interface: %v: %s", err, out)
+				}
+			})
+			previous, err := net.InterfaceByName(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const handle = 0x0DEB0172
+			staleTaggerFilter(t, previous, handle)
+			db := newFixtureDatabase(t)
+			now := time.Now()
+			retiredChainRow(t, db, 1, now, sql.NullInt64{Int64: 2, Valid: true})
+			cfg := fixtureConfig()
+			cfg.Tesla = retiredTesla(retiredSeed)
+			cfg.Network.PacketCounter, cfg.Network.Interface = tc.mode, tc.iface
+			if tc.iface == "previous" {
+				cfg.Network.Interface = name
+			}
+			core, logs := observer.New(zapcore.InfoLevel)
+			node, err := newNode(cfg, zap.New(core), db, func(*net.Interface, *zap.Logger) (ratelimit.PacketCount, error) { return &nodeCounter{}, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = node.Close() })
+			if node.retired.schedule != nil || logs.FilterMessage("Could not retire tagger filters an earlier executor process left attached").Len() != 1 {
+				t.Fatalf("restart accepted an unretired signer: tail present %v, logs %v", node.retired.schedule != nil, logs.All())
+			}
+			if !egressFilterAttached(t, previous, handle) {
+				t.Fatal("restart removed another interface's filter")
+			}
+			// Exercise the same proof with a ready clock even when this test
+			// host cannot make an NTP-readiness claim.
+			signers := taggerebpf.RetireStaleFilters(nil, zap.NewNop())
+			if signers == nil || deriveRetiredChain(t.Context(), executordb.New(db), retiredSeed, 2, true, signers, now, zap.NewNop()) != nil {
+				t.Fatal("a surviving signer allowed disclosure on a ready clock")
+			}
+			if err := taggerebpf.RetireStaleFilters(previous, zap.NewNop()); err != nil {
+				t.Fatal(err)
+			}
+			signers = taggerebpf.RetireStaleFilters(nil, zap.NewNop())
+			if signers != nil || deriveRetiredChain(t.Context(), executordb.New(db), retiredSeed, 2, true, signers, now, zap.NewNop()) == nil {
+				t.Fatalf("absence of signers did not allow recovery: %v", signers)
+			}
+		})
 	}
 }

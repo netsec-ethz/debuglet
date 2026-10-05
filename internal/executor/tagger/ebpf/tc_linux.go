@@ -107,36 +107,51 @@ func (f *legacyFilter) Close() error {
 // descriptor and ends with its process, but a legacy filter keeps its program
 // and key map, and so keeps signing with the last key installed, until it is
 // deleted. It is called before this process attaches any tagger, so every
-// tagger filter found is stale. A filter at the tagger's priority that is not
-// the tagger's is not deleted and makes the result an error, as does a failed
-// listing or deletion: the earlier signers are then not known to be retired.
+// tagger filter found on iface is stale. Other interfaces are inspected but
+// never changed: any remaining filter at the tagger's priority, or a failed
+// listing or deletion, means the earlier signers are not known to be retired.
+// A nil iface performs only this read-only check, including after a restart
+// with fallback packet counting or no configured interface.
 func RetireStaleFilters(iface *net.Interface, logger *zap.Logger) error {
 	conn, err := tc.Open(&tc.Config{})
 	if err != nil {
 		return fmt.Errorf("open rtnetlink: %w", err)
 	}
 	defer conn.Close()
-	msg := tc.Msg{Family: unix.AF_UNSPEC, Ifindex: uint32(iface.Index)}
-	list := func() ([]tc.Object, error) {
+	list := func(ifindex uint32) ([]tc.Object, error) {
 		qdiscs, err := conn.Qdisc().Get()
 		if err != nil {
 			return nil, fmt.Errorf("list qdiscs: %w", err)
 		}
+		var all []tc.Object
 		for _, qdisc := range qdiscs {
-			if qdisc.Ifindex == msg.Ifindex && qdisc.Kind == "clsact" {
-				egress := msg
-				egress.Parent = core.BuildHandle(tc.HandleRoot, tc.HandleMinEgress)
+			if (ifindex == 0 || qdisc.Ifindex == ifindex) && qdisc.Kind == "clsact" {
+				egress := tc.Msg{Family: unix.AF_UNSPEC, Ifindex: qdisc.Ifindex, Parent: core.BuildHandle(tc.HandleRoot, tc.HandleMinEgress)}
 				filters, err := conn.Filter().Get(&egress)
 				if err != nil {
 					return nil, fmt.Errorf("list egress filters: %w", err)
 				}
-				return filters, nil
+				all = append(all, filters...)
 			}
 		}
 		// Without a clsact qdisc no legacy filter is attached.
-		return nil, nil
+		return all, nil
 	}
-	return retireStaleFilters(list, func(filter *tc.Object) error { return conn.Filter().Delete(filter) }, logger)
+	if iface != nil {
+		if err := retireStaleFilters(func() ([]tc.Object, error) { return list(uint32(iface.Index)) }, func(filter *tc.Object) error { return conn.Filter().Delete(filter) }, logger); err != nil {
+			return err
+		}
+	}
+	filters, err := list(0)
+	if err != nil {
+		return err
+	}
+	for _, filter := range filters {
+		if filter.Info>>16 == legacyFilterPriority && filter.Handle != 0 {
+			return fmt.Errorf("egress filter %#x on interface %d may still sign with the previous chain; retire it before recovering that chain", filter.Handle, filter.Ifindex)
+		}
+	}
+	return nil
 }
 
 // retireStaleFilters deletes the tagger filters list returns through remove.
