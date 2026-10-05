@@ -83,14 +83,15 @@ func TestBootstrapFresh(t *testing.T) {
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{
-					"debuglets":      "id uuid start_time args wasm transaction_id floor_bw ceil_bw timeout_ms addresses require_icmp listen_udp listen_tcp listen_scion started_at dispatcher_incarnation session_id",
-					"debuglet_logs":  "id debuglet_id timestamp output",
-					"debuglet_exits": "debuglet_id dispatcher_incarnation session_id exit_code error_message recorded_at attempts last_attempt_at last_error rejected",
-					"tesla_chains":   "generation anchor epoch_base delay_ns chain_length created_at",
-					"output_runs":    "run_id dispatcher_incarnation session_id output_version last_sequence acknowledged_sequence emitted_bytes queued_bytes queued_frames status reason end_acknowledged receipt_sequence receipt_reason",
-					"output_frames":  "run_id sequence timestamp_ns output",
-					"output_usage":   "singleton charged_bytes",
-				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6})
+					"debuglets":             "id uuid start_time args wasm transaction_id floor_bw ceil_bw timeout_ms addresses require_icmp listen_udp listen_tcp listen_scion started_at dispatcher_incarnation session_id",
+					"debuglet_logs":         "id debuglet_id timestamp output",
+					"debuglet_exits":        "debuglet_id dispatcher_incarnation session_id exit_code error_message recorded_at attempts last_attempt_at last_error rejected",
+					"tesla_chains":          "generation anchor epoch_base delay_ns chain_length created_at",
+					"output_runs":           "run_id dispatcher_incarnation session_id output_version last_sequence acknowledged_sequence emitted_bytes queued_bytes queued_frames status reason end_acknowledged receipt_sequence receipt_reason",
+					"output_frames":         "run_id sequence timestamp_ns output",
+					"output_usage":          "singleton charged_bytes",
+					"operator_dispositions": "run_id recorded_at_ns reason",
+				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7})
 				executorSchemaRoundTrip(t, db)
 			}
 			if err := db.Close(); err != nil {

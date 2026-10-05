@@ -21,10 +21,12 @@ type Disposition struct {
 	// Queued counts retained rows that were accepted and persisted but
 	// never started. They stay in the database; nothing replays them.
 	Queued int64 `json:"queued"`
-	// Quarantined counts retained rows the next start will refuse to
-	// restore. This build quarantines every stored binding, so a stopped
-	// executor's whole retained queue is quarantined work.
+	// Quarantined counts unarchived execution rows the next start will
+	// refuse to restore because their control session ended.
 	Quarantined int64 `json:"quarantined"`
+	// Archived counts explicit local operator dispositions. Original evidence
+	// stays retained, but these runs cannot return to the execution queue.
+	Archived int64 `json:"archived"`
 	// Bindings counts the distinct control sessions the retained rows came
 	// from, so an operator can see whether retained work accumulated over
 	// several sessions.
@@ -47,7 +49,7 @@ type Disposition struct {
 // Empty reports storage that holds no retained execution row and no retained
 // terminal result: nothing local is left that an operator has to preserve.
 func (d Disposition) Empty() bool {
-	return d.Retained == 0 && d.RetainedTerminal == 0
+	return d.Retained == 0 && d.RetainedTerminal == 0 && d.Archived == 0
 }
 
 // Summary describes the disposition in one line of operator-facing text.
@@ -56,6 +58,6 @@ func (d Disposition) Summary() string {
 	if d.Truncated {
 		sessions = fmt.Sprintf("at least %d control sessions", d.Bindings)
 	}
-	return fmt.Sprintf("%d queued and %d started rows retained from %s, %d quarantined on the next start, %d terminal results still unacknowledged (%d never sent, %d permanently refused)",
-		d.Queued, d.Started, sessions, d.Quarantined, d.RetainedTerminal, d.UnsentTerminal, d.RejectedTerminal)
+	return fmt.Sprintf("%d queued and %d started rows retained from %s, %d quarantined on the next start, %d locally archived, %d terminal results still unacknowledged (%d never sent, %d permanently refused)",
+		d.Queued, d.Started, sessions, d.Quarantined, d.Archived, d.RetainedTerminal, d.UnsentTerminal, d.RejectedTerminal)
 }

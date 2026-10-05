@@ -51,6 +51,12 @@ type DebugletLog struct {
 	Output     []byte
 }
 
+type OperatorDisposition struct {
+	RunID        string
+	RecordedAtNs int64
+	Reason       string
+}
+
 type OutputFrame struct {
 	RunID       string
 	Sequence    int64
