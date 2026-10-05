@@ -45,8 +45,10 @@ type MetadataConfig struct {
 }
 
 // ClockConfig bounds the kernel's estimated clock error the executor accepts
-// before it reports its clock readiness as degraded. Readiness is reported,
-// not enforced: a degraded clock does not stop admission.
+// before it reports its clock readiness as degraded. Readiness when the TESLA
+// key chain starts decides whether that chain's origin is trusted: a chain
+// started on a clock that is not ready tags nothing, and a tagging node then
+// admits no runs until it restarts. Later readiness changes are only reported.
 type ClockConfig struct {
 	MaxErrorMS int64 `toml:"max_error_ms"`
 }

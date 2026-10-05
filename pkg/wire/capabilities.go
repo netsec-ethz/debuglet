@@ -96,7 +96,7 @@ const TagSpecV1 = "debuglet-tag-v1"
 // ObservedAt's clock. Available is an executor claim, not a verification.
 type AttributionState struct {
 	State               string `json:"state"`                 // available or unavailable.
-	Reason              string `json:"reason"`                // Empty when available; epoch_zero, chain_exhausted, refresh_failing, disclosure_held.
+	Reason              string `json:"reason"`                // Empty when available; epoch_zero, chain_exhausted, refresh_failing, disclosure_held, clock_unready, clock_drift.
 	Epoch               int64  `json:"epoch"`                 // Current key-schedule epoch.
 	InstalledEpoch      *int64 `json:"installed_epoch"`       // Oldest epoch a kernel tagger may still sign with; null when none holds a key.
 	LastRefreshAt       *int64 `json:"last_refresh_at"`       // Oldest last successful kernel key install; null without one.

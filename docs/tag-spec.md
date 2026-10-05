@@ -280,3 +280,32 @@ link type, and against `verify_pcap.py`) and
 `tools/test_verify_pcap.py` (capture verifier and generator drift). After a
 deliberate change of the generator, run `python3 tools/tag_vectors.py`; the
 Python tests fail on a stale file.
+
+## 10. Time
+
+The epoch mapping of §2 and §6 holds only if the executor's epochs and the
+verifier's clock agree. The executor's contract:
+
+- Epochs advance on the executor's monotonic clock from the announced origin
+  (`anchor_timestamp`), which is the wall-clock reading at chain start. The
+  origin is trusted only if the host clock's readiness (adjtimex state and
+  estimated error against `clock.max_error_ms`) was `ready` at chain start;
+  otherwise no key signs for the chain's life and attribution is reported
+  unavailable with `clock_unready`.
+- The executor measures drift as the wall time elapsed since the origin less
+  the monotonic time elapsed. A wall-clock step or a suspend that the
+  monotonic clock does not count changes it. While |drift| exceeds
+  min(*I* / 2, 1 s), where 1 s is the default verifier clock tolerance, no key
+  signs and attribution is unavailable with `clock_drift`. The bound is a
+  safety threshold beyond which capture times are taken to map to the wrong
+  epoch, not a measured bound on clock uncertainty. The pure-Go tagger stops
+  at once; a kernel tagger stops at its next key refresh, at most one epoch
+  later.
+- Recovery is an executor restart with a ready clock, which starts a new
+  chain. Nothing re-anchors a running chain.
+- Local epochs never decrease, so a disclosed key never regains signing
+  authority whatever the wall clock does, and the executor never signs with
+  the key of an epoch below one it has already signed with.
+
+A verifier still applies §6 with its own clock tolerance; the executor's
+contract only stops it from tagging while its own clocks disagree.

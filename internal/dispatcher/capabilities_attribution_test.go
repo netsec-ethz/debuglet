@@ -40,6 +40,8 @@ func TestCapabilityAttributionValidation(t *testing.T) {
 		{State: "unavailable", Reason: "epoch_zero"},
 		{State: "unavailable", Reason: "chain_exhausted", Epoch: 64},
 		{State: "unavailable", Reason: "refresh_failing", Epoch: 3, RefreshError: "stale key remains installed: " + strings.Repeat("é", 40)},
+		{State: "unavailable", Reason: "clock_unready"},
+		{State: "unavailable", Reason: "clock_drift", Epoch: 12, InstalledEpoch: i64(11)},
 	} {
 		if got := capabilitiesFromReport(report(valid), observed); got == nil || got.Attribution == nil || got.Attribution.State != valid.State {
 			t.Errorf("valid %v refused", valid)
@@ -49,6 +51,7 @@ func TestCapabilityAttributionValidation(t *testing.T) {
 		"empty state":             {},
 		"unknown state":           {State: "maybe"},
 		"available with reason":   {State: "available", Reason: "epoch_zero", Epoch: 1},
+		"available with clock":    {State: "available", Reason: "clock_drift", Epoch: 1},
 		"unavailable no reason":   {State: "unavailable", Epoch: 1},
 		"unknown reason":          {State: "unavailable", Reason: "clock_skew", Epoch: 1},
 		"negative epoch":          {State: "available", Epoch: -1},

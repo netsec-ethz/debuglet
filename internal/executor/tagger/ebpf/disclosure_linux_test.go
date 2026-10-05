@@ -76,7 +76,7 @@ func disclosureSlotEpoch(t *testing.T, bt *BPFTagger) (int64, bool) {
 	}
 	cfg := bt.schedule.Config()
 	for e := int64(1); e < cfg.ChainLength; e++ {
-		if want, ok, _ := akEntryAt(bt.schedule, bt.measureID, cfg.Epoch.Add(time.Duration(e)*cfg.EpochLength)); ok && want == entry {
+		if epochEntry(t, bt.schedule, bt.measureID, e) == entry {
 			return e, true
 		}
 	}

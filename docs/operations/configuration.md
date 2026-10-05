@@ -25,7 +25,7 @@ The two routes are rate-limited to 10 requests per second, with a burst of 40, p
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
 
-The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. It does not refuse admission. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
+The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. The readiness when the TESLA key chain starts decides `clock_unready`: a chain started on a clock that is not `ready` tags nothing, and a node that tags packets then refuses new runs until the executor restarts with a ready clock; later readiness changes are reported only. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
 
 ### Executor TESLA key schedule
 

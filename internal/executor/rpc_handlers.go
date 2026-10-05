@@ -146,8 +146,12 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	}
 	// Nothing a new run sends could be tagged, so it is not admitted. Runs
 	// admitted earlier continue untagged.
-	if e.teslaSchedule.Exhausted(time.Now()) {
+	now := time.Now()
+	if e.teslaSchedule.Exhausted(now) {
 		return nil, status.Error(codes.FailedPrecondition, "TESLA key chain exhausted: this executor admits no new runs until it is restarted")
+	}
+	if reason := clockRefusal(e.teslaSchedule.Attribution(now).Reason, e.tagging); reason != "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "TESLA attribution unavailable (%s): this executor admits no new runs until it is restarted with a ready clock", reason)
 	}
 	if e.outputFailed != nil && e.outputFailed.Load() {
 		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")

@@ -22,6 +22,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/hostprobe"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/credentials"
 )
@@ -119,9 +120,13 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 			return nil, sessionEnd(controlsession.LocalFailure, fmt.Errorf("load client credentials: %w", err))
 		}
 	}
-	schedule, err := startChain(context.Background(), db, cfg.Tesla)
+	schedule, clock, err := startChain(context.Background(), db, cfg.Tesla, cfg.Clock.MaxErrorBound())
 	if err != nil {
 		return nil, sessionEnd(controlsession.LocalFailure, err)
+	}
+	if schedule.Config().ClockUnready {
+		logger.Error("TESLA chain started while the host clock was not ready; packets are not attributable and tagging nodes admit no runs until the executor restarts with a ready clock",
+			zap.String("clock_state", clock.State), zap.String("clock_readiness", clock.Readiness), zap.String("clock_reason", clock.Reason))
 	}
 	pc, err := counter(iface, logger)
 	if err != nil {
@@ -144,31 +149,35 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 // startChain builds the TESLA chain of this start and records it before any of
 // its keys is used. A configured seed derives a new tail for every generation;
 // without one the tail is random. The anchor is unique in the record, so a
-// chain whose keys an earlier start disclosed is refused.
-func startChain(ctx context.Context, db *sql.DB, cfg config.TeslaConfig) (*tesla.KeySchedule, error) {
+// chain whose keys an earlier start disclosed is refused. The host clock is
+// read against clockBound just before the origin: a chain whose clock was not
+// ready has no attribution for its life. It returns that clock reading.
+func startChain(ctx context.Context, db *sql.DB, cfg config.TeslaConfig, clockBound time.Duration) (*tesla.KeySchedule, hostprobe.Clock, error) {
 	queries := executordb.New(db)
 	generation, err := queries.NextTeslaChainGeneration(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("read next TESLA chain generation: %w", err)
+		return nil, hostprobe.Clock{}, fmt.Errorf("read next TESLA chain generation: %w", err)
 	}
 	var seed []byte
 	if cfg.Seed != "" {
 		if seed, err = tesla.ChainSeed([]byte(cfg.Seed), generation); err != nil {
-			return nil, fmt.Errorf("derive TESLA chain %d: %w", generation, err)
+			return nil, hostprobe.Clock{}, fmt.Errorf("derive TESLA chain %d: %w", generation, err)
 		}
 	}
-	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, EpochLength: cfg.EpochLength(), DisclosureDelay: cfg.DisclosureDelayEpochs, ChainLength: cfg.ChainLength})
+	clock := hostprobe.ReadClock(clockBound)
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: seed, EpochLength: cfg.EpochLength(), DisclosureDelay: cfg.DisclosureDelayEpochs, ChainLength: cfg.ChainLength,
+		ClockUnready: clock.Readiness != hostprobe.ReadinessReady})
 	if err != nil {
-		return nil, fmt.Errorf("create TESLA schedule: %w", err)
+		return nil, hostprobe.Clock{}, fmt.Errorf("create TESLA schedule: %w", err)
 	}
 	chain := schedule.Config()
 	if err := queries.CreateTeslaChain(ctx, executordb.CreateTeslaChainParams{
 		Generation: generation, Anchor: schedule.Anchor(), EpochBase: chain.Epoch.UTC(),
 		DelayNs: int64(chain.EpochLength), ChainLength: chain.ChainLength, CreatedAt: time.Now().UTC(),
 	}); err != nil {
-		return nil, fmt.Errorf("record TESLA chain %d (a recorded anchor would reuse disclosed keys): %w", generation, err)
+		return nil, hostprobe.Clock{}, fmt.Errorf("record TESLA chain %d (a recorded anchor would reuse disclosed keys): %w", generation, err)
 	}
-	return schedule, nil
+	return schedule, clock, nil
 }
 
 // Close permanently closes new node admission. A busy result consumes nothing:

@@ -33,6 +33,23 @@ changes; the linked API and deployment documentation contains operational detail
     at capture time plus `--clock-tolerance`.
   - The browser verifier in debuglet-website needs the same change.
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
+- The executor stops tagging when its clock cannot place packets in the
+  epochs a verifier derives from capture time. Epochs advance on the
+  monotonic clock from the announced chain origin; previously a chain started
+  on an unsynchronised clock, or a wall-clock step or suspend afterwards, left
+  the executor tagging and reporting attribution as available although
+  honest packets mapped to the wrong epoch.
+  - Attribution gains the reasons `clock_unready` (the host clock readiness
+    was not `ready` when the chain started; it holds until a restart) and
+    `clock_drift` (wall and monotonic time elapsed since the origin differ by
+    more than min(epoch length / 2, 1 s)). No key signs while either holds;
+    a kernel tagger stops at its next refresh, at most one epoch later.
+  - A node that tags packets refuses new runs with `FailedPrecondition`
+    while either reason holds; a node whose tagging mode is `none` admits
+    them. The executor logs an error when a chain starts on a clock that is
+    not ready.
+  - The key schedule never signs with the key of an epoch below one it has
+    already signed with. See `docs/tag-spec.md` §10.
 
 ### Added
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
