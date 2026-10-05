@@ -47,10 +47,12 @@ type OrdersPage struct {
 }
 
 // Quote asks the dispatcher to price batch with the same TEST request body
-// SubmitTEST would send, without creating an intent. A batch the dispatcher
-// would refuse is answered with its problems in the quote's errors and an
-// empty total. Submission prices the batch again, so compare the quote with
-// the quote the intent returns.
+// SubmitTEST sends, without creating an intent or reserving anything. A batch
+// the dispatcher would refuse is answered with its problems in the quote's
+// errors and an empty total. A quote is not binding: the dispatcher prices the
+// batch again when SubmitTEST creates its intent, and SubmitTEST does not
+// return that price. A caller that sends the intent itself over HTTP can read
+// the dispatcher's price from the quote field of the intent response.
 func (c *Client) Quote(ctx context.Context, batch *PreparedBatch) (Quote, error) {
 	if batch == nil || batch.count == 0 || len(batch.debuglets) == 0 {
 		return Quote{}, errInvalidBatch
