@@ -429,6 +429,134 @@ func TestAttributionVerifyAnswersADisclosedEpochOffline(t *testing.T) {
 	}
 }
 
+// A disclosed chain can carry several runs in the same source/epoch group.
+// The response and its receipt must attribute each subset without treating
+// another run's valid packets as a tag mismatch.
+func TestAttributionVerifySplitsDisclosedRuns(t *testing.T) {
+	f, peer, chain := vtFixture(t)
+	runs := []string{vtRun(t, f), vtRun(t, f)}
+	slices.Sort(runs)
+	ctx, cancel := f.requestCtx()
+	defer cancel()
+	at := time.Now()
+	e := chain.epochOf(at)
+	if err := f.queries.InsertAttributionKey(ctx, database.InsertAttributionKeyParams{
+		ExecutorID: ccExecutorID, ChainID: tag.ChainID(chain.anchor()), Epoch: e, Key: chain.key(e), DisclosedAtNs: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([][]byte, len(runs))
+	for i, run := range runs {
+		var err error
+		keys[i], err = tagspec.DeriveAK(chain.key(e), []byte(run))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Find real colliding and non-colliding tags, so random run IDs cannot
+	// accidentally change the fixture's expected verdicts.
+	var unique, collision []byte
+	for nonce := uint32(0); nonce < 1<<22 && (unique == nil || collision == nil); nonce++ {
+		p := vtPacket(chain, "127.0.0.1", e, "", 1)
+		binary.BigEndian.PutUint32(p[28:], nonce)
+		a, _ := tagspec.PacketTag(keys[0], p)
+		b, _ := tagspec.PacketTag(keys[1], p)
+		binary.BigEndian.PutUint16(p[4:], a)
+		if a == b {
+			collision = p
+		} else if unique == nil {
+			unique = p
+		}
+	}
+	if unique == nil || collision == nil {
+		t.Fatal("could not construct tagged packet fixtures")
+	}
+	other := bytes.Clone(unique)
+	otherTag, _ := tagspec.PacketTag(keys[1], other)
+	binary.BigEndian.PutUint16(other[4:], otherTag)
+	unmatched := bytes.Clone(unique)
+	a, _ := tagspec.PacketID(unique)
+	bad := a + 1
+	if bad == otherTag {
+		bad++
+	}
+	binary.BigEndian.PutUint16(unmatched[4:], bad)
+	anonymous := f.client(f.root.URL, false)
+	for _, tc := range []struct {
+		name    string
+		packets [][]byte
+		want    []client.AttributionVerifyGroup
+	}{
+		{"two runs", [][]byte{unique, other, unique}, []client.AttributionVerifyGroup{
+			{RunID: runs[0], Verdict: "verified", Packets: []int{0, 2}},
+			{RunID: runs[1], Verdict: "verified", Packets: []int{1}},
+		}},
+		{"mixed", [][]byte{unique, other, unique, collision, unmatched}, []client.AttributionVerifyGroup{
+			{RunID: runs[0], Verdict: "verified", Packets: []int{0, 2}},
+			{RunID: runs[1], Verdict: "verified", Packets: []int{1}},
+			{Verdict: "unsupported", Reason: "ambiguous", Packets: []int{3}},
+			{Verdict: "unsupported", Reason: "unmatched", Packets: []int{4}},
+		}},
+		{"unmatched", [][]byte{unmatched}, []client.AttributionVerifyGroup{
+			{Verdict: "invalid", Reason: "tag_mismatch", Packets: []int{0}},
+		}},
+		{"ambiguous", [][]byte{collision}, []client.AttributionVerifyGroup{
+			{Verdict: "unsupported", Reason: "ambiguous", Packets: []int{0}},
+		}},
+		{"common run", [][]byte{unique, collision}, []client.AttributionVerifyGroup{
+			{RunID: runs[0], Verdict: "verified", Packets: []int{0, 1}},
+		}},
+		{"common run with unmatched", [][]byte{unique, collision, unmatched}, []client.AttributionVerifyGroup{
+			{RunID: runs[0], Verdict: "verified", Packets: []int{0, 1}},
+			{Verdict: "unsupported", Reason: "unmatched", Packets: []int{2}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sent := make([]client.AttributionVerifyPacket, len(tc.packets))
+			for i, p := range tc.packets {
+				sent[i] = client.AttributionVerifyPacket{Data: p, CapturedAt: at}
+			}
+			resp, err := anonymous.AttributionVerify(ctx, sent)
+			if err != nil || len(resp.Groups) != len(tc.want) {
+				t.Fatalf("groups %+v, error %v; want %+v", resp.Groups, err, tc.want)
+			}
+			for i, want := range tc.want {
+				g := resp.Groups[i]
+				if g.RunID != want.RunID || g.Verdict != want.Verdict || g.Reason != want.Reason || !slices.Equal(g.Packets, want.Packets) ||
+					g.Method != "offline" || g.Source != "127.0.0.1" || g.ExecutorID != ccExecutorID || g.ChainID != tag.ChainID(chain.anchor()) || g.Epoch != e ||
+					g.Budget == nil || g.Budget.Remaining != dispatcher.VerifyBudget {
+					t.Fatalf("group %d: %+v; want %+v checked offline without spending", i, g, want)
+				}
+			}
+			vtCheckReceipt(t, anonymous, sent, resp)
+			oaCheckResponse(t, oaContract(t), http.MethodPost, routeAttributionVerify, http.StatusOK, mustJSON(t, resp))
+		})
+	}
+	// Splitting must not let the response or signed receipt exceed 16 groups.
+	for _, extra := range []int{14, 15} {
+		sent := []client.AttributionVerifyPacket{{Data: unique, CapturedAt: at}, {Data: other, CapturedAt: at}}
+		for i := range extra {
+			sent = append(sent, client.AttributionVerifyPacket{Data: vtPacket(chain, fmt.Sprintf("198.51.100.%d", i+1), e, "", 1), CapturedAt: at})
+		}
+		status, _, body, _ := authRequest(t, f, http.MethodPost, routeAttributionVerify, mustJSON(t, wire.AttributionVerifyRequest{Packets: sent}), nil)
+		if extra == 15 {
+			if status != http.StatusBadRequest {
+				t.Fatalf("17 result groups: HTTP %d: %s", status, body)
+			}
+		} else {
+			var resp client.AttributionVerifyResponse
+			if status != http.StatusOK || json.Unmarshal(body, &resp) != nil || len(resp.Groups) != dispatcher.MaxVerifyGroups {
+				t.Fatalf("16 result groups: HTTP %d: %s", status, body)
+			}
+			vtCheckReceipt(t, anonymous, sent, resp)
+		}
+	}
+	var charged int
+	if err := f.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM attribution_verify_budget").Scan(&charged); err != nil || charged != 0 || peer.callCount() != 0 {
+		t.Fatalf("offline requests: %d budget rows, %d executor calls, error %v", charged, peer.callCount(), err)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	data, err := json.Marshal(v)

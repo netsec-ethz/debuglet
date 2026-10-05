@@ -191,10 +191,15 @@ charged before the query is relayed and never refunded: an answer lost to a
 crash, a timeout or a broken session still counts, so neither a restart nor
 a failure resets the budget. A disconnected executor is not asked, so
 nothing is charged for it. Only an answer from a disclosed key, which is
-already split per run, is `invalid` (`tag_mismatch`). The server answers for the whole group:
-unlike the offline check it does not split a group whose packets reproduce
-different runs, and it checks the epoch of the capture time only, not the
-one before it.
+split per run, can be `invalid` (`tag_mismatch`), and only when none of the
+group's packets matches. With a recorded key, the HTTP response and receipt
+list verified run subsets, ambiguous packets, and unmatched packets separately.
+Unmatched packets alongside valid ones are `unsupported` (`unmatched`). The
+request and response each allow at most 16 groups, including these subsets;
+split a request into smaller batches if it exceeds this limit. Before disclosure,
+the executor answers for the whole group, without splitting or returning
+per-packet matches. The HTTP route checks the epoch of the capture time only,
+not the one before it.
 
 The receipt is a detached Ed25519 signature over canonical JSON (keys
 sorted, no whitespace) of `{api_version, dispatcher, groups: [{chain_id,
@@ -240,9 +245,11 @@ no candidate reproduces. The unmatched entry is `unsupported: unmatched`
 packets are attributed to no run, but since other packets of the same address
 and epoch match, they are no evidence that Debuglet did not send the group
 (they may have been altered on the way). A group is `invalid` only when none
-of its packets matches. Every entry of a split group carries `split`:
-`{packets, matched, unmatched, runs}` of the whole group, so each run's
-match count can be read against the group's non-matches.
+of its packets matches. In the CLI and SDK report, every entry of a split
+group carries `split`: `{packets, matched, unmatched, runs}` of the whole
+group, so each run's match count can be read against the group's non-matches.
+The HTTP response and signed receipt identify each subset by its request
+packet indices; they do not include this report-only `split` summary.
 
 Machine reasons (`reason`): `invalid` has `tag_mismatch`, `no_run`;
 `pending` has `not_disclosed`, and from the server also `budget_exhausted`,
@@ -346,7 +353,7 @@ packets carry it as `captured_at`.
 | Evidence bundle | 256 MiB | |
 | Candidates per lookup | 32 | Larger answers are `unsupported: too many candidates` |
 | Keys per page | 1024 epochs | |
-| Packets per `POST /attribution/verify` | 256, body ≤ 64 KiB, ≤ 16 groups | |
+| Packets per `POST /attribution/verify` | 256, body ≤ 64 KiB, ≤ 16 source/epoch groups and ≤ 16 result subsets | |
 | Server budget `R` per (executor, chain, epoch) | 16 candidate trials (a query charges one per candidate run), shared by all requesters, durable across restarts, never refunded | Each trial tests at most one guess of a 16-bit tag against one run's key, so a forged tag for any candidate of that epoch succeeds with probability at most `R/65536 ≈ 0.02 %` |
 | Clock skew | ±1 epoch | As today |
 | History retention | Operator-configured, default 90 days | `missing` before `retained_from` |

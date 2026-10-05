@@ -26,12 +26,13 @@ import (
 // Server-assisted verification (docs/verification.md, method server). The
 // packets of one source address in one epoch of one chain form a group. A
 // group whose key is on record is checked here against the disclosed key
-// (method offline). Before disclosure, the dispatcher asks the executor,
-// which still holds the key, whether one candidate run reproduces every tag
-// (method server). The executor never returns tags or keys, and every
-// question spends one unit of a budget per executor, chain and epoch that all
-// requesters share. The budget is spent durably before the question is
-// relayed, so neither a crash nor a lost answer refunds it.
+// and split into run subsets (method offline). Before disclosure, the
+// dispatcher asks the executor, which still holds the key, whether one
+// candidate run reproduces every tag (method server). The executor never
+// returns tags or keys. Each question charges its candidate trials against
+// a budget per executor, chain and epoch shared by all requesters. The
+// budget is spent durably before relay, so a crash or lost answer cannot
+// refund it.
 
 // Limits of server-assisted verification (docs/verification.md#limits).
 const (
@@ -41,7 +42,7 @@ const (
 	VerifyBudget = 16
 	// MaxVerifyPackets bounds the packets of one request.
 	MaxVerifyPackets = 256
-	// MaxVerifyGroups bounds the groups one request forms.
+	// MaxVerifyGroups bounds both the source/epoch groups and result subsets.
 	MaxVerifyGroups = 16
 	// maxVerifyRuns is the most candidate runs one lookup may name.
 	maxVerifyRuns = 32
@@ -82,7 +83,7 @@ const (
 
 // ErrTooManyVerifyGroups reports a request whose packets form more than
 // MaxVerifyGroups groups.
-var ErrTooManyVerifyGroups = errors.New("the packets form more than 16 groups (one per source address and epoch)")
+var ErrTooManyVerifyGroups = errors.New("the packets form more than 16 groups or run subsets")
 
 // VerifyPacket is one packet of a verification request.
 type VerifyPacket struct {
@@ -248,7 +249,10 @@ func (d *Dispatcher) VerifyAttribution(ctx context.Context, packets []VerifyPack
 		}
 	}
 	for _, g := range groups {
-		out = append(out, d.verifyGroup(ctx, g.chain, g.epoch, g.packets, packets))
+		out = append(out, d.verifyGroup(ctx, g.chain, g.epoch, g.packets, packets)...)
+		if len(out) > MaxVerifyGroups {
+			return nil, ErrTooManyVerifyGroups
+		}
 	}
 	return out, nil
 }
@@ -272,8 +276,8 @@ func (d *Dispatcher) verifyCandidates(ctx context.Context, ip string, at time.Ti
 	return time.Unix(0, retainedFrom), rows, tx.Commit()
 }
 
-// verifyGroup decides one group of one chain at one epoch.
-func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64, indices []int, packets []VerifyPacket) VerifyGroupResult {
+// verifyGroup decides one chain epoch, splitting disclosed matches per run.
+func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64, indices []int, packets []VerifyPacket) []VerifyGroupResult {
 	row := c.row
 	source := netip.AddrFrom4([4]byte(packets[indices[0]].Data[12:16])).String()
 	out := VerifyGroupResult{Source: source, ChainID: row.ChainID, ExecutorID: row.ExecutorID, Epoch: epoch, Packets: indices}
@@ -283,13 +287,13 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 	switch {
 	case row.TagSpec != tagspec.Version:
 		out.Verdict, out.Reason = VerifyUnsupported, "tag_spec"
-		return out
+		return []VerifyGroupResult{out}
 	case row.DelayEpochs < tagspec.MinDisclosureDelay:
 		out.Verdict, out.Reason = VerifyUnsupported, "disclosure_delay"
-		return out
+		return []VerifyGroupResult{out}
 	case epoch < 1 || (row.ChainLength > 0 && epoch >= row.ChainLength):
 		out.Verdict, out.Reason = VerifyUnsupported, "no_signing_key"
-		return out
+		return []VerifyGroupResult{out}
 	}
 	out.Budget = budget
 	q := database.New(d.db)
@@ -302,11 +306,10 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 	if key, ok, err := d.recordedEpochKey(ctx, row.ExecutorID, row.ChainID, epoch); err != nil {
 		out.Verdict, out.Reason = VerifyPending, VerifyExecutorUnavailable
 		d.logger.Warn("Failed to read a disclosed key for verification", zap.String("executorID", row.ExecutorID), zap.Error(err))
-		return out
+		return []VerifyGroupResult{out}
 	} else if ok {
 		out.Method = VerifyMethodOffline
-		out.Verdict, out.Reason, out.RunID = matchRuns(key, c.runs, indices, packets)
-		return out
+		return matchRuns(key, c.runs, out, packets)
 	}
 	now := d.now()
 	if !now.Before(due) {
@@ -316,7 +319,7 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 		} else {
 			out.Verdict, out.Reason = VerifyMissing, "keys_missing"
 		}
-		return out
+		return []VerifyGroupResult{out}
 	}
 	d.mu.RLock()
 	entry := d.executors[row.ExecutorID]
@@ -328,17 +331,17 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 	if owner == nil {
 		// Nothing is asked, so nothing is spent.
 		out.Verdict, out.Reason, out.PendingUntil = VerifyPending, VerifyExecutorUnavailable, &pendingUntil
-		return out
+		return []VerifyGroupResult{out}
 	}
 	used, err := d.spendVerifyBudget(ctx, row.ExecutorID, row.ChainID, epoch, int64(len(c.runs)), now)
 	if errors.Is(err, sql.ErrNoRows) {
 		out.Verdict, out.Reason, out.PendingUntil = VerifyPending, VerifyBudgetExhausted, &pendingUntil
-		return out
+		return []VerifyGroupResult{out}
 	}
 	if err != nil {
 		out.Verdict, out.Reason = VerifyPending, VerifyExecutorUnavailable
 		d.logger.Warn("Failed to spend a verification query", zap.String("executorID", row.ExecutorID), zap.Error(err))
-		return out
+		return []VerifyGroupResult{out}
 	}
 	budget.Remaining = max(VerifyBudget-used, 0)
 	var answered bool
@@ -349,7 +352,7 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 	if out.Verdict == VerifyPending {
 		out.PendingUntil = &pendingUntil
 	}
-	return out
+	return []VerifyGroupResult{out}
 }
 
 // spendVerifyBudget charges trials to the epoch, in its own transaction, and
@@ -400,36 +403,78 @@ func (d *Dispatcher) recordedEpochKey(ctx context.Context, executorID, chainID s
 	return key, true, nil
 }
 
-// matchRuns decides a group against a disclosed key with the executor's
-// rule: the one run that reproduces every tag is verified; none is a
-// mismatch; several are ambiguous.
-func matchRuns(key []byte, runs []string, indices []int, packets []VerifyPacket) (verdict, reason, run string) {
-	var matched []string
+// matchRuns checks each packet against a disclosed key. A common run can
+// resolve collisions across packets; otherwise each run, ambiguous subset
+// and unmatched subset gets its own result, as in the offline client.
+func matchRuns(key []byte, runs []string, base VerifyGroupResult, packets []VerifyPacket) []VerifyGroupResult {
+	matches := make([][]string, len(base.Packets))
 	for _, candidate := range runs {
 		ak, err := tagspec.DeriveAK(key, []byte(candidate))
 		if err != nil {
 			continue
 		}
-		all := true
-		for _, i := range indices {
+		for k, i := range base.Packets {
 			in, _ := tagspec.HashInput(packets[i].Data)
 			id, _ := tagspec.PacketID(packets[i].Data)
-			if tag, err := tagspec.ComputeTag(ak, in); err != nil || tag != id {
-				all = false
-				break
+			if tag, err := tagspec.ComputeTag(ak, in); err == nil && tag == id {
+				matches[k] = append(matches[k], candidate)
 			}
 		}
-		if all {
-			matched = append(matched, candidate)
+	}
+	var common []string
+	matched := 0
+	for _, m := range matches {
+		if len(m) == 0 {
+			continue
+		}
+		if matched == 0 {
+			common = slices.Clone(m)
+		} else {
+			common = slices.DeleteFunc(common, func(run string) bool { return !slices.Contains(m, run) })
+		}
+		matched++
+	}
+	if matched == 0 {
+		base.Verdict, base.Reason = VerifyInvalid, "tag_mismatch"
+		return []VerifyGroupResult{base}
+	}
+	byRun := map[string][]int{}
+	var ambiguous, unmatched []int
+	for k, m := range matches {
+		i := base.Packets[k]
+		switch {
+		case len(m) == 0:
+			unmatched = append(unmatched, i)
+		case len(common) == 1:
+			byRun[common[0]] = append(byRun[common[0]], i)
+		case len(common) == 0 && len(m) == 1:
+			byRun[m[0]] = append(byRun[m[0]], i)
+		default:
+			ambiguous = append(ambiguous, i)
 		}
 	}
-	switch len(matched) {
-	case 0:
-		return VerifyInvalid, "tag_mismatch", ""
-	case 1:
-		return VerifyVerified, "", matched[0]
+	var matchedRuns []string
+	for run := range byRun {
+		matchedRuns = append(matchedRuns, run)
 	}
-	return VerifyUnsupported, "ambiguous", ""
+	slices.Sort(matchedRuns)
+	var out []VerifyGroupResult
+	for _, run := range matchedRuns {
+		entry := base
+		entry.Packets, entry.RunID, entry.Verdict = byRun[run], run, VerifyVerified
+		out = append(out, entry)
+	}
+	if len(ambiguous) > 0 {
+		entry := base
+		entry.Packets, entry.Verdict, entry.Reason = ambiguous, VerifyUnsupported, "ambiguous"
+		out = append(out, entry)
+	}
+	if len(unmatched) > 0 {
+		entry := base
+		entry.Packets, entry.Verdict, entry.Reason = unmatched, VerifyUnsupported, VerifyUnmatched
+		out = append(out, entry)
+	}
+	return out
 }
 
 // executorReasons are the reasons an executor may give for unsupported.
