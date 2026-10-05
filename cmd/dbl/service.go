@@ -21,6 +21,7 @@ const serviceUsage = `Usage:
   dbl service start|stop|status (--role ROLE) [--name NAME]
   dbl service uninstall (--role ROLE) [--name NAME] [--purge]
   dbl service prune --prefix DIR --version VERSION [--component full|cli|dispatcher|executor] [--dry-run]
+  dbl service archive-run [--name worker] [--apply --reason TEXT] RUN_UUID
 
 Install one verified role as a service the host's service manager supervises.
 --root writes the same files below another directory to inspect them; a staged
@@ -97,6 +98,9 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 		return usageError("dbl service", serviceUsage, stderr, "missing subcommand")
 	}
 	subcommand := args[0]
+	if subcommand == "archive-run" {
+		return archiveCommand(ctx, args[1:], options, stdout, stderr, deps)
+	}
 	if subcommand == "prune" {
 		return servicePruneCommand(ctx, args[1:], options, stdout, stderr, deps)
 	}
@@ -107,7 +111,7 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 	switch subcommand {
 	case "install", "start", "stop", "status", "uninstall":
 	default:
-		return usageError("dbl service", serviceUsage, stderr, "expected install, start, stop, status, uninstall or prune")
+		return usageError("dbl service", serviceUsage, stderr, "expected install, start, stop, status, uninstall, prune or archive-run")
 	}
 	name := "dbl service " + subcommand
 	fs := newCommandFlagSet("service " + subcommand)
