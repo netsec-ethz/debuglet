@@ -14,6 +14,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
+	"math"
 	"time"
 
 	"go.uber.org/zap"
@@ -410,6 +411,12 @@ func recordSettlement(ctx context.Context, queries *database.Queries, order data
 func (p *PaymentHandler) refundOnChain(ctx context.Context, transactionID string, orders []database.DebugletOrder, extra func(*database.Queries) error) (string, error) {
 	transfer := database.ChainTransfer{Kind: transferRefund, TransactionID: transactionID}
 	for _, order := range orders {
+		if order.Price < 0 {
+			return "", fmt.Errorf("refund order %d of transaction %s: amount must not be negative", order.OrderID, transactionID)
+		}
+		if order.Price > math.MaxInt64-transfer.Amount {
+			return "", fmt.Errorf("refund transaction %s: total amount exceeds the supported range", transactionID)
+		}
 		transfer.Amount += order.Price
 		transfer.Currency, transfer.Receiver = order.Currency, order.RefundAddress
 	}
