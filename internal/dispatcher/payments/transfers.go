@@ -42,6 +42,11 @@ const staleReservation = 10 * time.Minute
 // recorded.
 const executeTimeout = 2 * time.Minute
 
+// chainReadTimeout bounds one chain read: the preparation of a transfer and
+// each reconciliation lookup. A lookup that does not answer in time leaves the
+// transfer unknown; it never means that the money was not sent.
+var chainReadTimeout = 30 * time.Second
+
 var (
 	// errAlreadySettled is returned by a transfer decision that finds the
 	// decision already taken. Nothing is reserved and nothing is sent.
@@ -64,15 +69,15 @@ type reservedTransfer struct {
 // transfer pays for) and reserves the transfer row with the signed
 // transaction; then the transfer is submitted and its outcome recorded. An
 // error means the decision was not taken and nothing was sent. Once the
-// decision is committed, a failed or unknown transfer is recorded on its row
-// and logged, and nil is returned.
-func (p *PaymentHandler) sendTransfer(ctx context.Context, transfer database.ChainTransfer, decide func(*database.Queries) error) error {
+// decision is committed, the error is nil and state is the outcome recorded on
+// the transfer row (sent, failed or unknown), or empty when nothing was to be
+// transferred.
+func (p *PaymentHandler) sendTransfer(ctx context.Context, transfer database.ChainTransfer, decide func(*database.Queries) error) (state string, err error) {
 	reserved, err := p.prepareAndReserve(ctx, transfer, decide)
 	if err != nil || reserved == nil {
-		return err
+		return "", err
 	}
-	p.executeReserved(ctx, reserved)
-	return nil
+	return p.executeReserved(ctx, reserved), nil
 }
 
 // prepareAndReserve prepares the transfer, then commits decide together with
@@ -81,8 +86,10 @@ func (p *PaymentHandler) sendTransfer(ctx context.Context, transfer database.Cha
 func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer database.ChainTransfer, decide func(*database.Queries) error) (*reservedTransfer, error) {
 	var prepared *sui.PreparedTransfer
 	if transfer.Amount > 0 {
+		readCtx, cancel := context.WithTimeout(ctx, chainReadTimeout)
 		var err error
-		prepared, err = p.sui.PrepareTransfer(ctx, uint64(transfer.Amount), sui.GetCoinType(transfer.Currency, p.cfg.Sui.Network), transfer.Receiver)
+		prepared, err = p.sui.PrepareTransfer(readCtx, uint64(transfer.Amount), sui.GetCoinType(transfer.Currency, p.cfg.Sui.Network), transfer.Receiver)
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("prepare %s transfer: %w", transfer.Kind, err)
 		}
@@ -122,10 +129,12 @@ func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer databas
 
 // executeReserved submits a reserved transfer and records the outcome. The
 // outcome is recorded even when ctx ended during the call; if it cannot be
-// recorded, the row stays reserved and reconciliation resolves it.
-func (p *PaymentHandler) executeReserved(ctx context.Context, reserved *reservedTransfer) {
+// recorded, the row stays reserved and reconciliation resolves it. It returns
+// the outcome's state.
+func (p *PaymentHandler) executeReserved(ctx context.Context, reserved *reservedTransfer) string {
 	state, detail := executionOutcome(p.submit(ctx, reserved.prepared))
 	p.recordTransfer(context.WithoutCancel(ctx), reserved.row, state, reserved.prepared.Digest, detail)
+	return state
 }
 
 // submit runs ExecuteTransfer bounded by executeTimeout.
@@ -221,30 +230,38 @@ func (p *PaymentHandler) ReconcileTransfers(ctx context.Context, limit int) erro
 	return nil
 }
 
+// reconcileTransfer looks one transfer up within chainReadTimeout and records
+// what the lookup found. The outcome is recorded even when ctx ended.
 func (p *PaymentHandler) reconcileTransfer(ctx context.Context, t database.ChainTransfer) {
-	outcome, verified, err := p.sui.LookupTransfer(ctx, t.Digest, &sui.TransferExpectation{
+	lookupCtx, cancel := context.WithTimeout(ctx, chainReadTimeout)
+	outcome, verified, err := p.sui.LookupTransfer(lookupCtx, t.Digest, &sui.TransferExpectation{
 		Receiver: t.Receiver, Amount: uint64(t.Amount), CoinType: sui.GetCoinType(t.Currency, p.cfg.Sui.Network),
 	})
+	timedOut := errors.Is(lookupCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+	cancel()
+	record := context.WithoutCancel(ctx)
 	switch {
+	case err != nil && timedOut:
+		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: lookup timed out")
 	case err != nil:
-		p.recordTransfer(ctx, t, transferUnknown, t.Digest, "last check: lookup inconclusive: "+err.Error())
+		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: lookup inconclusive: "+err.Error())
 	case outcome == sui.TransferConfirmed && verified:
-		p.recordTransfer(ctx, t, transferConfirmed, t.Digest, "")
+		p.recordTransfer(record, t, transferConfirmed, t.Digest, "")
 	case outcome == sui.TransferConfirmed:
-		p.recordTransfer(ctx, t, transferUnknown, t.Digest, "last check: executed successfully, but the node returned no balance changes, so the receiver's credit could not be verified")
+		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: executed successfully, but the node returned no balance changes, so the receiver's credit could not be verified")
 	case outcome == sui.TransferFailed:
-		p.recordTransfer(ctx, t, transferFailed, t.Digest, "executed with failure status")
+		p.recordTransfer(record, t, transferFailed, t.Digest, "executed with failure status")
 	case outcome == sui.TransferNotFound && t.State != transferSent:
 		prepared, err := sui.RestorePreparedTransfer(t.Digest, t.SignedTransaction, t.Signature)
 		if err != nil {
-			p.recordTransfer(ctx, t, transferUnknown, t.Digest, "last check: not found, and the stored transaction cannot be submitted again: "+err.Error())
+			p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: not found, and the stored transaction cannot be submitted again: "+err.Error())
 			return
 		}
 		state, detail := executionOutcome(p.submit(ctx, prepared))
-		p.recordTransfer(context.WithoutCancel(ctx), t, state, prepared.Digest, detail)
+		p.recordTransfer(record, t, state, prepared.Digest, detail)
 	case outcome == sui.TransferNotFound:
-		p.recordTransfer(ctx, t, transferUnknown, t.Digest, "last check: not found after the chain accepted it")
+		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: not found after the chain accepted it")
 	default:
-		p.recordTransfer(ctx, t, transferUnknown, t.Digest, fmt.Sprintf("last check: unexpected lookup outcome %q", outcome))
+		p.recordTransfer(record, t, transferUnknown, t.Digest, fmt.Sprintf("last check: unexpected lookup outcome %q", outcome))
 	}
 }
