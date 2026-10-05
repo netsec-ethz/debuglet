@@ -132,8 +132,12 @@ whether it was applied, a duplicate, a mismatch, expired or for an unknown
 intent), and
 `chain_transfers`, the outbound payout and refund transfers and their states,
 including each signed transaction and its signature, stored before broadcast.
-Both are kept indefinitely for reconciliation; they stay empty while chain
-payments are disabled.
+A transfer row is `reserved` before the chain is called, then `sent`,
+`confirmed`, `failed` (nothing moved; a failed payout's amount is back in the
+balance) or `unknown` (the outcome is not known yet; reconciliation keeps
+checking it). Both are kept indefinitely for reconciliation; they stay empty
+while chain payments are disabled. See [chain payments](payments.md) for the
+transfer lifecycle and what each state means for an operator.
 
 ## State and upgrades
 
