@@ -21,6 +21,17 @@ The dispatcher prunes older records on its expiry loop, at startup and hourly: r
 
 The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
 
+### Dispatcher usage allowances
+
+The optional `[allowance]` section caps what authenticated accounts may reserve with `TEST` payment intents at the TEST units an operator granted them. Allowances are non-transferable usage credits in TEST units, not money or prepaid USDC. Every shipped configuration leaves them disabled; enabling them is a choice of the deployment.
+
+| Key | Unit | Default | Allowed |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | `true` or `false` |
+| `default_grant` | TEST units | 30,000,000 | 0 (default) or positive |
+
+Nothing is granted automatically, at sign-up or later. An operator account grants an account an amount with a reason and an idempotency key through `POST /operator/accounts/{id}/allowance`; a request without an amount grants `default_grant`, which at a price of 1 covers ten runs of 100,000 bit/s for 30 seconds. Grants are never changed, reset or renewed, and an account's ceiling is the sum of its grants. While allowances are enabled, an account's `TEST` intent is created only if its remaining allowance covers the price, otherwise it is refused with `allowance_exceeded`; the request without a credential that the local development profile admits is not capped. See [the API reference](../api.md#usage-allowances-api-115) for how reservations are counted.
+
 ### Dispatcher blockchain payments
 
 The `[sui]` section configures chain payments. Every shipped configuration sets `disabled = true` and leaves the other fields empty; in that mode they are ignored and the dispatcher serves `TEST` payments only. `server.local_development = true` requires `disabled = true`. Enabling chain payments is an operator decision with its own profile and checklist; see [chain payments](payments.md).
@@ -134,7 +145,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 21 and executor schema 6 are the current schema boundaries.
+Dispatcher schema 23 and executor schema 6 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
@@ -155,6 +166,11 @@ balance) or `unknown` (the outcome is not known yet; reconciliation keeps
 checking it). Both are kept indefinitely for reconciliation; they stay empty
 while chain payments are disabled. See [chain payments](payments.md) for the
 transfer lifecycle and what each state means for an operator.
+
+From dispatcher schema 23, it also keeps `allowance_grants`, one row per usage
+allowance grant (account, amount in TEST units, the granting operator account,
+reason, idempotency key and time). Grants are never changed or removed; the
+table stays empty while allowances are disabled.
 
 ## State and upgrades
 

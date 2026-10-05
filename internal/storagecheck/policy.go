@@ -31,9 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 22: the chain listener records payment receipts and outbound
-	// transfers in payment_receipts and chain_transfers.
-	MinimumDispatcherVersion int64 = 22
+	// Schema 23: usage allowances are read from allowance_grants.
+	MinimumDispatcherVersion int64 = 23
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -74,6 +73,7 @@ func PolicyFor(role Role) (Policy, error) {
 		}, Tables: map[string][]string{
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
+			"allowance_grants":           {"id", "user_id", "amount", "granted_by", "reason", "idempotency_key", "granted_at"},
 			"payment_receipts":           {"tx_digest", "event_seq", "nonce", "disposition", "amount", "checkpoint", "observed_at"},
 			"chain_transfers":            {"id", "kind", "transaction_id", "amount", "state", "digest", "signed_transaction", "signature", "updated_at"},
 			"measurement_profiles":       {"id", "user_id", "document"},

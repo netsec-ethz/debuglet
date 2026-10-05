@@ -99,3 +99,7 @@ API 1.12 adds measurement profiles, batch details, explicit retry lineage, liste
 Dispatcher schema 21 records one settlement per order and the pricing rule of each transaction; this build refuses an older dispatcher database, so upgrade it explicitly before starting this build.
 
 Dispatcher schema 22 records chain payment receipts and outbound chain transfers. The receipt listener and the transfer code depend on it, so this build requires schema 22; upgrade explicitly before starting it. The HTTP API is unchanged.
+
+API 1.15 adds `POST /payment/quote`, the `quote` field of the payment intent response, the `economics` field of `GET /me`, `GET /me/orders`, the usage allowance routes `GET /me/allowance` and `POST /operator/accounts/{id}/allowance`, the `allowance_exceeded`, `allowance_out_of_range` and `conflict` error codes, and `GET /operator/executors/{id}/earnings`. The Go client requires 1.15 for these routes.
+
+Dispatcher schema 23 records usage allowance grants in `allowance_grants`. The allowance routes and the capped intent depend on it, so this build requires schema 23; upgrade explicitly before starting it.
