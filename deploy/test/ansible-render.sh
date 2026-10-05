@@ -145,6 +145,8 @@ printf '%s\n' 'GITHUB_OAUTH_CLIENT_ID=fixture-client' \
 	"GITHUB_OAUTH_CLIENT_SECRET=''" >"$work/github-quoted-empty-secret.env"
 printf '%s\n' 'CILOGON_CLIENT_ID=   ' \
 	'CILOGON_CLIENT_SECRET=fixture-secret' >"$work/cilogon-blank-id.env"
+printf '%s\n' ' CILOGON_CLIENT_SECRET=' | cat "$work/cilogon_oidc.env" - >"$work/cilogon-padded-secret.env"
+printf '%s\n' 'CILOGON_CLIENT_SECRET =' | cat "$work/cilogon_oidc.env" - >"$work/cilogon-spaced-secret.env"
 chmod 0600 "$work"/cilogon-*.env "$work"/github-*.env
 
 # The inventory carries the host layout only. Everything a role would write to
@@ -336,6 +338,10 @@ refuses 'CILogon with an empty quoted secret is refused' 'CILOGON_CLIENT_SECRET 
 	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-quoted-empty-secret.env"
 refuses 'CILogon with a whitespace-only client ID is refused' 'CILOGON_CLIENT_ID exactly once and non-empty' \
 	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-blank-id.env"
+refuses 'CILogon with a padded empty secret after a good one is refused' 'CILOGON_CLIENT_SECRET exactly once and non-empty' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-padded-secret.env"
+refuses 'CILogon with a spaced empty secret after a good one is refused' 'CILOGON_CLIENT_SECRET exactly once and non-empty' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-spaced-secret.env"
 refute 'a refused credential file does not show its values' "$work/refuse.log" 'fixture-secret'
 refuses 'GitHub OAuth without its secret is refused' 'GITHUB_OAUTH_CLIENT_SECRET exactly once and non-empty' \
 	-e "dispatcher_github_oauth_env_file=$work/github-no-secret.env"
