@@ -131,7 +131,7 @@ func TestCancellationCrashBoundaries(t *testing.T) {
 			}
 			defer db.Close()
 			logger := zap.NewNop()
-			ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+			ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 			d, err := New(logger, db, "cancel-restart", time.Minute, time.Minute, ph)
 			if err != nil {
 				t.Fatal(err)

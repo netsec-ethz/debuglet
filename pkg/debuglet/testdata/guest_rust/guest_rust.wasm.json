@@ -1,0 +1,10 @@
+{
+  "guest_abi": "debuglet-go-wasi-imports-v1",
+  "language": "rust",
+  "toolchain": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+  "image": "rust:1.90-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f",
+  "target": "wasm32-wasip1",
+  "build": "RUSTFLAGS=--remap-path-prefix=<checkout>/= cargo build --release --locked --target wasm32-wasip1 (opt-level = \"s\", strip = true)",
+  "sha256": "fa81d338109e9cb398902105a3b0ecad0bb2f8dc39163a0974cdc98fc31f4d96",
+  "bytes": 66914
+}

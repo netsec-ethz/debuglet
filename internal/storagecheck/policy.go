@@ -31,7 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 20
+	// Schema 23: usage allowances are read from allowance_grants.
+	MinimumDispatcherVersion int64 = 23
 	MinimumExecutorVersion   int64 = 7
 )
 
@@ -72,6 +73,9 @@ func PolicyFor(role Role) (Policy, error) {
 		}, Tables: map[string][]string{
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
+			"allowance_grants":           {"id", "user_id", "amount", "granted_by", "reason", "idempotency_key", "granted_at"},
+			"payment_receipts":           {"tx_digest", "event_seq", "nonce", "disposition", "amount", "checkpoint", "observed_at"},
+			"chain_transfers":            {"id", "kind", "transaction_id", "amount", "state", "digest", "signed_transaction", "signature", "updated_at"},
 			"measurement_profiles":       {"id", "user_id", "document"},
 			"measurement_requests":       {"debuglet_id", "document"},
 			"measurement_execution":      {"debuglet_id", "started_observed_ns", "terminal_observed_ns", "exit_code", "tcp_endpoint"},
@@ -87,6 +91,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
 			"debuglet_provenance":        {"debuglet_id", "document"},
 			"debuglet_output":            {"debuglet_id", "output_version", "owner_fingerprint", "account_id", "committed_sequence", "final_sequence", "final_cursor", "status", "reason"},
+			"order_settlements":          {"transaction_id", "order_id", "kind", "amount"},
 			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
 			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
 			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
@@ -101,7 +106,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"device_logins":              {"selector", "verifier_hash", "user_code_hash", "audience", "scopes", "label", "expires_at", "next_poll_at", "poll_interval", "state", "approver_session", "user_id"},
 			"sessions":                   {"selector", "verifier_hash", "csrf_hash", "user_id", "expires_at", "revoked", "kind", "audience", "scopes", "label", "authenticated_at"},
 			"transaction_users":          {"transaction_id", "user_id"},
-			"transactions":               {"currency", "status"},
+			"transactions":               {"currency", "status", "pricing_rule"},
 			"user_credentials":           {"user_id", "kind", "selector", "secret_hash"},
 			"users":                      {"uuid", "name", "role"},
 		}}, nil

@@ -1,0 +1,21 @@
+[package]
+name = "guest_rust"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# The retained module guest_rust.wasm is built from this crate with
+#   RUSTFLAGS=--remap-path-prefix=<checkout>/= \
+#     cargo build --release --locked --target wasm32-wasip1
+# and recorded in guest_rust.wasm.json.
+[[bin]]
+name = "guest_rust"
+path = "src/main.rs"
+
+[dependencies]
+debuglet = { path = "../../../../examples/debuglets/rust/debuglet" }
+
+[profile.release]
+opt-level = "s"
+strip = true

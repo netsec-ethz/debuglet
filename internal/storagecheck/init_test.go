@@ -50,6 +50,9 @@ func TestBootstrapFresh(t *testing.T) {
 					"measurement_execution":      "debuglet_id started_observed_ns terminal_observed_ns exit_code tcp_endpoint",
 					"retry_requests":             "caller_scope request_id parent_run_id transaction_id request_hash intent_metadata",
 					"allocation_reclamations":    "debuglet_id reclaimed_at",
+					"allowance_grants":           "id user_id amount currency granted_by reason idempotency_key granted_at",
+					"payment_receipts":           "tx_digest event_seq nonce disposition amount coin_type receiver checkpoint observed_at detail",
+					"chain_transfers":            "id kind executor_id transaction_id order_id amount currency receiver state digest signed_transaction signature detail created_at updated_at",
 					"account_run_reservations":   "debuglet_id account_id queued_bytes retired_at last_retirement_check",
 					"payload_tombstones":         "debuglet_id deleted_at reason workload_sha256 certificate_sha256",
 					"debuglets":                  "id uuid start_time end_time usage ceil_bw executor_id addresses state error transaction_id order_id dispatcher_incarnation session_id",
@@ -57,9 +60,10 @@ func TestBootstrapFresh(t *testing.T) {
 					"debuglet_output":            "debuglet_id output_version owner_fingerprint account_id committed_sequence byte_count frame_count last_log_id final_sequence final_cursor status reason",
 					"debuglet_cancellations":     "debuglet_id request_id reason requested_at attempted_at acknowledged_at failure",
 					"debuglet_provenance":        "debuglet_id document",
+					"order_settlements":          "transaction_id order_id kind amount currency executor_id debuglet_id recorded_at",
 					"output_account_usage":       "account_id charged_bytes frame_count",
 					"output_node_usage":          "singleton charged_bytes frame_count",
-					"transactions":               "id auth_key price method expires_at hash currency status",
+					"transactions":               "id auth_key price method expires_at hash currency status pricing_rule",
 					"transaction_states":         "key value",
 					"earnings":                   "executor_id currency total_income current_balance sui_wallet_address",
 					"debuglet_order":             "transaction_id order_id executor_id price currency state refund_address debuglet_id",
@@ -75,7 +79,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

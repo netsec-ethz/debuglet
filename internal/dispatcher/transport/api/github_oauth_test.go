@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -127,5 +128,105 @@ func TestGitHubOAuthRejectsMismatchedState(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusFound || response.Header.Get("Location") != "https://example.test/console/?auth_error=expired" {
 		t.Fatalf("status = %d", response.StatusCode)
+	}
+}
+
+// stubGitHub serves the GitHub authorization, token and user endpoints from
+// handler for the rest of the test.
+func stubGitHub(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	provider := httptest.NewServer(handler)
+	oldAuthorize, oldToken, oldUser, oldClient := githubAuthorizeURL, githubTokenURL, githubUserURL, githubOAuthHTTPClient
+	githubAuthorizeURL, githubTokenURL, githubUserURL, githubOAuthHTTPClient = provider.URL+"/authorize", provider.URL+"/token", provider.URL+"/user", provider.Client()
+	t.Cleanup(func() {
+		githubAuthorizeURL, githubTokenURL, githubUserURL, githubOAuthHTTPClient = oldAuthorize, oldToken, oldUser, oldClient
+		provider.Close()
+	})
+}
+
+func githubFixture(t *testing.T, options ...Option) *ccFixture {
+	t.Helper()
+	return ccNewFixtureWith(t, append([]Option{CookieSecure(true), GitHubOAuth(GitHubOAuthConfig{Enabled: true, ClientID: "test-id", ClientSecret: "test-secret", CallbackURL: "https://example.test/api/auth/github/callback", SuccessURL: "https://example.test/console/"})}, options...)...)
+}
+
+// githubCallback starts a GitHub sign-in and returns the provider's callback
+// for it, carrying the issued state, the login cookies and query.
+func githubCallback(t *testing.T, f *ccFixture, query url.Values) *http.Request {
+	t.Helper()
+	start, err := http.NewRequest(http.MethodGet, f.root.URL+"/auth/github", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := cilogonResponse(t, start)
+	location, err := url.Parse(response.Header.Get("Location"))
+	if err != nil || response.StatusCode != http.StatusFound || location.Query().Get("state") == "" {
+		t.Fatalf("start = %d %s", response.StatusCode, response.Header.Get("Location"))
+	}
+	query.Set("state", location.Query().Get("state"))
+	callback, err := http.NewRequest(http.MethodGet, f.root.URL+"/auth/github/callback?"+query.Encode(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range response.Cookies() {
+		callback.AddCookie(cookie)
+	}
+	return callback
+}
+
+// githubSignInFailed asserts the callback ended at the sign-in failure state
+// without an account, a linked identity or a session.
+func githubSignInFailed(t *testing.T, f *ccFixture, response *http.Response, code string) {
+	t.Helper()
+	if response.StatusCode != http.StatusFound || response.Header.Get("Location") != "https://example.test/console/?auth_error="+code {
+		t.Fatalf("callback = %d %s, want auth_error=%s", response.StatusCode, response.Header.Get("Location"), code)
+	}
+	for _, cookie := range response.Cookies() {
+		if (cookie.Name == sessionCookieName || cookie.Name == csrfCookieName) && cookie.Value != "" {
+			t.Fatalf("failed sign-in set %s", cookie.Name)
+		}
+	}
+	var users, identities int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&users); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM oauth_identities`).Scan(&identities); err != nil {
+		t.Fatal(err)
+	}
+	if users != 0 || identities != 0 {
+		t.Fatalf("failed sign-in stored users=%d identities=%d", users, identities)
+	}
+}
+
+func TestGitHubOAuthProviderOutageIsATemporarySignInFailure(t *testing.T) {
+	var exchanges, lookups atomic.Int32
+	stubGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			exchanges.Add(1)
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		case "/user":
+			lookups.Add(1)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	f := githubFixture(t)
+	githubSignInFailed(t, f, cilogonResponse(t, githubCallback(t, f, url.Values{"code": {"one-time"}})), "provider_unavailable")
+	if exchanges.Load() != 1 || lookups.Load() != 0 {
+		t.Fatalf("token exchanges=%d user lookups=%d", exchanges.Load(), lookups.Load())
+	}
+}
+
+func TestGitHubOAuthCancelledSignInCreatesNoAccount(t *testing.T) {
+	var requests atomic.Int32
+	stubGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	})
+	f := githubFixture(t)
+	githubSignInFailed(t, f, cilogonResponse(t, githubCallback(t, f, url.Values{"error": {"access_denied"}})), "cancelled")
+	if requests.Load() != 0 {
+		t.Fatalf("a cancelled sign-in contacted the provider %d times", requests.Load())
 	}
 }

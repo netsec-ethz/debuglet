@@ -24,6 +24,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/protocol"
@@ -251,7 +252,7 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ph := payments.NewPaymentHandler(db, cfg, logger)
+	ph, _ := payments.NewPaymentHandler(db, cfg, logger)
 	d, err := dispatcher.New(logger, db, "wf-test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
@@ -499,13 +500,15 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 			t.Fatalf("%s in disabled mode returned %v, want ErrPaymentsDisabled", c.name, err)
 		}
 	}
-	ph.CompleteTransaction(wfChainOutstandingID, ctx)
+	if _, err := ph.ApplyPaymentReceipt(ctx, sui.PaymentReceipt{Digest: "wf-digest", Nonce: wfChainOutstandingID}); !errors.Is(err, payments.ErrPaymentsDisabled) {
+		t.Fatalf("ApplyPaymentReceipt in disabled mode returned %v, want ErrPaymentsDisabled", err)
+	}
 	outstanding, err := queries.GetTransactionByID(ctx, wfChainOutstandingID)
 	if err != nil {
 		t.Fatalf("outstanding chain transaction: %v", err)
 	}
 	if outstanding.Status != int64(models.Outstanding) {
-		t.Fatalf("CompleteTransaction marked a chain transaction as %d in disabled mode", outstanding.Status)
+		t.Fatalf("ApplyPaymentReceipt marked a chain transaction as %d in disabled mode", outstanding.Status)
 	}
 	if after := wfTakeSnapshot(t, db); after != chainBefore {
 		t.Fatalf("disabled chain paths changed rows:\nbefore:\n%s\nafter:\n%s", chainBefore, after)
@@ -584,7 +587,7 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	if after := wfTakeSnapshot(t, db2); after != completed {
 		t.Fatalf("rows differ after reopen:\nbefore:\n%s\nafter:\n%s", completed, after)
 	}
-	ph2 := payments.NewPaymentHandler(db2, cfg, logger)
+	ph2, _ := payments.NewPaymentHandler(db2, cfg, logger)
 	paid, err := ph2.IsPaid(ctx, txID)
 	if err != nil {
 		t.Fatalf("IsPaid after reopen: %v", err)

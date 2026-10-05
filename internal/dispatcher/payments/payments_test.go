@@ -36,12 +36,12 @@ const waitBound = 2 * time.Second
 // the GetTransactionOrders pattern is anchored to avoid matching the longer
 // GetDebugletOrder statement.
 var (
-	transactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
+	transactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status", "pricing_rule"}
 	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	earningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 
 	getTransactionByIDQuery = regexp.QuoteMeta(
-		"SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions\nWHERE id = ?",
+		"SELECT id, auth_key, price, method, expires_at, hash, currency, status, pricing_rule FROM transactions\nWHERE id = ?",
 	)
 	updateTransactionStatusQuery = regexp.QuoteMeta(
 		"UPDATE transactions\nSET status = ?\nWHERE id = ?",
@@ -54,6 +54,9 @@ var (
 	) + `\s*$`
 	updateDebugletOrderStateQuery = regexp.QuoteMeta(
 		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
+	)
+	transitionDebugletOrderQuery = regexp.QuoteMeta(
+		"UPDATE debuglet_order\nSET state = ?1\nWHERE transaction_id = ?2 AND order_id = ?3\n  AND state = ?4",
 	)
 )
 
@@ -96,7 +99,17 @@ type fakeChain struct {
 	transferAmount   uint64
 	transferCoinType string
 	transferAddress  string
+	transferDigest   string
 	transferErr      error
+
+	prepared   *sui.PreparedTransfer
+	executed   *sui.PreparedTransfer
+	executeErr error
+	lookedUp   string
+	expected   *sui.TransferExpectation
+	outcome    sui.TransferOutcome
+	verified   bool
+	lookupErr  error
 }
 
 func newFakeChain() *fakeChain {
@@ -147,12 +160,42 @@ func (f *fakeChain) RefundDebuglet(debugletOrder *database.DebugletOrder, refund
 	return f.refundErr
 }
 
-func (f *fakeChain) TransferCoins(amount uint64, cointype string, refundAddress string, ctx context.Context) error {
+func (f *fakeChain) TransferCoins(amount uint64, cointype string, receiver string, ctx context.Context) (string, error) {
 	f.record("TransferCoins")
 	f.mu.Lock()
-	f.transferAmount, f.transferCoinType, f.transferAddress = amount, cointype, refundAddress
-	f.mu.Unlock()
-	return f.transferErr
+	defer f.mu.Unlock()
+	f.transferAmount, f.transferCoinType, f.transferAddress = amount, cointype, receiver
+	return f.transferDigest, f.transferErr
+}
+
+// PrepareTransfer records its arguments like TransferCoins and returns a
+// prepared transfer carrying the scripted digest.
+func (f *fakeChain) PrepareTransfer(ctx context.Context, amount uint64, coinType string, receiver string) (*sui.PreparedTransfer, error) {
+	f.record("PrepareTransfer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transferAmount, f.transferCoinType, f.transferAddress = amount, coinType, receiver
+	if f.transferErr != nil {
+		return nil, f.transferErr
+	}
+	f.prepared = &sui.PreparedTransfer{Digest: f.transferDigest}
+	return f.prepared, nil
+}
+
+func (f *fakeChain) ExecuteTransfer(ctx context.Context, prepared *sui.PreparedTransfer) error {
+	f.record("ExecuteTransfer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.executed = prepared
+	return f.executeErr
+}
+
+func (f *fakeChain) LookupTransfer(ctx context.Context, digest string, expect *sui.TransferExpectation) (sui.TransferOutcome, bool, error) {
+	f.record("LookupTransfer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookedUp, f.expected = digest, expect
+	return f.outcome, f.verified, f.lookupErr
 }
 
 // fakePayout is a scripted payoutLoop that blocks until its context ends.
@@ -179,6 +222,8 @@ type depRecorder struct {
 	chain  *fakeChain
 	payout *fakePayout
 
+	chainErr error // returned by the chain factory when set
+
 	chainCalls  int
 	payoutCalls int
 	gotCfg      *config.DispatcherConfig
@@ -194,10 +239,13 @@ func newDepRecorder() *depRecorder {
 
 func (r *depRecorder) deps() paymentDeps {
 	return paymentDeps{
-		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) chainBackend {
+		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) (chainBackend, error) {
 			r.chainCalls++
 			r.gotCfg, r.gotDB, r.gotLogger, r.gotTF = cfg, db, logger, tf
-			return r.chain
+			if r.chainErr != nil {
+				return nil, r.chainErr
+			}
+			return r.chain, nil
 		},
 		newPayout: func(db *sql.DB, h Handler, logger *zap.Logger) payoutLoop {
 			r.payoutCalls++
@@ -263,7 +311,10 @@ func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 func newDisabledHandler(t *testing.T, db *sql.DB, stale bool, inject bool) (*PaymentHandler, *depRecorder) {
 	t.Helper()
 	rec := newDepRecorder()
-	h := newPaymentHandler(db, disabledConfig(t, stale), zap.NewNop(), rec.deps())
+	h, err := newPaymentHandler(db, disabledConfig(t, stale), zap.NewNop(), rec.deps())
+	if err != nil {
+		t.Fatalf("disabled construction: %v", err)
+	}
 	if rec.chainCalls != 0 || rec.payoutCalls != 0 {
 		t.Fatalf("disabled construction invoked factories: chain=%d payout=%d", rec.chainCalls, rec.payoutCalls)
 	}
@@ -280,7 +331,10 @@ func newDisabledHandler(t *testing.T, db *sql.DB, stale bool, inject bool) (*Pay
 func newEnabledHandler(t *testing.T, db *sql.DB, cfg *config.DispatcherConfig) (*PaymentHandler, *depRecorder) {
 	t.Helper()
 	rec := newDepRecorder()
-	h := newPaymentHandler(db, cfg, zap.NewNop(), rec.deps())
+	h, err := newPaymentHandler(db, cfg, zap.NewNop(), rec.deps())
+	if err != nil {
+		t.Fatalf("enabled construction: %v", err)
+	}
 	if rec.chainCalls != 1 || rec.payoutCalls != 1 {
 		t.Fatalf("enabled construction factory counts: chain=%d payout=%d, want 1/1", rec.chainCalls, rec.payoutCalls)
 	}
@@ -309,7 +363,7 @@ func waitErr(t *testing.T, ch <-chan error, what string) error {
 
 func transactionRow(method string, status models.TransactionState) *sqlmock.Rows {
 	return sqlmock.NewRows(transactionColumns).AddRow(
-		testTxID, "", testPrice, method, time.Now().Add(5*time.Minute), testHash, method, int64(status),
+		testTxID, "", testPrice, method, time.Now().Add(5*time.Minute), testHash, method, int64(status), "",
 	)
 }
 
@@ -388,7 +442,10 @@ func TestPublicConstructorDisabled(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stale=%v", stale), func(t *testing.T) {
 			db, mock := newMockDB(t)
-			h := NewPaymentHandler(db, disabledConfig(t, stale), zap.NewNop())
+			h, err := NewPaymentHandler(db, disabledConfig(t, stale), zap.NewNop())
+			if err != nil {
+				t.Fatalf("public constructor in disabled mode: %v", err)
+			}
 			if h.sui != nil || h.pt != nil {
 				t.Fatalf("public constructor built services in disabled mode: sui=%v pt=%v", h.sui, h.pt)
 			}
@@ -414,7 +471,10 @@ func TestEnabledConstructionInvokesBothFactoriesOnce(t *testing.T) {
 			cfg := tc.cfg(t)
 			logger := zap.NewNop()
 			rec := newDepRecorder()
-			h := newPaymentHandler(db, cfg, logger, rec.deps())
+			h, err := newPaymentHandler(db, cfg, logger, rec.deps())
+			if err != nil {
+				t.Fatalf("enabled construction: %v", err)
+			}
 
 			if rec.chainCalls != 1 || rec.payoutCalls != 1 {
 				t.Fatalf("factory counts chain=%d payout=%d, want 1/1", rec.chainCalls, rec.payoutCalls)
@@ -430,6 +490,61 @@ func TestEnabledConstructionInvokesBothFactoriesOnce(t *testing.T) {
 			}
 			if h.sui != chainBackend(rec.chain) || h.pt != payoutLoop(rec.payout) {
 				t.Fatalf("handler does not hold the constructed services")
+			}
+			assertMet(t, mock)
+		})
+	}
+}
+
+// TestEnabledConstructionFailure proves that a chain backend that cannot be
+// built fails construction: the error reaches the caller, no handler is
+// returned and the payout factory never runs, so nothing can be started.
+func TestEnabledConstructionFailure(t *testing.T) {
+	db, mock := newMockDB(t)
+	rec := newDepRecorder()
+	rec.chainErr = errScripted
+	h, err := newPaymentHandler(db, enabledConfig(t), zap.NewNop(), rec.deps())
+	if !errors.Is(err, errScripted) || h != nil {
+		t.Fatalf("newPaymentHandler = (%v, %v), want (nil, wrapped %v)", h, err, errScripted)
+	}
+	if rec.chainCalls != 1 || rec.payoutCalls != 0 {
+		t.Fatalf("factory counts chain=%d payout=%d, want 1/0", rec.chainCalls, rec.payoutCalls)
+	}
+	if calls := rec.chain.Calls(); len(calls) != 0 {
+		t.Fatalf("chain backend used after a failed construction: %v", calls)
+	}
+	assertMet(t, mock)
+}
+
+// TestPublicConstructorEnabledRejectsUnusableConfig drives the production
+// factory with configurations that must fail before any client exists. The
+// error names the field and never contains keystore content.
+func TestPublicConstructorEnabledRejectsUnusableConfig(t *testing.T) {
+	valid := func(t *testing.T) *config.DispatcherConfig {
+		cfg := enabledConfig(t)
+		cfg.Sui.Address = "0x" + strings.Repeat("a", 64)
+		cfg.Sui.PaymentRegistryId = "0x" + strings.Repeat("b", 64)
+		cfg.Sui.PaymentKitPackage = "0x" + strings.Repeat("c", 64)
+		return cfg
+	}
+	cases := []struct {
+		name   string
+		mutate func(cfg *config.DispatcherConfig)
+		want   string
+	}{
+		{"missing keystore", func(*config.DispatcherConfig) {}, "sui.keystore_path"},
+		{"invalid network", func(cfg *config.DispatcherConfig) { cfg.Sui.Network = "devnet" }, "sui.network"},
+		{"empty endpoint", func(cfg *config.DispatcherConfig) { cfg.Sui.GRPCEndpoint = "" }, "sui.grpc_endpoint"},
+		{"malformed receiver address", func(cfg *config.DispatcherConfig) { cfg.Sui.Address = "0xdead-beef" }, "sui.address"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newMockDB(t)
+			cfg := valid(t)
+			tc.mutate(cfg)
+			h, err := NewPaymentHandler(db, cfg, zap.NewNop())
+			if err == nil || h != nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("NewPaymentHandler = (%v, %v), want an error naming %s", h, err, tc.want)
 			}
 			assertMet(t, mock)
 		})
@@ -697,21 +812,18 @@ func TestDisabledChainGuards(t *testing.T) {
 }
 
 // TestDisabledTESTPaths checks the database-only TEST behaviour in disabled
-// mode: refunds keep failing with the existing unsupported-currency errors and
-// never commit. Crediting a completed TEST order is covered on a real database
-// by TestSetDebugletOrderCompleteCreditsOnce.
+// mode: chain refunds keep failing with the existing unsupported-currency
+// errors and never commit. Crediting a completed TEST order and refunding a
+// failed TEST run locally are covered on a real database by
+// TestSetDebugletOrderCompleteCreditsOnce and settlement_test.go.
 func TestDisabledTESTPaths(t *testing.T) {
 	t.Run("RefundDebugletOrder TEST order is unsupported", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newDisabledHandler(t, db, true, true)
 
-		// Existing behaviour: the state update happens inside the transaction
-		// and is rolled back with the unsupported-currency error.
+		// The currency is refused before any state is written.
 		mock.ExpectBegin()
 		expectOrderRead(mock, "TEST", models.Paid)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID).
-			WillReturnRows(orderRow("TEST", models.Refunded))
 		mock.ExpectRollback()
 
 		err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background())
@@ -727,16 +839,24 @@ func TestDisabledTESTPaths(t *testing.T) {
 		assertMet(t, mock)
 	})
 
-	t.Run("RefundDebugletOrder already refunded order", func(t *testing.T) {
+	t.Run("SettleTerminalOrder already refunded TEST order", func(t *testing.T) {
 		db, mock := newMockDB(t)
-		h, _ := newDisabledHandler(t, db, true, true)
+		h, rec := newDisabledHandler(t, db, true, true)
+		// The conditional transition finds no Outstanding order; the order
+		// is read again, found settled, and nothing is written.
 		mock.ExpectBegin()
-		expectOrderRead(mock, "USDC", models.Refunded)
+		expectOrderRead(mock, "TEST", models.Refunded)
+		mock.ExpectExec(transitionDebugletOrderQuery).
+			WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		expectOrderRead(mock, "TEST", models.Refunded)
 		mock.ExpectRollback()
 
-		err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background())
-		if err == nil || err.Error() != "Debuglet has already been refunded" {
-			t.Fatalf("RefundDebugletOrder(refunded) = %v", err)
+		if err := h.SettleTerminalOrder(context.Background(), testDebuglet(), 1); err != nil {
+			t.Fatalf("SettleTerminalOrder(refunded) = %v", err)
+		}
+		if calls := rec.chain.Calls(); len(calls) != 0 {
+			t.Fatalf("settled order reached the chain backend: %v", calls)
 		}
 		assertMet(t, mock)
 	})
@@ -748,12 +868,6 @@ func TestDisabledTESTPaths(t *testing.T) {
 		mock.ExpectBegin()
 		expectTransactionRead(mock, "TEST", models.Paid)
 		expectTransactionOrdersRead(mock, "TEST", 1)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID).
-			WillReturnRows(orderRow("TEST", models.Refunded))
-		mock.ExpectExec(updateTransactionStatusQuery).
-			WithArgs(int64(models.Refunded), testTxID).
-			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectRollback()
 
 		err := h.RefundTransaction(testTxID, context.Background())
@@ -883,177 +997,117 @@ func TestUnrelatedReadErrorsArePreserved(t *testing.T) {
 // ---- enabled forwarding through the scripted backend ----
 
 func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
-	t.Run("RefundDebugletOrder USDC", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		mock.ExpectBegin()
-		expectOrderRead(mock, "USDC", models.Paid)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID).
-			WillReturnRows(orderRow("USDC", models.Refunded))
-		mock.ExpectCommit()
-
-		if err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background()); err != nil {
-			t.Fatalf("RefundDebugletOrder: %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "RefundDebuglet" {
-			t.Fatalf("backend calls %v", calls)
-		}
-		if rec.chain.refundAddress != testRefund || rec.chain.refundOrder == nil || rec.chain.refundOrder.State != int64(models.Refunded) {
-			t.Fatalf("forwarded refund (%v, %q)", rec.chain.refundOrder, rec.chain.refundAddress)
-		}
-		assertMet(t, mock)
-	})
-
-	t.Run("RefundTransaction USDC", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		mock.ExpectBegin()
-		expectTransactionRead(mock, "USDC", models.Paid)
-		expectTransactionOrdersRead(mock, "USDC", 2)
-		for i := int64(1); i <= 2; i++ {
-			mock.ExpectQuery(updateDebugletOrderStateQuery).
-				WithArgs(int64(models.Refunded), testTxID, i).
-				WillReturnRows(orderRow("USDC", models.Refunded))
-		}
-		mock.ExpectExec(updateTransactionStatusQuery).
-			WithArgs(int64(models.Refunded), testTxID).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
-
-		if err := h.RefundTransaction(testTxID, context.Background()); err != nil {
-			t.Fatalf("RefundTransaction: %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "TransferCoins" {
-			t.Fatalf("backend calls %v", calls)
-		}
-		if rec.chain.transferAmount != uint64(2*testPrice) || rec.chain.transferAddress != testRefund ||
-			rec.chain.transferCoinType != sui.GetCoinType("USDC", "testnet") {
-			t.Fatalf("forwarded transfer (%d, %q, %q)", rec.chain.transferAmount, rec.chain.transferCoinType, rec.chain.transferAddress)
-		}
-		assertMet(t, mock)
-	})
-
-	t.Run("PayoutExecutor USDC", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		err := h.PayoutExecutor(database.Earning{ExecutorID: testExecutor, Currency: "USDC", CurrentBalance: 42, SuiWalletAddress: "0xwallet"}, context.Background())
-		if err != nil {
-			t.Fatalf("PayoutExecutor: %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "TransferCoins" {
-			t.Fatalf("backend calls %v", calls)
-		}
-		if rec.chain.transferAmount != 42 || rec.chain.transferAddress != "0xwallet" ||
-			rec.chain.transferCoinType != sui.GetCoinType("USDC", "testnet") {
-			t.Fatalf("forwarded transfer (%d, %q, %q)", rec.chain.transferAmount, rec.chain.transferCoinType, rec.chain.transferAddress)
-		}
-		assertMet(t, mock)
-	})
+	const testReceiver = "0x00000000000000000000000000000000000000000000000000000000000000aa"
 
 	t.Run("TransferUSDC reaches the backend once", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		if err := h.TransferUSDC(9, "0xreceiver", context.Background()); err != nil {
+		rec.chain.transferDigest = "digest-1"
+		if err := h.TransferUSDC(9, testReceiver, context.Background()); err != nil {
 			t.Fatalf("TransferUSDC: %v", err)
 		}
 		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "TransferCoins" {
 			t.Fatalf("backend calls %v", calls)
 		}
-		if rec.chain.transferAmount != 9 {
-			t.Fatalf("forwarded amount %d", rec.chain.transferAmount)
+		if rec.chain.transferAmount != 9 || rec.chain.transferAddress != testReceiver ||
+			rec.chain.transferCoinType != sui.GetCoinType("USDC", "testnet") {
+			t.Fatalf("forwarded transfer (%d, %q, %q)", rec.chain.transferAmount, rec.chain.transferCoinType, rec.chain.transferAddress)
+		}
+		assertMet(t, mock)
+	})
+
+	t.Run("TransferUSDC refuses a malformed receiver", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		h, rec := newEnabledHandler(t, db, enabledConfig(t))
+		for _, receiver := range []string{"", "0xreceiver", "receiver", "0x" + strings.Repeat("a", 65)} {
+			if err := h.TransferUSDC(9, receiver, context.Background()); err == nil {
+				t.Fatalf("TransferUSDC(%q) succeeded", receiver)
+			}
+		}
+		if calls := rec.chain.Calls(); len(calls) != 0 {
+			t.Fatalf("backend reached with a malformed receiver: %v", calls)
+		}
+		assertMet(t, mock)
+	})
+
+	t.Run("TransferUSDC refuses a network without USDC", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		cfg := enabledConfig(t)
+		cfg.Sui.Network = "devnet"
+		h, rec := newEnabledHandler(t, db, cfg)
+		if err := h.TransferUSDC(9, testReceiver, context.Background()); err == nil {
+			t.Fatalf("TransferUSDC on devnet succeeded")
+		}
+		if calls := rec.chain.Calls(); len(calls) != 0 {
+			t.Fatalf("backend reached without a coin type: %v", calls)
+		}
+		assertMet(t, mock)
+	})
+
+	t.Run("TransferUSDC returns the backend error", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		h, rec := newEnabledHandler(t, db, enabledConfig(t))
+		rec.chain.transferErr = errScripted
+		if err := h.TransferUSDC(9, testReceiver, context.Background()); !errors.Is(err, errScripted) {
+			t.Fatalf("TransferUSDC = %v, want %v", err, errScripted)
 		}
 		assertMet(t, mock)
 	})
 }
 
-// ---- CompleteTransaction (void TransactionFulfiller callback) ----
+// ---- ApplyPaymentReceipt (the chain listener's TransactionFulfiller) ----
 
-// Log messages emitted by CompleteTransaction. The callback is void and
-// swallows database errors into these lines, so the log is the only place an
-// attempted write can be observed: sqlmock answers an unexpected UPDATE with an
-// error, which surfaces as logFailedSettle rather than as a test failure.
-const (
-	logLookupFailed = "failed to look up transaction to settle"
-	logNotSettling  = "not settling transaction"
-	logSettling     = "settling transaction"
-	logFailedSettle = "failed to settle transaction"
+var (
+	getPaymentReceiptQuery   = regexp.QuoteMeta("FROM payment_receipts\nWHERE tx_digest = ? AND event_seq = ?")
+	markTransactionPaidQuery = regexp.QuoteMeta("UPDATE transactions\nSET status = ?1\nWHERE id = ?2 AND status = ?3")
 )
 
-var allCompleteLogs = []string{logLookupFailed, logNotSettling, logSettling, logFailedSettle}
-
-func TestCompleteTransaction(t *testing.T) {
-	expectUpdate := func(mock sqlmock.Sqlmock) {
-		mock.ExpectExec(updateTransactionStatusQuery).WithArgs(int64(models.Paid), testTxID).WillReturnResult(sqlmock.NewResult(0, 1))
+// Every failure of ApplyPaymentReceipt is returned, never logged as consumed,
+// and leaves nothing written: the listener then keeps its cursor and processes
+// the receipt again. Disabled mode refuses before touching the database.
+func TestApplyPaymentReceiptModes(t *testing.T) {
+	receipt := sui.PaymentReceipt{
+		Digest: "digest-1", Nonce: testTxID, Amount: uint64(testPrice),
+		CoinType: sui.GetCoinType("USDC", "testnet"), Receiver: "0xdead", Timestamp: time.Now(),
+	}
+	expectBeginAndReceiptMiss := func(mock sqlmock.Sqlmock) {
+		mock.ExpectBegin()
+		mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, int64(0)).WillReturnError(sql.ErrNoRows)
 	}
 	cases := []struct {
 		name     string
 		disabled bool
 		expect   func(mock sqlmock.Sqlmock)
-		wantLogs []string // exactly these CompleteTransaction messages, in order
+		want     error
 	}{
+		{name: "disabled: refused without a read", disabled: true, expect: func(sqlmock.Sqlmock) {}, want: ErrPaymentsDisabled},
 		{
-			name: "disabled SUI: lookup only", disabled: true,
-			expect:   func(mock sqlmock.Sqlmock) { expectTransactionRead(mock, "SUI", models.Outstanding) },
-			wantLogs: []string{logNotSettling},
-		},
-		{
-			name: "disabled USDC: lookup only", disabled: true,
-			expect:   func(mock sqlmock.Sqlmock) { expectTransactionRead(mock, "USDC", models.Outstanding) },
-			wantLogs: []string{logNotSettling},
-		},
-		{
-			name: "disabled TEST: lookup then update", disabled: true,
+			name: "enabled receipt lookup error: rolled back",
 			expect: func(mock sqlmock.Sqlmock) {
-				expectTransactionRead(mock, "TEST", models.Outstanding)
-				expectUpdate(mock)
+				mock.ExpectBegin()
+				mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, int64(0)).WillReturnError(errScripted)
+				mock.ExpectRollback()
 			},
-			wantLogs: []string{logSettling},
+			want: errScripted,
 		},
 		{
-			name: "disabled lookup error: no update", disabled: true,
+			name: "enabled transaction lookup error: rolled back",
 			expect: func(mock sqlmock.Sqlmock) {
+				expectBeginAndReceiptMiss(mock)
 				mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnError(errScripted)
+				mock.ExpectRollback()
 			},
-			wantLogs: []string{logLookupFailed},
+			want: errScripted,
 		},
 		{
-			name: "disabled unknown id: no update", disabled: true,
+			name: "enabled paid write error: no receipt recorded",
 			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnError(sql.ErrNoRows)
-			},
-			wantLogs: []string{logLookupFailed},
-		},
-		{
-			name: "enabled SUI: lookup then update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
-				expectTransactionRead(mock, "SUI", models.Outstanding)
-				expectUpdate(mock)
-			},
-			wantLogs: []string{logSettling},
-		},
-		{
-			name: "enabled USDC: lookup then update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
+				expectBeginAndReceiptMiss(mock)
 				expectTransactionRead(mock, "USDC", models.Outstanding)
-				expectUpdate(mock)
+				mock.ExpectExec(markTransactionPaidQuery).WithArgs(int64(models.Paid), testTxID, int64(models.Outstanding)).WillReturnError(errScripted)
+				mock.ExpectRollback()
 			},
-			wantLogs: []string{logSettling},
-		},
-		{
-			name: "enabled TEST: lookup then update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
-				expectTransactionRead(mock, "TEST", models.Outstanding)
-				expectUpdate(mock)
-			},
-			wantLogs: []string{logSettling},
-		},
-		{
-			name: "enabled lookup error: no update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnError(errScripted)
-			},
-			wantLogs: []string{logLookupFailed},
+			want: errScripted,
 		},
 	}
 	for _, tc := range cases {
@@ -1071,30 +1125,19 @@ func TestCompleteTransaction(t *testing.T) {
 			tc.expect(mock)
 
 			var tf sui.TransactionFulfiller = h
-			tf.CompleteTransaction(testTxID, context.Background())
-
+			disposition, err := tf.ApplyPaymentReceipt(context.Background(), receipt)
+			if !errors.Is(err, tc.want) || disposition != "" {
+				t.Fatalf("ApplyPaymentReceipt = %q, %v; want error %v", disposition, err, tc.want)
+			}
 			if calls := rec.chain.Calls(); len(calls) != 0 {
-				t.Fatalf("CompleteTransaction reached the chain backend: %v", calls)
+				t.Fatalf("ApplyPaymentReceipt reached the chain backend: %v", calls)
 			}
-			// ExpectationsWereMet proves the expected reads/updates happened; the
-			// log proves nothing else was attempted (an unexpected UPDATE would
-			// have been answered with an error and logged as logFailedSettle).
+			// ExpectationsWereMet proves the scripted statements ran and the
+			// transaction was rolled back; an unexpected INSERT would have
+			// failed the call with a different error.
 			assertMet(t, mock)
-			var got []string
-			for _, entry := range logs.All() {
-				for _, known := range allCompleteLogs {
-					if entry.Message == known {
-						got = append(got, entry.Message)
-					}
-				}
-			}
-			if strings.Join(got, "|") != strings.Join(tc.wantLogs, "|") {
-				t.Fatalf("CompleteTransaction log messages %q, want %q (all entries: %v)", got, tc.wantLogs, logs.All())
-			}
-			if tc.wantLogs[0] == logSettling {
-				if n := logs.FilterMessage(logSettling).Len(); n != 1 {
-					t.Fatalf("settling logged %d times", n)
-				}
+			if logs.Len() != 0 {
+				t.Fatalf("ApplyPaymentReceipt logged %v", logs.All())
 			}
 		})
 	}
@@ -1141,7 +1184,7 @@ func TestRefundTransactionSpendsTheTransactionItself(t *testing.T) {
 	if err := h.RefundTransaction(id, ctx); err != nil {
 		t.Fatalf("refund: %v", err)
 	}
-	if !strings.Contains(strings.Join(rec.chain.Calls(), " "), "TransferCoins") {
+	if !strings.Contains(strings.Join(rec.chain.Calls(), " "), "ExecuteTransfer") {
 		t.Fatalf("the money was not moved: %v", rec.chain.Calls())
 	}
 	refunded, err := queries.GetTransactionByID(ctx, id)
@@ -1228,6 +1271,7 @@ func TestSetDebugletOrderCompleteCreditsOnce(t *testing.T) {
 	if got := totalIncome(t, db); got != testPrice {
 		t.Fatalf("total income %d after two completions, want the order price %d once", got, testPrice)
 	}
+	assertSettledOnce(t, db, settlementCredit)
 	if calls := rec.chain.Calls(); len(calls) != 0 {
 		t.Fatalf("TEST completion reached the chain backend: %v", calls)
 	}
@@ -1254,6 +1298,9 @@ BEGIN SELECT RAISE(ABORT, 'earnings update refused'); END;`); err != nil {
 	if got := totalIncome(t, db); got != 0 {
 		t.Fatalf("total income %d after a failed earnings write", got)
 	}
+	if n, _ := settlementOf(t, db); n != 0 {
+		t.Fatalf("%d settlement rows after a failed earnings write", n)
+	}
 }
 
 // A refunded order is never credited.
@@ -1270,6 +1317,9 @@ func TestSetDebugletOrderCompleteLeavesRefundedOrder(t *testing.T) {
 	}
 	if got := totalIncome(t, db); got != 0 {
 		t.Fatalf("a refunded order earned %d", got)
+	}
+	if n, _ := settlementOf(t, db); n != 0 {
+		t.Fatalf("%d settlement rows written for an order refunded elsewhere", n)
 	}
 }
 
@@ -1309,6 +1359,11 @@ func TestCreatePaymentIntentTESTStoresPriceAndCurrency(t *testing.T) {
 			if stored.Price != testPrice || stored.Currency != "TEST" || stored.Method != "TEST" {
 				t.Fatalf("stored TEST transaction price=%d currency=%q method=%q, want %d %q %q",
 					stored.Price, stored.Currency, stored.Method, testPrice, "TEST", "TEST")
+			}
+			// The pricing rule is named by the API layer that priced the
+			// intent; this layer stores none.
+			if stored.PricingRule != "" {
+				t.Fatalf("stored TEST transaction pricing rule %q, want none", stored.PricingRule)
 			}
 			if stored.Status != int64(models.Paid) || stored.AuthKey != "" || stored.Hash != testHash {
 				t.Fatalf("stored TEST transaction status=%d auth_key=%q hash=%q, want %d %q %q",

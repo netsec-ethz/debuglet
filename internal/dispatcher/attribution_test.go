@@ -82,7 +82,8 @@ func TestDisclosedKeysSurviveADispatcherRestart(t *testing.T) {
 
 	cfg := &config.DispatcherConfig{}
 	cfg.Sui.Disabled = true
-	restarted, err := New(zap.NewNop(), db, "restarted", time.Minute, time.Second, payments.NewPaymentHandler(db, cfg, zap.NewNop()))
+	ph, _ := payments.NewPaymentHandler(db, cfg, zap.NewNop())
+	restarted, err := New(zap.NewNop(), db, "restarted", time.Minute, time.Second, ph)
 	if err != nil {
 		t.Fatal(err)
 	}
