@@ -204,7 +204,7 @@ func TestRetiredChainIsNotDerived(t *testing.T) {
 	}
 }
 
-// Migration 7 adds the delay as NULL to chains recorded on schema 6, and such
+// Migration 8 adds the delay as NULL to chains recorded on schema 6, and such
 // a chain is not re-derived.
 func TestChainRecordedBeforeTheDelayColumn(t *testing.T) {
 	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "executor.sqlite"), sqlitedb.Create())
@@ -218,7 +218,7 @@ func TestChainRecordedBeforeTheDelayColumn(t *testing.T) {
 	if _, err := db.ExecContext(t.Context(), "INSERT INTO tesla_chains (generation, anchor, epoch_base, delay_ns, chain_length, created_at) VALUES (1, x'0102', ?, 1000000000, 6, ?)", time.Now().UTC(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := sqlitedb.Migrate(t.Context(), db, executordb.MigrationFS(), sqlitedb.Latest); err != nil || version != 7 {
+	if version, err := sqlitedb.Migrate(t.Context(), db, executordb.MigrationFS(), sqlitedb.Latest); err != nil || version != 8 {
 		t.Fatalf("migrate to latest: %d, %v", version, err)
 	}
 	chain, err := executordb.New(db).GetTeslaChain(t.Context(), 1)
