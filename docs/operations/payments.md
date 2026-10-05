@@ -246,8 +246,8 @@ itself:
    reaches `confirmed` and that the digest on the row is the one a Sui Testnet
    explorer shows for the transfer.
 
-The following have been exercised only against local fixtures and remain open
-until a live service confirms them during that rehearsal:
+During that rehearsal, verify the following properties against the deployment's
+selected Sui endpoints and payment kit:
 
 - The GraphQL fields the listener relies on: `serviceConfig.availableRange`
   for indexer coverage, and `Event.sequenceNumber` as the event's position,
