@@ -71,18 +71,29 @@ func New(schedule *tesla.KeySchedule, measurementID []byte) *Tagger {
 // returned unmodified without error. While the schedule has no usable signing
 // key (epoch 0, whose key is the public anchor) the packet is likewise
 // returned unmodified and untagged, as on the eBPF path.
+//
+// The key is read from the schedule once per packet: the tag is derived from
+// the key that decided to tag, so a later epoch reached by another signing
+// path in between does not turn a tagged packet into an error.
 func (t *Tagger) TagPacket(pkt []byte) ([]byte, error) {
-	now := time.Now()
-	if !isIPv4(pkt) || t.schedule.CurrentKey(now) == nil {
+	if !isIPv4(pkt) {
 		return pkt, nil
 	}
-	tag, err := t.schedule.ComputeTagForPacket(now, t.measurementID, pkt)
+	return t.tagWithKey(pkt, t.schedule.CurrentKey(time.Now()))
+}
+
+// tagWithKey tags pkt under chainKey, returning it untagged without a key.
+func (t *Tagger) tagWithKey(pkt, chainKey []byte) ([]byte, error) {
+	if chainKey == nil {
+		return pkt, nil
+	}
+	tag, err := tesla.TagWithKey(chainKey, t.measurementID, pkt)
 	var unsupported *tesla.UnsupportedError
 	if errors.As(err, &unsupported) {
 		return pkt, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("tagger: ComputeTagForPacket: %w", err)
+		return nil, fmt.Errorf("tagger: TagWithKey: %w", err)
 	}
 	writeIPID(pkt, tag)
 	pkt[6] |= 0x40 // DF

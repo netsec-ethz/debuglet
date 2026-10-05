@@ -86,7 +86,7 @@ counter, not evidence that the kernel still enforces every packet.
 | Metric | Meaning |
 | --- | --- |
 | `executors_enforcement_mode{state="..."}` | Counts for `ebpf`, `fallback` and `unknown`. |
-| `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held` and `unknown`. |
+| `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held`, `clock_unready`, `clock_drift` and `unknown`. |
 | `executors_clock_readiness{state="..."}` | Counts for `ready`, `degraded` and `unknown`, from the kernel clock report and its configured error threshold. |
 | `executors_schedule_unknown` | Executors without a usable fresh schedule observation. |
 | `executors_schedule_expired` | Announced signing schedules whose expiry has passed on the dispatcher's clock. |

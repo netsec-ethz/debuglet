@@ -62,7 +62,7 @@ It is an executor claim, not a verification, and it is not a discovery filter.
 | `refresh_failing` | A kernel tagger's latest key refresh failed. Its slot is empty or may still hold the previous epoch's key; `refresh_error` gives a short error of at most 128 bytes. |
 | `disclosure_held` | An installed key has held disclosure back for longer than one epoch, so the keys of new tags are not published. This is the case of a tagger whose slot could not be cleared. |
 | `clock_unready` | The host clock readiness (see [host probes](#host-probes)) was not `ready` when the key chain started, so the announced chain origin may be wrong. It holds for the chain's life: nothing is tagged until the executor restarts with a ready clock, which starts a new chain. |
-| `clock_drift` | Since the chain started, the wall clock has moved away from the monotonic clock the epochs advance on by more than the drift bound: the wall clock was stepped, or the host was suspended. Nothing is tagged while it holds; the recovery is a restart with a ready clock. |
+| `clock_drift` | Since the chain started, the wall clock has moved away from the monotonic clock the epochs advance on by more than the drift bound: the wall clock was stepped, or the host was suspended. Nothing is tagged while it holds. A drift that returns within the bound resumes tagging by itself; a persistent one, such as after a suspend, needs a restart with a ready clock. |
 
 Epochs advance on the executor's monotonic clock from the announced origin.
 The drift is the wall time elapsed since the origin less the monotonic time
@@ -71,7 +71,9 @@ tolerance of `tools/verify_pcap.py`; it is a safety threshold beyond which a
 verifier's mapping of capture time to epochs is taken to be wrong, not a
 measured bound on clock uncertainty. Both clock reasons take precedence over
 `epoch_zero`. The pure-Go tagger stops at once; a kernel tagger stops at its
-next key refresh, at most one epoch later. While either clock reason holds, a
+next key refresh, at most one epoch later assuming that refresh runs as
+scheduled and removes the slot; a failed removal keeps disclosure of that key
+held back and is retried. While either clock reason holds, a
 node that tags packets (tagging mode other than `none`) refuses new runs with
 `FailedPrecondition` naming the reason; a node that tags nothing admits them.
 See [the tag specification](../tag-spec.md#10-time).

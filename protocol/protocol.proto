@@ -350,7 +350,7 @@ message TaggingMode {
 // measured on the executor's clock when the report was built.
 message AttributionState {
   string state = 1;  // available or unavailable.
-  string reason = 2; // Empty when available; epoch_zero, chain_exhausted, refresh_failing or disclosure_held.
+  string reason = 2; // Empty when available; epoch_zero, chain_exhausted, refresh_failing, disclosure_held, clock_unready or clock_drift.
   int64 epoch = 3;   // Current key-schedule epoch.
   optional int64 installed_epoch = 4;     // Oldest epoch a kernel tagger slot may still sign with; absent when none holds a key.
   optional int64 last_refresh_age_ms = 5; // Since the oldest last successful kernel key install; absent without one.

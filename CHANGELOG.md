@@ -42,8 +42,10 @@ changes; the linked API and deployment documentation contains operational detail
   - Attribution gains the reasons `clock_unready` (the host clock readiness
     was not `ready` when the chain started; it holds until a restart) and
     `clock_drift` (wall and monotonic time elapsed since the origin differ by
-    more than min(epoch length / 2, 1 s)). No key signs while either holds;
-    a kernel tagger stops at its next refresh, at most one epoch later.
+    more than min(epoch length / 2, 1 s); it clears by itself if the drift
+    returns within the bound, while a persistent drift needs a restart). No
+    key signs while either holds; a kernel tagger stops at its next
+    scheduled refresh, at most one epoch later if the slot removal succeeds.
   - A node that tags packets refuses new runs with `FailedPrecondition`
     while either reason holds; a node whose tagging mode is `none` admits
     them. The executor logs an error when a chain starts on a clock that is
