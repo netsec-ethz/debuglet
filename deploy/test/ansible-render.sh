@@ -126,6 +126,14 @@ chmod 0600 "$work/cilogon_oidc.env"
 # A CILogon file that lacks the secret, for the preflight refusal below.
 grep -v '^CILOGON_CLIENT_SECRET' "$work/cilogon_oidc.env" >"$work/cilogon-incomplete.env"
 chmod 0600 "$work/cilogon-incomplete.env"
+# Malformed credential files: each required name must be assigned exactly once
+# and non-empty.
+printf '%s\n' 'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
+	'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' >"$work/cilogon-duplicate-id.env"
+printf '%s\n' 'CILOGON_CLIENT_SECRET=' | cat "$work/cilogon_oidc.env" - >"$work/cilogon-empty-secret.env"
+grep -v '^GITHUB_OAUTH_CLIENT_SECRET' "$work/github-oauth.env" >"$work/github-no-secret.env"
+grep '^GITHUB_OAUTH_CLIENT_ID' "$work/github-oauth.env" | cat - "$work/github-oauth.env" >"$work/github-duplicate-id.env"
+chmod 0600 "$work"/cilogon-*.env "$work"/github-*.env
 
 # The inventory carries the host layout only. Everything a role would write to
 # a managed host is redirected with extra variables, which outrank both the
@@ -308,6 +316,15 @@ refuses 'a cleartext channel to a remote dispatcher is refused' 'literal loopbac
 	-e executor_disable_tls=true
 refuses 'CILogon without its credentials is refused' 'cilogon_oidc.env.example' \
 	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-incomplete.env"
+refuses 'CILogon with a duplicate client ID and no secret is refused' 'CILOGON_CLIENT_ID exactly once and non-empty' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-duplicate-id.env"
+refuses 'CILogon with a trailing empty secret is refused' 'CILOGON_CLIENT_SECRET exactly once and non-empty' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-empty-secret.env"
+refute 'a refused credential file does not show its values' "$work/refuse.log" 'fixture-secret'
+refuses 'GitHub OAuth without its secret is refused' 'GITHUB_OAUTH_CLIENT_SECRET exactly once and non-empty' \
+	-e "dispatcher_github_oauth_env_file=$work/github-no-secret.env"
+refuses 'GitHub OAuth with a duplicate client ID is refused' 'GITHUB_OAUTH_CLIENT_ID exactly once and non-empty' \
+	-e "dispatcher_github_oauth_env_file=$work/github-duplicate-id.env"
 refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certificate nothing presents' \
 	-e dispatcher_disable_tls=true
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \
