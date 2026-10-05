@@ -96,6 +96,9 @@ func (h *Handler) startProviderLogin(c echo.Context, provider, purpose, session 
 	} else {
 		discovery, err := h.cilogonProvider(c.Request().Context())
 		if err != nil {
+			if purpose == "login" {
+				return h.oauthFailure(c, provider, "provider_unavailable")
+			}
 			return apiError(http.StatusBadGateway, CodeInternal, "CILogon is temporarily unavailable; try again later")
 		}
 		cfg := h.cilogonClient(discovery)

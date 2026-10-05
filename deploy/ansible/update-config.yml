@@ -44,14 +44,36 @@
       register: dispatcher_github_oauth_credentials
       when: dispatcher_github_oauth_enabled | bool
 
+    - name: Update CILogon credentials
+      ansible.builtin.copy:
+        src: "{{ dispatcher_cilogon_oidc_env_file }}"
+        dest: "{{ config_dir }}/dispatcher/cilogon-oidc.env"
+        owner: "{{ debuglet_user }}"
+        group: "{{ debuglet_group }}"
+        mode: "0600"
+      no_log: true
+      register: dispatcher_cilogon_oidc_credentials
+      when: dispatcher_cilogon_oidc_enabled | bool
+
+    - name: Update dispatcher systemd unit
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/roles/dispatcher/templates/dispatcher.service.j2"
+        dest: "{{ systemd_unit_dir }}/debuglet-dispatcher.service"
+        owner: root
+        group: root
+        mode: "0644"
+      register: dispatcher_unit
+
     - name: Restart dispatcher if config changed
       ansible.builtin.systemd:
         name: debuglet-dispatcher
         state: restarted
+        daemon_reload: "{{ dispatcher_unit.changed }}"
       when: >-
         debuglet_manage_services | bool and
-        (dispatcher_config.changed or
-         (dispatcher_github_oauth_credentials.changed | default(false)))
+        (dispatcher_config.changed or dispatcher_unit.changed or
+         (dispatcher_github_oauth_credentials.changed | default(false)) or
+         (dispatcher_cilogon_oidc_credentials.changed | default(false)))
 
 - name: Update executor config
   hosts: executors
