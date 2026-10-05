@@ -105,10 +105,20 @@ silent report loss can instead take the 90-second report expiry above.
 
 `DebugletDisclosureUnhealthy` fires when any registered executor reports failed
 key refresh, an excessive disclosure hold, an exhausted/not-yet-started signing
-chain, an expired announced schedule or unknown state. It remains firing when
-an unhealthy report expires. Resolution requires fresh positive subsystem
-reports and unexpired schedules; a heartbeat alone is insufficient. This does
-not prove that disclosed keys reached durable storage or validate captured tags.
+chain, an expired announced schedule or unknown state, or when the dispatcher's
+disclosure delivery lag exceeds 90 seconds or is unknown. It remains firing when
+an unhealthy report expires or the lag sample is missing. Resolution requires
+fresh positive subsystem reports, unexpired schedules and a known lag of at most
+90 seconds for every executor; a heartbeat alone is insufficient. The lag counts
+only keys this dispatcher verified and recorded in its database; it does not
+validate captured tags.
+
+The 90-second lag threshold is three maximal heartbeat intervals (an executor
+discloses on every heartbeat, at most 30 seconds apart) and equals the report
+lifetime above, so one or two lost heartbeats do not alert. Until the first
+disclosure of a chain reaches a dispatcher process, for example after either
+daemon restarts, the lag is unknown for up to one heartbeat once a key is due;
+the pending period normally covers that.
 
 `DebugletExecutorStateStorageLow` fires below 10% available space on any executor
 state filesystem, or when the aggregate is incomplete. It uses each executor's
@@ -128,6 +138,11 @@ When an executor health alert fires:
   and clock state. Drain affected work before repairing/restarting the service;
   preserve its identity, database and logs. Do not manually disclose a key that
   a kernel slot might still use, or treat a reconnect as cleanup evidence.
+- For disclosure lag, compare the executor's disclosure hold and its
+  `next_disclosure_epoch` (`GET /executors/:id/tesla`) with the dispatcher log.
+  A rejected or early disclosure is logged once per chain; a failed database
+  write is retried with the next disclosure. Check the control session and the
+  dispatcher's database before restarting the executor, which starts a new chain.
 - For chain exhaustion, stop admission and follow the daemon's logged
   `final_disclosure_at` before restart. Increase the next chain's configured
   lifetime if needed. An early restart can lose disclosure of its final epochs.
@@ -139,8 +154,8 @@ When an executor health alert fires:
   space without removing active state, identity, journals or guest output.
   Confirm a fresh complete ratio above the threshold. Missing measurements do
   not establish recovery.
-- Confirm new reports show the intended counter, present attachments, available attribution and
-  positive remaining lifetime. Validate traffic separately when claiming
+- Confirm new reports show the intended counter, present attachments, available attribution,
+  positive remaining lifetime and a known disclosure lag. Validate traffic separately when claiming
   enforcement or attribution. Alert resolution does not repair historical runs.
 
 These rules monitor the current registry. Removing a failed executor can clear

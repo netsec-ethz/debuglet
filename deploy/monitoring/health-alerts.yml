@@ -35,14 +35,17 @@ groups:
              == on(job, instance) debuglet_executors_registered{job="debuglet-dispatcher"})
            and on(job, instance) (debuglet_executors_schedule_unknown{job="debuglet-dispatcher"} == 0)
            and on(job, instance) (debuglet_executors_schedule_expired{job="debuglet-dispatcher"} == 0)
+           and on(job, instance) (debuglet_observation_available{job="debuglet-dispatcher",observation="executor_disclosure_lag_seconds"} == 1)
+           and on(job, instance) (debuglet_executors_disclosure_lag_unknown{job="debuglet-dispatcher"} == 0)
+           and on(job, instance) (debuglet_executor_disclosure_lag_seconds{job="debuglet-dispatcher"} <= 90)
            and on(job, instance) (abs(time() - debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher"}) <= 45))
         for: 45s
         labels:
           severity: warning
           owner: debuglet-operator
         annotations:
-          summary: Executor attribution or signing schedule is unavailable or unknown
-          description: Inspect attribution reasons, disclosure holds and remaining schedule lifetime. Missing or expired reports do not establish recovery. This alert does not verify captured traffic or delivery of disclosed keys.
+          summary: Executor attribution, signing schedule or key disclosure is unavailable, late or unknown
+          description: Inspect attribution reasons, disclosure holds, remaining schedule lifetime and the disclosure lag. Missing or expired reports do not establish recovery. The lag counts keys this dispatcher verified and recorded; this alert does not verify captured traffic.
           runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#executor-health
 
       - alert: DebugletExecutorStateStorageLow

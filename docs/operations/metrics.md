@@ -70,9 +70,9 @@ structured interruption reason. Accordingly `queue_age_seconds`,
 unsupported. The supported scheduled-start overdue gauge does not substitute
 for these observations.
 
-Denied traffic, independently verified enforcement, TESLA clock uncertainty,
-end-to-end disclosure delivery lag and settlement backlog remain unsupported.
-Collection never changes
+Denied traffic, independently verified enforcement, TESLA clock uncertainty
+and settlement backlog remain unsupported. Disclosure delivery lag is observed
+at the dispatcher only (see executor health below). Collection never changes
 admission, packet enforcement, terminal state, payment or readiness decisions.
 
 ## Executor health
@@ -99,6 +99,8 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_schedule_remaining_seconds` | Minimum nonnegative remaining signing lifetime, using the announced start, epoch length and chain length on the dispatcher's clock. |
 | `executor_clock_estimated_error_seconds` | Maximum reported kernel error estimate; this is not a measured uncertainty bound. |
 | `executor_disclosure_held_seconds` | Maximum reported age of an installed-key disclosure hold. It does not measure delivery or durable storage of keys at the dispatcher. |
+| `executors_disclosure_lag_unknown` | Executors whose disclosure delivery lag cannot be determined. |
+| `executor_disclosure_lag_seconds` | Maximum disclosure delivery lag: time since the oldest due key became disclosable without this dispatcher having verified and recorded it; zero when every due key is stored. |
 
 Mode, attachment, attribution and clock groups each partition `executors_registered`.
 Missing, malformed, future-dated or 90-second-old reports become `unknown`, as
@@ -113,6 +115,21 @@ registered. State counts remain available, so a partial report cannot masquerade
 as a healthy zero. A fresh attribution report with no installed-key hold has an
 observed hold of zero. Clock estimates and schedule expiry can disagree between
 machines with bad clocks; inspect clock readiness before interpreting timings.
+
+Disclosure delivery lag is judged by what this dispatcher has verified against
+the chain anchor and recorded in its database. From the announced schedule, the
+key of epoch i becomes disclosable at the start of epoch i+d on the dispatcher's
+clock, without the 5-second skew allowance that disclosure acceptance grants; no
+key is due before epoch d+1 starts, and the chain's final key is the last one
+due. The lag is the time since the oldest due but unrecorded key became
+disclosable. It is not the executor-side hold (`executor_disclosure_held_seconds`),
+and it does not verify tags or captured traffic. An executor is unknown when its
+schedule report is stale, incomplete or from a disconnected session. Before the
+first key of a chain is due the lag is a known zero; after that it is unknown
+until the first disclosure of the chain reaches this dispatcher process: at
+most one heartbeat for an honest executor, and one heartbeat after a dispatcher
+restart. Collection reads only the in-memory record of
+received keys, never the database.
 
 Resource extrema additionally export `<metric>_unknown`, the count of registered
 executors lacking that observation. A known zero remains numeric. A partial

@@ -123,6 +123,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 		}
 		gauge("executors_schedule_unknown", "Registered executors without a usable current schedule observation.", h.ScheduleUnknown)
 		gauge("executors_schedule_expired", "Registered executors whose announced signing schedule expired on the dispatcher clock.", h.ScheduleExpired)
+		gauge("executors_disclosure_lag_unknown", "Registered executors whose disclosure delivery lag cannot be determined.", h.DisclosureLag.Unknown)
 		for _, metric := range []struct {
 			name, help string
 			value      *float64
@@ -131,6 +132,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 			{"executor_schedule_remaining_seconds", "Minimum remaining signing lifetime of announced executor schedules, using the dispatcher clock.", h.ScheduleRemainingSeconds, h.ScheduleUnknown},
 			{"executor_clock_estimated_error_seconds", "Maximum reported kernel clock error estimate; not an independently verified uncertainty bound.", h.ClockEstimatedErrorSeconds, h.ClockEstimateUnknown},
 			{"executor_disclosure_held_seconds", "Maximum reported installed-key disclosure hold age; not end-to-end key delivery lag.", &h.DisclosureHeldSeconds, h.AttributionUnknown},
+			{"executor_disclosure_lag_seconds", "Maximum time since the oldest due key became disclosable without this dispatcher verifying and recording it.", h.DisclosureLag.Value, h.DisclosureLag.Unknown},
 		} {
 			reason := ""
 			if control.Registered == 0 {
@@ -171,7 +173,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 	}
 	// These require timestamps, finality or authoritative subsystem contracts
 	// that the current process does not persist or expose. Silence is not zero.
-	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds", "disclosure_lag_seconds", "settlement_backlog"} {
+	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds", "settlement_backlog"} {
 		available(name, "unsupported")
 	}
 	return out.String() + availability.String()

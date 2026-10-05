@@ -127,6 +127,26 @@ func (c Chain) DisclosableAt(epoch int64) (time.Time, bool) {
 	return c.Start.Add(time.Duration(epoch+c.disclosureDelay()) * c.Interval), true
 }
 
+// DueEpoch returns the highest epoch whose key an honest executor must have
+// disclosed by now: the epoch in progress at now less the disclosure delay d,
+// without the clockSkew allowance Store grants, and at most L-1 when the
+// chain length is known. ok is false while the schedule is unknown; a result
+// below one means no key is due yet.
+func (c Chain) DueEpoch(now time.Time) (int64, bool) {
+	if c.Interval <= 0 {
+		return 0, false
+	}
+	elapsed := now.Sub(c.Start)
+	if elapsed < 0 {
+		return -1, true
+	}
+	due := int64(elapsed/c.Interval) - c.disclosureDelay()
+	if c.Length > 0 {
+		due = min(due, c.Length-1)
+	}
+	return due, true
+}
+
 // RejectedError reports a disclosure that was not stored because it does not
 // extend its chain. First is set for the first rejection on that chain, so a
 // caller can log a misbehaving executor once rather than on every heartbeat;
@@ -392,6 +412,21 @@ func (ks *KeyStore) LatestDisclosed(executorID string, anchor []byte) (epoch int
 		return 0, nil, false
 	}
 	return epoch, key, true
+}
+
+// CachedLatest returns the highest verified and recorded epoch of the chain of
+// executorID with the given anchor as the cache holds it: zero when none yet.
+// cached is false when the cache does not hold the chain, which it starts to
+// on the chain's first disclosure in this process. It reads no Backend and
+// creates no cache entry.
+func (ks *KeyStore) CachedLatest(executorID string, anchor []byte) (epoch int64, cached bool) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	c := ks.chain(executorID, anchor)
+	if c == nil {
+		return 0, false
+	}
+	return c.latest, true
 }
 
 func (ks *KeyStore) PrintKeys() {
