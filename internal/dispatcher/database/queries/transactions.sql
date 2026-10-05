@@ -75,12 +75,14 @@ SELECT * FROM order_settlements
 WHERE transaction_id = ? AND order_id = ?;
 
 -- name: ListPendingSettlements :many
-SELECT sqlc.embed(d), e.exit_code FROM debuglet_order o
+-- Only wholly local settlements: credits of any currency and TEST refunds.
+SELECT sqlc.embed(d), e.exit_code, o.currency FROM debuglet_order o
 JOIN debuglets d ON d.id = o.debuglet_id
   AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
 JOIN measurement_execution e ON e.debuglet_id = d.id
 WHERE o.state = sqlc.arg(outstanding_state) AND d.state = sqlc.arg(exited_state)
-  AND e.exit_code IS NOT NULL
+  AND e.exit_code IS NOT NULL AND (e.exit_code = 0 OR o.currency = 'TEST')
+  AND d.id > sqlc.arg(after_id)
 ORDER BY d.id
 LIMIT sqlc.arg(row_limit);
 

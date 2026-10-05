@@ -5,9 +5,13 @@ package payments
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
@@ -174,4 +178,112 @@ func TestSettleTerminalOrderRefusesAnUnsettleableState(t *testing.T) {
 	if n, _ := settlementOf(t, db); n != 0 || orderState(t, db) != models.Aborted || totalIncome(t, db) != 0 {
 		t.Fatalf("an aborted order was settled: %d rows, state %v", n, orderState(t, db))
 	}
+}
+
+// seedFailedUSDCRun stores a paid USDC order whose claimed run exited with code
+// 3, as the terminal path leaves it before the order is settled.
+func seedFailedUSDCRun(t *testing.T, db *sql.DB) database.Debuglet {
+	t.Helper()
+	ctx := t.Context()
+	q := database.New(db)
+	if _, err := q.CreateTransaction(ctx, database.CreateTransactionParams{
+		ID: testTxID, Price: testPrice, Currency: "USDC", Method: "USDC",
+		ExpiresAt: models.NewUTCTime(time.Now().Add(time.Hour)), Status: int64(models.Paid), Hash: testHash,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
+		TransactionID: testTxID, OrderID: testOrderID, ExecutorID: testExecutor, Price: testPrice,
+		Currency: "USDC", RefundAddress: testRefund, State: int64(models.Outstanding),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := q.CreateDebuglet(ctx, database.CreateDebugletParams{
+		Uuid: uuid.New(), StartTime: models.NewUTCTime(time.Now()), EndTime: models.NewUTCTime(time.Now()),
+		ExecutorID: testExecutor, State: models.RunStateExited, TransactionID: testTxID, OrderID: testOrderID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.RecordMeasurementTerminal(ctx, database.RecordMeasurementTerminalParams{
+		DebugletID: run.ID, ExitCode: sql.NullInt64{Int64: 3, Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE debuglet_order SET debuglet_id = ? WHERE transaction_id = ? AND order_id = ?",
+		run.ID, testTxID, testOrderID); err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+// A chain refund whose outcome is uncertain is not sent again: after a failed
+// inline refund the order stays Outstanding with no settlement row, and a
+// later settlement pass does not select it, so the chain backend is reached
+// exactly once.
+func TestSettlementPassNeverResendsAChainRefund(t *testing.T) {
+	db := newRefundDatabase(t)
+	h, rec := newEnabledHandler(t, db, enabledConfig(t))
+	rec.chain.refundErr = errors.New("transfer response lost")
+	run := seedFailedUSDCRun(t, db)
+
+	if err := h.SettleTerminalOrder(t.Context(), &run, 3); !errors.Is(err, rec.chain.refundErr) {
+		t.Fatalf("SettleTerminalOrder = %v, want the chain failure", err)
+	}
+	if got := orderState(t, db); got != models.Outstanding {
+		t.Fatalf("order state %v after a failed chain refund, want %v", got, models.Outstanding)
+	}
+	if n, _ := settlementOf(t, db); n != 0 {
+		t.Fatalf("%d settlement rows after a failed chain refund", n)
+	}
+	for range 2 {
+		settled, failed, deferred, next, err := h.SettlePendingOrders(t.Context(), 0, 32)
+		if settled != 0 || failed != 0 || deferred != 0 || next != 0 || err != nil {
+			t.Fatalf("pass: settled %d, failed %d, deferred %d, next %d, error %v", settled, failed, deferred, next, err)
+		}
+	}
+	if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "RefundDebuglet" {
+		t.Fatalf("chain backend calls %v, want one RefundDebuglet", calls)
+	}
+	if got := orderState(t, db); got != models.Outstanding {
+		t.Fatalf("order state %v after the passes, want %v", got, models.Outstanding)
+	}
+}
+
+// A chain refund that was sent but whose local commit failed leaves the order
+// Outstanding. A settlement pass that is handed such an order anyway defers it
+// without reaching the chain backend again.
+func TestSettlementPassDefersAChainRefundAfterAFailedCommit(t *testing.T) {
+	db, mock := newMockDB(t)
+	h, rec := newEnabledHandler(t, db, enabledConfig(t))
+	run := database.Debuglet{ID: 9, Uuid: uuid.New(), TransactionID: testTxID, OrderID: testOrderID, ExecutorID: testExecutor, State: models.RunStateExited}
+
+	mock.ExpectBegin()
+	expectOrderRead(mock, "USDC", models.Outstanding)
+	mock.ExpectExec(transitionDebugletOrderQuery).
+		WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO order_settlements").
+		WithArgs(testTxID, testOrderID, "refund", testPrice, "USDC", testExecutor, nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit().WillReturnError(errScripted)
+	if err := h.SettleTerminalOrder(t.Context(), &run, 3); !errors.Is(err, errScripted) {
+		t.Fatalf("SettleTerminalOrder = %v, want the failed commit", err)
+	}
+
+	now := time.Now().UTC()
+	mock.ExpectQuery("-- name: ListPendingSettlements").
+		WithArgs(int64(models.Outstanding), int64(models.RunStateExited), int64(0), int64(32)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "start_time", "end_time", "usage", "ceil_bw", "executor_id",
+			"addresses", "state", "error", "transaction_id", "order_id", "dispatcher_incarnation", "session_id", "exit_code", "currency"}).
+			AddRow(run.ID, run.Uuid.String(), now, now, 0, 0, testExecutor, "", int64(models.RunStateExited), nil,
+				testTxID, testOrderID, "", "", 3, "USDC"))
+	settled, failed, deferred, next, err := h.SettlePendingOrders(t.Context(), 0, 32)
+	if settled != 0 || failed != 0 || deferred != 1 || next != 0 || err != nil {
+		t.Fatalf("pass: settled %d, failed %d, deferred %d, next %d, error %v", settled, failed, deferred, next, err)
+	}
+	if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "RefundDebuglet" {
+		t.Fatalf("chain backend calls %v, want one RefundDebuglet", calls)
+	}
+	assertMet(t, mock)
 }
