@@ -88,6 +88,19 @@ executor reported.
 A change of reason is sent on the next heartbeat rather than waiting for the
 30 second report interval. The executor log keeps the full refresh error.
 
+Before a key is disclosed, the dispatcher can relay a group of captured packets
+to the executor over the control session for [server
+verification](../verification.md). The executor answers one verdict for the
+whole group: `matched` with the one candidate run that reproduces every tag,
+`unmatched`, `ambiguous`, or `unsupported` with a reason (`unknown_chain`,
+`epoch_unavailable`, `attribution_unavailable`, `too_many`, `malformed`). It
+never returns tags, keys or per-packet results. It refuses an epoch whose key
+it would already disclose, which can be verified offline, and answers
+`attribution_unavailable` while either clock reason above holds. A query
+carries at most 32 candidate runs and 256 packets. The query budget is the
+dispatcher's; the executor logs one Info line per query with the candidate and
+packet counts and the verdict, and no packet bytes or run IDs.
+
 ## Tagging mode
 
 The `tagging` object in `capabilities` reports which of a run's packets carry

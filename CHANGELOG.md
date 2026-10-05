@@ -52,6 +52,11 @@ changes; the linked API and deployment documentation contains operational detail
     already signed with. See `docs/tag-spec.md` §10.
 
 ### Added
+- The executor answers pre-disclosure tag verification queries over the
+  control session (`VerifyTags`): for one group of captured packets of one
+  epoch it reports which candidate run, if any, reproduces every tag, without
+  returning tags or keys. It refuses disclosable epochs, unknown chains and
+  untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

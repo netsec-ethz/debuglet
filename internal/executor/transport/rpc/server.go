@@ -145,6 +145,29 @@ func (s *server) InspectRetainedRun(ctx context.Context, in *pb.InspectRetainedR
 	return inspector.OnInspectRetainedRun(ctx, binding, in)
 }
 
+// tagVerifier is the optional part of ExecutorState behind pre-disclosure
+// tag verification. A state that does not implement it answers UNIMPLEMENTED.
+type tagVerifier interface {
+	OnVerifyTags(ctx context.Context, binding controlsession.Binding, req *pb.VerifyTagsRequest) (*pb.VerifyTagsResponse, error)
+}
+
+// VerifyTags is admitted like InspectRetainedRun: the exact armed session, and
+// the same session named in the request.
+func (s *server) VerifyTags(ctx context.Context, in *pb.VerifyTagsRequest) (*pb.VerifyTagsResponse, error) {
+	binding, err := s.admission(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	verifier, ok := s.state.(tagVerifier)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "tag verification is unavailable")
+	}
+	if err := CheckPayloadBinding(in.GetControlBinding(), binding); err != nil {
+		return nil, err
+	}
+	return verifier.OnVerifyTags(ctx, binding, in)
+}
+
 // ProbeSession touches no scheduler, telemetry, SQL or outbound RPC. It is a
 // bounded reverse-path proof under the same confirmed lease as other effects.
 func (s *server) ProbeSession(ctx context.Context, in *pb.ProbeSessionRequest) (*pb.ProbeSessionResponse, error) {
