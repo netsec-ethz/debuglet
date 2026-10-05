@@ -250,7 +250,24 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 			return c.JSON(http.StatusOK, saved)
 		}
 	}
-	intent, err := h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
+	// While allowances are enabled, an account's TEST intent is created only
+	// if the account's remaining allowance covers its price. The local
+	// development bypass names no account and is not capped.
+	var intent payments.PaymentIntent
+	if owner, ok := established.owner(); ok && req.PaymentMethod == "TEST" && h.dispatcher.Payment.AllowancesEnabled() {
+		intent, err = h.dispatcher.Payment.CreateAllowanceIntentIn(dbTx, owner, transactionId, price, hash, ctx)
+		var exceeded *payments.AllowanceExceededError
+		if errors.As(err, &exceeded) {
+			// Nothing of this intent was written. The release of the
+			// account's expired unadmitted intents stands.
+			if err := dbTx.Commit(); err != nil {
+				return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the payment intent", err)
+			}
+			return allowanceExceeded(exceeded)
+		}
+	} else {
+		intent, err = h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
+	}
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash))
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)

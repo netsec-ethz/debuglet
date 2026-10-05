@@ -98,6 +98,12 @@ const (
 	// CodeRateLimited is a client address over the rate limit of a public
 	// route; retry later.
 	CodeRateLimited = "rate_limited"
+	// CodeAllowanceExceeded is a TEST intent whose price the account's
+	// remaining usage allowance does not cover.
+	CodeAllowanceExceeded = "allowance_exceeded"
+	// CodeConflict is a request whose idempotency key already names a
+	// different request.
+	CodeConflict = "conflict"
 )
 
 // SubmissionError reports a failed SubmitTEST. Stage is "intent" or "submit".

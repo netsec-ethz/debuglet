@@ -5,6 +5,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,9 +23,17 @@ type Economics = wire.Economics
 // OrderHistory is one page of Client.Orders.
 type OrderHistory = wire.OrderHistory
 
+// Allowance is the account's usage allowance; see Client.Allowance.
+type Allowance = wire.Allowance
+
+// ExecutorEarnings is an owned executor's earnings; see
+// Client.ExecutorEarnings.
+type ExecutorEarnings = wire.ExecutorEarnings
+
 const (
-	routeQuote  = "payment/quote"
-	routeOrders = "me/orders"
+	routeQuote     = "payment/quote"
+	routeOrders    = "me/orders"
+	routeAllowance = "me/allowance"
 	// economicsAPIVersion is the first contract version with quotes and the
 	// order history.
 	economicsAPIVersion = "1.15"
@@ -84,4 +93,46 @@ func (c *Client) Orders(ctx context.Context, page OrdersPage) (OrderHistory, err
 		return OrderHistory{}, c.protocolErr(http.MethodGet, routeOrders, "page exceeds the requested limit")
 	}
 	return history, nil
+}
+
+// Allowance returns the authenticated account's usage allowance in TEST units.
+// A dispatcher that does not offer allowances answers 404 with not_found;
+// User.Economics.Allowances tells beforehand.
+func (c *Client) Allowance(ctx context.Context) (Allowance, error) {
+	ctx = context.WithValue(ctx, requiredVersionKey{}, economicsAPIVersion)
+	data, err := c.do(ctx, http.MethodGet, routeAllowance, nil, nil, http.StatusOK)
+	if err != nil {
+		return Allowance{}, err
+	}
+	var allowance Allowance
+	if err := c.decode(http.MethodGet, routeAllowance, data, &allowance); err != nil {
+		return Allowance{}, err
+	}
+	if allowance.Currency == "" || allowance.Remaining == "" {
+		return Allowance{}, c.protocolErr(http.MethodGet, routeAllowance, "incomplete allowance")
+	}
+	return allowance, nil
+}
+
+// ExecutorEarnings returns what an executor the authenticated account owns
+// has earned and the outbound chain transfers that name it. Another account's
+// executor answers 404 with not_found.
+func (c *Client) ExecutorEarnings(ctx context.Context, executorID string) (ExecutorEarnings, error) {
+	if executorID == "" {
+		return ExecutorEarnings{}, errors.New("client: an executor ID is required")
+	}
+	ctx = context.WithValue(ctx, requiredVersionKey{}, economicsAPIVersion)
+	route := "operator/executors/" + url.PathEscape(executorID) + "/earnings"
+	data, err := c.do(ctx, http.MethodGet, route, nil, nil, http.StatusOK)
+	if err != nil {
+		return ExecutorEarnings{}, err
+	}
+	var earnings ExecutorEarnings
+	if err := c.decode(http.MethodGet, route, data, &earnings); err != nil {
+		return ExecutorEarnings{}, err
+	}
+	if earnings.Payouts == "" {
+		return ExecutorEarnings{}, c.protocolErr(http.MethodGet, route, "incomplete earnings")
+	}
+	return earnings, nil
 }

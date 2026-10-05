@@ -290,6 +290,215 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /operator/executors/{id}/earnings:
+    get:
+      operationId: "getExecutorEarnings"
+      summary: "Report what your executor has earned and its chain transfers."
+      description: "Added in API 1.15. Requires an authenticated account that owns the executor; other accounts receive 404. Reports the earnings the dispatcher has credited to the executor in the currency it announces (the first currency it earned in while it is not connected) and up to 100 of the newest outbound chain transfers that name it. payouts is disabled while blockchain payments are disabled. Nothing is paid out by this route."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: "string"
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "The executor's earnings and transfers."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorEarnings"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request did not authenticate as an account (unauthorized). The local development profile does not serve this route without a credential either."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "No executor with this ID is owned by the caller (not_found)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The earnings could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /operator/accounts/{id}/allowance:
+    post:
+      operationId: "grantAllowance"
+      summary: "Grant an account a usage allowance."
+      description: "Added in API 1.15. Requires an authenticated operator account, recorded as granted_by. Records an immutable grant of TEST units, the configured default grant when amount is omitted. Allowances are non-transferable usage credits, not money. The same idempotency_key with the same amount and reason answers 200 with the recorded grant and records nothing; with a different amount or reason it answers 409. While allowances are disabled every request answers 404."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: "string"
+        - name: "id"
+          in: "path"
+          required: true
+          description: "The account ID."
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AllowanceGrantRequest"
+      responses:
+        "200":
+          description: "The idempotency key names this grant already; nothing was recorded."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllowanceGrantResult"
+        "201":
+          description: "The grant was recorded."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AllowanceGrantResult"
+        "400":
+          description: "Malformed body, an amount that is not a positive decimal number, or a missing or overlong reason or idempotency_key (invalid_request), or an unsupported Debuglet-API-Version (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request did not authenticate as an account (unauthorized). The local development profile does not serve this route without a credential either."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The account is not an operator, or a cookie-authenticated request lacks its CSRF token (forbidden)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Unknown account, or allowances are not enabled on this dispatcher (not_found)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "The idempotency_key already names a grant with a different amount or reason (conflict)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The grant could not be recorded."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /executor-enrollment:
     post:
       operationId: "enrollExecutorCertificate"
@@ -3873,7 +4082,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: "Account request quota reached (account_quota_exceeded); Retry-After seconds."
+          description: "Account request quota reached (account_quota_exceeded); Retry-After seconds. While usage allowances are enabled, also an account's TEST intent whose price its remaining allowance does not cover (allowance_exceeded), without Retry-After; no transaction, order or owner is written."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4254,6 +4463,85 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: "The order history could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/allowance:
+    get:
+      operationId: "getMyAllowance"
+      summary: "Report the account's usage allowance."
+      description: "Added in API 1.15. Requires an authenticated account, including when local development is enabled. Reports the caller's usage allowance in TEST units; answers 404 while allowances are not enabled."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "The caller's allowance."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Allowance"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request did not authenticate as an account (unauthorized). The local development profile does not serve this route without a credential either."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Allowances are not enabled on this dispatcher (not_found), or the account no longer exists."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The allowance could not be read."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -5923,6 +6211,8 @@ components:
             - "payload_not_deletable"
             - "account_quota_exceeded"
             - "rate_limited"
+            - "allowance_exceeded"
+            - "conflict"
         message:
           type: "string"
           description: "Bounded human-readable diagnostic. Never carries a credential, a stack trace or internal database or transport detail."
@@ -7347,7 +7637,7 @@ components:
           description: "Whether blockchain payments are enabled on this dispatcher."
         allowances:
           type: boolean
-          description: "Whether usage allowances are offered. Always false in this version."
+          description: "Whether usage allowances are enabled: an account's TEST intents are then capped by the TEST units an operator granted it, and GET /me/allowance reports them."
     Quote:
       type: object
       description: "Added in API 1.15. The price of a batch. Amounts are decimal strings of integer base units of currency. A quote is not a reservation; the intent prices again when it is created."
@@ -7404,6 +7694,173 @@ components:
           description: "Why the order could not be priced or admitted in this batch; empty when it can."
           items:
             $ref: "#/components/schemas/FieldError"
+    Allowance:
+      type: object
+      description: "Added in API 1.15. An account's usage allowance: non-transferable usage credits in TEST units, not money. Amounts are decimal strings of TEST units. remaining is granted - consumed - reserved and is negative when the account used more before its grants than it was granted since."
+      additionalProperties: false
+      required:
+        - currency
+        - granted
+        - reserved
+        - consumed
+        - remaining
+        - pricing_rule
+      properties:
+        currency:
+          type: string
+          description: "Always TEST."
+        granted:
+          type: string
+          description: "The sum of the account's grants."
+        reserved:
+          type: string
+          description: "The price of the account's TEST orders of paid intents whose run has no settled outcome yet, admitted or not."
+        consumed:
+          type: string
+          description: "The price of the account's TEST orders whose run has a settled outcome, credited or refunded alike."
+        remaining:
+          type: string
+        pricing_rule:
+          type: string
+          description: "The pricing rule intents are priced with now."
+    AllowanceGrantRequest:
+      type: object
+      description: "Added in API 1.15."
+      additionalProperties: false
+      required:
+        - reason
+        - idempotency_key
+      properties:
+        amount:
+          type: string
+          description: "A positive decimal number of TEST units. Omitted or empty grants the dispatcher's configured default grant."
+        reason:
+          type: string
+          description: "Why the grant is issued, 1 to 200 characters."
+        idempotency_key:
+          type: string
+          description: "1 to 128 characters; a repeated request with the same key issues the grant once."
+    AllowanceGrant:
+      type: object
+      description: "Added in API 1.15. One recorded grant. Grants are never changed or removed."
+      additionalProperties: false
+      required:
+        - id
+        - amount
+        - currency
+        - reason
+        - idempotency_key
+        - granted_by
+        - granted_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        amount:
+          type: string
+          description: "A decimal string of TEST units."
+        currency:
+          type: string
+        reason:
+          type: string
+        idempotency_key:
+          type: string
+        granted_by:
+          type: string
+          format: uuid
+          description: "The operator account that issued the grant."
+        granted_at:
+          type: string
+          format: date-time
+    AllowanceGrantResult:
+      type: object
+      description: "Added in API 1.15. A grant and the account's allowance after it."
+      additionalProperties: false
+      required:
+        - grant
+        - allowance
+      properties:
+        grant:
+          $ref: "#/components/schemas/AllowanceGrant"
+        allowance:
+          $ref: "#/components/schemas/Allowance"
+    ExecutorEarnings:
+      type: object
+      description: "Added in API 1.15. What an executor has earned, as the dispatcher records it, and the outbound chain transfers that name it. Amounts are decimal strings of base units of currency."
+      additionalProperties: false
+      required:
+        - currency
+        - total_income
+        - current_balance
+        - transfers
+        - payouts
+      properties:
+        currency:
+          type: string
+          description: "Empty when the executor has earned nothing and is not connected."
+        total_income:
+          type: string
+        current_balance:
+          type: string
+          description: "Earned and not yet reserved for a payout."
+        transfers:
+          type: array
+          description: "Up to 100 transfers, newest first."
+          items:
+            $ref: "#/components/schemas/ChainTransfer"
+        payouts:
+          type: string
+          description: "disabled while blockchain payments are disabled; nothing is paid out then."
+          enum:
+            - "enabled"
+            - "disabled"
+    ChainTransfer:
+      type: object
+      description: "Added in API 1.15. One outbound chain transfer."
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - amount
+        - currency
+        - receiver
+        - state
+        - digest
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum:
+            - "payout"
+            - "refund"
+        amount:
+          type: string
+        currency:
+          type: string
+        receiver:
+          type: string
+        state:
+          type: string
+          description: "reserved before the chain call; sent, confirmed or failed after it; unknown while the outcome is not known, which is never a failure."
+          enum:
+            - "reserved"
+            - "sent"
+            - "confirmed"
+            - "failed"
+            - "unknown"
+        digest:
+          type: string
+          description: "The chain transaction digest; empty before one is known."
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     OrderHistory:
       type: object
       description: "Added in API 1.15. One page of the account's payment intents."

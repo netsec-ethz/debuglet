@@ -37,6 +37,17 @@ type AllocationReclamation struct {
 	ReclaimedAt models.UTCTime
 }
 
+type AllowanceGrant struct {
+	ID             int64
+	UserID         int64
+	Amount         int64
+	Currency       string
+	GrantedBy      int64
+	Reason         string
+	IdempotencyKey string
+	GrantedAt      models.UTCTime
+}
+
 type AttributionChain struct {
 	ExecutorID  string
 	ChainID     string

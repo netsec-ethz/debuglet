@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -15,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 type OwnedExecutorResponse struct {
@@ -177,4 +179,75 @@ func (h *Handler) PostExecutorEnrollment(c echo.Context) error {
 		GRPCAddress    string `json:"grpc_address"`
 		YamuxAddress   string `json:"yamux_address"`
 	}{request.ExecutorID, certificate, h.issuer.CAPEM(), h.onboarding.GRPCAddress, h.onboarding.YamuxAddress})
+}
+
+// maxEarningsTransfers bounds the transfers GET /operator/executors/:id/earnings
+// lists, newest first.
+const maxEarningsTransfers = 100
+
+// GET /operator/executors/:id/earnings
+//
+// GetExecutorEarnings reports what an executor the caller owns has earned and
+// the outbound chain transfers that name it. It reads records only; no payout
+// is started here. Another account's executor answers like a missing one.
+func (h *Handler) GetExecutorEarnings(c echo.Context) error {
+	account, err := requireAccount(c)
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	tx, err := h.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return earningsFailure(err)
+	}
+	defer tx.Rollback()
+	q := database.New(tx)
+	executor, err := q.GetOwnedExecutor(ctx, database.GetOwnedExecutorParams{Uuid: account.UserUUID, ExecutorID: c.Param("id")})
+	if errors.Is(err, sql.ErrNoRows) {
+		return apiError(http.StatusNotFound, CodeNotFound, "executor not found")
+	}
+	if err != nil {
+		return earningsFailure(err)
+	}
+	rows, err := q.GetEarningsOf(ctx, executor.ExecutorID)
+	if err != nil {
+		return earningsFailure(err)
+	}
+	transfers, err := q.ListExecutorTransfers(ctx, database.ListExecutorTransfersParams{ExecutorID: executor.ExecutorID, RowLimit: maxEarningsTransfers})
+	if err != nil {
+		return earningsFailure(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return earningsFailure(err)
+	}
+	response := wire.ExecutorEarnings{TotalIncome: "0", CurrentBalance: "0", Transfers: make([]wire.ChainTransfer, 0, len(transfers)), Payouts: "disabled"}
+	if h.dispatcher.Payment.CheckPaymentMethod("USDC") == nil {
+		response.Payouts = "enabled"
+	}
+	// Earnings are kept per currency. The executor's announced currency is
+	// the one it earns in now; an executor that is not connected reports the
+	// first currency it earned in.
+	if node, ok := h.dispatcher.GetExecutor(executor.ExecutorID); ok {
+		response.Currency = node.Currency
+	}
+	for i, row := range rows {
+		if row.Currency == response.Currency || (i == 0 && response.Currency == "") {
+			response.Currency = row.Currency
+			response.TotalIncome = strconv.FormatInt(row.TotalIncome, 10)
+			response.CurrentBalance = strconv.FormatInt(row.CurrentBalance, 10)
+			break
+		}
+	}
+	for _, transfer := range transfers {
+		response.Transfers = append(response.Transfers, wire.ChainTransfer{
+			ID: transfer.ID, Kind: transfer.Kind, Amount: strconv.FormatInt(transfer.Amount, 10),
+			Currency: transfer.Currency, Receiver: transfer.Receiver, State: transfer.State, Digest: transfer.Digest,
+			CreatedAt: transfer.CreatedAt.UTC(), UpdatedAt: transfer.UpdatedAt.UTC(),
+		})
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+func earningsFailure(err error) error {
+	return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the executor's earnings", err)
 }
