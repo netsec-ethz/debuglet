@@ -14,8 +14,12 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/florianl/go-tc"
 	"github.com/florianl/go-tc/core"
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
+
+// legacyFilterName is the name every tagger gives its legacy tc filter.
+const legacyFilterName = "debuglet_tag"
 
 // legacyFilterPriority orders the tagger's filters among an interface's tc
 // egress filters. Every tagger uses it; the handle tells them apart.
@@ -52,7 +56,7 @@ func attachLegacyTC(iface *net.Interface, program *ebpf.Program, handle uint32) 
 		return nil, errors.Join(fmt.Errorf("add clsact qdisc: %w", err), conn.Close())
 	}
 	fd := uint32(program.FD())
-	name := "debuglet_tag"
+	name := legacyFilterName
 	flags := uint32(tc.BpfActDirect)
 	filter := tc.Object{
 		Msg: tc.Msg{
@@ -96,4 +100,68 @@ func (f *legacyFilter) Close() error {
 		f.closeErr = errors.Join(deleteErr, conn.Close())
 	})
 	return f.closeErr
+}
+
+// RetireStaleFilters removes from iface's egress hook every legacy tc filter
+// a tagger of an earlier process left. A TCX attachment is owned by its link
+// descriptor and ends with its process, but a legacy filter keeps its program
+// and key map, and so keeps signing with the last key installed, until it is
+// deleted. It is called before this process attaches any tagger, so every
+// tagger filter found is stale. A filter at the tagger's priority that is not
+// the tagger's is not deleted and makes the result an error, as does a failed
+// listing or deletion: the earlier signers are then not known to be retired.
+func RetireStaleFilters(iface *net.Interface, logger *zap.Logger) error {
+	conn, err := tc.Open(&tc.Config{})
+	if err != nil {
+		return fmt.Errorf("open rtnetlink: %w", err)
+	}
+	defer conn.Close()
+	msg := tc.Msg{Family: unix.AF_UNSPEC, Ifindex: uint32(iface.Index)}
+	list := func() ([]tc.Object, error) {
+		qdiscs, err := conn.Qdisc().Get()
+		if err != nil {
+			return nil, fmt.Errorf("list qdiscs: %w", err)
+		}
+		for _, qdisc := range qdiscs {
+			if qdisc.Ifindex == msg.Ifindex && qdisc.Kind == "clsact" {
+				egress := msg
+				egress.Parent = core.BuildHandle(tc.HandleRoot, tc.HandleMinEgress)
+				filters, err := conn.Filter().Get(&egress)
+				if err != nil {
+					return nil, fmt.Errorf("list egress filters: %w", err)
+				}
+				return filters, nil
+			}
+		}
+		// Without a clsact qdisc no legacy filter is attached.
+		return nil, nil
+	}
+	return retireStaleFilters(list, func(filter *tc.Object) error { return conn.Filter().Delete(filter) }, logger)
+}
+
+// retireStaleFilters deletes the tagger filters list returns through remove.
+func retireStaleFilters(list func() ([]tc.Object, error), remove func(*tc.Object) error, logger *zap.Logger) error {
+	filters, err := list()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, filter := range filters {
+		// Handle 0 is the dump's entry for the priority itself, not a filter.
+		if filter.Info>>16 != legacyFilterPriority || filter.Handle == 0 {
+			continue
+		}
+		if filter.Kind != "bpf" || filter.BPF == nil || filter.BPF.Name == nil || *filter.BPF.Name != legacyFilterName {
+			errs = append(errs, fmt.Errorf("egress filter %#x at the tagger's priority is not a tagger filter", filter.Handle))
+			continue
+		}
+		stale := tc.Object{Msg: tc.Msg{Family: unix.AF_UNSPEC, Ifindex: filter.Ifindex, Handle: filter.Handle, Parent: filter.Parent,
+			Info: core.FilterInfo(legacyFilterPriority, unix.ETH_P_ALL)}, Attribute: tc.Attribute{Kind: "bpf"}}
+		if err := remove(&stale); err != nil && !errors.Is(err, unix.ENOENT) {
+			errs = append(errs, fmt.Errorf("delete stale egress filter %#x: %w", filter.Handle, err))
+			continue
+		}
+		logger.Warn("Removed a tagger filter an earlier executor process left attached", zap.Uint32("ifindex", filter.Ifindex), zap.Uint32("handle", filter.Handle))
+	}
+	return errors.Join(errs...)
 }

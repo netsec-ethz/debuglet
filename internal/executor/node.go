@@ -21,6 +21,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/sqlite"
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/hostprobe"
@@ -133,7 +134,16 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 		logger.Error("TESLA chain started while the host clock was not ready; packets are not attributable and tagging nodes admit no runs until the executor restarts with a ready clock",
 			zap.String("clock_state", clock.State), zap.String("clock_readiness", clock.Readiness), zap.String("clock_reason", clock.Reason))
 	}
-	retired := deriveRetiredChain(context.Background(), executordb.New(db), cfg.Tesla.Seed, generation, !schedule.Config().ClockUnready, time.Now(), logger)
+	// A legacy tc filter of an earlier process outlives it and keeps signing
+	// with its last key, so it is removed before that chain's keys can be
+	// disclosed; this process has attached no tagger yet.
+	var signers error
+	if iface != nil {
+		if signers = ebpf.RetireStaleFilters(iface, logger); signers != nil {
+			logger.Warn("Could not retire tagger filters an earlier executor process left attached", zap.String("interface", iface.Name), zap.Error(signers))
+		}
+	}
+	retired := deriveRetiredChain(context.Background(), executordb.New(db), cfg.Tesla.Seed, generation, !schedule.Config().ClockUnready, signers, time.Now(), logger)
 	pc, err := counter(iface, logger)
 	if err != nil {
 		if pc != nil {
@@ -146,7 +156,7 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	}
 	n := &Node{supervisor: supervisor, socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
-	n.retired.schedule = retired
+	n.retired.schedule, n.retired.logger = retired, logger
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()),
 		zap.Duration("TESLA_epoch_length", schedule.Config().EpochLength), zap.Int64("TESLA_disclosure_delay_epochs", schedule.DisclosureDelay()))
 	owned = true
@@ -189,15 +199,21 @@ func startChain(ctx context.Context, db *sql.DB, cfg config.TeslaConfig, clockBo
 	return schedule, generation, clock, nil
 }
 
+// retiredDeliveryLimit bounds how long after its final disclosure a retired
+// chain is reconstructed at a start, or offered by a running process, without
+// a heartbeat having delivered its final key.
+const retiredDeliveryLimit = 24 * time.Hour
+
 // deriveRetiredChain re-derives the chain of the previous start, the one
-// before generation, while its last keys are still undisclosed at now, so the
-// heartbeat can disclose them. That needs the configured seed, the chain's
-// recorded disclosure delay and a ready clock at this start, since the wall
-// clock decides when each key is due; and the re-derived anchor must be the
-// recorded one. The result is DisclosureOnly and registered with no tagger, so
-// a recorded generation never signs again. Each start logs once why it
-// discloses no tail.
-func deriveRetiredChain(ctx context.Context, queries *executordb.Queries, seed string, generation int64, clockReady bool, now time.Time, logger *zap.Logger) *tesla.KeySchedule {
+// before generation, until retiredDeliveryLimit after its final disclosure,
+// so the heartbeat can disclose its remaining keys. That needs the configured seed, the chain's
+// recorded disclosure delay, a ready clock at this start, whose wall reading
+// places the recorded origin, and the earlier process's signers retired
+// (signers is nil); and the re-derived anchor must be the recorded one. The
+// result is DisclosureOnly and registered with no tagger, so a recorded
+// generation never signs again. Its epochs advance on the monotonic clock from
+// now (see recoveredClock). Each start logs once why it discloses no tail.
+func deriveRetiredChain(ctx context.Context, queries *executordb.Queries, seed string, generation int64, clockReady bool, signers error, now time.Time, logger *zap.Logger) *tesla.KeySchedule {
 	if generation <= 1 {
 		return nil
 	}
@@ -220,18 +236,23 @@ func deriveRetiredChain(ctx context.Context, queries *executordb.Queries, seed s
 	interval, delay := time.Duration(previous.DelayNs), previous.DisclosureDelay.Int64
 	final := previous.EpochBase.Add(time.Duration(previous.ChainLength-1+delay) * interval)
 	fields = append(fields, zap.Time("final_disclosure_at", final))
-	if !now.Before(final) {
-		return skip("its final key is already due")
-	}
 	if !clockReady {
 		return skip("the host clock is not ready")
+	}
+	if signers != nil {
+		return skip("tagger filters of the earlier process could not be retired", zap.Error(signers))
+	}
+	// The bound a running process keeps an undelivered chain for: a chain past
+	// its final disclosure carries k_{L-1} on the first heartbeat.
+	if !now.Before(final.Add(retiredDeliveryLimit)) {
+		return skip("its final key was due more than 24 hours ago")
 	}
 	tail, err := tesla.ChainSeed([]byte(seed), previous.Generation)
 	if err != nil {
 		return skip(err.Error())
 	}
 	retired, err := tesla.NewKeySchedule(tesla.Config{Seed: tail, EpochLength: interval, DisclosureDelay: delay, ChainLength: previous.ChainLength,
-		Epoch: previous.EpochBase, DisclosureOnly: true})
+		Epoch: previous.EpochBase, DisclosureOnly: true, Clock: recoveredClock{wall: now.Round(0), at: now}})
 	if err != nil {
 		return skip(err.Error())
 	}
@@ -243,16 +264,39 @@ func deriveRetiredChain(ctx context.Context, queries *executordb.Queries, seed s
 	return retired
 }
 
-// retiredChain holds the chain the previous start retired while its last keys
-// are due.
+// recoveredClock places a recorded origin, which carries no monotonic reading,
+// on the monotonic clock: the wall time from the origin to the recovery
+// instant, read on a ready clock, plus the monotonic time since then. A wall
+// step after recovery therefore neither advances nor holds back disclosure.
+type recoveredClock struct {
+	wall time.Time // the recovery instant's wall reading
+	at   time.Time // the same instant with its monotonic reading
+	// host measures from at; nil uses the readings of the instants, as the
+	// current chain's schedule does.
+	host tesla.Clock
+}
+
+func (c recoveredClock) Elapsed(origin, t time.Time) (time.Duration, time.Duration) {
+	since, wall := t.Sub(c.at), t.Round(0).Sub(origin.Round(0))
+	if c.host != nil {
+		since, _ = c.host.Elapsed(c.at, t)
+		_, wall = c.host.Elapsed(origin, t)
+	}
+	return c.wall.Sub(origin.Round(0)) + since, wall
+}
+
+// retiredChain holds the chain the previous start retired until a heartbeat
+// that carried its final key k_{L-1} succeeded; a later key covers every
+// earlier one, so only the final one needs to arrive.
 type retiredChain struct {
 	mu       sync.Mutex
 	schedule *tesla.KeySchedule
+	logger   *zap.Logger
 }
 
 // disclosures returns the retired chain's key due at now for the heartbeat.
-// The chain is dropped one epoch after its final disclosure, so its last key
-// rides on more than one heartbeat.
+// A chain whose final key no heartbeat delivered within retiredDeliveryLimit
+// of its final disclosure is dropped with a warning.
 func (r *retiredChain) disclosures(now time.Time) []*protocol.TeslaDisclosure {
 	if r == nil {
 		return nil
@@ -262,7 +306,8 @@ func (r *retiredChain) disclosures(now time.Time) []*protocol.TeslaDisclosure {
 	if r.schedule == nil {
 		return nil
 	}
-	if !now.Before(r.schedule.FinalDisclosure().Add(r.schedule.Config().EpochLength)) {
+	if final := r.schedule.FinalDisclosure(); !now.Before(final.Add(retiredDeliveryLimit)) {
+		r.logger.Warn("Dropped the previous TESLA chain without a delivered final key", zap.Time("final_disclosure_at", final))
 		r.schedule = nil
 		return nil
 	}
@@ -271,6 +316,26 @@ func (r *retiredChain) disclosures(now time.Time) []*protocol.TeslaDisclosure {
 		return nil
 	}
 	return []*protocol.TeslaDisclosure{{Anchor: r.schedule.Anchor(), Epoch: epoch, Key: key}}
+}
+
+// delivered records that a heartbeat carrying sent succeeded, and drops the
+// retired chain once that included its final key.
+func (r *retiredChain) delivered(sent []*protocol.TeslaDisclosure) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.schedule == nil {
+		return
+	}
+	for _, d := range sent {
+		if d.GetEpoch() == r.schedule.ChainLength()-1 && bytes.Equal(d.GetAnchor(), r.schedule.Anchor()) {
+			r.logger.Info("Delivered the previous TESLA chain's final key", zap.Int64("epoch", d.GetEpoch()))
+			r.schedule = nil
+			return
+		}
+	}
 }
 
 // Close permanently closes new node admission. A busy result consumes nothing:

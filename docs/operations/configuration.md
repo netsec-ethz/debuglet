@@ -62,21 +62,42 @@ delay has elapsed.
 The keys live only in the running executor, and every start builds a new
 chain. When `[tesla] seed` is configured, a start re-derives the previous
 chain from the seed and its record, and the heartbeat discloses that chain's
-remaining keys at their due instants, under its own anchor, until its final key
-is out. The re-derived chain only discloses: it never signs again, and no tagger
-holds it. A restart then loses nothing. The keys of the last d epochs before a
-restart are still never disclosed, and packets tagged in them (the last 15
-minutes by default) can never be verified, when:
+remaining keys at their due instants, under its own anchor. The re-derived
+chain only discloses: it never signs again, and no tagger holds it. Its epochs
+advance on the monotonic clock from the start, which places the recorded
+origin with its ready wall clock, so a later wall-clock step neither advances
+nor delays a disclosure; if the clock loses readiness later, that is reported
+for the current chain and the old chain's disclosure continues. The heartbeat
+offers the old chain's final key until one heartbeat that carried it
+succeeded; the dispatcher's durable record of it is not confirmed back. A tail
+whose final key no heartbeat delivered within 24 hours of its final
+disclosure is dropped with a warning.
+
+Recovery also requires the previous process's signers to be retired. A TCX
+attachment ends with its process and needs no action. A legacy tc filter,
+used on kernels without TCX, outlives its process and keeps signing with its
+last key, so each start on a configured interface first removes the tagger
+filters an earlier process left there (logging each removal); if it cannot
+list or remove them, or finds another filter at the tagger's priority, it
+discloses no tail. Only the configured interface is checked: a filter left on
+an interface an earlier configuration named is not removed.
+
+The keys of the last d epochs before a restart are still never disclosed, and
+packets tagged in them (the last 15 minutes by default) can never be verified,
+when:
 
 - no seed is configured (each chain's tail is random);
 - the previous chain was recorded before the executor kept its disclosure
   delay (chains started by an earlier release);
-- the host clock is not ready at the new start, since the wall clock decides
-  when each old key is due;
+- the host clock is not ready at the new start, since its wall reading places
+  the recorded origin;
+- the previous process's tagger filters could not be removed;
 - the re-derived chain does not match the recorded anchor, for example after
   the seed was changed (logged as an error);
+- the new start comes more than 24 hours after the previous chain's final key
+  was due (the same bound a running executor keeps an undelivered tail for);
 - the executor restarted more than once before the earlier chain's final key
-  was due (only the immediately previous chain is re-derived).
+  was delivered (only the immediately previous chain is re-derived).
 
 Each start logs once which of these applies. Without a seed, stop an executor
 only once its last attributed packets are d epochs old. When the chain runs

@@ -379,6 +379,9 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 				_, err = client.Heartbeat(callCtx, req)
 				cancel()
 			}
+			if err == nil {
+				e.retired.delivered(req.ExtraDisclosures)
+			}
 			if err != nil {
 				e.logger.Error("Failed to send heartbeat", zap.Error(err))
 			}

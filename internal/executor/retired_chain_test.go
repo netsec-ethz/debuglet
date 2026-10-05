@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -78,7 +79,7 @@ func TestRestartDisclosesTheRetiredChainTail(t *testing.T) {
 	}
 
 	core, logs := observer.New(zapcore.InfoLevel)
-	retired := deriveRetiredChain(ctx, executordb.New(db), cfg.Seed, next, true, origin.Add(3500*time.Millisecond), zap.New(core))
+	retired := deriveRetiredChain(ctx, executordb.New(db), cfg.Seed, next, true, nil, origin.Add(3500*time.Millisecond), zap.New(core))
 	if retired == nil || !bytes.Equal(retired.Anchor(), first.Anchor()) || !retired.Config().DisclosureOnly {
 		t.Fatalf("re-derived chain %v; want the first chain, disclosure only", retired)
 	}
@@ -86,12 +87,12 @@ func TestRestartDisclosesTheRetiredChainTail(t *testing.T) {
 		t.Fatalf("logged %v; want one disclosure line", logs.All())
 	}
 
-	holder := &retiredChain{schedule: retired}
+	holder := &retiredChain{schedule: retired, logger: zap.NewNop()}
 	for k := int64(0); k <= 8; k++ {
 		at := origin.Add(time.Duration(k)*time.Second + 500*time.Millisecond)
 		got := holder.disclosures(at)
 		switch {
-		case k < 2 || k == 8:
+		case k < 2:
 			if len(got) != 0 {
 				t.Fatalf("epoch %d: disclosed %v; want nothing", k, got)
 			}
@@ -106,8 +107,15 @@ func TestRestartDisclosesTheRetiredChainTail(t *testing.T) {
 			t.Fatalf("epoch %d: the retired chain returned a signing key", k)
 		}
 	}
-	if holder.schedule != nil || len(holder.disclosures(origin.Add(3500*time.Millisecond))) != 0 {
-		t.Fatal("the retired chain was kept after its final disclosure")
+	// Past its final disclosure the chain is kept until the final key was
+	// delivered; an earlier key does not retire it.
+	holder.delivered(holder.disclosures(origin.Add(4500 * time.Millisecond)))
+	if holder.schedule == nil {
+		t.Fatal("delivering k_2 retired the chain")
+	}
+	holder.delivered(holder.disclosures(origin.Add(20 * time.Second)))
+	if holder.schedule != nil || len(holder.disclosures(origin.Add(20*time.Second))) != 0 {
+		t.Fatal("the retired chain was kept after its final key was delivered")
 	}
 
 	// The tagger of a run after the restart holds the new chain; a longer
@@ -140,8 +148,10 @@ func TestRestartDisclosesTheRetiredChainTail(t *testing.T) {
 
 // Without everything a re-derivation needs, a start discloses no tail and
 // says once why: no seed, no recorded delay (a chain recorded before the
-// column, migrated from schema 6), a final key already due, an unready clock,
-// or a re-derived anchor that is not the recorded one, which is an error.
+// column, migrated from schema 6), a final key due more than a day ago, an
+// unready clock,
+// tagger filters of the earlier process not retired, or a re-derived anchor
+// that is not the recorded one, which is an error.
 func TestRetiredChainIsNotDerived(t *testing.T) {
 	now := time.Now()
 	recentDelay := sql.NullInt64{Int64: 2, Valid: true}
@@ -149,21 +159,24 @@ func TestRetiredChainIsNotDerived(t *testing.T) {
 		name       string
 		seed       string
 		clockReady bool
+		signers    error
 		record     func(t *testing.T, db *sql.DB)
 		level      zapcore.Level
 		message    string
 		reason     string
 	}{
-		{"first chain", retiredSeed, true, func(*testing.T, *sql.DB) {}, 0, "", ""},
-		{"no seed", "", true, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
+		{"first chain", retiredSeed, true, nil, func(*testing.T, *sql.DB) {}, 0, "", ""},
+		{"no seed", "", true, nil, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
 			zapcore.InfoLevel, "Previous TESLA chain's remaining keys are not disclosed", "no tesla.seed is configured, so the chain cannot be re-derived"},
-		{"unknown delay", retiredSeed, true, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, sql.NullInt64{}) },
+		{"unknown delay", retiredSeed, true, nil, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, sql.NullInt64{}) },
 			zapcore.InfoLevel, "Previous TESLA chain's remaining keys are not disclosed", "the chain's disclosure delay is not on record"},
-		{"final key due", retiredSeed, true, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now.Add(-time.Hour), recentDelay) },
-			zapcore.InfoLevel, "Previous TESLA chain's remaining keys are not disclosed", "its final key is already due"},
-		{"clock unready", retiredSeed, false, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
+		{"final key due too long ago", retiredSeed, true, nil, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now.Add(-25*time.Hour), recentDelay) },
+			zapcore.InfoLevel, "Previous TESLA chain's remaining keys are not disclosed", "its final key was due more than 24 hours ago"},
+		{"clock unready", retiredSeed, false, nil, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
 			zapcore.InfoLevel, "Previous TESLA chain's remaining keys are not disclosed", "the host clock is not ready"},
-		{"anchor mismatch", "another seed", true, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
+		{"signers not retired", retiredSeed, true, errors.New("delete stale egress filter"), func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
+			zapcore.InfoLevel, "Previous TESLA chain's remaining keys are not disclosed", "tagger filters of the earlier process could not be retired"},
+		{"anchor mismatch", "another seed", true, nil, func(t *testing.T, db *sql.DB) { retiredChainRow(t, db, 1, now, recentDelay) },
 			zapcore.ErrorLevel, "Re-derived previous TESLA chain does not match its recorded anchor; its remaining keys are not disclosed (was tesla.seed changed?)", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,7 +187,7 @@ func TestRetiredChainIsNotDerived(t *testing.T) {
 				t.Fatal(err)
 			}
 			core, logs := observer.New(zapcore.DebugLevel)
-			if retired := deriveRetiredChain(t.Context(), executordb.New(db), tc.seed, next, tc.clockReady, now.Add(time.Second), zap.New(core)); retired != nil {
+			if retired := deriveRetiredChain(t.Context(), executordb.New(db), tc.seed, next, tc.clockReady, tc.signers, now.Add(time.Second), zap.New(core)); retired != nil {
 				t.Fatal("a retired chain was derived")
 			}
 			if tc.message == "" {
@@ -213,22 +226,29 @@ func TestChainRecordedBeforeTheDelayColumn(t *testing.T) {
 		t.Fatalf("migrated chain %+v, %v; want an unknown delay", chain, err)
 	}
 	core, logs := observer.New(zapcore.InfoLevel)
-	if deriveRetiredChain(t.Context(), executordb.New(db), retiredSeed, 2, true, time.Now(), zap.New(core)) != nil || logs.FilterField(zap.String("reason", "the chain's disclosure delay is not on record")).Len() != 1 {
+	if deriveRetiredChain(t.Context(), executordb.New(db), retiredSeed, 2, true, nil, time.Now(), zap.New(core)) != nil || logs.FilterField(zap.String("reason", "the chain's disclosure delay is not on record")).Len() != 1 {
 		t.Fatalf("a chain without a recorded delay: logged %v", logs.All())
 	}
 }
 
-// heartbeatCapture is a dispatcher that records the heartbeats it receives.
+// heartbeatCapture is a dispatcher that records the heartbeats it receives
+// and fails those fail names.
 type heartbeatCapture struct {
 	pb.DispatcherServiceClient
 	mu    sync.Mutex
 	beats []*pb.HeartbeatRequest
+	fail  func(*pb.HeartbeatRequest) error
 }
 
 func (c *heartbeatCapture) Heartbeat(_ context.Context, req *pb.HeartbeatRequest, _ ...grpc.CallOption) (*pb.HeartbeatResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.beats = append(c.beats, req)
+	if c.fail != nil {
+		if err := c.fail(req); err != nil {
+			return nil, err
+		}
+	}
 	return &pb.HeartbeatResponse{}, nil
 }
 
@@ -241,7 +261,7 @@ func (c *heartbeatCapture) received() []*pb.HeartbeatRequest {
 // A node restarted on the same database before the previous chain's final
 // disclosure keeps that chain disclosure only; its heartbeats carry the old
 // chain's due keys under the old anchor, never early, through k_{L-1}, and
-// stop once the chain is dropped.
+// stop after one that carried k_{L-1} succeeded.
 func TestHeartbeatDisclosesTheRetiredChainTail(t *testing.T) {
 	db := newFixtureDatabase(t)
 	cfg := fixtureConfig()
@@ -269,7 +289,7 @@ func TestHeartbeatDisclosesTheRetiredChainTail(t *testing.T) {
 		if retired != nil {
 			t.Fatal("a start on an unready clock derived the previous chain")
 		}
-		retired = deriveRetiredChain(t.Context(), executordb.New(db), cfg.Tesla.Seed, 2, true, time.Now(), zap.NewNop())
+		retired = deriveRetiredChain(t.Context(), executordb.New(db), cfg.Tesla.Seed, 2, true, nil, time.Now(), zap.NewNop())
 		node.retired.schedule = retired
 	}
 	if retired == nil || !bytes.Equal(retired.Anchor(), first.Anchor()) || !retired.Config().DisclosureOnly {
@@ -288,17 +308,26 @@ func TestHeartbeatDisclosesTheRetiredChainTail(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); e.startHeartbeatLoop(ctx, operationBinding()) }()
 	origin := first.Config().Epoch
-	dropped := origin.Add(8 * time.Second)
-	deadline := dropped.Add(operationTestBound)
+	final, _ := first.KeyAtEpoch(5)
+	deliveredAt := -1
+	deadline := origin.Add(8 * time.Second).Add(operationTestBound)
 	for {
 		beats := dispatcher.received()
-		if n := len(beats); n > 0 && time.Unix(0, beats[n-1].GetTimestampNs()).After(dropped) {
+		if deliveredAt < 0 {
+			for i, beat := range beats {
+				if extra := beat.GetExtraDisclosures(); len(extra) == 1 && bytes.Equal(extra[0].GetKey(), final) {
+					deliveredAt = i
+					break
+				}
+			}
+		}
+		if deliveredAt >= 0 && len(beats) > deliveredAt+2 {
 			break
 		}
 		if time.Now().After(deadline) {
 			cancel()
 			<-done
-			t.Fatal("no heartbeat after the retired chain's final disclosure")
+			t.Fatal("no heartbeat after one delivered the retired chain's final key")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -306,7 +335,7 @@ func TestHeartbeatDisclosesTheRetiredChainTail(t *testing.T) {
 	<-done
 
 	highest := int64(-1)
-	for _, beat := range dispatcher.received() {
+	for i, beat := range dispatcher.received() {
 		sent := time.Unix(0, beat.GetTimestampNs())
 		if len(beat.GetTeslaKeyAnchor()) != 0 {
 			t.Fatalf("the current chain's key names anchor %x", beat.GetTeslaKeyAnchor())
@@ -317,9 +346,9 @@ func TestHeartbeatDisclosesTheRetiredChainTail(t *testing.T) {
 			}
 		}
 		extra := beat.GetExtraDisclosures()
-		if !sent.Before(dropped) {
+		if i > deliveredAt {
 			if len(extra) != 0 {
-				t.Fatalf("a heartbeat after the drop carried %v", extra)
+				t.Fatalf("a heartbeat after the final key was delivered carried %v", extra)
 			}
 			continue
 		}
@@ -335,6 +364,191 @@ func TestHeartbeatDisclosesTheRetiredChainTail(t *testing.T) {
 		highest = max(highest, disclosure.GetEpoch())
 	}
 	if highest != 5 || node.retired.schedule != nil {
-		t.Fatalf("highest retired key disclosed k_%d, chain kept %v; want k_5 and dropped", highest, node.retired.schedule != nil)
+		t.Fatalf("highest retired key disclosed k_%d, chain kept %v; want k_5 and retired", highest, node.retired.schedule != nil)
+	}
+}
+
+// After recovery the retired chain's epochs advance on the monotonic clock
+// from the recovery instant: a forward or backward wall step, or a wall clock
+// that drifts beyond what a signing chain tolerates (readiness lost), leaves
+// its disclosure schedule unchanged and disclosure continues.
+func TestRetiredChainFollowsTheMonotonicClock(t *testing.T) {
+	origin := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	recovery := origin.Add(3500 * time.Millisecond)
+	tail, err := tesla.ChainSeed([]byte(retiredSeed), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule := func(step time.Duration) *tesla.KeySchedule {
+		t.Helper()
+		var host tesla.Clock
+		if step != 0 {
+			host = aheadClock(step)
+		}
+		ks, err := tesla.NewKeySchedule(tesla.Config{Seed: tail, EpochLength: time.Second, DisclosureDelay: 2, ChainLength: 6, Epoch: origin,
+			DisclosureOnly: true, Clock: recoveredClock{wall: recovery, at: recovery, host: host}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ks
+	}
+	unstepped := schedule(0)
+	for _, step := range []time.Duration{30 * time.Second, -30 * time.Second, time.Hour} {
+		stepped := schedule(step)
+		for at := time.Duration(0); at <= 10*time.Second; at += 250 * time.Millisecond {
+			now := recovery.Add(at)
+			wantEpoch, wantKey, wantOK := unstepped.DisclosedKey(now)
+			epoch, key, ok := stepped.DisclosedKey(now)
+			if epoch != wantEpoch || ok != wantOK || !bytes.Equal(key, wantKey) {
+				t.Fatalf("wall step %v, %v after recovery: disclosed (%d, %v); want (%d, %v)", step, at, epoch, ok, wantEpoch, wantOK)
+			}
+		}
+		if drift := stepped.Drift(recovery.Add(time.Second)); drift != step {
+			t.Fatalf("drift %v after a wall step of %v", drift, step)
+		}
+	}
+	if epoch, _, ok := unstepped.DisclosedKey(recovery); !ok || epoch != 1 {
+		t.Fatalf("disclosed (%d, %v) at recovery 3.5 s after the origin; want k_1", epoch, ok)
+	}
+}
+
+// A retired chain stays until a heartbeat delivered its final key, however
+// the heartbeat cadence changed: the previous chain had I = 1 s, d = 11 and
+// L = 20, so k_19 is due 30 s after its origin; the restart at +25 s runs
+// 60 s epochs, whose heartbeat interval is 30 s, so the first heartbeat after
+// the restart comes at +55 s. Without a delivery the chain is dropped with a
+// warning a day after its final disclosure.
+func TestRetiredChainOutlivesAChangedHeartbeatCadence(t *testing.T) {
+	db := newFixtureDatabase(t)
+	origin := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	tail, err := tesla.ChainSeed([]byte(retiredSeed), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := tesla.NewKeySchedule(tesla.Config{Seed: tail, EpochLength: time.Second, DisclosureDelay: 11, ChainLength: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executordb.New(db).CreateTeslaChain(t.Context(), executordb.CreateTeslaChainParams{Generation: 1, Anchor: previous.Anchor(),
+		EpochBase: origin, DelayNs: int64(time.Second), ChainLength: 20, CreatedAt: origin, DisclosureDelay: sql.NullInt64{Int64: 11, Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+	core, logs := observer.New(zapcore.InfoLevel)
+	retired := deriveRetiredChain(t.Context(), executordb.New(db), retiredSeed, 2, true, nil, origin.Add(25*time.Second), zap.New(core))
+	if retired == nil {
+		t.Fatalf("not derived: %v", logs.All())
+	}
+	finalKey, _ := previous.KeyAtEpoch(19)
+	for _, cap := range []bool{false, true} {
+		holder := &retiredChain{schedule: retired, logger: zap.New(core)}
+		if cap {
+			if got := holder.disclosures(retired.FinalDisclosure().Add(retiredDeliveryLimit)); len(got) != 0 || holder.schedule != nil {
+				t.Fatalf("a day after the final disclosure: disclosed %v, kept %v", got, holder.schedule != nil)
+			}
+			if logs.FilterMessage("Dropped the previous TESLA chain without a delivered final key").Len() != 1 {
+				t.Fatal("the undelivered drop was not logged")
+			}
+			continue
+		}
+		got := holder.disclosures(origin.Add(55 * time.Second))
+		if len(got) != 1 || got[0].GetEpoch() != 19 || !bytes.Equal(got[0].GetKey(), finalKey) {
+			t.Fatalf("first heartbeat after the restart carried %v; want k_19", got)
+		}
+		holder.delivered(got)
+		if holder.schedule != nil {
+			t.Fatal("the chain was kept after its final key was delivered")
+		}
+	}
+}
+
+// A heartbeat that carried the retired chain's final key and failed keeps
+// the chain; the next one that succeeds retires it.
+func TestFailedHeartbeatKeepsTheRetiredChain(t *testing.T) {
+	cfg := fixtureConfig()
+	cfg.Tesla = retiredTesla("")
+	node, err := newNode(cfg, zap.NewNop(), newFixtureDatabase(t), ratelimit.New)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := node.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	// The chain's final key has been due for 3 s.
+	retired, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("failed delivery"), EpochLength: time.Second, DisclosureDelay: 2, ChainLength: 6,
+		Epoch: time.Now().Add(-10 * time.Second).Round(0), DisclosureOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.retired.schedule, node.retired.logger = retired, zap.NewNop()
+	final, _ := retired.KeyAtEpoch(5)
+
+	e, err := newExecutor(node, &abortTestScheduler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failures := 0
+	dispatcher := &heartbeatCapture{fail: func(req *pb.HeartbeatRequest) error {
+		if len(req.GetExtraDisclosures()) > 0 && failures < 2 {
+			failures++
+			return errors.New("dispatcher unavailable")
+		}
+		return nil
+	}}
+	e.clientFor = func(context.Context, controlsession.Binding) (pb.DispatcherServiceClient, error) {
+		return dispatcher, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); e.startHeartbeatLoop(ctx, operationBinding()) }()
+	// Five heartbeats at the 500 ms interval of 1 s epochs, plus the usual bound.
+	deadline := time.Now().Add(5*cfg.Tesla.EpochLength()/2 + operationTestBound)
+	for len(dispatcher.received()) < 5 {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("too few heartbeats")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	for i, beat := range dispatcher.received() {
+		extra := beat.GetExtraDisclosures()
+		if i < 3 {
+			if len(extra) != 1 || extra[0].GetEpoch() != 5 || !bytes.Equal(extra[0].GetKey(), final) {
+				t.Fatalf("heartbeat %d carried %v; want the final key again", i, extra)
+			}
+			continue
+		}
+		if len(extra) != 0 {
+			t.Fatalf("heartbeat %d after the delivery carried %v", i, extra)
+		}
+	}
+	if node.retired.schedule != nil {
+		t.Fatal("the delivered chain was kept")
+	}
+}
+
+// A start after the previous chain's final key was due, within the bound a
+// running process keeps an undelivered chain for, still reconstructs it, and
+// the first heartbeat carries k_{L-1}.
+func TestRetiredChainPastItsFinalDisclosure(t *testing.T) {
+	db := newFixtureDatabase(t)
+	now := time.Now()
+	anchor := retiredChainRow(t, db, 1, now.Add(-time.Hour), sql.NullInt64{Int64: 2, Valid: true})
+	retired := deriveRetiredChain(t.Context(), executordb.New(db), retiredSeed, 2, true, nil, now, zap.NewNop())
+	if retired == nil || !bytes.Equal(retired.Anchor(), anchor) {
+		t.Fatal("a chain an hour past its final disclosure was not reconstructed")
+	}
+	holder := &retiredChain{schedule: retired, logger: zap.NewNop()}
+	got := holder.disclosures(now.Add(time.Second))
+	if len(got) != 1 || got[0].GetEpoch() != 5 || !bytes.Equal(got[0].GetAnchor(), anchor) {
+		t.Fatalf("first heartbeat carried %v; want k_5", got)
+	}
+	holder.delivered(got)
+	if holder.schedule != nil {
+		t.Fatal("the delivered chain was kept")
 	}
 }
