@@ -657,7 +657,7 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		var admitErr error
 		entry := d.executors[id]
 		var revision uint64
-		ordered := entry != nil && entry.bandwidthVersion == 1
+		ordered := entry != nil && entry.bandwidthVersion >= 1
 		if entry != nil && (owner == nil || id != owner.ExecutorID() || entry.owner == owner) {
 			entry.bandwidthPending = true
 			entry.bandwidthRevision++
@@ -798,7 +798,7 @@ func (d *Dispatcher) reconcileFairshare(ctx context.Context, origin *rpc.Mutatio
 		return
 	}
 	entry.bandwidthRevision++
-	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion == 1, wait: entry.bandwidthTail, done: make(chan struct{})}
+	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion >= 1, wait: entry.bandwidthTail, done: make(chan struct{})}
 	r.revision = entry.bandwidthRevision
 	entry.bandwidthTail = r.done
 	d.mu.Unlock()

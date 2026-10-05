@@ -62,7 +62,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	capabilities, vantage := e.capabilityReport(ctx, true)
 	resp := &pb.HelloResponse{
 		ExecutorId:       e.cfg.Identity.ExecutorID,
-		BandwidthVersion: 1,
+		BandwidthVersion: 2,
 		Version:          e.cfg.Identity.Version,
 		Capabilities:     capabilities,
 		VantagePoint:     vantage,

@@ -35,6 +35,10 @@ const (
 	MaxDestinationLength = 255
 
 	destinationPolicyBound = 5 * time.Second
+	// bandwidthVersionDenial is the first executor bandwidth version that
+	// applies DestinationLimit.denied, refusing new work and closing active
+	// sockets, before it acknowledges a revision.
+	bandwidthVersionDenial = 2
 	expiredPolicyReason    = "expired"
 )
 
@@ -43,6 +47,14 @@ var (
 	// recorded or applied.
 	ErrInvalidDestinationPolicy = errors.New("invalid destination policy")
 	errPolicySuperseded         = errors.New("destination policy was superseded")
+
+	// ErrDestinationPolicyNotRecorded is a change whose event was not
+	// committed; nothing of it was applied or sent, and the previous
+	// policy stays authoritative.
+	ErrDestinationPolicyNotRecorded = errors.New("destination policy was not recorded")
+	// ErrDenialUnsupported is a recorded deny that an executor holding an
+	// allocation acknowledged without being able to revoke its traffic.
+	ErrDenialUnsupported = errors.New("executor upgrade required to revoke denied destinations")
 )
 
 // DestinationPolicyChange is the complete policy an operator sets for a
@@ -172,17 +184,27 @@ func (d *Dispatcher) changeDestinationPolicy(ctx context.Context, destination st
 	sendErr := work.send(ctx)
 
 	d.mu.Lock()
-	confirmed := 0
+	confirmed, cannotRevoke := 0, 0
 	for _, r := range work.recipients {
 		entry := d.executors[r.owner.ExecutorID()]
-		if r.revision > 0 && entry != nil && entry.owner == r.owner && !entry.bandwidthPending && entry.bandwidthRevision >= r.revision {
-			confirmed++
+		if r.revision == 0 || entry == nil || entry.owner != r.owner || entry.bandwidthPending || entry.bandwidthRevision < r.revision {
+			continue
 		}
+		// An executor that predates denials applies the zero limit and
+		// acknowledges, but keeps its runs' floors and connections.
+		if event.kind == DestinationPolicyDeny && entry.bandwidthVersion < bandwidthVersionDenial {
+			cannotRevoke++
+			continue
+		}
+		confirmed++
 	}
 	if current := d.policies.delivery[destination]; current.revision == recorded.Revision {
 		d.policies.delivery[destination] = policyDelivery{revision: recorded.Revision, recipients: holders, unconfirmed: max(holders-confirmed, 0)}
 	}
 	d.mu.Unlock()
+	if cannotRevoke > 0 {
+		sendErr = errors.Join(sendErr, ErrDenialUnsupported)
+	}
 	return sendErr
 }
 
@@ -192,13 +214,13 @@ func (d *Dispatcher) recordDestinationPolicy(ctx context.Context, destination st
 	var recorded database.DestinationPolicyEvent
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return recorded, fmt.Errorf("record destination policy: %w", err)
+		return recorded, fmt.Errorf("%w: %w", ErrDestinationPolicyNotRecorded, err)
 	}
 	defer tx.Rollback()
 	queries := database.New(d.db).WithTx(tx)
 	latest, err := queries.LatestDestinationPolicyRevision(ctx, destination)
 	if err != nil {
-		return recorded, fmt.Errorf("record destination policy: %w", err)
+		return recorded, fmt.Errorf("%w: %w", ErrDestinationPolicyNotRecorded, err)
 	}
 	if expect != 0 && latest != expect {
 		return recorded, errPolicySuperseded
@@ -211,10 +233,10 @@ func (d *Dispatcher) recordDestinationPolicy(ctx context.Context, destination st
 		params.ExpiresAtNs = sql.NullInt64{Int64: event.expiresAt.UnixNano(), Valid: true}
 	}
 	if recorded, err = queries.RecordDestinationPolicy(ctx, params); err != nil {
-		return recorded, fmt.Errorf("record destination policy: %w", err)
+		return recorded, fmt.Errorf("%w: %w", ErrDestinationPolicyNotRecorded, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return recorded, fmt.Errorf("record destination policy: %w", err)
+		return recorded, fmt.Errorf("%w: %w", ErrDestinationPolicyNotRecorded, err)
 	}
 	return recorded, nil
 }

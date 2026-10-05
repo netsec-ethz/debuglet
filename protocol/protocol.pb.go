@@ -293,7 +293,7 @@ type HelloResponse struct {
 	// TESLA chain length L: the chain serves epochs below it. Zero from an
 	// executor that predates it; the schedule's length is then unknown.
 	TeslaChainLength int64  `protobuf:"varint,21,opt,name=tesla_chain_length,json=teslaChainLength,proto3" json:"tesla_chain_length,omitempty"`
-	BandwidthVersion uint32 `protobuf:"varint,22,opt,name=bandwidth_version,json=bandwidthVersion,proto3" json:"bandwidth_version,omitempty"` // 1 supports ordered full allocation snapshots.
+	BandwidthVersion uint32 `protobuf:"varint,22,opt,name=bandwidth_version,json=bandwidthVersion,proto3" json:"bandwidth_version,omitempty"` // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
@@ -322,5 +323,37 @@ func TestDestinationDenyReportsALegacyExecutorAsUnconfirmed(t *testing.T) {
 	}
 	if limits := dlBandwidths(peer); len(limits) == 0 || limits[len(limits)-1].GetLimits()[0].GetBitsLimit() != 0 {
 		t.Fatalf("legacy executor did not receive the zero limit: %v", limits)
+	}
+}
+
+// TestDestinationPolicyThatCannotBeRecordedSaysSo states that PATCH
+// /destination does not claim a deny was recorded when its event could not
+// be written, and that the previous policy stays authoritative.
+func TestDestinationPolicyThatCannotBeRecordedSaysSo(t *testing.T) {
+	f := ccNewFixture(t)
+	contract := oaContract(t)
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	const destination = "192.0.2.131"
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: 5 * ccFloorBW, Reason: "capacity planning"})
+	wfExpect(t, "limit", status, http.StatusNoContent, body)
+	if _, err := f.db.ExecContext(t.Context(), `CREATE TRIGGER dl_refuse BEFORE INSERT ON destination_policy_events
+BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	status, body = raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Denied: true, Reason: "owner request"})
+	wfExpect(t, "unrecorded deny", status, http.StatusInternalServerError, body)
+	oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
+	if envelope := envelopeOf(t, "unrecorded deny", body); envelope.Code != CodeInternal || envelope.Message != "destination policy could not be recorded" {
+		t.Fatalf("unrecorded deny answered %+v", envelope)
+	}
+	if _, err := f.db.ExecContext(t.Context(), `DROP TRIGGER dl_refuse`); err != nil {
+		t.Fatal(err)
+	}
+	listed := dlPolicies(t, raw, contract)
+	if len(listed) != 1 || listed[0].Kind != "limit" || listed[0].Denied || listed[0].Revision != 1 {
+		t.Fatalf("listed %+v, want the previous limit", listed)
+	}
+	if got := f.d.DestinationLimit(destination); got != bitrate.Bitrate(5*ccFloorBW) {
+		t.Fatalf("limit after an unrecorded deny is %s", got)
 	}
 }

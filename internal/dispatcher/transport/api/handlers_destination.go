@@ -75,6 +75,13 @@ func (h *Handler) PatchDestinationLimit(c echo.Context) error {
 			return apiErrorFrom(http.StatusConflict, CodeCapacityExhausted,
 				"limit is below the floors admitted on the destination, active or reserved", err)
 		}
+		if errors.Is(err, dispatcher.ErrDestinationPolicyNotRecorded) {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "destination policy could not be recorded", err)
+		}
+		if errors.Is(err, dispatcher.ErrDenialUnsupported) && !errors.Is(err, dispatcher.ErrOrderedBandwidthUnsupported) {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
+				"destination policy recorded; upgrade executors that predate destination denials to revoke active traffic", err)
+		}
 		if errors.Is(err, dispatcher.ErrOrderedBandwidthUnsupported) {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal,
 				"destination limit recorded; upgrade legacy executors to confirm ordered application", err)

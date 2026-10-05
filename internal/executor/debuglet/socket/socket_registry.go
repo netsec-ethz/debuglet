@@ -180,38 +180,37 @@ func (r *SocketRegistry) Close(handle int32) error {
 // CloseRemote closes every open socket whose RemoteAddr matches and returns
 // how many it closed. A blocked read or write on one of them returns, and the
 // handle then reports ErrRevoked. The registry stays open for other sockets.
+// A matching socket another closer already detached is joined, not counted:
+// CloseRemote returns only once every matching socket's close has completed.
 func (r *SocketRegistry) CloseRemote(match func(remote string) bool) int {
 	r.mu.Lock()
-	open := make([]*socketEntry, 0, len(r.sockets))
-	for _, entry := range r.sockets {
-		if !entry.detached {
-			open = append(open, entry)
-		}
-	}
+	entries := append([]*socketEntry(nil), r.sockets...)
 	r.mu.Unlock()
 	var matched []*socketEntry
-	for _, entry := range open {
+	for _, entry := range entries {
 		if match(entry.socket.RemoteAddr()) {
 			matched = append(matched, entry)
 		}
 	}
+	revoked := make(map[*socketEntry]bool, len(matched))
 	r.mu.Lock()
-	closing := matched[:0]
 	for _, entry := range matched {
 		if !entry.detached {
 			entry.detached, entry.reason = true, ErrRevoked
-			closing = append(closing, entry)
+			revoked[entry] = true
 		}
 	}
 	r.mu.Unlock()
-	for _, entry := range closing {
-		if err := entry.close(); err != nil {
+	for _, entry := range matched {
+		// close runs once; for an entry another closer holds, this waits
+		// for that close, and for one closed earlier it returns at once.
+		if err := entry.close(); err != nil && revoked[entry] {
 			r.mu.Lock()
 			r.lateCloseErr = errors.Join(r.lateCloseErr, err)
 			r.mu.Unlock()
 		}
 	}
-	return len(closing)
+	return len(revoked)
 }
 
 // CloseAll permanently stops admission before invoking any external Close.

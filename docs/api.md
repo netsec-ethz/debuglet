@@ -173,7 +173,7 @@ for permission scopes, expiry, provider setup and current limits.
 Allocation delivery failures return `Unavailable` to the executor; the recorded
 allocation is idempotent and stays until normal release or window reclamation.
 Each exact session retries pending delivery on its heartbeat, with no separate
-notification worker. Executors advertising bandwidth version 1 apply complete
+notification worker. Executors advertising bandwidth version 1 or later apply complete
 allocation snapshots in revision order, including after an older RPC times out.
 An acknowledgement means the current packet-counter updates succeeded.
 
@@ -202,7 +202,11 @@ expiry), `denied`, `limit` (null for the default), `reason`, `actor` (account
 ID, `local`, or `system`), `set_at`, `expires_at`, `revision`, and `delivery`
 (`confirmed` or `unconfirmed`) with `recipients` and `unconfirmed` counts for
 the executors that held an allocation when it was applied in this dispatcher
-lifetime. A deny is sent as a zero limit with the denied flag; an executor of
-this release closes the active sockets to the destination before it
-acknowledges, an older one only applies the zero limit and reads unconfirmed. See
+lifetime. A deny is sent as a zero limit with the denied flag. An executor of
+this release (bandwidth version 2) closes the active sockets to the destination
+before it acknowledges; only its acknowledgement confirms a deny. An executor
+that predates this release only applies the zero limit, stays unconfirmed even
+when it acknowledges, and the PATCH answers 500 asking for its upgrade. A
+failure to record the change answers 500 "destination policy could not be
+recorded"; nothing was applied and the previous policy stays in force. See
 [destination limits and opt-outs](operations/configuration.md#destination-limits-and-opt-outs).

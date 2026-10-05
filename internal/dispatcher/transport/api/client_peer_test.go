@@ -81,7 +81,7 @@ func (p *cpPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, er
 	hello := &pb.HelloResponse{
 		ExecutorId:       p.id,
 		Version:          "client-peer",
-		BandwidthVersion: 1,
+		BandwidthVersion: 2,
 		Currency:         p.currency,
 		PricePerBwS:      p.price,
 	}

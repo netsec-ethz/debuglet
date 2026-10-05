@@ -51,7 +51,7 @@ message HelloResponse {
   // TESLA chain length L: the chain serves epochs below it. Zero from an
   // executor that predates it; the schedule's length is then unknown.
   int64 tesla_chain_length = 21;
-  uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots.
+  uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
 }
 
 message DebugletPolicy {

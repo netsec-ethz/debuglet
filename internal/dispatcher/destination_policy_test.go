@@ -65,8 +65,8 @@ BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
 		t.Fatal(err)
 	}
 	deny := DestinationPolicyChange{Denied: true, Reason: "owner request"}
-	if err := f.d.SetDestinationPolicy(t.Context(), "operator", destination, deny); err == nil {
-		t.Fatal("a policy that could not be recorded was accepted")
+	if err := f.d.SetDestinationPolicy(t.Context(), "operator", destination, deny); !errors.Is(err, ErrDestinationPolicyNotRecorded) {
+		t.Fatalf("a policy that could not be recorded returned %v, want %v", err, ErrDestinationPolicyNotRecorded)
 	}
 	if dpDenied(f.d, destination) || dlCap(f.d, destination) != 10*tgFloorA {
 		t.Fatal("a policy that could not be recorded was applied")
@@ -279,5 +279,39 @@ func TestSubmissionNamingADeniedDestinationIsRefused(t *testing.T) {
 	f.d.mu.Unlock()
 	if err != nil {
 		t.Fatalf("submission to an allowed destination: %v", err)
+	}
+}
+
+// TestDenialIsConfirmedOnlyByExecutorsThatRevoke states that an executor
+// predating denials, which acknowledges the revision and applies the zero
+// limit but ignores the flag, does not confirm a deny while it holds a
+// positive-floor allocation, and that an executor that revokes does.
+func TestDenialIsConfirmedOnlyByExecutorsThatRevoke(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		predatesDenial bool
+	}{{"version 1", true}, {"version 2", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			peer := &tgPeer{predatesDenial: tc.predatesDenial}
+			f := newTGFixture(t, peer)
+			const destination = "192.0.2.130"
+			dlHold(t, f, destination)
+			before := len(dlBandwidth(peer))
+			err := f.d.SetDestinationPolicy(t.Context(), "operator", destination, DestinationPolicyChange{Denied: true, Reason: "owner request"})
+			pushed := dlBandwidth(peer)[before:]
+			if len(pushed) != 1 || pushed[0].GetRevision() == 0 || !dpLimitOf(t, pushed, destination).GetDenied() {
+				t.Fatalf("deny sent %v, want one revised update carrying the flag", pushed)
+			}
+			policy, _ := dpPolicy(t, f.d, destination)
+			if tc.predatesDenial {
+				if !errors.Is(err, ErrDenialUnsupported) || policy.Recipients != 1 || policy.Unconfirmed != 1 {
+					t.Fatalf("deny acknowledged by an executor that predates denials: %v, listed %+v", err, policy)
+				}
+				return
+			}
+			if err != nil || policy.Recipients != 1 || policy.Unconfirmed != 0 {
+				t.Fatalf("deny acknowledged by a revoking executor: %v, listed %+v", err, policy)
+			}
+		})
 	}
 }
