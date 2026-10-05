@@ -57,6 +57,22 @@ changes; the linked API and deployment documentation contains operational detail
   epoch it reports which candidate run, if any, reproduces every tag, without
   returning tags or keys. It refuses disclosable epochs, unknown chains and
   untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
+- Server-assisted probe verification (#341, API 1.15, dispatcher schema 20).
+  `POST /attribution/verify` checks up to 256 captured packets in at most 16
+  groups: a group whose key is disclosed is checked against the key store; a
+  group whose key is not yet disclosed is relayed to its executor over the
+  control session (`VerifyTags`), which answers yes or no for the whole group
+  and never returns tags or keys. Each relayed question spends one of 16
+  queries per executor, chain and epoch, shared by every requester, spent
+  durably before the relay and never refunded. Every answer carries an
+  Ed25519 receipt over the dispatcher, API version, the dispatcher's query
+  time, the packet digest and the verdicts; `GET /attribution/receipt-keys`
+  lists the keys with their validity, and `[attribution] receipt_key_path`
+  names the key file, created when absent. `client.Verify` and `dbl verify`
+  send pending groups unless `--offline`, report `via server` with the
+  receipt key, and keep receipts and keys in the evidence bundle, which
+  `client.VerifyEvidence` checks again. The dispatcher's minimum supported
+  schema is 20.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

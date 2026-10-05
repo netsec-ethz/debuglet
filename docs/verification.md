@@ -1,7 +1,7 @@
 # Probe verification
 
 This note records how the recipient of a probe checks which Debuglet run sent
-it. It is a design for #71, #73 and #341; steps 1 to 3 of the
+it. It is a design for #71, #73 and #341; steps 1 to 4 of the
 [delivery order](#delivery-order) have landed, the rest has not. Keep it in
 step with the code as each step lands. The tag
 algorithm itself is specified in the [tag spec](tag-spec.md) (tag spec
@@ -19,9 +19,10 @@ Anyone can look them up without an account through
 `GET /attribution/candidates` and `GET /attribution/keys`, so captures older
 than the executor's current chain or the dispatcher's last restart can still
 be verified. `dbl verify` and `client.Verify` check a capture offline against
-these routes and write and check [evidence bundles](#evidence); the server
-method (#341) does not exist yet, so a group whose key is not disclosed is
-`pending`. The reference verifier
+these routes and write and check [evidence bundles](#evidence). A group
+whose key is not disclosed yet is sent to `POST /attribution/verify`, whose
+executor answers before disclosure (method `server`); with `--offline`, or
+when no answer is possible, it is `pending`. The reference verifier
 [`tools/verify_pcap.py`](../tools/verify_pcap.py), mirrored by the website's
 `verify.ts`, uses the same routes and falls back to the deprecated
 `GET /executors/by-ip` (account required, the caller's own runs among the
@@ -29,7 +30,8 @@ executor's last 20) and `GET /executors/{id}/tesla` (current chain only). An
 executor restart still loses the last `d` epochs of its chain: the dispatcher
 accepts a disclosure for an earlier recorded chain (`tesla_key_anchor` on the
 heartbeat), but the executor does not yet re-derive and disclose that tail.
-Nothing can be verified before disclosure.
+Before disclosure only the executor can check a tag, through the server
+method.
 
 ## Model
 
@@ -60,13 +62,14 @@ dbl verify <capture.pcap|pcapng|evidence.json> [--at <time>] [--offline]
 - No account or login is needed, and no credential is sent. The dispatcher is
   the selected connection (`--endpoint` or `--dispatcher`).
 - Each group is verified by `server` or `offline` automatically, and the
-  output says which. `--offline` never uploads packets. Groups whose key is not
-  disclosed are then `pending`. Until #341 lands every check is `offline`,
-  with or without the flag.
+  output says which, and names the receipt key of a `server` verdict.
+  `--offline` never uploads packets. Groups whose key is not disclosed are
+  then `pending`. Without it, the first 64 bytes of at most 256 packets of
+  each such group are sent to the dispatcher.
 - `--at` sets the capture time of every packet, overriding the capture's own
   timestamps (for example for a capture whose clock is known to be wrong).
 - `--evidence` writes the evidence bundle. Passing a bundle instead of a
-  capture checks it again offline, together with its receipt.
+  capture checks it again offline, together with its receipts.
 - `--source` checks only the packets from the given addresses or prefixes and
   skips the rest before any lookup. A lookup covers one address for one epoch
   of the runs it names, but an address without a run needs a lookup per
@@ -133,8 +136,8 @@ every supported link type.
 
 The routes below follow the existing conventions. They have no path prefix;
 the version is negotiated with the `Debuglet-API-Version` header, and the
-routes are an addition in the next minor version (the candidates and keys
-routes are part of the unreleased API 1.11). They are public
+routes are additions of API 1.11 (candidates and keys) and API 1.15
+(verify and receipt keys). They are public
 (`security: []`), rate-limited per client address (10 requests per second,
 burst 40, per TCP peer and per /64 for IPv6, or per `X-Forwarded-For` client
 behind a proxy listed in `[attribution] trusted_proxies`; `429 rate_limited`
@@ -147,19 +150,58 @@ are RFC 3339.
 | --- | --- |
 | `GET /attribution/candidates?ip=&at=` | Dated lookup: the runs active from `ip` within one epoch of `at` (RFC 3339). Each candidate gives `executor_id`, `run_id`, active interval (`active_from`, `active_to`), `ip_source` (`observed` or `advertised`), the schedule `{chain_id, k0, t0_unix_ns, epoch_seconds, disclosure_delay_epochs, chain_length, tag_spec}`, `disclosed_through` (the latest disclosed epoch, 0 for none), `disclosed_through_at_ns` (when the dispatcher recorded that key, 0 for none) and `next_disclosure_at_ns` (the earliest time the key of `disclosed_through + 1` may be disclosed, `t0_unix_ns + (disclosed_through + 1 + d)·I`). `chain_id` is the hex of the first 16 bytes of SHA-256(`k0`), and `chain_length` 0 when the executor did not report it. `tag_spec` is the version the executor reported with the chain when it registered: 1 is tag spec v1, 0 is legacy (an executor that did not report `debuglet-tag-v1`, including every executor that predates the report), and a v1 verifier reports a legacy chain's packets `unsupported`, not `invalid`. The answer includes `retained_from`, so that `missing` can be told apart from "no run", and `truncated` when more than 32 runs matched. |
 | `GET /attribution/keys?executor_id=&chain_id=&from_epoch=&to_epoch=` | Disclosed keys of one chain, at most 1024 epochs per page, with `next_epoch` for the next page (null on the last). `from_epoch` defaults to 1 and `to_epoch` to no bound. Undisclosed epochs are absent. The client checks every key against `k0`. |
-| `POST /attribution/verify` | Server-assisted check. The request lists up to 256 packets as `{data: base64 of the first 64 bytes of the IPv4 packet, captured_at}`. The response gives a verdict for each group, the budget `{limit, remaining, resets_at}` per group, and a signed `receipt`. |
+| `POST /attribution/verify` | Server-assisted check. The request lists up to 256 packets as `{data: base64 of the first min(64, Total Length) bytes of the IPv4 packet, captured_at}`. The response gives for each group `{source, epoch, chain_id, executor_id, run_id, verdict, reason, method, packets, budget: {limit, remaining, resets_at}}` (`packets` are indices into the request; `budget` only for a group with a chain) and a signed `receipt` `{key_id, payload, signature}`. |
 | `GET /attribution/receipt-keys` | The dispatcher's current and past receipt-verification keys (Ed25519) with their validity periods. |
 
-The dispatcher forms groups by source address and epoch. It asks the executor
-about one group at a time: which candidate run, if any, reproduces the tag of
-every packet in the group. The executor never returns tags or keys. A group
-whose packets reproduce different runs is split per run, as in the offline
-check (see [results](#results)). A group whose key is already disclosed is answered from the key
-store, spends no budget and is marked `method: offline` in the receipt. The
-receipt is a detached signature over canonical JSON of the dispatcher ID, the
-API version, the query time, the SHA-256 packet digest (see
-[evidence](#evidence)) and each group's verdict, run, executor, epoch and
-method.
+The dispatcher forms groups as the offline check does: the packets of one
+source address from the first one up to the end of the current epoch of
+every run a dated lookup names (a second without a run), and within that
+window one group per candidate chain, in the epoch of the first packet's
+`captured_at` under that chain. It checks one group at a time against the
+candidates of its chain:
+
+- A key on record for the epoch (or a later one it derives from) answers
+  from the key store with the tag functions of the offline check:
+  `method: offline`, no budget spent.
+- An unusable schedule (`tag_spec`, `disclosure_delay`, `no_signing_key`)
+  is `unsupported`; a key that is due but not on record is `pending`
+  (`not_disclosed`) within two minutes of its due time and `missing`
+  (`keys_missing`) after.
+- Otherwise, when the executor is connected with that chain, the dispatcher
+  spends one query of the budget of that executor, chain and epoch, in its
+  own transaction, and then asks the executor over the control session
+  which candidate run, if any, reproduces the tag of every packet. The
+  executor never returns tags or keys. `matched` is `verified` with the run,
+  `unmatched` is `invalid` (`tag_mismatch`), `ambiguous` and every executor
+  refusal (`unknown_chain`, `epoch_unavailable`,
+  `attribution_unavailable`, `too_many`, `malformed`) are `unsupported`
+  with that reason; all have `method: server`. An exhausted budget is
+  `pending` (`budget_exhausted`), an executor that is not connected or does
+  not answer `pending` (`executor_unavailable`).
+
+A query is spent before it is relayed and is never refunded: an answer lost
+to a crash, a timeout or a broken session still counts, so neither a
+restart nor a failure resets the budget. A disconnected executor is not
+asked, so nothing is spent for it. The server answers for the whole group:
+unlike the offline check it does not split a group whose packets reproduce
+different runs, and it checks the epoch of the capture time only, not the
+one before it.
+
+The receipt is a detached Ed25519 signature over canonical JSON (keys
+sorted, no whitespace) of `{api_version, dispatcher, groups: [{chain_id,
+epoch, executor_id, method, packets, reason, run_id, source, verdict}],
+packets_digest, query_at}`. `dispatcher` is the configured
+`[authentication] public_url`, or the origin the request was addressed to;
+`packets_digest` is the [evidence](#evidence) digest of the request's
+packets in request order; `query_at` is the dispatcher's clock when it
+answered. The callers' `captured_at` enter only through the digest: a
+receipt shows what was asked and what was answered when, not when a packet
+was observed. `key_id` is the hex of the first 16 bytes of SHA-256 of the
+public key, which `GET /attribution/receipt-keys` lists with its validity;
+a receipt is valid when its `query_at` lies within that validity. The key is
+read from `[attribution] receipt_key_path`, created when absent the first
+time either route needs it, and recorded with its validity; a dispatcher
+started with another key ends the validity of the earlier one.
 
 `GET /executors/by-ip` and `GET /executors/{id}/tesla` remain unchanged
 within API major 1. They are marked `deprecated: true` in OpenAPI and point to
@@ -194,7 +236,8 @@ of its packets matches. Every entry of a split group carries `split`:
 match count can be read against the group's non-matches.
 
 Machine reasons (`reason`): `invalid` has `tag_mismatch`, `no_run`;
-`pending` has `not_disclosed`; `missing` has `not_retained`
+`pending` has `not_disclosed`, and from the server also `budget_exhausted`
+and `executor_unavailable`; `missing` has `not_retained`
 (before `retained_from`) and `keys_missing` (the run is on record but no key
 at or above the epoch is); `unsupported` has `ipv6`, `not_ipv4`,
 `too_short`, `malformed`, `fragment` (the tag spec's own reasons),
@@ -244,7 +287,8 @@ without a capture:
 "schedule": {…}, "keys": [{"epoch": 1234, "key": "…"}]}],
   "lookups": [{"ip": "…", "at": "…", "retained_from": "…", "candidates": […]}],
   "chains": [{"executor_id": "…", "schedule": {…}, "keys": [{"epoch": 1234, "key": "…"}]}],
-  "receipts": [{"key_id": "…", "payload": "<base64 canonical JSON>", "signature": "…"}]
+  "receipts": [{"key_id": "…", "payload": "<base64 canonical JSON>", "signature": "…", "packets": [3, 4]}],
+  "receipt_keys": [{"key_id": "…", "public_key": "…", "valid_from": "…", "valid_to": null}]
 }
 ```
 
@@ -259,6 +303,16 @@ check used, so `dbl verify evidence.json` and `client.VerifyEvidence` repeat
 the whole check without the capture or the dispatcher: they check the digest,
 walk every chain's keys to its `k0`, recompute every group from the packets,
 lookups and keys as of `created_at`, and fail when a recorded group differs.
+Each receipt lists the bundle's packets its request sent (`packets`); its
+signature is checked under the key of `receipt_keys` it names, the key's ID
+against its public key, the receipt's `query_at` against the key's validity
+and its `packets_digest` against those packets, and its `server` answers
+then decide the groups that recompute as pending, exactly as in the live
+check. A group whose packets exceed the 256 of one request is checked by
+its first 256 packets; the rest stays a separate `pending` entry. The
+embedded receipt keys are the dispatcher's claim like the rest of the
+bundle: compare their IDs with `GET /attribution/receipt-keys` of the
+dispatcher you trust.
 The lookups and schedules remain the dispatcher's claims, and until #71(b)
 nothing in the bundle authenticates them: the chain walk ties every key to
 the recorded `k0`, but `k0` and the other schedule fields (`t0_unix_ns`,
@@ -283,7 +337,7 @@ packets carry it as `captured_at`.
 | Candidates per lookup | 32 | Larger answers are `unsupported: too many candidates` |
 | Keys per page | 1024 epochs | |
 | Packets per `POST /attribution/verify` | 256, body ≤ 64 KiB, ≤ 16 groups | |
-| Server budget `R` per (executor, epoch) | 16 group queries, shared by all requesters | Each query tests at most one guess of a 16-bit tag, so forgery succeeds with probability at most `R/65536 ≈ 0.02 %` |
+| Server budget `R` per (executor, chain, epoch) | 16 group queries, shared by all requesters, durable across restarts, never refunded | Each query tests at most one guess of a 16-bit tag, so forgery succeeds with probability at most `R/65536 ≈ 0.02 %` |
 | Clock skew | ±1 epoch | As today |
 | History retention | Operator-configured, default 90 days | `missing` before `retained_from` |
 
@@ -298,8 +352,9 @@ address and time it names. It does not learn the account, the debuglet or the
 results; a run ID grants no access to owner routes. The operator maps a run to
 its account when handling an abuse report. A `server` query sends the
 dispatcher the first 64 bytes of each submitted packet (the probe's own
-headers and the recipient's address). The dispatcher keeps the digest and the
-receipt for abuse handling, not the packets.
+headers and the recipient's address), which it relays to the executor of the
+candidate runs. The dispatcher logs the packet digest, the number of packets
+and groups and the receipt key, not the packets.
 
 ## Delivery order
 
@@ -320,6 +375,7 @@ receipt for abuse handling, not the packets.
    a separate companion change.
 4. #341: `POST /attribution/verify`, the executor query over the control
    session, budget `R`, receipts and `/attribution/receipt-keys`. The command
-   selects the method automatically.
+   selects the method automatically. *Landed* (dispatcher schema 20, API
+   1.15).
 5. #71(b, c): operator-signed schedule parameters, carried in candidates and
    evidence; chain rollover with an overlap window.

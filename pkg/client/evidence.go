@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +19,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/pkg/tagspec"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // The evidence bundle (docs/verification.md#evidence) lets a verifier repeat
@@ -60,8 +59,9 @@ type Evidence struct {
 	// the verification used. Each key hashes to the schedule's k0.
 	Chains []EvidenceChain `json:"chains"`
 	// Receipts are the dispatcher's signed receipts of server-assisted
-	// checks (#341); this client writes none yet.
-	Receipts []EvidenceReceipt `json:"receipts"`
+	// checks, and ReceiptKeys the keys that verify them.
+	Receipts    []EvidenceReceipt    `json:"receipts"`
+	ReceiptKeys []EvidenceReceiptKey `json:"receipt_keys,omitempty"`
 }
 
 // EvidenceTool names the program that wrote a bundle.
@@ -167,25 +167,25 @@ type EvidenceChain struct {
 	Keys       []EvidenceKey    `json:"keys"`
 }
 
-// EvidenceReceipt is a signed dispatcher receipt (#341).
+// EvidenceReceipt is a signed dispatcher receipt of POST /attribution/verify:
+// Signature is the Ed25519 signature by the key KeyID over Payload, the
+// canonical JSON of an AttributionReceiptPayload. Packets are the indices of
+// the bundle's packets the request sent, in request order; the payload's
+// digest covers exactly those.
 type EvidenceReceipt struct {
 	KeyID     string `json:"key_id"`
 	Payload   []byte `json:"payload"`
 	Signature []byte `json:"signature"`
+	Packets   []int  `json:"packets"`
 }
 
 // PacketDigest returns the digest of an evidence packet list.
 func PacketDigest(items []EvidencePacket) string {
-	h := sha256.New()
-	var buf [8]byte
-	for _, p := range items {
-		binary.BigEndian.PutUint16(buf[:2], uint16(len(p.Data)))
-		h.Write(buf[:2])
-		h.Write(p.Data)
-		binary.BigEndian.PutUint64(buf[:], uint64(p.CapturedAt.UnixNano()))
-		h.Write(buf[:])
+	packets := make([]wire.AttributionVerifyPacket, len(items))
+	for i, p := range items {
+		packets[i] = wire.AttributionVerifyPacket{Data: p.Data, CapturedAt: p.CapturedAt}
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+	return wire.PacketsDigest(packets)
 }
 
 // toolVersion is this module's version, as the build records it.
@@ -213,6 +213,10 @@ func (r VerifyReport) Evidence() Evidence {
 		TagSpec: tagspec.Version, Dispatcher: EvidenceDispatcher{URL: r.Dispatcher, APIVersion: m.apiVersion},
 		At: r.At, ClockToleranceMS: r.ClockToleranceMS,
 		Groups: []EvidenceGroup{}, Lookups: m.lookups, Chains: []EvidenceChain{}, Receipts: []EvidenceReceipt{},
+		ReceiptKeys: m.receiptKeys,
+	}
+	if len(m.receipts) > 0 {
+		ev.Receipts = m.receipts
 	}
 	if ev.Lookups == nil {
 		ev.Lookups = []EvidenceLookup{}
@@ -341,21 +345,22 @@ func (e *EvidenceMismatchError) Error() string {
 var ErrEvidenceDigest = errors.New("client: evidence does not check out: the packets do not match the recorded digest")
 
 // VerifyEvidence checks a bundle again, offline: the packet digest, every key
-// against its chain anchor, and every group's verdict recomputed from the
-// packets, the recorded lookups and keys as of the bundle's creation. It
-// returns the recomputed report, with an *EvidenceMismatchError when a
+// against its chain anchor, every receipt's signature under the embedded key
+// it names, its validity at the receipt's query time and the receipt's digest
+// of the packets it lists, and every group's verdict recomputed from the
+// packets, the recorded lookups, keys and receipts as of the bundle's
+// creation. It returns the recomputed report, with an *EvidenceReceiptError
+// for a receipt that does not verify and an *EvidenceMismatchError when a
 // recorded verdict differs. The lookups and schedules are the dispatcher's
 // claims; the bundle does not authenticate them (the operator signature of
-// #71(b) will).
+// #71(b) will). The embedded receipt keys are the dispatcher's claim too:
+// compare their IDs with GET /attribution/receipt-keys of the dispatcher.
 func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 	if ev.Format != EvidenceFormat || ev.FormatVersion != EvidenceFormatVersion {
 		return VerifyReport{}, fmt.Errorf("client: evidence format %q version %d is not supported", ev.Format, ev.FormatVersion)
 	}
 	if ev.TagSpec != tagspec.Version {
 		return VerifyReport{}, fmt.Errorf("client: evidence names tag spec %d; this client implements %s", ev.TagSpec, tagspec.ID)
-	}
-	if len(ev.Receipts) > 0 {
-		return VerifyReport{}, errors.New("client: evidence carries server receipts, which this client cannot check yet (#341)")
 	}
 	if ev.Packets.Count != len(ev.Packets.Items) || len(ev.Packets.Items) == 0 || len(ev.Packets.Items) > MaxCapturePackets {
 		return VerifyReport{}, errors.New("client: evidence does not check out: the packet count is wrong")
@@ -382,11 +387,27 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 		packets[i] = CapturedPacket{Data: p.Data, CapturedAt: p.CapturedAt}
 	}
 	src := &evidenceSource{ev: ev}
+	if len(ev.Receipts) > maxVerifyLookups {
+		return VerifyReport{}, errors.New("client: evidence exceeds the verification limits")
+	}
+	payloads := make([]AttributionReceiptPayload, len(ev.Receipts))
+	for i, r := range ev.Receipts {
+		p, err := checkReceipt(r, ev.ReceiptKeys, ev.Packets.Items)
+		if err != nil {
+			return VerifyReport{}, &EvidenceReceiptError{Receipt: i, Msg: err.Error()}
+		}
+		payloads[i] = p
+	}
 	rep, err := verifyOffline(ctx, src, packets, VerifyOptions{ClockTolerance: time.Duration(ev.ClockToleranceMS) * time.Millisecond}, ev.CreatedAt)
 	if err != nil {
 		return VerifyReport{}, err
 	}
 	rep.At = ev.At
+	if len(ev.Receipts) > 0 {
+		rep.material.receipts, rep.material.receiptKeys = ev.Receipts, ev.ReceiptKeys
+		rep.Groups = applyReceipts(rep.Groups, ev.Receipts, payloads, itemTimes(ev.Packets.Items))
+		rep.Counts = countGroups(rep.Groups)
+	}
 	again := rep.Evidence()
 	want, got := slices.Clone(ev.Groups), again.Groups
 	byFirst := func(gs []EvidenceGroup) {
