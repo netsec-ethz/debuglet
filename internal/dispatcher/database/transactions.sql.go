@@ -469,7 +469,12 @@ JOIN debuglets d ON d.id = o.debuglet_id
   AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
 JOIN measurement_execution e ON e.debuglet_id = d.id
 WHERE o.state = ?1 AND d.state = ?2
-  AND e.exit_code IS NOT NULL AND (e.exit_code = 0 OR o.currency = 'TEST')
+  AND e.exit_code IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM chain_transfers t
+    WHERE t.kind = 'refund' AND t.transaction_id = o.transaction_id
+      AND (t.order_id IS NULL OR t.order_id = o.order_id)
+  )
   AND d.id > ?3
 ORDER BY d.id
 LIMIT ?4
@@ -488,7 +493,8 @@ type ListPendingSettlementsRow struct {
 	Currency string
 }
 
-// Only wholly local settlements: credits of any currency and TEST refunds.
+// An order covered by a refund transfer in any state is never listed: the
+// transfer's own reconciliation resolves it, so a pass cannot send it twice.
 func (q *Queries) ListPendingSettlements(ctx context.Context, arg ListPendingSettlementsParams) ([]ListPendingSettlementsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listPendingSettlements,
 		arg.OutstandingState,

@@ -4,6 +4,7 @@
 package sui_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,6 +32,7 @@ import (
 	suiModels "github.com/block-vision/sui-go-sdk/models"
 	"github.com/block-vision/sui-go-sdk/mystenbcs"
 	v2 "github.com/block-vision/sui-go-sdk/pb/sui/rpc/v2"
+	"github.com/block-vision/sui-go-sdk/signer"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -45,7 +48,10 @@ const (
 )
 
 var (
-	ourAddress   = strings.Repeat("ab", 32)
+	// ourSeed is the Ed25519 seed of the dispatcher key in the fixture's
+	// keystore; ourAddress is its address without the 0x prefix.
+	ourSeed      = bytes.Repeat([]byte{0x5e}, 32)
+	ourAddress   = strings.TrimPrefix(signer.NewSigner(ourSeed).Address, "0x")
 	otherAddress = strings.Repeat("cd", 32)
 	// The chain reports coin types without the 0x prefix.
 	usdcType = strings.TrimPrefix(sui.GetCoinType("USDC", "testnet"), "0x")
@@ -222,9 +228,24 @@ type fixture struct {
 	ph     *payments.PaymentHandler
 }
 
+// writeKeystore writes a keystore file holding the dispatcher key: a JSON
+// array with one base64 entry of the Ed25519 flag byte and the seed.
+func writeKeystore(t *testing.T) string {
+	t.Helper()
+	raw, err := json.Marshal([]string{base64.StdEncoding.EncodeToString(append([]byte{0}, ourSeed...))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "sui.keystore")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // newFixture is a real dispatcher database, an enabled payment handler as the
 // listener's fulfiller and a local GraphQL server. No chain endpoint is
-// contacted: the gRPC client is never used and the keystore does not exist.
+// contacted: the gRPC client is never used.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "dispatcher.sqlite"), sqlitedb.Create())
@@ -244,10 +265,15 @@ func newFixture(t *testing.T) *fixture {
 		GraphQLURL:        httpServer.URL,
 		Address:           "0x" + strings.ToUpper(ourAddress),
 		PaymentKitPackage: testPackage,
-		KeystorePath:      filepath.Join(t.TempDir(), "missing.keystore"),
+		PaymentRegistryId: "0x1",
+		KeystorePath:      writeKeystore(t),
 	}}
 	core, logs := observer.New(zapcore.InfoLevel)
-	return &fixture{db: db, cfg: cfg, server: server, core: core, logs: logs, ph: payments.NewPaymentHandler(db, cfg, zap.New(core))}
+	ph, err := payments.NewPaymentHandler(db, cfg, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewPaymentHandler: %v", err)
+	}
+	return &fixture{db: db, cfg: cfg, server: server, core: core, logs: logs, ph: ph}
 }
 
 // listener is a fresh listener, as after a dispatcher restart.

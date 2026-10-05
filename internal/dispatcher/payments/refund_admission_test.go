@@ -88,7 +88,7 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		if err := h.RefundTransaction(testTxID, t.Context()); err != nil {
 			t.Fatalf("transaction-wide fallback: %v", err)
 		}
-		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "TransferCoins" {
+		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "PrepareTransfer,ExecuteTransfer" {
 			t.Fatal("transaction-wide fallback changed")
 		}
 	})
@@ -112,7 +112,7 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		if err := db.QueryRow("SELECT COUNT(*) FROM debuglets").Scan(&runs); err != nil || runs != 0 {
 			t.Fatalf("refused admission left %d runs: %v", runs, err)
 		}
-		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "TransferCoins" {
+		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "PrepareTransfer,ExecuteTransfer" {
 			t.Fatal("refund or spent order changed")
 		}
 	})
@@ -177,10 +177,10 @@ func TestUnadmittedRefundRacesAdmissionOnTwoHandles(t *testing.T) {
 				t.Fatal(err)
 			}
 			if refunded {
-				if runs != 0 || orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "TransferCoins" {
+				if runs != 0 || orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "PrepareTransfer,ExecuteTransfer" {
 					t.Fatal("refund winner also admitted work or transferred twice")
 				}
-			} else if runs != 1 || orderState(t, db) != models.Outstanding || len(chain.Calls()) != 0 {
+			} else if runs != 1 || orderState(t, db) != models.Outstanding || strings.Contains(strings.Join(chain.Calls(), ","), "ExecuteTransfer") {
 				t.Fatal("admission winner was refunded or duplicated")
 			}
 		})

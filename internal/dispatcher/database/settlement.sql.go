@@ -40,6 +40,49 @@ func (q *Queries) GetPaymentReceipt(ctx context.Context, arg GetPaymentReceiptPa
 	return i, err
 }
 
+const insertChainTransfer = `-- name: InsertChainTransfer :one
+INSERT INTO chain_transfers (kind, executor_id, transaction_id, order_id, amount, currency, receiver, state, digest, signed_transaction, signature, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id
+`
+
+type InsertChainTransferParams struct {
+	Kind              string
+	ExecutorID        string
+	TransactionID     string
+	OrderID           sql.NullInt64
+	Amount            int64
+	Currency          string
+	Receiver          string
+	State             string
+	Digest            string
+	SignedTransaction []byte
+	Signature         string
+	CreatedAt         models.UTCTime
+	UpdatedAt         models.UTCTime
+}
+
+func (q *Queries) InsertChainTransfer(ctx context.Context, arg InsertChainTransferParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertChainTransfer,
+		arg.Kind,
+		arg.ExecutorID,
+		arg.TransactionID,
+		arg.OrderID,
+		arg.Amount,
+		arg.Currency,
+		arg.Receiver,
+		arg.State,
+		arg.Digest,
+		arg.SignedTransaction,
+		arg.Signature,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertPaymentReceipt = `-- name: InsertPaymentReceipt :exec
 INSERT INTO payment_receipts (tx_digest, event_seq, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -114,6 +157,57 @@ func (q *Queries) ListPaymentReceiptsByNonce(ctx context.Context, nonce string) 
 	return items, nil
 }
 
+const listUnresolvedChainTransfers = `-- name: ListUnresolvedChainTransfers :many
+SELECT id, kind, executor_id, transaction_id, order_id, amount, currency, receiver, state, digest, signed_transaction, signature, detail, created_at, updated_at FROM chain_transfers
+WHERE state IN ('sent', 'unknown') OR (state = 'reserved' AND updated_at < ?1)
+ORDER BY updated_at, id
+LIMIT ?2
+`
+
+type ListUnresolvedChainTransfersParams struct {
+	ReservedBefore models.UTCTime
+	RowLimit       int64
+}
+
+func (q *Queries) ListUnresolvedChainTransfers(ctx context.Context, arg ListUnresolvedChainTransfersParams) ([]ChainTransfer, error) {
+	rows, err := q.db.QueryContext(ctx, listUnresolvedChainTransfers, arg.ReservedBefore, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChainTransfer
+	for rows.Next() {
+		var i ChainTransfer
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ExecutorID,
+			&i.TransactionID,
+			&i.OrderID,
+			&i.Amount,
+			&i.Currency,
+			&i.Receiver,
+			&i.State,
+			&i.Digest,
+			&i.SignedTransaction,
+			&i.Signature,
+			&i.Detail,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markTransactionPaid = `-- name: MarkTransactionPaid :execrows
 UPDATE transactions
 SET status = ?1
@@ -128,6 +222,99 @@ type MarkTransactionPaidParams struct {
 
 func (q *Queries) MarkTransactionPaid(ctx context.Context, arg MarkTransactionPaidParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markTransactionPaid, arg.Paid, arg.ID, arg.Outstanding)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const refundPaidTransaction = `-- name: RefundPaidTransaction :execrows
+UPDATE transactions
+SET status = ?1
+WHERE id = ?2 AND status = ?3
+`
+
+type RefundPaidTransactionParams struct {
+	Refunded int64
+	ID       string
+	Paid     int64
+}
+
+func (q *Queries) RefundPaidTransaction(ctx context.Context, arg RefundPaidTransactionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refundPaidTransaction, arg.Refunded, arg.ID, arg.Paid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const releasePayout = `-- name: ReleasePayout :exec
+UPDATE earnings
+SET current_balance = current_balance + ?1
+WHERE executor_id = ?2 AND currency = ?3
+`
+
+type ReleasePayoutParams struct {
+	Amount     int64
+	ExecutorID string
+	Currency   string
+}
+
+func (q *Queries) ReleasePayout(ctx context.Context, arg ReleasePayoutParams) error {
+	_, err := q.db.ExecContext(ctx, releasePayout, arg.Amount, arg.ExecutorID, arg.Currency)
+	return err
+}
+
+const reservePayout = `-- name: ReservePayout :execrows
+UPDATE earnings
+SET current_balance = current_balance - ?1
+WHERE earnings.executor_id = ?2 AND earnings.currency = ?3
+  AND earnings.current_balance >= ?1
+  AND NOT EXISTS (
+    SELECT 1 FROM chain_transfers t
+    WHERE t.kind = 'payout' AND t.executor_id = ?2 AND t.currency = ?3
+      AND t.state IN ('reserved', 'sent', 'unknown')
+  )
+`
+
+type ReservePayoutParams struct {
+	Amount     int64
+	ExecutorID string
+	Currency   string
+}
+
+func (q *Queries) ReservePayout(ctx context.Context, arg ReservePayoutParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reservePayout, arg.Amount, arg.ExecutorID, arg.Currency)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateChainTransfer = `-- name: UpdateChainTransfer :execrows
+UPDATE chain_transfers
+SET state = ?1, digest = ?2, detail = ?3, updated_at = ?4
+WHERE id = ?5 AND state = ?6
+`
+
+type UpdateChainTransferParams struct {
+	State     string
+	Digest    string
+	Detail    string
+	UpdatedAt models.UTCTime
+	ID        int64
+	FromState string
+}
+
+func (q *Queries) UpdateChainTransfer(ctx context.Context, arg UpdateChainTransferParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateChainTransfer,
+		arg.State,
+		arg.Digest,
+		arg.Detail,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.FromState,
+	)
 	if err != nil {
 		return 0, err
 	}
