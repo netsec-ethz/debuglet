@@ -428,7 +428,7 @@ func (p *Policy) cached(host string) (resolution, bool) {
 }
 
 func (p *Policy) see(host string, addrs []netip.Addr) {
-	key := revocationKey(host)
+	key := DestinationKey(host)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.seen == nil {

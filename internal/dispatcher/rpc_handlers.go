@@ -15,6 +15,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -327,7 +328,7 @@ func repeatsPolicy(requested *pb.DebugletPolicy, floor, ceil bitrate.Bitrate, de
 func destinationSet(addresses []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(addresses))
 	for _, address := range addresses {
-		set[address] = struct{}{}
+		set[netpolicy.DestinationKey(address)] = struct{}{}
 	}
 	return set
 }
@@ -646,7 +647,13 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 			return nil, err
 		}
 	}
+	seen := make(map[string]struct{}, len(dests))
 	for _, dest := range dests {
+		dest = netpolicy.DestinationKey(dest)
+		if _, duplicate := seen[dest]; duplicate {
+			continue
+		}
+		seen[dest] = struct{}{}
 		for id, limit := range d.destinations.Fairshare(dest) {
 			perExec[id] = append(perExec[id], d.destinationLimitLocked(dest, limit))
 		}

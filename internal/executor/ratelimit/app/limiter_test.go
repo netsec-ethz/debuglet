@@ -262,3 +262,21 @@ func TestLimiterDestinationRequiresMembership(t *testing.T) {
 		t.Fatalf("rejoined destination: %d updated=%v error=%v", value, updated, err)
 	}
 }
+
+func TestLimiterSharesEquivalentDestinationSpellings(t *testing.T) {
+	l := NewLimiter(zap.NewNop())
+	l.SetExecutorCapacity(2000)
+	l.SetAddrCapacity("TARGET.Example.:443", 800)
+	first := insertLimiterRun(t, l, "target.example", "TARGET.EXAMPLE.")
+	second := insertLimiterRun(t, l, "TARGET.Example.:80")
+	for _, id := range []uuid.UUID{first, second} {
+		limit, _, err := l.GetAddrLimit(id, "target.example.")
+		if err != nil || limit != 400 {
+			t.Fatalf("alias share: %d, %v; want 400", limit, err)
+		}
+	}
+	l.RemoveDebuglet(first)
+	if limit, _, err := l.GetAddrLimit(second, "target.example"); err != nil || limit != 800 {
+		t.Fatalf("remaining alias share: %d, %v; want 800", limit, err)
+	}
+}

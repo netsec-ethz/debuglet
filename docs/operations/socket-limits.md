@@ -61,17 +61,21 @@ arrived is checked again when it is registered and is closed instead of being
 handed to the guest (a recoverable dial reports `Closed`; an accepted peer is
 skipped).
 
-The bound is the acknowledgement: a denial has taken effect on an executor
-once it acknowledges the bandwidth revision that carries it. Admission is
-refused and the sockets are closed before that acknowledgement is sent.
+A version-2 acknowledgement confirms that admission is refused and the
+active sockets have closed. If delivery fails or the executor cannot confirm
+revocation, the dispatcher retires that exact control session within the
+five-second delivery deadline. It cannot renew its lease through successful
+health probes. Remote cleanup may take the remaining negotiated lease
+duration; retirement itself is not a remote acknowledgement.
 Connections closed this way do not resume when a later snapshot allows the
 destination again; the guest has to connect anew. Traffic sent or received
 before the close is not charged back. Limits of this mechanism: SCION
 connections and the run's listeners themselves are not closed (an inbound
 peer of a denied destination is refused per connection and per datagram); a
-denied name is matched to the addresses the run itself resolved it to; and a
-denial does not survive the control session, since the dispatcher sends a
-full snapshot to each new session.
+denied name is matched to the addresses the run itself resolved it to; and an
+executor denial set belongs to its control session. The dispatcher retains
+the policy durably, refuses new denied work after reconnect, and includes
+denials in every full allocation snapshot.
 
 SCION remains disabled by the supported default network policy. Its registry
 now enforces its 16-destination capacity, including pending dials; this does not

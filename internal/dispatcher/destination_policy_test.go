@@ -199,6 +199,9 @@ func TestDestinationPolicyReportsExecutorsThatDidNotAcknowledge(t *testing.T) {
 	if !dpDenied(d, destination) {
 		t.Fatal("undelivered deny not applied")
 	}
+	if _, ok := d.GetExecutor(fairshareExecutorID); ok {
+		t.Fatal("unconfirmed denial left the stale session available")
+	}
 	policy, _ := dpPolicy(t, d, destination)
 	if policy.Recipients != 2 || policy.Unconfirmed != 2 {
 		t.Fatalf("listed %+v, want two unconfirmed recipients", policy)
@@ -313,5 +316,53 @@ func TestDenialIsConfirmedOnlyByExecutorsThatRevoke(t *testing.T) {
 				t.Fatalf("deny acknowledged by a revoking executor: %v, listed %+v", err, policy)
 			}
 		})
+	}
+}
+
+// A spelling change cannot hide an existing allocation from an opt-out or
+// admit new work. The original run policy still identifies the same target.
+func TestDestinationPolicyUsesTheExecutorDestinationKey(t *testing.T) {
+	for _, names := range [][2]string{{"TARGET.Example.:443", "target.example"}, {"[::ffff:192.0.2.131]:443", "192.0.2.131"}} {
+		t.Run(names[0], func(t *testing.T) {
+			peer := &tgPeer{}
+			f := newTGFixture(t, peer)
+			dlHold(t, f, names[0])
+			before := len(dlBandwidth(peer))
+			if err := f.d.SetDestinationPolicy(t.Context(), "operator", names[1], DestinationPolicyChange{Denied: true, Reason: "opt out"}); err != nil {
+				t.Fatal(err)
+			}
+			policy, ok := dpPolicy(t, f.d, names[1])
+			if !ok || policy.Recipients != 1 || policy.Unconfirmed != 0 || !dpDenied(f.d, names[0]) {
+				t.Fatalf("normalized denial: %+v found=%v", policy, ok)
+			}
+			if !dpLimitOf(t, dlBandwidth(peer)[before:], names[1]).GetDenied() {
+				t.Fatal("the existing allocation did not receive its denial")
+			}
+			future := f.start
+			spec := arithSpec(0, 1000, tgTimeout, &future)
+			spec.Policy.Addresses = []string{names[0]}
+			f.d.mu.Lock()
+			_, err := f.d.validateDebugletSpec(&spec)
+			f.d.mu.Unlock()
+			if !errors.Is(err, resource.ErrDenied) {
+				t.Fatalf("equivalent destination admitted: %v", err)
+			}
+			if dpDenied(f.d, "unrelated.example") {
+				t.Fatal("denial affected an unrelated destination")
+			}
+		})
+	}
+}
+
+func TestDestinationPolicyRejectsMalformedKeysWithoutRecording(t *testing.T) {
+	f := newTGFixture(t, nil)
+	for _, destination := range []string{".", "192.0.2.0/24", "bad/path", "bad name", "name\n.example", "[invalid]:port"} {
+		if err := f.d.SetDestinationPolicy(t.Context(), "operator", destination, DestinationPolicyChange{Denied: true, Reason: "opt out"}); !errors.Is(err, ErrInvalidDestinationPolicy) {
+			t.Fatalf("destination %q: %v", destination, err)
+		}
+	}
+	policies, err := f.d.ListDestinationPolicies(t.Context())
+	if err != nil || len(policies) != 0 {
+		t.Fatalf("malformed policy changed history: %+v, %v", policies, err)
 	}
 }

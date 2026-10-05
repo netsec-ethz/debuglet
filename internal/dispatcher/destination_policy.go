@@ -8,6 +8,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"strings"
+
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
@@ -132,8 +136,15 @@ func (d *Dispatcher) SetDestinationLimit(destination string, limit bitrate.Bitra
 // failed deliveries, and the delivery outcome is kept for
 // ListDestinationPolicies.
 func (d *Dispatcher) SetDestinationPolicy(ctx context.Context, actor, destination string, change DestinationPolicyChange) error {
-	if destination == "" || len(destination) > MaxDestinationLength || actor == "" ||
+	if strings.ContainsAny(destination, "\x00\r\n\t") {
+		return ErrInvalidDestinationPolicy
+	}
+	destination = netpolicy.DestinationKey(destination)
+	if destination == "" || strings.Contains(destination, "/") || len(destination) > MaxDestinationLength || actor == "" ||
 		len(change.Reason) > MaxDestinationPolicyReason || !bitrate.InPolicyRange(int64(change.Limit)) {
+		return ErrInvalidDestinationPolicy
+	}
+	if _, err := netpolicy.Parse(netpolicy.Spec{DeniedDestinations: destination}); err != nil {
 		return ErrInvalidDestinationPolicy
 	}
 	if !change.ExpiresAt.IsZero() && !change.ExpiresAt.After(d.now()) {
@@ -185,15 +196,23 @@ func (d *Dispatcher) changeDestinationPolicy(ctx context.Context, destination st
 
 	d.mu.Lock()
 	confirmed, cannotRevoke := 0, 0
+	var stale []*rpc.SessionOwner
 	for _, r := range work.recipients {
 		entry := d.executors[r.owner.ExecutorID()]
-		if r.revision == 0 || entry == nil || entry.owner != r.owner || entry.bandwidthPending || entry.bandwidthRevision < r.revision {
+		if entry == nil || entry.owner != r.owner {
+			continue
+		}
+		if r.revision == 0 || entry.bandwidthPending || entry.bandwidthRevision < r.revision {
+			if event.kind == DestinationPolicyDeny {
+				stale = append(stale, r.owner)
+			}
 			continue
 		}
 		// An executor that predates denials applies the zero limit and
 		// acknowledges, but keeps its runs' floors and connections.
 		if event.kind == DestinationPolicyDeny && entry.bandwidthVersion < bandwidthVersionDenial {
 			cannotRevoke++
+			stale = append(stale, r.owner)
 			continue
 		}
 		confirmed++
@@ -202,6 +221,13 @@ func (d *Dispatcher) changeDestinationPolicy(ctx context.Context, destination st
 		d.policies.delivery[destination] = policyDelivery{revision: recorded.Revision, recipients: holders, unconfirmed: max(holders-confirmed, 0)}
 	}
 	d.mu.Unlock()
+	// Retire only the captured sessions: a successor must never inherit an
+	// old delivery failure. Retirement prevents healthy session probes from
+	// renewing a lease while its destination policy remains unconfirmed.
+	// Remote cleanup can still take the remainder of that existing lease.
+	for _, owner := range stale {
+		d.Bidi.RemoveClient(owner)
+	}
 	if cannotRevoke > 0 {
 		sendErr = errors.Join(sendErr, ErrDenialUnsupported)
 	}

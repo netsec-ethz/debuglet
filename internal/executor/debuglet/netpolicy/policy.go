@@ -414,7 +414,7 @@ func embeddedV4(addr netip.Addr) (netip.Addr, bool) {
 // connections to it before it returns.
 type Revocations struct {
 	mu       sync.Mutex
-	denied   map[string]struct{} // revocationKey of each denied destination
+	denied   map[string]struct{} // DestinationKey of each denied destination
 	watchers map[*revocationWatch]struct{}
 }
 
@@ -445,7 +445,7 @@ func (r *Revocations) Update(destinations []string, replace bool) []Revoked {
 		clear(r.denied)
 	}
 	for _, destination := range destinations {
-		if key := revocationKey(destination); key != "" {
+		if key := DestinationKey(destination); key != "" {
 			r.denied[key] = struct{}{}
 		}
 	}
@@ -484,7 +484,7 @@ func (r *Revocations) watch(run string, close func() int) (stop func()) {
 // checkDeclared refuses a destination the set denies, written as a name, an
 // address or a declared destination.
 func (r *Revocations) checkDeclared(destination string) error {
-	key := revocationKey(destination)
+	key := DestinationKey(destination)
 	if r == nil || key == "" {
 		return nil
 	}
@@ -514,10 +514,10 @@ func (r *Revocations) hosts() []string {
 	return hosts
 }
 
-// revocationKey is the one spelling of a destination the set compares: the
+// DestinationKey is the one spelling of a destination the set compares: the
 // normalized address, or the lower-case name without a trailing dot. A SCION
 // address or a port is reduced to its host, as for a declared destination.
-func revocationKey(destination string) string {
+func DestinationKey(destination string) string {
 	host := declaredHost(destination)
 	if addr, err := netip.ParseAddr(host); err == nil {
 		return Normalize(addr).String()

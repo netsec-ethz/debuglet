@@ -188,6 +188,9 @@ an executor upgrade is required. Reconnection never retargets an old update.
 API 1.16. `PATCH /destination` (operator) states the complete policy of one
 destination: `limit`, or `denied: true`, which refuses every new submission
 and allocation there whatever its floor and records no limit; `denied: false` lifts a deny.
+Destination keys use the executor policy normalization: host without port,
+lower-case name without a final dot, or canonical IP without mapping/zone.
+Equivalent spellings address the same policy, reservation and limiter.
 `reason` (at most 500 bytes) is required to deny or to lower the limit, and
 `expires_at` (RFC 3339, in the future) returns the destination to the default
 capacity at that time. Answers: 204 recorded and delivered, 400 invalid, 403
@@ -206,7 +209,11 @@ lifetime. A deny is sent as a zero limit with the denied flag. An executor of
 this release (bandwidth version 2) closes the active sockets to the destination
 before it acknowledges; only its acknowledgement confirms a deny. An executor
 that predates this release only applies the zero limit, stays unconfirmed even
-when it acknowledges, and the PATCH answers 500 asking for its upgrade. A
-failure to record the change answers 500 "destination policy could not be
+when it acknowledges, and the PATCH answers 500 asking for its upgrade.
+An unconfirmed deny retires only its captured control session within the
+five-second delivery deadline, preventing further lease renewal. Remote work
+stops no later than its existing lease expiry under the supported control
+contract; delivery remains unconfirmed. Reconnecting does not remove the
+durable policy. A failure to record the change answers 500 "destination policy could not be
 recorded"; nothing was applied and the previous policy stays in force. See
 [destination limits and opt-outs](operations/configuration.md#destination-limits-and-opt-outs).
