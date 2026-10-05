@@ -52,3 +52,9 @@ LIMIT sqlc.arg(row_limit);
 UPDATE transactions
 SET status = sqlc.arg(refunded)
 WHERE id = sqlc.arg(id) AND status = sqlc.arg(paid);
+
+-- name: GetLatestRefundTransferState :one
+SELECT state FROM chain_transfers
+WHERE kind = 'refund' AND transaction_id = ?
+ORDER BY id DESC
+LIMIT 1;

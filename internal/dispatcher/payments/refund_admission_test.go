@@ -78,7 +78,7 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		if claimed, err := claimRefundOrder(t.Context(), db); err != nil || !claimed {
 			t.Fatalf("claim: %t, %v", claimed, err)
 		}
-		if err := h.RefundUnadmittedTransaction(testTxID, t.Context()); !errors.Is(err, ErrTransactionClaimed) {
+		if _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); !errors.Is(err, ErrTransactionClaimed) {
 			t.Fatalf("refund admitted work: %v", err)
 		}
 		if got := orderState(t, db); got != models.Outstanding || len(chain.Calls()) != 0 {
@@ -94,7 +94,7 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 	})
 	t.Run("refund before stale paid preflight", func(t *testing.T) {
 		db, h, chain := admissionRefundFixture(t, "USDC")
-		if err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err != nil {
+		if _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		for _, latePayment := range []bool{false, true} {
@@ -123,7 +123,7 @@ func TestUnadmittedRefundFailureLeavesIntentSpendable(t *testing.T) {
 		t.Run(currency, func(t *testing.T) {
 			db, h, chain := admissionRefundFixture(t, currency)
 			chain.transferErr = errors.New("fixture refund rejected")
-			if err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err == nil {
+			if _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err == nil {
 				t.Fatal("unsupported or rejected refund succeeded")
 			}
 			transaction, err := database.New(db).GetTransactionByID(t.Context(), testTxID)
@@ -161,7 +161,7 @@ func TestUnadmittedRefundRacesAdmissionOnTwoHandles(t *testing.T) {
 					claimed, err = claimRefundOrder(t.Context(), other)
 					return err
 				},
-				func() error { return h.RefundUnadmittedTransaction(testTxID, t.Context()) },
+				func() error { _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); return err },
 			})
 			for _, err := range errs {
 				if err != nil && !errors.Is(err, ErrTransactionClaimed) && !strings.Contains(err.Error(), "database is locked") {

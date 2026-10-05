@@ -12,6 +12,20 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
+const getLatestRefundTransferState = `-- name: GetLatestRefundTransferState :one
+SELECT state FROM chain_transfers
+WHERE kind = 'refund' AND transaction_id = ?
+ORDER BY id DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestRefundTransferState(ctx context.Context, transactionID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getLatestRefundTransferState, transactionID)
+	var state string
+	err := row.Scan(&state)
+	return state, err
+}
+
 const getPaymentReceipt = `-- name: GetPaymentReceipt :one
 SELECT tx_digest, event_seq, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail FROM payment_receipts
 WHERE tx_digest = ? AND event_seq = ?
