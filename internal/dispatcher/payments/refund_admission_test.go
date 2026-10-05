@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
@@ -99,7 +100,9 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		for _, latePayment := range []bool{false, true} {
 			if latePayment {
 				// A repeated payment notification must not revive a refunded order.
-				h.CompleteTransaction(testTxID, t.Context())
+				if _, err := h.ApplyPaymentReceipt(t.Context(), sui.PaymentReceipt{Digest: "late-payment", Nonce: testTxID}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if claimed, err := claimRefundOrder(t.Context(), db); err != nil || claimed {
 				t.Fatalf("claim refunded order: %t, %v", claimed, err)
