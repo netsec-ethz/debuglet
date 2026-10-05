@@ -256,3 +256,78 @@ func TestKeyStoreRejectsEarlyDisclosure(t *testing.T) {
 		t.Errorf("latest epoch = %d; want 5", epoch)
 	}
 }
+
+// unreadBackend holds keys on record but fails the test on any read.
+type unreadBackend struct {
+	*memoryBackend
+	t *testing.T
+}
+
+func (b unreadBackend) Latest(string, []byte) (int64, []byte, bool, error) {
+	b.t.Error("Backend.Latest called")
+	return 0, nil, false, errors.New("unexpected read")
+}
+
+func (b unreadBackend) Get(string, []byte, int64) ([]byte, bool, error) {
+	b.t.Error("Backend.Get called")
+	return nil, false, errors.New("unexpected read")
+}
+
+// TestKeyStoreCachedLatest checks that the cache-only view reports a chain
+// as unknown until a disclosure reaches the store, then its latest epoch, and
+// that it never reads a Backend or creates a cache entry.
+func TestKeyStoreCachedLatest(t *testing.T) {
+	ks := NewKeyStore()
+	const id = "executor"
+	chain := hashChain(0x3C, 8)
+	start := time.Unix(1_700_000_000, 0)
+	c := Chain{Anchor: chain[0], Start: start, Interval: 10 * time.Second, DisclosureDelay: 2}
+	if _, cached := ks.CachedLatest(id, c.Anchor); cached {
+		t.Fatal("a chain without disclosures is cached")
+	}
+	if err := ks.Store(id, c, start.Add(50*time.Second), 3, chain[3]); err != nil {
+		t.Fatal(err)
+	}
+	if epoch, cached := ks.CachedLatest(id, c.Anchor); !cached || epoch != 3 {
+		t.Fatalf("CachedLatest = (%d, %v); want (3, true)", epoch, cached)
+	}
+	if _, cached := ks.CachedLatest("other", c.Anchor); cached {
+		t.Fatal("another executor shares this executor's chain")
+	}
+
+	// A persistent store whose cache is cold, as after a restart, answers
+	// from the cache only, although the record holds the chain.
+	record := &memoryBackend{keys: map[string][]byte{}}
+	if err := NewPersistentKeyStore(record).Store(id, c, start.Add(50*time.Second), 3, chain[3]); err != nil {
+		t.Fatal(err)
+	}
+	cold := NewPersistentKeyStore(unreadBackend{record, t})
+	for range 2 {
+		if _, cached := cold.CachedLatest(id, c.Anchor); cached {
+			t.Fatal("a cold cache answered")
+		}
+	}
+	if epoch, _, ok, _ := record.Latest(id, c.Anchor); !ok || epoch != 3 {
+		t.Fatalf("record holds epoch %d, %v; want 3", epoch, ok)
+	}
+}
+
+func TestChainDueEpoch(t *testing.T) {
+	start := time.Unix(1_700_000_000, 0)
+	c := Chain{Start: start, Interval: 10 * time.Second, DisclosureDelay: 3, Length: 8}
+	for _, tc := range []struct {
+		at   time.Duration
+		want int64
+	}{{-time.Second, -1}, {0, -3}, {39 * time.Second, 0}, {40 * time.Second, 1}, {74 * time.Second, 4}, {time.Hour, 7}} {
+		if due, ok := c.DueEpoch(start.Add(tc.at)); !ok || due != tc.want {
+			t.Errorf("DueEpoch(start%+v) = (%d, %v); want (%d, true)", tc.at, due, ok, tc.want)
+		}
+		// The skew allowance of Store does not make a key due earlier.
+		if at, _ := c.DisclosableAt(tc.want); tc.want >= 1 && start.Add(tc.at).Before(at) {
+			t.Errorf("epoch %d due before it is disclosable", tc.want)
+		}
+	}
+	if _, ok := (Chain{Start: start}).DueEpoch(start); ok {
+		t.Error("an unknown schedule has a due epoch")
+	}
+}

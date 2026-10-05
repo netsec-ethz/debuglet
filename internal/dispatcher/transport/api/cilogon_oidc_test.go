@@ -24,6 +24,7 @@ type cilogonStub struct {
 	mu                     sync.Mutex
 	key, signingKey        *rsa.PrivateKey
 	kid, nonce, challenge  string
+	failPath               string
 	claims                 map[string]any
 	exchanges, keyRequests int
 }
@@ -34,6 +35,10 @@ func newCILogonStub(t *testing.T, key *rsa.PrivateKey) *cilogonStub {
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
+		if r.URL.Path == p.failPath {
+			http.Error(w, "private provider diagnostic", http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/.well-known/openid-configuration":
@@ -97,9 +102,9 @@ func newCILogonStub(t *testing.T, key *rsa.PrivateKey) *cilogonStub {
 	return p
 }
 
-func (p *cilogonStub) fixture(t *testing.T) *ccFixture {
+func (p *cilogonStub) fixture(t *testing.T, options ...Option) *ccFixture {
 	t.Helper()
-	return ccNewFixtureWith(t, CookieSecure(true), CILogon(CILogonConfig{Enabled: true, Issuer: p.server.URL, ClientID: "test-id", ClientSecret: "test-secret", CallbackURL: "https://example.test/auth/cilogon/callback", SuccessURL: "https://example.test/console/"}))
+	return ccNewFixtureWith(t, append([]Option{CookieSecure(true), CILogon(CILogonConfig{Enabled: true, Issuer: p.server.URL, ClientID: "test-id", ClientSecret: "test-secret", CallbackURL: "https://example.test/auth/cilogon/callback", SuccessURL: "https://example.test/console/"})}, options...)...)
 }
 
 func cilogonResponse(t *testing.T, request *http.Request) *http.Response {
@@ -113,11 +118,14 @@ func cilogonResponse(t *testing.T, request *http.Request) *http.Response {
 	return response
 }
 
-func (p *cilogonStub) begin(t *testing.T, f *ccFixture) *http.Request {
+func (p *cilogonStub) begin(t *testing.T, f *ccFixture, cookies ...*http.Cookie) *http.Request {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, f.root.URL+"/auth/cilogon", nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, cookie := range cookies {
+		request.AddCookie(cookie)
 	}
 	response := cilogonResponse(t, request)
 	location, err := url.Parse(response.Header.Get("Location"))

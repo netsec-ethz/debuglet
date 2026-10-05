@@ -149,6 +149,10 @@ func (h *Handler) PostRecover(c echo.Context) error {
 	if !ok {
 		return unauthorized()
 	}
+	selector, _, _ := parseCredential(recoveryPrefix, strings.TrimSpace(req.RecoveryCode))
+	if err := queries.ConsumeAdminAccountRecovery(ctx, selector); err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to recover the account", err)
+	}
 	if err := queries.RevokeUserSessions(ctx, row.Uuid); err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to revoke the account's sessions", err)
 	}
