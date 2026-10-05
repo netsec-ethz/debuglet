@@ -344,3 +344,55 @@ func TestAnUnauthenticatedRequestIsRefusedBeforeMaintenanceIsConsulted(t *testin
 		})
 	}
 }
+
+// A refunded order is described by what its refund did with the money: a
+// refund transfer that was sent, is pending, or could not be sent and is owed
+// is said to be so on every later request; a TEST refund, which has no
+// transfer, keeps its wording.
+func TestARefundedOrderIsDescribedByItsRefundTransfer(t *testing.T) {
+	const prefix = "dispatcher is in maintenance: submission admission is stopped (planned upgrade)"
+	for state, want := range map[string]string{
+		"sent":      "; this payment order was paid and its refund has been sent, so it cannot be spent again",
+		"confirmed": "; this payment order was paid and its refund has been sent, so it cannot be spent again",
+		"reserved":  "; this payment order was paid; its refund was recorded and is pending confirmation, so it cannot be spent again",
+		"unknown":   "; this payment order was paid; its refund was recorded and is pending confirmation, so it cannot be spent again",
+		"failed":    "; this payment order was paid; its refund was recorded but could not be sent and is owed to the refund address, so it cannot be spent again",
+		"":          "; this payment order was refunded and cannot be spent again",
+	} {
+		t.Run(state, func(t *testing.T) {
+			f := newMaintenanceFixture(t)
+			const id, key = "refunded-order", "auth-key"
+			batch := maintenanceBatch()
+			f.seedOrder(id, key, batch, models.Refunded)
+			if state != "" {
+				now := models.NewUTCTime(time.Now())
+				if _, err := f.db.Exec(`INSERT INTO chain_transfers (kind, transaction_id, amount, currency, receiver, state, created_at, updated_at)
+VALUES ('refund', ?, 1000, 'USDC', '0xaa', ?, ?, ?)`, id, state, now, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.pause("planned upgrade")
+			for range 2 {
+				status, refusal := f.put("/debuglet", SubmitDebugletsRequest{TransactionId: id, AuthKey: key, Debuglets: batch})
+				if status != http.StatusServiceUnavailable || refusal.Message != prefix+want {
+					t.Fatalf("status %d, message %q; want %q", status, refusal.Message, prefix+want)
+				}
+			}
+		})
+	}
+}
+
+// The request that decides a refund words its outcome the same way; a refund
+// that moved nothing on chain keeps the wording of a TEST refund.
+func TestRefundStatementOfTheDecidingRequest(t *testing.T) {
+	for outcome, want := range map[payments.RefundOutcome]string{
+		payments.RefundSent:    "; this payment order was paid and its refund has been sent, so it cannot be spent again",
+		payments.RefundPending: "; this payment order was paid; its refund was recorded and is pending confirmation, so it cannot be spent again",
+		payments.RefundFailed:  "; this payment order was paid; its refund was recorded but could not be sent and is owed to the refund address, so it cannot be spent again",
+		payments.RefundLocal:   "; this payment order was paid and has been refunded, so it cannot be spent again",
+	} {
+		if got := refundStatement(outcome, true); got != want {
+			t.Fatalf("refundStatement(%v) = %q, want %q", outcome, got, want)
+		}
+	}
+}

@@ -868,12 +868,6 @@ func TestDisabledTESTPaths(t *testing.T) {
 		mock.ExpectBegin()
 		expectTransactionRead(mock, "TEST", models.Paid)
 		expectTransactionOrdersRead(mock, "TEST", 1)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID).
-			WillReturnRows(orderRow("TEST", models.Refunded))
-		mock.ExpectExec(updateTransactionStatusQuery).
-			WithArgs(int64(models.Refunded), testTxID).
-			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectRollback()
 
 		err := h.RefundTransaction(testTxID, context.Background())
@@ -1004,77 +998,6 @@ func TestUnrelatedReadErrorsArePreserved(t *testing.T) {
 
 func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
 	const testReceiver = "0x00000000000000000000000000000000000000000000000000000000000000aa"
-
-	t.Run("RefundDebugletOrder USDC", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		mock.ExpectBegin()
-		expectOrderRead(mock, "USDC", models.Outstanding)
-		mock.ExpectExec(transitionDebugletOrderQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec("INSERT INTO order_settlements").
-			WithArgs(testTxID, testOrderID, "refund", testPrice, "USDC", testExecutor, nil, sqlmock.AnyArg()).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
-
-		if err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background()); err != nil {
-			t.Fatalf("RefundDebugletOrder: %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "RefundDebuglet" {
-			t.Fatalf("backend calls %v", calls)
-		}
-		if rec.chain.refundAddress != testRefund || rec.chain.refundOrder == nil || rec.chain.refundOrder.State != int64(models.Refunded) {
-			t.Fatalf("forwarded refund (%v, %q)", rec.chain.refundOrder, rec.chain.refundAddress)
-		}
-		assertMet(t, mock)
-	})
-
-	t.Run("RefundTransaction USDC", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		mock.ExpectBegin()
-		expectTransactionRead(mock, "USDC", models.Paid)
-		expectTransactionOrdersRead(mock, "USDC", 2)
-		for i := int64(1); i <= 2; i++ {
-			mock.ExpectQuery(updateDebugletOrderStateQuery).
-				WithArgs(int64(models.Refunded), testTxID, i).
-				WillReturnRows(orderRow("USDC", models.Refunded))
-		}
-		mock.ExpectExec(updateTransactionStatusQuery).
-			WithArgs(int64(models.Refunded), testTxID).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectCommit()
-
-		if err := h.RefundTransaction(testTxID, context.Background()); err != nil {
-			t.Fatalf("RefundTransaction: %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "TransferCoins" {
-			t.Fatalf("backend calls %v", calls)
-		}
-		if rec.chain.transferAmount != uint64(2*testPrice) || rec.chain.transferAddress != testRefund ||
-			rec.chain.transferCoinType != sui.GetCoinType("USDC", "testnet") {
-			t.Fatalf("forwarded transfer (%d, %q, %q)", rec.chain.transferAmount, rec.chain.transferCoinType, rec.chain.transferAddress)
-		}
-		assertMet(t, mock)
-	})
-
-	t.Run("PayoutExecutor USDC", func(t *testing.T) {
-		db, mock := newMockDB(t)
-		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		err := h.PayoutExecutor(database.Earning{ExecutorID: testExecutor, Currency: "USDC", CurrentBalance: 42, SuiWalletAddress: "0xwallet"}, context.Background())
-		if err != nil {
-			t.Fatalf("PayoutExecutor: %v", err)
-		}
-		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "TransferCoins" {
-			t.Fatalf("backend calls %v", calls)
-		}
-		if rec.chain.transferAmount != 42 || rec.chain.transferAddress != "0xwallet" ||
-			rec.chain.transferCoinType != sui.GetCoinType("USDC", "testnet") {
-			t.Fatalf("forwarded transfer (%d, %q, %q)", rec.chain.transferAmount, rec.chain.transferCoinType, rec.chain.transferAddress)
-		}
-		assertMet(t, mock)
-	})
 
 	t.Run("TransferUSDC reaches the backend once", func(t *testing.T) {
 		db, mock := newMockDB(t)
@@ -1261,7 +1184,7 @@ func TestRefundTransactionSpendsTheTransactionItself(t *testing.T) {
 	if err := h.RefundTransaction(id, ctx); err != nil {
 		t.Fatalf("refund: %v", err)
 	}
-	if !strings.Contains(strings.Join(rec.chain.Calls(), " "), "TransferCoins") {
+	if !strings.Contains(strings.Join(rec.chain.Calls(), " "), "ExecuteTransfer") {
 		t.Fatalf("the money was not moved: %v", rec.chain.Calls())
 	}
 	refunded, err := queries.GetTransactionByID(ctx, id)

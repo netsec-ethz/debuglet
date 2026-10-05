@@ -5,12 +5,10 @@ package payments
 
 import (
 	"database/sql"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
@@ -217,73 +215,20 @@ func seedFailedUSDCRun(t *testing.T, db *sql.DB) database.Debuglet {
 	return run
 }
 
-// A chain refund whose outcome is uncertain is not sent again: after a failed
-// inline refund the order stays Outstanding with no settlement row, and a
-// later settlement pass does not select it, so the chain backend is reached
-// exactly once.
-func TestSettlementPassNeverResendsAChainRefund(t *testing.T) {
+// While chain payments are disabled a settlement pass defers a chain order
+// without reaching the chain backend and leaves it Outstanding.
+func TestSettlementPassDefersChainOrdersWhileDisabled(t *testing.T) {
 	db := newRefundDatabase(t)
-	h, rec := newEnabledHandler(t, db, enabledConfig(t))
-	rec.chain.refundErr = errors.New("transfer response lost")
-	run := seedFailedUSDCRun(t, db)
-
-	if err := h.SettleTerminalOrder(t.Context(), &run, 3); !errors.Is(err, rec.chain.refundErr) {
-		t.Fatalf("SettleTerminalOrder = %v, want the chain failure", err)
-	}
-	if got := orderState(t, db); got != models.Outstanding {
-		t.Fatalf("order state %v after a failed chain refund, want %v", got, models.Outstanding)
-	}
-	if n, _ := settlementOf(t, db); n != 0 {
-		t.Fatalf("%d settlement rows after a failed chain refund", n)
-	}
-	for range 2 {
-		settled, failed, deferred, next, err := h.SettlePendingOrders(t.Context(), 0, 32)
-		if settled != 0 || failed != 0 || deferred != 0 || next != 0 || err != nil {
-			t.Fatalf("pass: settled %d, failed %d, deferred %d, next %d, error %v", settled, failed, deferred, next, err)
-		}
-	}
-	if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "RefundDebuglet" {
-		t.Fatalf("chain backend calls %v, want one RefundDebuglet", calls)
-	}
-	if got := orderState(t, db); got != models.Outstanding {
-		t.Fatalf("order state %v after the passes, want %v", got, models.Outstanding)
-	}
-}
-
-// A chain refund that was sent but whose local commit failed leaves the order
-// Outstanding. A settlement pass that is handed such an order anyway defers it
-// without reaching the chain backend again.
-func TestSettlementPassDefersAChainRefundAfterAFailedCommit(t *testing.T) {
-	db, mock := newMockDB(t)
-	h, rec := newEnabledHandler(t, db, enabledConfig(t))
-	run := database.Debuglet{ID: 9, Uuid: uuid.New(), TransactionID: testTxID, OrderID: testOrderID, ExecutorID: testExecutor, State: models.RunStateExited}
-
-	mock.ExpectBegin()
-	expectOrderRead(mock, "USDC", models.Outstanding)
-	mock.ExpectExec(transitionDebugletOrderQuery).
-		WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO order_settlements").
-		WithArgs(testTxID, testOrderID, "refund", testPrice, "USDC", testExecutor, nil, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit().WillReturnError(errScripted)
-	if err := h.SettleTerminalOrder(t.Context(), &run, 3); !errors.Is(err, errScripted) {
-		t.Fatalf("SettleTerminalOrder = %v, want the failed commit", err)
-	}
-
-	now := time.Now().UTC()
-	mock.ExpectQuery("-- name: ListPendingSettlements").
-		WithArgs(int64(models.Outstanding), int64(models.RunStateExited), int64(0), int64(32)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "start_time", "end_time", "usage", "ceil_bw", "executor_id",
-			"addresses", "state", "error", "transaction_id", "order_id", "dispatcher_incarnation", "session_id", "exit_code", "currency"}).
-			AddRow(run.ID, run.Uuid.String(), now, now, 0, 0, testExecutor, "", int64(models.RunStateExited), nil,
-				testTxID, testOrderID, "", "", 3, "USDC"))
+	h, rec := newDisabledHandler(t, db, true, true)
+	seedFailedUSDCRun(t, db)
 	settled, failed, deferred, next, err := h.SettlePendingOrders(t.Context(), 0, 32)
 	if settled != 0 || failed != 0 || deferred != 1 || next != 0 || err != nil {
 		t.Fatalf("pass: settled %d, failed %d, deferred %d, next %d, error %v", settled, failed, deferred, next, err)
 	}
-	if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "RefundDebuglet" {
-		t.Fatalf("chain backend calls %v, want one RefundDebuglet", calls)
+	if calls := rec.chain.Calls(); len(calls) != 0 {
+		t.Fatalf("chain backend calls %v while disabled", calls)
 	}
-	assertMet(t, mock)
+	if got := orderState(t, db); got != models.Outstanding {
+		t.Fatalf("order state %v, want %v", got, models.Outstanding)
+	}
 }

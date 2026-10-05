@@ -75,13 +75,19 @@ SELECT * FROM order_settlements
 WHERE transaction_id = ? AND order_id = ?;
 
 -- name: ListPendingSettlements :many
--- Only wholly local settlements: credits of any currency and TEST refunds.
+-- An order covered by a refund transfer in any state is never listed: the
+-- transfer's own reconciliation resolves it, so a pass cannot send it twice.
 SELECT sqlc.embed(d), e.exit_code, o.currency FROM debuglet_order o
 JOIN debuglets d ON d.id = o.debuglet_id
   AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
 JOIN measurement_execution e ON e.debuglet_id = d.id
 WHERE o.state = sqlc.arg(outstanding_state) AND d.state = sqlc.arg(exited_state)
-  AND e.exit_code IS NOT NULL AND (e.exit_code = 0 OR o.currency = 'TEST')
+  AND e.exit_code IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM chain_transfers t
+    WHERE t.kind = 'refund' AND t.transaction_id = o.transaction_id
+      AND (t.order_id IS NULL OR t.order_id = o.order_id)
+  )
   AND d.id > sqlc.arg(after_id)
 ORDER BY d.id
 LIMIT sqlc.arg(row_limit);
