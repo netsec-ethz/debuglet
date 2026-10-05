@@ -10,6 +10,9 @@ Group={{ debuglet_group }}
 {% if dispatcher_github_oauth_enabled | bool %}
 EnvironmentFile={{ config_dir }}/dispatcher/github-oauth.env
 {% endif %}
+{% if dispatcher_cilogon_oidc_enabled | bool %}
+EnvironmentFile={{ config_dir }}/dispatcher/cilogon-oidc.env
+{% endif %}
 ExecStart={{ payload_prefix }}/bin/debuglet-dispatcher \
     -config {{ config_dir }}/dispatcher/dispatcher.toml
 Restart=on-failure
