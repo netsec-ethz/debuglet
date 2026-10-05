@@ -53,7 +53,7 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 6 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 7 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)

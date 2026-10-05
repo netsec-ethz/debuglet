@@ -60,14 +60,28 @@ TRACER design uses, far beyond that bound. Tags become verifiable once the
 delay has elapsed.
 
 The keys live only in the running executor, and every start builds a new
-chain. The keys of the last d epochs before a restart are therefore never
-disclosed, and packets tagged in them (the last 15 minutes by default) can
-never be verified. (The dispatcher already accepts a disclosure for an earlier
-chain it has on record, named by `tesla_key_anchor` on the heartbeat, but the
-executor does not yet re-derive and disclose its previous chain's tail.) Stop an executor only once its last attributed packets are
-d epochs old. When the chain runs out, the executor logs
-`final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
-disclosed; restart it after that time.
+chain. When `[tesla] seed` is configured, a start re-derives the previous
+chain from the seed and its record, and the heartbeat discloses that chain's
+remaining keys at their due instants, under its own anchor, until its final key
+is out. The re-derived chain only discloses: it never signs again, and no tagger
+holds it. A restart then loses nothing. The keys of the last d epochs before a
+restart are still never disclosed, and packets tagged in them (the last 15
+minutes by default) can never be verified, when:
+
+- no seed is configured (each chain's tail is random);
+- the previous chain was recorded before the executor kept its disclosure
+  delay (chains started by an earlier release);
+- the host clock is not ready at the new start, since the wall clock decides
+  when each old key is due;
+- the re-derived chain does not match the recorded anchor, for example after
+  the seed was changed (logged as an error);
+- the executor restarted more than once before the earlier chain's final key
+  was due (only the immediately previous chain is re-derived).
+
+Each start logs once which of these applies. Without a seed, stop an executor
+only once its last attributed packets are d epochs old. When the chain runs
+out, the executor logs `final_disclosure_at`, d − 1 epochs after the expiry,
+when its last key is disclosed; restart it after that time.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
 never disclosed while an installed copy can still sign. The schedule and every

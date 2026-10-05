@@ -199,6 +199,12 @@ type Config struct {
 	// Attribution reports UnattributableClockUnready for the chain's life.
 	ClockUnready bool
 
+	// DisclosureOnly marks a retired chain re-derived after a restart only to
+	// disclose its last keys: CurrentKey never returns a key, so no signing
+	// path can use it. It needs the recorded Seed and Epoch; Epoch carries no
+	// monotonic reading, so its epochs advance on the wall clock.
+	DisclosureOnly bool
+
 	// Clock measures the time elapsed since Epoch. Nil uses the readings of
 	// the instants themselves (see Clock).
 	Clock Clock
@@ -274,6 +280,9 @@ type KeySchedule struct {
 // delay below MinDisclosureDelay is refused.
 // If cfg.ChainLength is zero it is derived from EpochLength (see DefaultChainHorizon).
 func NewKeySchedule(cfg Config) (*KeySchedule, error) {
+	if cfg.DisclosureOnly && (len(cfg.Seed) == 0 || cfg.Epoch.IsZero()) {
+		return nil, fmt.Errorf("tesla: a disclosure-only schedule needs its recorded seed and origin")
+	}
 	if len(cfg.Seed) == 0 {
 		cfg.Seed = make([]byte, 32)
 		if _, err := io.ReadFull(rand.Reader, cfg.Seed); err != nil {
@@ -517,9 +526,10 @@ func (ks *KeySchedule) Expiry() time.Time {
 }
 
 // FinalDisclosure returns when the last signing key k_{L-1} becomes
-// disclosable: the start of epoch L-1+d, d-1 epochs after Expiry. Keys live
-// only in this schedule, so a restart before then starts a new chain and the
-// keys of the old chain's last undisclosed epochs are never published; the
+// disclosable: the start of epoch L-1+d, d-1 epochs after Expiry. A restart
+// before then starts a new chain; the executor discloses the old chain's
+// remaining keys only when it can re-derive that chain from a configured seed
+// as a DisclosureOnly schedule, otherwise they are never published and the
 // packets they tagged cannot be verified.
 func (ks *KeySchedule) FinalDisclosure() time.Time {
 	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength-1+ks.cfg.DisclosureDelay) * ks.cfg.EpochLength)
@@ -557,11 +567,14 @@ func (ks *KeySchedule) keyForEpoch(epoch int64) []byte {
 // nil while no key is usable: epochOf maps epoch 0 and any instant before
 // Epoch to 0, whose key is the public anchor (see KeySchedule), and every
 // instant from the start of epoch L to L, whose key k_L is never disclosed.
-// No key is usable either while the clock cannot be trusted (see Time), or for
-// an epoch below the highest one whose key CurrentKey has already returned.
-// Every signing path reads the key here, so this is the one place the rule is
-// decided.
+// No key is usable either while the clock cannot be trusted (see Time), for
+// an epoch below the highest one whose key CurrentKey has already returned, or
+// ever on a DisclosureOnly schedule. Every signing path reads the key here, so
+// this is the one place the rule is decided.
 func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
+	if ks.cfg.DisclosureOnly {
+		return nil
+	}
 	monotonic, wall := ks.cfg.Clock.Elapsed(ks.cfg.Epoch, t)
 	epoch := ks.epochAt(monotonic)
 	if epoch < 1 || epoch >= ks.cfg.ChainLength || ks.clockReason(wall-monotonic) != "" {
