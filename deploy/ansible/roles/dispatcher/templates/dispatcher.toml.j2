@@ -65,3 +65,9 @@ allowed_origins = {{ dispatcher_cors_allowed_origins | to_json }}
 enabled = {{ dispatcher_github_oauth_enabled | bool | lower }}
 callback_url = "{{ dispatcher_github_oauth_callback_url }}"
 success_url = "{{ dispatcher_github_oauth_success_url }}"
+
+[cilogon_oidc]
+enabled = {{ dispatcher_cilogon_oidc_enabled | bool | lower }}
+issuer = "{{ dispatcher_cilogon_oidc_issuer }}"
+callback_url = "{{ dispatcher_cilogon_oidc_callback_url }}"
+success_url = "{{ dispatcher_cilogon_oidc_success_url }}"

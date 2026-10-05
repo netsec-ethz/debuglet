@@ -142,6 +142,30 @@
         quiet: true
       when: dispatcher_github_oauth_enabled | bool
 
+    # Counts the two variable names only; the values are never read into
+    # Ansible, so they cannot appear in output.
+    - name: Count local CILogon credential entries
+      ansible.builtin.command:
+        argv: [grep, -c, -E, '^CILOGON_CLIENT_(ID|SECRET)=.+', "{{ dispatcher_github_oauth_env_file }}"]
+      delegate_to: localhost
+      register: cilogon_credentials
+      changed_when: false
+      failed_when: false
+      when: dispatcher_cilogon_oidc_enabled | bool
+
+    - name: Require local CILogon credentials
+      ansible.builtin.assert:
+        that:
+          - dispatcher_github_oauth_enabled | bool
+          - cilogon_credentials.stdout | trim == '2'
+        fail_msg: >-
+          dispatcher_cilogon_oidc_enabled needs CILOGON_CLIENT_ID and
+          CILOGON_CLIENT_SECRET, each once and non-empty, in
+          {{ dispatcher_github_oauth_env_file }} (the owner-only env file the
+          dispatcher unit loads). Never commit this file.
+        quiet: true
+      when: dispatcher_cilogon_oidc_enabled | bool
+
     - name: Require an authority for client certificates
       ansible.builtin.assert:
         that:
