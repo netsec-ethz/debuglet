@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func ssExitRefused(t *testing.T, f *tgFixture, exits []ssExit, prepare ...func(*
 	tgAssertEarnings(t, f, 0)
 	// While the settlement is still refused a pass settles nothing and
 	// reports the failure.
-	if settled, failed, err := f.ph.SettlePendingOrders(f.ctx, settlementSweepLimit); settled != 0 || failed != len(exits) || err == nil {
+	if settled, failed, _, _, err := f.ph.SettlePendingOrders(f.ctx, 0, settlementSweepLimit); settled != 0 || failed != len(exits) || err == nil {
 		t.Fatalf("pass while refused settled %d, failed %d, error %v", settled, failed, err)
 	}
 	g := reopenTG(t, f, prepare...)
@@ -101,7 +102,7 @@ func TestSettlementSweepDeliversFailedInlineSettlements(t *testing.T) {
 		t.Fatalf("%d credit and %d refund settlements, want one each", credits, refunds)
 	}
 
-	if settled, failed, err := g.ph.SettlePendingOrders(g.ctx, settlementSweepLimit); settled != 0 || failed != 0 || err != nil {
+	if settled, failed, _, _, err := g.ph.SettlePendingOrders(g.ctx, 0, settlementSweepLimit); settled != 0 || failed != 0 || err != nil {
 		t.Fatalf("second pass settled %d, failed %d, error %v", settled, failed, err)
 	}
 	loop.set(time.Now().Add(time.Hour))
@@ -129,7 +130,7 @@ func TestSettlementSweepSkipsRunsWithoutATerminalExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if settled, failed, err := f.ph.SettlePendingOrders(f.ctx, settlementSweepLimit); settled != 0 || failed != 0 || err != nil {
+	if settled, failed, _, _, err := f.ph.SettlePendingOrders(f.ctx, 0, settlementSweepLimit); settled != 0 || failed != 0 || err != nil {
 		t.Fatalf("pass settled %d, failed %d, error %v", settled, failed, err)
 	}
 	f.d.sweepPendingSettlements(time.Time{})
@@ -147,13 +148,14 @@ func TestSettlementSweepIsBoundedByItsLimit(t *testing.T) {
 	first, second := f.seedDirect(t, tgFloorA), f.seedDirect(t, tgFloorB)
 	g := ssExitRefused(t, f, []ssExit{{first, 0}, {second, 0}})
 
-	if settled, failed, err := g.ph.SettlePendingOrders(g.ctx, 1); settled != 1 || failed != 0 || err != nil {
-		t.Fatalf("bounded pass settled %d, failed %d, error %v", settled, failed, err)
+	settled, failed, _, next, err := g.ph.SettlePendingOrders(g.ctx, 0, 1)
+	if settled != 1 || failed != 0 || next != first.row.ID || err != nil {
+		t.Fatalf("bounded pass settled %d, failed %d, next %d, error %v", settled, failed, next, err)
 	}
 	tgAssertOrder(t, g, first, models.Credited)
 	tgAssertOrder(t, g, second, models.Outstanding)
-	if settled, failed, err := g.ph.SettlePendingOrders(g.ctx, 1); settled != 1 || failed != 0 || err != nil {
-		t.Fatalf("next pass settled %d, failed %d, error %v", settled, failed, err)
+	if settled, failed, _, next, err := g.ph.SettlePendingOrders(g.ctx, next, 1); settled != 1 || failed != 0 || next != second.row.ID || err != nil {
+		t.Fatalf("next pass settled %d, failed %d, next %d, error %v", settled, failed, next, err)
 	}
 	tgAssertOrder(t, g, second, models.Credited)
 	tgAssertEarnings(t, g, tgOrderPrice(tgFloorA)+tgOrderPrice(tgFloorB))
@@ -170,4 +172,60 @@ func TestSettlementSweepSkipsAClosedDispatcher(t *testing.T) {
 		t.Fatalf("closed sweep returned %v, want %v", got, last)
 	}
 	tgAssertOrder(t, g, run, models.Outstanding)
+}
+
+// A failing order does not keep later ones from being settled: each pass
+// continues after the last run the previous one attempted and starts over once
+// the listing is exhausted, so the failing orders are attempted again.
+func TestSettlementSweepContinuesPastFailingOrders(t *testing.T) {
+	f := newTGFixture(t, nil)
+	a, b, c := f.seedDirect(t, tgFloorA), f.seedDirect(t, tgFloorA), f.seedDirect(t, tgFloorA)
+	g := ssExitRefused(t, f, []ssExit{{a, 0}, {b, 0}, {c, 0}})
+	if _, err := g.db.ExecContext(g.ctx, fmt.Sprintf(`CREATE TRIGGER ss_refuse_two BEFORE INSERT ON order_settlements
+WHEN NEW.debuglet_id IN (%d, %d) BEGIN SELECT RAISE(ABORT, 'settlement refused'); END;`, a.row.ID, b.row.ID)); err != nil {
+		t.Fatal(err)
+	}
+	after := int64(0)
+	for i, want := range []struct {
+		settled, failed int
+		next            int64
+	}{
+		{0, 2, b.row.ID},
+		{1, 0, 0},
+		{0, 2, b.row.ID},
+	} {
+		settled, failed, deferred, next, err := g.ph.SettlePendingOrders(g.ctx, after, 2)
+		if settled != want.settled || failed != want.failed || deferred != 0 || next != want.next || (err == nil) != (failed == 0) {
+			t.Fatalf("pass %d after %d: settled %d, failed %d, deferred %d, next %d, error %v; want %+v",
+				i+1, after, settled, failed, deferred, next, err, want)
+		}
+		after = next
+	}
+	tgAssertOrder(t, g, a, models.Outstanding)
+	tgAssertOrder(t, g, b, models.Outstanding)
+	tgAssertOrder(t, g, c, models.Credited)
+	tgAssertEarnings(t, g, tgOrderPrice(tgFloorA))
+}
+
+// The maintenance sweep keeps its position between passes.
+func TestSettlementSweepKeepsItsPosition(t *testing.T) {
+	f := newTGFixture(t, nil)
+	a, b := f.seedDirect(t, tgFloorA), f.seedDirect(t, tgFloorB)
+	g := ssExitRefused(t, f, []ssExit{{a, 0}, {b, 0}})
+	if _, err := g.db.ExecContext(g.ctx, fmt.Sprintf(`CREATE TRIGGER ss_refuse_one BEFORE INSERT ON order_settlements
+WHEN NEW.debuglet_id = %d BEGIN SELECT RAISE(ABORT, 'settlement refused'); END;`, a.row.ID)); err != nil {
+		t.Fatal(err)
+	}
+	g.d.settlementAfter = a.row.ID
+	g.d.sweepPendingSettlements(time.Time{})
+	if g.d.settlementAfter != 0 {
+		t.Fatalf("an exhausted pass continues after %d, want a new start", g.d.settlementAfter)
+	}
+	tgAssertOrder(t, g, a, models.Outstanding)
+	tgAssertOrder(t, g, b, models.Credited)
+	g.d.sweepPendingSettlements(time.Time{})
+	tgAssertOrder(t, g, a, models.Outstanding)
+	if g.d.settlementAfter != 0 {
+		t.Fatalf("a short pass continues after %d, want a new start", g.d.settlementAfter)
+	}
 }
