@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 	"github.com/netsec-ethz/debuglet/internal/hostprobe"
+	"github.com/netsec-ethz/debuglet/internal/observability"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"github.com/scionproto/scion/pkg/addr"
 	"github.com/scionproto/scion/pkg/daemon"
@@ -59,6 +61,15 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
 		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
 	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
+	stateDir := ""
+	if e.cfg.Database.Path != "" {
+		stateDir = filepath.Dir(e.cfg.Database.Path)
+	}
+	vantage.Resources = hostResources(observability.CollectHost(stateDir))
+	vantage.CounterAttachment = "unknown"
+	if counter, ok := e.packetCount.(interface{ AttachmentState() string }); ok {
+		vantage.CounterAttachment = counter.AttachmentState()
+	}
 	if initial {
 		vantage.Connectivity = e.initialConnectivityReport()
 	}
@@ -119,6 +130,14 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 		}
 	}
 	return report, vantage
+}
+
+func hostResources(host observability.HostSnapshot) *pb.HostResources {
+	value := func(v observability.HostValue) *pb.HostResourceValue {
+		return &pb.HostResourceValue{Value: v.Value, Unavailable: v.Unavailable}
+	}
+	return &pb.HostResources{ProcessRssBytes: value(host.ProcessRSSBytes), OpenFds: value(host.OpenFDs),
+		StateAvailableBytes: value(host.StateAvailableBytes), StateCapacityBytes: value(host.StateCapacityBytes)}
 }
 
 // icmpReport probes raw ICMPv4 sockets unless the operator switched ICMP off,

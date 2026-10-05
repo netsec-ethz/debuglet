@@ -34,6 +34,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Inspect an interrupted run](operations/recovery-inspection.md)
 - [Local validation checks](operations/local-checks.md)
 - [Signed releases and offline verification](operations/releases.md)
+- [External executor pilot](operations/external-pilot.md) — steps, records and support for an independently operated executor.
 
 Use the [deployment guide](../deploy/README.md) for the maintained Ansible procedures and upgrade inputs.
 

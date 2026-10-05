@@ -58,6 +58,7 @@ func TestConfigurationRefusesTheProfileOutsideALocalEnvironment(t *testing.T) {
 		{name: "TLS listener enabled", change: func(c *config.DispatcherConfig) { c.TLS.Disable = false }, names: "tls.disable"},
 		{name: "payments enabled", change: func(c *config.DispatcherConfig) { c.Sui.Disabled = false }, names: "sui.disabled"},
 		{name: "every interface", change: func(c *config.DispatcherConfig) { c.Server.BindHost = "" }, names: "server.bind_host"},
+		{name: "behind a TLS terminator", change: func(c *config.DispatcherConfig) { c.Server.BehindTLSTerminator = true }, names: "server.behind_tls_terminator"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := dispatcherConfig(filepath.Join(t.TempDir(), "dispatcher.sqlite"))

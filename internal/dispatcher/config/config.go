@@ -230,6 +230,8 @@ func (cfg *DispatcherConfig) Validate() error {
 			return errors.New("server.local_development requires sui.disabled = true; it serves unauthenticated requests as an operator and is only for a local environment")
 		case cfg.Server.BindHost == "":
 			return errors.New("server.local_development requires server.bind_host to be a loopback address; it serves unauthenticated requests as an operator and must not listen on every interface")
+		case cfg.Server.BehindTLSTerminator:
+			return errors.New("server.local_development requires server.behind_tls_terminator = false; it serves unauthenticated requests as an operator and must not be published through a TLS terminator")
 		}
 	}
 	if err := configcheck.LogLevel("logging.log_level", cfg.Logging.LogLevel); err != nil {
