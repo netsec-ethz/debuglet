@@ -139,6 +139,12 @@ printf '%s\n' 'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
 printf '%s\n' 'CILOGON_CLIENT_SECRET=' | cat "$work/cilogon_oidc.env" - >"$work/cilogon-empty-secret.env"
 grep -v '^GITHUB_OAUTH_CLIENT_SECRET' "$work/github-oauth.env" >"$work/github-no-secret.env"
 grep '^GITHUB_OAUTH_CLIENT_ID' "$work/github-oauth.env" | cat - "$work/github-oauth.env" >"$work/github-duplicate-id.env"
+printf '%s\n' 'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
+	'CILOGON_CLIENT_SECRET=""' >"$work/cilogon-quoted-empty-secret.env"
+printf '%s\n' 'GITHUB_OAUTH_CLIENT_ID=fixture-client' \
+	"GITHUB_OAUTH_CLIENT_SECRET=''" >"$work/github-quoted-empty-secret.env"
+printf '%s\n' 'CILOGON_CLIENT_ID=   ' \
+	'CILOGON_CLIENT_SECRET=fixture-secret' >"$work/cilogon-blank-id.env"
 chmod 0600 "$work"/cilogon-*.env "$work"/github-*.env
 
 # The inventory carries the host layout only. Everything a role would write to
@@ -326,11 +332,17 @@ refuses 'CILogon with a duplicate client ID and no secret is refused' 'CILOGON_C
 	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-duplicate-id.env"
 refuses 'CILogon with a trailing empty secret is refused' 'CILOGON_CLIENT_SECRET exactly once and non-empty' \
 	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-empty-secret.env"
+refuses 'CILogon with an empty quoted secret is refused' 'CILOGON_CLIENT_SECRET exactly once and non-empty' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-quoted-empty-secret.env"
+refuses 'CILogon with a whitespace-only client ID is refused' 'CILOGON_CLIENT_ID exactly once and non-empty' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-blank-id.env"
 refute 'a refused credential file does not show its values' "$work/refuse.log" 'fixture-secret'
 refuses 'GitHub OAuth without its secret is refused' 'GITHUB_OAUTH_CLIENT_SECRET exactly once and non-empty' \
 	-e "dispatcher_github_oauth_env_file=$work/github-no-secret.env"
 refuses 'GitHub OAuth with a duplicate client ID is refused' 'GITHUB_OAUTH_CLIENT_ID exactly once and non-empty' \
 	-e "dispatcher_github_oauth_env_file=$work/github-duplicate-id.env"
+refuses 'GitHub OAuth with an empty quoted secret is refused' 'GITHUB_OAUTH_CLIENT_SECRET exactly once and non-empty' \
+	-e "dispatcher_github_oauth_env_file=$work/github-quoted-empty-secret.env"
 refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certificate nothing presents' \
 	-e dispatcher_disable_tls=true
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \

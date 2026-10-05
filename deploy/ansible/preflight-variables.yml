@@ -142,12 +142,15 @@
         quiet: true
       when: dispatcher_github_oauth_enabled | bool
 
-    # Counts, per variable name, its assignment lines and its non-empty
-    # assignment lines; the values are never read into Ansible, so they cannot
-    # appear in output.
+    # Each name must be assigned on exactly one line, NAME=VALUE, with one
+    # unquoted, non-empty value and no surrounding whitespace: systemd strips
+    # quotes and surrounding whitespace from an environment file, which would
+    # leave the dispatcher an empty value. Counts, per name, its assignment
+    # lines, its non-empty ones and those of that form; the values are never
+    # read into Ansible, so they cannot appear in output.
     - name: Count local GitHub OAuth credential entries
       ansible.builtin.command:
-        argv: [sh, -c, 'grep -c -E "^$1=" "$2"; grep -c -E "^$1=.+" "$2"', sh, "{{ item }}", "{{ dispatcher_github_oauth_env_file }}"]
+        argv: [sh, -c, 'grep -c -E "^$1=" "$2"; grep -c -E "^$1=.+" "$2"; grep -c -E "^$1=$3" "$2"', sh, "{{ item }}", "{{ dispatcher_github_oauth_env_file }}", '[^[:space:]"''\][^[:space:]\]*$']
       loop: [GITHUB_OAUTH_CLIENT_ID, GITHUB_OAUTH_CLIENT_SECRET]
       delegate_to: localhost
       register: github_oauth_credential_counts
@@ -160,11 +163,12 @@
     - name: Require each GitHub OAuth credential once and non-empty
       ansible.builtin.assert:
         that:
-          - item.stdout_lines == ['1', '1']
+          - item.stdout_lines == ['1', '1', '1']
         fail_msg: >-
           {{ dispatcher_github_oauth_env_file }}, created from
           github-oauth.env.example, must assign {{ item.item }} exactly once
-          and non-empty.
+          and non-empty, as NAME=VALUE with one unquoted value and no
+          surrounding whitespace.
         quiet: true
       loop: "{{ github_oauth_credential_counts.results | default([]) }}"
       loop_control:
@@ -206,12 +210,15 @@
         quiet: true
       when: dispatcher_cilogon_oidc_enabled | bool
 
-    # Counts, per variable name, its assignment lines and its non-empty
-    # assignment lines; the values are never read into Ansible, so they cannot
-    # appear in output.
+    # Each name must be assigned on exactly one line, NAME=VALUE, with one
+    # unquoted, non-empty value and no surrounding whitespace: systemd strips
+    # quotes and surrounding whitespace from an environment file, which would
+    # leave the dispatcher an empty value. Counts, per name, its assignment
+    # lines, its non-empty ones and those of that form; the values are never
+    # read into Ansible, so they cannot appear in output.
     - name: Count local CILogon credential entries
       ansible.builtin.command:
-        argv: [sh, -c, 'grep -c -E "^$1=" "$2"; grep -c -E "^$1=.+" "$2"', sh, "{{ item }}", "{{ dispatcher_cilogon_oidc_env_file }}"]
+        argv: [sh, -c, 'grep -c -E "^$1=" "$2"; grep -c -E "^$1=.+" "$2"; grep -c -E "^$1=$3" "$2"', sh, "{{ item }}", "{{ dispatcher_cilogon_oidc_env_file }}", '[^[:space:]"''\][^[:space:]\]*$']
       loop: [CILOGON_CLIENT_ID, CILOGON_CLIENT_SECRET]
       delegate_to: localhost
       register: cilogon_credentials
@@ -224,11 +231,12 @@
     - name: Require each CILogon credential once and non-empty
       ansible.builtin.assert:
         that:
-          - item.stdout_lines == ['1', '1']
+          - item.stdout_lines == ['1', '1', '1']
         fail_msg: >-
           dispatcher_cilogon_oidc_enabled needs {{ dispatcher_cilogon_oidc_env_file }},
           created from cilogon_oidc.env.example, to assign {{ item.item }}
-          exactly once and non-empty.
+          exactly once and non-empty, as NAME=VALUE with one unquoted value
+          and no surrounding whitespace.
         quiet: true
       loop: "{{ cilogon_credentials.results | default([]) }}"
       loop_control:
