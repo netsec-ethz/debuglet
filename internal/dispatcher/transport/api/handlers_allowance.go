@@ -27,6 +27,10 @@ const (
 	// CodeConflict is a request whose idempotency key already names a
 	// different request.
 	CodeConflict = "conflict"
+	// CodeAllowanceOutOfRange is an account whose allowance history cannot be
+	// represented: a total of its grants or orders, or what remains, overflows
+	// a signed 64-bit integer.
+	CodeAllowanceOutOfRange = "allowance_out_of_range"
 )
 
 // Bounds of the operator's grant request.
@@ -44,6 +48,13 @@ func allowancesDisabled() error {
 func allowanceExceeded(err *payments.AllowanceExceededError) error {
 	return apiError(http.StatusTooManyRequests, CodeAllowanceExceeded, fmt.Sprintf(
 		"the usage allowance has %d TEST units remaining and this intent requires %d", err.Remaining, err.Required))
+}
+
+// allowanceOutOfRange answers an account whose allowance cannot be stated
+// without wrapping, instead of any balance.
+func allowanceOutOfRange(err error) error {
+	return apiErrorFrom(http.StatusConflict, CodeAllowanceOutOfRange,
+		"the account's allowance history cannot be represented; the operator must reconcile it", err)
 }
 
 func allowanceResponse(allowance payments.Allowance) wire.Allowance {
@@ -70,6 +81,9 @@ func (h *Handler) GetMyAllowance(c echo.Context) error {
 		return allowancesDisabled()
 	}
 	allowance, err := h.dispatcher.Payment.Allowance(c.Request().Context(), caller.UserUUID)
+	if errors.As(err, new(*payments.AllowanceRangeError)) {
+		return allowanceOutOfRange(err)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return apiError(http.StatusNotFound, CodeNotFound, "user does not exist")
 	}
@@ -123,6 +137,8 @@ func (h *Handler) PostAccountAllowance(c echo.Context) error {
 	switch {
 	case errors.Is(err, payments.ErrUnknownAccount):
 		return apiError(http.StatusNotFound, CodeNotFound, "account not found")
+	case errors.As(err, new(*payments.AllowanceRangeError)):
+		return allowanceOutOfRange(err)
 	case errors.Is(err, payments.ErrGrantConflict):
 		return apiError(http.StatusConflict, CodeConflict, "idempotency_key already names a grant with a different amount or reason")
 	case err != nil:

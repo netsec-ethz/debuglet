@@ -467,7 +467,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: "The idempotency_key already names a grant with a different amount or reason (conflict)."
+          description: "The idempotency_key already names a grant with a different amount or reason (conflict), or the account's allowance after the grant cannot be represented in signed 64-bit integers (allowance_out_of_range); nothing is recorded in either case."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4108,7 +4108,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: "Request identity is bound to a different parent or frozen payload (intent_mismatch)."
+          description: "Request identity is bound to a different parent or frozen payload (intent_mismatch), or, while usage allowances are enabled, the account's allowance history cannot be represented in signed 64-bit integers (allowance_out_of_range); nothing of the intent is written."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4520,6 +4520,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: "Allowances are not enabled on this dispatcher (not_found), or the account no longer exists."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "The account's allowance history cannot be represented in signed 64-bit integers (allowance_out_of_range); no balance is reported and an operator must reconcile it."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -6213,6 +6224,7 @@ components:
             - "rate_limited"
             - "allowance_exceeded"
             - "conflict"
+            - "allowance_out_of_range"
         message:
           type: "string"
           description: "Bounded human-readable diagnostic. Never carries a credential, a stack trace or internal database or transport detail."

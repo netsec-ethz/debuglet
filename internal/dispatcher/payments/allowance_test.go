@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -301,4 +302,76 @@ func TestAllowanceGrantIsIdempotentAndImmutable(t *testing.T) {
 		t.Fatal("a grant was removed")
 	}
 	assertAllowance(t, h, account, Allowance{Granted: 15})
+}
+
+// seedPricedHistory records, directly in the database, the history an account
+// may carry from before allowances were enabled: a settled TEST order priced
+// at the int64 maximum and a reserved one priced 2, and no grants. Its
+// remaining allowance is below the int64 minimum.
+func seedPricedHistory(t *testing.T, db *sql.DB, account uuid.UUID) {
+	t.Helper()
+	ctx := t.Context()
+	q := database.New(db)
+	for _, order := range []struct {
+		txID  string
+		price int64
+	}{{"tx-max", math.MaxInt64}, {"tx-two", 2}} {
+		if _, err := q.CreateTransaction(ctx, database.CreateTransactionParams{
+			ID: order.txID, Price: order.price, Currency: "TEST", Method: "TEST",
+			ExpiresAt: models.NewUTCTime(time.Now().Add(time.Hour)), Status: int64(models.Paid), Hash: testHash,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
+			TransactionID: order.txID, OrderID: testOrderID, ExecutorID: testExecutor, Price: order.price,
+			Currency: "TEST", RefundAddress: testRefund, State: int64(models.Outstanding),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.SetTransactionOwner(ctx, database.SetTransactionOwnerParams{TransactionID: order.txID, Uuid: account}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := q.InsertOrderSettlement(ctx, database.InsertOrderSettlementParams{
+		TransactionID: "tx-max", OrderID: testOrderID, Kind: settlementCredit, Amount: math.MaxInt64,
+		Currency: "TEST", ExecutorID: testExecutor, RecordedAt: models.NewUTCTime(time.Now()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An allowance whose remaining does not fit int64 is reported as out of range,
+// never as a wrapped balance, and an intent is refused without a write.
+func TestAllowanceOutOfRangeIsNeverWrapped(t *testing.T) {
+	if (Allowance{Consumed: math.MaxInt64, Reserved: 1}).representable() != true ||
+		(Allowance{Consumed: math.MaxInt64, Reserved: 2}).representable() != false ||
+		(Allowance{Granted: math.MaxInt64, Consumed: math.MaxInt64, Reserved: math.MaxInt64}).representable() != true {
+		t.Fatal("representable does not mark the int64 boundary")
+	}
+	db, h, account, _ := allowanceFixture(t)
+	seedPricedHistory(t, db, account)
+	var outOfRange *AllowanceRangeError
+	if allowance, err := h.Allowance(t.Context(), account); !errors.As(err, &outOfRange) || outOfRange.Account != account {
+		t.Fatalf("allowance of an unrepresentable history = %+v (remaining %d), %v", allowance, allowance.Remaining(), err)
+	}
+	if err := reserveIntent(t, h, db, account, "tx-new", 1); !errors.As(err, &outOfRange) {
+		t.Fatalf("intent on an unrepresentable history: %v", err)
+	}
+	if _, err := database.New(db).GetTransactionByID(t.Context(), "tx-new"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("refused intent left a transaction: %v", err)
+	}
+}
+
+// A grant after which the total of the grants overflows is not recorded.
+func TestAllowanceGrantBeyondTheRangeIsRolledBack(t *testing.T) {
+	db, h, account, operator := allowanceFixture(t)
+	mustGrant(t, h, account, operator, math.MaxInt64, "first")
+	if _, err := h.GrantAllowance(t.Context(), account, operator, 1, "trial", "second"); !errors.As(err, new(*AllowanceRangeError)) {
+		t.Fatalf("grant beyond the range: %v", err)
+	}
+	var rows int
+	if err := db.QueryRow("SELECT COUNT(*) FROM allowance_grants").Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("%d grant rows, %v; want the overflowing grant rolled back", rows, err)
+	}
+	assertAllowance(t, h, account, Allowance{Granted: math.MaxInt64})
 }

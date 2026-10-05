@@ -288,6 +288,12 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 			}
 			return allowanceExceeded(exceeded)
 		}
+		// An allowance history that cannot be represented refuses the
+		// intent with nothing of it written; the deferred rollback discards
+		// the release as well.
+		if errors.As(err, new(*payments.AllowanceRangeError)) {
+			return allowanceOutOfRange(err)
+		}
 	} else {
 		intent, err = h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
 	}

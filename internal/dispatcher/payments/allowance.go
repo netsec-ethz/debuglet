@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,9 +40,43 @@ type Allowance struct {
 }
 
 // Remaining is what the account may still reserve. It is negative when the
-// account used more before its grants than it was granted since.
+// account used more before its grants than it was granted since. An
+// Allowance read from the database is representable: readAllowance returns an
+// *AllowanceRangeError instead of one whose Remaining would overflow.
 func (a Allowance) Remaining() int64 {
 	return a.Granted - a.Consumed - a.Reserved
+}
+
+// AllowanceRangeError reports an account whose allowance history cannot be
+// represented in 64-bit integers: a total of its grants or orders, or what
+// remains of the grants, overflows. Nothing is wrapped or clamped; an operator
+// has to reconcile the history.
+type AllowanceRangeError struct {
+	Account uuid.UUID
+}
+
+func (e *AllowanceRangeError) Error() string {
+	return "the allowance history of account " + e.Account.String() + " cannot be represented"
+}
+
+// sqliteIntegerOverflow reports SQLite's error for a SUM of integers that
+// overflows, which it raises instead of wrapping.
+func sqliteIntegerOverflow(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "integer overflow")
+}
+
+// representable reports whether every aggregate of a is non-negative and
+// a.Granted - a.Consumed - a.Reserved is computed without overflow at either
+// step.
+func (a Allowance) representable() bool {
+	if a.Granted < 0 || a.Consumed < 0 || a.Reserved < 0 {
+		return false
+	}
+	// With non-negative operands, Granted - Consumed cannot overflow, and
+	// subtracting Reserved overflows only when that difference is negative
+	// and Reserved exceeds its distance from MinInt64.
+	afterConsumed := a.Granted - a.Consumed
+	return afterConsumed >= 0 || a.Reserved <= afterConsumed-math.MinInt64
 }
 
 // AllowanceExceededError refuses an intent whose price the account's
@@ -83,10 +119,17 @@ func (p *PaymentHandler) Allowance(ctx context.Context, account uuid.UUID) (Allo
 
 func readAllowance(ctx context.Context, q *database.Queries, account uuid.UUID) (Allowance, error) {
 	row, err := q.GetAllowance(ctx, database.GetAllowanceParams{PaidStatus: int64(models.Paid), UserUuid: account})
+	if sqliteIntegerOverflow(err) {
+		return Allowance{}, &AllowanceRangeError{Account: account}
+	}
 	if err != nil {
 		return Allowance{}, err
 	}
-	return Allowance{Granted: row.Granted, Reserved: row.Reserved, Consumed: row.Consumed}, nil
+	allowance := Allowance{Granted: row.Granted, Reserved: row.Reserved, Consumed: row.Consumed}
+	if !allowance.representable() {
+		return Allowance{}, &AllowanceRangeError{Account: account}
+	}
+	return allowance, nil
 }
 
 // CreateAllowanceIntentIn creates the paid TEST transaction of an account's
@@ -113,6 +156,10 @@ func (p *PaymentHandler) CreateAllowanceIntentIn(db database.DBTX, account uuid.
 		ID: transactionId, Price: price, ExpiresAt: models.NewUTCTime(now.Add(testIntentLifetime)),
 		PaidStatus: int64(models.Paid), Hash: hash, UserUuid: account,
 	})
+	if sqliteIntegerOverflow(err) {
+		// The guard's own total overflows: refuse, never wrap.
+		return PaymentIntent{}, &AllowanceRangeError{Account: account}
+	}
 	if err != nil {
 		return PaymentIntent{}, fmt.Errorf("failed to store transaction: %w", err)
 	}
@@ -137,7 +184,9 @@ type AllowanceGrantResult struct {
 // GrantAllowance records a grant of amount TEST units to account by operator.
 // The idempotency key makes a repeated request issue the grant once: the same
 // key with the same amount and reason returns the recorded grant, with any
-// other body ErrGrantConflict. An unknown account is ErrUnknownAccount.
+// other body ErrGrantConflict. An unknown account is ErrUnknownAccount. When
+// the account's allowance after the grant cannot be represented, nothing is
+// recorded and an *AllowanceRangeError is returned.
 func (p *PaymentHandler) GrantAllowance(ctx context.Context, account, operator uuid.UUID, amount int64, reason, key string) (AllowanceGrantResult, error) {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {

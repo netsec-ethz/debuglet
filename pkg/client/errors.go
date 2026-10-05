@@ -104,6 +104,9 @@ const (
 	// CodeConflict is a request whose idempotency key already names a
 	// different request.
 	CodeConflict = "conflict"
+	// CodeAllowanceOutOfRange is an account whose allowance history cannot be
+	// represented in 64-bit integers; an operator has to reconcile it.
+	CodeAllowanceOutOfRange = "allowance_out_of_range"
 )
 
 // SubmissionError reports a failed SubmitTEST. Stage is "intent" or "submit".

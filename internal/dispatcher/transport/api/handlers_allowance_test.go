@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -371,5 +372,53 @@ func TestExecutorEarningsForTheOwnerOnly(t *testing.T) {
 		if status, code := authAs(t, f, request.token, http.MethodGet, "/operator/executors/"+request.id+"/earnings", nil); status != http.StatusNotFound || code != CodeNotFound {
 			t.Fatalf("earnings of %s answered %d %s", request.id, status, code)
 		}
+	}
+}
+
+// A history whose remaining allowance does not fit int64 (a settled order
+// priced at the int64 maximum and a reserved one of 2, recorded before
+// allowances were enabled) answers 409 allowance_out_of_range, never a
+// wrapped positive balance, and an intent is refused without a write.
+func TestAllowanceOutOfRangeIsAnsweredNotWrapped(t *testing.T) {
+	f := alNewFixture(t)
+	_, _, userID, userToken := alAccounts(t, f)
+	ctx := t.Context()
+	for _, order := range []struct {
+		txID  string
+		price int64
+	}{{"tx-max", math.MaxInt64}, {"tx-two", 2}} {
+		if _, err := f.queries.CreateTransaction(ctx, database.CreateTransactionParams{
+			ID: order.txID, Price: order.price, Currency: "TEST", Method: "TEST",
+			ExpiresAt: models.NewUTCTime(time.Now().Add(time.Hour)), Status: int64(models.Paid), Hash: "history",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
+			TransactionID: order.txID, OrderID: 1, ExecutorID: ccExecutorID, Price: order.price,
+			Currency: "TEST", State: int64(models.Outstanding),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.queries.SetTransactionOwner(ctx, database.SetTransactionOwnerParams{TransactionID: order.txID, Uuid: uuid.MustParse(userID)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.queries.InsertOrderSettlement(ctx, database.InsertOrderSettlementParams{
+		TransactionID: "tx-max", OrderID: 1, Kind: "credit", Amount: math.MaxInt64,
+		Currency: "TEST", ExecutorID: ccExecutorID, RecordedAt: models.NewUTCTime(time.Now()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, code, data, _ := authRequest(t, f, http.MethodGet, "/me/allowance", nil, authBearer(userToken))
+	if status != http.StatusConflict || code != CodeAllowanceOutOfRange || strings.Contains(string(data), "remaining\"") {
+		t.Fatalf("allowance of an unrepresentable history answered %d: %s", status, data)
+	}
+	before := ecRowCounts(t, f)
+	if status, envelope, _, data := iaPutIntent(t, f, userToken, iaDebuglet(1, 1000, 2000)); status != http.StatusConflict || envelope.Code != CodeAllowanceOutOfRange {
+		t.Fatalf("intent on an unrepresentable history answered %d: %s", status, data)
+	}
+	if after := ecRowCounts(t, f); after["transactions"] != before["transactions"] || after["debuglet_order"] != before["debuglet_order"] || after["transaction_users"] != before["transaction_users"] {
+		t.Fatalf("a refused intent wrote rows: before %v after %v", before, after)
 	}
 }
