@@ -13,20 +13,21 @@ import (
 )
 
 const getPaymentReceipt = `-- name: GetPaymentReceipt :one
-SELECT tx_digest, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail FROM payment_receipts
-WHERE tx_digest = ? AND nonce = ?
+SELECT tx_digest, event_seq, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail FROM payment_receipts
+WHERE tx_digest = ? AND event_seq = ?
 `
 
 type GetPaymentReceiptParams struct {
 	TxDigest string
-	Nonce    string
+	EventSeq int64
 }
 
 func (q *Queries) GetPaymentReceipt(ctx context.Context, arg GetPaymentReceiptParams) (PaymentReceipt, error) {
-	row := q.db.QueryRowContext(ctx, getPaymentReceipt, arg.TxDigest, arg.Nonce)
+	row := q.db.QueryRowContext(ctx, getPaymentReceipt, arg.TxDigest, arg.EventSeq)
 	var i PaymentReceipt
 	err := row.Scan(
 		&i.TxDigest,
+		&i.EventSeq,
 		&i.Nonce,
 		&i.Disposition,
 		&i.Amount,
@@ -40,12 +41,13 @@ func (q *Queries) GetPaymentReceipt(ctx context.Context, arg GetPaymentReceiptPa
 }
 
 const insertPaymentReceipt = `-- name: InsertPaymentReceipt :exec
-INSERT INTO payment_receipts (tx_digest, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO payment_receipts (tx_digest, event_seq, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertPaymentReceiptParams struct {
 	TxDigest    string
+	EventSeq    int64
 	Nonce       string
 	Disposition string
 	Amount      string
@@ -59,6 +61,7 @@ type InsertPaymentReceiptParams struct {
 func (q *Queries) InsertPaymentReceipt(ctx context.Context, arg InsertPaymentReceiptParams) error {
 	_, err := q.db.ExecContext(ctx, insertPaymentReceipt,
 		arg.TxDigest,
+		arg.EventSeq,
 		arg.Nonce,
 		arg.Disposition,
 		arg.Amount,
@@ -72,9 +75,9 @@ func (q *Queries) InsertPaymentReceipt(ctx context.Context, arg InsertPaymentRec
 }
 
 const listPaymentReceiptsByNonce = `-- name: ListPaymentReceiptsByNonce :many
-SELECT tx_digest, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail FROM payment_receipts
+SELECT tx_digest, event_seq, nonce, disposition, amount, coin_type, receiver, checkpoint, observed_at, detail FROM payment_receipts
 WHERE nonce = ?
-ORDER BY observed_at, tx_digest
+ORDER BY observed_at, tx_digest, event_seq
 `
 
 func (q *Queries) ListPaymentReceiptsByNonce(ctx context.Context, nonce string) ([]PaymentReceipt, error) {
@@ -88,6 +91,7 @@ func (q *Queries) ListPaymentReceiptsByNonce(ctx context.Context, nonce string) 
 		var i PaymentReceipt
 		if err := rows.Scan(
 			&i.TxDigest,
+			&i.EventSeq,
 			&i.Nonce,
 			&i.Disposition,
 			&i.Amount,

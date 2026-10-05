@@ -285,6 +285,7 @@ type PayloadTombstone struct {
 
 type PaymentReceipt struct {
 	TxDigest    string
+	EventSeq    int64
 	Nonce       string
 	Disposition string
 	Amount      string

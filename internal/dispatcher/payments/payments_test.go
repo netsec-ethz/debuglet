@@ -981,7 +981,7 @@ func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
 // ---- ApplyPaymentReceipt (the chain listener's TransactionFulfiller) ----
 
 var (
-	getPaymentReceiptQuery   = regexp.QuoteMeta("FROM payment_receipts\nWHERE tx_digest = ? AND nonce = ?")
+	getPaymentReceiptQuery   = regexp.QuoteMeta("FROM payment_receipts\nWHERE tx_digest = ? AND event_seq = ?")
 	markTransactionPaidQuery = regexp.QuoteMeta("UPDATE transactions\nSET status = ?1\nWHERE id = ?2 AND status = ?3")
 )
 
@@ -995,7 +995,7 @@ func TestApplyPaymentReceiptModes(t *testing.T) {
 	}
 	expectBeginAndReceiptMiss := func(mock sqlmock.Sqlmock) {
 		mock.ExpectBegin()
-		mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, testTxID).WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, int64(0)).WillReturnError(sql.ErrNoRows)
 	}
 	cases := []struct {
 		name     string
@@ -1008,7 +1008,7 @@ func TestApplyPaymentReceiptModes(t *testing.T) {
 			name: "enabled receipt lookup error: rolled back",
 			expect: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
-				mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, testTxID).WillReturnError(errScripted)
+				mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, int64(0)).WillReturnError(errScripted)
 				mock.ExpectRollback()
 			},
 			want: errScripted,

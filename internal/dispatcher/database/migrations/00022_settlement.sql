@@ -1,11 +1,14 @@
 -- +goose up
 -- Every chain payment receipt addressed to this dispatcher, keyed by the chain
--- transaction digest and the receipt nonce (our transaction id). The row is
+-- transaction digest and the event's position among the transaction's events:
+-- one transaction may emit several receipts, also with the same nonce (our
+-- transaction id). The row is
 -- written in the same SQL transaction as the payment's effect, so a receipt
 -- read again after a restart is recognized instead of applied twice. The
 -- amount is decimal text so that a chain amount beyond INTEGER is kept exactly.
 CREATE TABLE payment_receipts (
     tx_digest TEXT NOT NULL,
+    event_seq INTEGER NOT NULL CHECK (event_seq >= 0),
     nonce TEXT NOT NULL,
     disposition TEXT NOT NULL CHECK (disposition IN ('applied', 'duplicate', 'mismatch', 'unknown_intent', 'expired')),
     amount TEXT NOT NULL,
@@ -14,8 +17,9 @@ CREATE TABLE payment_receipts (
     checkpoint INTEGER,
     observed_at TIMESTAMP NOT NULL,
     detail TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (tx_digest, nonce)
+    PRIMARY KEY (tx_digest, event_seq)
 );
+CREATE INDEX payment_receipts_nonce_idx ON payment_receipts(nonce);
 
 -- Outbound chain transfers (executor payouts and refunds). A row is reserved
 -- before the chain call and records what is known about it afterwards. The
@@ -44,4 +48,5 @@ CREATE INDEX chain_transfers_executor_idx ON chain_transfers(executor_id, curren
 -- +goose down
 DROP INDEX chain_transfers_executor_idx;
 DROP TABLE chain_transfers;
+DROP INDEX payment_receipts_nonce_idx;
 DROP TABLE payment_receipts;

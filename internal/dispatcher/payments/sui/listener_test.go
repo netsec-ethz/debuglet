@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -102,10 +103,13 @@ func encode(t *testing.T, ev receiptEvent) []byte {
 	return b
 }
 
-// event is one GraphQL event node.
+// event is one GraphQL event node. A zero checkpoint passes every
+// checkpoint filter.
 type event struct {
-	digest string
-	bcs    []byte
+	digest     string
+	seq        uint64
+	checkpoint uint64
+	bcs        []byte
 }
 
 func node(t *testing.T, digest string, ev receiptEvent) event {
@@ -113,11 +117,33 @@ func node(t *testing.T, digest string, ev receiptEvent) event {
 	return event{digest: digest, bcs: encode(t, ev)}
 }
 
-// graphQL serves PaymentReceipt events in pages, linked by endCursor.
+// graphQL serves PaymentReceipt events in pages, linked by endCursor, and
+// the indexer's last ingested checkpoint. Events of later checkpoints are not
+// served, like an indexer that has not ingested them yet.
 type graphQL struct {
-	mu      sync.Mutex
-	pages   [][]event
-	queries []map[string]any
+	mu         sync.Mutex
+	pages      [][]event
+	indexed    uint64
+	queries    []map[string]any // events queries
+	watermarks int              // indexed checkpoint queries
+}
+
+func (g *graphQL) setIndexed(cp uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.indexed = cp
+}
+
+func (g *graphQL) indexerQueries() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.watermarks
+}
+
+func (g *graphQL) eventQueries() []map[string]any {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]map[string]any(nil), g.queries...)
 }
 
 func (g *graphQL) setPages(pages ...[]event) {
@@ -128,6 +154,7 @@ func (g *graphQL) setPages(pages ...[]event) {
 
 func (g *graphQL) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -136,7 +163,23 @@ func (g *graphQL) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if strings.Contains(req.Query, "serviceConfig") {
+		g.watermarks++
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"serviceConfig": map[string]any{
+			"availableRange": map[string]any{"last": map[string]any{"sequenceNumber": g.indexed}},
+		}}})
+		return
+	}
 	g.queries = append(g.queries, req.Variables)
+	visible := func(ev event) bool {
+		if ev.checkpoint == 0 {
+			return true
+		}
+		after, hasAfter := req.Variables["afterCheckpoint"].(float64)
+		before, hasBefore := req.Variables["beforeCheckpoint"].(float64)
+		return ev.checkpoint <= g.indexed && (!hasAfter || float64(ev.checkpoint) > after) &&
+			(!hasBefore || float64(ev.checkpoint) < before)
+	}
 	index := 0
 	if after, ok := req.Variables["after"].(string); ok {
 		fmt.Sscanf(after, "page-%d", &index)
@@ -145,15 +188,20 @@ func (g *graphQL) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Transaction struct {
 			Digest string `json:"digest"`
 		} `json:"transaction"`
-		Contents struct {
+		SequenceNumber uint64 `json:"sequenceNumber"`
+		Contents       struct {
 			Bcs string `json:"bcs"`
 		} `json:"contents"`
 	}
 	nodes := []nodeJSON{}
 	if index < len(g.pages) {
 		for _, ev := range g.pages[index] {
+			if !visible(ev) {
+				continue
+			}
 			var n nodeJSON
 			n.Transaction.Digest = ev.digest
+			n.SequenceNumber = ev.seq
 			n.Contents.Bcs = base64.StdEncoding.EncodeToString(ev.bcs)
 			nodes = append(nodes, n)
 		}
@@ -187,7 +235,7 @@ func newFixture(t *testing.T) *fixture {
 	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	server := &graphQL{}
+	server := &graphQL{indexed: math.MaxInt32}
 	httpServer := httptest.NewServer(server)
 	t.Cleanup(httpServer.Close)
 	cfg := &config.DispatcherConfig{Sui: config.SuiConfig{
@@ -298,12 +346,9 @@ func TestCatchUpAppliesEachReceiptOnce(t *testing.T) {
 	if f.status(t, "tx-a") != models.Paid || f.status(t, "tx-b") != models.Paid || f.cursor(t) != "20" {
 		t.Fatalf("after first pass: a=%v b=%v cursor=%s", f.status(t, "tx-a"), f.status(t, "tx-b"), f.cursor(t))
 	}
-	want := []string{"d1/tx-a=applied::7", "d2/tx-b=applied::7", "d3/tx-a=mismatch:already paid by d1:7"}
+	want := []string{"d1/tx-a=applied::7", "d2/tx-b=applied::7", "d3/tx-a=mismatch:already paid by d1 event 0:7"}
 	equal(t, "rows", f.receipts(t), want)
-	f.server.mu.Lock()
-	after := f.server.queries[0]["afterCheckpoint"]
-	f.server.mu.Unlock()
-	if after != float64(10) {
+	if after := f.server.eventQueries()[0]["afterCheckpoint"]; after != float64(10) {
 		t.Fatalf("queried after checkpoint %v", after)
 	}
 
@@ -429,27 +474,29 @@ func checkpoint(t *testing.T, seq uint64, digest string, nonce string) *v2.Check
 	}
 }
 
-func TestProcessCheckpoint(t *testing.T) {
+func TestStreamRecordsCheckpoint(t *testing.T) {
 	f := newFixture(t)
 	f.transaction(t, "tx-a", time.Now().Add(time.Hour))
 	f.transaction(t, "tx-b", time.Now().Add(time.Hour))
 	f.setCursor(t, "41")
-	if err := f.listener().ProcessCheckpoint(t.Context(), checkpoint(t, 42, "d1", "tx-a")); err != nil {
+	cursor := uint64(41)
+	stream := f.listener().NewStream(&cursor)
+	if err := stream.Checkpoint(t.Context(), checkpoint(t, 42, "d1", "tx-a")); err != nil {
 		t.Fatal(err)
 	}
-	row, err := database.New(f.db).GetPaymentReceipt(t.Context(), database.GetPaymentReceiptParams{TxDigest: "d1", Nonce: "tx-a"})
+	row, err := database.New(f.db).GetPaymentReceipt(t.Context(), database.GetPaymentReceiptParams{TxDigest: "d1", EventSeq: 1})
 	if err != nil || row.Disposition != "applied" || row.Checkpoint != (sql.NullInt64{Int64: 42, Valid: true}) {
 		t.Fatalf("streamed receipt %+v, %v", row, err)
 	}
-	if f.cursor(t) != "42" || f.status(t, "tx-a") != models.Paid {
-		t.Fatalf("cursor %s, tx-a %v", f.cursor(t), f.status(t, "tx-a"))
+	if f.cursor(t) != "42" || f.status(t, "tx-a") != models.Paid || f.server.indexerQueries() != 0 {
+		t.Fatalf("cursor %s, tx-a %v, indexer queries %d", f.cursor(t), f.status(t, "tx-a"), f.server.indexerQueries())
 	}
 
 	if _, err := f.db.Exec(`CREATE TRIGGER fail_receipt BEFORE INSERT ON payment_receipts
 BEGIN SELECT RAISE(ABORT, 'scripted receipt failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.listener().ProcessCheckpoint(t.Context(), checkpoint(t, 43, "d2", "tx-b")); err == nil {
+	if err := stream.Checkpoint(t.Context(), checkpoint(t, 43, "d2", "tx-b")); err == nil {
 		t.Fatal("checkpoint with a failing write succeeded")
 	}
 	if f.cursor(t) != "42" || f.status(t, "tx-b") != models.Outstanding {
@@ -478,36 +525,28 @@ func TestStreamCatchesUpGapBeforeCheckpoint(t *testing.T) {
 	f.transaction(t, "tx-gap", time.Now().Add(time.Hour))
 	f.transaction(t, "tx-live", time.Now().Add(time.Hour))
 	f.setCursor(t, "10")
-	f.server.setPages([]event{node(t, "d-gap", receipt("tx-gap"))})
-	l := f.listener()
+	f.server.setPages([]event{{digest: "d-gap", checkpoint: 12, bcs: encode(t, receipt("tx-gap"))}})
 	cursor := uint64(10)
+	stream := f.listener().NewStream(&cursor)
 
-	seq, err := l.StreamCheckpoint(t.Context(), &cursor, checkpoint(t, 15, "d-live", "tx-live"))
-	if err != nil || seq != 15 {
-		t.Fatalf("StreamCheckpoint = %d, %v", seq, err)
+	if err := stream.Checkpoint(t.Context(), checkpoint(t, 15, "d-live", "tx-live")); err != nil {
+		t.Fatal(err)
 	}
 	equal(t, "order", f.dispositions(), []string{"d-gap=applied", "d-live=applied"})
-	f.server.mu.Lock()
-	queries := len(f.server.queries)
-	after := f.server.queries[0]["afterCheckpoint"]
-	f.server.mu.Unlock()
-	if queries != 1 || after != float64(10) {
-		t.Fatalf("gap queries %d after %v", queries, after)
+	queries := f.server.eventQueries()
+	if len(queries) != 1 || queries[0]["afterCheckpoint"] != float64(10) || queries[0]["beforeCheckpoint"] != float64(15) {
+		t.Fatalf("gap queries %v", queries)
 	}
 	if f.cursor(t) != "15" {
 		t.Fatalf("cursor %s", f.cursor(t))
 	}
 
 	// The next checkpoint follows directly: no catch-up query.
-	cursor = 15
-	if _, err := l.StreamCheckpoint(t.Context(), &cursor, checkpoint(t, 16, "d-next", "tx-live")); err != nil {
+	if err := stream.Checkpoint(t.Context(), checkpoint(t, 16, "d-next", "tx-live")); err != nil {
 		t.Fatal(err)
 	}
-	f.server.mu.Lock()
-	queries = len(f.server.queries)
-	f.server.mu.Unlock()
-	if queries != 1 || f.cursor(t) != "16" {
-		t.Fatalf("contiguous checkpoint: queries %d, cursor %s", queries, f.cursor(t))
+	if n := len(f.server.eventQueries()); n != 1 || f.cursor(t) != "16" {
+		t.Fatalf("contiguous checkpoint: queries %d, cursor %s", n, f.cursor(t))
 	}
 }
 
@@ -518,7 +557,7 @@ func TestStreamGapFailureKeepsCursor(t *testing.T) {
 	f.setCursor(t, "10")
 	f.server.setPages([]event{{digest: "d-gap", bcs: []byte{1}}})
 	cursor := uint64(10)
-	if _, err := f.listener().StreamCheckpoint(t.Context(), &cursor, checkpoint(t, 15, "d-live", "tx-gap")); err == nil {
+	if err := f.listener().NewStream(&cursor).Checkpoint(t.Context(), checkpoint(t, 15, "d-live", "tx-gap")); err == nil {
 		t.Fatal("gap with an undecodable event succeeded")
 	}
 	if f.cursor(t) != "10" || len(f.receipts(t)) != 0 {
@@ -526,21 +565,128 @@ func TestStreamGapFailureKeepsCursor(t *testing.T) {
 	}
 }
 
-// Without a stored cursor the listener starts at the tip and stores it, so a
-// restart before the first streamed checkpoint keeps that starting point.
+// Without a stored cursor the listener starts at the tip the indexer has
+// reached and stores it, so a restart before the first streamed checkpoint
+// keeps that starting point.
 func TestFirstStartStoresTip(t *testing.T) {
+	for _, tc := range []struct {
+		indexed uint64
+		want    string
+	}{{100, "77"}, {70, "70"}} {
+		f := newFixture(t)
+		f.server.setIndexed(tc.indexed)
+		cursor, err := f.listener().CatchUpTo(t.Context(), nil, 77)
+		if err != nil || cursor == nil || strconv.FormatUint(*cursor, 10) != tc.want {
+			t.Fatalf("indexer at %d: CatchUpTo = %v, %v", tc.indexed, cursor, err)
+		}
+		if f.cursor(t) != tc.want || len(f.server.eventQueries()) != 0 {
+			t.Fatalf("indexer at %d: stored cursor %s, %d event queries", tc.indexed, f.cursor(t), len(f.server.eventQueries()))
+		}
+	}
+}
+
+// The cursor never passes what the indexer has ingested. Node at 110,
+// indexer at 105, a payment at 108 the indexer exposes only later: it is
+// applied once, when the indexer has it.
+func TestCatchUpStopsAtIndexedCheckpoint(t *testing.T) {
 	f := newFixture(t)
-	cursor, err := f.listener().CatchUpTo(t.Context(), nil, 77)
-	if err != nil || cursor == nil || *cursor != 77 {
-		t.Fatalf("CatchUpTo = %v, %v", cursor, err)
+	f.transaction(t, "tx-108", time.Now().Add(time.Hour))
+	f.setCursor(t, "100")
+	f.server.setPages([]event{{digest: "d108", checkpoint: 108, bcs: encode(t, receipt("tx-108"))}})
+	f.server.setIndexed(105)
+	l := f.listener()
+	cursor := uint64(100)
+
+	next, err := l.CatchUpTo(t.Context(), &cursor, 110)
+	if err != nil || f.cursor(t) != "105" || *next != 105 {
+		t.Fatalf("indexer behind the node: cursor %s, %v", f.cursor(t), err)
 	}
-	if f.cursor(t) != "77" {
-		t.Fatalf("stored cursor %s", f.cursor(t))
+	if f.status(t, "tx-108") != models.Outstanding || len(f.receipts(t)) != 0 {
+		t.Fatal("receipt of an unindexed checkpoint was applied")
 	}
-	f.server.mu.Lock()
-	queries := len(f.server.queries)
-	f.server.mu.Unlock()
-	if queries != 0 {
-		t.Fatalf("first start queried %d pages", queries)
+	// The indexer behind the stored cursor: nothing is stored.
+	f.server.setIndexed(103)
+	if again, err := l.CatchUpTo(t.Context(), next, 110); err != nil || *again != 105 || f.cursor(t) != "105" {
+		t.Fatalf("indexer behind the cursor: %v, cursor %s", err, f.cursor(t))
 	}
+
+	f.server.setIndexed(110)
+	if next, err = l.CatchUpTo(t.Context(), next, 110); err != nil || *next != 110 || f.cursor(t) != "110" {
+		t.Fatalf("indexer caught up: cursor %s, %v", f.cursor(t), err)
+	}
+	equal(t, "rows", f.receipts(t), []string{"d108/tx-108=applied::7"})
+	if f.status(t, "tx-108") != models.Paid {
+		t.Fatal("receipt at 108 not applied")
+	}
+}
+
+// A streamed checkpoint far ahead of a lagging indexer records its own
+// receipts but leaves the cursor at what the indexer has proven; the gap is
+// read when the indexer has it.
+func TestStreamWaitsForIndexer(t *testing.T) {
+	f := newFixture(t)
+	for _, id := range []string{"tx-108", "tx-115", "tx-116"} {
+		f.transaction(t, id, time.Now().Add(time.Hour))
+	}
+	f.setCursor(t, "100")
+	f.server.setPages([]event{{digest: "d108", checkpoint: 108, bcs: encode(t, receipt("tx-108"))}})
+	f.server.setIndexed(105)
+	cursor := uint64(100)
+	stream := f.listener().NewStream(&cursor)
+
+	if err := stream.Checkpoint(t.Context(), checkpoint(t, 115, "d115", "tx-115")); err != nil {
+		t.Fatal(err)
+	}
+	if f.cursor(t) != "105" || *stream.Cursor() != 105 || f.status(t, "tx-115") != models.Paid || f.status(t, "tx-108") != models.Outstanding {
+		t.Fatalf("lagging indexer: cursor %s, tx-115 %v, tx-108 %v", f.cursor(t), f.status(t, "tx-115"), f.status(t, "tx-108"))
+	}
+
+	f.server.setIndexed(115)
+	if err := stream.Checkpoint(t.Context(), checkpoint(t, 116, "d116", "tx-116")); err != nil {
+		t.Fatal(err)
+	}
+	if f.cursor(t) != "116" || f.status(t, "tx-108") != models.Paid || f.status(t, "tx-116") != models.Paid {
+		t.Fatalf("indexer caught up: cursor %s, tx-108 %v", f.cursor(t), f.status(t, "tx-108"))
+	}
+	equal(t, "rows", f.receipts(t), []string{"d108/tx-108=applied::7", "d115/tx-115=applied::7", "d116/tx-116=applied::7"})
+	queries := f.server.eventQueries()
+	if len(queries) != 2 || queries[1]["afterCheckpoint"] != float64(105) || queries[1]["beforeCheckpoint"] != float64(115) {
+		t.Fatalf("catch-up queries %v", queries)
+	}
+
+	// The same range read again on a restart applies nothing twice.
+	if _, err := f.listener().CatchUpTo(t.Context(), &cursor, 116); err != nil {
+		t.Fatal(err)
+	}
+	equal(t, "rows after restart", f.receipts(t), []string{"d108/tx-108=applied::7", "d115/tx-115=applied::7", "d116/tx-116=applied::7"})
+}
+
+// Several receipt events of one transaction are separate receipts.
+func TestReceiptsOfOneTransaction(t *testing.T) {
+	f := newFixture(t)
+	f.transaction(t, "tx-a", time.Now().Add(time.Hour))
+	wrong := encode(t, receipt("tx-a", func(ev *receiptEvent) { ev.PaymentAmount = price + 1 }))
+	valid := encode(t, receipt("tx-a"))
+	f.server.setPages([]event{{digest: "d1", seq: 0, bcs: wrong}, {digest: "d1", seq: 3, bcs: valid}})
+
+	if err := f.listener().CatchUpRange(t.Context(), 0, 5); err != nil {
+		t.Fatal(err)
+	}
+	if f.status(t, "tx-a") != models.Paid {
+		t.Fatal("valid event after a rejected one in the same transaction did not pay")
+	}
+	var dispositions []string
+	rows, err := f.db.QueryContext(t.Context(), "SELECT disposition || ':' || detail FROM payment_receipts WHERE tx_digest = 'd1' ORDER BY disposition")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		dispositions = append(dispositions, d)
+	}
+	equal(t, "events of d1", dispositions, []string{"applied:", "mismatch:amount"})
 }

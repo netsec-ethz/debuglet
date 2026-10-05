@@ -22,7 +22,8 @@ import (
 // In one SQL transaction it validates a chain payment receipt against the
 // transaction its nonce names, marks an outstanding transaction paid when the
 // receipt pays it exactly, and records the receipt with its disposition. A
-// receipt that was recorded before is not applied again: an applied one is
+// receipt is one event, identified by its transaction digest and position; one
+// transaction may carry several. A receipt that was recorded before is not applied again: an applied one is
 // reported as duplicate, any other with its recorded disposition. A receipt
 // to another address whose nonce names no local transaction is not ours and
 // is not recorded (empty disposition). A database error is returned with
@@ -39,7 +40,11 @@ func (p *PaymentHandler) ApplyPaymentReceipt(ctx context.Context, r sui.PaymentR
 	defer tx.Rollback()
 	queries := database.New(tx)
 
-	stored, err := queries.GetPaymentReceipt(ctx, database.GetPaymentReceiptParams{TxDigest: r.Digest, Nonce: r.Nonce})
+	if r.EventSeq > math.MaxInt64 {
+		return "", fmt.Errorf("payment receipt %s: event position %d out of range", r.Digest, r.EventSeq)
+	}
+	eventSeq := int64(r.EventSeq)
+	stored, err := queries.GetPaymentReceipt(ctx, database.GetPaymentReceiptParams{TxDigest: r.Digest, EventSeq: eventSeq})
 	if err == nil {
 		if disposition := sui.ReceiptDisposition(stored.Disposition); disposition != sui.ReceiptApplied {
 			return disposition, nil
@@ -60,6 +65,7 @@ func (p *PaymentHandler) ApplyPaymentReceipt(ctx context.Context, r sui.PaymentR
 	}
 	if err := queries.InsertPaymentReceipt(ctx, database.InsertPaymentReceiptParams{
 		TxDigest:    r.Digest,
+		EventSeq:    eventSeq,
 		Nonce:       r.Nonce,
 		Disposition: string(disposition),
 		Amount:      strconv.FormatUint(r.Amount, 10),
@@ -115,14 +121,14 @@ func (p *PaymentHandler) settleReceipt(ctx context.Context, queries *database.Qu
 		return sui.ReceiptApplied, "", nil
 	}
 	// The same receipt was answered above from its own row, so an applied
-	// receipt for this nonce is a second payment by another chain transaction.
+	// receipt for this nonce is a second payment by another event.
 	recorded, err := queries.ListPaymentReceiptsByNonce(ctx, r.Nonce)
 	if err != nil {
 		return "", "", fmt.Errorf("read payment receipts: %w", err)
 	}
 	for _, other := range recorded {
 		if other.Disposition == string(sui.ReceiptApplied) {
-			return sui.ReceiptMismatch, "already paid by " + other.TxDigest, nil
+			return sui.ReceiptMismatch, fmt.Sprintf("already paid by %s event %d", other.TxDigest, other.EventSeq), nil
 		}
 	}
 	return sui.ReceiptMismatch, "transaction not outstanding", nil

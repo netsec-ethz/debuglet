@@ -56,6 +56,7 @@ const (
 // PaymentReceipt is a decoded payment kit receipt event.
 type PaymentReceipt struct {
 	Digest     string // chain transaction digest
+	EventSeq   uint64 // position of the event among the transaction's events
 	Nonce      string // our transaction id
 	Amount     uint64 // base units of CoinType
 	CoinType   string
@@ -183,32 +184,40 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 	return l.catchUpTo(ctx, cursor, info.GetCheckpointHeight())
 }
 
-// catchUpTo brings the stored cursor to tip. Without a stored cursor it
-// stores tip, so a restart keeps the same starting point.
+// catchUpTo brings the stored cursor towards the full node's tip, but only
+// as far as the GraphQL indexer has proven to have ingested: events of later
+// checkpoints may not be visible there yet. Without a stored cursor it stores
+// that bound, so a restart keeps the same starting point.
 func (l *Listener) catchUpTo(ctx context.Context, cursor *uint64, tip uint64) (*uint64, error) {
+	indexed, err := l.indexedCheckpoint(ctx)
+	if err != nil {
+		return cursor, err
+	}
+	bound := min(tip, indexed)
 	if cursor == nil {
-		if err := l.storeCursor(ctx, tip); err != nil {
+		if err := l.storeCursor(ctx, bound); err != nil {
 			return nil, err
 		}
-		l.logger.Info("no stored sui cursor, starting at chain tip", zap.Uint64("checkpoint", tip))
-		return &tip, nil
+		l.logger.Info("no stored sui cursor, starting at chain tip", zap.Uint64("checkpoint", bound))
+		return &bound, nil
 	}
-	if *cursor >= tip {
+	if *cursor >= bound {
 		return cursor, nil
 	}
 
-	if err := l.catchUpRange(ctx, *cursor, tip); err != nil {
+	if err := l.catchUpRange(ctx, *cursor, bound); err != nil {
 		return cursor, err
 	}
-	return &tip, nil
+	return &bound, nil
 }
 
-// catchUpRange records every receipt event after checkpoint after and then
-// stores tip as the cursor. It returns on the first event that could not be
-// recorded, leaving the stored cursor where it was.
-func (l *Listener) catchUpRange(ctx context.Context, after, tip uint64) error {
+// catchUpRange records every receipt event of the checkpoints (after, to] and
+// then stores to as the cursor. The caller has established that the indexer
+// covers to. It returns on the first event that could not be recorded,
+// leaving the stored cursor where it was.
+func (l *Listener) catchUpRange(ctx context.Context, after, to uint64) error {
 	l.logger.Info("sui catch-up: querying PaymentReceipt events via GraphQL",
-		zap.Uint64("after_checkpoint", after), zap.Uint64("to", tip))
+		zap.Uint64("after_checkpoint", after), zap.Uint64("to", to))
 
 	var (
 		pageCursor *string
@@ -219,7 +228,7 @@ func (l *Listener) catchUpRange(ctx context.Context, after, tip uint64) error {
 			return ctx.Err()
 		}
 
-		page, err := l.queryPaymentReceiptEvents(ctx, after, pageCursor)
+		page, err := l.queryPaymentReceiptEvents(ctx, after, to+1, pageCursor)
 		if err != nil {
 			return fmt.Errorf("query payment receipt events: %w", err)
 		}
@@ -230,7 +239,7 @@ func (l *Listener) catchUpRange(ctx context.Context, after, tip uint64) error {
 				return fmt.Errorf("payment receipt in transaction %s: decode base64: %w", node.Transaction.Digest, err)
 			}
 			// The GraphQL query does not report the event's checkpoint.
-			if _, err := l.processPaymentReceipt(ctx, contents, node.Transaction.Digest, 0); err != nil {
+			if _, err := l.processPaymentReceipt(ctx, contents, node.Transaction.Digest, node.SequenceNumber, 0); err != nil {
 				return err
 			}
 			numEvents++
@@ -243,19 +252,51 @@ func (l *Listener) catchUpRange(ctx context.Context, after, tip uint64) error {
 		pageCursor = &endCursor
 	}
 
-	if err := l.storeCursor(ctx, tip); err != nil {
+	if err := l.storeCursor(ctx, to); err != nil {
 		return err
 	}
-	l.logger.Info("sui catch-up: done", zap.Int("events_processed", numEvents), zap.Uint64("checkpoint", tip))
+	l.logger.Info("sui catch-up: done", zap.Int("events_processed", numEvents), zap.Uint64("checkpoint", to))
 	return nil
 }
 
+// indexedCheckpointQuery asks for the last checkpoint whose events the
+// indexer serves.
+const indexedCheckpointQuery = `
+query IndexedCheckpoint {
+  serviceConfig {
+    availableRange(type: "Query", field: "events") { last { sequenceNumber } }
+  }
+}`
+
+// indexedCheckpoint returns the last checkpoint the GraphQL indexer has
+// ingested events for.
+func (l *Listener) indexedCheckpoint(ctx context.Context) (uint64, error) {
+	var resp struct {
+		ServiceConfig struct {
+			AvailableRange struct {
+				Last *struct {
+					SequenceNumber uint64 `json:"sequenceNumber"`
+				} `json:"last"`
+			} `json:"availableRange"`
+		} `json:"serviceConfig"`
+	}
+	if err := l.graphQLQuery(ctx, indexedCheckpointQuery, nil, &resp); err != nil {
+		return 0, fmt.Errorf("query indexed checkpoint: %w", err)
+	}
+	last := resp.ServiceConfig.AvailableRange.Last
+	if last == nil {
+		return 0, errors.New("query indexed checkpoint: no checkpoint reported")
+	}
+	return last.SequenceNumber, nil
+}
+
 const paymentReceiptEventsQuery = `
-query PaymentReceiptEvents($type: String!, $afterCheckpoint: UInt53, $first: Int!, $after: String) {
-  events(first: $first, after: $after, filter: { type: $type, afterCheckpoint: $afterCheckpoint }) {
+query PaymentReceiptEvents($type: String!, $afterCheckpoint: UInt53, $beforeCheckpoint: UInt53, $first: Int!, $after: String) {
+  events(first: $first, after: $after, filter: { type: $type, afterCheckpoint: $afterCheckpoint, beforeCheckpoint: $beforeCheckpoint }) {
     pageInfo { hasNextPage endCursor }
     nodes {
       transaction { digest }
+      sequenceNumber
       contents { bcs }
     }
   }
@@ -265,7 +306,8 @@ type paymentReceiptEventNode struct {
 	Transaction struct {
 		Digest string `json:"digest"`
 	} `json:"transaction"`
-	Contents struct {
+	SequenceNumber uint64 `json:"sequenceNumber"`
+	Contents       struct {
 		Bcs string `json:"bcs"`
 	} `json:"contents"`
 }
@@ -280,13 +322,14 @@ type paymentReceiptEventsResponse struct {
 	} `json:"events"`
 }
 
-func (l *Listener) queryPaymentReceiptEvents(ctx context.Context, afterCheckpoint uint64, after *string) (*paymentReceiptEventsResponse, error) {
+func (l *Listener) queryPaymentReceiptEvents(ctx context.Context, afterCheckpoint, beforeCheckpoint uint64, after *string) (*paymentReceiptEventsResponse, error) {
 	var resp paymentReceiptEventsResponse
 	err := l.graphQLQuery(ctx, paymentReceiptEventsQuery, map[string]any{
-		"type":            l.eventType,
-		"afterCheckpoint": afterCheckpoint,
-		"first":           catchUpPageSize,
-		"after":           after,
+		"type":             l.eventType,
+		"afterCheckpoint":  afterCheckpoint,
+		"beforeCheckpoint": beforeCheckpoint,
+		"first":            catchUpPageSize,
+		"after":            after,
 	}, &resp)
 	return &resp, err
 }
@@ -349,6 +392,7 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 		return fmt.Errorf("SubscribeCheckpoints failed to start: %v", err)
 	}
 
+	state := streamState{cursor: *cursor}
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
@@ -358,51 +402,80 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 			return fmt.Errorf("recv checkpoint: %w", err)
 		}
 
-		seq, err := l.streamCheckpoint(ctx, *cursor, resp.GetCheckpoint())
+		if err := l.streamCheckpoint(ctx, &state, resp.GetCheckpoint()); err != nil {
+			return err
+		}
+		*cursor = state.cursor
+	}
+}
+
+// streamState is what one subscription has covered: the stored cursor and
+// the run of consecutive streamed checkpoints whose receipts are recorded.
+type streamState struct {
+	cursor   *uint64
+	runStart uint64
+	last     uint64
+	running  bool
+}
+
+// streamCheckpoint records the receipts of one streamed checkpoint and
+// advances the stored cursor only over checkpoints that are recorded: the
+// stream starts at the live checkpoint, so the checkpoints between the cursor
+// and the start of the streamed run are caught up through the indexer first,
+// as far as it has ingested them. Until it covers them all, the cursor stays
+// at the proven bound and the streamed receipts are recorded without moving
+// it; reading them again later finds them recorded.
+func (l *Listener) streamCheckpoint(ctx context.Context, st *streamState, cp *v2.Checkpoint) error {
+	seq := cp.GetSequenceNumber()
+	if !st.running || seq != st.last+1 {
+		st.runStart, st.running = seq, true
+	}
+	st.last = seq
+	if st.cursor != nil && *st.cursor+1 < st.runStart {
+		indexed, err := l.indexedCheckpoint(ctx)
 		if err != nil {
 			return err
 		}
-		*cursor = &seq
-	}
-}
-
-// streamCheckpoint handles one streamed checkpoint after the stored cursor.
-// The stream starts at the live checkpoint, so checkpoints between the cursor
-// and it are caught up first; the cursor never passes an unread checkpoint.
-func (l *Listener) streamCheckpoint(ctx context.Context, cursor *uint64, cp *v2.Checkpoint) (uint64, error) {
-	seq := cp.GetSequenceNumber()
-	if cursor != nil && seq > *cursor+1 {
-		if err := l.catchUpRange(ctx, *cursor, seq-1); err != nil {
-			return 0, err
+		if bound := min(indexed, st.runStart-1); bound > *st.cursor {
+			if err := l.catchUpRange(ctx, *st.cursor, bound); err != nil {
+				return err
+			}
+			st.cursor = &bound
 		}
 	}
-	if err := l.processCheckpoint(ctx, cp); err != nil {
-		return 0, err
+	if err := l.recordCheckpoint(ctx, cp); err != nil {
+		return err
 	}
-	return seq, nil
+	if st.cursor != nil && (*st.cursor+1 < st.runStart || *st.cursor >= seq) {
+		return nil
+	}
+	if err := l.storeCursor(ctx, seq); err != nil {
+		return err
+	}
+	st.cursor = &seq
+	return nil
 }
 
-// processCheckpoint records every receipt event of one streamed checkpoint
-// and then stores its sequence number as the cursor.
-func (l *Listener) processCheckpoint(ctx context.Context, cp *v2.Checkpoint) error {
+// recordCheckpoint records every receipt event of one streamed checkpoint.
+func (l *Listener) recordCheckpoint(ctx context.Context, cp *v2.Checkpoint) error {
 	seq := cp.GetSequenceNumber()
 	for _, tx := range cp.GetTransactions() {
-		for _, ev := range tx.GetEvents().GetEvents() {
+		for i, ev := range tx.GetEvents().GetEvents() {
 			if ev.GetEventType() != l.eventType {
 				continue
 			}
-			if _, err := l.processPaymentReceipt(ctx, ev.GetContents().GetValue(), tx.GetDigest(), seq); err != nil {
+			if _, err := l.processPaymentReceipt(ctx, ev.GetContents().GetValue(), tx.GetDigest(), uint64(i), seq); err != nil {
 				return err
 			}
 		}
 	}
-	return l.storeCursor(ctx, seq)
+	return nil
 }
 
 // processPaymentReceipt decodes one receipt event and records it. An event
 // that cannot be decoded is an error, like a failed write: skipping it would
 // lose the payment once the cursor moves past it.
-func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, txDigest string, checkpoint uint64) (ReceiptDisposition, error) {
+func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, txDigest string, eventSeq, checkpoint uint64) (ReceiptDisposition, error) {
 	if txDigest == "" {
 		return "", errors.New("payment receipt event without transaction digest")
 	}
@@ -412,6 +485,7 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 	}
 	receipt := PaymentReceipt{
 		Digest:     txDigest,
+		EventSeq:   eventSeq,
 		Nonce:      ev.Nonce,
 		Amount:     ev.PaymentAmount,
 		CoinType:   ev.CoinType,
@@ -421,11 +495,11 @@ func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, t
 	}
 	disposition, err := l.fulfiller.ApplyPaymentReceipt(ctx, receipt)
 	if err != nil {
-		return "", fmt.Errorf("record payment receipt %s/%s: %w", txDigest, ev.Nonce, err)
+		return "", fmt.Errorf("record payment receipt %s event %d: %w", txDigest, eventSeq, err)
 	}
 	if disposition != "" {
 		l.logger.Info("payment receipt recorded",
-			zap.String("tx", txDigest), zap.String("nonce", ev.Nonce), zap.String("disposition", string(disposition)))
+			zap.String("tx", txDigest), zap.Uint64("event", eventSeq), zap.String("nonce", ev.Nonce), zap.String("disposition", string(disposition)))
 	}
 	return disposition, nil
 }

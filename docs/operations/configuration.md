@@ -127,8 +127,9 @@ and retain paid databases and backups for operator reconciliation.
 
 From dispatcher schema 22, the dispatcher database also keeps `payment_receipts`,
 one row per chain payment receipt addressed to the dispatcher (chain
-transaction digest, nonce, amount, coin type, receiver and whether it was
-applied, a duplicate, a mismatch, expired or for an unknown intent), and
+transaction digest and event position, nonce, amount, coin type, receiver and
+whether it was applied, a duplicate, a mismatch, expired or for an unknown
+intent), and
 `chain_transfers`, the outbound payout and refund transfers and their states,
 including each signed transaction and its signature, stored before broadcast.
 Both are kept indefinitely for reconciliation; they stay empty while chain
