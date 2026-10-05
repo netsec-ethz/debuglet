@@ -158,6 +158,8 @@
       register: cilogon_credentials
       changed_when: false
       failed_when: false
+      # Read-only, so it also runs under --check, where the assert needs it.
+      check_mode: false
       when: dispatcher_cilogon_oidc_enabled | bool
 
     - name: Require local CILogon credentials
