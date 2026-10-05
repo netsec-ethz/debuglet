@@ -4,6 +4,7 @@
 package sui
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -15,6 +16,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"math"
+	"math/big"
 	"net"
 	"net/url"
 	"strconv"
@@ -221,6 +223,40 @@ type PreparedTransfer struct {
 	Digest    string
 	txBytes   []byte
 	signature string
+}
+
+// Bytes returns the signed BCS transaction data, for persisting before
+// submission.
+func (p *PreparedTransfer) Bytes() []byte { return p.txBytes }
+
+// Signature returns the transaction signature, for persisting before
+// submission.
+func (p *PreparedTransfer) Signature() string { return p.signature }
+
+// RestorePreparedTransfer rebuilds a prepared transfer from persisted values,
+// so that a transfer recorded before a restart can be submitted unchanged.
+// It refuses a digest that is not the digest of txBytes; errors wrap
+// ErrNotBroadcast.
+func RestorePreparedTransfer(digest string, txBytes []byte, signature string) (*PreparedTransfer, error) {
+	if len(txBytes) == 0 || signature == "" {
+		return nil, fmt.Errorf("%w: restore transfer %s: missing transaction bytes or signature", ErrNotBroadcast, digest)
+	}
+	computed, err := utils.GetTxDigestFromBytes(txBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: restore transfer %s: %w", ErrNotBroadcast, digest, err)
+	}
+	if computed != digest {
+		return nil, fmt.Errorf("%w: restore transfer %s: the transaction bytes have digest %s", ErrNotBroadcast, digest, computed)
+	}
+	return &PreparedTransfer{Digest: digest, txBytes: bytes.Clone(txBytes), signature: signature}, nil
+}
+
+// TransferExpectation is what a transfer must have done on chain: credit
+// Amount of CoinType to Receiver.
+type TransferExpectation struct {
+	Receiver string
+	Amount   uint64
+	CoinType string
 }
 
 // Bounds of coin selection. Coins are read in pages of coinPageSize, at most
@@ -476,28 +512,77 @@ func (h *SuiPaymentHandler) TransferCoins(amount uint64, cointype string, receiv
 }
 
 // LookupTransfer reports what the chain knows about the transfer with the
-// given digest. An error means the lookup itself failed.
-func (h *SuiPaymentHandler) LookupTransfer(ctx context.Context, digest string) (TransferOutcome, error) {
+// given digest. An error means the lookup itself failed, or that a confirmed
+// transaction did not do what expect describes; a mismatch is not a failed
+// transfer. With a non-nil expect, verified reports whether the node returned
+// balance changes and the receiver's credit was checked against them; when it
+// is false, confirmed rests on the digest and the execution status alone.
+func (h *SuiPaymentHandler) LookupTransfer(ctx context.Context, digest string, expect *TransferExpectation) (outcome TransferOutcome, verified bool, err error) {
 	if digest == "" {
-		return "", errors.New("look up transfer: empty digest")
+		return "", false, errors.New("look up transfer: empty digest")
 	}
-	result, err := h.client.GetTransaction(ctx, types.GetTransactionOptions{Digest: digest})
+	result, err := h.client.GetTransaction(ctx, types.GetTransactionOptions{
+		Digest:  digest,
+		Include: types.TransactionInclude{BalanceChanges: expect != nil},
+	})
 	if err != nil {
 		if status.Code(err) == codes.NotFound || errors.Is(err, types.ErrTransactionNotFound) {
-			return TransferNotFound, nil
+			return TransferNotFound, false, nil
 		}
-		return "", fmt.Errorf("look up transfer %s: %w", digest, err)
+		return "", false, fmt.Errorf("look up transfer %s: %w", digest, err)
 	}
 	switch tx := result.Transaction; {
 	case tx == nil:
-		return "", fmt.Errorf("look up transfer %s: empty response", digest)
+		return "", false, fmt.Errorf("look up transfer %s: empty response", digest)
 	case tx.Status.Success:
-		return TransferConfirmed, nil
+		if expect == nil || len(tx.BalanceChanges) == 0 {
+			return TransferConfirmed, false, nil
+		}
+		if err := checkCredit(tx.BalanceChanges, *expect); err != nil {
+			return "", false, fmt.Errorf("look up transfer %s: %w", digest, err)
+		}
+		return TransferConfirmed, true, nil
 	case tx.Status.Error != nil:
-		return TransferFailed, nil
+		return TransferFailed, false, nil
 	default:
-		return "", fmt.Errorf("look up transfer %s: response carries no execution status", digest)
+		return "", false, fmt.Errorf("look up transfer %s: response carries no execution status", digest)
 	}
+}
+
+// checkCredit requires the balance changes to credit exactly expect.Amount
+// of expect.CoinType to expect.Receiver. Addresses, including the package of
+// the coin type, are compared in their normalised form.
+func checkCredit(changes []types.BalanceChange, expect TransferExpectation) error {
+	receiver := utils.NormalizeSuiAddress(expect.Receiver)
+	coinType := normalizeCoinType(expect.CoinType)
+	credit := new(big.Int)
+	for _, change := range changes {
+		if err := ValidAddress(change.Address); err != nil {
+			return fmt.Errorf("balance change: %w", err)
+		}
+		if utils.NormalizeSuiAddress(change.Address) != receiver || normalizeCoinType(change.CoinType) != coinType {
+			continue
+		}
+		amount, ok := new(big.Int).SetString(change.Amount, 10)
+		if !ok {
+			return fmt.Errorf("balance change: invalid amount %q", change.Amount)
+		}
+		credit.Add(credit, amount)
+	}
+	if want := new(big.Int).SetUint64(expect.Amount); credit.Cmp(want) != 0 {
+		return fmt.Errorf("receiver %s was credited %s %s, expected %d", expect.Receiver, credit, expect.CoinType, expect.Amount)
+	}
+	return nil
+}
+
+// normalizeCoinType pads the package address of a coin type such as
+// 0x2::sui::SUI, so that short and long forms compare equal.
+func normalizeCoinType(coinType string) string {
+	pkg, rest, ok := strings.Cut(coinType, "::")
+	if !ok || ValidAddress(pkg) != nil {
+		return coinType
+	}
+	return string(utils.NormalizeSuiAddress(pkg)) + "::" + rest
 }
 
 func (h *SuiPaymentHandler) RefundDebuglet(debugletOrder *database.DebugletOrder, refundAddress string, ctx context.Context) error {

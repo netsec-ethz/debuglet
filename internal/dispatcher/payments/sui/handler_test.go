@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -253,6 +254,8 @@ type chainFixture struct {
 	execFails bool
 	// statuses maps a digest to its executed status; absent means not found.
 	statuses map[string]bool
+	// changes maps a digest to the balance changes the node reports.
+	changes map[string][]*v2.BalanceChange
 }
 
 type stateFixture struct {
@@ -305,7 +308,11 @@ func (l ledgerFixture) GetTransaction(_ context.Context, req *v2.GetTransactionR
 	if !ok {
 		return nil, status.Error(codes.NotFound, "transaction not found")
 	}
-	return &v2.GetTransactionResponse{Transaction: executed(req.GetDigest(), success)}, nil
+	tx := executed(req.GetDigest(), success)
+	if slices.Contains(req.GetReadMask().GetPaths(), "balance_changes") {
+		tx.BalanceChanges = l.f.changes[req.GetDigest()]
+	}
+	return &v2.GetTransactionResponse{Transaction: tx}, nil
 }
 
 type execFixture struct {
@@ -370,6 +377,7 @@ func fundedFixture() *chainFixture {
 		},
 		gasPrice: 1000,
 		statuses: map[string]bool{},
+		changes:  map[string][]*v2.BalanceChange{},
 	}
 }
 
@@ -481,13 +489,112 @@ func TestLookupTransfer(t *testing.T) {
 		"failed-digest":    TransferFailed,
 		"unknown-digest":   TransferNotFound,
 	} {
-		got, err := h.LookupTransfer(context.Background(), digest)
-		if err != nil || got != want {
-			t.Fatalf("LookupTransfer(%q) = (%q, %v), want %q", digest, got, err, want)
+		got, verified, err := h.LookupTransfer(context.Background(), digest, nil)
+		if err != nil || got != want || verified {
+			t.Fatalf("LookupTransfer(%q) = (%q, %v, %v), want %q unverified", digest, got, verified, err, want)
 		}
 	}
-	if _, err := h.LookupTransfer(context.Background(), ""); err == nil {
+	if _, _, err := h.LookupTransfer(context.Background(), "", nil); err == nil {
 		t.Fatalf("LookupTransfer(empty) succeeded")
+	}
+}
+
+func balanceChange(address string, coinType string, amount string) *v2.BalanceChange {
+	return &v2.BalanceChange{Address: proto.String(address), CoinType: proto.String(coinType), Amount: proto.String(amount)}
+}
+
+func TestLookupTransferChecksTheCredit(t *testing.T) {
+	sender := testSigner().Address
+	short := "0x" + strings.TrimLeft(testReceiver[2:], "0")
+	expect := &TransferExpectation{Receiver: testReceiver, Amount: 50, CoinType: testUSDC}
+	cases := []struct {
+		name    string
+		changes []*v2.BalanceChange
+		want    TransferOutcome
+		checked bool
+		err     string
+	}{
+		{"matching credit", []*v2.BalanceChange{
+			balanceChange(sender, testUSDC, "-50"),
+			balanceChange(short, testUSDC, "50"), // short address form
+			balanceChange(sender, "0x2::sui::SUI", "-1000"),
+		}, TransferConfirmed, true, ""},
+		{"no balance changes", nil, TransferConfirmed, false, ""},
+		{"wrong amount", []*v2.BalanceChange{balanceChange(testReceiver, testUSDC, "49")}, "", false, "credited 49"},
+		{"wrong receiver", []*v2.BalanceChange{balanceChange(testObjectID(0xbb), testUSDC, "50")}, "", false, "credited 0"},
+		{"wrong coin type", []*v2.BalanceChange{balanceChange(testReceiver, "0x2::sui::SUI", "50")}, "", false, "credited 0"},
+		{"malformed amount", []*v2.BalanceChange{balanceChange(testReceiver, testUSDC, "5x")}, "", false, "invalid amount"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fundedFixture()
+			f.statuses["digest"] = true
+			f.changes["digest"] = tc.changes
+			h := startFixture(t, f)
+			got, checked, err := h.LookupTransfer(context.Background(), "digest", expect)
+			if tc.err == "" {
+				if err != nil || got != tc.want || checked != tc.checked {
+					t.Fatalf("LookupTransfer = (%q, %v, %v), want (%q, %v)", got, checked, err, tc.want, tc.checked)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.err) || got == TransferFailed || got == TransferConfirmed {
+				t.Fatalf("LookupTransfer = (%q, %v, %v), want an error containing %q", got, checked, err, tc.err)
+			}
+		})
+	}
+	t.Run("failure status is failed whatever the changes", func(t *testing.T) {
+		f := fundedFixture()
+		f.statuses["digest"] = false
+		f.changes["digest"] = []*v2.BalanceChange{balanceChange(sender, "0x2::sui::SUI", "-1000")}
+		h := startFixture(t, f)
+		if got, _, err := h.LookupTransfer(context.Background(), "digest", expect); err != nil || got != TransferFailed {
+			t.Fatalf("LookupTransfer = (%q, %v), want failed", got, err)
+		}
+	})
+}
+
+func TestRestorePreparedTransfer(t *testing.T) {
+	f := fundedFixture()
+	h := startFixture(t, f)
+	prepared, err := h.PrepareTransfer(context.Background(), 50, testUSDC, testReceiver)
+	if err != nil {
+		t.Fatalf("PrepareTransfer: %v", err)
+	}
+	// What a caller persists before submission.
+	digest, txBytes, signature := prepared.Digest, bytes.Clone(prepared.Bytes()), prepared.Signature()
+
+	restored, err := RestorePreparedTransfer(digest, txBytes, signature)
+	if err != nil {
+		t.Fatalf("RestorePreparedTransfer: %v", err)
+	}
+	if err := h.ExecuteTransfer(context.Background(), restored); err != nil {
+		t.Fatalf("ExecuteTransfer(restored): %v", err)
+	}
+	if len(f.executed) != 1 || !bytes.Equal(f.executed[0], txBytes) || restored.Digest != digest {
+		t.Fatalf("the restored transfer did not submit the persisted bytes")
+	}
+
+	other, err := h.PrepareTransfer(context.Background(), 40, testUSDC, testReceiver)
+	if err != nil {
+		t.Fatalf("PrepareTransfer: %v", err)
+	}
+	for name, args := range map[string]struct {
+		digest    string
+		txBytes   []byte
+		signature string
+	}{
+		"digest of other bytes": {other.Digest, txBytes, signature},
+		"altered bytes":         {digest, append(bytes.Clone(txBytes), 0), signature},
+		"no bytes":              {digest, nil, signature},
+		"no signature":          {digest, txBytes, ""},
+	} {
+		if _, err := RestorePreparedTransfer(args.digest, args.txBytes, args.signature); !errors.Is(err, ErrNotBroadcast) {
+			t.Fatalf("%s: RestorePreparedTransfer = %v, want ErrNotBroadcast", name, err)
+		}
+	}
+	if len(f.executed) != 1 {
+		t.Fatalf("a refused restore submitted a transaction")
 	}
 }
 

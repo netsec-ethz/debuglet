@@ -43,7 +43,7 @@ type chainBackend interface {
 	TransferCoins(amount uint64, cointype string, receiver string, ctx context.Context) (string, error)
 	PrepareTransfer(ctx context.Context, amount uint64, coinType string, receiver string) (*sui.PreparedTransfer, error)
 	ExecuteTransfer(ctx context.Context, prepared *sui.PreparedTransfer) error
-	LookupTransfer(ctx context.Context, digest string) (sui.TransferOutcome, error)
+	LookupTransfer(ctx context.Context, digest string, expect *sui.TransferExpectation) (sui.TransferOutcome, bool, error)
 }
 
 // payoutLoop is the subset of *PayoutTicker that PaymentHandler uses.

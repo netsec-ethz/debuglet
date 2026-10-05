@@ -103,7 +103,9 @@ type fakeChain struct {
 	executed   *sui.PreparedTransfer
 	executeErr error
 	lookedUp   string
+	expected   *sui.TransferExpectation
 	outcome    sui.TransferOutcome
+	verified   bool
 	lookupErr  error
 }
 
@@ -185,12 +187,12 @@ func (f *fakeChain) ExecuteTransfer(ctx context.Context, prepared *sui.PreparedT
 	return f.executeErr
 }
 
-func (f *fakeChain) LookupTransfer(ctx context.Context, digest string) (sui.TransferOutcome, error) {
+func (f *fakeChain) LookupTransfer(ctx context.Context, digest string, expect *sui.TransferExpectation) (sui.TransferOutcome, bool, error) {
 	f.record("LookupTransfer")
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lookedUp = digest
-	return f.outcome, f.lookupErr
+	f.lookedUp, f.expected = digest, expect
+	return f.outcome, f.verified, f.lookupErr
 }
 
 // fakePayout is a scripted payoutLoop that blocks until its context ends.
