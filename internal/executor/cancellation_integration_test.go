@@ -216,7 +216,7 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	executorDB := openDB("executor.sqlite", executordb.MigrationFS())
 	dispatcherDB := openDB("dispatcher.sqlite", dispatcherdb.MigrationFS())
 	logger := zap.NewNop()
-	payment := payments.NewPaymentHandler(dispatcherDB, &dispatcherconfig.DispatcherConfig{Sui: dispatcherconfig.SuiConfig{Disabled: true}}, logger)
+	payment, _ := payments.NewPaymentHandler(dispatcherDB, &dispatcherconfig.DispatcherConfig{Sui: dispatcherconfig.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, dispatcherDB, "cancellation-fixture", time.Minute, time.Second, payment)
 	if err != nil {
 		t.Fatal(err)

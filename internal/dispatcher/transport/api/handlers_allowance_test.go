@@ -43,7 +43,11 @@ func alNewFixture(t *testing.T, options ...Option) *ccFixture {
 		t.Fatalf("migrate: %v", err)
 	}
 	cfg := &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}, Allowance: config.AllowanceConfig{Enabled: true}}
-	d, err := dispatcher.New(zap.NewNop(), db, "al-version", time.Minute, time.Minute, payments.NewPaymentHandler(db, cfg, zap.NewNop()))
+	ph, err := payments.NewPaymentHandler(db, cfg, zap.NewNop())
+	if err != nil {
+		t.Fatalf("payment handler: %v", err)
+	}
+	d, err := dispatcher.New(zap.NewNop(), db, "al-version", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
 	}

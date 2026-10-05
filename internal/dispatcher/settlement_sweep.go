@@ -23,8 +23,9 @@ const (
 // request and settlement is idempotent per order, so an order settled by the
 // terminal path meanwhile is left as it is. Each pass attempts at most
 // settlementSweepLimit orders, continuing after the last run the previous pass
-// attempted and starting over once the listing is exhausted. Chain refunds are
-// not retried here; a durable transfer record is to take them over.
+// attempted and starting over once the listing is exhausted. A chain refund is
+// sent from here only while no refund transfer covers the order; one that
+// exists, whatever its outcome, is resolved by transfer reconciliation.
 func (d *Dispatcher) sweepPendingSettlements(last time.Time) time.Time {
 	now := d.now()
 	if !last.IsZero() && now.Sub(last) < settlementSweepInterval {

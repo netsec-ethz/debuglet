@@ -2,43 +2,47 @@ package payments
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
+	"fmt"
 	"regexp"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 var (
 	getEarningsQuery = regexp.QuoteMeta(
 		"SELECT executor_id, currency, total_income, current_balance, sui_wallet_address FROM earnings",
 	) + `\s*$`
-	settleEarningQuery = regexp.QuoteMeta(
-		"UPDATE earnings \nSET current_balance = 0\nWHERE executor_id = ? AND currency = ?",
-	)
 )
 
 // recordingHandler is a payout Handler that records every earning it is asked
-// to pay and fails for the executors listed in failFor.
+// to pay and counts reconciliation passes.
 type recordingHandler struct {
-	mu      sync.Mutex
-	paid    []database.Earning
-	failFor map[string]bool
+	mu         sync.Mutex
+	paid       []database.Earning
+	reconciled int
 }
 
 func (r *recordingHandler) PayoutExecutor(e database.Earning, ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.paid = append(r.paid, e)
-	if r.failFor[e.ExecutorID] {
-		return errScripted
-	}
+	return nil
+}
+
+func (r *recordingHandler) ReconcileTransfers(ctx context.Context, limit int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reconciled++
 	return nil
 }
 
@@ -48,25 +52,10 @@ func (r *recordingHandler) Paid() []database.Earning {
 	return append([]database.Earning(nil), r.paid...)
 }
 
-// argRecorder is a sqlmock argument matcher that accepts any value and keeps
-// what it saw, so a test can assert which rows a statement was run for even
-// when the production code discards the statement's error.
-type argRecorder struct {
-	mu   sync.Mutex
-	seen []driver.Value
-}
-
-func (r *argRecorder) Match(v driver.Value) bool {
+func (r *recordingHandler) Reconciled() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.seen = append(r.seen, v)
-	return true
-}
-
-func (r *argRecorder) Seen() []driver.Value {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]driver.Value(nil), r.seen...)
+	return r.reconciled
 }
 
 func newTestTicker(t *testing.T, period time.Duration, handler Handler) (*PayoutTicker, sqlmock.Sqlmock) {
@@ -74,7 +63,9 @@ func newTestTicker(t *testing.T, period time.Duration, handler Handler) (*Payout
 	db, mock := newMockDB(t)
 	ticker := time.NewTicker(period)
 	t.Cleanup(ticker.Stop)
-	return &PayoutTicker{ticker: ticker, database: db, handler: handler, logger: zap.NewNop()}, mock
+	reconcile := time.NewTicker(period)
+	t.Cleanup(reconcile.Stop)
+	return &PayoutTicker{ticker: ticker, reconcile: reconcile, database: db, handler: handler, logger: zap.NewNop()}, mock
 }
 
 // TestStartPayoutLoopReturnsOnCancel runs the loop with a ticker that would
@@ -123,6 +114,8 @@ func TestStartPayoutLoopStopsTicker(t *testing.T) {
 	select {
 	case tick := <-pt.ticker.C:
 		t.Fatalf("ticker delivered a tick at %v after the loop returned; ticker not stopped", tick)
+	case tick := <-pt.reconcile.C:
+		t.Fatalf("reconciliation ticker delivered a tick at %v after the loop returned; ticker not stopped", tick)
 	case <-time.After(10 * period):
 	}
 	if paid := handler.Paid(); len(paid) != 0 {
@@ -131,33 +124,83 @@ func TestStartPayoutLoopStopsTicker(t *testing.T) {
 	assertMet(t, mock)
 }
 
-// TestPayExecutorsSettlesOnlySuccessfulPayouts drives PayExecutors directly:
-// a successful payout settles the earning row, a failed one leaves it alone.
-// The failing executor is listed first so a wrong settle would be recorded by
-// the argument recorder before the expected one.
-func TestPayExecutorsSettlesOnlySuccessfulPayouts(t *testing.T) {
-	handler := &recordingHandler{failFor: map[string]bool{"exec-fail": true}}
+// TestStartPayoutLoopReconciles runs the loop with a payout tick an hour away
+// and a short reconciliation tick: reconciliation runs without a payout.
+func TestStartPayoutLoopReconciles(t *testing.T) {
+	handler := &recordingHandler{}
 	pt, mock := newTestTicker(t, time.Hour, handler)
+	pt.reconcile.Reset(time.Millisecond)
 
-	mock.ExpectQuery(getEarningsQuery).WillReturnRows(sqlmock.NewRows(earningsColumns).
-		AddRow("exec-fail", "USDC", int64(10), int64(10), "0xfail").
-		AddRow("exec-ok", "USDC", int64(20), int64(20), "0xok"))
-	settled := &argRecorder{}
-	mock.ExpectExec(settleEarningQuery).WithArgs(settled, "USDC").WillReturnResult(sqlmock.NewResult(0, 1))
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- pt.StartPayoutLoop(ctx) }()
+	deadline := time.Now().Add(waitBound)
+	for handler.Reconciled() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := waitErr(t, errCh, "StartPayoutLoop after cancellation"); err != nil {
+		t.Fatalf("StartPayoutLoop returned %v", err)
+	}
+	if n := handler.Reconciled(); n < 2 {
+		t.Fatalf("%d reconciliation passes within %v", n, waitBound)
+	}
+	if paid := handler.Paid(); len(paid) != 0 {
+		t.Fatalf("reconciliation paid executors: %v", paid)
+	}
+	assertMet(t, mock)
+}
+
+// TestPayExecutorsSettlesOnlySuccessfulPayouts drives PayExecutors over a
+// real database: a successful payout leaves the balance reserved in a sent
+// transfer, a failed one restores the balance and records the failure. A
+// zero balance is skipped, and a balance without a wallet is not paid out and
+// counted once.
+func TestPayExecutorsSettlesOnlySuccessfulPayouts(t *testing.T) {
+	db, h, chain := transferFixture(t)
+	const failWallet, okWallet = "0xfa11", "0x0c"
+	chain.executeFor = map[string]error{failWallet: fmt.Errorf("%w: refused", sui.ErrNotBroadcast)}
+	seedEarning(t, db, "exec-fail", 10, failWallet)
+	seedEarning(t, db, "exec-ok", 20, okWallet)
+	seedEarning(t, db, "exec-empty", 0, "0x0e")
+	seedEarning(t, db, "exec-nowallet", 30, "")
+	if _, err := database.New(db).CreateEarnings(t.Context(), database.CreateEarningsParams{ExecutorID: "exec-test", Currency: "TEST"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.New(db).AddEarnings(t.Context(), database.AddEarningsParams{Amount: 40, ExecutorID: "exec-test", Currency: "TEST"}); err != nil {
+		t.Fatal(err)
+	}
+	core, logs := observer.New(zapcore.DebugLevel)
+	pt := &PayoutTicker{database: db, handler: h, logger: zap.New(core)}
 
 	pt.PayExecutors(context.Background())
 
-	paid := handler.Paid()
-	if len(paid) != 2 || paid[0].ExecutorID != "exec-fail" || paid[1].ExecutorID != "exec-ok" {
-		t.Fatalf("payout attempts %v", paid)
+	if n := count(chain.Calls(), "ExecuteTransfer"); n != 2 || count(chain.Calls(), "PrepareTransfer") != 2 {
+		t.Fatalf("%d executions, want 2", n)
 	}
-	if paid[1].CurrentBalance != 20 || paid[1].SuiWalletAddress != "0xok" {
-		t.Fatalf("earning forwarded to handler %+v", paid[1])
+	for executor, want := range map[string]int64{"exec-fail": 10, "exec-ok": 0, "exec-empty": 0, "exec-nowallet": 30} {
+		if got := earningOf(t, db, executor).CurrentBalance; got != want {
+			t.Fatalf("balance of %s %d, want %d", executor, got, want)
+		}
 	}
-	if seen := settled.Seen(); len(seen) != 1 || seen[0] != "exec-ok" {
-		t.Fatalf("settled executors %v, want [exec-ok]", seen)
+	states := map[string]string{}
+	for _, row := range transferRows(t, db) {
+		states[row.ExecutorID] = row.State
 	}
-	assertMet(t, mock)
+	if fmt.Sprint(states) != fmt.Sprint(map[string]string{"exec-fail": transferFailed, "exec-ok": transferSent}) {
+		t.Fatalf("transfer states %v", states)
+	}
+	test, err := database.New(db).GetEarningsIn(t.Context(), database.GetEarningsInParams{ExecutorID: "exec-test", Currency: "TEST"})
+	if err != nil || test.CurrentBalance != 40 {
+		t.Fatalf("TEST earning %+v, %v; want it untouched", test, err)
+	}
+	if n := logs.FilterField(zap.String("execID", "exec-test")).Len(); n != 0 {
+		t.Fatalf("TEST earning logged %d times", n)
+	}
+	warned := logs.FilterMessage("Earnings without a payout wallet were not paid out").All()
+	if len(warned) != 1 || warned[0].ContextMap()["balances"] != int64(1) {
+		t.Fatalf("wallet warnings %v", warned)
+	}
 }
 
 func TestPayExecutorsQueryError(t *testing.T) {

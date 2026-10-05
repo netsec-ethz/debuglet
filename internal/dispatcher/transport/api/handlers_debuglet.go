@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -148,7 +149,10 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		// those runs may be executing or credited, and refunding would pay
 		// for the same work twice.
 		if !errors.Is(err, dispatcher.ErrPaymentInUse) {
-			refund := h.dispatcher.Payment.RefundUnadmittedTransaction
+			refund := func(id string, ctx context.Context) error {
+				_, err := h.dispatcher.Payment.RefundUnadmittedTransaction(id, ctx)
+				return err
+			}
 			if errors.Is(err, dispatcher.ErrAdmissionCommitted) {
 				refund = h.dispatcher.Payment.RefundTransaction
 			}
@@ -202,10 +206,12 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 // what it decides is what happens to a payment order that was already paid
 // when admission stopped. Such an order is refunded here, because the batch it
 // paid for is not being accepted, and a refunded order is spent: the same
-// batch is refused on the transaction's status from then on. A refund that
-// cannot be performed is not silently dropped either: the refusal then says
-// the order is still paid, so the same batch can be submitted again once
-// admission resumes.
+// batch is refused on the transaction's status from then on. The refusal says
+// what became of the money: sent, recorded and pending confirmation, or
+// recorded but not sent and owed, on this request and on any later one. A
+// refund that cannot be decided is not silently dropped either: the refusal
+// then says the order is still paid, so the same batch can be submitted again
+// once admission resumes.
 //
 // The order is read only to answer that question, and only an order the caller
 // has proved it may spend is reported on at all. An unknown transaction,
@@ -221,17 +227,51 @@ func (h *Handler) refuseForMaintenance(c echo.Context, established *caller, req 
 	switch {
 	case !spendable:
 	case tx.Status == int64(models.Refunded):
-		message += "; this payment order was refunded and cannot be spent again"
+		message += h.recordedRefund(ctx, req.TransactionId)
 	case tx.Status == int64(models.Paid):
-		if refundErr := h.dispatcher.Payment.RefundUnadmittedTransaction(req.TransactionId, ctx); refundErr != nil {
-			h.logger.Warn("Failed to refund transaction", zap.String("ID", daemonlog.Identifier(req.TransactionId)))
-			h.logger.Debug("Private request diagnostic", zap.String("ID", daemonlog.Identifier(req.TransactionId)), zap.String("error", requestDiagnostic(c, refundErr, req.AuthKey)))
-			message += "; this payment order is paid and was not refunded, so it stays paid and the same batch can be submitted again once admission resumes"
+		outcome, refundErr := h.dispatcher.Payment.RefundUnadmittedTransaction(req.TransactionId, ctx)
+		if refundErr == nil {
+			message += refundStatement(outcome, true)
+			break
+		}
+		h.logger.Warn("Failed to refund transaction", zap.String("ID", daemonlog.Identifier(req.TransactionId)))
+		h.logger.Debug("Private request diagnostic", zap.String("ID", daemonlog.Identifier(req.TransactionId)), zap.String("error", requestDiagnostic(c, refundErr, req.AuthKey)))
+		// This request decided nothing, but a concurrent one may have.
+		if now, err := h.dispatcher.Payment.GetTransaction(ctx, req.TransactionId); err == nil && now.Status == int64(models.Refunded) {
+			message += h.recordedRefund(ctx, req.TransactionId)
 		} else {
-			message += "; this payment order was paid and has been refunded, so it cannot be spent again"
+			message += "; this payment order is paid and was not refunded, so it stays paid and the same batch can be submitted again once admission resumes"
 		}
 	}
 	return apiError(http.StatusServiceUnavailable, CodeUnavailable, message)
+}
+
+// recordedRefund words the refund of an already refunded transaction from its
+// recorded refund transfer.
+func (h *Handler) recordedRefund(ctx context.Context, transactionID string) string {
+	outcome, err := h.dispatcher.Payment.RefundOutcomeOf(ctx, transactionID)
+	if err != nil {
+		h.logger.Debug("Failed to read the refund outcome", zap.String("ID", daemonlog.Identifier(transactionID)), zap.String("error", daemonlog.Diagnostic(err)))
+		return "; this payment order has a recorded refund and cannot be spent again"
+	}
+	return refundStatement(outcome, false)
+}
+
+// refundStatement says what a decided refund did with the buyer's money.
+// initial marks the request that decided it.
+func refundStatement(outcome payments.RefundOutcome, initial bool) string {
+	switch outcome {
+	case payments.RefundSent:
+		return "; this payment order was paid and its refund has been sent, so it cannot be spent again"
+	case payments.RefundPending:
+		return "; this payment order was paid; its refund was recorded and is pending confirmation, so it cannot be spent again"
+	case payments.RefundFailed:
+		return "; this payment order was paid; its refund was recorded but could not be sent and is owed to the refund address, so it cannot be spent again"
+	}
+	if initial {
+		return "; this payment order was paid and has been refunded, so it cannot be spent again"
+	}
+	return "; this payment order was refunded and cannot be spent again"
 }
 
 // GET /debuglet/:id/logs

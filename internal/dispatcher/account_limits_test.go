@@ -118,7 +118,7 @@ func TestAccountAdmissionIsAtomicAcrossExecutorsAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
+	ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
 	d, err := New(zap.NewNop(), db, "restarted", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestPopulatedUpgradePreservesUnknownWorkAndFiniteAllowance(t *testing.T) {
 	if _, err := sqlitedb.Migrate(f.ctx, f.db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatal(err)
 	}
-	f.ph = payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
+	f.ph, _ = payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
 	f.d, err = New(zap.NewNop(), db, "upgraded", time.Minute, time.Minute, f.ph)
 	if err != nil {
 		t.Fatal(err)

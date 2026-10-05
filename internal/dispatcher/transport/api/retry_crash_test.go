@@ -94,7 +94,7 @@ func retryProcessFixture(t *testing.T, db *sql.DB) *ccFixture {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	logger := zap.NewNop()
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "retry-crash", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

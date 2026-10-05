@@ -58,7 +58,8 @@ func newRegistryFixture(t *testing.T) (*Dispatcher, *sql.DB, *registryTestTicker
 	}
 	cfg := &config.DispatcherConfig{}
 	cfg.Sui.Disabled = true
-	d, err := New(zap.NewNop(), db, "registry-test", time.Minute, time.Second, payments.NewPaymentHandler(db, cfg, zap.NewNop()))
+	ph, _ := payments.NewPaymentHandler(db, cfg, zap.NewNop())
+	d, err := New(zap.NewNop(), db, "registry-test", time.Minute, time.Second, ph)
 	if err != nil {
 		t.Fatal(err)
 	}
