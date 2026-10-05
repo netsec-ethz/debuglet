@@ -37,7 +37,11 @@ func allowanceHandler(t *testing.T, db *sql.DB) *PaymentHandler {
 	t.Helper()
 	cfg := disabledConfig(t, false)
 	cfg.Allowance.Enabled = true
-	return NewPaymentHandler(db, cfg, zap.NewNop())
+	h, err := NewPaymentHandler(db, cfg, zap.NewNop())
+	if err != nil {
+		t.Fatalf("payment handler: %v", err)
+	}
+	return h
 }
 
 // reserveIntent creates an account's TEST intent of one order of price the
