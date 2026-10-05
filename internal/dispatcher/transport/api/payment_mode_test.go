@@ -113,7 +113,7 @@ func modeNewFixture(t *testing.T) *modeFixture {
 func modeNewFixtureWithDB(t *testing.T, db *sql.DB, mock sqlmock.Sqlmock) *modeFixture {
 	t.Helper()
 	cfg := &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}
-	ph := payments.NewPaymentHandler(db, cfg, zap.NewNop())
+	ph, _ := payments.NewPaymentHandler(db, cfg, zap.NewNop())
 	d, err := dispatcher.New(zap.NewNop(), db, "test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

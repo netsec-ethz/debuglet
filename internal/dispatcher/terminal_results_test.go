@@ -210,7 +210,7 @@ func newTGFixture(t *testing.T, peer *tgPeer) *tgFixture {
 	}
 
 	logger := zap.NewNop()
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, db, "tg-test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
@@ -837,7 +837,7 @@ func TestTerminalResultGuards(t *testing.T) {
 				}
 			})
 			logger := zap.NewNop()
-			ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+			ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 			d, err := New(logger, db, "tg-mock", time.Minute, time.Minute, ph)
 			if err != nil {
 				t.Fatal(err)

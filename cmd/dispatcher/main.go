@@ -240,7 +240,10 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 		return err
 	}
 	defer metadataDB.Close()
-	paymentHandler := payments.NewPaymentHandler(db, cfg, logger)
+	paymentHandler, err := payments.NewPaymentHandler(db, cfg, logger)
+	if err != nil {
+		return fmt.Errorf("configure payments: %w", err)
+	}
 	d, err := dispatcher.New(logger, db, cfg.Server.Version, time.Duration(cfg.Scheduler.ExecutorTimeout)*time.Second, time.Duration(cfg.Scheduler.SchedulerGranularityMs)*time.Millisecond, paymentHandler)
 	if err != nil {
 		return fmt.Errorf("create dispatcher: %w", err)

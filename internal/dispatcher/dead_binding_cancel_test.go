@@ -166,7 +166,7 @@ func TestRestoreSchedulerNamesRunsOfAPreviousLifetime(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
-	ph := payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, f.db, "tg-restart", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

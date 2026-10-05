@@ -96,7 +96,15 @@ type fakeChain struct {
 	transferAmount   uint64
 	transferCoinType string
 	transferAddress  string
+	transferDigest   string
 	transferErr      error
+
+	prepared   *sui.PreparedTransfer
+	executed   *sui.PreparedTransfer
+	executeErr error
+	lookedUp   string
+	outcome    sui.TransferOutcome
+	lookupErr  error
 }
 
 func newFakeChain() *fakeChain {
@@ -147,12 +155,42 @@ func (f *fakeChain) RefundDebuglet(debugletOrder *database.DebugletOrder, refund
 	return f.refundErr
 }
 
-func (f *fakeChain) TransferCoins(amount uint64, cointype string, refundAddress string, ctx context.Context) error {
+func (f *fakeChain) TransferCoins(amount uint64, cointype string, receiver string, ctx context.Context) (string, error) {
 	f.record("TransferCoins")
 	f.mu.Lock()
-	f.transferAmount, f.transferCoinType, f.transferAddress = amount, cointype, refundAddress
-	f.mu.Unlock()
-	return f.transferErr
+	defer f.mu.Unlock()
+	f.transferAmount, f.transferCoinType, f.transferAddress = amount, cointype, receiver
+	return f.transferDigest, f.transferErr
+}
+
+// PrepareTransfer records its arguments like TransferCoins and returns a
+// prepared transfer carrying the scripted digest.
+func (f *fakeChain) PrepareTransfer(ctx context.Context, amount uint64, coinType string, receiver string) (*sui.PreparedTransfer, error) {
+	f.record("PrepareTransfer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transferAmount, f.transferCoinType, f.transferAddress = amount, coinType, receiver
+	if f.transferErr != nil {
+		return nil, f.transferErr
+	}
+	f.prepared = &sui.PreparedTransfer{Digest: f.transferDigest}
+	return f.prepared, nil
+}
+
+func (f *fakeChain) ExecuteTransfer(ctx context.Context, prepared *sui.PreparedTransfer) error {
+	f.record("ExecuteTransfer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.executed = prepared
+	return f.executeErr
+}
+
+func (f *fakeChain) LookupTransfer(ctx context.Context, digest string) (sui.TransferOutcome, error) {
+	f.record("LookupTransfer")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookedUp = digest
+	return f.outcome, f.lookupErr
 }
 
 // fakePayout is a scripted payoutLoop that blocks until its context ends.
@@ -179,6 +217,8 @@ type depRecorder struct {
 	chain  *fakeChain
 	payout *fakePayout
 
+	chainErr error // returned by the chain factory when set
+
 	chainCalls  int
 	payoutCalls int
 	gotCfg      *config.DispatcherConfig
@@ -194,10 +234,13 @@ func newDepRecorder() *depRecorder {
 
 func (r *depRecorder) deps() paymentDeps {
 	return paymentDeps{
-		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) chainBackend {
+		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) (chainBackend, error) {
 			r.chainCalls++
 			r.gotCfg, r.gotDB, r.gotLogger, r.gotTF = cfg, db, logger, tf
-			return r.chain
+			if r.chainErr != nil {
+				return nil, r.chainErr
+			}
+			return r.chain, nil
 		},
 		newPayout: func(db *sql.DB, h Handler, logger *zap.Logger) payoutLoop {
 			r.payoutCalls++
@@ -263,7 +306,10 @@ func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 func newDisabledHandler(t *testing.T, db *sql.DB, stale bool, inject bool) (*PaymentHandler, *depRecorder) {
 	t.Helper()
 	rec := newDepRecorder()
-	h := newPaymentHandler(db, disabledConfig(t, stale), zap.NewNop(), rec.deps())
+	h, err := newPaymentHandler(db, disabledConfig(t, stale), zap.NewNop(), rec.deps())
+	if err != nil {
+		t.Fatalf("disabled construction: %v", err)
+	}
 	if rec.chainCalls != 0 || rec.payoutCalls != 0 {
 		t.Fatalf("disabled construction invoked factories: chain=%d payout=%d", rec.chainCalls, rec.payoutCalls)
 	}
@@ -280,7 +326,10 @@ func newDisabledHandler(t *testing.T, db *sql.DB, stale bool, inject bool) (*Pay
 func newEnabledHandler(t *testing.T, db *sql.DB, cfg *config.DispatcherConfig) (*PaymentHandler, *depRecorder) {
 	t.Helper()
 	rec := newDepRecorder()
-	h := newPaymentHandler(db, cfg, zap.NewNop(), rec.deps())
+	h, err := newPaymentHandler(db, cfg, zap.NewNop(), rec.deps())
+	if err != nil {
+		t.Fatalf("enabled construction: %v", err)
+	}
 	if rec.chainCalls != 1 || rec.payoutCalls != 1 {
 		t.Fatalf("enabled construction factory counts: chain=%d payout=%d, want 1/1", rec.chainCalls, rec.payoutCalls)
 	}
@@ -388,7 +437,10 @@ func TestPublicConstructorDisabled(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stale=%v", stale), func(t *testing.T) {
 			db, mock := newMockDB(t)
-			h := NewPaymentHandler(db, disabledConfig(t, stale), zap.NewNop())
+			h, err := NewPaymentHandler(db, disabledConfig(t, stale), zap.NewNop())
+			if err != nil {
+				t.Fatalf("public constructor in disabled mode: %v", err)
+			}
 			if h.sui != nil || h.pt != nil {
 				t.Fatalf("public constructor built services in disabled mode: sui=%v pt=%v", h.sui, h.pt)
 			}
@@ -414,7 +466,10 @@ func TestEnabledConstructionInvokesBothFactoriesOnce(t *testing.T) {
 			cfg := tc.cfg(t)
 			logger := zap.NewNop()
 			rec := newDepRecorder()
-			h := newPaymentHandler(db, cfg, logger, rec.deps())
+			h, err := newPaymentHandler(db, cfg, logger, rec.deps())
+			if err != nil {
+				t.Fatalf("enabled construction: %v", err)
+			}
 
 			if rec.chainCalls != 1 || rec.payoutCalls != 1 {
 				t.Fatalf("factory counts chain=%d payout=%d, want 1/1", rec.chainCalls, rec.payoutCalls)
@@ -430,6 +485,61 @@ func TestEnabledConstructionInvokesBothFactoriesOnce(t *testing.T) {
 			}
 			if h.sui != chainBackend(rec.chain) || h.pt != payoutLoop(rec.payout) {
 				t.Fatalf("handler does not hold the constructed services")
+			}
+			assertMet(t, mock)
+		})
+	}
+}
+
+// TestEnabledConstructionFailure proves that a chain backend that cannot be
+// built fails construction: the error reaches the caller, no handler is
+// returned and the payout factory never runs, so nothing can be started.
+func TestEnabledConstructionFailure(t *testing.T) {
+	db, mock := newMockDB(t)
+	rec := newDepRecorder()
+	rec.chainErr = errScripted
+	h, err := newPaymentHandler(db, enabledConfig(t), zap.NewNop(), rec.deps())
+	if !errors.Is(err, errScripted) || h != nil {
+		t.Fatalf("newPaymentHandler = (%v, %v), want (nil, wrapped %v)", h, err, errScripted)
+	}
+	if rec.chainCalls != 1 || rec.payoutCalls != 0 {
+		t.Fatalf("factory counts chain=%d payout=%d, want 1/0", rec.chainCalls, rec.payoutCalls)
+	}
+	if calls := rec.chain.Calls(); len(calls) != 0 {
+		t.Fatalf("chain backend used after a failed construction: %v", calls)
+	}
+	assertMet(t, mock)
+}
+
+// TestPublicConstructorEnabledRejectsUnusableConfig drives the production
+// factory with configurations that must fail before any client exists. The
+// error names the field and never contains keystore content.
+func TestPublicConstructorEnabledRejectsUnusableConfig(t *testing.T) {
+	valid := func(t *testing.T) *config.DispatcherConfig {
+		cfg := enabledConfig(t)
+		cfg.Sui.Address = "0x" + strings.Repeat("a", 64)
+		cfg.Sui.PaymentRegistryId = "0x" + strings.Repeat("b", 64)
+		cfg.Sui.PaymentKitPackage = "0x" + strings.Repeat("c", 64)
+		return cfg
+	}
+	cases := []struct {
+		name   string
+		mutate func(cfg *config.DispatcherConfig)
+		want   string
+	}{
+		{"missing keystore", func(*config.DispatcherConfig) {}, "sui.keystore_path"},
+		{"invalid network", func(cfg *config.DispatcherConfig) { cfg.Sui.Network = "devnet" }, "sui.network"},
+		{"empty endpoint", func(cfg *config.DispatcherConfig) { cfg.Sui.GRPCEndpoint = "" }, "sui.grpc_endpoint"},
+		{"malformed receiver address", func(cfg *config.DispatcherConfig) { cfg.Sui.Address = "0xdead-beef" }, "sui.address"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newMockDB(t)
+			cfg := valid(t)
+			tc.mutate(cfg)
+			h, err := NewPaymentHandler(db, cfg, zap.NewNop())
+			if err == nil || h != nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("NewPaymentHandler = (%v, %v), want an error naming %s", h, err, tc.want)
 			}
 			assertMet(t, mock)
 		})
@@ -883,6 +993,8 @@ func TestUnrelatedReadErrorsArePreserved(t *testing.T) {
 // ---- enabled forwarding through the scripted backend ----
 
 func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
+	const testReceiver = "0x00000000000000000000000000000000000000000000000000000000000000aa"
+
 	t.Run("RefundDebugletOrder USDC", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newEnabledHandler(t, db, enabledConfig(t))
@@ -954,14 +1066,54 @@ func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
 	t.Run("TransferUSDC reaches the backend once", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newEnabledHandler(t, db, enabledConfig(t))
-		if err := h.TransferUSDC(9, "0xreceiver", context.Background()); err != nil {
+		rec.chain.transferDigest = "digest-1"
+		if err := h.TransferUSDC(9, testReceiver, context.Background()); err != nil {
 			t.Fatalf("TransferUSDC: %v", err)
 		}
 		if calls := rec.chain.Calls(); len(calls) != 1 || calls[0] != "TransferCoins" {
 			t.Fatalf("backend calls %v", calls)
 		}
-		if rec.chain.transferAmount != 9 {
-			t.Fatalf("forwarded amount %d", rec.chain.transferAmount)
+		if rec.chain.transferAmount != 9 || rec.chain.transferAddress != testReceiver ||
+			rec.chain.transferCoinType != sui.GetCoinType("USDC", "testnet") {
+			t.Fatalf("forwarded transfer (%d, %q, %q)", rec.chain.transferAmount, rec.chain.transferCoinType, rec.chain.transferAddress)
+		}
+		assertMet(t, mock)
+	})
+
+	t.Run("TransferUSDC refuses a malformed receiver", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		h, rec := newEnabledHandler(t, db, enabledConfig(t))
+		for _, receiver := range []string{"", "0xreceiver", "receiver", "0x" + strings.Repeat("a", 65)} {
+			if err := h.TransferUSDC(9, receiver, context.Background()); err == nil {
+				t.Fatalf("TransferUSDC(%q) succeeded", receiver)
+			}
+		}
+		if calls := rec.chain.Calls(); len(calls) != 0 {
+			t.Fatalf("backend reached with a malformed receiver: %v", calls)
+		}
+		assertMet(t, mock)
+	})
+
+	t.Run("TransferUSDC refuses a network without USDC", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		cfg := enabledConfig(t)
+		cfg.Sui.Network = "devnet"
+		h, rec := newEnabledHandler(t, db, cfg)
+		if err := h.TransferUSDC(9, testReceiver, context.Background()); err == nil {
+			t.Fatalf("TransferUSDC on devnet succeeded")
+		}
+		if calls := rec.chain.Calls(); len(calls) != 0 {
+			t.Fatalf("backend reached without a coin type: %v", calls)
+		}
+		assertMet(t, mock)
+	})
+
+	t.Run("TransferUSDC returns the backend error", func(t *testing.T) {
+		db, mock := newMockDB(t)
+		h, rec := newEnabledHandler(t, db, enabledConfig(t))
+		rec.chain.transferErr = errScripted
+		if err := h.TransferUSDC(9, testReceiver, context.Background()); !errors.Is(err, errScripted) {
+			t.Fatalf("TransferUSDC = %v, want %v", err, errScripted)
 		}
 		assertMet(t, mock)
 	})
