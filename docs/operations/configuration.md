@@ -32,6 +32,23 @@ The optional `[allowance]` section caps what authenticated accounts may reserve 
 
 Nothing is granted automatically, at sign-up or later. An operator account grants an account an amount with a reason and an idempotency key through `POST /operator/accounts/{id}/allowance`; a request without an amount grants `default_grant`, which at a price of 1 covers ten runs of 100,000 bit/s for 30 seconds. Grants are never changed, reset or renewed, and an account's ceiling is the sum of its grants. While allowances are enabled, an account's `TEST` intent is created only if its remaining allowance covers the price, otherwise it is refused with `allowance_exceeded`; the request without a credential that the local development profile admits is not capped. See [the API reference](../api.md#usage-allowances-api-115) for how reservations are counted.
 
+### Dispatcher blockchain payments
+
+The `[sui]` section configures chain payments. Every shipped configuration sets `disabled = true` and leaves the other fields empty; in that mode they are ignored and the dispatcher serves `TEST` payments only. `server.local_development = true` requires `disabled = true`. Enabling chain payments is an operator decision with its own profile and checklist; see [chain payments](payments.md).
+
+| Key | Value | Checked at startup when `disabled = false` |
+| --- | --- | --- |
+| `disabled` | `true` or `false` | Omitted means `false`; nothing is inferred from empty fields. |
+| `network` | `testnet` (the supported profile) | Must be `testnet` or `mainnet`. |
+| `grpc_endpoint` | Sui full node gRPC `host:port`, dialled with TLS | A non-empty host and a port from 1 to 65,535. |
+| `graphql_url` | Sui GraphQL service URL | An absolute `http` or `https` URL with a host. |
+| `address` | The dispatcher's receiving and paying address | A Sui address: `0x` and one to 64 hexadecimal digits. |
+| `payment_registry_id` | Object ID of the payment registry returned with each intent | A Sui address, as above. |
+| `payment_kit_package` | Package ID whose `payment_kit::PaymentReceipt` events the listener follows | A Sui address, as above. Write all 64 digits. |
+| `keystore_path` | Keystore file holding the Ed25519 key of `address` | Not empty; the file is read and must be a JSON array of base64 entries containing that key. |
+
+A failed check stops the daemon before any listener is bound, with `configure payments: blockchain payments:` and the field's error. Validation opens no network connection. The listener's stored checkpoint is checked when it starts; see [startup validation](payments.md#startup-validation).
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
