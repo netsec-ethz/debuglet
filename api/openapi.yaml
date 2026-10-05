@@ -3913,7 +3913,7 @@ paths:
     post:
       operationId: "quotePayment"
       summary: "Price a batch of debuglets without creating an intent."
-      description: "Added in API 1.15. Takes the body of PUT /payment/intent and prices it with the same rule, without writing anything: no transaction, no auth key, no order and no run. A batch the intent would refuse (an empty batch, an unknown executor, an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer) is answered 200 with every problem in the quote's errors and total empty. retry is not evaluated. Each quote counts against the account request quota like an intent. The intent prices the batch again when it is created and returns its own quote. See docs/api.md for the pricing rule."
+      description: "Added in API 1.15. Takes the body of PUT /payment/intent and prices it with the same rule, without writing anything: no transaction, no auth key, no order and no run. A batch the intent would refuse (an empty batch, an unknown executor, an invalid policy, a start_time outside its range, a policy the executor cannot currently serve such as require_icmp without ICMP, a repeated order_id or a price that does not fit a signed 64-bit integer) is answered 200 with every problem in the quote's errors and total empty. retry is not evaluated. Each quote counts against the account request quota like an intent. The intent prices the batch again when it is created and returns its own quote. See docs/api.md for the pricing rule."
       requestBody:
         required: true
         content:

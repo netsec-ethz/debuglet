@@ -5,6 +5,8 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 	"reflect"
 	"sort"
@@ -385,5 +387,47 @@ func TestOrderHistoryPagesTheCallersIntents(t *testing.T) {
 	}
 	if status, code := authAs(t, f, "", http.MethodGet, "/me/orders", nil); status != http.StatusUnauthorized {
 		t.Fatalf("anonymous history answered %d %s, want 401", status, code)
+	}
+}
+
+// TestQuoteReportsSubmissionRefusals: an order the submission would refuse
+// for its start time or for a capability its executor lacks is not quoted as
+// admissible. The quote names the field with no total, and intent creation
+// refuses the same body with the same code and field.
+func TestQuoteReportsSubmissionRefusals(t *testing.T) {
+	f := ccNewFixture(t)
+	farStart := iaDebuglet(1, 1000, 2000)
+	start := int64(math.MaxInt64)
+	farStart.StartTimestamp = &start
+	icmp := iaDebuglet(1, 1000, 2000)
+	icmp.Policy.RequireICMP = true
+	startMessage := fmt.Sprintf("start_time must be a Unix timestamp between %d and %d", minStartTimestamp, maxStartTimestamp)
+	orderID := int64(1)
+	for _, tc := range []struct {
+		name  string
+		order DebugletRequest
+		code  string
+		want  wire.FieldError
+	}{
+		{"an impossible start time", farStart, CodeInvalidRequest,
+			wire.FieldError{Field: "start_time", Code: "out_of_range", Message: startMessage, OrderID: &orderID}},
+		{"ICMP on an executor without it", icmp, CodeInvalidPolicy,
+			wire.FieldError{Field: "policy.require_icmp", Code: "unsupported", Message: "executor does not support ICMP, but policy requires it", OrderID: &orderID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, quote, _, data := ecQuote(t, f, "", "TEST", tc.order)
+			if status != http.StatusOK {
+				t.Fatalf("quote answered %d: %s", status, data)
+			}
+			if quote.Total != "" || len(quote.Orders) != 1 || quote.Orders[0].Price != "" ||
+				!reflect.DeepEqual(quote.Orders[0].Errors, []wire.FieldError{tc.want}) {
+				t.Fatalf("quote %s, want no total and the order error %+v", data, tc.want)
+			}
+			status, envelope, _, data := iaPutIntent(t, f, "", tc.order)
+			if status != http.StatusBadRequest || envelope.Code != tc.code ||
+				!reflect.DeepEqual(envelope.FieldErrors, []wire.FieldError{tc.want}) {
+				t.Fatalf("intent answered %d %s, want 400 %s naming %s", status, data, tc.code, tc.want.Field)
+			}
+		})
 	}
 }

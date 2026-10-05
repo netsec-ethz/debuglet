@@ -129,6 +129,23 @@ func (h *Handler) priceOrder(req DebugletRequest) (int64, *echo.HTTPError) {
 	if err := validatePolicy(req.OrderID, req.Policy); err != nil {
 		return 0, err
 	}
+	// The start time and the capabilities the policy requires are checked
+	// as the submission checks them, so that an order priced here is not
+	// refused there for a reason already known.
+	if err := validateStartTimestamp(req.StartTimestamp); err != nil {
+		return 0, requestFieldError(req.OrderID, "start_time", "out_of_range", err.Error())
+	}
+	if err := h.dispatcher.CheckExecutorCapabilities(req.ExecutorID, req.OrderID, specPolicy(req.Policy)); err != nil {
+		var capability *dispatcher.CapabilityError
+		if errors.As(err, &capability) {
+			return 0, policyFieldError(capability.OrderID, capability.Field, capability.Code, capability.Message)
+		}
+		if errors.Is(err, dispatcher.ErrUnknownExecutor) {
+			return 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
+				"unknown executor: "+echoed(req.ExecutorID))
+		}
+		return 0, apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to check the executor", err)
+	}
 
 	// The price is price_per_bw_s × floor_bw × timeout_ms / 1000, exact
 	// and rounded up to the next whole unit, so that a run shorter than a
@@ -145,6 +162,12 @@ func (h *Handler) priceOrder(req DebugletRequest) (int64, *echo.HTTPError) {
 		return 0, policyError(req.OrderID, "the price of the order overflows")
 	}
 	return price.Int64(), nil
+}
+
+// requestFieldError refuses one field of an order as an invalid request.
+func requestFieldError(orderID int64, field, code, reason string) *echo.HTTPError {
+	return echo.NewHTTPError(http.StatusBadRequest, ErrorResponse{Code: CodeInvalidRequest, Message: reason,
+		FieldErrors: []wire.FieldError{{Field: field, Code: code, Message: reason, OrderID: &orderID}}})
 }
 
 // storeOrders writes one Outstanding debuglet_order row per priced debuglet of
