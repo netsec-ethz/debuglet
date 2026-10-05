@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.14"
+  version: "1.15"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -3695,6 +3695,180 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /attribution/verify:
+    post:
+      operationId: "verifyAttribution"
+      summary: "Verify captured packets with the executor's help before disclosure."
+      description: "Added in API 1.15. Groups up to 256 packets by source address and epoch of each candidate chain, at most 16 groups, and gives each group a verdict. A group whose key is on record is checked against it (method offline) and spends nothing. Before disclosure the dispatcher asks the executor, which still holds the key, whether one candidate run reproduces every tag of the group (method server); the executor never returns tags or keys. Every such question spends one of 16 queries per executor, chain and epoch, shared by all requesters; it is spent before the question is relayed and is not refunded when the answer is lost. An exhausted budget or an unavailable executor leaves the group pending. The receipt is an Ed25519 signature over canonical JSON of the dispatcher, the API version, the dispatcher's query time, the packet digest and every group's verdict; it shows what was asked and answered when, not when a packet was captured. Public and rate-limited per client address."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionVerifyRequest"
+      responses:
+        "200":
+          description: "A verdict per group and the signed receipt."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionVerifyResponse"
+        "400":
+          description: "The body is not a request of 1 to 256 packets of 1 to 64 bytes each with a capture time, or the packets form more than 16 groups (invalid_request), or the Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 65536 bytes (payload_too_large)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "The client address sent more attribution requests than it admits (rate_limited): 10 per second with a burst of 40, counted per TCP peer address and per /64 for IPv6. Retry after Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+            Retry-After:
+              description: "Seconds to wait before retrying."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The attribution history could not be read (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The receipt key could not be read or created (service_unavailable)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /attribution/receipt-keys:
+    get:
+      operationId: "getAttributionReceiptKeys"
+      summary: "List the keys that verify verification receipts."
+      description: "Added in API 1.15. Every Ed25519 key this dispatcher has signed receipts with, with its validity: a receipt verifies under the key named by its key_id when its query_at lies within valid_from and valid_to. Public and rate-limited per client address."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The receipt keys, oldest first."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionReceiptKeys"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "The client address sent more attribution requests than it admits (rate_limited): 10 per second with a burst of 40, counted per TCP peer address and per /64 for IPv6. Retry after Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+            Retry-After:
+              description: "Seconds to wait before retrying."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The receipt keys could not be read (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The receipt key could not be read or created (service_unavailable)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /destination:
     patch:
       operationId: "setDestinationLimit"
@@ -7020,6 +7194,165 @@ components:
           format: int64
           nullable: true
           description: "from_epoch of the next page; null on the last page."
+    AttributionVerifyPacket:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - captured_at
+      properties:
+        data:
+          type: string
+          format: byte
+          description: "Base64 of the first min(64, Total Length) bytes of the IPv4 packet, tag in place."
+        captured_at:
+          type: string
+          format: date-time
+          description: "When the caller says the packet was captured. It selects the epoch and enters the receipt only through the packet digest."
+    AttributionVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - packets
+      properties:
+        packets:
+          type: array
+          description: "1 to 256 packets."
+          items:
+            $ref: "#/components/schemas/AttributionVerifyPacket"
+    AttributionVerifyBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - limit
+        - remaining
+        - resets_at
+      properties:
+        limit:
+          type: integer
+          format: int64
+          description: "Executor queries per executor, chain and epoch, shared by every requester."
+        remaining:
+          type: integer
+          format: int64
+        resets_at:
+          type: string
+          format: date-time
+          description: "When the epoch's key is due for disclosure; from then on the group is checked against the disclosed key."
+    AttributionVerifyGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - source
+        - epoch
+        - chain_id
+        - executor_id
+        - run_id
+        - verdict
+        - reason
+        - method
+        - packets
+      properties:
+        source:
+          type: string
+          description: "Source address of the packets; empty for packets without one."
+        epoch:
+          type: integer
+          format: int64
+          description: "Epoch of the capture time under the chain; 0 without a chain."
+        chain_id:
+          type: string
+        executor_id:
+          type: string
+        run_id:
+          type: string
+          description: "The run every tag reproduces, for verified; empty otherwise."
+        verdict:
+          type: string
+          enum:
+            - "verified"
+            - "invalid"
+            - "pending"
+            - "missing"
+            - "unsupported"
+        reason:
+          type: string
+          description: "Machine reason of any verdict but verified (docs/verification.md#results); pending adds budget_exhausted and executor_unavailable."
+        method:
+          type: string
+          description: "server when the executor answered, offline when a disclosed key did, empty when nothing was checked."
+        packets:
+          type: array
+          description: "Indices of the group's packets in the request."
+          items:
+            type: integer
+        budget:
+          $ref: "#/components/schemas/AttributionVerifyBudget"
+    AttributionReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - key_id
+        - payload
+        - signature
+      properties:
+        key_id:
+          type: string
+          description: "Hex of the first 16 bytes of SHA-256 of the signing public key."
+        payload:
+          type: string
+          format: byte
+          description: "Base64 of the canonical JSON (keys sorted, no whitespace) of {api_version, dispatcher, groups: [{chain_id, epoch, executor_id, method, packets, reason, run_id, source, verdict}], packets_digest, query_at}. packets_digest is sha256: and the hex SHA-256 over the big-endian uint16 length, the data and the int64 captured_at in Unix nanoseconds of every packet in order; query_at is the dispatcher's clock."
+        signature:
+          type: string
+          format: byte
+          description: "Base64 of the Ed25519 signature over payload."
+    AttributionVerifyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - groups
+        - receipt
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionVerifyGroup"
+        receipt:
+          $ref: "#/components/schemas/AttributionReceipt"
+    AttributionReceiptKey:
+      type: object
+      additionalProperties: false
+      required:
+        - key_id
+        - public_key
+        - valid_from
+        - valid_to
+      properties:
+        key_id:
+          type: string
+        public_key:
+          type: string
+          format: byte
+          description: "Base64 of the 32-byte Ed25519 public key."
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: string
+          format: date-time
+          nullable: true
+          description: "When another key became current; null for the current key."
+    AttributionReceiptKeys:
+      type: object
+      additionalProperties: false
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionReceiptKey"
     DestinationLimitRequest:
       type: object
       additionalProperties: false

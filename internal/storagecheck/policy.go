@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 19
+	MinimumDispatcherVersion int64 = 20
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -81,6 +81,8 @@ func PolicyFor(role Role) (Policy, error) {
 			"attribution_keys":           {"executor_id", "chain_id", "epoch", "key", "disclosed_at_ns"},
 			"attribution_runs":           {"debuglet_id", "chain_id", "source_ip", "source_ip_observed", "active_from_ns", "active_to_ns"},
 			"attribution_retention":      {"singleton", "retained_from_ns"},
+			"attribution_verify_budget":  {"executor_id", "chain_id", "epoch", "used"},
+			"attribution_receipt_keys":   {"key_id", "public_key", "valid_from_ns", "valid_to_ns"},
 			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure"},
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},

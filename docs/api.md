@@ -43,6 +43,13 @@ API 1.11 adds two public routes for [probe verification](verification.md). They 
 - `GET /attribution/candidates?ip=&at=` lists the runs active from `ip` within one epoch of `at` (RFC 3339), oldest first and at most 32 (`truncated` when more matched). Each candidate gives `executor_id`, `run_id`, `active_from`, `active_to`, `ip_source` (`observed` or `advertised`), the chain `schedule` `{chain_id, k0, t0_unix_ns, epoch_seconds, disclosure_delay_epochs, chain_length, tag_spec}`, `disclosed_through` (the latest disclosed epoch, 0 for none), `disclosed_through_at_ns` (when the dispatcher recorded that key) and `next_disclosure_at_ns` (the earliest disclosure time of the next key). `tag_spec` is 1 for debuglet-tag-v1 and 0 for a legacy chain whose executor did not report debuglet-tag-v1, which a v1 verifier reports as unsupported. The answer's `retained_from` is the start of the retained history: before it, no candidate is no evidence either way.
 - `GET /attribution/keys?executor_id=&chain_id=&from_epoch=&to_epoch=` returns a chain's disclosed keys in ascending epoch order, at most 1024 epochs per page, with `next_epoch` for the next page. Only keys that verified against `k0` are recorded, but a verifier checks each against `k0` itself.
 
+API 1.15 adds the server-assisted check, public and under the same rate limit:
+
+- `POST /attribution/verify` takes `{packets: [{data, captured_at}]}`: 1 to 256 packets, each the base64 of the first min(64, Total Length) bytes of the IPv4 packet with its capture time, in a body of at most 64 KiB that forms at most 16 groups (one per source address and epoch of each candidate chain). Each group in `groups` gives `source`, `epoch`, `chain_id`, `executor_id`, `run_id`, `verdict`, `reason`, `method` (`server` when the executor answered before disclosure, `offline` when a disclosed key did, empty when nothing was checked), `packets` (indices into the request) and, for a group with a chain, `budget` `{limit, remaining, resets_at}`. `receipt` `{key_id, payload, signature}` is an Ed25519 signature over the canonical JSON in `payload`. `503 service_unavailable` means the receipt key could not be read or created.
+- `GET /attribution/receipt-keys` lists every receipt key `{key_id, public_key, valid_from, valid_to}`, oldest first; `valid_to` is null for the current key.
+
+[Probe verification](verification.md#http-api) defines the groups, the budget and the receipt.
+
 A candidate names the run and its executor, never the account; a run ID grants no access to owner routes. `GET /executors/by-ip` and `GET /executors/{id}/tesla` are deprecated in favour of these routes and keep working within API major 1.
 
 ## Recovery inspection

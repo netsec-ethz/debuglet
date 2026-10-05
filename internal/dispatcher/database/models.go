@@ -45,6 +45,13 @@ type AttributionKey struct {
 	DisclosedAtNs int64
 }
 
+type AttributionReceiptKey struct {
+	KeyID       string
+	PublicKey   []byte
+	ValidFromNs int64
+	ValidToNs   sql.NullInt64
+}
+
 type AttributionRetention struct {
 	Singleton      int64
 	RetainedFromNs int64
@@ -57,6 +64,13 @@ type AttributionRun struct {
 	SourceIpObserved int64
 	ActiveFromNs     int64
 	ActiveToNs       int64
+}
+
+type AttributionVerifyBudget struct {
+	ExecutorID string
+	ChainID    string
+	Epoch      int64
+	Used       int64
 }
 
 type Debuglet struct {

@@ -44,6 +44,8 @@ func TestBootstrapFresh(t *testing.T) {
 					"attribution_keys":           "executor_id chain_id epoch key disclosed_at_ns",
 					"attribution_runs":           "debuglet_id chain_id source_ip source_ip_observed active_from_ns active_to_ns",
 					"attribution_retention":      "singleton retained_from_ns",
+					"attribution_verify_budget":  "executor_id chain_id epoch used",
+					"attribution_receipt_keys":   "key_id public_key valid_from_ns valid_to_ns",
 					"measurement_profiles":       "id user_id document",
 					"measurement_requests":       "debuglet_id document",
 					"measurement_execution":      "debuglet_id started_observed_ns terminal_observed_ns exit_code tcp_endpoint",
@@ -74,7 +76,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19})
+				}, []string{"account_run_reservations_live", "attribution_runs_source_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{
