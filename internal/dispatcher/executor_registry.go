@@ -407,7 +407,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 	defer close(done)
 	ticker := d.newExpiryTicker(d.leaseTiming.WatchdogInterval)
 	defer ticker.Stop()
-	var lastSweep, lastRetention, lastPrune time.Time
+	var lastSweep, lastSettlement, lastRetention, lastPrune time.Time
 	for {
 		select {
 		case <-d.expiryStop:
@@ -417,6 +417,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 				d.expireOwner(owner)
 			}
 			lastSweep = d.sweepEndedWindows(lastSweep)
+			lastSettlement = d.sweepPendingSettlements(lastSettlement)
 			if now := d.now(); lastRetention.IsZero() || now.Sub(lastRetention) >= 10*time.Second {
 				d.sweepPayloadRetention()
 				lastRetention = now

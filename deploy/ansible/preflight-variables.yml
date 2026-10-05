@@ -142,6 +142,40 @@
         quiet: true
       when: dispatcher_github_oauth_enabled | bool
 
+    # Each name must be assigned on exactly one line, NAME=VALUE, with one
+    # unquoted, non-empty value and no surrounding whitespace: systemd strips
+    # quotes and surrounding whitespace from an environment file, which would
+    # leave the dispatcher an empty value. systemd also trims blanks around
+    # the name, so a padded or spaced assignment ( NAME= or NAME =) counts as
+    # another assignment and is refused. Counts, per name, its assignment
+    # lines, its non-empty ones and those of that form; the values are never
+    # read into Ansible, so they cannot appear in output.
+    - name: Count local GitHub OAuth credential entries
+      ansible.builtin.command:
+        argv: [sh, -c, 'grep -c -E "^[[:blank:]]*$1[[:blank:]]*=" "$2"; grep -c -E "^$1=.+" "$2"; grep -c -E "^$1=$3" "$2"', sh, "{{ item }}", "{{ dispatcher_github_oauth_env_file }}", '[^[:space:]"''\][^[:space:]\]*$']
+      loop: [GITHUB_OAUTH_CLIENT_ID, GITHUB_OAUTH_CLIENT_SECRET]
+      delegate_to: localhost
+      register: github_oauth_credential_counts
+      changed_when: false
+      failed_when: false
+      # Read-only, so it also runs under --check, where the assert needs it.
+      check_mode: false
+      when: dispatcher_github_oauth_enabled | bool
+
+    - name: Require each GitHub OAuth credential once and non-empty
+      ansible.builtin.assert:
+        that:
+          - item.stdout_lines == ['1', '1', '1']
+        fail_msg: >-
+          {{ dispatcher_github_oauth_env_file }}, created from
+          github-oauth.env.example, must assign {{ item.item }} exactly once
+          and non-empty, as NAME=VALUE with one unquoted value and no
+          surrounding whitespace; padded or spaced assignments are refused.
+        quiet: true
+      loop: "{{ github_oauth_credential_counts.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: dispatcher_github_oauth_enabled | bool
     - name: Require complete browser credential URLs
       ansible.builtin.assert:
         that:
@@ -164,11 +198,32 @@
       register: cilogon_credentials_file
       when: dispatcher_cilogon_oidc_enabled | bool
 
-    # Counts the two variable names only; the values are never read into
-    # Ansible, so they cannot appear in output.
+    - name: Require local CILogon credentials
+      ansible.builtin.assert:
+        that:
+          - cilogon_credentials_file.stat.exists
+          - cilogon_credentials_file.stat.isreg
+          - cilogon_credentials_file.stat.mode in ['0600', '0400']
+        fail_msg: >-
+          dispatcher_cilogon_oidc_enabled needs {{ dispatcher_cilogon_oidc_env_file }},
+          created from cilogon_oidc.env.example with CILOGON_CLIENT_ID and
+          CILOGON_CLIENT_SECRET each once and non-empty, and chmod 600.
+          Never commit this file.
+        quiet: true
+      when: dispatcher_cilogon_oidc_enabled | bool
+
+    # Each name must be assigned on exactly one line, NAME=VALUE, with one
+    # unquoted, non-empty value and no surrounding whitespace: systemd strips
+    # quotes and surrounding whitespace from an environment file, which would
+    # leave the dispatcher an empty value. systemd also trims blanks around
+    # the name, so a padded or spaced assignment ( NAME= or NAME =) counts as
+    # another assignment and is refused. Counts, per name, its assignment
+    # lines, its non-empty ones and those of that form; the values are never
+    # read into Ansible, so they cannot appear in output.
     - name: Count local CILogon credential entries
       ansible.builtin.command:
-        argv: [grep, -c, -E, '^CILOGON_CLIENT_(ID|SECRET)=.+', "{{ dispatcher_cilogon_oidc_env_file }}"]
+        argv: [sh, -c, 'grep -c -E "^[[:blank:]]*$1[[:blank:]]*=" "$2"; grep -c -E "^$1=.+" "$2"; grep -c -E "^$1=$3" "$2"', sh, "{{ item }}", "{{ dispatcher_cilogon_oidc_env_file }}", '[^[:space:]"''\][^[:space:]\]*$']
+      loop: [CILOGON_CLIENT_ID, CILOGON_CLIENT_SECRET]
       delegate_to: localhost
       register: cilogon_credentials
       changed_when: false
@@ -177,19 +232,20 @@
       check_mode: false
       when: dispatcher_cilogon_oidc_enabled | bool
 
-    - name: Require local CILogon credentials
+    - name: Require each CILogon credential once and non-empty
       ansible.builtin.assert:
         that:
-          - cilogon_credentials_file.stat.exists
-          - cilogon_credentials_file.stat.isreg
-          - cilogon_credentials_file.stat.mode in ['0600', '0400']
-          - cilogon_credentials.stdout | trim == '2'
+          - item.stdout_lines == ['1', '1', '1']
         fail_msg: >-
           dispatcher_cilogon_oidc_enabled needs {{ dispatcher_cilogon_oidc_env_file }},
-          created from cilogon_oidc.env.example with CILOGON_CLIENT_ID and
-          CILOGON_CLIENT_SECRET each once and non-empty, and chmod 600.
-          Never commit this file.
+          created from cilogon_oidc.env.example, to assign {{ item.item }}
+          exactly once and non-empty, as NAME=VALUE with one unquoted value
+          and no surrounding whitespace; padded or spaced assignments are
+          refused.
         quiet: true
+      loop: "{{ cilogon_credentials.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
       when: dispatcher_cilogon_oidc_enabled | bool
 
     - name: Require an authority for client certificates

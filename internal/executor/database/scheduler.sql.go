@@ -23,13 +23,15 @@ SELECT ?1, ?2, ?3, ?4,
        ?11, ?12, ?13,
        ?14, ?15
 WHERE EXISTS (SELECT 1 FROM debuglets WHERE uuid = ?1)
-   OR ((SELECT COUNT(*) FROM debuglets) < CAST(?16 AS INTEGER)
+   OR ((SELECT COUNT(*) FROM debuglets
+        WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)) < CAST(?16 AS INTEGER)
        AND (SELECT COALESCE(SUM(
            length(wasm) + COALESCE(length(CAST(args AS BLOB)), 0)
            + COALESCE(length(CAST(addresses AS BLOB)), 0)
            + length(CAST(transaction_id AS BLOB))
            + length(CAST(dispatcher_incarnation AS BLOB))
-           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets)
+           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets
+           WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid))
            <= CAST(?17 AS INTEGER) - CAST(?18 AS INTEGER))
 `
 
@@ -146,7 +148,7 @@ func (q *Queries) CreateDebuglet(ctx context.Context, arg CreateDebugletParams) 
 
 const deleteDebuglet = `-- name: DeleteDebuglet :exec
 DELETE FROM debuglets
-WHERE uuid = ?
+WHERE uuid = ? AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)
 `
 
 func (q *Queries) DeleteDebuglet(ctx context.Context, argUuid uuid.UUID) error {
@@ -233,6 +235,7 @@ WHERE uuid = ?1
   AND dispatcher_incarnation = ?2
   AND session_id = ?3
   AND dispatcher_incarnation <> '' AND session_id <> ''
+  AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)
 `
 
 type GetOwnedDebugletByUUIDParams struct {
@@ -268,6 +271,7 @@ func (q *Queries) GetOwnedDebugletByUUID(ctx context.Context, arg GetOwnedDebugl
 
 const listDebuglets = `-- name: ListDebuglets :many
 SELECT id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation, session_id FROM debuglets
+WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)
 LIMIT ?
 OFFSET ?
 `
@@ -321,7 +325,7 @@ func (q *Queries) ListDebuglets(ctx context.Context, arg ListDebugletsParams) ([
 const updateDebugletStarted = `-- name: UpdateDebugletStarted :one
 UPDATE debuglets
 SET started_at = ?
-WHERE uuid = ?
+WHERE uuid = ? AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)
 RETURNING id, uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp, listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation, session_id
 `
 

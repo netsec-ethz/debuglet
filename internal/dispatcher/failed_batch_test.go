@@ -74,7 +74,7 @@ func newFBFixture(t *testing.T, peer *fbPeer, prepare ...func(*Dispatcher)) *tgF
 		t.Fatalf("migrate: %v", err)
 	}
 	logger := zap.NewNop()
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, db, "fb-test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

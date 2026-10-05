@@ -1,5 +1,6 @@
 -- name: ListDebuglets :many
 SELECT * FROM debuglets
+WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)
 LIMIT ?
 OFFSET ?;
 
@@ -12,17 +13,18 @@ SELECT * FROM debuglets
 WHERE uuid = sqlc.arg(uuid)
   AND dispatcher_incarnation = sqlc.arg(dispatcher_incarnation)
   AND session_id = sqlc.arg(session_id)
-  AND dispatcher_incarnation <> '' AND session_id <> '';
+  AND dispatcher_incarnation <> '' AND session_id <> ''
+  AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid);
 
 -- name: UpdateDebugletStarted :one
 UPDATE debuglets
 SET started_at = ?
-WHERE uuid = ?
+WHERE uuid = ? AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)
 RETURNING *;
 
 -- name: DeleteDebuglet :exec
 DELETE FROM debuglets
-WHERE uuid = ?;
+WHERE uuid = ? AND NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid);
 
 -- name: CreateDebuglet :exec
 INSERT INTO debuglets (
@@ -70,11 +72,13 @@ SELECT sqlc.arg(uuid), sqlc.narg(start_time), sqlc.narg(args), sqlc.arg(wasm),
        sqlc.arg(listen_udp), sqlc.arg(listen_tcp), sqlc.arg(listen_scion),
        sqlc.arg(dispatcher_incarnation), sqlc.arg(session_id)
 WHERE EXISTS (SELECT 1 FROM debuglets WHERE uuid = sqlc.arg(uuid))
-   OR ((SELECT COUNT(*) FROM debuglets) < CAST(sqlc.arg(max_queued_runs) AS INTEGER)
+   OR ((SELECT COUNT(*) FROM debuglets
+        WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)) < CAST(sqlc.arg(max_queued_runs) AS INTEGER)
        AND (SELECT COALESCE(SUM(
            length(wasm) + COALESCE(length(CAST(args AS BLOB)), 0)
            + COALESCE(length(CAST(addresses AS BLOB)), 0)
            + length(CAST(transaction_id AS BLOB))
            + length(CAST(dispatcher_incarnation AS BLOB))
-           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets)
+           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets
+           WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid))
            <= CAST(sqlc.arg(max_queued_bytes) AS INTEGER) - CAST(sqlc.arg(queue_bytes) AS INTEGER));

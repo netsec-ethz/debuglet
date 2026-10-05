@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
     long long end = get_timestamp() + duration_ns;
     long long sent = 0;
     while (get_timestamp() < end) {
-        send_tcp_data(sock, buf, chunk);
+        debuglet_send_tcp_all(sock, buf, chunk);
         sent += chunk;
     }
     close_tcp(sock);

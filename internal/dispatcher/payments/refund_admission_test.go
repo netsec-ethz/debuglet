@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments/sui"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
@@ -77,7 +78,7 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		if claimed, err := claimRefundOrder(t.Context(), db); err != nil || !claimed {
 			t.Fatalf("claim: %t, %v", claimed, err)
 		}
-		if err := h.RefundUnadmittedTransaction(testTxID, t.Context()); !errors.Is(err, ErrTransactionClaimed) {
+		if _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); !errors.Is(err, ErrTransactionClaimed) {
 			t.Fatalf("refund admitted work: %v", err)
 		}
 		if got := orderState(t, db); got != models.Outstanding || len(chain.Calls()) != 0 {
@@ -87,19 +88,21 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		if err := h.RefundTransaction(testTxID, t.Context()); err != nil {
 			t.Fatalf("transaction-wide fallback: %v", err)
 		}
-		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "TransferCoins" {
+		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "PrepareTransfer,ExecuteTransfer" {
 			t.Fatal("transaction-wide fallback changed")
 		}
 	})
 	t.Run("refund before stale paid preflight", func(t *testing.T) {
 		db, h, chain := admissionRefundFixture(t, "USDC")
-		if err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err != nil {
+		if _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		for _, latePayment := range []bool{false, true} {
 			if latePayment {
 				// A repeated payment notification must not revive a refunded order.
-				h.CompleteTransaction(testTxID, t.Context())
+				if _, err := h.ApplyPaymentReceipt(t.Context(), sui.PaymentReceipt{Digest: "late-payment", Nonce: testTxID}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if claimed, err := claimRefundOrder(t.Context(), db); err != nil || claimed {
 				t.Fatalf("claim refunded order: %t, %v", claimed, err)
@@ -109,7 +112,7 @@ func TestUnadmittedRefundAndAdmissionHaveOneWinner(t *testing.T) {
 		if err := db.QueryRow("SELECT COUNT(*) FROM debuglets").Scan(&runs); err != nil || runs != 0 {
 			t.Fatalf("refused admission left %d runs: %v", runs, err)
 		}
-		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "TransferCoins" {
+		if orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "PrepareTransfer,ExecuteTransfer" {
 			t.Fatal("refund or spent order changed")
 		}
 	})
@@ -120,7 +123,7 @@ func TestUnadmittedRefundFailureLeavesIntentSpendable(t *testing.T) {
 		t.Run(currency, func(t *testing.T) {
 			db, h, chain := admissionRefundFixture(t, currency)
 			chain.transferErr = errors.New("fixture refund rejected")
-			if err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err == nil {
+			if _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); err == nil {
 				t.Fatal("unsupported or rejected refund succeeded")
 			}
 			transaction, err := database.New(db).GetTransactionByID(t.Context(), testTxID)
@@ -158,7 +161,7 @@ func TestUnadmittedRefundRacesAdmissionOnTwoHandles(t *testing.T) {
 					claimed, err = claimRefundOrder(t.Context(), other)
 					return err
 				},
-				func() error { return h.RefundUnadmittedTransaction(testTxID, t.Context()) },
+				func() error { _, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); return err },
 			})
 			for _, err := range errs {
 				if err != nil && !errors.Is(err, ErrTransactionClaimed) && !strings.Contains(err.Error(), "database is locked") {
@@ -174,10 +177,10 @@ func TestUnadmittedRefundRacesAdmissionOnTwoHandles(t *testing.T) {
 				t.Fatal(err)
 			}
 			if refunded {
-				if runs != 0 || orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "TransferCoins" {
+				if runs != 0 || orderState(t, db) != models.Refunded || strings.Join(chain.Calls(), ",") != "PrepareTransfer,ExecuteTransfer" {
 					t.Fatal("refund winner also admitted work or transferred twice")
 				}
-			} else if runs != 1 || orderState(t, db) != models.Outstanding || len(chain.Calls()) != 0 {
+			} else if runs != 1 || orderState(t, db) != models.Outstanding || strings.Contains(strings.Join(chain.Calls(), ","), "ExecuteTransfer") {
 				t.Fatal("admission winner was refunded or duplicated")
 			}
 		})

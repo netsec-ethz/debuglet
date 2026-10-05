@@ -29,10 +29,12 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Add your executor](operations/executor-onboarding.md) — console enrollment, shell-only setup and persistent installation.
 - [Managed services](operations/services.md)
 - [Data retention, export and deletion](operations/data-retention.md)
+- [Chain payments](operations/payments.md) — modes, the supported Sui Testnet profile, startup validation, transfers and enablement.
 - [Executor recovery](operations/executor-recovery.md)
 - [Inspect an interrupted run](operations/recovery-inspection.md)
 - [Local validation checks](operations/local-checks.md)
 - [Signed releases and offline verification](operations/releases.md)
+- [External executor pilot](operations/external-pilot.md) — steps, records and support for an independently operated executor.
 
 Use the [deployment guide](../deploy/README.md) for the maintained Ansible procedures and upgrade inputs.
 
