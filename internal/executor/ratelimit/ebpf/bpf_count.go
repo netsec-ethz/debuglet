@@ -25,8 +25,10 @@ import (
 
 // BpfCount employs ratelimiting using an EBPF layer. It requires root priviliges to work.
 type BpfCount struct {
-	objs    countObjects
-	cleanup counterCleanup
+	objs            countObjects
+	cleanup         counterCleanup
+	attachmentLinks [2]io.Closer // Observed only; cleanup owns their release.
+	interfaceIndex  uint32
 
 	mu           sync.Mutex
 	destinations destinations.Resolved
@@ -80,7 +82,7 @@ func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, err
 		}
 		return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, err)
 	}
-	bc := &BpfCount{objs: objs, cleanup: counterCleanup{resources: resources}}
+	bc := &BpfCount{objs: objs, cleanup: counterCleanup{resources: resources}, interfaceIndex: uint32(iface.Index)}
 
 	egr, err := deps.attach(link.TCXOptions{
 		Program:   objs.HandleEgress,
@@ -88,6 +90,7 @@ func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, err
 		Attach:    ebpf.AttachTCXEgress,
 	})
 	bc.cleanup.add("egress TCX", egr)
+	bc.attachmentLinks[0] = egr
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("failed to attach egress TCX: %w", err), bc.Close())
 	}
@@ -98,6 +101,7 @@ func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, err
 		Attach:    ebpf.AttachTCXIngress,
 	})
 	bc.cleanup.add("ingress TCX", ingr)
+	bc.attachmentLinks[1] = ingr
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("failed to attach ingress TCX: %w", err), bc.Close())
 	}

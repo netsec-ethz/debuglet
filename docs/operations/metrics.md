@@ -70,9 +70,9 @@ structured interruption reason. Accordingly `queue_age_seconds`,
 unsupported. The supported scheduled-start overdue gauge does not substitute
 for these observations.
 
-Denied traffic, independently verified enforcement, TESLA clock uncertainty,
-end-to-end disclosure delivery lag and settlement backlog remain unsupported.
-The exporter does not read executor host resources. Collection never changes
+Denied traffic, independently verified enforcement, TESLA clock uncertainty
+and settlement backlog remain unsupported. Disclosure delivery lag is observed
+at the dispatcher only (see executor health below). Collection never changes
 admission, packet enforcement, terminal state, payment or readiness decisions.
 
 ## Executor health
@@ -86,6 +86,12 @@ counter, not evidence that the kernel still enforces every packet.
 | Metric | Meaning |
 | --- | --- |
 | `executors_enforcement_mode{state="..."}` | Counts for `ebpf`, `fallback` and `unknown`. |
+| `executors_counter_attachment{state="..."}` | Counts for `present`, `missing`, `unknown` and `not_required` (a fresh fallback selection). Presence checks both owned TCX links against their interface, hook and loaded program identity. |
+| `executor_process_rss_bytes_max` | Largest executor daemon RSS; excludes separate guest worker processes. |
+| `executor_process_open_fds_max` | Largest executor daemon descriptor count; excludes guest workers. |
+| `executor_state_available_bytes_min` | Least space available to unprivileged writes on any executor database filesystem. |
+| `executor_state_capacity_bytes_min` | Smallest such filesystem capacity. |
+| `executor_state_available_ratio_min` | Lowest available/capacity ratio, calculated per executor before aggregation. Quotas and inode exhaustion require host monitoring. |
 | `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held` and `unknown`. |
 | `executors_clock_readiness{state="..."}` | Counts for `ready`, `degraded` and `unknown`, from the kernel clock report and its configured error threshold. |
 | `executors_schedule_unknown` | Executors without a usable fresh schedule observation. |
@@ -93,20 +99,46 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_schedule_remaining_seconds` | Minimum nonnegative remaining signing lifetime, using the announced start, epoch length and chain length on the dispatcher's clock. |
 | `executor_clock_estimated_error_seconds` | Maximum reported kernel error estimate; this is not a measured uncertainty bound. |
 | `executor_disclosure_held_seconds` | Maximum reported age of an installed-key disclosure hold. It does not measure delivery or durable storage of keys at the dispatcher. |
+| `executors_disclosure_lag_unknown` | Executors whose disclosure delivery lag cannot be determined. |
+| `executor_disclosure_lag_seconds` | Maximum disclosure delivery lag: time since the oldest due key became disclosable without this dispatcher having verified and recorded it; zero when every due key of each executor's current chain is stored. |
 
-Mode, attribution and clock groups each partition `executors_registered`.
+Mode, attachment, attribution and clock groups each partition `executors_registered`.
 Missing, malformed, future-dated or 90-second-old reports become `unknown`, as
 do reports from disconnected sessions. A missing report does not clear a known
 problem by claiming recovery. New valid reports restore the current observation.
 The `executor_health` availability sample says whether registry aggregation
 completed, not whether the executors are healthy.
 
-The three numeric extrema are omitted with `reason="incomplete"` if any required
+Numeric extrema are omitted with `reason="incomplete"` if any required
 executor observation is unknown, and with `reason="no_executors"` when none is
 registered. State counts remain available, so a partial report cannot masquerade
 as a healthy zero. A fresh attribution report with no installed-key hold has an
 observed hold of zero. Clock estimates and schedule expiry can disagree between
 machines with bad clocks; inspect clock readiness before interpreting timings.
+
+Disclosure delivery lag is judged by what this dispatcher has verified against
+the chain anchor and recorded in its database. It covers only the chain each
+executor announced for its current registered session; a restart announces a new
+chain, and the lag neither follows retained earlier chains nor certifies that
+their undisclosed final keys were delivered. From the announced schedule, the
+key of epoch i becomes disclosable at the start of epoch i+d on the dispatcher's
+clock, without the 5-second skew allowance that disclosure acceptance grants; no
+key is due before epoch d+1 starts, and the chain's final key is the last one
+due. The lag is the time since the oldest due but unrecorded key became
+disclosable. It is not the executor-side hold (`executor_disclosure_held_seconds`),
+and it does not verify tags or captured traffic. An executor is unknown when its
+schedule report is stale, incomplete or from a disconnected session. Before the
+first key of a chain is due the lag is a known zero; after that it is unknown
+until the first disclosure of the chain reaches this dispatcher process: at
+most one heartbeat for an honest executor, and one heartbeat after a dispatcher
+restart. Collection reads only the in-memory record of
+received keys, never the database.
+
+Resource extrema additionally export `<metric>_unknown`, the count of registered
+executors lacking that observation. A known zero remains numeric. A partial
+maximum/minimum is withheld rather than appearing to cover the whole registry.
+These resource and attachment details are available only through operator metrics,
+not public executor discovery. Older executors omit them and count as unknown.
 
 ## Collection limits
 
@@ -133,6 +165,14 @@ rows and host resources are sequential observations, not a single atomic
 snapshot. A concurrent transition can therefore appear on the next scrape.
 Executor health reads only the bounded registry snapshot; it makes no remote
 calls, opens no sockets and changes no packet-counter or key-schedule state.
+
+Executors collect their own resources and attachment metadata with the existing
+30-second capability refresh, outside runtime locks. Filesystem, link and process
+reads are sequential, not an atomic health check. Successful link inspection after
+a detach is insufficient: the expected interface, hook and program must still
+match. An inspection error becomes unknown. Presence does not establish packet
+coverage, correct accounting or effective rate policing. The dispatcher uses
+local receipt freshness and does not contact executors while serving metrics.
 
 Linux host collection limits RSS input to 32 KiB and descriptor enumeration to
 65,536. Beyond those bounds it reports `limit`; missing files and permission
