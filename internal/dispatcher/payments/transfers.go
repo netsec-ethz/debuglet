@@ -37,6 +37,11 @@ const (
 // the call, and reconciliation looks it up.
 const staleReservation = 10 * time.Minute
 
+// automaticResubmissionWindow is an application recovery policy, not the
+// transaction's chain validity. After this window only lookups may resolve an
+// uncertain transfer; the signed transaction and any reserved balance stay put.
+const automaticResubmissionWindow = time.Hour
+
 // executeTimeout bounds one submission of a transfer. A submission that does
 // not answer in time has an unknown outcome, which is how its error is
 // recorded.
@@ -57,8 +62,8 @@ var (
 	errPayoutNotReserved = errors.New("payout not reserved: an earlier payout is still open or the balance changed")
 )
 
-// reservedTransfer is a transfer row in state reserved with its signed
-// transaction, ready to be submitted.
+// reservedTransfer holds a committed transfer decision. A prepared transaction
+// is ready to submit; an invalid legacy refund instead carries a failed row.
 type reservedTransfer struct {
 	row      database.ChainTransfer
 	prepared *sui.PreparedTransfer
@@ -77,21 +82,35 @@ func (p *PaymentHandler) sendTransfer(ctx context.Context, transfer database.Cha
 	if err != nil || reserved == nil {
 		return "", err
 	}
+	if reserved.prepared == nil {
+		p.logger.Warn("Refund could not be sent", zap.Int64("transfer", reserved.row.ID), zap.String("detail", reserved.row.Detail))
+		return reserved.row.State, nil
+	}
 	return p.executeReserved(ctx, reserved), nil
 }
 
 // prepareAndReserve prepares the transfer, then commits decide together with
-// the reserved transfer row. A transfer of amount zero moves nothing: decide is
-// committed alone and nil is returned without a reservation.
+// the reserved transfer row. An invalid legacy refund address commits a failed
+// row instead, recording the amount owed without calling the chain. A transfer
+// of amount zero commits decide alone and returns nil without a reservation.
 func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer database.ChainTransfer, decide func(*database.Queries) error) (*reservedTransfer, error) {
 	var prepared *sui.PreparedTransfer
 	if transfer.Amount > 0 {
-		readCtx, cancel := context.WithTimeout(ctx, chainReadTimeout)
-		var err error
-		prepared, err = p.sui.PrepareTransfer(readCtx, uint64(transfer.Amount), sui.GetCoinType(transfer.Currency, p.cfg.Sui.Network), transfer.Receiver)
-		cancel()
-		if err != nil {
-			return nil, fmt.Errorf("prepare %s transfer: %w", transfer.Kind, err)
+		// Old orders can predate intent address validation. Record the refund
+		// as owed but unsendable, atomically with its decision, without a chain
+		// call. Transient preparation errors still leave the decision pending.
+		if err := sui.ValidAddress(transfer.Receiver); transfer.Kind == transferRefund && err != nil {
+			transfer.State = transferFailed
+			transfer.Detail = "refund not sent: invalid refund address; amount remains owed; operator must verify a corrected address before repayment"
+			transfer.SignedTransaction = []byte{}
+		} else {
+			readCtx, cancel := context.WithTimeout(ctx, chainReadTimeout)
+			var err error
+			prepared, err = p.sui.PrepareTransfer(readCtx, uint64(transfer.Amount), sui.GetCoinType(transfer.Currency, p.cfg.Sui.Network), transfer.Receiver)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("prepare %s transfer: %w", transfer.Kind, err)
+			}
 		}
 	}
 
@@ -104,15 +123,18 @@ func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer databas
 	if err := decide(queries); err != nil {
 		return nil, err
 	}
-	if prepared != nil {
+	if transfer.Amount > 0 {
 		now := models.NewUTCTime(time.Now())
-		transfer.State, transfer.Digest, transfer.CreatedAt, transfer.UpdatedAt = transferReserved, prepared.Digest, now, now
-		transfer.SignedTransaction, transfer.Signature = append([]byte{}, prepared.Bytes()...), prepared.Signature()
+		transfer.CreatedAt, transfer.UpdatedAt = now, now
+		if prepared != nil {
+			transfer.State, transfer.Digest = transferReserved, prepared.Digest
+			transfer.SignedTransaction, transfer.Signature = append([]byte{}, prepared.Bytes()...), prepared.Signature()
+		}
 		transfer.ID, err = queries.InsertChainTransfer(ctx, database.InsertChainTransferParams{
 			Kind: transfer.Kind, ExecutorID: transfer.ExecutorID, TransactionID: transfer.TransactionID, OrderID: transfer.OrderID,
 			Amount: transfer.Amount, Currency: transfer.Currency, Receiver: transfer.Receiver, State: transfer.State,
 			Digest: transfer.Digest, SignedTransaction: transfer.SignedTransaction, Signature: transfer.Signature,
-			CreatedAt: transfer.CreatedAt, UpdatedAt: transfer.UpdatedAt,
+			Detail: transfer.Detail, CreatedAt: transfer.CreatedAt, UpdatedAt: transfer.UpdatedAt,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("reserve %s transfer: %w", transfer.Kind, err)
@@ -121,7 +143,7 @@ func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer databas
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit %s decision: %w", transfer.Kind, err)
 	}
-	if prepared == nil {
+	if transfer.Amount == 0 {
 		return nil, nil
 	}
 	return &reservedTransfer{row: transfer, prepared: prepared}, nil
@@ -209,8 +231,9 @@ func (p *PaymentHandler) recordTransfer(ctx context.Context, t database.ChainTra
 // transfer is confirmed only when the chain executed it successfully and the
 // receiver's credit was verified; executed with failure status it is failed;
 // a transfer the chain does not know is submitted again with its stored signed
-// transaction, which has the same digest and cannot execute twice. Anything
-// inconclusive leaves the transfer unknown with the last check in its detail.
+// transaction, which has the same digest and cannot execute twice, for at most
+// automaticResubmissionWindow after its reservation. Anything inconclusive
+// leaves the transfer unknown with the last check in its detail.
 func (p *PaymentHandler) ReconcileTransfers(ctx context.Context, limit int) error {
 	if p.chainDisabled() {
 		return fmt.Errorf("reconcile transfers: %w", ErrPaymentsDisabled)
@@ -240,28 +263,48 @@ func (p *PaymentHandler) reconcileTransfer(ctx context.Context, t database.Chain
 	timedOut := errors.Is(lookupCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 	cancel()
 	record := context.WithoutCancel(ctx)
+	resubmissionExpired := !time.Now().Before(t.CreatedAt.Add(automaticResubmissionWindow))
+	recordUnknown := func(detail string) {
+		if resubmissionExpired {
+			detail = "automatic resubmission stopped after the one-hour recovery window; outcome remains unknown; operator must verify the digest before resolving; " + detail
+			if t.Kind == transferPayout {
+				detail += "; payout balance remains reserved and later payouts for this executor and currency remain blocked"
+			}
+		}
+		p.recordTransfer(record, t, transferUnknown, t.Digest, detail)
+	}
 	switch {
 	case err != nil && timedOut:
-		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: lookup timed out")
+		recordUnknown("last check: lookup timed out")
 	case err != nil:
-		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: lookup inconclusive: "+err.Error())
+		recordUnknown("last check: lookup inconclusive: " + err.Error())
 	case outcome == sui.TransferConfirmed && verified:
 		p.recordTransfer(record, t, transferConfirmed, t.Digest, "")
 	case outcome == sui.TransferConfirmed:
-		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: executed successfully, but the node returned no balance changes, so the receiver's credit could not be verified")
+		recordUnknown("last check: executed successfully, but the node returned no balance changes, so the receiver's credit could not be verified")
 	case outcome == sui.TransferFailed:
 		p.recordTransfer(record, t, transferFailed, t.Digest, "executed with failure status")
 	case outcome == sui.TransferNotFound && t.State != transferSent:
-		prepared, err := sui.RestorePreparedTransfer(t.Digest, t.SignedTransaction, t.Signature)
-		if err != nil {
-			p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: not found, and the stored transaction cannot be submitted again: "+err.Error())
+		if resubmissionExpired {
+			recordUnknown("last check: transaction not found")
 			return
 		}
-		state, detail := executionOutcome(p.submit(ctx, prepared))
+		prepared, err := sui.RestorePreparedTransfer(t.Digest, t.SignedTransaction, t.Signature)
+		if err != nil {
+			recordUnknown("last check: not found, and the stored transaction cannot be submitted again: " + err.Error())
+			return
+		}
+		err = p.submit(ctx, prepared)
+		state, detail := executionOutcome(err)
+		if errors.Is(err, sui.ErrNotBroadcast) && !errors.Is(err, sui.ErrTransferFailed) {
+			// Refusing this attempt says nothing about an earlier submission.
+			recordUnknown("resubmission not broadcast; earlier outcome remains unknown: " + detail)
+			return
+		}
 		p.recordTransfer(record, t, state, prepared.Digest, detail)
 	case outcome == sui.TransferNotFound:
-		p.recordTransfer(record, t, transferUnknown, t.Digest, "last check: not found after the chain accepted it")
+		recordUnknown("last check: not found after the chain accepted it")
 	default:
-		p.recordTransfer(record, t, transferUnknown, t.Digest, fmt.Sprintf("last check: unexpected lookup outcome %q", outcome))
+		recordUnknown(fmt.Sprintf("last check: unexpected lookup outcome %q", outcome))
 	}
 }

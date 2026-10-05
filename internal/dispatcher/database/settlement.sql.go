@@ -55,8 +55,8 @@ func (q *Queries) GetPaymentReceipt(ctx context.Context, arg GetPaymentReceiptPa
 }
 
 const insertChainTransfer = `-- name: InsertChainTransfer :one
-INSERT INTO chain_transfers (kind, executor_id, transaction_id, order_id, amount, currency, receiver, state, digest, signed_transaction, signature, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO chain_transfers (kind, executor_id, transaction_id, order_id, amount, currency, receiver, state, digest, signed_transaction, signature, detail, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -72,6 +72,7 @@ type InsertChainTransferParams struct {
 	Digest            string
 	SignedTransaction []byte
 	Signature         string
+	Detail            string
 	CreatedAt         models.UTCTime
 	UpdatedAt         models.UTCTime
 }
@@ -89,6 +90,7 @@ func (q *Queries) InsertChainTransfer(ctx context.Context, arg InsertChainTransf
 		arg.Digest,
 		arg.SignedTransaction,
 		arg.Signature,
+		arg.Detail,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

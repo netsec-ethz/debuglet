@@ -4027,7 +4027,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IntentResponse"
         "400":
-          description: "Malformed body or an empty batch (invalid_request), an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor), or an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer (invalid_policy). Nothing is written in any of these cases."
+          description: "Malformed body, an empty batch, or a missing or invalid USDC refund_address (invalid_request; an address refusal includes field_errors with field refund_address and code invalid_address), an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor), or an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer (invalid_policy). Nothing is written in any of these cases."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -7543,7 +7543,7 @@ components:
           description: "TEST for the local alpha's bookkeeping-only method, or USDC."
         refund_address:
           type: "string"
-          description: "Chain address for refunds. Empty for TEST."
+          description: "Required when creating a USDC intent: a Sui address, 0x followed by 1 to 64 hexadecimal digits (short addresses are accepted). Missing or invalid values answer 400 invalid_request with field_errors naming refund_address and code invalid_address, before intent or order writes. Disabled chain payments still answer 503 payments_disabled first. TEST does not validate this field and it may be omitted or empty. The quote endpoint does not evaluate this field."
         retry:
           $ref: "#/components/schemas/RetryLink"
     IntentResponse:

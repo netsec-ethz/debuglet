@@ -238,6 +238,18 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") {
 		return unknownPaymentMethod(req.PaymentMethod)
 	}
+	// A chain refund must remain payable after the order is stored. Refuse an
+	// unusable address before pricing or creating any part of the intent, while
+	// preserving the disabled-payment response above and TEST's local behavior.
+	if req.PaymentMethod == "USDC" {
+		if err := sui.ValidAddress(req.RefundAddress); err != nil {
+			const message = "refund_address must be a Sui address: 0x followed by 1 to 64 hexadecimal digits"
+			return echo.NewHTTPError(http.StatusBadRequest, ErrorResponse{
+				Code: CodeInvalidRequest, Message: message,
+				FieldErrors: []wire.FieldError{{Field: "refund_address", Code: "invalid_address", Message: message}},
+			})
+		}
+	}
 	transactionId, err := h.dispatcher.Payment.NewTransactionID()
 	//TODO ensure transactionId unique
 	if err != nil {
