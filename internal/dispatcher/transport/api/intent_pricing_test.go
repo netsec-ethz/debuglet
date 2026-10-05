@@ -3,9 +3,12 @@ package api
 import (
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
@@ -179,6 +182,31 @@ func ipAssertPricingRule(t *testing.T, db *sql.DB, txID string) {
 	}
 }
 
+// ipAssertQuote checks that an intent response states the stored prices in its
+// quote: the pricing rule, TEST units, each order's price and the total.
+func ipAssertQuote(t *testing.T, data []byte, prices []int64) {
+	t.Helper()
+	var intent IntentResponse
+	if err := json.Unmarshal(data, &intent); err != nil {
+		t.Fatalf("decode the intent %s: %v", data, err)
+	}
+	quote := intent.Quote
+	if quote == nil || quote.PricingRule != PricingRule || quote.Currency != "TEST" || quote.Unit != "TEST units" ||
+		len(quote.Errors) != 0 || len(quote.Orders) != len(prices) {
+		t.Fatalf("intent quote %+v, want %d priced TEST orders", quote, len(prices))
+	}
+	total := new(big.Int)
+	for i, price := range prices {
+		total.Add(total, big.NewInt(price))
+		if quote.Orders[i].Price != strconv.FormatInt(price, 10) || len(quote.Orders[i].Errors) != 0 {
+			t.Fatalf("quoted order %d %+v, want price %d", i+1, quote.Orders[i], price)
+		}
+	}
+	if quote.Total != total.String() {
+		t.Fatalf("quoted total %q, want %s", quote.Total, total)
+	}
+}
+
 // TestIpIntentPricesAtTheLimitsOnSQLite drives PUT /payment/intent against a
 // real database at the edges of the pricing rule. The executor charges one
 // unit per bit per second and second. A price, of one order or of the batch,
@@ -254,6 +282,7 @@ func TestIpIntentPricesAtTheLimitsOnSQLite(t *testing.T) {
 			if status != http.StatusOK {
 				t.Fatalf("answered %d: %s", status, data)
 			}
+			ipAssertQuote(t, data, tc.prices)
 			var total int64
 			for _, price := range tc.prices {
 				total += price
@@ -297,6 +326,7 @@ func TestIpTESTIntentTotalsSurviveReopen(t *testing.T) {
 			if status != http.StatusOK {
 				t.Fatalf("answered %d: %s", status, data)
 			}
+			ipAssertQuote(t, data, tc.prices)
 			var total int64
 			want := make([][2]any, len(tc.prices))
 			for i, price := range tc.prices {

@@ -422,8 +422,10 @@ func TestSubmissionRefusalsKeepTheirCodes(t *testing.T) {
 		_, token, _ := authAccount(t, f, "icmp")
 		debuglets := dcDebuglets()
 		debuglets[0].Policy.RequireICMP = true
-		txID := dcIntent(t, f, token, debuglets)
-		status, _, body, _ := authRequest(t, f, http.MethodPut, "/debuglet", dcSubmitBody(t, txID, "", debuglets), authBearer(token))
+		// The refusal is known before any intent exists, so the intent
+		// already answers it; the submission repeats the check.
+		status, _, body, _ := authRequest(t, f, http.MethodPut, "/payment/intent",
+			dcJSON(t, PaymentIntentRequest{Debuglets: debuglets, PaymentMethod: "TEST"}), authBearer(token))
 		dcExpect(t, "ICMP policy", status, body, http.StatusBadRequest, CodeInvalidPolicy, "")
 		if !strings.Contains(string(body), "does not support ICMP") {
 			t.Fatalf("the message does not say what the executor lacks: %s", body)
@@ -455,10 +457,13 @@ func TestCapabilityRefusalsOmitRegisteredExecutorID(t *testing.T) {
 					debuglets[0].Policy.RequireICMP = capability.policy.RequireICMP
 					debuglets[0].Policy.ListenTCP = capability.policy.ListenTCP
 					debuglets[0].Policy.ListenUDP = capability.policy.ListenUDP
-					txID := dcIntent(t, f, token, debuglets)
-					status, _, body, _ := authRequest(t, f, http.MethodPut, "/debuglet", dcSubmitBody(t, txID, "", debuglets), authBearer(token))
+					status, _, body, _ := authRequest(t, f, http.MethodPut, "/payment/intent",
+						dcJSON(t, PaymentIntentRequest{Debuglets: debuglets, PaymentMethod: "TEST"}), authBearer(token))
 					dcExpect(t, capability.name, status, body, http.StatusBadRequest, CodeInvalidPolicy,
 						"invalid policy (order 0): "+capability.message)
+					if strings.Contains(string(body), executorID) {
+						t.Fatalf("the refusal repeats the executor ID: %s", body)
+					}
 					var response ErrorResponse
 					if err := json.Unmarshal(body, &response); err != nil {
 						t.Fatal(err)

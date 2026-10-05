@@ -121,6 +121,9 @@ type IntentResponse struct {
 	Retry  *wire.RetryReceipt `json:"retry,omitempty"`
 	Method string             `json:"method"`
 	Intent any                `json:"intent"`
+	// Quote states the prices the intent stored. It is absent when a retry
+	// recovers an intent created earlier.
+	Quote *wire.Quote `json:"quote,omitempty"`
 }
 
 type SuiIntent struct {
@@ -230,9 +233,21 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 		startTime = &tmp
 	}
 
+	return models.DebugletSpec{
+		Requested:  requested,
+		StartTime:  startTime,
+		ExecutorID: r.ExecutorID,
+		Args:       r.Args,
+		Wasm:       decoded,
+		Policy:     specPolicy(r.Policy),
+	}, nil
+}
+
+// specPolicy converts a requested policy into the dispatcher's units.
+func specPolicy(p DebugletPolicyRequest) models.DebugletPolicy {
 	// remove accidental ports from the policy addresses
 	var addrs []string
-	for _, a := range r.Policy.Addresses {
+	for _, a := range p.Addresses {
 		host, _, err := net.SplitHostPort(a)
 		if err != nil {
 			addrs = append(addrs, a)
@@ -240,22 +255,14 @@ func APIToSpec(r DebugletRequest) (models.DebugletSpec, error) {
 			addrs = append(addrs, host)
 		}
 	}
-
-	return models.DebugletSpec{
-		Requested:  requested,
-		StartTime:  startTime,
-		ExecutorID: r.ExecutorID,
-		Args:       r.Args,
-		Wasm:       decoded,
-		Policy: models.DebugletPolicy{
-			FloorBW:     bitrate.Bitrate(r.Policy.FloorBW),
-			CeilBW:      bitrate.Bitrate(r.Policy.CeilBW),
-			Timeout:     time.Duration(r.Policy.TimeoutMS) * time.Millisecond,
-			Addresses:   addrs,
-			RequireICMP: r.Policy.RequireICMP,
-			ListenUDP:   r.Policy.ListenUDP,
-			ListenTCP:   r.Policy.ListenTCP,
-			ListenSCION: r.Policy.ListenSCION,
-		},
-	}, nil
+	return models.DebugletPolicy{
+		FloorBW:     bitrate.Bitrate(p.FloorBW),
+		CeilBW:      bitrate.Bitrate(p.CeilBW),
+		Timeout:     time.Duration(p.TimeoutMS) * time.Millisecond,
+		Addresses:   addrs,
+		RequireICMP: p.RequireICMP,
+		ListenUDP:   p.ListenUDP,
+		ListenTCP:   p.ListenTCP,
+		ListenSCION: p.ListenSCION,
+	}
 }

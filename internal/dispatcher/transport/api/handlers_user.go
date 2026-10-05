@@ -40,9 +40,10 @@ func (h *Handler) GetMe(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, UserResponse{
-		ID:   user.Uuid.String(),
-		Name: user.Name,
-		Role: user.Role,
+		ID:        user.Uuid.String(),
+		Name:      user.Name,
+		Role:      user.Role,
+		Economics: h.accountEconomics(),
 	})
 }
 

@@ -374,6 +374,12 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			if err != nil {
 				t.Fatalf("owned SubmitTEST: %v", err)
 			}
+			if _, err := authenticated.Quote(ctx, batch); err != nil {
+				t.Fatalf("Quote: %v", err)
+			}
+			if _, err := authenticated.Orders(ctx, client.OrdersPage{Limit: 5}); err != nil {
+				t.Fatalf("Orders: %v", err)
+			}
 			if _, err := authenticated.Measurements(ctx, client.MeasurementOptions{Limit: 5}); err != nil {
 				t.Fatalf("Measurements: %v", err)
 			}

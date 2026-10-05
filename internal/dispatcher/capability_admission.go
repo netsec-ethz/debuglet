@@ -23,6 +23,21 @@ type CapabilityError struct {
 func (e *CapabilityError) Error() string { return e.Message }
 func (e *CapabilityError) Unwrap() error { return ErrInvalidPolicy }
 
+// CheckExecutorCapabilities applies the capability check of admission to an
+// order that is not being admitted: it reports whether the available executor
+// can serve what policy requires of it now, with the refusal admission would
+// return. It reads the registry only. An executor that is not registered or not
+// available is ErrUnknownExecutor.
+func (d *Dispatcher) CheckExecutorCapabilities(executorID string, orderID int64, policy models.DebugletPolicy) error {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	exec, exists := d.executors[executorID]
+	if d.closed || !exists || !exec.owner.Available() {
+		return ErrUnknownExecutor
+	}
+	return validateExecutorCapabilities(&models.DebugletSpec{OrderID: orderID, Policy: policy}, exec, d.now())
+}
+
 func validateExecutorCapabilities(spec *models.DebugletSpec, exec *executorEntry, now time.Time) error {
 	refuse := func(field, code, message string) error {
 		return &CapabilityError{Field: "policy." + field, Code: code, Message: message, OrderID: spec.OrderID}
