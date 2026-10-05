@@ -58,7 +58,7 @@ func newMaintenanceFixtureLogged(t *testing.T, logger *zap.Logger, options ...Op
 	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "maintenance-test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

@@ -315,7 +315,7 @@ func (f *commandRecovery) open(dir string) {
 	open("dispatcher.sqlite", ddb.MigrationFS())
 	open("executor.sqlite", edb.MigrationFS())
 	logger := zap.NewNop()
-	ph := payments.NewPaymentHandler(f.dispatcherDB, &dconfig.DispatcherConfig{Sui: dconfig.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(f.dispatcherDB, &dconfig.DispatcherConfig{Sui: dconfig.SuiConfig{Disabled: true}}, logger)
 	var err error
 	f.dispatcher, err = dispatcher.New(logger, f.dispatcherDB, "command-recovery", time.Minute, time.Second, ph)
 	if err != nil {
