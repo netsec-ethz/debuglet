@@ -165,7 +165,7 @@ func TestDestinationPolicyExpiryReachesTheHoldingExecutor(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(dlBandwidth(peer))
-	policy := dpAwait(t, f.d, destination, func(p DestinationPolicy) bool { return p.Kind == DestinationPolicyAllow })
+	policy := dpAwait(t, f.d, destination, func(p DestinationPolicy) bool { return p.Kind == DestinationPolicyAllow && p.Unconfirmed == 0 })
 	if policy.Actor != SystemActor || policy.Reason != "expired" || policy.Recipients != 1 || policy.Unconfirmed != 0 {
 		t.Fatalf("expiry recorded %+v", policy)
 	}
