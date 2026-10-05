@@ -201,7 +201,9 @@ func seedRetained(t *testing.T, state string, binding controlsession.Binding, wa
 			t.Fatal(err)
 		}
 		if started {
-			if _, err := q.UpdateDebugletStarted(t.Context(), executordb.UpdateDebugletStartedParams{Uuid: id, StartedAt: now}); err != nil {
+			// Seed the historical schema before the candidate upgrades it;
+			// current ownership queries require the current schema.
+			if _, err := db.ExecContext(t.Context(), "UPDATE debuglets SET started_at=? WHERE uuid=?", now, id); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -220,11 +222,32 @@ func seedRetained(t *testing.T, state string, binding controlsession.Binding, wa
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.chains, err = q.ListTeslaChains(t.Context())
+	fixture.chains, err = historicalChains(t, db)
 	if err != nil || len(fixture.chains) == 0 {
 		t.Fatalf("original schedule history: %v", err)
 	}
 	return fixture
+}
+
+// historicalChains reads the schedule history in the columns every supported
+// schema has, so a database seeded before the candidate upgrades it compares
+// with the same database afterwards.
+func historicalChains(t *testing.T, db *sql.DB) ([]executordb.TeslaChain, error) {
+	t.Helper()
+	rows, err := db.QueryContext(t.Context(), "SELECT generation, anchor, epoch_base, delay_ns, chain_length, created_at FROM tesla_chains ORDER BY generation")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var chains []executordb.TeslaChain
+	for rows.Next() {
+		var c executordb.TeslaChain
+		if err := rows.Scan(&c.Generation, &c.Anchor, &c.EpochBase, &c.DelayNs, &c.ChainLength, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		chains = append(chains, c)
+	}
+	return chains, rows.Err()
 }
 
 func assertRetained(t *testing.T, state string, fixture retainedFixture) {
@@ -249,7 +272,7 @@ func assertRetained(t *testing.T, state string, fixture retainedFixture) {
 	if err != nil || !reflect.DeepEqual(fixture.terminal, after) {
 		t.Fatalf("retained terminal changed or retried: %+v, %v", after, err)
 	}
-	chains, err := q.ListTeslaChains(t.Context())
+	chains, err := historicalChains(t, db)
 	if err != nil || len(chains) < len(fixture.chains) || !reflect.DeepEqual(fixture.chains, chains[:len(fixture.chains)]) {
 		t.Fatalf("retained schedule history changed: %v", err)
 	}

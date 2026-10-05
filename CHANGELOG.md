@@ -21,8 +21,8 @@ changes; the linked API and deployment documentation contains operational detail
     covering 15 minutes (90 epochs at the default 10-second epoch), and an
     explicit value below 2, or with less than 10 s of margin
     ((d − 1) × epoch length), is refused. The installed-key hold still applies.
-  - A restart starts a new chain, so the keys of the last d epochs before it
-    are never disclosed and those packets cannot be verified; the chain
+  - A restart starts a new chain, so without a configured `[tesla] seed` the
+    keys of the last d epochs before it are never disclosed and those packets cannot be verified; the chain
     exhaustion log names `final_disclosure_at`, the time after which a
     restart loses nothing.
   - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
@@ -59,7 +59,7 @@ changes; the linked API and deployment documentation contains operational detail
   epoch it reports which candidate run, if any, reproduces every tag, without
   returning tags or keys. It refuses disclosable epochs, unknown chains and
   untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
-- Server-assisted probe verification (#341, API 1.15, dispatcher schema 20).
+- Server-assisted probe verification (#341, API 1.16, dispatcher schema 24).
   `POST /attribution/verify` checks up to 256 captured packets in at most 16
   groups: a group whose key is disclosed is checked against the key store; a
   group whose key is not yet disclosed is relayed to its executor over the
@@ -76,7 +76,15 @@ changes; the linked API and deployment documentation contains operational detail
   send pending groups unless `--offline`, report `via server` with the
   receipt key, and keep receipts and keys in the evidence bundle, which
   `client.VerifyEvidence` checks again. The dispatcher's minimum supported
-  schema is 20.
+  schema is 24.
+- An executor with a configured `[tesla] seed` discloses the tail of its
+  previous chain after a restart: it re-derives that chain, which never signs
+  again, and sends its due keys beside the current one in the heartbeat's new
+  `extra_disclosures` field, until the final key is out. Executor schema 8
+  records each chain's disclosure delay; chains recorded before it, starts
+  without a seed and starts on an unready clock still lose the tail. The
+  dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
+  against its recorded chain.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and
@@ -198,6 +206,11 @@ changes; the linked API and deployment documentation contains operational detail
   `clock.max_error_ms` instead of reporting `clock: not_checked`: synchronized within the bound passes; unsynced or
   above the bound stays `not_checked` with the reason (the executor admits
   runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
+- Operator `/metrics` adds executor daemon resources, owned TCX counter
+  attachment presence and the dispatcher-side disclosure delivery lag;
+  `deploy/monitoring/health-alerts.yml` alerts on low executor state storage
+  and on a disclosure lag above 90 s or unknown
+  (`docs/operations/metrics.md`, `docs/operations/monitoring.md`).
 
 ### Changed
 - Ended run windows now record local allocation reclamation separately from

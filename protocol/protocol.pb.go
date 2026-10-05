@@ -959,8 +959,12 @@ type HeartbeatRequest struct {
 	// of this executor that the dispatcher has on record, so the tail of a chain
 	// can still be disclosed after the executor restarted onto a new one.
 	TeslaKeyAnchor []byte `protobuf:"bytes,7,opt,name=tesla_key_anchor,json=teslaKeyAnchor,proto3" json:"tesla_key_anchor,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Keys of earlier chains of this executor that are due now, beside the
+	// current chain's key above: after a restart, the tail of the chain it
+	// retired. Each names its chain by anchor, as tesla_key_anchor does.
+	ExtraDisclosures []*TeslaDisclosure `protobuf:"bytes,8,rep,name=extra_disclosures,json=extraDisclosures,proto3" json:"extra_disclosures,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *HeartbeatRequest) Reset() {
@@ -1042,6 +1046,74 @@ func (x *HeartbeatRequest) GetTeslaKeyAnchor() []byte {
 	return nil
 }
 
+func (x *HeartbeatRequest) GetExtraDisclosures() []*TeslaDisclosure {
+	if x != nil {
+		return x.ExtraDisclosures
+	}
+	return nil
+}
+
+// One disclosed chain key k_epoch of the chain whose anchor k_0 is anchor.
+type TeslaDisclosure struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Anchor        []byte                 `protobuf:"bytes,1,opt,name=anchor,proto3" json:"anchor,omitempty"`
+	Epoch         int64                  `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Key           []byte                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TeslaDisclosure) Reset() {
+	*x = TeslaDisclosure{}
+	mi := &file_protocol_protocol_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TeslaDisclosure) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TeslaDisclosure) ProtoMessage() {}
+
+func (x *TeslaDisclosure) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TeslaDisclosure.ProtoReflect.Descriptor instead.
+func (*TeslaDisclosure) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TeslaDisclosure) GetAnchor() []byte {
+	if x != nil {
+		return x.Anchor
+	}
+	return nil
+}
+
+func (x *TeslaDisclosure) GetEpoch() int64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *TeslaDisclosure) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
 type HeartbeatResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1050,7 +1122,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[11]
+	mi := &file_protocol_protocol_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1062,7 +1134,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[11]
+	mi := &file_protocol_protocol_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1075,7 +1147,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{11}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{12}
 }
 
 type ResourcesRequest struct {
@@ -1088,7 +1160,7 @@ type ResourcesRequest struct {
 
 func (x *ResourcesRequest) Reset() {
 	*x = ResourcesRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[12]
+	mi := &file_protocol_protocol_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1100,7 +1172,7 @@ func (x *ResourcesRequest) String() string {
 func (*ResourcesRequest) ProtoMessage() {}
 
 func (x *ResourcesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[12]
+	mi := &file_protocol_protocol_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1113,7 +1185,7 @@ func (x *ResourcesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesRequest.ProtoReflect.Descriptor instead.
 func (*ResourcesRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{12}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ResourcesRequest) GetExecutorId() string {
@@ -1138,7 +1210,7 @@ type ResourcesResponse struct {
 
 func (x *ResourcesResponse) Reset() {
 	*x = ResourcesResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[13]
+	mi := &file_protocol_protocol_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1150,7 +1222,7 @@ func (x *ResourcesResponse) String() string {
 func (*ResourcesResponse) ProtoMessage() {}
 
 func (x *ResourcesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[13]
+	mi := &file_protocol_protocol_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1163,7 +1235,7 @@ func (x *ResourcesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesResponse.ProtoReflect.Descriptor instead.
 func (*ResourcesResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{13}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{14}
 }
 
 type DebugletStateRequest struct {
@@ -1178,7 +1250,7 @@ type DebugletStateRequest struct {
 
 func (x *DebugletStateRequest) Reset() {
 	*x = DebugletStateRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[14]
+	mi := &file_protocol_protocol_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1190,7 +1262,7 @@ func (x *DebugletStateRequest) String() string {
 func (*DebugletStateRequest) ProtoMessage() {}
 
 func (x *DebugletStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[14]
+	mi := &file_protocol_protocol_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1203,7 +1275,7 @@ func (x *DebugletStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletStateRequest.ProtoReflect.Descriptor instead.
 func (*DebugletStateRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{14}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *DebugletStateRequest) GetDebugletId() string {
@@ -1243,7 +1315,7 @@ type ListenerEndpoint struct {
 
 func (x *ListenerEndpoint) Reset() {
 	*x = ListenerEndpoint{}
-	mi := &file_protocol_protocol_proto_msgTypes[15]
+	mi := &file_protocol_protocol_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1255,7 +1327,7 @@ func (x *ListenerEndpoint) String() string {
 func (*ListenerEndpoint) ProtoMessage() {}
 
 func (x *ListenerEndpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[15]
+	mi := &file_protocol_protocol_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1268,7 +1340,7 @@ func (x *ListenerEndpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenerEndpoint.ProtoReflect.Descriptor instead.
 func (*ListenerEndpoint) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{15}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListenerEndpoint) GetAddress() string {
@@ -1286,7 +1358,7 @@ type DebugletStateResponse struct {
 
 func (x *DebugletStateResponse) Reset() {
 	*x = DebugletStateResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[16]
+	mi := &file_protocol_protocol_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1298,7 +1370,7 @@ func (x *DebugletStateResponse) String() string {
 func (*DebugletStateResponse) ProtoMessage() {}
 
 func (x *DebugletStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[16]
+	mi := &file_protocol_protocol_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1311,7 +1383,7 @@ func (x *DebugletStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletStateResponse.ProtoReflect.Descriptor instead.
 func (*DebugletStateResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{16}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{17}
 }
 
 type DebugletAllocateRequest struct {
@@ -1326,7 +1398,7 @@ type DebugletAllocateRequest struct {
 
 func (x *DebugletAllocateRequest) Reset() {
 	*x = DebugletAllocateRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[17]
+	mi := &file_protocol_protocol_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1338,7 +1410,7 @@ func (x *DebugletAllocateRequest) String() string {
 func (*DebugletAllocateRequest) ProtoMessage() {}
 
 func (x *DebugletAllocateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[17]
+	mi := &file_protocol_protocol_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1351,7 +1423,7 @@ func (x *DebugletAllocateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletAllocateRequest.ProtoReflect.Descriptor instead.
 func (*DebugletAllocateRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{17}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DebugletAllocateRequest) GetDebugletId() string {
@@ -1392,7 +1464,7 @@ type DebugletAllocateResponse struct {
 
 func (x *DebugletAllocateResponse) Reset() {
 	*x = DebugletAllocateResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[18]
+	mi := &file_protocol_protocol_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1404,7 +1476,7 @@ func (x *DebugletAllocateResponse) String() string {
 func (*DebugletAllocateResponse) ProtoMessage() {}
 
 func (x *DebugletAllocateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[18]
+	mi := &file_protocol_protocol_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1417,7 +1489,7 @@ func (x *DebugletAllocateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletAllocateResponse.ProtoReflect.Descriptor instead.
 func (*DebugletAllocateResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{18}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *DebugletAllocateResponse) GetAllocatedLimits() []*DestinationLimit {
@@ -1438,7 +1510,7 @@ type DebugletExitRequest struct {
 
 func (x *DebugletExitRequest) Reset() {
 	*x = DebugletExitRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[19]
+	mi := &file_protocol_protocol_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1450,7 +1522,7 @@ func (x *DebugletExitRequest) String() string {
 func (*DebugletExitRequest) ProtoMessage() {}
 
 func (x *DebugletExitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[19]
+	mi := &file_protocol_protocol_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1463,7 +1535,7 @@ func (x *DebugletExitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletExitRequest.ProtoReflect.Descriptor instead.
 func (*DebugletExitRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{19}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *DebugletExitRequest) GetDebugletId() string {
@@ -1495,7 +1567,7 @@ type DebugletExitResponse struct {
 
 func (x *DebugletExitResponse) Reset() {
 	*x = DebugletExitResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[20]
+	mi := &file_protocol_protocol_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1507,7 +1579,7 @@ func (x *DebugletExitResponse) String() string {
 func (*DebugletExitResponse) ProtoMessage() {}
 
 func (x *DebugletExitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[20]
+	mi := &file_protocol_protocol_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1520,7 +1592,7 @@ func (x *DebugletExitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletExitResponse.ProtoReflect.Descriptor instead.
 func (*DebugletExitResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{20}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{21}
 }
 
 // Initially sent through a debuglet stream to identify the debuglet and executor. After that, the debuglet can send output messages through the same stream.
@@ -1535,7 +1607,7 @@ type DebugletIdent struct {
 
 func (x *DebugletIdent) Reset() {
 	*x = DebugletIdent{}
-	mi := &file_protocol_protocol_proto_msgTypes[21]
+	mi := &file_protocol_protocol_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1547,7 +1619,7 @@ func (x *DebugletIdent) String() string {
 func (*DebugletIdent) ProtoMessage() {}
 
 func (x *DebugletIdent) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[21]
+	mi := &file_protocol_protocol_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1560,7 +1632,7 @@ func (x *DebugletIdent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletIdent.ProtoReflect.Descriptor instead.
 func (*DebugletIdent) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{21}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DebugletIdent) GetDebugletId() string {
@@ -1595,7 +1667,7 @@ type DebugletOutput struct {
 
 func (x *DebugletOutput) Reset() {
 	*x = DebugletOutput{}
-	mi := &file_protocol_protocol_proto_msgTypes[22]
+	mi := &file_protocol_protocol_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1607,7 +1679,7 @@ func (x *DebugletOutput) String() string {
 func (*DebugletOutput) ProtoMessage() {}
 
 func (x *DebugletOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[22]
+	mi := &file_protocol_protocol_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1620,7 +1692,7 @@ func (x *DebugletOutput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletOutput.ProtoReflect.Descriptor instead.
 func (*DebugletOutput) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{22}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DebugletOutput) GetOutput() []byte {
@@ -1655,7 +1727,7 @@ type DebugletOutputEnd struct {
 
 func (x *DebugletOutputEnd) Reset() {
 	*x = DebugletOutputEnd{}
-	mi := &file_protocol_protocol_proto_msgTypes[23]
+	mi := &file_protocol_protocol_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1667,7 +1739,7 @@ func (x *DebugletOutputEnd) String() string {
 func (*DebugletOutputEnd) ProtoMessage() {}
 
 func (x *DebugletOutputEnd) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[23]
+	mi := &file_protocol_protocol_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1680,7 +1752,7 @@ func (x *DebugletOutputEnd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletOutputEnd.ProtoReflect.Descriptor instead.
 func (*DebugletOutputEnd) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{23}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *DebugletOutputEnd) GetLastSequence() int64 {
@@ -1718,7 +1790,7 @@ type DebugletStreamRequest struct {
 
 func (x *DebugletStreamRequest) Reset() {
 	*x = DebugletStreamRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[24]
+	mi := &file_protocol_protocol_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1730,7 +1802,7 @@ func (x *DebugletStreamRequest) String() string {
 func (*DebugletStreamRequest) ProtoMessage() {}
 
 func (x *DebugletStreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[24]
+	mi := &file_protocol_protocol_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1743,7 +1815,7 @@ func (x *DebugletStreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletStreamRequest.ProtoReflect.Descriptor instead.
 func (*DebugletStreamRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{24}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DebugletStreamRequest) GetMsg() isDebugletStreamRequest_Msg {
@@ -1812,7 +1884,7 @@ type DebugletStreamResponse struct {
 
 func (x *DebugletStreamResponse) Reset() {
 	*x = DebugletStreamResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[25]
+	mi := &file_protocol_protocol_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1824,7 +1896,7 @@ func (x *DebugletStreamResponse) String() string {
 func (*DebugletStreamResponse) ProtoMessage() {}
 
 func (x *DebugletStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[25]
+	mi := &file_protocol_protocol_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1837,7 +1909,7 @@ func (x *DebugletStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugletStreamResponse.ProtoReflect.Descriptor instead.
 func (*DebugletStreamResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{25}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DebugletStreamResponse) GetCommittedSequence() int64 {
@@ -1865,7 +1937,7 @@ type ControlBinding struct {
 
 func (x *ControlBinding) Reset() {
 	*x = ControlBinding{}
-	mi := &file_protocol_protocol_proto_msgTypes[26]
+	mi := &file_protocol_protocol_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1877,7 +1949,7 @@ func (x *ControlBinding) String() string {
 func (*ControlBinding) ProtoMessage() {}
 
 func (x *ControlBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[26]
+	mi := &file_protocol_protocol_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1890,7 +1962,7 @@ func (x *ControlBinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlBinding.ProtoReflect.Descriptor instead.
 func (*ControlBinding) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{26}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ControlBinding) GetDispatcherIncarnation() string {
@@ -1917,7 +1989,7 @@ type BindSessionRequest struct {
 
 func (x *BindSessionRequest) Reset() {
 	*x = BindSessionRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[27]
+	mi := &file_protocol_protocol_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1929,7 +2001,7 @@ func (x *BindSessionRequest) String() string {
 func (*BindSessionRequest) ProtoMessage() {}
 
 func (x *BindSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[27]
+	mi := &file_protocol_protocol_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1942,7 +2014,7 @@ func (x *BindSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindSessionRequest.ProtoReflect.Descriptor instead.
 func (*BindSessionRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{27}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *BindSessionRequest) GetExecutorId() string {
@@ -1961,7 +2033,7 @@ type BindSessionResponse struct {
 
 func (x *BindSessionResponse) Reset() {
 	*x = BindSessionResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[28]
+	mi := &file_protocol_protocol_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1973,7 +2045,7 @@ func (x *BindSessionResponse) String() string {
 func (*BindSessionResponse) ProtoMessage() {}
 
 func (x *BindSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[28]
+	mi := &file_protocol_protocol_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1986,7 +2058,7 @@ func (x *BindSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindSessionResponse.ProtoReflect.Descriptor instead.
 func (*BindSessionResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{28}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *BindSessionResponse) GetLeaseDurationMs() int64 {
@@ -2007,7 +2079,7 @@ type RenewLeaseRequest struct {
 
 func (x *RenewLeaseRequest) Reset() {
 	*x = RenewLeaseRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[29]
+	mi := &file_protocol_protocol_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2019,7 +2091,7 @@ func (x *RenewLeaseRequest) String() string {
 func (*RenewLeaseRequest) ProtoMessage() {}
 
 func (x *RenewLeaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[29]
+	mi := &file_protocol_protocol_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2032,7 +2104,7 @@ func (x *RenewLeaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewLeaseRequest.ProtoReflect.Descriptor instead.
 func (*RenewLeaseRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{29}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RenewLeaseRequest) GetSequence() uint64 {
@@ -2052,7 +2124,7 @@ type RenewLeaseResponse struct {
 
 func (x *RenewLeaseResponse) Reset() {
 	*x = RenewLeaseResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[30]
+	mi := &file_protocol_protocol_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2064,7 +2136,7 @@ func (x *RenewLeaseResponse) String() string {
 func (*RenewLeaseResponse) ProtoMessage() {}
 
 func (x *RenewLeaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[30]
+	mi := &file_protocol_protocol_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2077,7 +2149,7 @@ func (x *RenewLeaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewLeaseResponse.ProtoReflect.Descriptor instead.
 func (*RenewLeaseResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{30}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RenewLeaseResponse) GetSequence() uint64 {
@@ -2103,7 +2175,7 @@ type ProbeSessionRequest struct {
 
 func (x *ProbeSessionRequest) Reset() {
 	*x = ProbeSessionRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[31]
+	mi := &file_protocol_protocol_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2115,7 +2187,7 @@ func (x *ProbeSessionRequest) String() string {
 func (*ProbeSessionRequest) ProtoMessage() {}
 
 func (x *ProbeSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[31]
+	mi := &file_protocol_protocol_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2128,7 +2200,7 @@ func (x *ProbeSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeSessionRequest.ProtoReflect.Descriptor instead.
 func (*ProbeSessionRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{31}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ProbeSessionRequest) GetSequence() uint64 {
@@ -2147,7 +2219,7 @@ type ProbeSessionResponse struct {
 
 func (x *ProbeSessionResponse) Reset() {
 	*x = ProbeSessionResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[32]
+	mi := &file_protocol_protocol_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2159,7 +2231,7 @@ func (x *ProbeSessionResponse) String() string {
 func (*ProbeSessionResponse) ProtoMessage() {}
 
 func (x *ProbeSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[32]
+	mi := &file_protocol_protocol_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2172,7 +2244,7 @@ func (x *ProbeSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeSessionResponse.ProtoReflect.Descriptor instead.
 func (*ProbeSessionResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{32}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ProbeSessionResponse) GetSequence() uint64 {
@@ -2198,7 +2270,7 @@ type RetainedRun struct {
 
 func (x *RetainedRun) Reset() {
 	*x = RetainedRun{}
-	mi := &file_protocol_protocol_proto_msgTypes[33]
+	mi := &file_protocol_protocol_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2210,7 +2282,7 @@ func (x *RetainedRun) String() string {
 func (*RetainedRun) ProtoMessage() {}
 
 func (x *RetainedRun) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[33]
+	mi := &file_protocol_protocol_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2223,7 +2295,7 @@ func (x *RetainedRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetainedRun.ProtoReflect.Descriptor instead.
 func (*RetainedRun) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{33}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *RetainedRun) GetDebugletId() string {
@@ -2278,7 +2350,7 @@ type InspectRetainedRunRequest struct {
 
 func (x *InspectRetainedRunRequest) Reset() {
 	*x = InspectRetainedRunRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[34]
+	mi := &file_protocol_protocol_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2290,7 +2362,7 @@ func (x *InspectRetainedRunRequest) String() string {
 func (*InspectRetainedRunRequest) ProtoMessage() {}
 
 func (x *InspectRetainedRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[34]
+	mi := &file_protocol_protocol_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2303,7 +2375,7 @@ func (x *InspectRetainedRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectRetainedRunRequest.ProtoReflect.Descriptor instead.
 func (*InspectRetainedRunRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{34}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *InspectRetainedRunRequest) GetDebugletId() string {
@@ -2330,7 +2402,7 @@ type InspectRetainedRunResponse struct {
 
 func (x *InspectRetainedRunResponse) Reset() {
 	*x = InspectRetainedRunResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[35]
+	mi := &file_protocol_protocol_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2342,7 +2414,7 @@ func (x *InspectRetainedRunResponse) String() string {
 func (*InspectRetainedRunResponse) ProtoMessage() {}
 
 func (x *InspectRetainedRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[35]
+	mi := &file_protocol_protocol_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2355,7 +2427,7 @@ func (x *InspectRetainedRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectRetainedRunResponse.ProtoReflect.Descriptor instead.
 func (*InspectRetainedRunResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{35}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *InspectRetainedRunResponse) GetStatus() RetainedRunStatus {
@@ -2387,7 +2459,7 @@ type VerifyTagsRequest struct {
 
 func (x *VerifyTagsRequest) Reset() {
 	*x = VerifyTagsRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[36]
+	mi := &file_protocol_protocol_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2399,7 +2471,7 @@ func (x *VerifyTagsRequest) String() string {
 func (*VerifyTagsRequest) ProtoMessage() {}
 
 func (x *VerifyTagsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[36]
+	mi := &file_protocol_protocol_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2412,7 +2484,7 @@ func (x *VerifyTagsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyTagsRequest.ProtoReflect.Descriptor instead.
 func (*VerifyTagsRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{36}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *VerifyTagsRequest) GetControlBinding() *ControlBinding {
@@ -2461,7 +2533,7 @@ type VerifyTagsResponse struct {
 
 func (x *VerifyTagsResponse) Reset() {
 	*x = VerifyTagsResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[37]
+	mi := &file_protocol_protocol_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2473,7 +2545,7 @@ func (x *VerifyTagsResponse) String() string {
 func (*VerifyTagsResponse) ProtoMessage() {}
 
 func (x *VerifyTagsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[37]
+	mi := &file_protocol_protocol_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2486,7 +2558,7 @@ func (x *VerifyTagsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyTagsResponse.ProtoReflect.Descriptor instead.
 func (*VerifyTagsResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{37}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *VerifyTagsResponse) GetVerdict() string {
@@ -2534,7 +2606,7 @@ type ExecutorCapabilities struct {
 
 func (x *ExecutorCapabilities) Reset() {
 	*x = ExecutorCapabilities{}
-	mi := &file_protocol_protocol_proto_msgTypes[38]
+	mi := &file_protocol_protocol_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2546,7 +2618,7 @@ func (x *ExecutorCapabilities) String() string {
 func (*ExecutorCapabilities) ProtoMessage() {}
 
 func (x *ExecutorCapabilities) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[38]
+	mi := &file_protocol_protocol_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2559,7 +2631,7 @@ func (x *ExecutorCapabilities) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutorCapabilities.ProtoReflect.Descriptor instead.
 func (*ExecutorCapabilities) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{38}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ExecutorCapabilities) GetSchemaVersion() uint32 {
@@ -2622,7 +2694,7 @@ type ProbeState struct {
 
 func (x *ProbeState) Reset() {
 	*x = ProbeState{}
-	mi := &file_protocol_protocol_proto_msgTypes[39]
+	mi := &file_protocol_protocol_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2634,7 +2706,7 @@ func (x *ProbeState) String() string {
 func (*ProbeState) ProtoMessage() {}
 
 func (x *ProbeState) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[39]
+	mi := &file_protocol_protocol_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2647,7 +2719,7 @@ func (x *ProbeState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeState.ProtoReflect.Descriptor instead.
 func (*ProbeState) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{39}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ProbeState) GetState() string {
@@ -2686,7 +2758,7 @@ type TaggingMode struct {
 
 func (x *TaggingMode) Reset() {
 	*x = TaggingMode{}
-	mi := &file_protocol_protocol_proto_msgTypes[40]
+	mi := &file_protocol_protocol_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2698,7 +2770,7 @@ func (x *TaggingMode) String() string {
 func (*TaggingMode) ProtoMessage() {}
 
 func (x *TaggingMode) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[40]
+	mi := &file_protocol_protocol_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2711,7 +2783,7 @@ func (x *TaggingMode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaggingMode.ProtoReflect.Descriptor instead.
 func (*TaggingMode) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{40}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *TaggingMode) GetIpv4() string {
@@ -2760,7 +2832,7 @@ type AttributionState struct {
 
 func (x *AttributionState) Reset() {
 	*x = AttributionState{}
-	mi := &file_protocol_protocol_proto_msgTypes[41]
+	mi := &file_protocol_protocol_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2772,7 +2844,7 @@ func (x *AttributionState) String() string {
 func (*AttributionState) ProtoMessage() {}
 
 func (x *AttributionState) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[41]
+	mi := &file_protocol_protocol_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2785,7 +2857,7 @@ func (x *AttributionState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributionState.ProtoReflect.Descriptor instead.
 func (*AttributionState) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{41}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *AttributionState) GetState() string {
@@ -2847,20 +2919,22 @@ type VantagePointReport struct {
 	Listeners     []string               `protobuf:"bytes,3,rep,name=listeners,proto3" json:"listeners,omitempty"`                       // Listener transports it can open: tcp, udp, scion.
 	// Additive within schema version 1; absent is unknown. The dispatcher
 	// clears a malformed field alone and keeps the rest of the report.
-	Clock           *ClockState         `protobuf:"bytes,4,opt,name=clock,proto3" json:"clock,omitempty"`
-	Platform        *HostPlatform       `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`                                        // Operator only; never in the public executor listing.
-	LocationOptOut  bool                `protobuf:"varint,6,opt,name=location_opt_out,json=locationOptOut,proto3" json:"location_opt_out,omitempty"`   // Suppress automatic GeoIP publication; false for older peers.
-	Connectivity    *ConnectivityReport `protobuf:"bytes,7,opt,name=connectivity,proto3" json:"connectivity,omitempty"`                                // Optional bounded observation attempt.
-	ScionHost       string              `protobuf:"bytes,8,opt,name=scion_host,json=scionHost,proto3" json:"scion_host,omitempty"`                     // Local host selected toward the configured SCION control service.
-	ScionPathTarget string              `protobuf:"bytes,9,opt,name=scion_path_target,json=scionPathTarget,proto3" json:"scion_path_target,omitempty"` // Operator-configured remote ISD-AS; empty untested.
-	ScionPaths      *ProbeState         `protobuf:"bytes,10,opt,name=scion_paths,json=scionPaths,proto3" json:"scion_paths,omitempty"`                 // Daemon path availability, not data-plane reachability.
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	Clock             *ClockState         `protobuf:"bytes,4,opt,name=clock,proto3" json:"clock,omitempty"`
+	Platform          *HostPlatform       `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`                                             // Operator only; never in the public executor listing.
+	LocationOptOut    bool                `protobuf:"varint,6,opt,name=location_opt_out,json=locationOptOut,proto3" json:"location_opt_out,omitempty"`        // Suppress automatic GeoIP publication; false for older peers.
+	Connectivity      *ConnectivityReport `protobuf:"bytes,7,opt,name=connectivity,proto3" json:"connectivity,omitempty"`                                     // Optional bounded observation attempt.
+	ScionHost         string              `protobuf:"bytes,8,opt,name=scion_host,json=scionHost,proto3" json:"scion_host,omitempty"`                          // Local host selected toward the configured SCION control service.
+	ScionPathTarget   string              `protobuf:"bytes,9,opt,name=scion_path_target,json=scionPathTarget,proto3" json:"scion_path_target,omitempty"`      // Operator-configured remote ISD-AS; empty untested.
+	ScionPaths        *ProbeState         `protobuf:"bytes,10,opt,name=scion_paths,json=scionPaths,proto3" json:"scion_paths,omitempty"`                      // Daemon path availability, not data-plane reachability.
+	Resources         *HostResources      `protobuf:"bytes,11,opt,name=resources,proto3" json:"resources,omitempty"`                                          // Process and state-filesystem observations; operator metrics only.
+	CounterAttachment string              `protobuf:"bytes,12,opt,name=counter_attachment,json=counterAttachment,proto3" json:"counter_attachment,omitempty"` // present, missing or unknown: owned TCX links, not proof of packet policing.
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VantagePointReport) Reset() {
 	*x = VantagePointReport{}
-	mi := &file_protocol_protocol_proto_msgTypes[42]
+	mi := &file_protocol_protocol_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2872,7 +2946,7 @@ func (x *VantagePointReport) String() string {
 func (*VantagePointReport) ProtoMessage() {}
 
 func (x *VantagePointReport) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[42]
+	mi := &file_protocol_protocol_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2885,7 +2959,7 @@ func (x *VantagePointReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VantagePointReport.ProtoReflect.Descriptor instead.
 func (*VantagePointReport) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{42}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *VantagePointReport) GetSchemaVersion() uint32 {
@@ -2958,6 +3032,141 @@ func (x *VantagePointReport) GetScionPaths() *ProbeState {
 	return nil
 }
 
+func (x *VantagePointReport) GetResources() *HostResources {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+func (x *VantagePointReport) GetCounterAttachment() string {
+	if x != nil {
+		return x.CounterAttachment
+	}
+	return ""
+}
+
+type HostResourceValue struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         *uint64                `protobuf:"varint,1,opt,name=value,proto3,oneof" json:"value,omitempty"`
+	Unavailable   string                 `protobuf:"bytes,2,opt,name=unavailable,proto3" json:"unavailable,omitempty"` // missing, permission, read, limit, invalid or unsupported; empty with value.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostResourceValue) Reset() {
+	*x = HostResourceValue{}
+	mi := &file_protocol_protocol_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostResourceValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostResourceValue) ProtoMessage() {}
+
+func (x *HostResourceValue) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostResourceValue.ProtoReflect.Descriptor instead.
+func (*HostResourceValue) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *HostResourceValue) GetValue() uint64 {
+	if x != nil && x.Value != nil {
+		return *x.Value
+	}
+	return 0
+}
+
+func (x *HostResourceValue) GetUnavailable() string {
+	if x != nil {
+		return x.Unavailable
+	}
+	return ""
+}
+
+// Collected sequentially, not an atomic host snapshot. A missing field is unknown.
+type HostResources struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	ProcessRssBytes     *HostResourceValue     `protobuf:"bytes,1,opt,name=process_rss_bytes,json=processRssBytes,proto3" json:"process_rss_bytes,omitempty"`
+	OpenFds             *HostResourceValue     `protobuf:"bytes,2,opt,name=open_fds,json=openFds,proto3" json:"open_fds,omitempty"`
+	StateAvailableBytes *HostResourceValue     `protobuf:"bytes,3,opt,name=state_available_bytes,json=stateAvailableBytes,proto3" json:"state_available_bytes,omitempty"`
+	StateCapacityBytes  *HostResourceValue     `protobuf:"bytes,4,opt,name=state_capacity_bytes,json=stateCapacityBytes,proto3" json:"state_capacity_bytes,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *HostResources) Reset() {
+	*x = HostResources{}
+	mi := &file_protocol_protocol_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostResources) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostResources) ProtoMessage() {}
+
+func (x *HostResources) ProtoReflect() protoreflect.Message {
+	mi := &file_protocol_protocol_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostResources.ProtoReflect.Descriptor instead.
+func (*HostResources) Descriptor() ([]byte, []int) {
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *HostResources) GetProcessRssBytes() *HostResourceValue {
+	if x != nil {
+		return x.ProcessRssBytes
+	}
+	return nil
+}
+
+func (x *HostResources) GetOpenFds() *HostResourceValue {
+	if x != nil {
+		return x.OpenFds
+	}
+	return nil
+}
+
+func (x *HostResources) GetStateAvailableBytes() *HostResourceValue {
+	if x != nil {
+		return x.StateAvailableBytes
+	}
+	return nil
+}
+
+func (x *HostResources) GetStateCapacityBytes() *HostResourceValue {
+	if x != nil {
+		return x.StateCapacityBytes
+	}
+	return nil
+}
+
 type ReflectAddressRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ExecutorId    string                 `protobuf:"bytes,1,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
@@ -2968,7 +3177,7 @@ type ReflectAddressRequest struct {
 
 func (x *ReflectAddressRequest) Reset() {
 	*x = ReflectAddressRequest{}
-	mi := &file_protocol_protocol_proto_msgTypes[43]
+	mi := &file_protocol_protocol_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2980,7 +3189,7 @@ func (x *ReflectAddressRequest) String() string {
 func (*ReflectAddressRequest) ProtoMessage() {}
 
 func (x *ReflectAddressRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[43]
+	mi := &file_protocol_protocol_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2993,7 +3202,7 @@ func (x *ReflectAddressRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReflectAddressRequest.ProtoReflect.Descriptor instead.
 func (*ReflectAddressRequest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{43}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ReflectAddressRequest) GetExecutorId() string {
@@ -3019,7 +3228,7 @@ type ReflectAddressResponse struct {
 
 func (x *ReflectAddressResponse) Reset() {
 	*x = ReflectAddressResponse{}
-	mi := &file_protocol_protocol_proto_msgTypes[44]
+	mi := &file_protocol_protocol_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3031,7 +3240,7 @@ func (x *ReflectAddressResponse) String() string {
 func (*ReflectAddressResponse) ProtoMessage() {}
 
 func (x *ReflectAddressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[44]
+	mi := &file_protocol_protocol_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3044,7 +3253,7 @@ func (x *ReflectAddressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReflectAddressResponse.ProtoReflect.Descriptor instead.
 func (*ReflectAddressResponse) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{44}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ReflectAddressResponse) GetAddress() string {
@@ -3065,7 +3274,7 @@ type EgressTest struct {
 
 func (x *EgressTest) Reset() {
 	*x = EgressTest{}
-	mi := &file_protocol_protocol_proto_msgTypes[45]
+	mi := &file_protocol_protocol_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3077,7 +3286,7 @@ func (x *EgressTest) String() string {
 func (*EgressTest) ProtoMessage() {}
 
 func (x *EgressTest) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[45]
+	mi := &file_protocol_protocol_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3090,7 +3299,7 @@ func (x *EgressTest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressTest.ProtoReflect.Descriptor instead.
 func (*EgressTest) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{45}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *EgressTest) GetState() string {
@@ -3125,7 +3334,7 @@ type ListenerChallenge struct {
 
 func (x *ListenerChallenge) Reset() {
 	*x = ListenerChallenge{}
-	mi := &file_protocol_protocol_proto_msgTypes[46]
+	mi := &file_protocol_protocol_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3137,7 +3346,7 @@ func (x *ListenerChallenge) String() string {
 func (*ListenerChallenge) ProtoMessage() {}
 
 func (x *ListenerChallenge) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[46]
+	mi := &file_protocol_protocol_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3150,7 +3359,7 @@ func (x *ListenerChallenge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenerChallenge.ProtoReflect.Descriptor instead.
 func (*ListenerChallenge) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{46}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ListenerChallenge) GetTransport() string {
@@ -3188,7 +3397,7 @@ type ConnectivityReport struct {
 
 func (x *ConnectivityReport) Reset() {
 	*x = ConnectivityReport{}
-	mi := &file_protocol_protocol_proto_msgTypes[47]
+	mi := &file_protocol_protocol_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3200,7 +3409,7 @@ func (x *ConnectivityReport) String() string {
 func (*ConnectivityReport) ProtoMessage() {}
 
 func (x *ConnectivityReport) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[47]
+	mi := &file_protocol_protocol_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3213,7 +3422,7 @@ func (x *ConnectivityReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectivityReport.ProtoReflect.Descriptor instead.
 func (*ConnectivityReport) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{47}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ConnectivityReport) GetIpv4() *EgressTest {
@@ -3273,7 +3482,7 @@ type ClockState struct {
 
 func (x *ClockState) Reset() {
 	*x = ClockState{}
-	mi := &file_protocol_protocol_proto_msgTypes[48]
+	mi := &file_protocol_protocol_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3285,7 +3494,7 @@ func (x *ClockState) String() string {
 func (*ClockState) ProtoMessage() {}
 
 func (x *ClockState) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[48]
+	mi := &file_protocol_protocol_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3298,7 +3507,7 @@ func (x *ClockState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClockState.ProtoReflect.Descriptor instead.
 func (*ClockState) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{48}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ClockState) GetState() string {
@@ -3358,7 +3567,7 @@ type HostPlatform struct {
 
 func (x *HostPlatform) Reset() {
 	*x = HostPlatform{}
-	mi := &file_protocol_protocol_proto_msgTypes[49]
+	mi := &file_protocol_protocol_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3370,7 +3579,7 @@ func (x *HostPlatform) String() string {
 func (*HostPlatform) ProtoMessage() {}
 
 func (x *HostPlatform) ProtoReflect() protoreflect.Message {
-	mi := &file_protocol_protocol_proto_msgTypes[49]
+	mi := &file_protocol_protocol_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3383,7 +3592,7 @@ func (x *HostPlatform) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostPlatform.ProtoReflect.Descriptor instead.
 func (*HostPlatform) Descriptor() ([]byte, []int) {
-	return file_protocol_protocol_proto_rawDescGZIP(), []int{49}
+	return file_protocol_protocol_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *HostPlatform) GetOs() string {
@@ -3508,7 +3717,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x06limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x06limits\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\"/\n" +
 	"\x11BandwidthResponse\x12\x1a\n" +
-	"\brevision\x18\x01 \x01(\x04R\brevision\"\xde\x02\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\"\xaf\x03\n" +
 	"\x10HeartbeatRequest\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12!\n" +
@@ -3517,7 +3726,12 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\ttesla_key\x18\x04 \x01(\fR\bteslaKey\x12K\n" +
 	"\fcapabilities\x18\x05 \x01(\v2'.debuglet.protocol.ExecutorCapabilitiesR\fcapabilities\x12J\n" +
 	"\rvantage_point\x18\x06 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\x12(\n" +
-	"\x10tesla_key_anchor\x18\a \x01(\fR\x0eteslaKeyAnchor\"\x13\n" +
+	"\x10tesla_key_anchor\x18\a \x01(\fR\x0eteslaKeyAnchor\x12O\n" +
+	"\x11extra_disclosures\x18\b \x03(\v2\".debuglet.protocol.TeslaDisclosureR\x10extraDisclosures\"Q\n" +
+	"\x0fTeslaDisclosure\x12\x16\n" +
+	"\x06anchor\x18\x01 \x01(\fR\x06anchor\x12\x14\n" +
+	"\x05epoch\x18\x02 \x01(\x03R\x05epoch\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\fR\x03key\"\x13\n" +
 	"\x11HeartbeatResponse\"b\n" +
 	"\x10ResourcesRequest\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
@@ -3647,7 +3861,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x12disclosure_held_ms\x18\a \x01(\x03H\x02R\x10disclosureHeldMs\x88\x01\x01B\x12\n" +
 	"\x10_installed_epochB\x16\n" +
 	"\x14_last_refresh_age_msB\x15\n" +
-	"\x13_disclosure_held_ms\"\xed\x03\n" +
+	"\x13_disclosure_held_ms\"\xdc\x04\n" +
 	"\x12VantagePointReport\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12 \n" +
 	"\fscion_isd_as\x18\x02 \x01(\tR\n" +
@@ -3662,7 +3876,18 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x11scion_path_target\x18\t \x01(\tR\x0fscionPathTarget\x12>\n" +
 	"\vscion_paths\x18\n" +
 	" \x01(\v2\x1d.debuglet.protocol.ProbeStateR\n" +
-	"scionPaths\"N\n" +
+	"scionPaths\x12>\n" +
+	"\tresources\x18\v \x01(\v2 .debuglet.protocol.HostResourcesR\tresources\x12-\n" +
+	"\x12counter_attachment\x18\f \x01(\tR\x11counterAttachment\"Z\n" +
+	"\x11HostResourceValue\x12\x19\n" +
+	"\x05value\x18\x01 \x01(\x04H\x00R\x05value\x88\x01\x01\x12 \n" +
+	"\vunavailable\x18\x02 \x01(\tR\vunavailableB\b\n" +
+	"\x06_value\"\xd4\x02\n" +
+	"\rHostResources\x12P\n" +
+	"\x11process_rss_bytes\x18\x01 \x01(\v2$.debuglet.protocol.HostResourceValueR\x0fprocessRssBytes\x12?\n" +
+	"\bopen_fds\x18\x02 \x01(\v2$.debuglet.protocol.HostResourceValueR\aopenFds\x12X\n" +
+	"\x15state_available_bytes\x18\x03 \x01(\v2$.debuglet.protocol.HostResourceValueR\x13stateAvailableBytes\x12V\n" +
+	"\x14state_capacity_bytes\x18\x04 \x01(\v2$.debuglet.protocol.HostResourceValueR\x12stateCapacityBytes\"N\n" +
 	"\x15ReflectAddressRequest\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x14\n" +
@@ -3753,7 +3978,7 @@ func file_protocol_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_protocol_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_protocol_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_protocol_protocol_proto_goTypes = []any{
 	(RunState)(0),                      // 0: debuglet.protocol.RunState
 	(DebugletOutputStatus)(0),          // 1: debuglet.protocol.DebugletOutputStatus
@@ -3769,121 +3994,130 @@ var file_protocol_protocol_proto_goTypes = []any{
 	(*BandwidthRequest)(nil),           // 11: debuglet.protocol.BandwidthRequest
 	(*BandwidthResponse)(nil),          // 12: debuglet.protocol.BandwidthResponse
 	(*HeartbeatRequest)(nil),           // 13: debuglet.protocol.HeartbeatRequest
-	(*HeartbeatResponse)(nil),          // 14: debuglet.protocol.HeartbeatResponse
-	(*ResourcesRequest)(nil),           // 15: debuglet.protocol.ResourcesRequest
-	(*ResourcesResponse)(nil),          // 16: debuglet.protocol.ResourcesResponse
-	(*DebugletStateRequest)(nil),       // 17: debuglet.protocol.DebugletStateRequest
-	(*ListenerEndpoint)(nil),           // 18: debuglet.protocol.ListenerEndpoint
-	(*DebugletStateResponse)(nil),      // 19: debuglet.protocol.DebugletStateResponse
-	(*DebugletAllocateRequest)(nil),    // 20: debuglet.protocol.DebugletAllocateRequest
-	(*DebugletAllocateResponse)(nil),   // 21: debuglet.protocol.DebugletAllocateResponse
-	(*DebugletExitRequest)(nil),        // 22: debuglet.protocol.DebugletExitRequest
-	(*DebugletExitResponse)(nil),       // 23: debuglet.protocol.DebugletExitResponse
-	(*DebugletIdent)(nil),              // 24: debuglet.protocol.DebugletIdent
-	(*DebugletOutput)(nil),             // 25: debuglet.protocol.DebugletOutput
-	(*DebugletOutputEnd)(nil),          // 26: debuglet.protocol.DebugletOutputEnd
-	(*DebugletStreamRequest)(nil),      // 27: debuglet.protocol.DebugletStreamRequest
-	(*DebugletStreamResponse)(nil),     // 28: debuglet.protocol.DebugletStreamResponse
-	(*ControlBinding)(nil),             // 29: debuglet.protocol.ControlBinding
-	(*BindSessionRequest)(nil),         // 30: debuglet.protocol.BindSessionRequest
-	(*BindSessionResponse)(nil),        // 31: debuglet.protocol.BindSessionResponse
-	(*RenewLeaseRequest)(nil),          // 32: debuglet.protocol.RenewLeaseRequest
-	(*RenewLeaseResponse)(nil),         // 33: debuglet.protocol.RenewLeaseResponse
-	(*ProbeSessionRequest)(nil),        // 34: debuglet.protocol.ProbeSessionRequest
-	(*ProbeSessionResponse)(nil),       // 35: debuglet.protocol.ProbeSessionResponse
-	(*RetainedRun)(nil),                // 36: debuglet.protocol.RetainedRun
-	(*InspectRetainedRunRequest)(nil),  // 37: debuglet.protocol.InspectRetainedRunRequest
-	(*InspectRetainedRunResponse)(nil), // 38: debuglet.protocol.InspectRetainedRunResponse
-	(*VerifyTagsRequest)(nil),          // 39: debuglet.protocol.VerifyTagsRequest
-	(*VerifyTagsResponse)(nil),         // 40: debuglet.protocol.VerifyTagsResponse
-	(*ExecutorCapabilities)(nil),       // 41: debuglet.protocol.ExecutorCapabilities
-	(*ProbeState)(nil),                 // 42: debuglet.protocol.ProbeState
-	(*TaggingMode)(nil),                // 43: debuglet.protocol.TaggingMode
-	(*AttributionState)(nil),           // 44: debuglet.protocol.AttributionState
-	(*VantagePointReport)(nil),         // 45: debuglet.protocol.VantagePointReport
-	(*ReflectAddressRequest)(nil),      // 46: debuglet.protocol.ReflectAddressRequest
-	(*ReflectAddressResponse)(nil),     // 47: debuglet.protocol.ReflectAddressResponse
-	(*EgressTest)(nil),                 // 48: debuglet.protocol.EgressTest
-	(*ListenerChallenge)(nil),          // 49: debuglet.protocol.ListenerChallenge
-	(*ConnectivityReport)(nil),         // 50: debuglet.protocol.ConnectivityReport
-	(*ClockState)(nil),                 // 51: debuglet.protocol.ClockState
-	(*HostPlatform)(nil),               // 52: debuglet.protocol.HostPlatform
-	(*timestamppb.Timestamp)(nil),      // 53: google.protobuf.Timestamp
+	(*TeslaDisclosure)(nil),            // 14: debuglet.protocol.TeslaDisclosure
+	(*HeartbeatResponse)(nil),          // 15: debuglet.protocol.HeartbeatResponse
+	(*ResourcesRequest)(nil),           // 16: debuglet.protocol.ResourcesRequest
+	(*ResourcesResponse)(nil),          // 17: debuglet.protocol.ResourcesResponse
+	(*DebugletStateRequest)(nil),       // 18: debuglet.protocol.DebugletStateRequest
+	(*ListenerEndpoint)(nil),           // 19: debuglet.protocol.ListenerEndpoint
+	(*DebugletStateResponse)(nil),      // 20: debuglet.protocol.DebugletStateResponse
+	(*DebugletAllocateRequest)(nil),    // 21: debuglet.protocol.DebugletAllocateRequest
+	(*DebugletAllocateResponse)(nil),   // 22: debuglet.protocol.DebugletAllocateResponse
+	(*DebugletExitRequest)(nil),        // 23: debuglet.protocol.DebugletExitRequest
+	(*DebugletExitResponse)(nil),       // 24: debuglet.protocol.DebugletExitResponse
+	(*DebugletIdent)(nil),              // 25: debuglet.protocol.DebugletIdent
+	(*DebugletOutput)(nil),             // 26: debuglet.protocol.DebugletOutput
+	(*DebugletOutputEnd)(nil),          // 27: debuglet.protocol.DebugletOutputEnd
+	(*DebugletStreamRequest)(nil),      // 28: debuglet.protocol.DebugletStreamRequest
+	(*DebugletStreamResponse)(nil),     // 29: debuglet.protocol.DebugletStreamResponse
+	(*ControlBinding)(nil),             // 30: debuglet.protocol.ControlBinding
+	(*BindSessionRequest)(nil),         // 31: debuglet.protocol.BindSessionRequest
+	(*BindSessionResponse)(nil),        // 32: debuglet.protocol.BindSessionResponse
+	(*RenewLeaseRequest)(nil),          // 33: debuglet.protocol.RenewLeaseRequest
+	(*RenewLeaseResponse)(nil),         // 34: debuglet.protocol.RenewLeaseResponse
+	(*ProbeSessionRequest)(nil),        // 35: debuglet.protocol.ProbeSessionRequest
+	(*ProbeSessionResponse)(nil),       // 36: debuglet.protocol.ProbeSessionResponse
+	(*RetainedRun)(nil),                // 37: debuglet.protocol.RetainedRun
+	(*InspectRetainedRunRequest)(nil),  // 38: debuglet.protocol.InspectRetainedRunRequest
+	(*InspectRetainedRunResponse)(nil), // 39: debuglet.protocol.InspectRetainedRunResponse
+	(*VerifyTagsRequest)(nil),          // 40: debuglet.protocol.VerifyTagsRequest
+	(*VerifyTagsResponse)(nil),         // 41: debuglet.protocol.VerifyTagsResponse
+	(*ExecutorCapabilities)(nil),       // 42: debuglet.protocol.ExecutorCapabilities
+	(*ProbeState)(nil),                 // 43: debuglet.protocol.ProbeState
+	(*TaggingMode)(nil),                // 44: debuglet.protocol.TaggingMode
+	(*AttributionState)(nil),           // 45: debuglet.protocol.AttributionState
+	(*VantagePointReport)(nil),         // 46: debuglet.protocol.VantagePointReport
+	(*HostResourceValue)(nil),          // 47: debuglet.protocol.HostResourceValue
+	(*HostResources)(nil),              // 48: debuglet.protocol.HostResources
+	(*ReflectAddressRequest)(nil),      // 49: debuglet.protocol.ReflectAddressRequest
+	(*ReflectAddressResponse)(nil),     // 50: debuglet.protocol.ReflectAddressResponse
+	(*EgressTest)(nil),                 // 51: debuglet.protocol.EgressTest
+	(*ListenerChallenge)(nil),          // 52: debuglet.protocol.ListenerChallenge
+	(*ConnectivityReport)(nil),         // 53: debuglet.protocol.ConnectivityReport
+	(*ClockState)(nil),                 // 54: debuglet.protocol.ClockState
+	(*HostPlatform)(nil),               // 55: debuglet.protocol.HostPlatform
+	(*timestamppb.Timestamp)(nil),      // 56: google.protobuf.Timestamp
 }
 var file_protocol_protocol_proto_depIdxs = []int32{
-	41, // 0: debuglet.protocol.HelloResponse.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
-	45, // 1: debuglet.protocol.HelloResponse.vantage_point:type_name -> debuglet.protocol.VantagePointReport
-	53, // 2: debuglet.protocol.UploadRequest.start_time:type_name -> google.protobuf.Timestamp
+	42, // 0: debuglet.protocol.HelloResponse.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
+	46, // 1: debuglet.protocol.HelloResponse.vantage_point:type_name -> debuglet.protocol.VantagePointReport
+	56, // 2: debuglet.protocol.UploadRequest.start_time:type_name -> google.protobuf.Timestamp
 	5,  // 3: debuglet.protocol.UploadRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
-	29, // 4: debuglet.protocol.UploadRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
+	30, // 4: debuglet.protocol.UploadRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
 	10, // 5: debuglet.protocol.BandwidthRequest.limits:type_name -> debuglet.protocol.DestinationLimit
-	41, // 6: debuglet.protocol.HeartbeatRequest.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
-	45, // 7: debuglet.protocol.HeartbeatRequest.vantage_point:type_name -> debuglet.protocol.VantagePointReport
-	0,  // 8: debuglet.protocol.DebugletStateRequest.state:type_name -> debuglet.protocol.RunState
-	18, // 9: debuglet.protocol.DebugletStateRequest.tcp_listener:type_name -> debuglet.protocol.ListenerEndpoint
-	5,  // 10: debuglet.protocol.DebugletAllocateRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
-	10, // 11: debuglet.protocol.DebugletAllocateResponse.allocated_limits:type_name -> debuglet.protocol.DestinationLimit
-	29, // 12: debuglet.protocol.DebugletIdent.original_binding:type_name -> debuglet.protocol.ControlBinding
-	53, // 13: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
-	1,  // 14: debuglet.protocol.DebugletOutputEnd.status:type_name -> debuglet.protocol.DebugletOutputStatus
-	24, // 15: debuglet.protocol.DebugletStreamRequest.ident:type_name -> debuglet.protocol.DebugletIdent
-	25, // 16: debuglet.protocol.DebugletStreamRequest.output:type_name -> debuglet.protocol.DebugletOutput
-	26, // 17: debuglet.protocol.DebugletStreamRequest.end:type_name -> debuglet.protocol.DebugletOutputEnd
-	26, // 18: debuglet.protocol.DebugletStreamResponse.end:type_name -> debuglet.protocol.DebugletOutputEnd
-	29, // 19: debuglet.protocol.RetainedRun.original_binding:type_name -> debuglet.protocol.ControlBinding
-	53, // 20: debuglet.protocol.RetainedRun.started_at:type_name -> google.protobuf.Timestamp
-	53, // 21: debuglet.protocol.RetainedRun.start_time:type_name -> google.protobuf.Timestamp
-	29, // 22: debuglet.protocol.InspectRetainedRunRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
-	2,  // 23: debuglet.protocol.InspectRetainedRunResponse.status:type_name -> debuglet.protocol.RetainedRunStatus
-	36, // 24: debuglet.protocol.InspectRetainedRunResponse.run:type_name -> debuglet.protocol.RetainedRun
-	29, // 25: debuglet.protocol.VerifyTagsRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
-	44, // 26: debuglet.protocol.ExecutorCapabilities.attribution:type_name -> debuglet.protocol.AttributionState
-	43, // 27: debuglet.protocol.ExecutorCapabilities.tagging:type_name -> debuglet.protocol.TaggingMode
-	42, // 28: debuglet.protocol.ExecutorCapabilities.icmp:type_name -> debuglet.protocol.ProbeState
-	51, // 29: debuglet.protocol.VantagePointReport.clock:type_name -> debuglet.protocol.ClockState
-	52, // 30: debuglet.protocol.VantagePointReport.platform:type_name -> debuglet.protocol.HostPlatform
-	50, // 31: debuglet.protocol.VantagePointReport.connectivity:type_name -> debuglet.protocol.ConnectivityReport
-	42, // 32: debuglet.protocol.VantagePointReport.scion_paths:type_name -> debuglet.protocol.ProbeState
-	48, // 33: debuglet.protocol.ConnectivityReport.ipv4:type_name -> debuglet.protocol.EgressTest
-	48, // 34: debuglet.protocol.ConnectivityReport.ipv6:type_name -> debuglet.protocol.EgressTest
-	49, // 35: debuglet.protocol.ConnectivityReport.listeners:type_name -> debuglet.protocol.ListenerChallenge
-	46, // 36: debuglet.protocol.DispatcherService.ReflectAddress:input_type -> debuglet.protocol.ReflectAddressRequest
-	13, // 37: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
-	15, // 38: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
-	17, // 39: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
-	20, // 40: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
-	22, // 41: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
-	27, // 42: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
-	30, // 43: debuglet.protocol.DispatcherService.BindSession:input_type -> debuglet.protocol.BindSessionRequest
-	32, // 44: debuglet.protocol.DispatcherService.RenewLease:input_type -> debuglet.protocol.RenewLeaseRequest
-	3,  // 45: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
-	6,  // 46: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
-	8,  // 47: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
-	11, // 48: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
-	34, // 49: debuglet.protocol.ExecutorService.ProbeSession:input_type -> debuglet.protocol.ProbeSessionRequest
-	37, // 50: debuglet.protocol.ExecutorService.InspectRetainedRun:input_type -> debuglet.protocol.InspectRetainedRunRequest
-	39, // 51: debuglet.protocol.ExecutorService.VerifyTags:input_type -> debuglet.protocol.VerifyTagsRequest
-	47, // 52: debuglet.protocol.DispatcherService.ReflectAddress:output_type -> debuglet.protocol.ReflectAddressResponse
-	14, // 53: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
-	16, // 54: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
-	19, // 55: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
-	21, // 56: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
-	23, // 57: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
-	28, // 58: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
-	31, // 59: debuglet.protocol.DispatcherService.BindSession:output_type -> debuglet.protocol.BindSessionResponse
-	33, // 60: debuglet.protocol.DispatcherService.RenewLease:output_type -> debuglet.protocol.RenewLeaseResponse
-	4,  // 61: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
-	7,  // 62: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
-	9,  // 63: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
-	12, // 64: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
-	35, // 65: debuglet.protocol.ExecutorService.ProbeSession:output_type -> debuglet.protocol.ProbeSessionResponse
-	38, // 66: debuglet.protocol.ExecutorService.InspectRetainedRun:output_type -> debuglet.protocol.InspectRetainedRunResponse
-	40, // 67: debuglet.protocol.ExecutorService.VerifyTags:output_type -> debuglet.protocol.VerifyTagsResponse
-	52, // [52:68] is the sub-list for method output_type
-	36, // [36:52] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	42, // 6: debuglet.protocol.HeartbeatRequest.capabilities:type_name -> debuglet.protocol.ExecutorCapabilities
+	46, // 7: debuglet.protocol.HeartbeatRequest.vantage_point:type_name -> debuglet.protocol.VantagePointReport
+	14, // 8: debuglet.protocol.HeartbeatRequest.extra_disclosures:type_name -> debuglet.protocol.TeslaDisclosure
+	0,  // 9: debuglet.protocol.DebugletStateRequest.state:type_name -> debuglet.protocol.RunState
+	19, // 10: debuglet.protocol.DebugletStateRequest.tcp_listener:type_name -> debuglet.protocol.ListenerEndpoint
+	5,  // 11: debuglet.protocol.DebugletAllocateRequest.policy:type_name -> debuglet.protocol.DebugletPolicy
+	10, // 12: debuglet.protocol.DebugletAllocateResponse.allocated_limits:type_name -> debuglet.protocol.DestinationLimit
+	30, // 13: debuglet.protocol.DebugletIdent.original_binding:type_name -> debuglet.protocol.ControlBinding
+	56, // 14: debuglet.protocol.DebugletOutput.timestamp:type_name -> google.protobuf.Timestamp
+	1,  // 15: debuglet.protocol.DebugletOutputEnd.status:type_name -> debuglet.protocol.DebugletOutputStatus
+	25, // 16: debuglet.protocol.DebugletStreamRequest.ident:type_name -> debuglet.protocol.DebugletIdent
+	26, // 17: debuglet.protocol.DebugletStreamRequest.output:type_name -> debuglet.protocol.DebugletOutput
+	27, // 18: debuglet.protocol.DebugletStreamRequest.end:type_name -> debuglet.protocol.DebugletOutputEnd
+	27, // 19: debuglet.protocol.DebugletStreamResponse.end:type_name -> debuglet.protocol.DebugletOutputEnd
+	30, // 20: debuglet.protocol.RetainedRun.original_binding:type_name -> debuglet.protocol.ControlBinding
+	56, // 21: debuglet.protocol.RetainedRun.started_at:type_name -> google.protobuf.Timestamp
+	56, // 22: debuglet.protocol.RetainedRun.start_time:type_name -> google.protobuf.Timestamp
+	30, // 23: debuglet.protocol.InspectRetainedRunRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
+	2,  // 24: debuglet.protocol.InspectRetainedRunResponse.status:type_name -> debuglet.protocol.RetainedRunStatus
+	37, // 25: debuglet.protocol.InspectRetainedRunResponse.run:type_name -> debuglet.protocol.RetainedRun
+	30, // 26: debuglet.protocol.VerifyTagsRequest.control_binding:type_name -> debuglet.protocol.ControlBinding
+	45, // 27: debuglet.protocol.ExecutorCapabilities.attribution:type_name -> debuglet.protocol.AttributionState
+	44, // 28: debuglet.protocol.ExecutorCapabilities.tagging:type_name -> debuglet.protocol.TaggingMode
+	43, // 29: debuglet.protocol.ExecutorCapabilities.icmp:type_name -> debuglet.protocol.ProbeState
+	54, // 30: debuglet.protocol.VantagePointReport.clock:type_name -> debuglet.protocol.ClockState
+	55, // 31: debuglet.protocol.VantagePointReport.platform:type_name -> debuglet.protocol.HostPlatform
+	53, // 32: debuglet.protocol.VantagePointReport.connectivity:type_name -> debuglet.protocol.ConnectivityReport
+	43, // 33: debuglet.protocol.VantagePointReport.scion_paths:type_name -> debuglet.protocol.ProbeState
+	48, // 34: debuglet.protocol.VantagePointReport.resources:type_name -> debuglet.protocol.HostResources
+	47, // 35: debuglet.protocol.HostResources.process_rss_bytes:type_name -> debuglet.protocol.HostResourceValue
+	47, // 36: debuglet.protocol.HostResources.open_fds:type_name -> debuglet.protocol.HostResourceValue
+	47, // 37: debuglet.protocol.HostResources.state_available_bytes:type_name -> debuglet.protocol.HostResourceValue
+	47, // 38: debuglet.protocol.HostResources.state_capacity_bytes:type_name -> debuglet.protocol.HostResourceValue
+	51, // 39: debuglet.protocol.ConnectivityReport.ipv4:type_name -> debuglet.protocol.EgressTest
+	51, // 40: debuglet.protocol.ConnectivityReport.ipv6:type_name -> debuglet.protocol.EgressTest
+	52, // 41: debuglet.protocol.ConnectivityReport.listeners:type_name -> debuglet.protocol.ListenerChallenge
+	49, // 42: debuglet.protocol.DispatcherService.ReflectAddress:input_type -> debuglet.protocol.ReflectAddressRequest
+	13, // 43: debuglet.protocol.DispatcherService.Heartbeat:input_type -> debuglet.protocol.HeartbeatRequest
+	16, // 44: debuglet.protocol.DispatcherService.Resources:input_type -> debuglet.protocol.ResourcesRequest
+	18, // 45: debuglet.protocol.DispatcherService.DebugletState:input_type -> debuglet.protocol.DebugletStateRequest
+	21, // 46: debuglet.protocol.DispatcherService.DebugletAllocate:input_type -> debuglet.protocol.DebugletAllocateRequest
+	23, // 47: debuglet.protocol.DispatcherService.DebugletExit:input_type -> debuglet.protocol.DebugletExitRequest
+	28, // 48: debuglet.protocol.DispatcherService.DebugletStream:input_type -> debuglet.protocol.DebugletStreamRequest
+	31, // 49: debuglet.protocol.DispatcherService.BindSession:input_type -> debuglet.protocol.BindSessionRequest
+	33, // 50: debuglet.protocol.DispatcherService.RenewLease:input_type -> debuglet.protocol.RenewLeaseRequest
+	3,  // 51: debuglet.protocol.ExecutorService.Hello:input_type -> debuglet.protocol.HelloRequest
+	6,  // 52: debuglet.protocol.ExecutorService.Upload:input_type -> debuglet.protocol.UploadRequest
+	8,  // 53: debuglet.protocol.ExecutorService.Abort:input_type -> debuglet.protocol.AbortRequest
+	11, // 54: debuglet.protocol.ExecutorService.Bandwidth:input_type -> debuglet.protocol.BandwidthRequest
+	35, // 55: debuglet.protocol.ExecutorService.ProbeSession:input_type -> debuglet.protocol.ProbeSessionRequest
+	38, // 56: debuglet.protocol.ExecutorService.InspectRetainedRun:input_type -> debuglet.protocol.InspectRetainedRunRequest
+	40, // 57: debuglet.protocol.ExecutorService.VerifyTags:input_type -> debuglet.protocol.VerifyTagsRequest
+	50, // 58: debuglet.protocol.DispatcherService.ReflectAddress:output_type -> debuglet.protocol.ReflectAddressResponse
+	15, // 59: debuglet.protocol.DispatcherService.Heartbeat:output_type -> debuglet.protocol.HeartbeatResponse
+	17, // 60: debuglet.protocol.DispatcherService.Resources:output_type -> debuglet.protocol.ResourcesResponse
+	20, // 61: debuglet.protocol.DispatcherService.DebugletState:output_type -> debuglet.protocol.DebugletStateResponse
+	22, // 62: debuglet.protocol.DispatcherService.DebugletAllocate:output_type -> debuglet.protocol.DebugletAllocateResponse
+	24, // 63: debuglet.protocol.DispatcherService.DebugletExit:output_type -> debuglet.protocol.DebugletExitResponse
+	29, // 64: debuglet.protocol.DispatcherService.DebugletStream:output_type -> debuglet.protocol.DebugletStreamResponse
+	32, // 65: debuglet.protocol.DispatcherService.BindSession:output_type -> debuglet.protocol.BindSessionResponse
+	34, // 66: debuglet.protocol.DispatcherService.RenewLease:output_type -> debuglet.protocol.RenewLeaseResponse
+	4,  // 67: debuglet.protocol.ExecutorService.Hello:output_type -> debuglet.protocol.HelloResponse
+	7,  // 68: debuglet.protocol.ExecutorService.Upload:output_type -> debuglet.protocol.UploadResponse
+	9,  // 69: debuglet.protocol.ExecutorService.Abort:output_type -> debuglet.protocol.AbortResponse
+	12, // 70: debuglet.protocol.ExecutorService.Bandwidth:output_type -> debuglet.protocol.BandwidthResponse
+	36, // 71: debuglet.protocol.ExecutorService.ProbeSession:output_type -> debuglet.protocol.ProbeSessionResponse
+	39, // 72: debuglet.protocol.ExecutorService.InspectRetainedRun:output_type -> debuglet.protocol.InspectRetainedRunResponse
+	41, // 73: debuglet.protocol.ExecutorService.VerifyTags:output_type -> debuglet.protocol.VerifyTagsResponse
+	58, // [58:74] is the sub-list for method output_type
+	42, // [42:58] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_protocol_protocol_proto_init() }
@@ -3893,24 +4127,25 @@ func file_protocol_protocol_proto_init() {
 	}
 	file_protocol_protocol_proto_msgTypes[1].OneofWrappers = []any{}
 	file_protocol_protocol_proto_msgTypes[3].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[19].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[24].OneofWrappers = []any{
+	file_protocol_protocol_proto_msgTypes[20].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[25].OneofWrappers = []any{
 		(*DebugletStreamRequest_Ident)(nil),
 		(*DebugletStreamRequest_Output)(nil),
 		(*DebugletStreamRequest_End)(nil),
 	}
-	file_protocol_protocol_proto_msgTypes[33].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[35].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[41].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[48].OneofWrappers = []any{}
-	file_protocol_protocol_proto_msgTypes[49].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[34].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[36].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[42].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[44].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[51].OneofWrappers = []any{}
+	file_protocol_protocol_proto_msgTypes[52].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_protocol_protocol_proto_rawDesc), len(file_protocol_protocol_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   50,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

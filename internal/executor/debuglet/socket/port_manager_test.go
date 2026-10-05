@@ -106,7 +106,17 @@ func TestPortManagerEnabled(t *testing.T) {
 }
 
 func TestPortManagerListenTCPDistinctPorts(t *testing.T) {
-	p1, p2 := freePort(t), freePort(t)
+	// Keep the first probe bound while selecting the second port: once a
+	// probe is closed, the kernel may return that same ephemeral port again.
+	first, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	p1, p2 := first.Addr().(*net.TCPAddr).Port, freePort(t)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
 	s, err := NewPortManager("203.0.113.10", strconv.Itoa(p1)+","+strconv.Itoa(p2))
 	if err != nil {
 		t.Fatalf("NewPortManager: %v", err)
@@ -175,7 +185,16 @@ func TestPortManagerListenTCPExhausted(t *testing.T) {
 }
 
 func TestPortManagerListenUDPDistinctPorts(t *testing.T) {
-	p1, p2 := freeUDPPort(t), freeUDPPort(t)
+	// Reserve the first port until the second probe has selected another.
+	first, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	p1, p2 := first.LocalAddr().(*net.UDPAddr).Port, freeUDPPort(t)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
 	s, err := NewPortManager("203.0.113.10", strconv.Itoa(p1)+","+strconv.Itoa(p2))
 	if err != nil {
 		t.Fatalf("NewPortManager: %v", err)

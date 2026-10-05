@@ -50,7 +50,7 @@ func serveVerifyAnswer(t *testing.T, f *fakeServer, chain *testChain, run, verdi
 		group := wire.AttributionReceiptGroup{ChainID: chain.sched.ChainID, Epoch: e, ExecutorID: chain.executor, Method: "server",
 			Packets: packets, Reason: reason, RunID: run, Source: srcA.String(), Verdict: verdict}
 		payload, err := wire.CanonicalReceiptPayload(wire.AttributionReceiptPayload{
-			APIVersion: "1.15", Dispatcher: "http://dispatcher.test", Groups: []wire.AttributionReceiptGroup{group},
+			APIVersion: "1.16", Dispatcher: "http://dispatcher.test", Groups: []wire.AttributionReceiptGroup{group},
 			PacketsDigest: wire.PacketsDigest(req.Packets), QueryAt: time.Now().UTC().Format(time.RFC3339Nano),
 		})
 		if err != nil {

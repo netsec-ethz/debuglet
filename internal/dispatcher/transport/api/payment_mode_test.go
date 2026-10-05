@@ -67,7 +67,7 @@ var (
 		"INSERT INTO debuglet_order (transaction_id, order_id, executor_id, price, currency, refund_address, state ) VALUES (?,?,?,?,?,?,?) RETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
 	)
 	modeGetTransactionQuery = regexp.QuoteMeta(
-		"SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions WHERE id = ?",
+		"SELECT id, auth_key, price, method, expires_at, hash, currency, status, pricing_rule FROM transactions WHERE id = ?",
 	)
 	modeGetTransactionOrdersQuery = regexp.QuoteMeta(
 		"SELECT transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id FROM debuglet_order WHERE transaction_id = ?",
@@ -81,7 +81,7 @@ var (
 
 	modeEarningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 	modeOrderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
-	modeTransactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
+	modeTransactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status", "pricing_rule"}
 )
 
 type modeFixture struct {
@@ -113,7 +113,7 @@ func modeNewFixture(t *testing.T) *modeFixture {
 func modeNewFixtureWithDB(t *testing.T, db *sql.DB, mock sqlmock.Sqlmock) *modeFixture {
 	t.Helper()
 	cfg := &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}
-	ph := payments.NewPaymentHandler(db, cfg, zap.NewNop())
+	ph, _ := payments.NewPaymentHandler(db, cfg, zap.NewNop())
 	d, err := dispatcher.New(zap.NewNop(), db, "test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func modeRequestHash(t *testing.T, debuglets []DebugletRequest) string {
 // CreateTransaction return it.
 func modeTransactionRows(id, authKey, method, currency, hash string, status models.TransactionState) *sqlmock.Rows {
 	return sqlmock.NewRows(modeTransactionColumns).AddRow(
-		id, authKey, modeOrderPrice, method, time.Now().Add(5*time.Minute).UTC(), hash, currency, int64(status),
+		id, authKey, modeOrderPrice, method, time.Now().Add(5*time.Minute).UTC(), hash, currency, int64(status), "",
 	)
 }
 

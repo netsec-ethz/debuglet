@@ -11,6 +11,19 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
+type AccountRecoveryAudit struct {
+	Selector            string
+	UserID              int64
+	CaseReference       string
+	IssuedByUid         int64
+	IssuedAt            int64
+	ExpiresAt           int64
+	ConsumedAt          int64
+	RevokedAt           int64
+	RevokedByUid        sql.NullInt64
+	RevocationReference string
+}
+
 type AccountRunReservation struct {
 	DebugletID          int64
 	AccountID           int64
@@ -22,6 +35,17 @@ type AccountRunReservation struct {
 type AllocationReclamation struct {
 	DebugletID  int64
 	ReclaimedAt models.UTCTime
+}
+
+type AllowanceGrant struct {
+	ID             int64
+	UserID         int64
+	Amount         int64
+	Currency       string
+	GrantedBy      int64
+	Reason         string
+	IdempotencyKey string
+	GrantedAt      models.UTCTime
 }
 
 type AttributionChain struct {
@@ -71,6 +95,24 @@ type AttributionVerifyBudget struct {
 	ChainID    string
 	Epoch      int64
 	Used       int64
+}
+
+type ChainTransfer struct {
+	ID                int64
+	Kind              string
+	ExecutorID        string
+	TransactionID     string
+	OrderID           sql.NullInt64
+	Amount            int64
+	Currency          string
+	Receiver          string
+	State             string
+	Digest            string
+	SignedTransaction []byte
+	Signature         string
+	Detail            string
+	CreatedAt         models.UTCTime
+	UpdatedAt         models.UTCTime
 }
 
 type Debuglet struct {
@@ -228,6 +270,17 @@ type OauthLoginAttempt struct {
 	ExpiresAt       models.UTCTime
 }
 
+type OrderSettlement struct {
+	TransactionID string
+	OrderID       int64
+	Kind          string
+	Amount        int64
+	Currency      string
+	ExecutorID    string
+	DebugletID    sql.NullInt64
+	RecordedAt    models.UTCTime
+}
+
 type OutputAccountUsage struct {
 	AccountID    int64
 	ChargedBytes int64
@@ -253,6 +306,19 @@ type PayloadTombstone struct {
 	Reason            string
 	WorkloadSha256    sql.NullString
 	CertificateSha256 sql.NullString
+}
+
+type PaymentReceipt struct {
+	TxDigest    string
+	EventSeq    int64
+	Nonce       string
+	Disposition string
+	Amount      string
+	CoinType    string
+	Receiver    string
+	Checkpoint  sql.NullInt64
+	ObservedAt  models.UTCTime
+	Detail      string
 }
 
 type PendingIdentityLink struct {
@@ -291,14 +357,15 @@ type Session struct {
 }
 
 type Transaction struct {
-	ID        string
-	AuthKey   string
-	Price     int64
-	Method    string
-	ExpiresAt models.UTCTime
-	Hash      string
-	Currency  string
-	Status    int64
+	ID          string
+	AuthKey     string
+	Price       int64
+	Method      string
+	ExpiresAt   models.UTCTime
+	Hash        string
+	Currency    string
+	Status      int64
+	PricingRule string
 }
 
 type TransactionState struct {

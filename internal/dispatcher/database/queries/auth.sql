@@ -14,7 +14,12 @@ SELECT user_credentials.user_id, user_credentials.secret_hash,
 FROM user_credentials
 INNER JOIN users ON users.id = user_credentials.user_id
 WHERE user_credentials.selector = sqlc.arg(selector)
-  AND user_credentials.kind = sqlc.arg(kind);
+  AND user_credentials.kind = sqlc.arg(kind)
+  AND NOT EXISTS (
+      SELECT 1 FROM account_recovery_audit
+      WHERE account_recovery_audit.selector = user_credentials.selector
+        AND (expires_at <= unixepoch() OR consumed_at != 0 OR revoked_at != 0)
+  );
 
 /*
 

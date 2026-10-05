@@ -77,6 +77,9 @@ type Dispatcher struct {
 	now                func() time.Time
 	newExpiryTicker    func(time.Duration) expiryTicker
 	initializeEarnings func(context.Context, *RegisteredExecutor)
+	// settlementAfter is the run id the next settlement sweep continues
+	// after. Only the maintenance goroutine reads or writes it.
+	settlementAfter int64
 
 	destinations *resource.DestinationsUsage
 	Payment      *payments.PaymentHandler

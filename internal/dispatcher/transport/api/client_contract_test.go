@@ -138,7 +138,7 @@ func ccNewFixtureConfigured(t *testing.T, logger *zap.Logger, peer *cpPeer, conf
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, db, "cc-version", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

@@ -176,6 +176,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/operator/executors", h.GetOwnedExecutors)
 	e.POST("/operator/executors", h.PostOwnedExecutor)
 	e.POST("/operator/executors/:id/enrollment-token", h.PostOwnedExecutorToken)
+	e.GET("/operator/executors/:id/earnings", h.GetExecutorEarnings)
+	e.POST("/operator/accounts/:id/allowance", h.PostAccountAllowance)
 	e.POST("/executor-enrollment", h.PostExecutorEnrollment)
 	// attribution
 	e.GET(routeAttributionCandidates, h.GetAttributionCandidates)
@@ -187,9 +189,12 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// payment
 	// e.GET("payment/balance", h.GetBalance)
 	e.PUT("/payment/intent", h.PutPaymentIntent)
+	e.POST("/payment/quote", h.PostPaymentQuote)
 	e.GET("/payment/:transaction_id/status", h.GetPaymentStatus)
 	// user
 	e.GET("/me", h.GetMe)
+	e.GET("/me/orders", h.GetMyOrders)
+	e.GET("/me/allowance", h.GetMyAllowance)
 	e.GET("/user-ids", h.ListUserIDs)
 	e.PUT("/user", h.CreateUser)
 	e.GET("/list-debuglets", h.ListUserDebuglets)

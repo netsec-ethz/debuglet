@@ -166,3 +166,64 @@ func TestHeartbeatBoundsDisclosuresByRegisteredSchedule(t *testing.T) {
 		t.Fatalf("latest disclosure = (%d, %v); want epoch 3", epoch, ok)
 	}
 }
+
+// TestHeartbeatExtraDisclosures checks the extra disclosures beside the
+// current chain's key: one for an earlier recorded chain is stored under that
+// chain together with the current key, repeated and reordered ones change
+// nothing, one for an unrecorded anchor is dropped, and a heartbeat with more
+// than maxExtraDisclosures of them has all of them refused.
+func TestHeartbeatExtraDisclosures(t *testing.T) {
+	d, _, _ := newRegistryFixture(t)
+	core, logs := observer.New(zapcore.WarnLevel)
+	d.logger = zap.New(core)
+	const id = "restarted-tail"
+	tailA, tailB := bytes.Repeat([]byte{0x6A}, 32), bytes.Repeat([]byte{0x6B}, 32)
+	anchorA, anchorB := chainKey(tailA, 0), chainKey(tailB, 0)
+	attributionRegister(t, d, id, anchorA)
+	d.mu.RLock()
+	d.executors[id].owner.Retire()
+	d.mu.RUnlock()
+	attributionRegister(t, d, id, anchorB)
+	extraA := func(epochs ...int) []*pb.TeslaDisclosure {
+		var out []*pb.TeslaDisclosure
+		for _, epoch := range epochs {
+			out = append(out, &pb.TeslaDisclosure{Anchor: anchorA, Epoch: int64(epoch), Key: chainKey(tailA, epoch)})
+		}
+		return out
+	}
+
+	attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{ExtraDisclosures: extraA(1, 2, 3, 4, 5)})
+	if _, _, ok := d.keystore.LatestDisclosed(id, anchorA); ok || attributionKeyRows(t, d) != 0 {
+		t.Fatal("a heartbeat with more extra disclosures than allowed stored one")
+	}
+	if n := logs.FilterMessage("Refused a heartbeat's extra TESLA disclosures").Len(); n != 1 {
+		t.Fatalf("refusal logged %d times; want once", n)
+	}
+
+	attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{TeslaKeyEpoch: 5, TeslaKey: tailB, ExtraDisclosures: extraA(4)})
+	for _, want := range []struct {
+		name   string
+		anchor []byte
+		epoch  int64
+		key    []byte
+	}{{"current", anchorB, 5, tailB}, {"earlier", anchorA, 4, chainKey(tailA, 4)}} {
+		if epoch, key, ok := d.keystore.LatestDisclosed(id, want.anchor); !ok || epoch != want.epoch || !bytes.Equal(key, want.key) {
+			t.Fatalf("%s chain latest=(%d, %x, %v); want k_%d", want.name, epoch, key, ok, want.epoch)
+		}
+	}
+
+	attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{ExtraDisclosures: extraA(5, 3, 5, 4)})
+	attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{ExtraDisclosures: extraA(5)})
+	if epoch, _, ok := d.keystore.LatestDisclosed(id, anchorA); !ok || epoch != 5 {
+		t.Fatalf("earlier chain latest=(%d, %v) after repeated disclosures; want k_5", epoch, ok)
+	}
+	rows := attributionKeyRows(t, d)
+	unknown := bytes.Repeat([]byte{0x6C}, 32)
+	attributionHeartbeat(t, d, id, &pb.HeartbeatRequest{ExtraDisclosures: []*pb.TeslaDisclosure{{Anchor: chainKey(unknown, 0), Epoch: 5, Key: unknown}}})
+	if n := attributionKeyRows(t, d); n != rows {
+		t.Fatalf("%d keys on record after an unrecorded chain's disclosure; want %d", n, rows)
+	}
+	if n := logs.FilterMessage("Rejected disclosed TESLA key").Len() + logs.FilterMessage("Executor disclosed a TESLA key early; it is misbehaving").Len(); n != 0 {
+		t.Fatalf("genuine disclosures were rejected %d times", n)
+	}
+}

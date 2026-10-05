@@ -71,3 +71,9 @@ enabled = {{ dispatcher_cilogon_oidc_enabled | bool | lower }}
 issuer = "{{ dispatcher_cilogon_oidc_issuer }}"
 callback_url = "{{ dispatcher_cilogon_oidc_callback_url }}"
 success_url = "{{ dispatcher_cilogon_oidc_success_url }}"
+
+{% if dispatcher_authentication_public_url | length > 0 %}
+[authentication]
+public_url = {{ dispatcher_authentication_public_url | to_json }}
+device_verification_url = {{ dispatcher_authentication_device_verification_url | to_json }}
+{% endif %}

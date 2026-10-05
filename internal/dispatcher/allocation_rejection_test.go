@@ -135,7 +135,8 @@ func TestAllocationRejectionUnwindsThroughExit(t *testing.T) {
 				t.Fatal("rejected allocation retained a destination allocation")
 			}
 			// Observe the existing terminal/effect path after executor unwind.
-			// TEST refund failure remains the current behavior.
+			// The failed run refunds its TEST order locally. A run whose
+			// transaction was replaced names no order and settles nothing.
 			message := "allocation rejected: " + reason
 			exit := &pb.DebugletExitRequest{DebugletId: deb.id.String(), ExitCode: 1, ErrorMessage: &message}
 			if _, err := client.DebugletExit(ctx, exit); err != nil {
@@ -146,7 +147,11 @@ func TestAllocationRejectionUnwindsThroughExit(t *testing.T) {
 			if f.d.destinations.Len() != 0 {
 				t.Fatal("existing exit path retained partial destination allocation")
 			}
-			tgAssertOrder(t, f, deb, models.Outstanding)
+			if reason == "payment lookup" {
+				tgAssertOrder(t, f, deb, models.Outstanding)
+			} else {
+				tgAssertOrder(t, f, deb, models.Refunded)
+			}
 			tgAssertEarnings(t, f, 0)
 			after := f.snapshot(t)
 			if _, err := client.DebugletExit(ctx, exit); err != nil {

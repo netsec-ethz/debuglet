@@ -51,6 +51,12 @@ type DebugletLog struct {
 	Output     []byte
 }
 
+type OperatorDisposition struct {
+	RunID        string
+	RecordedAtNs int64
+	Reason       string
+}
+
 type OutputFrame struct {
 	RunID       string
 	Sequence    int64
@@ -81,10 +87,11 @@ type OutputUsage struct {
 }
 
 type TeslaChain struct {
-	Generation  int64
-	Anchor      []byte
-	EpochBase   time.Time
-	DelayNs     int64
-	ChainLength int64
-	CreatedAt   time.Time
+	Generation      int64
+	Anchor          []byte
+	EpochBase       time.Time
+	DelayNs         int64
+	ChainLength     int64
+	CreatedAt       time.Time
+	DisclosureDelay sql.NullInt64
 }

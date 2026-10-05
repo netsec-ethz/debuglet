@@ -53,7 +53,7 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 6 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 8 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	q := database.New(db)
@@ -85,7 +85,7 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 }
 
 func TestControlBindingExecutorOwnedQueries(t *testing.T) {
-	ctx, db := cbOpen(t, 3)
+	ctx, db := cbOpen(t, sqlitedb.Latest)
 	q := database.New(db)
 	id := uuid.New()
 	input := database.CreateDebugletParams{Uuid: id, Wasm: []byte("bound WASM"), TransactionID: "bound-transaction", FloorBw: 12, CeilBw: 34, TimeoutMs: 1000, DispatcherIncarnation: cbIncarnation, SessionID: cbSession}

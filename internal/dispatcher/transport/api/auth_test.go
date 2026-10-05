@@ -766,11 +766,16 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"GET /operator/executors":                       {anonymous: http.StatusUnauthorized, target: "/operator/executors"},
 	"POST /operator/executors":                      {anonymous: http.StatusUnauthorized, target: "/operator/executors", body: []byte(`{"name":"node"}`)},
 	"POST /operator/executors/:id/enrollment-token": {anonymous: http.StatusUnauthorized, target: "/operator/executors/" + authSampleID + "/enrollment-token"},
+	"GET /operator/executors/:id/earnings":          {anonymous: http.StatusUnauthorized, target: "/operator/executors/" + authSampleID + "/earnings"},
+	"POST /operator/accounts/:id/allowance":         {anonymous: http.StatusUnauthorized, target: "/operator/accounts/" + authSampleID + "/allowance", body: []byte(`{"reason":"trial","idempotency_key":"k"}`)},
 	"POST /executor-enrollment":                     {anonymous: http.StatusServiceUnavailable, target: "/executor-enrollment", body: []byte(`{}`), public: true},
 	"PATCH /destination":                            {anonymous: http.StatusUnauthorized, target: "/destination", body: []byte(`{"destination":"127.0.0.1","limit":1000000}`)},
 	"PUT /payment/intent":                           {anonymous: http.StatusUnauthorized, target: "/payment/intent", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /payment/:transaction_id/status":           {anonymous: http.StatusUnauthorized, target: "/payment/none/status"},
+	"POST /payment/quote":                           {anonymous: http.StatusUnauthorized, target: "/payment/quote", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /me":                                       {anonymous: http.StatusUnauthorized, target: "/me"},
+	"GET /me/orders":                                {anonymous: http.StatusUnauthorized, target: "/me/orders"},
+	"GET /me/allowance":                             {anonymous: http.StatusUnauthorized, target: "/me/allowance"},
 	"GET /user-ids":                                 {anonymous: http.StatusUnauthorized, target: "/user-ids"},
 	// Registering an account is the credential issuer: it has to be
 	// reachable by a caller that has no credential yet.

@@ -22,11 +22,14 @@ var credentialScopes = []string{"account:read", "executors:read", "executors:wri
 // administration or identity-management authority.
 var credentialRouteScopes = map[string]string{
 	"GET /me":                                       "account:read",
+	"GET /me/orders":                                "account:read",
+	"GET /me/allowance":                             "account:read",
 	"GET /auth/credential":                          "account:read",
 	"GET /executors":                                "executors:read",
 	"GET /executors/by-ip":                          "executors:read",
 	"GET /executors/:id/tesla":                      "executors:read",
 	"GET /operator/executors":                       "executors:read",
+	"GET /operator/executors/:id/earnings":          "executors:read",
 	"POST /operator/executors":                      "executors:write",
 	"POST /operator/executors/:id/enrollment-token": "executors:write",
 	"GET /list-debuglets":                           "measurements:read",
@@ -46,6 +49,7 @@ var credentialRouteScopes = map[string]string{
 	"DELETE /debuglet":                              "measurements:write",
 	"DELETE /debuglet/:id/payload":                  "measurements:write",
 	"PUT /payment/intent":                           "measurements:write",
+	"POST /payment/quote":                           "measurements:read",
 	"POST /measurement-profiles":                    "measurements:write",
 	"PUT /measurement-profiles/:id":                 "measurements:write",
 	"DELETE /measurement-profiles/:id":              "measurements:write",

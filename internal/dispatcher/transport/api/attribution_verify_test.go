@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	apiinfo "github.com/netsec-ethz/debuglet/api"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -145,7 +146,10 @@ func vtFixture(t *testing.T, options ...Option) (*ccFixture, *vtPeer, vtChain) {
 	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatal(err)
 	}
-	ph := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
+	ph, err := payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
 	d, err := dispatcher.New(zap.NewNop(), db, "vt-version", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +230,7 @@ func vtCheckReceipt(t *testing.T, c *client.Client, sent []client.AttributionVer
 		t.Fatalf("the payload is not canonical JSON: %s", r.Payload)
 	}
 	queryAt, err := time.Parse(time.RFC3339Nano, p.QueryAt)
-	if err != nil || time.Since(queryAt) > time.Minute || p.APIVersion != "1.15" || p.Dispatcher == "" {
+	if err != nil || time.Since(queryAt) > time.Minute || p.APIVersion != apiinfo.Version || p.Dispatcher == "" {
 		t.Fatalf("payload %+v", p)
 	}
 	if p.PacketsDigest != wire.PacketsDigest(sent) || len(p.Groups) != len(resp.Groups) {
@@ -358,8 +362,11 @@ func TestAttributionVerifyBudgetIsSharedDurableAndNotRefunded(t *testing.T) {
 	// A restart keeps the count. The restarted dispatcher has no session
 	// with the executor, so it asks nothing and spends nothing.
 	f.d.Close()
-	restarted, err := dispatcher.New(zap.NewNop(), f.db, "restarted", time.Minute, time.Minute,
-		payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop()))
+	ph, err := payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := dispatcher.New(zap.NewNop(), f.db, "restarted", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -736,8 +743,11 @@ func TestAttributionVerifyChargesCandidateTrials(t *testing.T) {
 	}
 
 	f.d.Close()
-	restarted, err := dispatcher.New(zap.NewNop(), f.db, "restarted", time.Minute, time.Minute,
-		payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop()))
+	ph, err := payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := dispatcher.New(zap.NewNop(), f.db, "restarted", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
 	}

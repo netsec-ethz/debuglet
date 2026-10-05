@@ -24,6 +24,34 @@ The dispatcher prunes older records on its expiry loop, at startup and hourly: r
 
 The attribution routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
 
+### Dispatcher usage allowances
+
+The optional `[allowance]` section caps what authenticated accounts may reserve with `TEST` payment intents at the TEST units an operator granted them. Allowances are non-transferable usage credits in TEST units, not money or prepaid USDC. Every shipped configuration leaves them disabled; enabling them is a choice of the deployment.
+
+| Key | Unit | Default | Allowed |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | `true` or `false` |
+| `default_grant` | TEST units | 30,000,000 | 0 (default) or positive |
+
+Nothing is granted automatically, at sign-up or later. An operator account grants an account an amount with a reason and an idempotency key through `POST /operator/accounts/{id}/allowance`; a request without an amount grants `default_grant`, which at a price of 1 covers ten runs of 100,000 bit/s for 30 seconds. Grants are never changed, reset or renewed, and an account's ceiling is the sum of its grants. While allowances are enabled, an account's `TEST` intent is created only if its remaining allowance covers the price, otherwise it is refused with `allowance_exceeded`; the request without a credential that the local development profile admits is not capped. See [the API reference](../api.md#usage-allowances-api-115) for how reservations are counted.
+
+### Dispatcher blockchain payments
+
+The `[sui]` section configures chain payments. Every shipped configuration sets `disabled = true` and leaves the other fields empty; in that mode they are ignored and the dispatcher serves `TEST` payments only. `server.local_development = true` requires `disabled = true`. Enabling chain payments is an operator decision with its own profile and checklist; see [chain payments](payments.md).
+
+| Key | Value | Checked at startup when `disabled = false` |
+| --- | --- | --- |
+| `disabled` | `true` or `false` | Omitted means `false`; nothing is inferred from empty fields. |
+| `network` | `testnet` (the supported profile) | Must be `testnet` or `mainnet`. |
+| `grpc_endpoint` | Sui full node gRPC `host:port`, dialled with TLS | A non-empty host and a port from 1 to 65,535. |
+| `graphql_url` | Sui GraphQL service URL | An absolute `http` or `https` URL with a host. |
+| `address` | The dispatcher's receiving and paying address | A Sui address: `0x` and one to 64 hexadecimal digits. |
+| `payment_registry_id` | Object ID of the payment registry returned with each intent | A Sui address, as above. |
+| `payment_kit_package` | Package ID whose `payment_kit::PaymentReceipt` events the listener follows | A Sui address, as above. Write all 64 digits. |
+| `keystore_path` | Keystore file holding the Ed25519 key of `address` | Not empty; the file is read and must be a JSON array of base64 entries containing that key. |
+
+A failed check stops the daemon before any listener is bound, with `configure payments: blockchain payments:` and the field's error. Validation opens no network connection. The listener's stored checkpoint is checked when it starts; see [startup validation](payments.md#startup-validation).
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
@@ -63,14 +91,56 @@ TRACER design uses, far beyond that bound. Tags become verifiable once the
 delay has elapsed.
 
 The keys live only in the running executor, and every start builds a new
-chain. The keys of the last d epochs before a restart are therefore never
-disclosed, and packets tagged in them (the last 15 minutes by default) can
-never be verified. (The dispatcher already accepts a disclosure for an earlier
-chain it has on record, named by `tesla_key_anchor` on the heartbeat, but the
-executor does not yet re-derive and disclose its previous chain's tail.) Stop an executor only once its last attributed packets are
-d epochs old. When the chain runs out, the executor logs
-`final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
-disclosed; restart it after that time.
+chain. When `[tesla] seed` is configured, a start re-derives the previous
+chain from the seed and its record, and the heartbeat discloses that chain's
+remaining keys at their due instants, under its own anchor. The re-derived
+chain only discloses: it never signs again, and no tagger holds it. Its epochs
+advance on the monotonic clock from the start, which places the recorded
+origin with its ready wall clock, so a later wall-clock step neither advances
+nor delays a disclosure; if the clock loses readiness later, that is reported
+for the current chain and the old chain's disclosure continues. The heartbeat
+offers the old chain's final key until one heartbeat that carried it
+succeeded; the dispatcher's durable record of it is not confirmed back. A tail
+whose final key no heartbeat delivered within 24 hours of its final
+disclosure is dropped with a warning; this retention interval uses the same
+recovered monotonic clock as disclosure.
+
+Recovery also requires the previous process's signers to be retired. A TCX
+attachment ends with its process and needs no action. A legacy tc filter,
+used on kernels without TCX, outlives its process and keeps signing with its
+last key. Startup removes stale tagger filters only from the interface selected
+for packet counting (logging each removal); if it cannot
+list or remove them, or finds another filter at the tagger's priority, it
+discloses no tail. It then checks every interface in its network namespace
+for remaining filters at that priority, even when the new configuration uses
+fallback packet counting or no interface. A remaining filter withholds
+recovery; filters on other interfaces are never removed automatically. This
+also withholds recovery when another executor has a live legacy tagger on
+another interface, since the recorded chain does not identify its attachment.
+Before restarting to recover a tail, stop the previous process and remove its
+stale filters, or select its previous interface so startup can retire them.
+
+The keys of the last d epochs before a restart are still never disclosed, and
+packets tagged in them (the last 15 minutes by default) can never be verified,
+when:
+
+- no seed is configured (each chain's tail is random);
+- the previous chain was recorded before the executor kept its disclosure
+  delay (chains started by an earlier release);
+- the host clock is not ready at the new start, since its wall reading places
+  the recorded origin;
+- the previous process's tagger filters could not be removed;
+- the re-derived chain does not match the recorded anchor, for example after
+  the seed was changed (logged as an error);
+- the new start comes more than 24 hours after the previous chain's final key
+  was due (the same bound a running executor keeps an undelivered tail for);
+- the executor restarted more than once before the earlier chain's final key
+  was delivered (only the immediately previous chain is re-derived).
+
+Each start logs once which of these applies. Without a seed, stop an executor
+only once its last attributed packets are d epochs old. When the chain runs
+out, the executor logs `final_disclosure_at`, d − 1 epochs after the expiry,
+when its last key is disclosed; restart it after that time.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
 never disclosed while an installed copy can still sign. The schedule and every
@@ -101,7 +171,7 @@ binaries are installed; it does not change the state's contents or retention.
 
 | Location | Retained data and lifetime |
 | --- | --- |
-| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records, saved profiles, batch and retry identities, submitted configuration, account reservations, result provenance, cancellation intent, and retained output/finality. Payload expiry is disabled by default; configured expiry or owner deletion retains identity, accounting and verification references. Announced TESLA chains, verified disclosed keys and run intervals follow the separate attribution retention period. |
+| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records with the name of the pricing rule of each transaction, one immutable settlement record per settled order (`order_settlements`: credit or refund, amount, currency, executor and run), saved profiles, batch and retry identities, submitted configuration, account reservations, result provenance, cancellation intent, and retained output/finality. Payload expiry is disabled by default; configured expiry or owner deletion retains identity, accounting and verification references. Announced TESLA chains, verified disclosed keys and run intervals follow the separate attribution retention period. |
 | Executor `database.path` | Queued workload bytes and policy, original run bindings, retained terminal reports, TESLA chain descriptors and the durable output spool. Completed execution rows can be removed by normal cleanup; interrupted prior-binding rows remain quarantined for inspection and are never automatically resumed. Acknowledged output payload is released according to the output protocol. |
 | Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
 | Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
@@ -120,13 +190,32 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 16 and executor schema 6 are the current schema boundaries.
+Dispatcher schema 24 and executor schema 8 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
 are not reconciled payment state: migration 4 leaves old earnings without a
 payout wallet, and re-registration does not repair it. Keep payments disabled
 and retain paid databases and backups for operator reconciliation.
+
+From dispatcher schema 22, the dispatcher database also keeps `payment_receipts`,
+one row per chain payment receipt addressed to the dispatcher (chain
+transaction digest and event position, nonce, amount, coin type, receiver and
+whether it was applied, a duplicate, a mismatch, expired or for an unknown
+intent), and
+`chain_transfers`, the outbound payout and refund transfers and their states,
+including each signed transaction and its signature, stored before broadcast.
+A transfer row is `reserved` before the chain is called, then `sent`,
+`confirmed`, `failed` (nothing moved; a failed payout's amount is back in the
+balance) or `unknown` (the outcome is not known yet; reconciliation keeps
+checking it). Both are kept indefinitely for reconciliation; they stay empty
+while chain payments are disabled. See [chain payments](payments.md) for the
+transfer lifecycle and what each state means for an operator.
+
+From dispatcher schema 23, it also keeps `allowance_grants`, one row per usage
+allowance grant (account, amount in TEST units, the granting operator account,
+reason, idempotency key and time). Grants are never changed or removed; the
+table stays empty while allowances are disabled.
 
 ## State and upgrades
 

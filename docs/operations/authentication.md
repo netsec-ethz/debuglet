@@ -67,10 +67,42 @@ CILogon discovery refreshes hourly; signing keys refresh when an unknown key is
 encountered. Failed discovery, exchange or verification cannot create a session.
 The console distinguishes cancellation, expired sign-in and temporary provider
 failure. Restart the dispatcher after rotating client secrets; verify sign-in in
-staging before enabling production. Disabling a provider prevents new sign-ins
+staging before enabling production. [Provider registrations](#provider-registrations-ownership-renewal-and-callback-changes)
+describes rotation with the deployment playbooks. Disabling a provider prevents new sign-ins
 through it but does not by itself revoke existing Debuglet sessions: revoke them
 explicitly during an incident. Preserve another enabled sign-in or recovery path
 before disabling the last provider.
+
+## Provider registrations: ownership, renewal and callback changes
+
+The deployment's operator holds the GitHub OAuth app and the CILogon client
+registration of each environment and records each client ID and registered
+callback with the deployment's private configuration. Register exactly
+`https://<dispatcher_base_url>/api/auth/<provider>/callback`, with `github` or
+`cilogon` as the provider: `deploy/ansible/group_vars/dispatcher.yml` renders
+these as `dispatcher_github_oauth_callback_url` and
+`dispatcher_cilogon_oidc_callback_url`, and the dispatcher sends the configured
+value as the redirect URI. `dispatcher_cilogon_oidc_issuer` must be
+`https://cilogon.org` or `https://test.cilogon.org`; a client approved on
+`cilogon.org` does not work against `test.cilogon.org`.
+
+To change a callback, register the new URL with the provider first, deploy the
+configuration with `make deploy-update-config DEPLOY_ENV=<env>`, verify sign-in
+through that provider, then remove the old URL. If the provider accepts only one
+callback URL, sign-in through it can fail until the registration and the
+deployed configuration match. Each callback must share its origin with its
+success URL and, when it is set, with `authentication.public_url`.
+
+To renew or re-register a client, write the new values into the owner-only
+`secrets/<env>/github-oauth.env` or `secrets/<env>/cilogon_oidc.env` beside the
+playbooks, created from `github-oauth.env.example` or
+`cilogon_oidc.env.example`. The dispatcher reads `GITHUB_OAUTH_CLIENT_ID`,
+`GITHUB_OAUTH_CLIENT_SECRET`, `CILOGON_CLIENT_ID` and `CILOGON_CLIENT_SECRET`
+only when it starts. `make deploy-update-config` installs a changed credential
+file with mode `0600`, refreshes the service unit's list of environment files
+and restarts the dispatcher, which then reads the new values. Verify sign-in,
+then revoke the old secret at the provider. A GitHub identity is the GitHub
+account's numeric ID, so a new GitHub OAuth app keeps existing identities.
 
 ## Approve a CLI or headless host
 
@@ -131,6 +163,35 @@ in the deployment's private incident records. Revocation prevents future
 authenticated requests; it does not cancel already admitted measurements.
 Handle active work separately and verify its observed outcome before claiming
 traffic has stopped.
+
+## Provider-side incidents
+
+**Leaked client secret.** Create a new secret at the provider, revoke the old
+one and install the new value as described in
+[provider registrations](#provider-registrations-ownership-renewal-and-callback-changes),
+then verify sign-in. Debuglet sessions do not record the provider that created
+them, so they cannot be revoked by provider. Revocation is per account: each
+affected account holder revokes all credentials on the **Credentials** page or,
+where the account has one, uses its recovery code, which revokes every session
+of the account. Otherwise
+sessions and API credentials expire twelve hours after issue.
+
+**Compromised or rotated CILogon signing key.** The dispatcher fetches new
+signing keys when a token names an unknown key and refreshes discovery hourly,
+so a routine rotation needs no action. If every CILogon sign-in fails
+validation, no session is created; check the configured issuer and that the
+dispatcher reaches the provider. A restart discards cached discovery metadata.
+If the provider reports a key compromise, set
+`dispatcher_cilogon_oidc_enabled: false`, deploy the configuration and revoke
+the affected accounts' credentials as above. GitHub sign-in does not verify a signed token: the dispatcher reads the
+account from GitHub's API over HTTPS with the exchanged access token.
+
+**Provider outage.** Existing Debuglet sessions keep working, while new sign-ins
+through that provider fail without creating a session; see
+[configure a dispatcher](#configure-a-dispatcher).
+
+**Compromised provider account.** Follow
+[respond to a copied credential](#respond-to-a-copied-credential).
 
 ## Authentication request limits
 

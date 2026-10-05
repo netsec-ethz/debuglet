@@ -39,10 +39,13 @@ func (h *Handler) GetMe(c echo.Context) error {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to retrieve user", err)
 	}
 
+	economics := h.accountEconomics()
+	economics.Allowances = h.dispatcher.Payment.AllowancesEnabled()
 	return c.JSON(http.StatusOK, UserResponse{
-		ID:   user.Uuid.String(),
-		Name: user.Name,
-		Role: user.Role,
+		ID:        user.Uuid.String(),
+		Name:      user.Name,
+		Role:      user.Role,
+		Economics: economics,
 	})
 }
 
