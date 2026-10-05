@@ -9,7 +9,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,8 +33,44 @@ import (
 
 const catchUpPageSize = 50
 
+// ReceiptDisposition is what a chain payment receipt was recorded as.
+type ReceiptDisposition string
+
+const (
+	// ReceiptApplied marks the receipt that paid its transaction.
+	ReceiptApplied ReceiptDisposition = "applied"
+	// ReceiptDuplicate is returned for a receipt that was already applied;
+	// its effect is not repeated.
+	ReceiptDuplicate ReceiptDisposition = "duplicate"
+	// ReceiptMismatch marks a receipt that names one of our transactions but
+	// does not pay it: wrong method, coin type, receiver or amount, or a
+	// transaction that is no longer outstanding.
+	ReceiptMismatch ReceiptDisposition = "mismatch"
+	// ReceiptUnknownIntent marks a receipt to our address whose nonce names
+	// no local transaction. It is left for operator reconciliation.
+	ReceiptUnknownIntent ReceiptDisposition = "unknown_intent"
+	// ReceiptExpired marks a receipt timestamped after its transaction expired.
+	ReceiptExpired ReceiptDisposition = "expired"
+)
+
+// PaymentReceipt is a decoded payment kit receipt event.
+type PaymentReceipt struct {
+	Digest     string // chain transaction digest
+	Nonce      string // our transaction id
+	Amount     uint64 // base units of CoinType
+	CoinType   string
+	Receiver   string
+	Timestamp  time.Time
+	Checkpoint uint64 // 0 when the source does not report it
+}
+
+// TransactionFulfiller records payment receipts.
 type TransactionFulfiller interface {
-	CompleteTransaction(transactionId string, ctx context.Context)
+	// ApplyPaymentReceipt records r and applies its effect at most once. An
+	// empty disposition with a nil error means the receipt is not addressed to
+	// this dispatcher and nothing was recorded. After an error nothing was
+	// recorded and the receipt must be processed again.
+	ApplyPaymentReceipt(ctx context.Context, r PaymentReceipt) (ReceiptDisposition, error)
 }
 
 type Listener struct {
@@ -48,7 +86,6 @@ type Listener struct {
 	httpClient        *http.Client
 	db                *sql.DB
 	fulfiller         TransactionFulfiller
-	cfg               *config.DispatcherConfig
 }
 
 func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf TransactionFulfiller) *Listener {
@@ -71,25 +108,17 @@ func NewListener(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, t
 		client:            client,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 		fulfiller:         tf,
-		cfg:               cfg,
 	}
 }
 
+// Start processes payment receipts until ctx ends. The stored cursor names
+// the last checkpoint whose receipts are all recorded; it advances only after
+// that, so an interrupted range is read again and its receipts are recognized
+// as already recorded. A stored cursor that cannot be parsed is an error.
 func (l *Listener) Start(ctx context.Context) error {
-	queries := database.New(l.db)
-	raw, err := queries.GetTransactionState(ctx, l.cursorKey)
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("load sui cursor: %w", err)
-	}
-
-	var cursor *uint64
-	if raw.Value != "" {
-		seq, err := strconv.ParseUint(raw.Value, 10, 64)
-		if err != nil {
-			l.logger.Warn("invalid stored sui cursor, resetting to start", zap.Error(err))
-		} else {
-			cursor = &seq
-		}
+	cursor, err := l.loadCursor(ctx)
+	if err != nil {
+		return err
 	}
 
 	l.logger.Info("sui event listener started", zap.String("event_type", l.eventType))
@@ -98,14 +127,15 @@ func (l *Listener) Start(ctx context.Context) error {
 	for {
 		cursor, err = l.catchUp(ctx, cursor)
 		if err != nil {
+			// The stream would advance the cursor past the unprocessed range.
 			l.logger.Error("sui catch-up error", zap.Error(err))
+		} else {
+			err = l.subscribeGRPC(ctx, &cursor)
 		}
-
-		err = l.subscribeGRPC(ctx, &cursor)
 		if ctx.Err() != nil {
 			return nil
 		}
-		l.logger.Warn("sui grpc stream ended, reconnecting", zap.Error(err), zap.Duration("backoff", backoff))
+		l.logger.Warn("sui receipt processing interrupted, retrying", zap.Error(err), zap.Duration("backoff", backoff))
 
 		select {
 		case <-ctx.Done():
@@ -114,6 +144,30 @@ func (l *Listener) Start(ctx context.Context) error {
 		}
 		backoff = min(backoff*2, 30*time.Second)
 	}
+}
+
+// loadCursor returns the stored cursor, or nil when none is stored.
+func (l *Listener) loadCursor(ctx context.Context) (*uint64, error) {
+	raw, err := database.New(l.db).GetTransactionState(ctx, l.cursorKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load sui cursor %q: %w", l.cursorKey, err)
+	}
+	seq, err := strconv.ParseUint(raw.Value, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("stored sui cursor %q is invalid: %w", l.cursorKey, err)
+	}
+	return &seq, nil
+}
+
+func (l *Listener) storeCursor(ctx context.Context, seq uint64) error {
+	_, err := database.New(l.db).UpdateTransactionState(ctx, database.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(seq, 10)})
+	if err != nil {
+		return fmt.Errorf("persist sui cursor: %w", err)
+	}
+	return nil
 }
 
 func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error) {
@@ -126,9 +180,16 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 	if err != nil {
 		return cursor, fmt.Errorf("get service info: %w", err)
 	}
-	tip := info.GetCheckpointHeight()
+	return l.catchUpTo(ctx, cursor, info.GetCheckpointHeight())
+}
 
+// catchUpTo brings the stored cursor to tip. Without a stored cursor it
+// stores tip, so a restart keeps the same starting point.
+func (l *Listener) catchUpTo(ctx context.Context, cursor *uint64, tip uint64) (*uint64, error) {
 	if cursor == nil {
+		if err := l.storeCursor(ctx, tip); err != nil {
+			return nil, err
+		}
 		l.logger.Info("no stored sui cursor, starting at chain tip", zap.Uint64("checkpoint", tip))
 		return &tip, nil
 	}
@@ -136,8 +197,18 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 		return cursor, nil
 	}
 
+	if err := l.catchUpRange(ctx, *cursor, tip); err != nil {
+		return cursor, err
+	}
+	return &tip, nil
+}
+
+// catchUpRange records every receipt event after checkpoint after and then
+// stores tip as the cursor. It returns on the first event that could not be
+// recorded, leaving the stored cursor where it was.
+func (l *Listener) catchUpRange(ctx context.Context, after, tip uint64) error {
 	l.logger.Info("sui catch-up: querying PaymentReceipt events via GraphQL",
-		zap.Uint64("after_checkpoint", *cursor), zap.Uint64("to", tip))
+		zap.Uint64("after_checkpoint", after), zap.Uint64("to", tip))
 
 	var (
 		pageCursor *string
@@ -145,21 +216,23 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 	)
 	for {
 		if ctx.Err() != nil {
-			return cursor, ctx.Err()
+			return ctx.Err()
 		}
 
-		page, err := l.queryPaymentReceiptEvents(ctx, *cursor, pageCursor)
+		page, err := l.queryPaymentReceiptEvents(ctx, after, pageCursor)
 		if err != nil {
-			return cursor, fmt.Errorf("query payment receipt events: %w", err)
+			return fmt.Errorf("query payment receipt events: %w", err)
 		}
 
 		for _, node := range page.Events.Nodes {
 			contents, err := base64.StdEncoding.DecodeString(node.Contents.Bcs)
 			if err != nil {
-				l.logger.Warn("PaymentReceipt: failed to decode base64 contents", zap.Error(err))
-				continue
+				return fmt.Errorf("payment receipt in transaction %s: decode base64: %w", node.Transaction.Digest, err)
 			}
-			l.processPaymentReceipt(ctx, contents, node.Transaction.Digest)
+			// The GraphQL query does not report the event's checkpoint.
+			if _, err := l.processPaymentReceipt(ctx, contents, node.Transaction.Digest, 0); err != nil {
+				return err
+			}
 			numEvents++
 		}
 
@@ -170,17 +243,11 @@ func (l *Listener) catchUp(ctx context.Context, cursor *uint64) (*uint64, error)
 		pageCursor = &endCursor
 	}
 
-	l.logger.Info("sui catch-up: done", zap.Int("events_processed", numEvents), zap.Uint64("checkpoint", tip))
-
-	cursor = &tip
-
-	queries := database.New(l.db)
-	_, err = queries.UpdateTransactionState(ctx, database.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(tip, 10)})
-	if err != nil {
-		l.logger.Error("failed to persist sui cursor", zap.Error(err))
+	if err := l.storeCursor(ctx, tip); err != nil {
+		return err
 	}
-
-	return cursor, nil
+	l.logger.Info("sui catch-up: done", zap.Int("events_processed", numEvents), zap.Uint64("checkpoint", tip))
+	return nil
 }
 
 const paymentReceiptEventsQuery = `
@@ -291,84 +358,76 @@ func (l *Listener) subscribeGRPC(ctx context.Context, cursor **uint64) error {
 			return fmt.Errorf("recv checkpoint: %w", err)
 		}
 
-		cp := resp.GetCheckpoint()
-		for _, tx := range cp.GetTransactions() {
-			txDigest := tx.GetDigest()
-			for _, ev := range tx.GetEvents().GetEvents() {
-				if ev.GetEventType() != l.eventType {
-					continue
-				}
-				l.processEventGRPC(ctx, ev, txDigest)
+		seq, err := l.streamCheckpoint(ctx, *cursor, resp.GetCheckpoint())
+		if err != nil {
+			return err
+		}
+		*cursor = &seq
+	}
+}
+
+// streamCheckpoint handles one streamed checkpoint after the stored cursor.
+// The stream starts at the live checkpoint, so checkpoints between the cursor
+// and it are caught up first; the cursor never passes an unread checkpoint.
+func (l *Listener) streamCheckpoint(ctx context.Context, cursor *uint64, cp *v2.Checkpoint) (uint64, error) {
+	seq := cp.GetSequenceNumber()
+	if cursor != nil && seq > *cursor+1 {
+		if err := l.catchUpRange(ctx, *cursor, seq-1); err != nil {
+			return 0, err
+		}
+	}
+	if err := l.processCheckpoint(ctx, cp); err != nil {
+		return 0, err
+	}
+	return seq, nil
+}
+
+// processCheckpoint records every receipt event of one streamed checkpoint
+// and then stores its sequence number as the cursor.
+func (l *Listener) processCheckpoint(ctx context.Context, cp *v2.Checkpoint) error {
+	seq := cp.GetSequenceNumber()
+	for _, tx := range cp.GetTransactions() {
+		for _, ev := range tx.GetEvents().GetEvents() {
+			if ev.GetEventType() != l.eventType {
+				continue
+			}
+			if _, err := l.processPaymentReceipt(ctx, ev.GetContents().GetValue(), tx.GetDigest(), seq); err != nil {
+				return err
 			}
 		}
-
-		seq := cp.GetSequenceNumber()
-		*cursor = &seq
-
-		queries := database.New(l.db)
-		_, err = queries.UpdateTransactionState(ctx, database.UpdateTransactionStateParams{Key: l.cursorKey, Value: strconv.FormatUint(seq, 10)})
-		if err != nil {
-			l.logger.Error("failed to persist sui cursor", zap.Error(err))
-		}
 	}
-}
-func (l *Listener) processEventGRPC(ctx context.Context, ev *v2.Event, txDigest string) {
-	l.processPaymentReceipt(ctx, ev.GetContents().GetValue(), txDigest)
+	return l.storeCursor(ctx, seq)
 }
 
-func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, txDigest string) {
-	receipt, err := decodePaymentReceiptEvent(contents)
+// processPaymentReceipt decodes one receipt event and records it. An event
+// that cannot be decoded is an error, like a failed write: skipping it would
+// lose the payment once the cursor moves past it.
+func (l *Listener) processPaymentReceipt(ctx context.Context, contents []byte, txDigest string, checkpoint uint64) (ReceiptDisposition, error) {
+	if txDigest == "" {
+		return "", errors.New("payment receipt event without transaction digest")
+	}
+	ev, err := decodePaymentReceiptEvent(contents)
 	if err != nil {
-		l.logger.Warn("PaymentReceipt: failed to decode BCS contents",
-			zap.String("tx", txDigest),
-			zap.Error(err),
-		)
-		return
+		return "", fmt.Errorf("payment receipt in transaction %s: decode: %w", txDigest, err)
 	}
-
-	amount := int64(receipt.PaymentAmount)
-	receiver := fmt.Sprintf("0x%x", receipt.Receiver)
-	// TODO refund failed purchases
-	queries := database.New(l.db)
-	transaction, err := queries.GetTransactionByID(ctx, receipt.Nonce)
+	receipt := PaymentReceipt{
+		Digest:     txDigest,
+		Nonce:      ev.Nonce,
+		Amount:     ev.PaymentAmount,
+		CoinType:   ev.CoinType,
+		Receiver:   fmt.Sprintf("0x%x", ev.Receiver[:]),
+		Timestamp:  time.UnixMilli(int64(ev.TimestampMs)).UTC(),
+		Checkpoint: checkpoint,
+	}
+	disposition, err := l.fulfiller.ApplyPaymentReceipt(ctx, receipt)
 	if err != nil {
-		l.logger.Warn("failed to get transaction", zap.String("id", receipt.Nonce), zap.Error(err))
-		return
+		return "", fmt.Errorf("record payment receipt %s/%s: %w", txDigest, ev.Nonce, err)
 	}
-
-	if transaction.Method != "SUI" && transaction.Method != "USDC" {
-		l.logger.Warn("Wrong method for transaction", zap.String("found", transaction.Method))
+	if disposition != "" {
+		l.logger.Info("payment receipt recorded",
+			zap.String("tx", txDigest), zap.String("nonce", ev.Nonce), zap.String("disposition", string(disposition)))
 	}
-	switch transaction.Currency {
-	case "SUI":
-		if !strings.EqualFold(receipt.CoinType, "0x2::sui::SUI") && !strings.EqualFold(receipt.CoinType, "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI") {
-			l.logger.Warn("wrong coin type", zap.String("expected", "0x2::sui::SUI"), zap.String("found", receipt.CoinType))
-			return
-		}
-	case "USDC":
-		if !strings.EqualFold("0x"+receipt.CoinType, GetCoinType(transaction.Currency, l.cfg.Sui.Network)) {
-			l.logger.Warn("wrong coin type", zap.String("expected", GetCoinType(transaction.Currency, l.cfg.Sui.Network)), zap.String("found", receipt.CoinType))
-			return
-		}
-	}
-
-	if amount != transaction.Price {
-		l.logger.Warn("payment didn't match price", zap.Int64("expected", transaction.Price), zap.Int64("actual", amount))
-		return
-	}
-	if receiver != l.receiverAddress {
-		l.logger.Warn("payment to wrong address", zap.String("expected", l.receiverAddress), zap.String("actual", receiver))
-		return
-	}
-	if receipt.Timestamp.After(transaction.ExpiresAt.Time) {
-		l.logger.Warn("transaction expired", zap.Time("exp_time", transaction.ExpiresAt.Time), zap.Time("executed_at", receipt.Timestamp))
-		return
-	}
-	l.fulfiller.CompleteTransaction(transaction.ID, ctx)
-	if err != nil {
-		l.logger.Error("failed to mark transaction as paid", zap.String("id", transaction.ID), zap.Error(err))
-		return
-	}
+	return disposition, nil
 }
 
 type paymentType struct {
@@ -384,13 +443,23 @@ type paymentReceipt struct {
 	PaymentAmount uint64
 	Receiver      suiModels.SuiAddressBytes
 	CoinType      string
-	Timestamp     time.Time
+	TimestampMs   uint64
 }
 
+// decodePaymentReceiptEvent decodes the BCS contents of a payment kit
+// PaymentReceipt event. The layout is fixed by the Move struct, so bytes left
+// over mean the event was not decoded as what it is.
 func decodePaymentReceiptEvent(data []byte) (paymentReceipt, error) {
 	var ev paymentReceipt
-	if _, err := mystenbcs.Unmarshal(data, &ev); err != nil {
+	n, err := mystenbcs.Unmarshal(data, &ev)
+	if err != nil {
 		return ev, err
+	}
+	if n != len(data) {
+		return ev, fmt.Errorf("%d unexpected trailing bytes", len(data)-n)
+	}
+	if ev.TimestampMs > math.MaxInt64 {
+		return ev, fmt.Errorf("timestamp %d ms out of range", ev.TimestampMs)
 	}
 	return ev, nil
 }

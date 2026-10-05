@@ -978,93 +978,59 @@ func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
 	})
 }
 
-// ---- CompleteTransaction (void TransactionFulfiller callback) ----
+// ---- ApplyPaymentReceipt (the chain listener's TransactionFulfiller) ----
 
-// Log messages emitted by CompleteTransaction. The callback is void and
-// swallows database errors into these lines, so the log is the only place an
-// attempted write can be observed: sqlmock answers an unexpected UPDATE with an
-// error, which surfaces as logFailedSettle rather than as a test failure.
-const (
-	logLookupFailed = "failed to look up transaction to settle"
-	logNotSettling  = "not settling transaction"
-	logSettling     = "settling transaction"
-	logFailedSettle = "failed to settle transaction"
+var (
+	getPaymentReceiptQuery   = regexp.QuoteMeta("FROM payment_receipts\nWHERE tx_digest = ? AND nonce = ?")
+	markTransactionPaidQuery = regexp.QuoteMeta("UPDATE transactions\nSET status = ?1\nWHERE id = ?2 AND status = ?3")
 )
 
-var allCompleteLogs = []string{logLookupFailed, logNotSettling, logSettling, logFailedSettle}
-
-func TestCompleteTransaction(t *testing.T) {
-	expectUpdate := func(mock sqlmock.Sqlmock) {
-		mock.ExpectExec(updateTransactionStatusQuery).WithArgs(int64(models.Paid), testTxID).WillReturnResult(sqlmock.NewResult(0, 1))
+// Every failure of ApplyPaymentReceipt is returned, never logged as consumed,
+// and leaves nothing written: the listener then keeps its cursor and processes
+// the receipt again. Disabled mode refuses before touching the database.
+func TestApplyPaymentReceiptModes(t *testing.T) {
+	receipt := sui.PaymentReceipt{
+		Digest: "digest-1", Nonce: testTxID, Amount: uint64(testPrice),
+		CoinType: sui.GetCoinType("USDC", "testnet"), Receiver: "0xdead", Timestamp: time.Now(),
+	}
+	expectBeginAndReceiptMiss := func(mock sqlmock.Sqlmock) {
+		mock.ExpectBegin()
+		mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, testTxID).WillReturnError(sql.ErrNoRows)
 	}
 	cases := []struct {
 		name     string
 		disabled bool
 		expect   func(mock sqlmock.Sqlmock)
-		wantLogs []string // exactly these CompleteTransaction messages, in order
+		want     error
 	}{
+		{name: "disabled: refused without a read", disabled: true, expect: func(sqlmock.Sqlmock) {}, want: ErrPaymentsDisabled},
 		{
-			name: "disabled SUI: lookup only", disabled: true,
-			expect:   func(mock sqlmock.Sqlmock) { expectTransactionRead(mock, "SUI", models.Outstanding) },
-			wantLogs: []string{logNotSettling},
-		},
-		{
-			name: "disabled USDC: lookup only", disabled: true,
-			expect:   func(mock sqlmock.Sqlmock) { expectTransactionRead(mock, "USDC", models.Outstanding) },
-			wantLogs: []string{logNotSettling},
-		},
-		{
-			name: "disabled TEST: lookup then update", disabled: true,
+			name: "enabled receipt lookup error: rolled back",
 			expect: func(mock sqlmock.Sqlmock) {
-				expectTransactionRead(mock, "TEST", models.Outstanding)
-				expectUpdate(mock)
+				mock.ExpectBegin()
+				mock.ExpectQuery(getPaymentReceiptQuery).WithArgs(receipt.Digest, testTxID).WillReturnError(errScripted)
+				mock.ExpectRollback()
 			},
-			wantLogs: []string{logSettling},
+			want: errScripted,
 		},
 		{
-			name: "disabled lookup error: no update", disabled: true,
+			name: "enabled transaction lookup error: rolled back",
 			expect: func(mock sqlmock.Sqlmock) {
+				expectBeginAndReceiptMiss(mock)
 				mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnError(errScripted)
+				mock.ExpectRollback()
 			},
-			wantLogs: []string{logLookupFailed},
+			want: errScripted,
 		},
 		{
-			name: "disabled unknown id: no update", disabled: true,
+			name: "enabled paid write error: no receipt recorded",
 			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnError(sql.ErrNoRows)
-			},
-			wantLogs: []string{logLookupFailed},
-		},
-		{
-			name: "enabled SUI: lookup then update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
-				expectTransactionRead(mock, "SUI", models.Outstanding)
-				expectUpdate(mock)
-			},
-			wantLogs: []string{logSettling},
-		},
-		{
-			name: "enabled USDC: lookup then update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
+				expectBeginAndReceiptMiss(mock)
 				expectTransactionRead(mock, "USDC", models.Outstanding)
-				expectUpdate(mock)
+				mock.ExpectExec(markTransactionPaidQuery).WithArgs(int64(models.Paid), testTxID, int64(models.Outstanding)).WillReturnError(errScripted)
+				mock.ExpectRollback()
 			},
-			wantLogs: []string{logSettling},
-		},
-		{
-			name: "enabled TEST: lookup then update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
-				expectTransactionRead(mock, "TEST", models.Outstanding)
-				expectUpdate(mock)
-			},
-			wantLogs: []string{logSettling},
-		},
-		{
-			name: "enabled lookup error: no update", disabled: false,
-			expect: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnError(errScripted)
-			},
-			wantLogs: []string{logLookupFailed},
+			want: errScripted,
 		},
 	}
 	for _, tc := range cases {
@@ -1082,30 +1048,19 @@ func TestCompleteTransaction(t *testing.T) {
 			tc.expect(mock)
 
 			var tf sui.TransactionFulfiller = h
-			tf.CompleteTransaction(testTxID, context.Background())
-
+			disposition, err := tf.ApplyPaymentReceipt(context.Background(), receipt)
+			if !errors.Is(err, tc.want) || disposition != "" {
+				t.Fatalf("ApplyPaymentReceipt = %q, %v; want error %v", disposition, err, tc.want)
+			}
 			if calls := rec.chain.Calls(); len(calls) != 0 {
-				t.Fatalf("CompleteTransaction reached the chain backend: %v", calls)
+				t.Fatalf("ApplyPaymentReceipt reached the chain backend: %v", calls)
 			}
-			// ExpectationsWereMet proves the expected reads/updates happened; the
-			// log proves nothing else was attempted (an unexpected UPDATE would
-			// have been answered with an error and logged as logFailedSettle).
+			// ExpectationsWereMet proves the scripted statements ran and the
+			// transaction was rolled back; an unexpected INSERT would have
+			// failed the call with a different error.
 			assertMet(t, mock)
-			var got []string
-			for _, entry := range logs.All() {
-				for _, known := range allCompleteLogs {
-					if entry.Message == known {
-						got = append(got, entry.Message)
-					}
-				}
-			}
-			if strings.Join(got, "|") != strings.Join(tc.wantLogs, "|") {
-				t.Fatalf("CompleteTransaction log messages %q, want %q (all entries: %v)", got, tc.wantLogs, logs.All())
-			}
-			if tc.wantLogs[0] == logSettling {
-				if n := logs.FilterMessage(logSettling).Len(); n != 1 {
-					t.Fatalf("settling logged %d times", n)
-				}
+			if logs.Len() != 0 {
+				t.Fatalf("ApplyPaymentReceipt logged %v", logs.All())
 			}
 		})
 	}

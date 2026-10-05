@@ -231,30 +231,6 @@ func (p *PaymentHandler) createDummyIntent(db database.DBTX, transactionId strin
 	}
 }
 
-// CompleteTransaction marks a transaction as paid. It is the
-// sui.TransactionFulfiller callback of the chain listener, so it keeps its
-// void signature: a failed lookup, or a chain transaction while blockchain
-// payments are disabled, is logged and leaves the row untouched.
-func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.Context) {
-	queries := database.New(p.db)
-	transaction, err := queries.GetTransactionByID(ctx, transactionId)
-	if err != nil {
-		p.logger.Error("failed to look up transaction to settle", zap.String("id", transactionId), zap.Error(err))
-		return
-	}
-	if err := p.requireChain(transaction.Method, "settle transaction"); err != nil {
-		p.logger.Warn("not settling transaction", zap.String("id", transactionId), zap.String("method", transaction.Method), zap.Error(err))
-		return
-	}
-	p.logger.Info("settling transaction", zap.String("id", transactionId))
-	if err := queries.UpdateTransactionStatus(ctx, database.UpdateTransactionStatusParams{
-		Status: int64(models.Paid),
-		ID:     transactionId,
-	}); err != nil {
-		p.logger.Error("failed to settle transaction", zap.String("id", transactionId), zap.Error(err))
-	}
-}
-
 // Settlement kinds recorded in order_settlements.
 const (
 	settlementCredit = "credit"

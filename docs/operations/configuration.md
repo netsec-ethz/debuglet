@@ -125,6 +125,15 @@ are not reconciled payment state: migration 4 leaves old earnings without a
 payout wallet, and re-registration does not repair it. Keep payments disabled
 and retain paid databases and backups for operator reconciliation.
 
+From dispatcher schema 22, the dispatcher database also keeps `payment_receipts`,
+one row per chain payment receipt addressed to the dispatcher (chain
+transaction digest, nonce, amount, coin type, receiver and whether it was
+applied, a duplicate, a mismatch, expired or for an unknown intent), and
+`chain_transfers`, the outbound payout and refund transfers and their states,
+including each signed transaction and its signature, stored before broadcast.
+Both are kept indefinitely for reconciliation; they stay empty while chain
+payments are disabled.
+
 ## State and upgrades
 
 Daemons never migrate a database at startup. Back up the dispatcher database, use the release's explicit migration process, and deploy a single reviewed version across the service. An interrupted executor run is not resumed after restart.

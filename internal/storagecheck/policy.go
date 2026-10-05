@@ -31,7 +31,9 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 21
+	// Schema 22: the chain listener records payment receipts and outbound
+	// transfers in payment_receipts and chain_transfers.
+	MinimumDispatcherVersion int64 = 22
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -72,6 +74,8 @@ func PolicyFor(role Role) (Policy, error) {
 		}, Tables: map[string][]string{
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
+			"payment_receipts":           {"tx_digest", "nonce", "disposition", "amount", "checkpoint", "observed_at"},
+			"chain_transfers":            {"id", "kind", "transaction_id", "amount", "state", "digest", "signed_transaction", "signature", "updated_at"},
 			"measurement_profiles":       {"id", "user_id", "document"},
 			"measurement_requests":       {"debuglet_id", "document"},
 			"measurement_execution":      {"debuglet_id", "started_observed_ns", "terminal_observed_ns", "exit_code", "tcp_endpoint"},
