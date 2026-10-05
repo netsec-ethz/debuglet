@@ -72,16 +72,16 @@ func TestConcurrentCompletionsCreditOnce(t *testing.T) {
 		}
 	}
 	assertCreditedOnce(t, db)
+	assertSettledOnce(t, db, settlementCredit)
 	if calls := rec.chain.Calls(); len(calls) != 0 {
 		t.Fatalf("TEST completion reached the chain backend: %v", calls)
 	}
 }
 
-// A refund of a TEST order racing its completion never takes the order from
-// the credit. TEST has no refund, so every refund fails and rolls back its
-// state change whether it runs before or after the credit; the completion
-// credits once.
-func TestConcurrentCompletionAndTESTRefundCreditOnce(t *testing.T) {
+// A failed-run refund of a TEST order racing its completion: exactly one of
+// them settles the order, every call returns nil, and the order carries one
+// settlement row that agrees with its state and the executor's income.
+func TestConcurrentCompletionAndTESTRefundSettleOnce(t *testing.T) {
 	db := newRefundDatabase(t)
 	h, rec := newDisabledHandler(t, db, true, true)
 	seedTESTOrder(t, db, models.Outstanding)
@@ -89,22 +89,20 @@ func TestConcurrentCompletionAndTESTRefundCreditOnce(t *testing.T) {
 	var calls []func() error
 	for range creditCallers / 2 {
 		calls = append(calls,
-			func() error { return h.SetDebugletOrderComplete(testDebuglet(), t.Context()) },
-			func() error { return h.RefundDebugletOrder(testDebuglet(), testRefund, t.Context()) },
+			func() error { return h.SettleTerminalOrder(t.Context(), testDebuglet(), 0) },
+			func() error { return h.SettleTerminalOrder(t.Context(), testDebuglet(), 1) },
 		)
 	}
 	for i, err := range raceCalls(calls) {
-		if i%2 == 0 {
-			if err != nil {
-				t.Fatalf("completion %d: %v", i, err)
-			}
-			continue
-		}
-		if err == nil || !strings.Contains(err.Error(), "Refunds not supported for currency TEST") {
-			t.Fatalf("TEST refund %d = %v, want it refused", i, err)
+		if err != nil {
+			t.Fatalf("settlement %d: %v", i, err)
 		}
 	}
-	assertCreditedOnce(t, db)
+	n, row := settlementOf(t, db)
+	if n != 1 {
+		t.Fatalf("%d settlement rows, want 1", n)
+	}
+	assertSettledOnce(t, db, row.Kind)
 	if calls := rec.chain.Calls(); len(calls) != 0 {
 		t.Fatalf("TEST completion or refund reached the chain backend: %v", calls)
 	}
@@ -156,8 +154,10 @@ func TestCompletionsOnTwoHandlesCreditOnce(t *testing.T) {
 	}
 	t.Logf("%d completions returned nil, %d lost the lock", succeeded, busy)
 	assertCreditedOnce(t, db)
+	assertSettledOnce(t, db, settlementCredit)
 	if err := second.SetDebugletOrderComplete(testDebuglet(), t.Context()); err != nil {
 		t.Fatalf("completion after the race: %v", err)
 	}
 	assertCreditedOnce(t, other)
+	assertSettledOnce(t, other, settlementCredit)
 }

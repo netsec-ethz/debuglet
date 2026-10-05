@@ -227,6 +227,17 @@ type OauthLoginAttempt struct {
 	ExpiresAt       models.UTCTime
 }
 
+type OrderSettlement struct {
+	TransactionID string
+	OrderID       int64
+	Kind          string
+	Amount        int64
+	Currency      string
+	ExecutorID    string
+	DebugletID    sql.NullInt64
+	RecordedAt    models.UTCTime
+}
+
 type OutputAccountUsage struct {
 	AccountID    int64
 	ChargedBytes int64
@@ -290,14 +301,15 @@ type Session struct {
 }
 
 type Transaction struct {
-	ID        string
-	AuthKey   string
-	Price     int64
-	Method    string
-	ExpiresAt models.UTCTime
-	Hash      string
-	Currency  string
-	Status    int64
+	ID          string
+	AuthKey     string
+	Price       int64
+	Method      string
+	ExpiresAt   models.UTCTime
+	Hash        string
+	Currency    string
+	Status      int64
+	PricingRule string
 }
 
 type TransactionState struct {

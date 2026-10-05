@@ -166,6 +166,19 @@ func ipStored(t *testing.T, db *sql.DB, txID string) (price int64, currency, met
 	return price, currency, method, status, orders
 }
 
+// ipAssertPricingRule checks that the stored transaction of an intent names
+// the rule that priced it.
+func ipAssertPricingRule(t *testing.T, db *sql.DB, txID string) {
+	t.Helper()
+	var rule string
+	if err := db.QueryRow("SELECT pricing_rule FROM transactions WHERE id = ?", txID).Scan(&rule); err != nil {
+		t.Fatalf("stored pricing rule of %s: %v", txID, err)
+	}
+	if rule != PricingRule {
+		t.Fatalf("stored pricing rule %q, want %q", rule, PricingRule)
+	}
+}
+
 // TestIpIntentPricesAtTheLimitsOnSQLite drives PUT /payment/intent against a
 // real database at the edges of the pricing rule. The executor charges one
 // unit per bit per second and second. A price, of one order or of the batch,
@@ -245,7 +258,9 @@ func TestIpIntentPricesAtTheLimitsOnSQLite(t *testing.T) {
 			for _, price := range tc.prices {
 				total += price
 			}
-			price, _, _, _, orders := ipStored(t, iaReopen(t, f), txID)
+			reopened := iaReopen(t, f)
+			price, _, _, _, orders := ipStored(t, reopened, txID)
+			ipAssertPricingRule(t, reopened, txID)
 			if price != total || total != maximum {
 				t.Fatalf("stored total %d, want %d", price, maximum)
 			}
@@ -300,6 +315,7 @@ func TestIpTESTIntentTotalsSurviveReopen(t *testing.T) {
 				if fmt.Sprint(orders) != fmt.Sprint(want) {
 					t.Fatalf("%s: orders %v, want %v", source.name, orders, want)
 				}
+				ipAssertPricingRule(t, source.db, txID)
 			}
 		})
 	}

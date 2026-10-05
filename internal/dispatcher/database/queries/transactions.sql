@@ -7,6 +7,11 @@ INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, sta
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
+-- name: SetTransactionPricingRule :exec
+UPDATE transactions
+SET pricing_rule = ?
+WHERE id = ?;
+
 -- name: UpdateTransactionStatus :exec
 UPDATE transactions
 SET status = ?
@@ -54,6 +59,30 @@ UPDATE debuglet_order
 SET state = ? 
 WHERE transaction_id = ? AND order_id = ?
 RETURNING *;
+
+-- name: TransitionDebugletOrder :execrows
+UPDATE debuglet_order
+SET state = sqlc.arg(to_state)
+WHERE transaction_id = sqlc.arg(transaction_id) AND order_id = sqlc.arg(order_id)
+  AND state = sqlc.arg(from_state);
+
+-- name: InsertOrderSettlement :exec
+INSERT INTO order_settlements (transaction_id, order_id, kind, amount, currency, executor_id, debuglet_id, recorded_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetOrderSettlement :one
+SELECT * FROM order_settlements
+WHERE transaction_id = ? AND order_id = ?;
+
+-- name: ListPendingSettlements :many
+SELECT sqlc.embed(d), e.exit_code FROM debuglet_order o
+JOIN debuglets d ON d.id = o.debuglet_id
+  AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
+JOIN measurement_execution e ON e.debuglet_id = d.id
+WHERE o.state = sqlc.arg(outstanding_state) AND d.state = sqlc.arg(exited_state)
+  AND e.exit_code IS NOT NULL
+ORDER BY d.id
+LIMIT sqlc.arg(row_limit);
 
 -- name: ClaimDebugletOrder :execrows
 UPDATE debuglet_order

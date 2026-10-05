@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 20
+	MinimumDispatcherVersion int64 = 21
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -87,6 +87,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
 			"debuglet_provenance":        {"debuglet_id", "document"},
 			"debuglet_output":            {"debuglet_id", "output_version", "owner_fingerprint", "account_id", "committed_sequence", "final_sequence", "final_cursor", "status", "reason"},
+			"order_settlements":          {"transaction_id", "order_id", "kind", "amount"},
 			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
 			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
 			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
@@ -101,7 +102,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"device_logins":              {"selector", "verifier_hash", "user_code_hash", "audience", "scopes", "label", "expires_at", "next_poll_at", "poll_interval", "state", "approver_session", "user_id"},
 			"sessions":                   {"selector", "verifier_hash", "csrf_hash", "user_id", "expires_at", "revoked", "kind", "audience", "scopes", "label", "authenticated_at"},
 			"transaction_users":          {"transaction_id", "user_id"},
-			"transactions":               {"currency", "status"},
+			"transactions":               {"currency", "status", "pricing_rule"},
 			"user_credentials":           {"user_id", "kind", "selector", "secret_hash"},
 			"users":                      {"uuid", "name", "role"},
 		}}, nil
