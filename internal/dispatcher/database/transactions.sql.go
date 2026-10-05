@@ -467,9 +467,10 @@ const listPendingSettlements = `-- name: ListPendingSettlements :many
 SELECT d.id, d.uuid, d.start_time, d.end_time, d.usage, d.ceil_bw, d.executor_id, d.addresses, d.state, d.error, d.transaction_id, d.order_id, d.dispatcher_incarnation, d.session_id, e.exit_code, o.currency FROM debuglet_order o
 JOIN debuglets d ON d.id = o.debuglet_id
   AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
-JOIN measurement_execution e ON e.debuglet_id = d.id
+LEFT JOIN measurement_execution e ON e.debuglet_id = d.id
+LEFT JOIN debuglet_cancellations c ON c.debuglet_id = d.id
 WHERE o.state = ?1 AND d.state = ?2
-  AND e.exit_code IS NOT NULL
+  AND (e.exit_code IS NOT NULL OR c.terminal_recorded_at IS NOT NULL)
   AND NOT EXISTS (
     SELECT 1 FROM chain_transfers t
     WHERE t.kind = 'refund' AND t.transaction_id = o.transaction_id

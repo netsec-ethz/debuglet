@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 25: destination policy events retain operator opt-outs.
-	MinimumDispatcherVersion int64 = 25
+	// Schema 26: cancellation terminal decisions are read for refund recovery.
+	MinimumDispatcherVersion int64 = 26
 	MinimumExecutorVersion   int64 = 8
 )
 
@@ -88,7 +88,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"attribution_retention":      {"singleton", "retained_from_ns"},
 			"attribution_verify_budget":  {"executor_id", "chain_id", "epoch", "used"},
 			"attribution_receipt_keys":   {"key_id", "public_key", "valid_from_ns", "valid_to_ns"},
-			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure"},
+			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure", "terminal_recorded_at"},
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
 			"debuglet_provenance":        {"debuglet_id", "document"},
