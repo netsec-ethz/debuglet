@@ -53,9 +53,23 @@ commands, the output or error text, and any deviation from the documents.
    that owns the executor and expires after 24 hours; keep it off command
    arguments and out of any message. Record when the executor first appears as
    **Ready**.
-3. **Observe versions and capabilities.** Run
+3. **Connect and observe versions and capabilities.** Enrollment saves no CLI
+   connection or session. Save the API URL from step 2, then sign in as the
+   account that owns the executor:
+
+   ```sh
+   dbl connect DISPATCHER_URL --name NAME
+   dbl --dispatcher NAME login
+   ```
+
+   Approve the printed code in a browser, adding `--no-browser` on a shell-only
+   machine ([CLI access](authentication.md#approve-a-cli-or-headless-host)), or
+   use the [account-key login](../cli.md#use-an-account-key-connection) if the
+   project names it. For a private CA, set `SSL_CERT_FILE` to its certificate
+   first; `connect` has no certificate option
+   ([client trust](remote-deployment.md#client-trust-and-account-access)). Run
    `dbl --dispatcher NAME version --server` and
-   `dbl --dispatcher NAME nodes --output json`, and record the server version
+   `dbl --dispatcher NAME --output json nodes`, and record the server version
    and the executor's reported protocols (`tcp`, `tls`, `udp`, `icmp`, `scion`),
    packet counter and SCION ISD-AS ([executor discovery](executor-discovery.md)).
    Unknown or absent values are recorded as unknown.
@@ -66,7 +80,8 @@ commands, the output or error text, and any deviation from the documents.
    dbl --dispatcher NAME run --executor ID --sample hello --wait --allow-remote-test
    ```
 
-   Record the run ID, `dbl status ID` and `dbl logs ID`
+   Record the run ID, `dbl --dispatcher NAME status ID` and
+   `dbl --dispatcher NAME logs ID`
    ([CLI reference](../cli.md)). Use only destinations agreed beforehand.
 5. **Back up and restart.** Stop the executor cleanly, preserve its entire
    private state directory, then start it again from that same directory with
@@ -86,7 +101,8 @@ commands, the output or error text, and any deviation from the documents.
   measurement.
 - Support effort: every contact, with its time, question, answer and the minutes
   spent.
-- Recovery behaviour after the restart in step 5.
+- Recovery behaviour after the restart from the original state directory in
+  step 5.
 - Deviations from the documents and documentation defects.
 
 The project keeps the pilot record privately with the deployment's
