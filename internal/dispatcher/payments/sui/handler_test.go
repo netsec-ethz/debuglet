@@ -22,6 +22,7 @@ import (
 
 	"github.com/block-vision/sui-go-sdk/common/grpcconn"
 	sdkmodels "github.com/block-vision/sui-go-sdk/models"
+	"github.com/block-vision/sui-go-sdk/mystenbcs"
 	v2 "github.com/block-vision/sui-go-sdk/pb/sui/rpc/v2"
 	"github.com/block-vision/sui-go-sdk/signer"
 	"github.com/block-vision/sui-go-sdk/sui/v2/grpc_client"
@@ -128,6 +129,30 @@ func TestSelectCoinsFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			coins, total, err := selectCoins(context.Background(), tc.pages.list, "0x1", testUSDC, tc.amount, tc.max, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("selectCoins = (%v, %d, %v), want error containing %q", coins, total, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSelectCoinsRefusesMalformedPagination(t *testing.T) {
+	cases := []struct {
+		name  string
+		pages *scriptedPages
+		max   int
+		want  string
+	}{
+		// Coin 1 is listed again on the next page; counted twice it would cover 50.
+		{"object repeated across pages", &scriptedPages{pages: [][]types.Coin{{testCoin(1, "30")}, {testCoin(1, "30")}}}, 100, "listed coin " + testObjectID(1) + " twice"},
+		{"object repeated within a page", &scriptedPages{pages: [][]types.Coin{{testCoin(1, "30"), testCoin(1, "30")}}}, 100, "twice"},
+		// Page 2 answers with the cursor that requested it; its coin would cover 50.
+		{"page repeats its cursor", &scriptedPages{pages: [][]types.Coin{{testCoin(1, "10")}, {testCoin(2, "90")}, {testCoin(3, "1")}}, cursors: []string{"1", "1"}}, 100, "repeated a cursor"},
+		{"cursor seen earlier", &scriptedPages{pages: [][]types.Coin{{testCoin(1, "10")}, {testCoin(2, "10")}, {testCoin(3, "90")}, {testCoin(4, "1")}}, cursors: []string{"1", "2", "1"}}, 100, "repeated a cursor"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			coins, total, err := selectCoins(context.Background(), tc.pages.list, "0x1", testUSDC, 50, tc.max, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("selectCoins = (%v, %d, %v), want error containing %q", coins, total, err, tc.want)
 			}
@@ -256,6 +281,9 @@ type chainFixture struct {
 	statuses map[string]bool
 	// changes maps a digest to the balance changes the node reports.
 	changes map[string][]*v2.BalanceChange
+	// respDigest, when set, replaces the digest in execution and lookup
+	// responses, as a node answering for another transaction would.
+	respDigest *string
 }
 
 type stateFixture struct {
@@ -309,6 +337,9 @@ func (l ledgerFixture) GetTransaction(_ context.Context, req *v2.GetTransactionR
 		return nil, status.Error(codes.NotFound, "transaction not found")
 	}
 	tx := executed(req.GetDigest(), success)
+	if l.f.respDigest != nil {
+		tx.Digest = proto.String(*l.f.respDigest)
+	}
 	if slices.Contains(req.GetReadMask().GetPaths(), "balance_changes") {
 		tx.BalanceChanges = l.f.changes[req.GetDigest()]
 	}
@@ -331,6 +362,9 @@ func (e execFixture) ExecuteTransaction(_ context.Context, req *v2.ExecuteTransa
 	digest, err := utils.GetTxDigestFromBytes(txBytes)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if e.f.respDigest != nil {
+		digest = *e.f.respDigest
 	}
 	return &v2.ExecuteTransactionResponse{Transaction: executed(digest, !e.f.execFails)}, nil
 }
@@ -440,6 +474,69 @@ func TestPrepareTransferFailuresAreNotBroadcast(t *testing.T) {
 	}
 }
 
+func TestPrepareTransferRefusesRepeatedCoins(t *testing.T) {
+	for name, mutate := range map[string]func(f *chainFixture){
+		"transfer coin repeated": func(f *chainFixture) { f.pages[testUSDC] = [][]*v2.Object{{coinObject(1, 30)}, {coinObject(1, 30)}} },
+		"gas coin repeated": func(f *chainFixture) {
+			f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{coinObject(11, 30_000_000)}, {coinObject(11, 30_000_000)}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := fundedFixture()
+			mutate(f)
+			h := startFixture(t, f)
+			digest, err := h.TransferCoins(50, testUSDC, testReceiver, context.Background())
+			if !errors.Is(err, ErrNotBroadcast) || !strings.Contains(err.Error(), "twice") || digest != "" {
+				t.Fatalf("TransferCoins = (%q, %v), want ErrNotBroadcast for a repeated coin", digest, err)
+			}
+			if len(f.executed) != 0 {
+				t.Fatalf("a transfer with a repeated coin was submitted")
+			}
+		})
+	}
+}
+
+// TestPreparedTransferReferencesEachCoinOnce decodes the signed bytes and
+// checks that no coin object appears twice among the inputs and the gas
+// payment.
+func TestPreparedTransferReferencesEachCoinOnce(t *testing.T) {
+	f := fundedFixture()
+	f.pages[testUSDC] = [][]*v2.Object{{coinObject(1, 10), coinObject(2, 10)}, {coinObject(3, 40)}}
+	f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{coinObject(11, 20_000_000)}, {coinObject(12, 20_000_000), coinObject(13, 20_000_000)}}
+	h := startFixture(t, f)
+	prepared, err := h.PrepareTransfer(context.Background(), 50, testUSDC, testReceiver)
+	if err != nil {
+		t.Fatalf("PrepareTransfer: %v", err)
+	}
+	var data transaction.TransactionData
+	if _, err := mystenbcs.Unmarshal(prepared.Bytes(), &data); err != nil {
+		t.Fatalf("decode prepared transaction: %v", err)
+	}
+	seen := map[sdkmodels.SuiAddressBytes]bool{}
+	var inputs, gas int
+	for _, in := range data.V1.Kind.ProgrammableTransaction.Inputs {
+		if in.Object == nil {
+			continue
+		}
+		id := in.Object.ImmOrOwnedObject.ObjectId
+		if seen[id] {
+			t.Fatalf("coin %x is referenced twice", id)
+		}
+		seen[id] = true
+		inputs++
+	}
+	for _, ref := range *data.V1.GasData.Payment {
+		if seen[ref.ObjectId] {
+			t.Fatalf("gas coin %x is referenced twice", ref.ObjectId)
+		}
+		seen[ref.ObjectId] = true
+		gas++
+	}
+	if inputs != 3 || gas != 3 {
+		t.Fatalf("%d coin inputs and %d gas coins, want 3 and 3", inputs, gas)
+	}
+}
+
 func TestSUITransferPaysGasFromOtherCoins(t *testing.T) {
 	f := fundedFixture()
 	f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{coinObject(11, 60_000_000)}, {coinObject(12, 50_000_000)}}
@@ -477,6 +574,65 @@ func TestExecuteTransferOutcomes(t *testing.T) {
 			t.Fatalf("ExecuteTransfer(empty) = %v, want ErrNotBroadcast", err)
 		}
 	})
+}
+
+func TestExecuteTransferResponseForAnotherDigestIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		respDigest string
+		fails      bool
+	}{
+		{"other digest, success", testObjectDigest(0x42), false},
+		{"other digest, failure", testObjectDigest(0x42), true},
+		{"empty digest, success", "", false},
+		{"empty digest, failure", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fundedFixture()
+			h := startFixture(t, f)
+			prepared, err := h.PrepareTransfer(context.Background(), 50, testUSDC, testReceiver)
+			if err != nil {
+				t.Fatalf("PrepareTransfer: %v", err)
+			}
+			digest, txBytes, signature := prepared.Digest, bytes.Clone(prepared.Bytes()), prepared.Signature()
+			f.respDigest, f.execFails = &tc.respDigest, tc.fails
+
+			err = h.ExecuteTransfer(context.Background(), prepared)
+			if err == nil || errors.Is(err, ErrNotBroadcast) || errors.Is(err, ErrTransferFailed) {
+				t.Fatalf("ExecuteTransfer = %v, want an unknown outcome wrapping neither sentinel", err)
+			}
+			if prepared.Digest != digest {
+				t.Fatalf("prepared digest changed from %s to %s", digest, prepared.Digest)
+			}
+			if _, err := RestorePreparedTransfer(digest, txBytes, signature); err != nil {
+				t.Fatalf("RestorePreparedTransfer after the mismatch: %v", err)
+			}
+		})
+	}
+}
+
+func TestLookupTransferResponseForAnotherDigestIsAnError(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		respDigest string
+		success    bool
+	}{
+		{"other digest, success", "other-digest", true},
+		{"other digest, failure", "other-digest", false},
+		{"empty digest, success", "", true},
+		{"empty digest, failure", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fundedFixture()
+			f.statuses["digest"] = tc.success
+			f.respDigest = &tc.respDigest
+			h := startFixture(t, f)
+			got, verified, err := h.LookupTransfer(context.Background(), "digest", nil)
+			if err == nil || got == TransferConfirmed || got == TransferFailed || verified {
+				t.Fatalf("LookupTransfer = (%q, %v, %v), want an error", got, verified, err)
+			}
+		})
+	}
 }
 
 func TestLookupTransfer(t *testing.T) {

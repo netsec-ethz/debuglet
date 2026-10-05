@@ -282,7 +282,8 @@ type coinLister func(ctx context.Context, options types.ListCoinsOptions) (*type
 // selectCoins pages through owner's coins of coinType, skipping the object
 // ids in exclude, and returns the coins read until their balances cover
 // amount, with their total. It selects at most maxCoins coins and reads at
-// most maxCoinPages pages.
+// most maxCoinPages pages. A listing that repeats a cursor or a coin object
+// is refused before the page is counted.
 func selectCoins(ctx context.Context, list coinLister, owner string, coinType string, amount uint64, maxCoins int, exclude map[string]bool) ([]types.Coin, uint64, error) {
 	if amount == 0 {
 		return nil, 0, errors.New("amount must be positive")
@@ -293,7 +294,11 @@ func selectCoins(ctx context.Context, list coinLister, owner string, coinType st
 		total    uint64
 		cursor   *string
 	)
-	seen := map[string]bool{}
+	// Cursors used so far and every object id listed, so that a malformed
+	// listing can neither loop nor count a coin twice. Both grow by at most
+	// one page per iteration and the iterations are bounded.
+	seenCursors := map[string]bool{}
+	listed := map[string]bool{}
 	for page := 0; ; page++ {
 		if page == maxCoinPages {
 			return nil, 0, fmt.Errorf("%s coins: more than %d pages without covering %d (selected %d)", coinType, maxCoinPages, amount, total)
@@ -309,7 +314,22 @@ func selectCoins(ctx context.Context, list coinLister, owner string, coinType st
 		if len(resp.Objects) == 0 && more {
 			return nil, 0, fmt.Errorf("%s coins: empty page %d before the end of the listing", coinType, page+1)
 		}
+		// The page is validated before any of its coins is counted.
+		if more {
+			if seenCursors[*resp.Cursor] || (cursor != nil && *resp.Cursor == *cursor) {
+				return nil, 0, fmt.Errorf("%s coins: listing repeated a cursor", coinType)
+			}
+			seenCursors[*resp.Cursor] = true
+		}
 		for _, coin := range resp.Objects {
+			id := string(utils.NormalizeSuiAddress(coin.ObjectId))
+			if ValidAddress(coin.ObjectId) != nil {
+				id = coin.ObjectId // refused by objectRef when selected
+			}
+			if listed[id] {
+				return nil, 0, fmt.Errorf("%s coins: listed coin %s twice", coinType, coin.ObjectId)
+			}
+			listed[id] = true
 			if exclude[coin.ObjectId] {
 				continue
 			}
@@ -335,10 +355,6 @@ func selectCoins(ctx context.Context, list coinLister, owner string, coinType st
 		if !more {
 			return nil, 0, fmt.Errorf("insufficient %s balance: %d of %d", coinType, total, amount)
 		}
-		if seen[*resp.Cursor] {
-			return nil, 0, fmt.Errorf("%s coins: listing repeated a cursor", coinType)
-		}
-		seen[*resp.Cursor] = true
 		cursor = resp.Cursor
 	}
 }
@@ -483,10 +499,10 @@ func (h *SuiPaymentHandler) ExecuteTransfer(ctx context.Context, prepared *Prepa
 	if result.Transaction == nil {
 		return fmt.Errorf("execute transfer %s: empty response", prepared.Digest)
 	}
-	if d := result.Transaction.Digest; d != "" && d != prepared.Digest {
-		h.logger.Error("executed transfer digest differs from the computed digest",
-			zap.String("computed", prepared.Digest), zap.String("executed", d))
-		prepared.Digest = d
+	// The response must be about this transaction; otherwise its status says
+	// nothing about it and the outcome stays unknown.
+	if d := result.Transaction.Digest; d != prepared.Digest {
+		return fmt.Errorf("execute transfer %s: response is for transaction %q", prepared.Digest, d)
 	}
 	switch st := result.Transaction.Status; {
 	case st.Success:
@@ -534,6 +550,8 @@ func (h *SuiPaymentHandler) LookupTransfer(ctx context.Context, digest string, e
 	switch tx := result.Transaction; {
 	case tx == nil:
 		return "", false, fmt.Errorf("look up transfer %s: empty response", digest)
+	case tx.Digest != digest:
+		return "", false, fmt.Errorf("look up transfer %s: response is for transaction %q", digest, tx.Digest)
 	case tx.Status.Success:
 		if expect == nil || len(tx.BalanceChanges) == 0 {
 			return TransferConfirmed, false, nil
