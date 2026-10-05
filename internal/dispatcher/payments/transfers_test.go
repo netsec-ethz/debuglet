@@ -321,6 +321,93 @@ func TestUnansweredSubmissionIsUnknown(t *testing.T) {
 	}
 }
 
+// The outcome a decided refund returns, and the one later read from its
+// transfer row, follow the recorded state; a TEST refund has no row.
+func TestRefundOutcomeFollowsTheRecordedTransfer(t *testing.T) {
+	for name, tc := range map[string]struct {
+		executeErr error
+		want       RefundOutcome
+	}{
+		"sent":    {nil, RefundSent},
+		"unknown": {errLostResponse, RefundPending},
+		"failed":  {fmt.Errorf("%w: refused", sui.ErrNotBroadcast), RefundFailed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, h, chain := transferFixture(t)
+			seedUSDCTransaction(t, db, 7)
+			chain.executeErrs = []error{tc.executeErr}
+			if outcome, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); outcome != tc.want || err != nil {
+				t.Fatalf("RefundUnadmittedTransaction = (%v, %v), want (%v, nil)", outcome, err, tc.want)
+			}
+			if outcome, err := h.RefundOutcomeOf(t.Context(), testTxID); outcome != tc.want || err != nil {
+				t.Fatalf("RefundOutcomeOf = (%v, %v), want (%v, nil)", outcome, err, tc.want)
+			}
+		})
+	}
+	_, h, _ := transferFixture(t)
+	if outcome, err := h.RefundOutcomeOf(t.Context(), "no-transfer"); outcome != RefundLocal || err != nil {
+		t.Fatalf("RefundOutcomeOf without a transfer = (%v, %v)", outcome, err)
+	}
+}
+
+// hangingLookup answers LookupTransfer for the digest hang only when its
+// context ends, and confirms every other digest.
+type hangingLookup struct {
+	*transferChain
+	hang string
+}
+
+func (c hangingLookup) LookupTransfer(ctx context.Context, digest string, expect *sui.TransferExpectation) (sui.TransferOutcome, bool, error) {
+	c.record("LookupTransfer")
+	if digest == c.hang {
+		<-ctx.Done()
+		return "", false, ctx.Err()
+	}
+	return sui.TransferConfirmed, true, nil
+}
+
+// A lookup that never answers is cut off at chainReadTimeout: its transfer is
+// recorded unknown with the reservation kept, and later transfers are still
+// reconciled in the same pass.
+func TestHungLookupDoesNotStopReconciliation(t *testing.T) {
+	const bound = 200 * time.Millisecond
+	saved := chainReadTimeout
+	chainReadTimeout = bound
+	t.Cleanup(func() { chainReadTimeout = saved })
+
+	db, h, chain := transferFixture(t)
+	chain.executeErrs = []error{errLostResponse, errLostResponse}
+	for _, executor := range []string{"exec-a", "exec-b"} {
+		if err := h.PayoutExecutor(seedEarning(t, db, executor, testBalance, testWallet), t.Context()); err != nil {
+			t.Fatalf("PayoutExecutor(%s): %v", executor, err)
+		}
+	}
+	rows := transferRows(t, db)
+	if len(rows) != 2 || rows[0].State != transferUnknown || rows[1].State != transferUnknown {
+		t.Fatalf("payouts with lost responses: %+v", rows)
+	}
+	h.sui = hangingLookup{transferChain: chain, hang: rows[0].Digest}
+
+	start := time.Now()
+	reconcile(t, h)
+	if elapsed := time.Since(start); elapsed < bound || elapsed > bound+waitBound {
+		t.Fatalf("pass took %v with a lookup bound of %v", elapsed, bound)
+	}
+	byExecutor := map[string]database.ChainTransfer{}
+	for _, row := range transferRows(t, db) {
+		byExecutor[row.ExecutorID] = row
+	}
+	if row := byExecutor["exec-a"]; row.State != transferUnknown || row.Detail != "last check: lookup timed out" {
+		t.Fatalf("hung lookup recorded %+v", row)
+	}
+	if row := byExecutor["exec-b"]; row.State != transferConfirmed {
+		t.Fatalf("later transfer recorded %+v", row)
+	}
+	if got := earningOf(t, db, "exec-a").CurrentBalance; got != 0 {
+		t.Fatalf("balance %d after a timed-out lookup, want the reservation kept", got)
+	}
+}
+
 // A preparation failure reserves nothing.
 func TestUnpreparedPayoutReservesNothing(t *testing.T) {
 	db, h, chain := transferFixture(t)
@@ -572,13 +659,16 @@ func TestRefundTransactionIsOneTransferWithOneSettlementPerOrder(t *testing.T) {
 }
 
 // A refund whose transfer fails stays decided: the orders are Refunded and
-// the owed amount is visible as a failed transfer.
+// the owed amount is visible as a failed transfer, and the caller is told so.
 func TestFailedRefundTransferKeepsTheDecision(t *testing.T) {
 	db, h, chain := transferFixture(t)
 	seedUSDCTransaction(t, db, 7, 8)
 	chain.executeErrs = []error{fmt.Errorf("%w: refused", sui.ErrTransferFailed)}
-	if err := h.RefundTransaction(testTxID, t.Context()); err != nil {
-		t.Fatalf("RefundTransaction: %v", err)
+	if outcome, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); outcome != RefundFailed || err != nil {
+		t.Fatalf("RefundUnadmittedTransaction = (%v, %v), want (%v, nil)", outcome, err, RefundFailed)
+	}
+	if outcome, err := h.RefundOutcomeOf(t.Context(), testTxID); outcome != RefundFailed || err != nil {
+		t.Fatalf("RefundOutcomeOf = (%v, %v), want (%v, nil)", outcome, err, RefundFailed)
 	}
 	status, orders, settlements := refundState(t, db)
 	if status != models.Refunded || orders[0] != models.Refunded || orders[1] != models.Refunded || settlements != 2 {
@@ -596,7 +686,11 @@ func TestDuplicateRefundRequestSendsNothing(t *testing.T) {
 	if err := h.RefundTransaction(testTxID, t.Context()); err != nil {
 		t.Fatalf("RefundTransaction: %v", err)
 	}
-	for _, refund := range []func(string, context.Context) error{h.RefundTransaction, h.RefundUnadmittedTransaction} {
+	unadmitted := func(id string, ctx context.Context) error {
+		_, err := h.RefundUnadmittedTransaction(id, ctx)
+		return err
+	}
+	for _, refund := range []func(string, context.Context) error{h.RefundTransaction, unadmitted} {
 		if err := refund(testTxID, t.Context()); err == nil || !strings.Contains(err.Error(), "has not been payed") {
 			t.Fatalf("repeated refund = %v", err)
 		}

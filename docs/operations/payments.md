@@ -58,6 +58,9 @@ between the reservation and the submission):
 | Not found, row `sent` | `unknown` |
 | Lookup error, or a credit that does not match | `unknown` |
 
+Each lookup waits at most 30 seconds; one that does not answer leaves the
+transfer `unknown` and the pass continues with the next transfer.
+
 A resubmission sends the identical signed bytes, which have the same digest,
 so the chain executes the transfer at most once. A transfer is never rebuilt
 with new bytes because a response was lost.
@@ -71,7 +74,9 @@ is the time of the last check.
   executor's balance; the next payout pass tries again with a new transfer.
 - **`failed` refund**: the orders stay refunded and the amount is owed to the
   buyer's refund address. It is not retried automatically; the row is the
-  record of what is owed.
+  record of what is owed. A buyer whose paid order is refunded because
+  submissions are paused is told whether the refund was sent, is pending
+  confirmation, or could not be sent and is owed.
 - **`unknown`**: reconciliation keeps checking it every minute. A payout in
   this state blocks further payouts of that executor and currency, so the
   amount cannot be paid twice. If it stays `unknown`, for example because the
