@@ -100,7 +100,7 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_clock_estimated_error_seconds` | Maximum reported kernel error estimate; this is not a measured uncertainty bound. |
 | `executor_disclosure_held_seconds` | Maximum reported age of an installed-key disclosure hold. It does not measure delivery or durable storage of keys at the dispatcher. |
 | `executors_disclosure_lag_unknown` | Executors whose disclosure delivery lag cannot be determined. |
-| `executor_disclosure_lag_seconds` | Maximum disclosure delivery lag: time since the oldest due key became disclosable without this dispatcher having verified and recorded it; zero when every due key is stored. |
+| `executor_disclosure_lag_seconds` | Maximum disclosure delivery lag: time since the oldest due key became disclosable without this dispatcher having verified and recorded it; zero when every due key of each executor's current chain is stored. |
 
 Mode, attachment, attribution and clock groups each partition `executors_registered`.
 Missing, malformed, future-dated or 90-second-old reports become `unknown`, as
@@ -117,7 +117,10 @@ observed hold of zero. Clock estimates and schedule expiry can disagree between
 machines with bad clocks; inspect clock readiness before interpreting timings.
 
 Disclosure delivery lag is judged by what this dispatcher has verified against
-the chain anchor and recorded in its database. From the announced schedule, the
+the chain anchor and recorded in its database. It covers only the chain each
+executor announced for its current registered session; a restart announces a new
+chain, and the lag neither follows retained earlier chains nor certifies that
+their undisclosed final keys were delivered. From the announced schedule, the
 key of epoch i becomes disclosable at the start of epoch i+d on the dispatcher's
 clock, without the 5-second skew allowance that disclosure acceptance grants; no
 key is due before epoch d+1 starts, and the chain's final key is the last one
