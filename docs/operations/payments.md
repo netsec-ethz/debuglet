@@ -113,6 +113,20 @@ Two conditions are checked later, when the receipt listener starts or runs:
   indexer cannot be queried or reports no range, catch-up logs `sui catch-up error` and is retried
   with a growing delay, without moving the cursor.
 
+## Schedules
+
+With chain payments enabled, the dispatcher runs these on its own:
+
+- **Payout:** daily at local midnight, for every positive `USDC` balance that
+  has a payout wallet.
+- **Reconciliation:** every minute, over at most 100 open transfers; a
+  `reserved` row counts as stale after ten minutes. See
+  [reconciliation](#reconciliation).
+- **Settlement pass:** every 30 seconds, over at most 32 orders of finished
+  runs.
+- **Submission:** one submission of a transfer waits at most two minutes;
+  after that its outcome is `unknown`.
+
 ## Transfer lifecycle
 
 Every outbound transfer, payout or refund, follows the same steps and leaves
@@ -240,3 +254,15 @@ A failed refund is not sent again automatically, and a transfer can stay
 `unknown`, for example when its coins were spent by another transaction; what
 the operator does in both cases is described under
 [what an operator sees](#what-an-operator-sees).
+
+### Backups and restore
+
+[Backup and restore](backup-restore.md) covers the foreground `TEST` state
+only. A dispatcher database restored from a backup taken before its last chain
+transfer brings back executor balances and owed refunds that were already
+paid, and nothing in the dispatcher prevents paying them again: the payout
+pays every positive balance, and a payout is refused only while a `reserved`,
+`sent` or `unknown` payout row exists for that executor and currency. Before
+the payout or settlement pass runs on a restored database, switch chain
+payments off and reconcile its balances, orders and transfer rows against the
+chain history of the dispatcher's address.
