@@ -36,12 +36,12 @@ const waitBound = 2 * time.Second
 // the GetTransactionOrders pattern is anchored to avoid matching the longer
 // GetDebugletOrder statement.
 var (
-	transactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status"}
+	transactionColumns = []string{"id", "auth_key", "price", "method", "expires_at", "hash", "currency", "status", "pricing_rule"}
 	orderColumns       = []string{"transaction_id", "order_id", "executor_id", "price", "currency", "state", "refund_address", "debuglet_id"}
 	earningsColumns    = []string{"executor_id", "currency", "total_income", "current_balance", "sui_wallet_address"}
 
 	getTransactionByIDQuery = regexp.QuoteMeta(
-		"SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions\nWHERE id = ?",
+		"SELECT id, auth_key, price, method, expires_at, hash, currency, status, pricing_rule FROM transactions\nWHERE id = ?",
 	)
 	updateTransactionStatusQuery = regexp.QuoteMeta(
 		"UPDATE transactions\nSET status = ?\nWHERE id = ?",
@@ -54,6 +54,9 @@ var (
 	) + `\s*$`
 	updateDebugletOrderStateQuery = regexp.QuoteMeta(
 		"UPDATE debuglet_order\nSET state = ? \nWHERE transaction_id = ? AND order_id = ?\nRETURNING transaction_id, order_id, executor_id, price, currency, state, refund_address, debuglet_id",
+	)
+	transitionDebugletOrderQuery = regexp.QuoteMeta(
+		"UPDATE debuglet_order\nSET state = ?1\nWHERE transaction_id = ?2 AND order_id = ?3\n  AND state = ?4",
 	)
 )
 
@@ -309,7 +312,7 @@ func waitErr(t *testing.T, ch <-chan error, what string) error {
 
 func transactionRow(method string, status models.TransactionState) *sqlmock.Rows {
 	return sqlmock.NewRows(transactionColumns).AddRow(
-		testTxID, "", testPrice, method, time.Now().Add(5*time.Minute), testHash, method, int64(status),
+		testTxID, "", testPrice, method, time.Now().Add(5*time.Minute), testHash, method, int64(status), "",
 	)
 }
 
@@ -697,21 +700,18 @@ func TestDisabledChainGuards(t *testing.T) {
 }
 
 // TestDisabledTESTPaths checks the database-only TEST behaviour in disabled
-// mode: refunds keep failing with the existing unsupported-currency errors and
-// never commit. Crediting a completed TEST order is covered on a real database
-// by TestSetDebugletOrderCompleteCreditsOnce.
+// mode: chain refunds keep failing with the existing unsupported-currency
+// errors and never commit. Crediting a completed TEST order and refunding a
+// failed TEST run locally are covered on a real database by
+// TestSetDebugletOrderCompleteCreditsOnce and settlement_test.go.
 func TestDisabledTESTPaths(t *testing.T) {
 	t.Run("RefundDebugletOrder TEST order is unsupported", func(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newDisabledHandler(t, db, true, true)
 
-		// Existing behaviour: the state update happens inside the transaction
-		// and is rolled back with the unsupported-currency error.
+		// The currency is refused before any state is written.
 		mock.ExpectBegin()
 		expectOrderRead(mock, "TEST", models.Paid)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID).
-			WillReturnRows(orderRow("TEST", models.Refunded))
 		mock.ExpectRollback()
 
 		err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background())
@@ -727,16 +727,24 @@ func TestDisabledTESTPaths(t *testing.T) {
 		assertMet(t, mock)
 	})
 
-	t.Run("RefundDebugletOrder already refunded order", func(t *testing.T) {
+	t.Run("SettleTerminalOrder already refunded TEST order", func(t *testing.T) {
 		db, mock := newMockDB(t)
-		h, _ := newDisabledHandler(t, db, true, true)
+		h, rec := newDisabledHandler(t, db, true, true)
+		// The conditional transition finds no Outstanding order; the order
+		// is read again, found settled, and nothing is written.
 		mock.ExpectBegin()
-		expectOrderRead(mock, "USDC", models.Refunded)
+		expectOrderRead(mock, "TEST", models.Refunded)
+		mock.ExpectExec(transitionDebugletOrderQuery).
+			WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		expectOrderRead(mock, "TEST", models.Refunded)
 		mock.ExpectRollback()
 
-		err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background())
-		if err == nil || err.Error() != "Debuglet has already been refunded" {
-			t.Fatalf("RefundDebugletOrder(refunded) = %v", err)
+		if err := h.SettleTerminalOrder(context.Background(), testDebuglet(), 1); err != nil {
+			t.Fatalf("SettleTerminalOrder(refunded) = %v", err)
+		}
+		if calls := rec.chain.Calls(); len(calls) != 0 {
+			t.Fatalf("settled order reached the chain backend: %v", calls)
 		}
 		assertMet(t, mock)
 	})
@@ -887,10 +895,13 @@ func TestEnabledChainMethodsForwardToBackend(t *testing.T) {
 		db, mock := newMockDB(t)
 		h, rec := newEnabledHandler(t, db, enabledConfig(t))
 		mock.ExpectBegin()
-		expectOrderRead(mock, "USDC", models.Paid)
-		mock.ExpectQuery(updateDebugletOrderStateQuery).
-			WithArgs(int64(models.Refunded), testTxID, testOrderID).
-			WillReturnRows(orderRow("USDC", models.Refunded))
+		expectOrderRead(mock, "USDC", models.Outstanding)
+		mock.ExpectExec(transitionDebugletOrderQuery).
+			WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO order_settlements").
+			WithArgs(testTxID, testOrderID, "refund", testPrice, "USDC", testExecutor, nil, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 
 		if err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background()); err != nil {
@@ -1228,6 +1239,7 @@ func TestSetDebugletOrderCompleteCreditsOnce(t *testing.T) {
 	if got := totalIncome(t, db); got != testPrice {
 		t.Fatalf("total income %d after two completions, want the order price %d once", got, testPrice)
 	}
+	assertSettledOnce(t, db, settlementCredit)
 	if calls := rec.chain.Calls(); len(calls) != 0 {
 		t.Fatalf("TEST completion reached the chain backend: %v", calls)
 	}
@@ -1254,6 +1266,9 @@ BEGIN SELECT RAISE(ABORT, 'earnings update refused'); END;`); err != nil {
 	if got := totalIncome(t, db); got != 0 {
 		t.Fatalf("total income %d after a failed earnings write", got)
 	}
+	if n, _ := settlementOf(t, db); n != 0 {
+		t.Fatalf("%d settlement rows after a failed earnings write", n)
+	}
 }
 
 // A refunded order is never credited.
@@ -1270,6 +1285,9 @@ func TestSetDebugletOrderCompleteLeavesRefundedOrder(t *testing.T) {
 	}
 	if got := totalIncome(t, db); got != 0 {
 		t.Fatalf("a refunded order earned %d", got)
+	}
+	if n, _ := settlementOf(t, db); n != 0 {
+		t.Fatalf("%d settlement rows written for an order refunded elsewhere", n)
 	}
 }
 
@@ -1309,6 +1327,11 @@ func TestCreatePaymentIntentTESTStoresPriceAndCurrency(t *testing.T) {
 			if stored.Price != testPrice || stored.Currency != "TEST" || stored.Method != "TEST" {
 				t.Fatalf("stored TEST transaction price=%d currency=%q method=%q, want %d %q %q",
 					stored.Price, stored.Currency, stored.Method, testPrice, "TEST", "TEST")
+			}
+			// The pricing rule is named by the API layer that priced the
+			// intent; this layer stores none.
+			if stored.PricingRule != "" {
+				t.Fatalf("stored TEST transaction pricing rule %q, want none", stored.PricingRule)
 			}
 			if stored.Status != int64(models.Paid) || stored.AuthKey != "" || stored.Hash != testHash {
 				t.Fatalf("stored TEST transaction status=%d auth_key=%q hash=%q, want %d %q %q",

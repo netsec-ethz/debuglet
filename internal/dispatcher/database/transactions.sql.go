@@ -133,7 +133,7 @@ func (q *Queries) CreateEarnings(ctx context.Context, arg CreateEarningsParams) 
 const createTransaction = `-- name: CreateTransaction :one
 INSERT INTO transactions (id, auth_key, price, currency, method, expires_at, status, hash)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, auth_key, price, method, expires_at, hash, currency, status
+RETURNING id, auth_key, price, method, expires_at, hash, currency, status, pricing_rule
 `
 
 type CreateTransactionParams struct {
@@ -168,6 +168,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.Hash,
 		&i.Currency,
 		&i.Status,
+		&i.PricingRule,
 	)
 	return i, err
 }
@@ -335,8 +336,34 @@ func (q *Queries) GetEarningsOf(ctx context.Context, executorID string) ([]Earni
 	return items, nil
 }
 
+const getOrderSettlement = `-- name: GetOrderSettlement :one
+SELECT transaction_id, order_id, kind, amount, currency, executor_id, debuglet_id, recorded_at FROM order_settlements
+WHERE transaction_id = ? AND order_id = ?
+`
+
+type GetOrderSettlementParams struct {
+	TransactionID string
+	OrderID       int64
+}
+
+func (q *Queries) GetOrderSettlement(ctx context.Context, arg GetOrderSettlementParams) (OrderSettlement, error) {
+	row := q.db.QueryRowContext(ctx, getOrderSettlement, arg.TransactionID, arg.OrderID)
+	var i OrderSettlement
+	err := row.Scan(
+		&i.TransactionID,
+		&i.OrderID,
+		&i.Kind,
+		&i.Amount,
+		&i.Currency,
+		&i.ExecutorID,
+		&i.DebugletID,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const getTransactionByID = `-- name: GetTransactionByID :one
-SELECT id, auth_key, price, method, expires_at, hash, currency, status FROM transactions
+SELECT id, auth_key, price, method, expires_at, hash, currency, status, pricing_rule FROM transactions
 WHERE id = ?
 `
 
@@ -352,6 +379,7 @@ func (q *Queries) GetTransactionByID(ctx context.Context, id string) (Transactio
 		&i.Hash,
 		&i.Currency,
 		&i.Status,
+		&i.PricingRule,
 	)
 	return i, err
 }
@@ -405,6 +433,107 @@ func (q *Queries) GetTransactionState(ctx context.Context, key string) (Transact
 	return i, err
 }
 
+const insertOrderSettlement = `-- name: InsertOrderSettlement :exec
+INSERT INTO order_settlements (transaction_id, order_id, kind, amount, currency, executor_id, debuglet_id, recorded_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertOrderSettlementParams struct {
+	TransactionID string
+	OrderID       int64
+	Kind          string
+	Amount        int64
+	Currency      string
+	ExecutorID    string
+	DebugletID    sql.NullInt64
+	RecordedAt    models.UTCTime
+}
+
+func (q *Queries) InsertOrderSettlement(ctx context.Context, arg InsertOrderSettlementParams) error {
+	_, err := q.db.ExecContext(ctx, insertOrderSettlement,
+		arg.TransactionID,
+		arg.OrderID,
+		arg.Kind,
+		arg.Amount,
+		arg.Currency,
+		arg.ExecutorID,
+		arg.DebugletID,
+		arg.RecordedAt,
+	)
+	return err
+}
+
+const listPendingSettlements = `-- name: ListPendingSettlements :many
+SELECT d.id, d.uuid, d.start_time, d.end_time, d.usage, d.ceil_bw, d.executor_id, d.addresses, d.state, d.error, d.transaction_id, d.order_id, d.dispatcher_incarnation, d.session_id, e.exit_code, o.currency FROM debuglet_order o
+JOIN debuglets d ON d.id = o.debuglet_id
+  AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
+JOIN measurement_execution e ON e.debuglet_id = d.id
+WHERE o.state = ?1 AND d.state = ?2
+  AND e.exit_code IS NOT NULL AND (e.exit_code = 0 OR o.currency = 'TEST')
+  AND d.id > ?3
+ORDER BY d.id
+LIMIT ?4
+`
+
+type ListPendingSettlementsParams struct {
+	OutstandingState int64
+	ExitedState      models.DebugletRunState
+	AfterID          int64
+	RowLimit         int64
+}
+
+type ListPendingSettlementsRow struct {
+	Debuglet Debuglet
+	ExitCode sql.NullInt64
+	Currency string
+}
+
+// Only wholly local settlements: credits of any currency and TEST refunds.
+func (q *Queries) ListPendingSettlements(ctx context.Context, arg ListPendingSettlementsParams) ([]ListPendingSettlementsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingSettlements,
+		arg.OutstandingState,
+		arg.ExitedState,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingSettlementsRow
+	for rows.Next() {
+		var i ListPendingSettlementsRow
+		if err := rows.Scan(
+			&i.Debuglet.ID,
+			&i.Debuglet.Uuid,
+			&i.Debuglet.StartTime,
+			&i.Debuglet.EndTime,
+			&i.Debuglet.Usage,
+			&i.Debuglet.CeilBw,
+			&i.Debuglet.ExecutorID,
+			&i.Debuglet.Addresses,
+			&i.Debuglet.State,
+			&i.Debuglet.Error,
+			&i.Debuglet.TransactionID,
+			&i.Debuglet.OrderID,
+			&i.Debuglet.DispatcherIncarnation,
+			&i.Debuglet.SessionID,
+			&i.ExitCode,
+			&i.Currency,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const refundUnadmittedTransaction = `-- name: RefundUnadmittedTransaction :execrows
 UPDATE transactions
 SET status = ?1
@@ -446,6 +575,22 @@ func (q *Queries) SetRefundAddress(ctx context.Context, arg SetRefundAddressPara
 	return err
 }
 
+const setTransactionPricingRule = `-- name: SetTransactionPricingRule :exec
+UPDATE transactions
+SET pricing_rule = ?
+WHERE id = ?
+`
+
+type SetTransactionPricingRuleParams struct {
+	PricingRule string
+	ID          string
+}
+
+func (q *Queries) SetTransactionPricingRule(ctx context.Context, arg SetTransactionPricingRuleParams) error {
+	_, err := q.db.ExecContext(ctx, setTransactionPricingRule, arg.PricingRule, arg.ID)
+	return err
+}
+
 const settleEarning = `-- name: SettleEarning :exec
 UPDATE earnings 
 SET current_balance = 0
@@ -460,6 +605,33 @@ type SettleEarningParams struct {
 func (q *Queries) SettleEarning(ctx context.Context, arg SettleEarningParams) error {
 	_, err := q.db.ExecContext(ctx, settleEarning, arg.ExecutorID, arg.Currency)
 	return err
+}
+
+const transitionDebugletOrder = `-- name: TransitionDebugletOrder :execrows
+UPDATE debuglet_order
+SET state = ?1
+WHERE transaction_id = ?2 AND order_id = ?3
+  AND state = ?4
+`
+
+type TransitionDebugletOrderParams struct {
+	ToState       int64
+	TransactionID string
+	OrderID       int64
+	FromState     int64
+}
+
+func (q *Queries) TransitionDebugletOrder(ctx context.Context, arg TransitionDebugletOrderParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, transitionDebugletOrder,
+		arg.ToState,
+		arg.TransactionID,
+		arg.OrderID,
+		arg.FromState,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateDebugletOrderState = `-- name: UpdateDebugletOrderState :one

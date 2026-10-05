@@ -594,13 +594,13 @@ func TestTerminalResultGuards(t *testing.T) {
 				tgAssertRow(t, f.row(t, deb.id), models.RunStateExited, tc.want)
 				tgAssertReserved(t, f, deb, 0)
 				// The payment decision stays exit-code based, also for a zero
-				// exit with an error message; TEST refunds are unsupported and
-				// leave the order Outstanding.
+				// exit with an error message; a failed TEST run is refunded
+				// locally.
 				if tc.credited {
 					tgAssertOrder(t, f, deb, models.Credited)
 					tgAssertEarnings(t, f, income+tgOrderPrice(tgFloorA))
 				} else {
-					tgAssertOrder(t, f, deb, models.Outstanding)
+					tgAssertOrder(t, f, deb, models.Refunded)
 					tgAssertEarnings(t, f, income)
 				}
 			})
@@ -641,8 +641,8 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatalf("first exit: %v", err)
 			}
 			tgAssertRow(t, f.row(t, b.id), models.RunStateExited, tgText("debuglet exited with code 2"))
-			// The refund attempt fails for TEST and rolls back: order unchanged.
-			tgAssertOrder(t, f, b, models.Outstanding)
+			// The failed TEST run is refunded locally, moving nothing.
+			tgAssertOrder(t, f, b, models.Refunded)
 			tgAssertEarnings(t, f, 0)
 			tgAssertReserved(t, f, b, tgFloorA)
 			after := f.snapshot(t)
@@ -651,7 +651,7 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatalf("duplicate exit: %v", err)
 			}
 			tgAssertRow(t, f.row(t, b.id), models.RunStateExited, tgText("debuglet exited with code 2"))
-			tgAssertOrder(t, f, b, models.Outstanding)
+			tgAssertOrder(t, f, b, models.Refunded)
 			tgAssertEarnings(t, f, 0)
 			tgAssertSnapshot(t, f, after, "duplicate exit")
 			tgAssertReserved(t, f, b, tgFloorA)
@@ -705,7 +705,7 @@ func TestTerminalResultGuards(t *testing.T) {
 			tgAssertEarnings(t, f, tgOrderPrice(tgFloorA))
 		case tgText("concurrent failure"):
 			tgAssertRow(t, row, models.RunStateExited, tgText("concurrent failure"))
-			tgAssertOrder(t, f, a, models.Outstanding)
+			tgAssertOrder(t, f, a, models.Refunded)
 			tgAssertEarnings(t, f, 0)
 		default:
 			t.Fatalf("row error %+v belongs to no caller", row.Error)
@@ -1020,7 +1020,7 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatalf("SubmitDebuglets after an early failure: %v", err)
 			}
 			tgAssertRow(t, deb.row, models.RunStateExited, tgText("crash"))
-			tgAssertOrder(t, f, deb, models.Outstanding)
+			tgAssertOrder(t, f, deb, models.Refunded)
 			tgAssertEarnings(t, f, 0)
 			tgAssertReserved(t, f, deb, 0)
 		})
@@ -1051,7 +1051,7 @@ func TestTerminalResultGuards(t *testing.T) {
 				t.Fatalf("abort A: %v", err)
 			}
 			tgAssertRow(t, f.row(t, a.id), models.RunStateExited, tgText("operator abort"))
-			tgAssertOrder(t, f, a, models.Outstanding)
+			tgAssertOrder(t, f, a, models.Refunded)
 			tgAssertReserved(t, f, a, tgFloorB)
 			after := f.snapshot(t)
 			if err := f.abort(t, a.id, "second abort"); err != nil {

@@ -255,7 +255,48 @@ func (p *PaymentHandler) CompleteTransaction(transactionId string, ctx context.C
 	}
 }
 
+// Settlement kinds recorded in order_settlements.
+const (
+	settlementCredit = "credit"
+	settlementRefund = "refund"
+)
+
+// SettleTerminalOrder applies the payment decision for the order of a run that
+// reached its terminal state: exit code 0 credits the executor, any other exit
+// refunds the buyer. A USDC order is refunded on chain; a TEST order moves no
+// funds and is only recorded as refunded. The decision is taken once per order:
+// an order that is already credited or refunded is left as it is and nil is
+// returned, so the terminal path and the settlement sweep may both deliver it.
+func (p *PaymentHandler) SettleTerminalOrder(ctx context.Context, deb *database.Debuglet, exitCode int32) error {
+	if exitCode == 0 {
+		return p.settleOrder(ctx, deb, settlementCredit, "", false)
+	}
+	return p.settleOrder(ctx, deb, settlementRefund, "", false)
+}
+
+// SetDebugletOrderComplete credits the executor with the price of the run's
+// order. It is the credit leg of SettleTerminalOrder.
 func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, ctx context.Context) error {
+	return p.settleOrder(ctx, debuglet, settlementCredit, "", false)
+}
+
+// RefundDebugletOrder returns the price of the run's order to its buyer on
+// chain. TEST orders hold no funds and are refused; SettleTerminalOrder records
+// their refund locally instead.
+func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refundAddress string, ctx context.Context) error {
+	return p.settleOrder(ctx, debuglet, settlementRefund, refundAddress, true)
+}
+
+// settleOrder moves an Outstanding order to Credited or Refunded and records
+// the decision in order_settlements in the same SQL transaction, together with
+// the earnings credit or the chain refund. The conditional state write is the
+// cheap guard against a second settlement, the settlement row's primary key the
+// durable one; any failure rolls back all of it. A USDC refund is sent inside
+// the SQL transaction, so a failure after the transfer may leave the order
+// Outstanding although the money moved: chain refunds are therefore attempted
+// once, from the terminal path, and are not retried automatically until a
+// durable transfer record takes them over.
+func (p *PaymentHandler) settleOrder(ctx context.Context, debuglet *database.Debuglet, kind string, refundAddress string, chainOnly bool) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -263,91 +304,131 @@ func (p *PaymentHandler) SetDebugletOrderComplete(debuglet *database.Debuglet, c
 	defer tx.Rollback()
 
 	queries := database.New(p.db).WithTx(tx)
-	p.logger.Debug("Update", zap.String("transactionId", debuglet.TransactionID), zap.Int64("orderId", debuglet.OrderID))
-	// Read the order first: its currency decides whether crediting is allowed
-	// before any state is changed.
-	current, err := queries.GetDebugletOrder(ctx, database.GetDebugletOrderParams{
-		TransactionID: debuglet.TransactionID,
-		OrderID:       debuglet.OrderID,
-	})
+	key := database.GetDebugletOrderParams{TransactionID: debuglet.TransactionID, OrderID: debuglet.OrderID}
+	// Read the order first: its currency decides whether the settlement is
+	// allowed before any state is changed.
+	order, err := queries.GetDebugletOrder(ctx, key)
 	if err != nil {
 		return fmt.Errorf("Failed to find debuglet order of %s: %w", debuglet.Uuid.String(), err)
 	}
-	if err := p.requireChain(current.Currency, "credit order"); err != nil {
+	to := models.Credited
+	if kind == settlementRefund {
+		to = models.Refunded
+		if err := p.requireChain(order.Currency, "refund order"); err != nil {
+			return err
+		}
+		if order.Currency != "USDC" && (chainOnly || order.Currency != "TEST") {
+			return fmt.Errorf("Refunds not supported for currency %s", order.Currency)
+		}
+	} else if err := p.requireChain(order.Currency, "credit order"); err != nil {
 		return err
 	}
-	// Only an outstanding order is credited. A credited order is already
-	// included in the executor's earnings; a refunded order is not credited.
-	switch models.TransactionState(current.State) {
-	case models.Outstanding:
-	case models.Credited, models.Refunded:
-		return nil
-	default:
-		return fmt.Errorf("cannot credit order of %s in state %v", debuglet.Uuid.String(), models.TransactionState(current.State))
-	}
-	order, err := queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
-		State:         int64(models.Credited),
-		TransactionID: debuglet.TransactionID,
-		OrderID:       debuglet.OrderID,
+
+	changed, err := queries.TransitionDebugletOrder(ctx, database.TransitionDebugletOrderParams{
+		ToState: int64(to), TransactionID: key.TransactionID, OrderID: key.OrderID, FromState: int64(models.Outstanding),
 	})
 	if err != nil {
-		return fmt.Errorf("Failed to update state of %s: %s", debuglet.Uuid.String(), err.Error())
+		return fmt.Errorf("failed to update state of order of %s: %w", debuglet.Uuid.String(), err)
 	}
-	if err := p.CreateEarningsIfNotExists(debuglet.ExecutorID, order.Currency, "", queries, ctx); err != nil {
-		return fmt.Errorf("failed to create earnings of %s: %w", debuglet.ExecutorID, err)
+	if changed == 0 {
+		// Only an outstanding order is settled. A credited order is already
+		// included in the executor's earnings; a refunded order is not credited.
+		current, err := queries.GetDebugletOrder(ctx, key)
+		if err != nil {
+			return fmt.Errorf("Failed to find debuglet order of %s: %w", debuglet.Uuid.String(), err)
+		}
+		switch models.TransactionState(current.State) {
+		case models.Credited, models.Refunded:
+			return nil
+		default:
+			return fmt.Errorf("cannot settle order of %s in state %v", debuglet.Uuid.String(), models.TransactionState(current.State))
+		}
 	}
-	if err := queries.AddEarnings(ctx, database.AddEarningsParams{
-		Amount:     order.Price,
-		ExecutorID: debuglet.ExecutorID,
-		Currency:   order.Currency,
+	order.State = int64(to)
+	if err := queries.InsertOrderSettlement(ctx, database.InsertOrderSettlementParams{
+		TransactionID: order.TransactionID,
+		OrderID:       order.OrderID,
+		Kind:          kind,
+		Amount:        order.Price,
+		Currency:      order.Currency,
+		ExecutorID:    debuglet.ExecutorID,
+		DebugletID:    order.DebugletID,
+		RecordedAt:    models.NewUTCTime(time.Now()),
 	}); err != nil {
-		return fmt.Errorf("failed to credit earnings of %s: %w", debuglet.ExecutorID, err)
+		return fmt.Errorf("failed to record settlement of order of %s: %w", debuglet.Uuid.String(), err)
 	}
-	p.logger.Debug("Credited Executor", zap.String("ID", debuglet.ExecutorID), zap.String("currency", order.Currency), zap.Int64("amount", order.Price))
+
+	switch {
+	case kind == settlementCredit:
+		if err := p.CreateEarningsIfNotExists(debuglet.ExecutorID, order.Currency, "", queries, ctx); err != nil {
+			return fmt.Errorf("failed to create earnings of %s: %w", debuglet.ExecutorID, err)
+		}
+		if err := queries.AddEarnings(ctx, database.AddEarningsParams{
+			Amount:     order.Price,
+			ExecutorID: debuglet.ExecutorID,
+			Currency:   order.Currency,
+		}); err != nil {
+			return fmt.Errorf("failed to credit earnings of %s: %w", debuglet.ExecutorID, err)
+		}
+		p.logger.Debug("Credited Executor", zap.String("ID", debuglet.ExecutorID), zap.String("currency", order.Currency), zap.Int64("amount", order.Price))
+	case order.Currency == "USDC":
+		if err := p.sui.RefundDebuglet(&order, refundAddress, ctx); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
-func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refundAddress string, ctx context.Context) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	queries := database.New(p.db).WithTx(tx)
-	order, err := queries.GetDebugletOrder(ctx, database.GetDebugletOrderParams{
-		TransactionID: debuglet.TransactionID,
-		OrderID:       debuglet.OrderID,
+// SettlePendingOrders applies SettleTerminalOrder to at most limit Outstanding
+// orders whose run is terminal with a recorded exit code and whose run id is
+// above after, in run order. A run without a recorded exit code is not settled:
+// nothing infers its outcome. Only wholly local settlements are retried, credits
+// and TEST refunds; a chain refund is never sent again from here and is counted
+// as deferred. An order that fails stays Outstanding for a later pass and the
+// others are still settled. next is the last run id attempted, or 0 once the
+// listing is exhausted, so that the following pass continues after it and a
+// failing order never keeps later ones from being attempted. The first failure
+// is returned with the counts.
+func (p *PaymentHandler) SettlePendingOrders(ctx context.Context, after int64, limit int) (settled, failed, deferred int, next int64, err error) {
+	pending, err := database.New(p.db).ListPendingSettlements(ctx, database.ListPendingSettlementsParams{
+		OutstandingState: int64(models.Outstanding), ExitedState: models.RunStateExited, AfterID: after, RowLimit: int64(limit),
 	})
 	if err != nil {
-		return fmt.Errorf("Failed to find debuglet order: %w", err)
+		return 0, 0, 0, after, fmt.Errorf("failed to list pending settlements: %w", err)
 	}
-	if order.State == int64(models.Refunded) {
-		return fmt.Errorf("Debuglet has already been refunded")
+	var first error
+	exhausted := len(pending) < limit
+	for _, row := range pending {
+		if ctx.Err() != nil {
+			exhausted = false
+			break
+		}
+		run := row.Debuglet
+		next = run.ID
+		if row.ExitCode.Int64 != 0 && isChainCurrency(row.Currency) {
+			deferred++
+			continue
+		}
+		if err := p.SettleTerminalOrder(ctx, &run, int32(row.ExitCode.Int64)); err != nil {
+			p.logger.Debug("Order settlement remains pending", zap.String("debugletID", run.Uuid.String()))
+			failed++
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		settled++
+		p.logger.Info("Settled order of terminal run", zap.String("debugletID", run.Uuid.String()), zap.Int64("exitCode", row.ExitCode.Int64))
 	}
-	if err := p.requireChain(order.Currency, "refund order"); err != nil {
-		return err
+	if deferred > 0 {
+		p.logger.Debug("Chain refunds are not retried automatically", zap.Int("deferred", deferred))
 	}
-
-	order, err = queries.UpdateDebugletOrderState(ctx, database.UpdateDebugletOrderStateParams{
-		TransactionID: debuglet.TransactionID,
-		OrderID:       debuglet.OrderID,
-		State:         int64(models.Refunded),
-	})
-
-	if err != nil {
-		return err
+	if exhausted {
+		next = 0
+	} else if next == 0 {
+		next = after
 	}
-	switch order.Currency {
-	case "USDC":
-		err = p.sui.RefundDebuglet(&order, refundAddress, ctx)
-	default:
-		err = fmt.Errorf("Refunds not supported for currency %s", order.Currency)
-	}
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return settled, failed, deferred, next, first
 }
 
 // RefundTransaction retains transaction-wide refunds, including claimed orders.

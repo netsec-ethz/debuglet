@@ -821,22 +821,15 @@ func (d *Dispatcher) sendFairshare(ctx context.Context, origin *rpc.Mutation, de
 }
 
 // settleTerminalPayment preserves the winner's exit-code-based payment decision.
-// Resource release is separate and never retries payment effects.
+// Resource release is separate and never retries payment effects. A failure is
+// logged here; the settlement sweep delivers the decision later.
 func (d *Dispatcher) settleTerminalPayment(ctx context.Context, deb *database.Debuglet, exitCode int32) {
-	switch exitCode {
-	case 0:
-		//credit executor
-		d.logger.Debug("Debuglet Completed. Credit executor")
-		if err := d.Payment.SetDebugletOrderComplete(deb, ctx); err != nil {
-			d.logger.Warn("Failed to credit executor for debuglet", zap.String("debugletID", deb.Uuid.String()))
-			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", deb.Uuid.String()), zap.String("operation", "Failed to credit executor for debuglet"), zap.String("error", daemonlog.Diagnostic(err)))
+	if err := d.Payment.SettleTerminalOrder(ctx, deb, exitCode); err != nil {
+		operation := "Failed to credit executor for debuglet"
+		if exitCode != 0 {
+			operation = "Failed to refund debuglet order"
 		}
-	default:
-		//refund
-		d.logger.Debug("Debuglet Aborted. Refund Buyer")
-		if err := d.Payment.RefundDebugletOrder(deb, "", ctx); err != nil {
-			d.logger.Warn("Failed to refund debuglet order", zap.String("debugletID", deb.Uuid.String()))
-			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", deb.Uuid.String()), zap.String("operation", "Failed to refund debuglet order"), zap.String("error", daemonlog.Diagnostic(err)))
-		}
+		d.logger.Warn(operation, zap.String("debugletID", deb.Uuid.String()))
+		d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", deb.Uuid.String()), zap.String("operation", operation), zap.String("error", daemonlog.Diagnostic(err)))
 	}
 }
