@@ -21,6 +21,23 @@ The dispatcher prunes older records on its expiry loop, at startup and hourly: r
 
 The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
 
+### Dispatcher blockchain payments
+
+The `[sui]` section configures chain payments. Every shipped configuration sets `disabled = true` and leaves the other fields empty; in that mode they are ignored and the dispatcher serves `TEST` payments only. `server.local_development = true` requires `disabled = true`. Enabling chain payments is an operator decision with its own profile and checklist; see [chain payments](payments.md).
+
+| Key | Value | Checked at startup when `disabled = false` |
+| --- | --- | --- |
+| `disabled` | `true` or `false` | Omitted means `false`; nothing is inferred from empty fields. |
+| `network` | `testnet` (the supported profile) | Must be `testnet` or `mainnet`. |
+| `grpc_endpoint` | Sui full node gRPC `host:port`, dialled with TLS | A non-empty host and a port from 1 to 65,535. |
+| `graphql_url` | Sui GraphQL service URL | An absolute `http` or `https` URL with a host. |
+| `address` | The dispatcher's receiving and paying address | A Sui address: `0x` and one to 64 hexadecimal digits. |
+| `payment_registry_id` | Object ID of the payment registry returned with each intent | A Sui address, as above. |
+| `payment_kit_package` | Package ID whose `payment_kit::PaymentReceipt` events the listener follows | A Sui address, as above. Write all 64 digits. |
+| `keystore_path` | Keystore file holding the Ed25519 key of `address` | Not empty; the file is read and must be a JSON array of base64 entries containing that key. |
+
+A failed check stops the daemon before any listener is bound, with `configure payments: blockchain payments:` and the field's error. Validation opens no network connection. The listener's stored checkpoint is checked when it starts; see [startup validation](payments.md#startup-validation).
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
