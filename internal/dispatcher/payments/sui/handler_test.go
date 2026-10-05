@@ -537,6 +537,37 @@ func TestPreparedTransferReferencesEachCoinOnce(t *testing.T) {
 	}
 }
 
+// TestPrepareTransferRefusesOverlongListedIDs feeds coin listings carrying
+// an object id of 65 hex digits, which the SDK's address normalisation cannot
+// handle; selection must refuse it as an ordinary preparation error.
+func TestPrepareTransferRefusesOverlongListedIDs(t *testing.T) {
+	overlong := func(balance uint64) *v2.Object {
+		o := coinObject(1, balance)
+		o.ObjectId = proto.String("0x" + strings.Repeat("a", 65))
+		return o
+	}
+	for name, mutate := range map[string]func(f *chainFixture){
+		"transfer coin": func(f *chainFixture) { f.pages[testUSDC] = [][]*v2.Object{{overlong(100)}} },
+		"gas coin":      func(f *chainFixture) { f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{overlong(60_000_000)}} },
+		"zero-balance transfer coin": func(f *chainFixture) {
+			f.pages[testUSDC] = [][]*v2.Object{{overlong(0), coinObject(2, 100)}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := fundedFixture()
+			mutate(f)
+			h := startFixture(t, f)
+			prepared, err := h.PrepareTransfer(context.Background(), 50, testUSDC, testReceiver)
+			if !errors.Is(err, ErrNotBroadcast) || prepared != nil {
+				t.Fatalf("PrepareTransfer = (%v, %v), want nil and ErrNotBroadcast", prepared, err)
+			}
+			if len(f.executed) != 0 {
+				t.Fatalf("an execution request was made")
+			}
+		})
+	}
+}
+
 func TestSUITransferPaysGasFromOtherCoins(t *testing.T) {
 	f := fundedFixture()
 	f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{coinObject(11, 60_000_000)}, {coinObject(12, 50_000_000)}}

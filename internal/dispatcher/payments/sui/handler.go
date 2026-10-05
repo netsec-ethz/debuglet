@@ -322,10 +322,12 @@ func selectCoins(ctx context.Context, list coinLister, owner string, coinType st
 			seenCursors[*resp.Cursor] = true
 		}
 		for _, coin := range resp.Objects {
-			id := string(utils.NormalizeSuiAddress(coin.ObjectId))
-			if ValidAddress(coin.ObjectId) != nil {
-				id = coin.ObjectId // refused by objectRef when selected
+			// Validated before normalising: the SDK's normalisation panics
+			// on an id longer than 64 hex digits.
+			if err := ValidAddress(coin.ObjectId); err != nil {
+				return nil, 0, fmt.Errorf("%s coins: listed coin: %w", coinType, err)
 			}
+			id := string(utils.NormalizeSuiAddress(coin.ObjectId))
 			if listed[id] {
 				return nil, 0, fmt.Errorf("%s coins: listed coin %s twice", coinType, coin.ObjectId)
 			}
