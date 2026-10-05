@@ -98,4 +98,6 @@ API 1.12 adds measurement profiles, batch details, explicit retry lineage, liste
 
 Dispatcher schema 21 records one settlement per order and the pricing rule of each transaction; this build refuses an older dispatcher database, so upgrade it explicitly before starting this build.
 
+Dispatcher schema 22 records chain payment receipts and outbound chain transfers. The receipt listener and the transfer code depend on it, so this build requires schema 22; upgrade explicitly before starting it. The HTTP API is unchanged.
+
 API 1.15 adds `POST /payment/quote`, the `quote` field of the payment intent response, the `economics` field of `GET /me` and `GET /me/orders`. The quote and order history require 1.15 from the Go client; no dispatcher schema change is involved.
