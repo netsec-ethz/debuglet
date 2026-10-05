@@ -4,6 +4,8 @@
 package resource_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -23,7 +25,11 @@ import (
 // FILE`. Its scenario events are replayed here into the dispatcher's
 // destination accounting, and core's admission decisions are compared with
 // the simulator's. Only the JSON fields the replay needs are decoded.
-const simTraceDigest = "b2f51d7e28deb45f6dfc22f34e15b0fbcc655125164e9b673c7e36ba93a86b2b"
+const (
+	simTraceDigest = "b2f51d7e28deb45f6dfc22f34e15b0fbcc655125164e9b673c7e36ba93a86b2b"
+	// simTraceSHA256 pins the whole fixture file.
+	simTraceSHA256 = "67c26fa00727c98a5d7996a0c7e68fde24daeee875ac071c4fb6eae915696294"
+)
 
 type simJob struct {
 	ID           string          `json:"id"`
@@ -80,12 +86,20 @@ func TestReplaySimulatorTraceAgainstDestinationAccounting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != simTraceSHA256 {
+		t.Fatalf("fixture SHA-256 is %x, want %s", sum, simTraceSHA256)
+	}
 	var trace simTrace
 	if err := json.Unmarshal(raw, &trace); err != nil {
 		t.Fatal(err)
 	}
 	if trace.Digest != simTraceDigest || len(trace.Steps) != len(trace.Scenario.Events) {
 		t.Fatalf("unexpected fixture: digest %s, %d steps for %d events", trace.Digest, len(trace.Steps), len(trace.Scenario.Events))
+	}
+	for i, step := range trace.Steps {
+		if step.Index != i {
+			t.Fatalf("step %d carries index %d", i, step.Index)
+		}
 	}
 	events := make([]simEvent, len(trace.Scenario.Events))
 	for i, rawEvent := range trace.Scenario.Events {
@@ -118,6 +132,7 @@ func TestReplaySimulatorTraceAgainstDestinationAccounting(t *testing.T) {
 		}
 	}
 	active := map[string]*simJob{}   // the jobs admitted by both sides
+	touched := map[string]bool{}     // every destination core has charged so far
 	coreRefused := map[string]bool{} // the jobs only the simulator admitted
 	runID := func(job string) uuid.UUID { return uuid.NewSHA1(uuid.NameSpaceOID, []byte(job)) }
 
@@ -128,7 +143,8 @@ func TestReplaySimulatorTraceAgainstDestinationAccounting(t *testing.T) {
 		prefix, _ := json.MarshalIndent(trace.Scenario.Events[:i+1], "", "  ")
 		t.Fatalf("event %d: %s\nreproducing events:\n%s", i, fmt.Sprintf(format, args...), prefix)
 	}
-	// check states core's invariants on every destination of the active jobs.
+	// check states core's invariants on every destination charged so far. A
+	// destination without active jobs charges nothing and shares nothing.
 	check := func(i int) {
 		t.Helper()
 		floors := map[string]bitrate.Bitrate{}
@@ -140,17 +156,34 @@ func TestReplaySimulatorTraceAgainstDestinationAccounting(t *testing.T) {
 				totals[key] = [2]bitrate.Bitrate{totals[key][0] + job.Floor, totals[key][1] + job.Ceil}
 			}
 		}
-		for destination, floor := range floors {
+		for destination := range touched {
+			floor := floors[destination]
+			expected := map[string]bool{}
+			for key := range totals {
+				if key[1] == destination {
+					expected[key[0]] = true
+				}
+			}
 			if used := usage.Used(destination); used != floor {
 				violation(i, "%s charges %d, the active floors sum to %d", destination, int64(used), int64(floor))
 			}
 			var sum bitrate.Bitrate
+			seen := map[string]bool{}
 			for executor, share := range usage.Fairshare(destination) {
+				if seen[executor] || !expected[executor] {
+					violation(i, "%s on %s is given a share again or without an active job", executor, destination)
+				}
+				seen[executor] = true
 				want := totals[[2]string{executor, destination}]
 				if share < want[0] || share > want[1] {
 					violation(i, "%s on %s is given %d, outside [%d, %d]", executor, destination, int64(share), int64(want[0]), int64(want[1]))
 				}
 				sum += share
+			}
+			for executor := range expected {
+				if !seen[executor] {
+					violation(i, "%s holds active jobs on %s but is given no share", executor, destination)
+				}
 			}
 			if capacity := usage.Cap(destination); sum > capacity {
 				violation(i, "shares on %s sum to %d, above the capacity %d", destination, int64(sum), int64(capacity))
@@ -173,6 +206,11 @@ func TestReplaySimulatorTraceAgainstDestinationAccounting(t *testing.T) {
 			job := event.Submit
 			before := usage.Snapshot()
 			admitted := usage.Allocate(runID(job.ID), job.Executor, job.Destinations, job.Floor, job.Ceil) == nil
+			if admitted {
+				for _, destination := range job.Destinations {
+					touched[destination] = true
+				}
+			}
 			if admitted == !step.Rejected {
 				agree[map[bool]string{true: "admitted", false: "refused"}[admitted]]++
 				if admitted {
