@@ -2682,7 +2682,7 @@ func (x *TaggingMode) GetTagSpec() string {
 type AttributionState struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	State            string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`                                                          // available or unavailable.
-	Reason           string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`                                                        // Empty when available; epoch_zero, chain_exhausted, refresh_failing or disclosure_held.
+	Reason           string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`                                                        // Empty when available; epoch_zero, chain_exhausted, refresh_failing, disclosure_held, clock_unready or clock_drift.
 	Epoch            int64                  `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`                                                         // Current key-schedule epoch.
 	InstalledEpoch   *int64                 `protobuf:"varint,4,opt,name=installed_epoch,json=installedEpoch,proto3,oneof" json:"installed_epoch,omitempty"`           // Oldest epoch a kernel tagger slot may still sign with; absent when none holds a key.
 	LastRefreshAgeMs *int64                 `protobuf:"varint,5,opt,name=last_refresh_age_ms,json=lastRefreshAgeMs,proto3,oneof" json:"last_refresh_age_ms,omitempty"` // Since the oldest last successful kernel key install; absent without one.

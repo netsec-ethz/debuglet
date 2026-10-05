@@ -31,18 +31,19 @@ func retiredFixture(t *testing.T) (signing, retired *KeySchedule) {
 }
 
 // A disclosure-only schedule never signs: no epoch yields a key, on the
-// pure-Go path (CurrentKey) or the per-run derivation (currentAK), where the
-// same chain configured for signing does.
+// pure-Go path (CurrentKey) or the per-run derivation (ComputeTagForPacket,
+// which reads it), where the same chain configured for signing does.
 func TestDisclosureOnlyScheduleNeverSigns(t *testing.T) {
 	signing, retired := retiredFixture(t)
 	origin := retired.Config().Epoch
+	packet := testIPv4([]byte("retired chain payload"))
 	for epoch := int64(0); epoch <= 10; epoch++ {
 		at := origin.Add(time.Duration(epoch)*time.Second + 500*time.Millisecond)
 		if key := retired.CurrentKey(at); key != nil {
 			t.Fatalf("epoch %d: disclosure-only schedule returned a signing key", epoch)
 		}
-		if _, err := retired.currentAK(at, []byte("run")); err == nil {
-			t.Fatalf("epoch %d: disclosure-only schedule derived a run key", epoch)
+		if _, err := retired.ComputeTagForPacket(at, []byte("run"), packet); err == nil {
+			t.Fatalf("epoch %d: disclosure-only schedule tagged a packet", epoch)
 		}
 	}
 	if signing.CurrentKey(origin.Add(1500*time.Millisecond)) == nil {
