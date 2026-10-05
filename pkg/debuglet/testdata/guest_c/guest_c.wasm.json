@@ -1,0 +1,10 @@
+{
+  "guest_abi": "debuglet-go-wasi-imports-v1",
+  "language": "c",
+  "toolchain": "clang version 19.1.5-wasi-sdk (wasi-sdk 25)",
+  "image": "ghcr.io/webassembly/wasi-sdk:wasi-sdk-25@sha256:fdebde86990902087ecc470bf993ffec4d646e8fbd2e68c290a44120437622d0",
+  "target": "wasm32-wasip1",
+  "build": "clang --target=wasm32-wasip1 -Oz -s -Wall -Werror -o guest_c.wasm main.c",
+  "sha256": "ad4523fbce3146f41feca0ff1ddbace82e5b5863faa8f100882eb21c1cd18d2b",
+  "bytes": 27813
+}
