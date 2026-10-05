@@ -66,13 +66,11 @@ enabled = {{ dispatcher_github_oauth_enabled | bool | lower }}
 callback_url = "{{ dispatcher_github_oauth_callback_url }}"
 success_url = "{{ dispatcher_github_oauth_success_url }}"
 
-{% if dispatcher_cilogon_oidc_enabled | bool %}
 [cilogon_oidc]
-enabled = true
-issuer = {{ dispatcher_cilogon_oidc_issuer | to_json }}
-callback_url = {{ dispatcher_cilogon_oidc_callback_url | to_json }}
-success_url = {{ dispatcher_cilogon_oidc_success_url | to_json }}
-{% endif %}
+enabled = {{ dispatcher_cilogon_oidc_enabled | bool | lower }}
+issuer = "{{ dispatcher_cilogon_oidc_issuer }}"
+callback_url = "{{ dispatcher_cilogon_oidc_callback_url }}"
+success_url = "{{ dispatcher_cilogon_oidc_success_url }}"
 
 {% if dispatcher_authentication_public_url | length > 0 %}
 [authentication]

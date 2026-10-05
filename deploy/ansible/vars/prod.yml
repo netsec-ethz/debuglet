@@ -10,3 +10,7 @@ debuglet_env: prod
 # dispatcher_cors_allowed_origins (see group_vars/dispatcher.yml), which is
 # what lets the console authenticate with its session cookie.
 dispatcher_base_url: debuglet.netsec.ethz.ch
+
+# CILogon client cilogon:/client_id/f8b81eedbc869260bc6eefee48cb9be is approved
+# for https://debuglet.netsec.ethz.ch/api/auth/cilogon/callback.
+dispatcher_cilogon_oidc_enabled: true

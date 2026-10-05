@@ -321,10 +321,11 @@ applications' callback URLs as
 the selected file to the dispatcher with mode 0600 and systemd reads it as an
 environment file; neither the secret nor the real file belongs in Git.
 
-CILogon and browser-approved CLI credentials are opt-in. First obtain separate
-approved CILogon registrations for staging and production, using the exact HTTPS
-`/api/auth/cilogon/callback` URLs. Copy `ansible/cilogon-oidc.env.example` to
-`ansible/secrets/<env>/cilogon-oidc.env`, fill in that environment's credentials,
+CILogon needs an approved client per environment, and browser-approved CLI
+credentials are opt-in. First obtain separate approved CILogon registrations for
+staging and production, using the exact HTTPS `/api/auth/cilogon/callback` URLs.
+Copy `ansible/cilogon_oidc.env.example` to
+`ansible/secrets/<env>/cilogon_oidc.env`, fill in that environment's credentials,
 and set mode 0600. No deployment or test creates a provider registration.
 
 Add these nonsecret settings to the chosen environment's variables, substituting
@@ -339,10 +340,11 @@ dispatcher_authentication_device_verification_url: https://dispatcher.example/co
 
 The CILogon callback and success URLs default to the configured
 `dispatcher_base_url`. Use `https://test.cilogon.org` only with a separately
-approved test client. Leave CILogon disabled until registration and real staging
-sign-in have been verified. Both authentication URLs default empty; set both to
-enable CLI approval, which also works with GitHub alone. The matching console
-must serve `/console/device`.
+approved test client. `vars/prod.yml` enables CILogon for the approved production
+client; leave it disabled in other environments until their own client is
+registered and real sign-in has been verified. Both authentication URLs default
+empty; set both to enable CLI approval, which also works with GitHub alone. The
+matching console must serve `/console/device`.
 
 The dispatcher role installs the CILogon environment file with mode 0600 and
 `no_log`; generated TOML and units contain no client secret. `update-config.yml`
