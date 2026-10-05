@@ -300,9 +300,12 @@ verifier's clock agree. The executor's contract:
   safety threshold beyond which capture times are taken to map to the wrong
   epoch, not a measured bound on clock uncertainty. The pure-Go tagger stops
   at once; a kernel tagger stops at its next key refresh, at most one epoch
-  later.
-- Recovery is an executor restart with a ready clock, which starts a new
-  chain. Nothing re-anchors a running chain.
+  later assuming that refresh runs as scheduled and removes the slot (a
+  failed removal keeps disclosure of that key held back and is retried).
+- A drift that returns within the bound resumes signing by itself. A
+  persistent drift, such as after a suspend, or an unready origin needs an
+  executor restart with a ready clock, which starts a new chain. Nothing
+  re-anchors a running chain.
 - Local epochs never decrease, so a disclosed key never regains signing
   authority whatever the wall clock does, and the executor never signs with
   the key of an epoch below one it has already signed with.

@@ -80,3 +80,41 @@ func TestMetricsScheduleExpiryAndUnknownArithmetic(t *testing.T) {
 		}
 	}
 }
+
+// Every validated attribution report lands in exactly one attribution bucket,
+// so the buckets partition the registered executors.
+func TestMetricsAttributionBucketsPartitionExecutors(t *testing.T) {
+	now := time.Unix(10000, 0)
+	held := int64(1000)
+	reports := []*pb.AttributionState{
+		nil,
+		{State: "available", Epoch: 2},
+		{State: "unavailable", Reason: "epoch_zero"},
+		{State: "unavailable", Reason: "chain_exhausted", Epoch: 9},
+		{State: "unavailable", Reason: "refresh_failing", Epoch: 2, RefreshError: "put failed"},
+		{State: "unavailable", Reason: "disclosure_held", Epoch: 2, DisclosureHeldMs: &held},
+		{State: "unavailable", Reason: "clock_unready", Epoch: 2},
+		{State: "unavailable", Reason: "clock_drift", Epoch: 2},
+	}
+	var total ExecutorHealthMetrics
+	for _, report := range reports {
+		caps := capabilitiesFromReport(&pb.ExecutorCapabilities{SchemaVersion: 1, EnforcementMode: "ebpf", Attribution: report}, now)
+		if caps == nil || (report != nil && caps.Attribution == nil) {
+			t.Fatalf("report %v refused", report)
+		}
+		e := &executorEntry{RegisteredExecutor: &RegisteredExecutor{Capabilities: caps, capabilityObserved: now}}
+		var one ExecutorHealthMetrics
+		one.observe(e, now, true)
+		total.observe(e, now, true)
+		if n := attributionBuckets(one); n != 1 {
+			t.Errorf("report %v counted %d times: %+v", report, n, one)
+		}
+	}
+	if total.ClockUnready != 1 || total.ClockDrift != 1 || attributionBuckets(total) != len(reports) {
+		t.Fatalf("aggregate: %+v", total)
+	}
+}
+
+func attributionBuckets(h ExecutorHealthMetrics) int {
+	return h.AttributionAvailable + h.EpochZero + h.ChainExhausted + h.RefreshFailing + h.DisclosureHeld + h.ClockUnready + h.ClockDrift + h.AttributionUnknown
+}

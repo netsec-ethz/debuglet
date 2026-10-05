@@ -91,7 +91,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 			counts     []int
 		}{
 			{"executors_enforcement_mode", "Registered executors by freshly reported counter selection, not proof of continuous enforcement.", []string{"ebpf", "fallback", "unknown"}, []int{h.EBPF, h.Fallback, h.EnforcementUnknown}},
-			{"executors_attribution_state", "Registered executors by fresh attribution report; unknown includes stale or disconnected observations.", []string{"available", "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "unknown"}, []int{h.AttributionAvailable, h.EpochZero, h.ChainExhausted, h.RefreshFailing, h.DisclosureHeld, h.AttributionUnknown}},
+			{"executors_attribution_state", "Registered executors by fresh attribution report; unknown includes stale or disconnected observations.", []string{"available", "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "clock_unready", "clock_drift", "unknown"}, []int{h.AttributionAvailable, h.EpochZero, h.ChainExhausted, h.RefreshFailing, h.DisclosureHeld, h.ClockUnready, h.ClockDrift, h.AttributionUnknown}},
 			{"executors_clock_readiness", "Registered executors by freshly reported kernel clock readiness, not an independently measured bound.", []string{"ready", "degraded", "unknown"}, []int{h.ClockReady, h.ClockDegraded, h.ClockUnknown}},
 		} {
 			fmt.Fprintf(&out, "# HELP debuglet_%s %s\n# TYPE debuglet_%s gauge\n", group.name, group.help, group.name)

@@ -578,16 +578,6 @@ func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
 	}
 }
 
-// currentAK derives the per-measurement key at time t, failing while no chain
-// key is usable so no tag is ever derived from the public anchor.
-func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, error) {
-	k := ks.CurrentKey(t)
-	if k == nil {
-		return nil, fmt.Errorf("tesla: no usable signing key (epoch 0, chain exhausted, untrusted clock or an epoch already passed)")
-	}
-	return DeriveAK(k, measurementID)
-}
-
 // DisclosedKey returns the epoch index and key that should be disclosed at
 // time t. The key for epoch τ is disclosed once the disclosure delay of d
 // epochs has elapsed after τ: at the start of epoch τ+d, so at time t the
