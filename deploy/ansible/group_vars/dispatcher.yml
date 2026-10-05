@@ -53,6 +53,10 @@ dispatcher_cilogon_oidc_issuer: "https://cilogon.org"
 dispatcher_cilogon_oidc_callback_url: "https://{{ dispatcher_base_url }}/api/auth/cilogon/callback"
 dispatcher_cilogon_oidc_success_url: "https://{{ dispatcher_base_url }}/console/"
 
+# Set both URLs to enable browser-approved CLI credentials.
+dispatcher_authentication_public_url: ""
+dispatcher_authentication_device_verification_url: ""
+
 # Whether the dispatcher requires a client certificate on its own listeners.
 # Only meaningful when dispatcher_disable_tls is false, and off by default:
 # turning it on refuses every executor that does not yet present a client

@@ -40,6 +40,11 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 	return total, nil
 }
 
+// PricingRule names the rule priceIntent applies and is recorded on every
+// intent it prices: an order costs price_per_bw_s x floor_bw x timeout_ms / 1000
+// in base units, computed exactly and rounded up to the next whole unit.
+const PricingRule = "bw-s-ceil-ms-v1"
+
 // priceIntent validates and prices every debuglet of an intent without
 // writing anything, returning each order's price and the total. The
 // payment-mode preflight runs first so that a disabled chain method never
@@ -203,6 +208,11 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash))
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)
+	}
+	if err := queries.SetTransactionPricingRule(ctx, database.SetTransactionPricingRuleParams{
+		PricingRule: PricingRule, ID: transactionId,
+	}); err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to record the pricing rule", err)
 	}
 	if err := h.storeOrders(ctx, queries, req, transactionId, req.RefundAddress, prices); err != nil {
 		return err

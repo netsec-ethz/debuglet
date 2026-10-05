@@ -80,7 +80,7 @@ func TestOutputStreamFailureIsNoTerminalResult(t *testing.T) {
 		t.Fatalf("real exit after the failed stream: %v", err)
 	}
 	tgAssertRow(t, f.row(t, run.id), models.RunStateExited, tgText("guest crashed"))
-	tgAssertOrder(t, f, run, models.Outstanding)
+	tgAssertOrder(t, f, run, models.Refunded)
 	tgAssertReserved(t, f, run, tgFloorB)
 	after := f.snapshot(t)
 	if err := f.exit(t, run.id, 0, nil); err != nil {

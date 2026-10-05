@@ -58,7 +58,24 @@ func main() {
 	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
 	acceptDataLoss := flag.Bool("accept-data-loss", false, "With -upgrade-database, apply a migration that drops the recorded runs and their logs")
+	recoverAccount := flag.String("recover-unmapped-account", "", "Issue a one-time recovery code for an independently verified credentialless account UUID, then exit")
+	revokeRecovery := flag.String("revoke-account-recovery", "", "Revoke an unused administrator-issued recovery code for this account UUID, then exit")
+	recoveryCase := flag.String("recovery-case", "", "Private support-case reference recording the administrator's independent ownership verification")
+	recoveryOutput := flag.String("recovery-output", "", "Absent file in an owned mode-0700 directory for the one-time recovery code")
 	flag.Parse()
+	recoveryRequested := false
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "recover-unmapped-account", "revoke-account-recovery", "recovery-case", "recovery-output":
+			recoveryRequested = true
+		}
+	})
+	if recoveryRequested {
+		if err := validateRecoveryFlags(flag.CommandLine, *recoverAccount, *revokeRecovery, *recoveryCase, *recoveryOutput); err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	initRequested, initOnly := false, true
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "init-database" {
@@ -104,6 +121,22 @@ func main() {
 	cfg, err := config.LoadConfig(*cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load dispatcher config: %v", err))
+	}
+	if recoveryRequested {
+		account := *recoverAccount
+		if account == "" {
+			account = *revokeRecovery
+		}
+		if err := administerAccountRecovery(context.Background(), cfg, account, *recoveryCase, *recoveryOutput, *revokeRecovery != ""); err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		if *revokeRecovery != "" {
+			fmt.Printf("unused administrator recovery for account %s revoked\n", account)
+		} else {
+			fmt.Printf("one-time account recovery code written to %s; expires in 24 hours\n", *recoveryOutput)
+		}
+		return
 	}
 
 	// Checking a database only reads it, so it is safe while the daemon

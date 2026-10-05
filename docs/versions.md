@@ -95,3 +95,7 @@ API 1.10 adds optional [account-owned executor enrollment](operations/executor-o
 API 1.11 adds the public attribution lookups `GET /attribution/candidates` and `GET /attribution/keys` and deprecates `GET /executors/by-ip` and `GET /executors/{id}/tesla`, which keep working within API major 1. Dispatcher schema 14 stores the attribution history they answer from; upgrade explicitly before starting this build. The control protocol gains the optional `tesla_chain_length` (hello) and `tesla_key_anchor` (heartbeat) fields without a version change; an older peer leaves them empty.
 
 API 1.12 adds measurement profiles, batch details, explicit retry lineage, listener readiness and owner payload deletion. Retry clients require 1.12 so a dispatcher that only supports attribution cannot silently accept a request without retaining its retry identity. Dispatcher schema 15 stores the workflow metadata; schema 16 adds account reservations and payload tombstones.
+
+Dispatcher schema 21 records one settlement per order and the pricing rule of each transaction; this build refuses an older dispatcher database, so upgrade it explicitly before starting this build.
+
+Dispatcher schema 22 records chain payment receipts and outbound chain transfers. The receipt listener and the transfer code depend on it, so this build requires schema 22; upgrade explicitly before starting it. The HTTP API is unchanged.

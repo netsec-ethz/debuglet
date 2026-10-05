@@ -98,7 +98,7 @@ binaries are installed; it does not change the state's contents or retention.
 
 | Location | Retained data and lifetime |
 | --- | --- |
-| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records, saved profiles, batch and retry identities, submitted configuration, account reservations, result provenance, cancellation intent, and retained output/finality. Payload expiry is disabled by default; configured expiry or owner deletion retains identity, accounting and verification references. Announced TESLA chains, verified disclosed keys and run intervals follow the separate attribution retention period. |
+| Dispatcher `database.path` | Accounts, hashed credentials and sessions, OAuth identities, executor enrollment/ownership, transaction/order records with the name of the pricing rule of each transaction, one immutable settlement record per settled order (`order_settlements`: credit or refund, amount, currency, executor and run), saved profiles, batch and retry identities, submitted configuration, account reservations, result provenance, cancellation intent, and retained output/finality. Payload expiry is disabled by default; configured expiry or owner deletion retains identity, accounting and verification references. Announced TESLA chains, verified disclosed keys and run intervals follow the separate attribution retention period. |
 | Executor `database.path` | Queued workload bytes and policy, original run bindings, retained terminal reports, TESLA chain descriptors and the durable output spool. Completed execution rows can be removed by normal cleanup; interrupted prior-binding rows remain quarantined for inspection and are never automatically resumed. Acknowledged output payload is released according to the output protocol. |
 | Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
 | Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
@@ -117,13 +117,23 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 16 and executor schema 6 are the current schema boundaries.
+Dispatcher schema 21 and executor schema 6 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
 are not reconciled payment state: migration 4 leaves old earnings without a
 payout wallet, and re-registration does not repair it. Keep payments disabled
 and retain paid databases and backups for operator reconciliation.
+
+From dispatcher schema 22, the dispatcher database also keeps `payment_receipts`,
+one row per chain payment receipt addressed to the dispatcher (chain
+transaction digest and event position, nonce, amount, coin type, receiver and
+whether it was applied, a duplicate, a mismatch, expired or for an unknown
+intent), and
+`chain_transfers`, the outbound payout and refund transfers and their states,
+including each signed transaction and its signature, stored before broadcast.
+Both are kept indefinitely for reconciliation; they stay empty while chain
+payments are disabled.
 
 ## State and upgrades
 

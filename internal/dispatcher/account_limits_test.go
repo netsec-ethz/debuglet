@@ -313,7 +313,7 @@ func TestPopulatedUpgradePreservesUnknownWorkAndFiniteAllowance(t *testing.T) {
 		}
 		history = append(history, row)
 	}
-	if _, err := sqlitedb.Migrate(f.ctx, f.db, database.MigrationFS(), 16); err != nil {
+	if _, err := sqlitedb.Migrate(f.ctx, f.db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatal(err)
 	}
 	f.ph, _ = payments.NewPaymentHandler(db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop())

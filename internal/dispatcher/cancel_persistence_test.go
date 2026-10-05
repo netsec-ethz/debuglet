@@ -47,7 +47,7 @@ func TestCancellationResultThatIsNotRecordedIsReported(t *testing.T) {
 		t.Fatalf("abort once the write succeeds: %v", err)
 	}
 	tgAssertRow(t, f.row(t, a.id), models.RunStateExited, tgText("operator abort"))
-	tgAssertOrder(t, f, a, models.Outstanding)
+	tgAssertOrder(t, f, a, models.Refunded)
 	tgAssertReserved(t, f, a, tgFloorB)
 	after := f.snapshot(t)
 

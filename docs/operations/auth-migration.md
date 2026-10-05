@@ -116,16 +116,80 @@ similar display name is not a successful migration.
 
 Keep unmapped accounts and their ownership records intact. Ask the operator to
 independently verify ownership through the deployment's support process; a UUID,
-email address or knowledge of a measurement is not proof. There is currently no
-product command for an administrator to claim or attach these historical
-accounts. Until a reviewed recovery procedure exists, their access stays withheld.
-Do not rewrite ownership rows, merge accounts by display name, or enable the local
-development bypass to get past the problem.
+email address or knowledge of a measurement is not proof. A trusted administrator
+with access to the dispatcher host can restore access to an existing account
+that has **neither credentials nor a linked provider identity**. This does not
+merge accounts, transfer resources or adopt unowned runs. Until the independent
+verification is complete, access stays withheld.
+
+Record the requester, the independent evidence and the approving administrator
+in a private support case. The command records that case's reference and its
+effective operating-system UID; it cannot decide whether the evidence proves
+ownership. If several administrators use the same service account, the support
+case must identify the person approving the recovery. Do not put personal
+evidence or credentials in the case reference, shell arguments or logs.
+
+After taking the backup above, keep the dispatcher stopped and issue a code as
+the database owner. Replace the example UUID and reference with the verified
+account and a unique case reference:
+
+```sh
+sudo install -d -m 700 -o debuglet -g debuglet /srv/debuglet-recovery
+sudo -u debuglet debuglet-dispatcher \
+  -config /etc/debuglet/dispatcher/dispatcher.toml \
+  -recover-unmapped-account 01234567-89ab-cdef-0123-456789abcdef \
+  -recovery-case SUPPORT-2026-42 \
+  -recovery-output /srv/debuglet-recovery/SUPPORT-2026-42.txt
+```
+
+The output path must be absent and its real parent directory must be owned by
+the invoking user with mode 0700. Use a trusted directory tree and keep it under
+the administrator's exclusive control during the command. The complete code is
+published in a mode-0600 file before the database transaction commits. It is never printed. Output
+failure rolls the transaction back. If a commit cannot confirm success, the
+command reports the uncertainty and retains the private file; inspect the audit
+and explicitly revoke any pending grant before retrying.
+
+Issuance records the account, case reference, effective UID, issue time and expiry
+in `account_recovery_audit`, and revokes every existing session of the account.
+That also invalidates outstanding device approvals and pending identity links
+bound to those sessions. The database contains only the code's verifier digest.
+The code expires after 24 hours and works once through the existing
+[`POST /auth/recover` procedure](../cli.md#recover-a-lost-account-key). Share the
+file only with the independently verified requester through the deployment's
+confidential support channel, then start the dispatcher. Successful recovery
+records consumption and replaces the code with ordinary account credentials,
+preserving the account's original UUID, role and resource ownership. The user can
+then sign in and explicitly link an available provider identity. If that identity
+already belongs to a different Debuglet account, linking is refused; continue
+using the recovered account key and resolve the separate account conflict through
+support. This command never moves provider identities between accounts.
+
+For a lost, expired or incorrectly delivered **unused** code, stop the service
+and revoke it on the host:
+
+```sh
+sudo -u debuglet debuglet-dispatcher \
+  -config /etc/debuglet/dispatcher/dispatcher.toml \
+  -revoke-account-recovery 01234567-89ab-cdef-0123-456789abcdef \
+  -recovery-case SUPPORT-2026-42-REVOKE
+```
+
+Revocation records its time, UID and reference and removes only that pending
+recovery credential. A replacement requires a new unique case reference and a
+new absent output path. A consumed grant cannot be revoked or reused; the normal
+account recovery rules apply after credentials have been issued. Inspect the
+audit through a read-only database connection and retain the associated private
+support record. Host administrators can modify the database, so this audit is an
+operational record, not tamper-proof evidence against a compromised host.
+
+There is no public administrator recovery endpoint. Do not rewrite ownership
+rows, merge accounts by display name, or enable the local development bypass.
 
 For an account that already has a recovery code, use the separate
 [account recovery procedure](../cli.md#recover-a-lost-account-key). It preserves
 that account's ownership while replacing its credentials and revoking sessions.
-It cannot recover an unmapped account that never had such a code.
+Knowledge of the account UUID cannot substitute for a genuine recovery code.
 
 ## Rollback without restoring UUID authentication
 
