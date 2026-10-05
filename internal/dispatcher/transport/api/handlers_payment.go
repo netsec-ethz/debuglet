@@ -40,65 +40,134 @@ func (h *Handler) LockPrice(request PaymentIntentRequest, transactionId string, 
 	return total, nil
 }
 
-// PricingRule names the rule priceIntent applies and is recorded on every
-// intent it prices: an order costs price_per_bw_s x floor_bw x timeout_ms / 1000
-// in base units, computed exactly and rounded up to the next whole unit.
+// PricingRule names the rule priceOrder implements. A response that carries a
+// price names it, so a client can tell when the rule changed between a quote
+// and an intent; a different rule is a new name.
 const PricingRule = "bw-s-ceil-ms-v1"
 
 // priceIntent validates and prices every debuglet of an intent without
 // writing anything, returning each order's price and the total. The
 // payment-mode preflight runs first so that a disabled chain method never
-// reaches the executor lookup.
+// reaches the executor lookup. The first refusal priceBatch finds is the
+// intent's answer.
 func (h *Handler) priceIntent(request PaymentIntentRequest) ([]int64, int64, error) {
 	if err := h.dispatcher.Payment.CheckPaymentMethod(request.PaymentMethod); err != nil {
 		return nil, 0, paymentMethodError(request.PaymentMethod, err)
 	}
-	if len(request.Debuglets) == 0 {
-		return nil, 0, apiError(http.StatusBadRequest, CodeInvalidRequest, "no debuglets provided")
-	}
-	price := new(big.Int)
-	prices := make([]int64, len(request.Debuglets))
-	seen := make(map[int64]struct{}, len(request.Debuglets))
-	for i, req := range request.Debuglets {
-		if _, err := submittedConfiguration(req); err != nil {
-			return nil, 0, apiError(http.StatusBadRequest, CodeInvalidRequest, err.Error())
-		}
-		executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
-		if !exists {
-			return nil, 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
-				"unknown executor: "+echoed(req.ExecutorID))
-		}
-		if err := validatePolicy(req.OrderID, req.Policy); err != nil {
-			return nil, 0, err
-		}
-		if _, repeated := seen[req.OrderID]; repeated {
-			return nil, 0, policyError(req.OrderID, "order_id is repeated in the batch")
-		}
-		seen[req.OrderID] = struct{}{}
-
-		// The price is price_per_bw_s × floor_bw × timeout_ms / 1000, exact
-		// and rounded up to the next whole unit, so that a run shorter than a
-		// second is not free.
-		debugletPrice := new(big.Int).SetInt64(executor.PricePerBwS)
-		debugletPrice.Mul(debugletPrice, big.NewInt(req.Policy.FloorBW))
-		debugletPrice.Mul(debugletPrice, big.NewInt(req.Policy.TimeoutMS))
-		var rem big.Int
-		debugletPrice.QuoRem(debugletPrice, big.NewInt(1000), &rem)
-		if rem.Sign() > 0 {
-			debugletPrice.Add(debugletPrice, big.NewInt(1))
-		}
-		if !debugletPrice.IsInt64() {
-			return nil, 0, policyError(req.OrderID, "the price of the order overflows")
-		}
-		prices[i] = debugletPrice.Int64()
-		price.Add(price, debugletPrice)
-		if !price.IsInt64() {
-			return nil, 0, apiError(http.StatusBadRequest, CodeInvalidPolicy,
-				"invalid policy: the total price of the batch overflows")
-		}
+	prices, total, failures := h.priceBatch(request.Debuglets)
+	if len(failures) > 0 {
+		return nil, 0, failures[0].err
 	}
 	//TODO? Add margin on price
-	return prices, price.Int64(), nil
+	return prices, total, nil
+}
+
+// pricingFailure is one refusal found while pricing a batch: of the order at
+// index, or of the batch as a whole when index is -1. field names the refused
+// request field when the refusal does not carry its own field errors.
+type pricingFailure struct {
+	index int
+	field string
+	err   *echo.HTTPError
+}
+
+// priceBatch prices every debuglet of a batch and sums the prices. It does not
+// stop at a refusal: it reports every refusal in the order it finds them, so
+// the first one is what an intent answers and all of them are what a quote
+// reports. prices of a refused order and total are meaningful only when
+// nothing was refused.
+func (h *Handler) priceBatch(debuglets []DebugletRequest) ([]int64, int64, []pricingFailure) {
+	if len(debuglets) == 0 {
+		return nil, 0, []pricingFailure{{index: -1, field: "debuglets",
+			err: apiError(http.StatusBadRequest, CodeInvalidRequest, "no debuglets provided")}}
+	}
+	var failures []pricingFailure
+	total := new(big.Int)
+	overflowed := false
+	prices := make([]int64, len(debuglets))
+	seen := make(map[int64]struct{}, len(debuglets))
+	for i, req := range debuglets {
+		price, err := h.priceOrder(req)
+		if err != nil {
+			failures = append(failures, pricingFailure{index: i, err: err})
+		}
+		if _, repeated := seen[req.OrderID]; repeated {
+			failures = append(failures, pricingFailure{index: i, field: "order_id",
+				err: policyError(req.OrderID, "order_id is repeated in the batch")})
+			continue
+		}
+		seen[req.OrderID] = struct{}{}
+		if err != nil {
+			continue
+		}
+		prices[i] = price
+		total.Add(total, big.NewInt(price))
+		if !total.IsInt64() && !overflowed {
+			overflowed = true
+			failures = append(failures, pricingFailure{index: -1, field: "debuglets",
+				err: apiError(http.StatusBadRequest, CodeInvalidPolicy,
+					"invalid policy: the total price of the batch overflows")})
+		}
+	}
+	if len(failures) > 0 {
+		return prices, 0, failures
+	}
+	return prices, total.Int64(), nil
+}
+
+// priceOrder validates one debuglet of a batch and prices it with the
+// executor's announced rate. It is the only place a price is computed.
+func (h *Handler) priceOrder(req DebugletRequest) (int64, *echo.HTTPError) {
+	if _, err := submittedConfiguration(req); err != nil {
+		return 0, apiError(http.StatusBadRequest, CodeInvalidRequest, err.Error())
+	}
+	executor, exists := h.dispatcher.GetExecutor(req.ExecutorID)
+	if !exists {
+		return 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
+			"unknown executor: "+echoed(req.ExecutorID))
+	}
+	if err := validatePolicy(req.OrderID, req.Policy); err != nil {
+		return 0, err
+	}
+	// The start time and the capabilities the policy requires are checked
+	// as the submission checks them, so that an order priced here is not
+	// refused there for a reason already known.
+	if err := validateStartTimestamp(req.StartTimestamp); err != nil {
+		return 0, requestFieldError(req.OrderID, "start_time", "out_of_range", err.Error())
+	}
+	if err := h.dispatcher.CheckExecutorCapabilities(req.ExecutorID, req.OrderID, specPolicy(req.Policy)); err != nil {
+		var capability *dispatcher.CapabilityError
+		if errors.As(err, &capability) {
+			return 0, policyFieldError(capability.OrderID, capability.Field, capability.Code, capability.Message)
+		}
+		if errors.Is(err, dispatcher.ErrUnknownExecutor) {
+			return 0, apiError(http.StatusBadRequest, CodeUnknownExecutor,
+				"unknown executor: "+echoed(req.ExecutorID))
+		}
+		return 0, apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to check the executor", err)
+	}
+
+	// The price is price_per_bw_s × floor_bw × timeout_ms / 1000, exact
+	// and rounded up to the next whole unit, so that a run shorter than a
+	// second is not free.
+	price := new(big.Int).SetInt64(executor.PricePerBwS)
+	price.Mul(price, big.NewInt(req.Policy.FloorBW))
+	price.Mul(price, big.NewInt(req.Policy.TimeoutMS))
+	var rem big.Int
+	price.QuoRem(price, big.NewInt(1000), &rem)
+	if rem.Sign() > 0 {
+		price.Add(price, big.NewInt(1))
+	}
+	if !price.IsInt64() {
+		return 0, policyError(req.OrderID, "the price of the order overflows")
+	}
+	return price.Int64(), nil
+}
+
+// requestFieldError refuses one field of an order as an invalid request.
+func requestFieldError(orderID int64, field, code, reason string) *echo.HTTPError {
+	return echo.NewHTTPError(http.StatusBadRequest, ErrorResponse{Code: CodeInvalidRequest, Message: reason,
+		FieldErrors: []wire.FieldError{{Field: field, Code: code, Message: reason, OrderID: &orderID}}})
 }
 
 // storeOrders writes one Outstanding debuglet_order row per priced debuglet of
@@ -204,7 +273,30 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 			return c.JSON(http.StatusOK, saved)
 		}
 	}
-	intent, err := h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
+	// While allowances are enabled, an account's TEST intent is created only
+	// if the account's remaining allowance covers its price. The local
+	// development bypass names no account and is not capped.
+	var intent payments.PaymentIntent
+	if owner, ok := established.owner(); ok && req.PaymentMethod == "TEST" && h.dispatcher.Payment.AllowancesEnabled() {
+		intent, err = h.dispatcher.Payment.CreateAllowanceIntentIn(dbTx, owner, transactionId, price, hash, ctx)
+		var exceeded *payments.AllowanceExceededError
+		if errors.As(err, &exceeded) {
+			// Nothing of this intent was written. The release of the
+			// account's expired unadmitted intents stands.
+			if err := dbTx.Commit(); err != nil {
+				return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to store the payment intent", err)
+			}
+			return allowanceExceeded(exceeded)
+		}
+		// An allowance history that cannot be represented refuses the
+		// intent with nothing of it written; the deferred rollback discards
+		// the release as well.
+		if errors.As(err, new(*payments.AllowanceRangeError)) {
+			return allowanceOutOfRange(err)
+		}
+	} else {
+		intent, err = h.dispatcher.Payment.CreatePaymentIntentIn(dbTx, transactionId, price, req.PaymentMethod, hash, ctx)
+	}
 	if err != nil {
 		h.logger.Info("INTENT", zap.String("hash", hash))
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to create the payment intent", err)
@@ -233,6 +325,10 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// The stored prices, stated as the quote of the same batch would state
+	// them, so a client can compare the two exactly.
+	quote := newQuote(req.PaymentMethod, req.Debuglets, prices, price, nil)
+	response.Quote = &quote
 	if req.Retry != nil {
 		if err := storeRetryIntent(ctx, queries, established, req, transactionId, response); err != nil {
 			return err

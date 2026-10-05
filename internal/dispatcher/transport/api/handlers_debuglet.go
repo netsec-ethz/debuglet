@@ -101,6 +101,12 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		return apiError(http.StatusBadRequest, CodePaymentIncomplete,
 			fmt.Sprintf("Transaction %s was refunded and cannot be spent again", echoed(req.TransactionId)))
 	}
+	// An intent released after it expired unused returned its reservation to
+	// the account's allowance, so it cannot be spent any more.
+	if tx.Status == int64(models.Expired) {
+		return apiError(http.StatusBadRequest, CodePaymentIncomplete,
+			fmt.Sprintf("Transaction %s expired unused and cannot be spent", echoed(req.TransactionId)))
+	}
 	if tx.Status != int64(models.Paid) {
 		return apiError(http.StatusBadRequest, CodePaymentIncomplete,
 			fmt.Sprintf("Transaction %s has not yet been completed", echoed(req.TransactionId)))

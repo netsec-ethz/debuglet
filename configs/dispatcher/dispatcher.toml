@@ -86,3 +86,11 @@ queued_bytes = 1073741824
 [retention]
 # No automatic measurement expiry until this operator chooses a period.
 payload_max_age_seconds = 0
+
+# Usage allowances cap the TEST intents of accounts at the TEST units an
+# operator granted them (POST /operator/accounts/{id}/allowance). They are
+# usage credits, not money; nothing grants them automatically. Enabling them
+# is a deployment choice.
+[allowance]
+enabled = false
+default_grant = 30000000

@@ -61,6 +61,7 @@ func (d *Dispatcher) CollectMetrics(ctx context.Context) ControlMetrics {
 				report.Registered++
 				available := entry.owner.Available()
 				report.Health.observe(entry, now, available)
+				report.Health.observeDisclosureLag(entry, now, available, d.keystore)
 				if available {
 					report.Ready++
 					report.ReadyCapacityBitsPerSecond += float64(entry.capacity)

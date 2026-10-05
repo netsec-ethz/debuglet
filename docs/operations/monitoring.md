@@ -85,7 +85,7 @@ logs for diagnosis; use the documented upgrade/recovery operations where needed.
 ## Executor health
 
 Enable [health-alerts.yml](../../deploy/monitoring/health-alerts.yml) alongside the
-availability rule. Both rules use the same 45-second pending period and refuse
+availability rule. These rules use the same 45-second pending period and refuse
 missing, failed or stale observations. The executor's capability report expires
 after 90 seconds without refresh; allow that additional interval for a silent
 reporting failure. Test their controlled failure/recovery fixtures with
@@ -93,20 +93,40 @@ reporting failure. Test their controlled failure/recovery fixtures with
 
 `DebugletRequiredCounterUnavailable` is opt-in: set the collector target label
 `require_ebpf: "true"` only when **every registered executor** is required to select
-eBPF. Otherwise a supported fallback does not raise this alert. The rule fires
-when any selection is fallback/unknown or the observations cannot be collected.
-This is a collector policy, not a new executor enforcement setting. A reported
-eBPF selection does not prove its hook remains attached or that a particular
-traffic path is policed; independent packet validation is still required.
+eBPF with its owned ingress and egress TCX links present. Otherwise a supported
+fallback does not raise this alert. The rule fires when any selection is
+fallback/unknown, either attachment is missing/unknown, or observations cannot
+be collected. Recovery requires a fresh positive attachment report from every
+registered executor, so old executors without this observation remain unknown.
+This is a collector policy, not a new executor enforcement setting. Attachment
+presence does not verify packet coverage, accounting or effective policing.
+Allow the 30-second report cadence before the normal scrape/evaluation budget;
+silent report loss can instead take the 90-second report expiry above.
 
 `DebugletDisclosureUnhealthy` fires when any registered executor reports failed
 key refresh, an excessive disclosure hold, an exhausted/not-yet-started signing
-chain, an expired announced schedule or unknown state. It remains firing when
-an unhealthy report expires. Resolution requires fresh positive subsystem
-reports and unexpired schedules; a heartbeat alone is insufficient. This does
-not prove that disclosed keys reached durable storage or validate captured tags.
+chain, an expired announced schedule or unknown state, or when the dispatcher's
+disclosure delivery lag exceeds 90 seconds or is unknown. It remains firing when
+an unhealthy report expires or the lag sample is missing. Resolution requires
+fresh positive subsystem reports, unexpired schedules and a known lag of at most
+90 seconds for every executor; a heartbeat alone is insufficient. The lag counts
+only keys this dispatcher verified and recorded in its database; it does not
+validate captured tags.
 
-When either alert fires:
+The 90-second lag threshold is three maximal heartbeat intervals (an executor
+discloses on every heartbeat, at most 30 seconds apart) and equals the report
+lifetime above, so one or two lost heartbeats do not alert. Until the first
+disclosure of a chain reaches a dispatcher process, for example after either
+daemon restarts, the lag is unknown for up to one heartbeat once a key is due;
+the pending period normally covers that.
+
+`DebugletExecutorStateStorageLow` fires below 10% available space on any executor
+state filesystem, or when the aggregate is incomplete. It uses each executor's
+available/capacity ratio rather than dividing unrelated extrema. RSS and FD
+metrics describe the executor daemon, excluding guest workers; set thresholds
+suited to your service limits using host monitoring for the whole service.
+
+When an executor health alert fires:
 
 - Use the operator executor listing to identify the affected executor and its
   capability, attribution and clock fields; metrics intentionally omit its ID.
@@ -118,11 +138,24 @@ When either alert fires:
   and clock state. Drain affected work before repairing/restarting the service;
   preserve its identity, database and logs. Do not manually disclose a key that
   a kernel slot might still use, or treat a reconnect as cleanup evidence.
+- For disclosure lag, compare the executor's disclosure hold and its
+  `next_disclosure_epoch` (`GET /executors/:id/tesla`) with the dispatcher log.
+  A rejected or early disclosure is logged once per chain; a failed database
+  write is retried with the next disclosure. Check the control session and the
+  dispatcher's database before restarting the executor, which starts a new chain.
 - For chain exhaustion, stop admission and follow the daemon's logged
   `final_disclosure_at` before restart. Increase the next chain's configured
   lifetime if needed. An early restart can lose disclosure of its final epochs.
-- Confirm new reports show the intended counter, available attribution and
-  positive remaining lifetime. Validate traffic separately when claiming
+- For a missing attachment, inspect the configured interface and the service's
+  owned TCX links. Drain and repair/restart the affected service; this observer
+  does not reattach programs. Preserve its identity and state. A fresh selection
+  alone cannot clear the alert; both attachment observations must recover.
+- For storage pressure, inspect each executor's database filesystem and recover
+  space without removing active state, identity, journals or guest output.
+  Confirm a fresh complete ratio above the threshold. Missing measurements do
+  not establish recovery.
+- Confirm new reports show the intended counter, present attachments, available attribution,
+  positive remaining lifetime and a known disclosure lag. Validate traffic separately when claiming
   enforcement or attribution. Alert resolution does not repair historical runs.
 
 These rules monitor the current registry. Removing a failed executor can clear
@@ -166,7 +199,7 @@ Enable [storage-alerts.yml](../../deploy/monitoring/storage-alerts.yml) and the
 the supported offline backup profile. `DebugletStateStorageLow` checks the
 **dispatcher's state filesystem**, firing below 10% space available to
 unprivileged writes, or when that observation is missing. This does not cover
-executor disks, filesystem quotas or inode exhaustion; retain host monitoring
+executor disks (use the executor health rule above), filesystem quotas or inode exhaustion; retain host monitoring
 for those. A failed dispatcher scrape is covered by `DebugletUnavailable`.
 
 Backups currently require a clean, joined foreground shutdown and `--offline`.

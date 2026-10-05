@@ -422,8 +422,10 @@ func TestSubmissionRefusalsKeepTheirCodes(t *testing.T) {
 		_, token, _ := authAccount(t, f, "icmp")
 		debuglets := dcDebuglets()
 		debuglets[0].Policy.RequireICMP = true
-		txID := dcIntent(t, f, token, debuglets)
-		status, _, body, _ := authRequest(t, f, http.MethodPut, "/debuglet", dcSubmitBody(t, txID, "", debuglets), authBearer(token))
+		// The refusal is known before any intent exists, so the intent
+		// already answers it; the submission repeats the check.
+		status, _, body, _ := authRequest(t, f, http.MethodPut, "/payment/intent",
+			dcJSON(t, PaymentIntentRequest{Debuglets: debuglets, PaymentMethod: "TEST"}), authBearer(token))
 		dcExpect(t, "ICMP policy", status, body, http.StatusBadRequest, CodeInvalidPolicy, "")
 		if !strings.Contains(string(body), "does not support ICMP") {
 			t.Fatalf("the message does not say what the executor lacks: %s", body)
@@ -455,10 +457,13 @@ func TestCapabilityRefusalsOmitRegisteredExecutorID(t *testing.T) {
 					debuglets[0].Policy.RequireICMP = capability.policy.RequireICMP
 					debuglets[0].Policy.ListenTCP = capability.policy.ListenTCP
 					debuglets[0].Policy.ListenUDP = capability.policy.ListenUDP
-					txID := dcIntent(t, f, token, debuglets)
-					status, _, body, _ := authRequest(t, f, http.MethodPut, "/debuglet", dcSubmitBody(t, txID, "", debuglets), authBearer(token))
+					status, _, body, _ := authRequest(t, f, http.MethodPut, "/payment/intent",
+						dcJSON(t, PaymentIntentRequest{Debuglets: debuglets, PaymentMethod: "TEST"}), authBearer(token))
 					dcExpect(t, capability.name, status, body, http.StatusBadRequest, CodeInvalidPolicy,
 						"invalid policy (order 0): "+capability.message)
+					if strings.Contains(string(body), executorID) {
+						t.Fatalf("the refusal repeats the executor ID: %s", body)
+					}
 					var response ErrorResponse
 					if err := json.Unmarshal(body, &response); err != nil {
 						t.Fatal(err)
@@ -528,5 +533,28 @@ func TestPrivateHTTPDiagnosticsRedactPresentedCredentials(t *testing.T) {
 	private := logs.FilterMessage("Private request diagnostic").All()
 	if len(private) != 1 || !strings.Contains(dcRender(private[0]), "private SQL diagnostic") || strings.Contains(fmt.Sprint(private[0].ContextMap()["error"]), "\n") {
 		t.Fatal("operator diagnostic lost or unbounded")
+	}
+
+	// A sign-in callback carries its authorization code and state in the query,
+	// and a state-changing browser request its CSRF token in a header.
+	core, logs = observer.New(zapcore.DebugLevel)
+	request = httptest.NewRequest(http.MethodGet, "/auth/github/callback?code=code-sentinel&state=state-sentinel", nil)
+	request.Header.Set(csrfHeaderName, "csrf-sentinel")
+	c = echo.New().NewContext(request, httptest.NewRecorder())
+	c.SetPath("/auth/github/callback")
+	h = NewHandler(nil, nil, zap.New(core))
+	h.errorHandler(apiErrorFrom(http.StatusInternalServerError, CodeInternal, "operation failed", errors.New("exchange code-sentinel for state-sentinel with csrf-sentinel failed")), c)
+	private = logs.FilterMessage("Private request diagnostic").All()
+	if len(private) != 1 {
+		t.Fatal("callback diagnostic lost")
+	}
+	rendered := dcRender(private[0])
+	for _, secret := range []string{"code-sentinel", "state-sentinel", "csrf-sentinel"} {
+		if strings.Contains(rendered, secret) {
+			t.Errorf("private diagnostic retained %s", secret)
+		}
+	}
+	if !strings.Contains(rendered, "exchange [redacted] for [redacted] with [redacted] failed") {
+		t.Error("private diagnostic lost the redacted cause")
 	}
 }
