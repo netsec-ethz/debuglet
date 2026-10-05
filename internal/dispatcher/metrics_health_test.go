@@ -4,10 +4,13 @@
 package dispatcher
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"math"
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
@@ -78,5 +81,117 @@ func TestMetricsScheduleExpiryAndUnknownArithmetic(t *testing.T) {
 		if h.ScheduleUnknown != 1 || h.ScheduleRemainingSeconds != nil || h.ScheduleExpired != 0 {
 			t.Fatalf("unknown/overflow length %d: %+v", length, h)
 		}
+	}
+}
+
+// TestMetricsDisclosureLagFollowsVerifiedKeys drives a real key store with a
+// real hash chain of ten 10-second epochs and a disclosure delay of two: k_i
+// becomes disclosable at start+(i+2)*10s. The dispatcher clock is now.
+func TestMetricsDisclosureLagFollowsVerifiedKeys(t *testing.T) {
+	const length = 10
+	keys := make([][]byte, length)
+	keys[length-1] = bytes.Repeat([]byte{0x4C}, 32)
+	for i := length - 2; i >= 0; i-- {
+		sum := sha256.Sum256(keys[i+1])
+		keys[i] = sum[:]
+	}
+	start := time.Unix(10000, 0)
+	ks := tag.NewKeyStore()
+	e := &executorEntry{RegisteredExecutor: &RegisteredExecutor{ID: "lagging", TeslaAnchorKey: keys[0], TeslaAnchorTimestamp: start,
+		TeslaDelay: 10 * time.Second, TeslaDisclosureDelay: 2, TeslaChainLength: length}}
+	at := func(seconds int) time.Time { return start.Add(time.Duration(seconds) * time.Second) }
+	lag := func(now time.Time, connected bool) ExecutorResourceMetric {
+		t.Helper()
+		e.capabilityObserved = now.Add(-time.Second)
+		var h ExecutorHealthMetrics
+		h.observeDisclosureLag(e, now, connected, ks)
+		return h.DisclosureLag
+	}
+	want := func(name string, got ExecutorResourceMetric, seconds float64) {
+		t.Helper()
+		if got.Unknown != 0 || got.Value == nil || *got.Value != seconds {
+			t.Fatalf("%s: lag %+v, want %v s", name, got, seconds)
+		}
+	}
+	unknown := func(name string, got ExecutorResourceMetric) {
+		t.Helper()
+		if got.Unknown != 1 || got.Value != nil {
+			t.Fatalf("%s: lag %+v, want unknown", name, got)
+		}
+	}
+	disclose := func(now time.Time, epoch int) {
+		t.Helper()
+		if err := ks.Store(e.ID, e.teslaChain(), now, int64(epoch), keys[epoch]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Nothing is due before start+30s, whether or not a key arrived.
+	want("nothing due", lag(at(29), true), 0)
+	unknown("first key due but none received", lag(at(35), true))
+	disclose(at(35), 1)
+	want("all due keys stored", lag(at(35), true), 0)
+	// At start+67s k_4 is due; k_2 has been disclosable since start+40s.
+	want("due keys missing", lag(at(67), true), 27)
+	unknown("disconnected session", lag(at(67), false))
+	e.capabilityObserved = at(67).Add(-capabilityLifetime)
+	var stale ExecutorHealthMetrics
+	stale.observeDisclosureLag(e, at(67), true, ks)
+	unknown("stale report", stale.DisclosureLag)
+	disclose(at(67), 4)
+	want("caught up", lag(at(67), true), 0)
+	// Past the chain's end only k_9 is due, disclosable from start+110s.
+	want("chain end missing", lag(at(3600), true), 3600-70)
+	disclose(at(3600), length-1)
+	want("chain end", lag(at(3600), true), 0)
+
+	// The aggregate is the maximum, and any unknown executor is counted.
+	other := &executorEntry{RegisteredExecutor: &RegisteredExecutor{ID: "other", TeslaAnchorKey: []byte("unseen"), TeslaAnchorTimestamp: start,
+		TeslaDelay: 10 * time.Second, TeslaDisclosureDelay: 2, TeslaChainLength: length, capabilityObserved: at(3599)}}
+	e.TeslaChainLength = 2 * length
+	e.capabilityObserved = at(3599)
+	var h ExecutorHealthMetrics
+	h.observeDisclosureLag(e, at(3600), true, ks)
+	h.observeDisclosureLag(other, at(3600), true, ks)
+	if h.DisclosureLag.Unknown != 1 || h.DisclosureLag.Value == nil || *h.DisclosureLag.Value != 3600-120 {
+		t.Fatalf("aggregate: %+v", h.DisclosureLag)
+	}
+	e.TeslaChainLength = length
+
+	for name, edit := range map[string]func(*RegisteredExecutor){
+		"no epoch length": func(r *RegisteredExecutor) { r.TeslaDelay = 0 },
+		"no chain length": func(r *RegisteredExecutor) { r.TeslaChainLength = 0 },
+		"no anchor":       func(r *RegisteredExecutor) { r.TeslaAnchorKey = nil },
+		"no start":        func(r *RegisteredExecutor) { r.TeslaAnchorTimestamp = time.Time{} },
+	} {
+		saved := *e.RegisteredExecutor
+		edit(e.RegisteredExecutor)
+		unknown(name, lag(at(67), true))
+		*e.RegisteredExecutor = saved
+	}
+}
+
+// TestCollectMetricsReportsDisclosureLagFromTheKeyStore checks the scrape path:
+// the dispatcher's own key store answers, and a recorded key ends the unknown.
+func TestCollectMetricsReportsDisclosureLagFromTheKeyStore(t *testing.T) {
+	f := newTGFixture(t, nil)
+	tail := bytes.Repeat([]byte{0x4D}, 32)
+	sum := sha256.Sum256(tail)
+	now := time.Now()
+	f.d.mu.Lock()
+	e := f.d.executors[tgExecutorID]
+	// k_1 has been due since the start of epoch 3, about five seconds ago.
+	e.TeslaAnchorKey, e.TeslaAnchorTimestamp, e.TeslaDelay, e.TeslaDisclosureDelay, e.TeslaChainLength = sum[:], now.Add(-35*time.Second), 10*time.Second, 2, 2
+	e.capabilityObserved = now
+	chain := e.teslaChain()
+	f.d.mu.Unlock()
+	if lag := f.d.CollectMetrics(f.ctx).Health.DisclosureLag; lag.Unknown != 1 || lag.Value != nil {
+		t.Fatalf("before any disclosure: %+v", lag)
+	}
+	if err := f.d.keystore.Store(tgExecutorID, chain, time.Now(), 1, tail); err != nil {
+		t.Fatal(err)
+	}
+	if lag := f.d.CollectMetrics(f.ctx).Health.DisclosureLag; lag.Unknown != 0 || lag.Value == nil || *lag.Value != 0 {
+		t.Fatalf("after the due key was recorded: %+v", lag)
 	}
 }

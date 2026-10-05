@@ -13,14 +13,16 @@ groups:
            and on(job, instance) (debuglet_executors_registered{job="debuglet-dispatcher"} > 0)
            and on(job, instance) (debuglet_executors_enforcement_mode{job="debuglet-dispatcher",state="ebpf"}
              == on(job, instance) debuglet_executors_registered{job="debuglet-dispatcher"})
+           and on(job, instance) (debuglet_executors_counter_attachment{job="debuglet-dispatcher",state="present"}
+             == on(job, instance) debuglet_executors_registered{job="debuglet-dispatcher"})
            and on(job, instance) (abs(time() - debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher"}) <= 45))
         for: 45s
         labels:
           severity: page
           owner: debuglet-operator
         annotations:
-          summary: Required executor packet-counter selection is unavailable or unknown
-          description: Inspect fresh executor capabilities and daemon logs. Fallback is allowed unless this collector target explicitly requires eBPF. Selected eBPF is not proof of continuous packet enforcement.
+          summary: Required executor packet-counter attachment is unavailable or unknown
+          description: Inspect fresh executor capabilities, owned TCX attachment observations and daemon logs. Fallback is allowed unless this collector target explicitly requires eBPF. Attachment presence is not proof of continuous packet enforcement.
           runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#executor-health
       - alert: DebugletDisclosureUnhealthy
         expr: |
@@ -33,12 +35,32 @@ groups:
              == on(job, instance) debuglet_executors_registered{job="debuglet-dispatcher"})
            and on(job, instance) (debuglet_executors_schedule_unknown{job="debuglet-dispatcher"} == 0)
            and on(job, instance) (debuglet_executors_schedule_expired{job="debuglet-dispatcher"} == 0)
+           and on(job, instance) (debuglet_observation_available{job="debuglet-dispatcher",observation="executor_disclosure_lag_seconds"} == 1)
+           and on(job, instance) (debuglet_executors_disclosure_lag_unknown{job="debuglet-dispatcher"} == 0)
+           and on(job, instance) (debuglet_executor_disclosure_lag_seconds{job="debuglet-dispatcher"} <= 90)
            and on(job, instance) (abs(time() - debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher"}) <= 45))
         for: 45s
         labels:
           severity: warning
           owner: debuglet-operator
         annotations:
-          summary: Executor attribution or signing schedule is unavailable or unknown
-          description: Inspect attribution reasons, disclosure holds and remaining schedule lifetime. Missing or expired reports do not establish recovery. This alert does not verify captured traffic or delivery of disclosed keys.
+          summary: Executor attribution, signing schedule or key disclosure is unavailable, late or unknown
+          description: Inspect attribution reasons, disclosure holds, remaining schedule lifetime and the disclosure lag. Missing or expired reports do not establish recovery. The lag counts keys this dispatcher verified and recorded; this alert does not verify captured traffic.
+          runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#executor-health
+
+      - alert: DebugletExecutorStateStorageLow
+        expr: |
+          up{job="debuglet-dispatcher"}
+          unless on(job, instance)
+          ((up{job="debuglet-dispatcher"} == 1)
+           and on(job, instance) (debuglet_executor_state_available_ratio_min{job="debuglet-dispatcher"} >= 0.10)
+           and on(job, instance) (debuglet_observation_available{job="debuglet-dispatcher",observation="executor_state_available_ratio_min"} == 1)
+           and on(job, instance) (abs(time() - debuglet_control_observed_timestamp_seconds{job="debuglet-dispatcher"}) <= 45))
+        for: 45s
+        labels:
+          severity: warning
+          owner: debuglet-operator
+        annotations:
+          summary: Executor state storage is low or cannot be observed
+          description: A registered executor has less than ten percent available filesystem space, or a fresh complete observation is unavailable. Check each executor's local storage; quotas and inodes require host monitoring.
           runbook_url: https://debuglet.netsec.ethz.ch/docs/operations/monitoring/#executor-health

@@ -66,6 +66,17 @@
   when: dispatcher_github_oauth_enabled | bool
   notify: Restart dispatcher
 
+- name: Deploy CILogon credentials
+  ansible.builtin.copy:
+    src: "{{ dispatcher_cilogon_oidc_env_file }}"
+    dest: "{{ config_dir }}/dispatcher/cilogon-oidc.env"
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0600"
+  no_log: true
+  when: dispatcher_cilogon_oidc_enabled | bool
+  notify: Restart dispatcher
+
 - name: Install dispatcher systemd unit
   ansible.builtin.template:
     src: dispatcher.service.j2

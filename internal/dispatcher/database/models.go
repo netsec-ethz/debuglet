@@ -11,6 +11,19 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
 
+type AccountRecoveryAudit struct {
+	Selector            string
+	UserID              int64
+	CaseReference       string
+	IssuedByUid         int64
+	IssuedAt            int64
+	ExpiresAt           int64
+	ConsumedAt          int64
+	RevokedAt           int64
+	RevokedByUid        sql.NullInt64
+	RevocationReference string
+}
+
 type AccountRunReservation struct {
 	DebugletID          int64
 	AccountID           int64

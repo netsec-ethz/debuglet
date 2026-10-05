@@ -119,6 +119,19 @@ printf '%s\n' 'dispatcher.fixture.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF
 printf '%s\n' 'GITHUB_OAUTH_CLIENT_ID=fixture-client' \
 	'GITHUB_OAUTH_CLIENT_SECRET=fixture-secret' >"$work/github-oauth.env"
 chmod 0600 "$work/github-oauth.env"
+# CILogon is enabled in the production profile too, from its own file.
+printf '%s\n' 'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
+	'CILOGON_CLIENT_SECRET=fixture-secret' >"$work/cilogon_oidc.env"
+chmod 0600 "$work/cilogon_oidc.env"
+# A CILogon file that lacks the secret, for the preflight refusal below.
+grep -v '^CILOGON_CLIENT_SECRET' "$work/cilogon_oidc.env" >"$work/cilogon-incomplete.env"
+chmod 0600 "$work/cilogon-incomplete.env"
+cat >"$work/cilogon.yml" <<EOF
+dispatcher_cilogon_oidc_enabled: true
+dispatcher_cilogon_oidc_env_file: $work/cilogon_oidc.env
+dispatcher_authentication_public_url: https://api.fixture.invalid/api
+dispatcher_authentication_device_verification_url: https://api.fixture.invalid/console/device
+EOF
 
 # The inventory carries the host layout only. Everything a role would write to
 # a managed host is redirected with extra variables, which outrank both the
@@ -144,6 +157,7 @@ known_hosts_file: $work/known_hosts
 dispatcher_addr: dispatcher.fixture.invalid
 dispatcher_base_url: api.fixture.invalid
 dispatcher_github_oauth_env_file: $work/github-oauth.env
+dispatcher_cilogon_oidc_env_file: $work/cilogon_oidc.env
 dispatcher_grpc_port: 19001
 dispatcher_http_port: 19000
 deploy_version: fixture-1.2.3
@@ -298,10 +312,22 @@ refuses 'a database directory inside the configuration is refused' 'neither' \
 	-e "state_dir=$host/etc/debuglet/state"
 refuses 'a cleartext channel to a remote dispatcher is refused' 'literal loopback address' \
 	-e executor_disable_tls=true
+refuses 'CILogon without its credentials is refused' 'cilogon_oidc.env.example' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-incomplete.env"
 refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certificate nothing presents' \
 	-e dispatcher_disable_tls=true
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \
 	-e dispatcher_disable_tls=true -e dispatcher_require_client_cert=true
+
+refuses 'CILogon requires its own private credential file' 'cilogon_oidc.env.example' \
+	-e "@$work/cilogon.yml" -e "dispatcher_cilogon_oidc_env_file=$work/missing.env"
+chmod 0644 "$work/cilogon_oidc.env"
+refuses 'CILogon refuses readable-by-others credentials' 'chmod 600' -e "@$work/cilogon.yml"
+chmod 0600 "$work/cilogon_oidc.env"
+refuses 'CILogon refuses an unrelated issuer' 'approved CILogon' \
+	-e "@$work/cilogon.yml" -e dispatcher_cilogon_oidc_issuer=https://other.fixture.invalid
+refuses 'browser credential URLs must be configured together' 'Set both dispatcher_authentication' \
+	-e dispatcher_authentication_public_url=https://api.fixture.invalid/api
 
 refuses 'onboarding requires client certificates' 'dispatcher_require_client_cert=true' \
 	-e "@$work/onboarding.yml" -e dispatcher_require_client_cert=false
@@ -421,12 +447,26 @@ done
 expect 'the dispatcher binds the configured HTTP port' "$dispatcher_toml" 'http_port = 19000'
 expect 'the dispatcher binds the configured gRPC port' "$dispatcher_toml" 'grpc_port = 19001'
 expect 'the dispatcher records the deployed version' "$dispatcher_toml" 'version = "fixture-1.2.3"'
+cilogon_enabled() {
+	grep -A1 -xF '[cilogon_oidc]' "$dispatcher_toml" | sed -n 2p
+}
+if [ "$(cilogon_enabled)" = 'enabled = true' ]; then
+	check 'the production profile renders CILogon enabled' pass
+else
+	check 'the production profile renders CILogon enabled' fail
+fi
+refute 'browser CLI approval is absent by default' "$dispatcher_toml" '[authentication]'
 expect 'the executor dials the configured control address' "$executor_toml" \
 	'addr = "dispatcher.fixture.invalid:19001"'
 expect 'the executor dials the configured yamux address' "$executor_toml" \
 	'yamux_addr = "dispatcher.fixture.invalid:19000"'
 expect 'the credentialed origin follows the API domain' "$dispatcher_toml" \
 	'["https://api.fixture.invalid"]'
+expect 'the production profile enables CILogon sign-in' "$dispatcher_toml" \
+	'callback_url = "https://api.fixture.invalid/api/auth/cilogon/callback"'
+expect 'the dispatcher unit loads the CILogon credentials' \
+	"$host/etc/systemd/system/debuglet-dispatcher.service" \
+	"EnvironmentFile=$host/etc/debuglet/dispatcher/cilogon-oidc.env"
 expect 'the executor carries its UUID identity' "$executor_toml" \
 	'executor_id = "5fe02882-0410-416c-9935-235090bcba0d"'
 
@@ -670,6 +710,59 @@ else
 	check 'a configuration update refuses a version other than the installed one' fail
 	tail -10 "$work/update-config-conflict.log" >&2
 fi
+
+# CILogon activation, secret rotation and disablement also use config updates.
+if run "$work/cilogon-enable.log" update-config.yml --limit dispatcher \
+	-e "deploy_version=$release_version" -e "@$work/cilogon.yml"; then
+	check 'CILogon activates through the configuration update' pass
+else
+	check 'CILogon activates through the configuration update' fail
+	tail -20 "$work/cilogon-enable.log" >&2
+fi
+expect 'the CILogon issuer is rendered' "$dispatcher_toml" 'issuer = "https://cilogon.org"'
+expect 'browser CLI approval uses the configured audience' "$dispatcher_toml" 'public_url = "https://api.fixture.invalid/api"'
+expect 'browser CLI approval uses the configured console' "$dispatcher_toml" 'device_verification_url = "https://api.fixture.invalid/console/device"'
+expect 'the updated unit loads CILogon credentials' \
+	"$host/etc/systemd/system/debuglet-dispatcher.service" \
+	"EnvironmentFile=$host/etc/debuglet/dispatcher/cilogon-oidc.env"
+expect 'the updated unit retains GitHub credentials' \
+	"$host/etc/systemd/system/debuglet-dispatcher.service" \
+	"EnvironmentFile=$host/etc/debuglet/dispatcher/github-oauth.env"
+if cmp -s "$work/cilogon_oidc.env" "$host/etc/debuglet/dispatcher/cilogon-oidc.env" &&
+	[ "$(stat -c %a "$host/etc/debuglet/dispatcher/cilogon-oidc.env")" = 600 ]; then
+	check 'CILogon credentials are installed privately' pass
+else
+	check 'CILogon credentials are installed privately' fail
+fi
+for file in "$dispatcher_toml" "$host/etc/systemd/system/debuglet-dispatcher.service" "$work/cilogon-enable.log"; do
+	refute 'the CILogon client secret is excluded from rendered config and logs' "$file" 'fixture-secret'
+done
+printf '%s\n' 'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
+	'CILOGON_CLIENT_SECRET=cilogon-fixture-rotated' >"$work/cilogon_oidc.env"
+if run "$work/cilogon-rotate.log" update-config.yml --limit dispatcher \
+	-e "deploy_version=$release_version" -e "@$work/cilogon.yml" &&
+	cmp -s "$work/cilogon_oidc.env" "$host/etc/debuglet/dispatcher/cilogon-oidc.env"; then
+	check 'a configuration update replaces CILogon credentials' pass
+else
+	check 'a configuration update replaces CILogon credentials' fail
+	tail -20 "$work/cilogon-rotate.log" >&2
+fi
+refute 'rotation keeps the new secret out of deployment logs' "$work/cilogon-rotate.log" 'cilogon-fixture-rotated'
+if run "$work/cilogon-disable.log" update-config.yml --limit dispatcher \
+	-e "deploy_version=$release_version" -e dispatcher_cilogon_oidc_enabled=false; then
+	check 'CILogon can be disabled through a configuration update' pass
+else
+	check 'CILogon can be disabled through a configuration update' fail
+	tail -20 "$work/cilogon-disable.log" >&2
+fi
+if [ "$(cilogon_enabled)" = 'enabled = false' ]; then
+	check 'disabled CILogon is rendered as disabled' pass
+else
+	check 'disabled CILogon is rendered as disabled' fail
+fi
+refute 'browser CLI approval is removed with its URLs' "$dispatcher_toml" '[authentication]'
+refute 'disabled CILogon is not loaded by systemd' \
+	"$host/etc/systemd/system/debuglet-dispatcher.service" 'cilogon-oidc.env'
 
 # -------------------------------------------------- shared executor host ---
 # Snapshot prod, including links, before applying dev to the same temporary
