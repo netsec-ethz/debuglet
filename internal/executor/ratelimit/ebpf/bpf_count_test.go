@@ -20,6 +20,9 @@ import (
 )
 
 func TestCounterObjectOwnershipList(t *testing.T) {
+	if state := new(BpfCount).AttachmentState(); state != "unknown" {
+		t.Fatalf("uninitialized counter: %s", state)
+	}
 	objects := countObjects{
 		countPrograms: countPrograms{HandleEgress: new(ebpf.Program), HandleIngress: new(ebpf.Program)},
 		countMaps: countMaps{
@@ -336,6 +339,27 @@ func TestBPFCounterLinuxLoad(t *testing.T) {
 	})
 	if len(count.cleanup.resources) != 9 {
 		t.Fatalf("owned kernel handles=%d want=9", len(count.cleanup.resources))
+	}
+	if state := count.AttachmentState(); state != "present" {
+		t.Fatalf("attached counter observation: %s", state)
+	}
+	// Detach only this fixture's owned egress link, retaining the FD. Successful
+	// Info alone must not call this healthy. No traffic is sent by this check.
+	if err := count.attachmentLinks[0].(link.Link).Detach(); err != nil {
+		t.Fatal(err)
+	}
+	if state := count.AttachmentState(); state != "missing" {
+		t.Fatalf("detached counter observation: %s", state)
+	}
+	replacement, err := NewBPFCount(iface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := replacement.AttachmentState(); state != "present" {
+		t.Errorf("replacement counter observation: %s", state)
+	}
+	if err := replacement.Close(); err != nil {
+		t.Fatal(err)
 	}
 	// A run's executor limit is removed from the kernel map, and removing one
 	// that is already gone succeeds: unregistration removes it unconditionally.

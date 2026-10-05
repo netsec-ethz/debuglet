@@ -120,3 +120,71 @@ func TestMetricsConcurrentCollectionRefusesWithoutWaiting(t *testing.T) {
 		t.Fatalf("busy scrape: %d %s", recorder.Code, recorder.Body)
 	}
 }
+
+func TestMetricsResourcesOmitPartialAggregates(t *testing.T) {
+	rss, ratio := 1024.0, .05
+	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 2, Health: dispatcher.ExecutorHealthMetrics{
+		AttachmentPresent: 1, AttachmentUnknown: 1,
+		RSS:                 dispatcher.ExecutorResourceMetric{Value: &rss, Unknown: 1},
+		StateAvailableRatio: dispatcher.ExecutorResourceMetric{Value: &ratio},
+	}}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	for _, want := range []string{
+		`debuglet_executors_counter_attachment{state="unknown"} 1`,
+		`debuglet_executor_process_rss_bytes_max_unknown 1`,
+		`debuglet_observation_available{observation="executor_process_rss_bytes_max",reason="incomplete"} 0`,
+		`debuglet_executor_state_available_ratio_min 0.05`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if strings.Contains(out, "\ndebuglet_executor_process_rss_bytes_max ") {
+		t.Fatal("partial maximum appeared complete")
+	}
+	c.Health.RSS.Unknown = 0
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if !strings.Contains(out, "\ndebuglet_executor_process_rss_bytes_max 1024\n") {
+		t.Fatal("complete maximum missing")
+	}
+	c.Registered = 0
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, "\ndebuglet_executor_process_rss_bytes_max ") || !strings.Contains(out, `observation="executor_process_rss_bytes_max",reason="no_executors"`) {
+		t.Fatal("empty registry appeared numeric")
+	}
+}
+
+func TestMetricsDisclosureLagOmittedWhileAnyExecutorUnknown(t *testing.T) {
+	lag := 12.5
+	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 2, Health: dispatcher.ExecutorHealthMetrics{
+		DisclosureLag: dispatcher.ExecutorResourceMetric{Value: &lag, Unknown: 1},
+	}}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	for _, want := range []string{
+		"\ndebuglet_executors_disclosure_lag_unknown 1\n",
+		`debuglet_observation_available{observation="executor_disclosure_lag_seconds",reason="incomplete"} 0`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if strings.Contains(out, "\ndebuglet_executor_disclosure_lag_seconds ") || strings.Contains(out, `observation="disclosure_lag_seconds"`) {
+		t.Fatal("partial disclosure lag appeared complete, or is still unsupported")
+	}
+	c.Health.DisclosureLag.Unknown = 0
+	out = formatMetrics(c, observability.HostSnapshot{})
+	for _, want := range []string{
+		"\ndebuglet_executors_disclosure_lag_unknown 0\n",
+		"\ndebuglet_executor_disclosure_lag_seconds 12.5\n",
+		`debuglet_observation_available{observation="executor_disclosure_lag_seconds",reason=""} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	c.Registered, c.Health.DisclosureLag = 0, dispatcher.ExecutorResourceMetric{}
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, "\ndebuglet_executor_disclosure_lag_seconds ") || !strings.Contains(out, `observation="executor_disclosure_lag_seconds",reason="no_executors"`) || !strings.Contains(out, "\ndebuglet_executors_disclosure_lag_unknown 0\n") {
+		t.Fatal("empty registry appeared numeric")
+	}
+}

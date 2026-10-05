@@ -43,6 +43,77 @@ Keep it off in a managed deployment. Authentication does not provide a general
 registration, login or workload abuse prevention service; restrict exposure to
 the intended users.
 
+### Accounts, sessions and provider sign-in
+
+The dispatcher issues and verifies every Debuglet credential. After a provider
+sign-in, a browser holds its session only as an `HttpOnly`, `SameSite=Strict`
+cookie, marked `Secure` when the dispatcher serves TLS or is configured behind
+a TLS terminator, and repeats the session's CSRF token in the `X-Debuglet-CSRF`
+header of every cookie-authenticated change. `dbl` and other API clients present
+a bearer credential. GitHub OAuth and CILogon OIDC only identify a person: their
+authorization codes and tokens are used during the callback exchange and never
+become or are stored as Debuglet credentials. Account keys, recovery codes,
+sessions and API credentials are stored only as SHA-256 digests of their secret
+part.
+
+Sessions and API credentials expire twelve hours after issue and are not
+extended by use. A provider sign-in attempt and a device-login request expire
+after ten minutes. Creating, listing or revoking API credentials, approving a
+device and changing sign-in methods require a browser session authenticated in
+the last ten minutes. An API credential carries only the approved scopes among
+`account:read`, `measurements:read`, `measurements:write`, `executors:read` and
+`executors:write`, is accepted only for the configured
+`authentication.public_url` audience and never from a cookie, and cannot manage
+credentials or sign-in methods. Logout revokes the presenting session;
+`dbl logout` also forgets the stored copy.
+
+Protections:
+
+- Login CSRF and code interception: every sign-in uses PKCE (`S256`) and a
+  random state, stored server-side only as a hash, consumed once and matched
+  against short-lived `HttpOnly` cookies of the browser that started it.
+- Forged CILogon tokens: the ID token's signature, issuer, audience, expiry,
+  nonce, authorized party and access-token hash are checked; any failure
+  creates no session.
+- Provider mix-up: each provider has its own callback and cookies, and an
+  attempt is consumed only by the provider that started it. GitHub identities
+  use the fixed issuer `https://github.com`; the CILogon issuer must be
+  `https://cilogon.org` or `https://test.cilogon.org`.
+- Open redirect: the configured callback is the redirect URI, and the callback
+  returns only to the configured success URL; both are absolute HTTPS URLs on
+  one origin without query or fragment.
+- Session fixation: the server mints a new session at sign-in and revokes the
+  browser's previous session.
+- Device-login phishing: approval needs a recent browser session, the requested
+  audience must be this dispatcher, the label and scopes can be inspected first,
+  and the approval must be confirmed explicitly. A request is consumed once;
+  revoking the approving session cancels an unconsumed approval.
+
+An external identity is its issuer and subject. Names never match accounts and
+email is not read, so a first sign-in creates a new ordinary account. Linking requires a recent session, a fresh provider sign-in started
+from it and explicit confirmation; an identity owned by another account is
+refused. Removing a method is refused when no other enabled method and no
+recovery code would remain. Linking or removing revokes all of the account's
+sessions and API credentials and issues a new browser session. A recovery code
+names only its own account: using it replaces the account key and recovery
+code and revokes every session of that account. No route claims an account by
+UUID or email.
+
+The dispatcher logs sign-in method changes, device-login decisions and
+completions, and API credential issuance and revocation with the account ID and,
+where one applies, the credential identifier, never the secret. Successful provider sign-ins are not
+logged as separate events. The request log records the matched route, never the
+raw URL or query, so authorization codes and state values are not logged.
+Private error diagnostics replace the request's `Authorization` header, bearer
+token and cookie values with `[redacted]`.
+
+`server.local_development` serves requests that present no credential as the
+local operator. It requires `tls.disable = true`, `sui.disabled = true`,
+`server.behind_tls_terminator = false` and a loopback `server.bind_host`, and
+the dispatcher refuses to start unless both listeners are bound to loopback. A
+presented credential is still verified. The deployment templates do not enable
+it.
+
 ### Dispatcher and executor control
 
 Both control paths use the negotiated binding, secret session token and a live
