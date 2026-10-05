@@ -85,6 +85,32 @@ changes; the linked API and deployment documentation contains operational detail
   without a seed and starts on an unready clock still lose the tail. The
   dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
   against its recorded chain.
+- Executor: a destination the dispatcher marks `denied` in a bandwidth
+  snapshot (#74; `DestinationLimit.denied`, additive) is refused for new
+  connections, datagrams and accepted peers, by name and by the addresses
+  the name resolved to, and the active TCP, TLS, UDP and ICMP sockets of
+  every run to it are closed before the snapshot's revision is
+  acknowledged, including a connection still being made at that moment. A
+  guest using `debuglet_io_v1` sees a closed socket and continues; a guest
+  blocked in a legacy socket import fails as on a lost connection. One
+  `Destination revoked` log line per run carries the socket count. A later
+  snapshot without the flag allows the destination again; executors and
+  dispatchers that do not set it behave as before. See
+  `docs/operations/socket-limits.md` for the bound.
+- Recorded destination opt-outs (API 1.17, dispatcher schema 25). `PATCH
+  /destination` accepts `denied`, `reason` and `expires_at`; a denied
+  destination refuses every new submission and allocation, zero floors
+  included. Each change
+  is appended to the dispatcher database with its operator account before it
+  applies, is applied again at startup, and an expiry is recorded as an
+  `allow` event of the dispatcher. `GET /destinations` lists the current
+  policies with their delivery state. Executors receive a denied destination
+  as a zero limit with the new `DestinationLimit.denied` flag in every
+  snapshot; executors of this release close the active sockets (see the
+  executor entry), older ones reduce running runs to their floor and are
+  listed as unconfirmed. Dispatcher
+  databases require the explicit upgrade to schema 25. See
+  `docs/operations/configuration.md#destination-limits-and-opt-outs`.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

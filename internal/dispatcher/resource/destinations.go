@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/avl"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"iter"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ var (
 	ErrMinGreater     = errors.New("minimum is greater than maximum bandwidth limit")
 	ErrCapacityFull   = errors.New("insufficient capacity")
 	ErrPolicyConflict = errors.New("destination is already allocated to the run with different limits")
+	ErrDenied         = errors.New("destination is denied by its operator")
 )
 
 type storeKey struct {
@@ -61,6 +63,9 @@ type DestinationsUsage struct {
 	store           map[storeKey]*storeValue
 	activeDebuglets map[activeKey]allocation
 	defaultCap      bitrate.Bitrate
+	// Destinations an operator denied. Nothing new is admitted on them, and
+	// what is already allocated there is shared nothing above zero.
+	denied map[string]struct{}
 }
 
 func NewDestinations(defaultCap bitrate.Bitrate) *DestinationsUsage {
@@ -71,6 +76,7 @@ func NewDestinations(defaultCap bitrate.Bitrate) *DestinationsUsage {
 		store:           make(map[storeKey]*storeValue),
 		activeDebuglets: make(map[activeKey]allocation),
 		defaultCap:      defaultCap,
+		denied:          make(map[string]struct{}),
 	}
 }
 
@@ -78,6 +84,10 @@ func NewDestinations(defaultCap bitrate.Bitrate) *DestinationsUsage {
 // allocation path decides capacity itself, so this remains only as a capacity
 // query for callers and tests of other packages.
 func (d *DestinationsUsage) CheckCapacity(destination string, minimum bitrate.Bitrate) error {
+	destination = netpolicy.DestinationKey(destination)
+	if d.Denied(destination) {
+		return fmt.Errorf("%s: %w", destination, ErrDenied)
+	}
 	cap := d.Cap(destination)
 	used := d.usedCapacities[destination]
 	if used+minimum > cap {
@@ -87,6 +97,7 @@ func (d *DestinationsUsage) CheckCapacity(destination string, minimum bitrate.Bi
 }
 
 func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], bitrate.Bitrate) {
+	destination = netpolicy.DestinationKey(destination)
 	tree, exists := d.trees[destination]
 	if !exists {
 		tree = &avl.AVL[string]{}
@@ -96,6 +107,7 @@ func (d *DestinationsUsage) getTreeCap(destination string) (*avl.AVL[string], bi
 }
 
 func (d *DestinationsUsage) Cap(destination string) bitrate.Bitrate {
+	destination = netpolicy.DestinationKey(destination)
 	cap, exists := d.capacities[destination]
 	if !exists {
 		cap = d.defaultCap
@@ -124,6 +136,7 @@ func (d *DestinationsUsage) Allocate(debugletID uuid.UUID, executorID string, de
 	pending := make([]string, 0, len(destinations))
 	seen := make(map[string]struct{}, len(destinations))
 	for _, destination := range destinations {
+		destination = netpolicy.DestinationKey(destination)
 		if _, repeated := seen[destination]; repeated {
 			continue
 		}
@@ -149,6 +162,9 @@ func (d *DestinationsUsage) Allocate(debugletID uuid.UUID, executorID string, de
 
 // charge applies a decision that is known not to be recorded yet.
 func (d *DestinationsUsage) charge(debugletID uuid.UUID, destination string, decision allocation) error {
+	if d.Denied(destination) {
+		return fmt.Errorf("allocation failed on %s: %w", destination, ErrDenied)
+	}
 	used := d.usedCapacities[destination]
 	if cap := d.Cap(destination); used+decision.minimum > cap {
 		return fmt.Errorf("%s destination capacity exceeded (want %s, have %s): %w", destination, decision.minimum, cap-used, ErrCapacityFull)
@@ -175,6 +191,7 @@ func (d *DestinationsUsage) charge(debugletID uuid.UUID, destination string, dec
 // release always returns exactly the capacity its allocation charged. Removing
 // an allocation that is not recorded does nothing.
 func (d *DestinationsUsage) Remove(debugletID uuid.UUID, destination string) {
+	destination = netpolicy.DestinationKey(destination)
 	key := activeKey{debugletID, destination}
 	recorded, active := d.activeDebuglets[key]
 	if !active {
@@ -230,12 +247,14 @@ func (d *DestinationsUsage) Len() int {
 // tuples of (ID, new maximum bandwidth).
 //
 // The fairshare respects the minimum bandwidth of each ID.
-// It is guaranteed that ID.maximum >= fairshare >= ID.minimum for all IDs.
+// It is guaranteed that ID.maximum >= fairshare >= ID.minimum for all IDs,
+// except on a denied destination, where every ID is given zero.
 //
 // An executor is a member of the tree of a destination exactly while it holds
 // totals there, and it is a member once, so every node has its totals and each
 // executor is yielded a single time.
 func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, bitrate.Bitrate] {
+	destination = netpolicy.DestinationKey(destination)
 	tree, cap := d.getTreeCap(destination)
 	usage := d.usedCapacities[destination]
 
@@ -248,11 +267,15 @@ func (d *DestinationsUsage) Fairshare(destination string) iter.Seq2[string, bitr
 		shareable = 0
 	}
 	fairshare := tree.Fairshare(int64(shareable))
+	_, denied := d.denied[destination]
 	return func(yield func(string, bitrate.Bitrate) bool) {
 		for n := range tree.Range(avl.Unbounded, avl.Unbounded) {
 			jk := storeKey{ID: n.ID, destination: destination}
 			s := d.store[jk]
 			actualLimit := min(s.maximum, bitrate.Bitrate(fairshare)+s.minimum)
+			if denied {
+				actualLimit = 0
+			}
 			if !yield(n.ID, actualLimit) {
 				return
 			}
@@ -281,9 +304,48 @@ func (d *DestinationsUsage) ForExecutor(executorID string) iter.Seq2[string, bit
 // floors already charged there is refused and nothing is recorded: those
 // floors were admitted and stay, so the limit can be lowered once they end.
 func (d *DestinationsUsage) SetLimit(destination string, limit bitrate.Bitrate) error {
-	if used := d.usedCapacities[destination]; limit < used {
-		return fmt.Errorf("%s destination limit below its charged floors (want %s, charged %s): %w", destination, limit, used, ErrCapacityFull)
+	destination = netpolicy.DestinationKey(destination)
+	if err := d.CheckLimit(destination, limit); err != nil {
+		return err
 	}
 	d.capacities[destination] = limit
 	return nil
+}
+
+// CheckLimit reports whether SetLimit would accept limit, changing nothing.
+func (d *DestinationsUsage) CheckLimit(destination string, limit bitrate.Bitrate) error {
+	destination = netpolicy.DestinationKey(destination)
+	if used := d.usedCapacities[destination]; limit < used {
+		return fmt.Errorf("%s destination limit below its charged floors (want %s, charged %s): %w", destination, limit, used, ErrCapacityFull)
+	}
+	return nil
+}
+
+// ResetLimit removes the recorded limit of a destination, which then has the
+// default capacity again. Unlike SetLimit it never refuses: floors already
+// charged above the default stay, and nothing more is shared until they end.
+func (d *DestinationsUsage) ResetLimit(destination string) {
+	destination = netpolicy.DestinationKey(destination)
+	delete(d.capacities, destination)
+}
+
+// Deny refuses every new allocation on a destination, whatever its floor,
+// zero included, until Allow. Allocations already recorded there stay until
+// their runs end, and Fairshare gives them zero. The limit is kept as it is.
+func (d *DestinationsUsage) Deny(destination string) {
+	destination = netpolicy.DestinationKey(destination)
+	d.denied[destination] = struct{}{}
+}
+
+// Allow lifts a Deny. The limit of the destination is not changed.
+func (d *DestinationsUsage) Allow(destination string) {
+	destination = netpolicy.DestinationKey(destination)
+	delete(d.denied, destination)
+}
+
+// Denied reports whether a destination is denied.
+func (d *DestinationsUsage) Denied(destination string) bool {
+	destination = netpolicy.DestinationKey(destination)
+	_, denied := d.denied[destination]
+	return denied
 }

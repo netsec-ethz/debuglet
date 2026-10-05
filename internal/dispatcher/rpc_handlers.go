@@ -15,6 +15,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -346,7 +347,7 @@ func repeatsPolicy(requested *pb.DebugletPolicy, floor, ceil bitrate.Bitrate, de
 func destinationSet(addresses []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(addresses))
 	for _, address := range addresses {
-		set[address] = struct{}{}
+		set[netpolicy.DestinationKey(address)] = struct{}{}
 	}
 	return set
 }
@@ -665,9 +666,15 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 			return nil, err
 		}
 	}
+	seen := make(map[string]struct{}, len(dests))
 	for _, dest := range dests {
+		dest = netpolicy.DestinationKey(dest)
+		if _, duplicate := seen[dest]; duplicate {
+			continue
+		}
+		seen[dest] = struct{}{}
 		for id, limit := range d.destinations.Fairshare(dest) {
-			perExec[id] = append(perExec[id], &pb.DestinationLimit{Address: dest, BitsLimit: int64(limit)})
+			perExec[id] = append(perExec[id], d.destinationLimitLocked(dest, limit))
 		}
 	}
 	for id, updates := range perExec {
@@ -676,7 +683,7 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		var admitErr error
 		entry := d.executors[id]
 		var revision uint64
-		ordered := entry != nil && entry.bandwidthVersion == 1
+		ordered := entry != nil && entry.bandwidthVersion >= 1
 		if entry != nil && (owner == nil || id != owner.ExecutorID() || entry.owner == owner) {
 			entry.bandwidthPending = true
 			entry.bandwidthRevision++
@@ -793,7 +800,7 @@ func (work *fairshareWork) send(ctx context.Context) error {
 func (d *Dispatcher) allocationSnapshot(executorID string) []*pb.DestinationLimit {
 	var updates []*pb.DestinationLimit
 	for address, limit := range d.destinations.ForExecutor(executorID) {
-		updates = append(updates, &pb.DestinationLimit{Address: address, BitsLimit: int64(limit)})
+		updates = append(updates, d.destinationLimitLocked(address, limit))
 	}
 	return updates
 }
@@ -817,7 +824,7 @@ func (d *Dispatcher) reconcileFairshare(ctx context.Context, origin *rpc.Mutatio
 		return
 	}
 	entry.bandwidthRevision++
-	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion == 1, wait: entry.bandwidthTail, done: make(chan struct{})}
+	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion >= 1, wait: entry.bandwidthTail, done: make(chan struct{})}
 	r.revision = entry.bandwidthRevision
 	entry.bandwidthTail = r.done
 	d.mu.Unlock()

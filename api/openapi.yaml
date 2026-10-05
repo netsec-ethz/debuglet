@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.16"
+  version: "1.17"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -4081,8 +4081,8 @@ paths:
   /destination:
     patch:
       operationId: "setDestinationLimit"
-      summary: "Set the bandwidth limit of one destination."
-      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Current executors apply acknowledged full snapshots in session revision order, so an older delivery cannot overwrite a newer one. Failed application stays pending and is retried on that exact session’s heartbeat. Legacy executors may receive the limit but cannot confirm ordered application; the response instructs the operator to upgrade them. This route does not guarantee workload revocation."
+      summary: "Set the bandwidth limit of one destination, or deny it."
+      description: "An operator operation outside the researcher-facing flow. Each request states the complete policy of the destination: a limit, or a deny, which refuses every new submission (409 capacity_exhausted on PUT /debuglet) and allocation there whatever its floor and records no limit. A reason is required to deny or to lower the limit; expires_at returns the destination to the default capacity at that time, recorded as an allow event by the actor system. The policy is appended to the destination's durable history with the operator account as its actor before it applies, and it is applied again when the dispatcher restarts. A deny is sent to executors holding an allocation as a zero limit with the denied flag. An executor of this release, advertising bandwidth version 2, closes the active sockets to the destination before it acknowledges, and only its acknowledgement confirms a deny. An executor that predates this release only applies the zero limit, so a run admitted before the deny keeps its admitted floor until it ends; it is counted as unconfirmed even when it acknowledges. It records the policy, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Current executors apply acknowledged full snapshots in session revision order, so an older delivery cannot overwrite a newer one. Failed application stays pending and is retried on that exact session’s heartbeat. Legacy executors may receive the limit but cannot confirm ordered application; the response instructs the operator to upgrade them. This route does not guarantee workload revocation."
       requestBody:
         required: true
         content:
@@ -4098,14 +4098,14 @@ paths:
             type: string
       responses:
         "204":
-          description: "The limit was recorded and every executor holding an allocation on the destination acknowledged the recomputed share."
+          description: "The policy was recorded and every executor holding an allocation on the destination acknowledged the recomputed share."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
                 type: string
         "400":
-          description: "Malformed body (invalid_request) or a limit outside its documented range (invalid_policy)."
+          description: "Malformed body, an empty or oversized destination, a missing or oversized reason, or an expires_at that is not a future RFC 3339 time (invalid_request), or a limit outside its documented range (invalid_policy). Nothing is recorded."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4160,7 +4160,86 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: "The limit was recorded but at least one executor did not acknowledge ordered application (internal_error). Pending delivery is retried on heartbeat; the request may also be repeated. Legacy peers require an executor upgrade first."
+          description: "The policy was recorded but at least one executor did not acknowledge ordered application, or a deny reached an executor that predates destination denials and cannot revoke active traffic (internal_error); GET /destinations counts it as unconfirmed. Pending delivery is retried on heartbeat; the request may also be repeated. Legacy peers require an executor upgrade first. When the change itself could not be recorded the message is 'destination policy could not be recorded': nothing was applied and the previous policy stays in force."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /destinations:
+    get:
+      operationId: "listDestinationPolicies"
+      summary: "List the current policy of every destination that has one."
+      description: "An operator operation. Each entry is the latest recorded event of its destination: its kind, limit, reason, actor, set and expiry times and revision, and whether every executor that held an allocation on the destination when it was applied in this dispatcher lifetime acknowledged it. After a restart no allocation survives, so a restored policy has no recipients and reads confirmed."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The current destination policies, ordered by destination."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DestinationPolicies"
+        "400":
+          description: "An unsupported Debuglet-API-Version (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The authenticated account is not an operator (forbidden)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The recorded policies could not be read (internal_error)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -7864,7 +7943,87 @@ components:
           format: int64
           minimum: 0
           maximum: 1000000000000000
-          description: "Bandwidth limit in bits per second, at most 1000000000000000 (1 Pbit/s). It becomes the capacity the runs of the destination are shared out of, so it is held to the same range as the bandwidth of a policy."
+          description: "Bandwidth limit in bits per second, at most 1000000000000000 (1 Pbit/s). It becomes the capacity the runs of the destination are shared out of, so it is held to the same range as the bandwidth of a policy. It is not recorded while the destination is denied."
+        denied:
+          type: boolean
+          description: "Deny the destination: every new allocation there is refused, whatever its floor. False, or absent, lifts a deny."
+        reason:
+          type: string
+          description: "Why the policy is set, recorded with it, at most 500 bytes. Required to deny or to lower the limit."
+        expires_at:
+          type: string
+          format: date-time
+          description: "RFC 3339 time, in the future, at which the destination returns to the default capacity. Absent: no expiry."
+    DestinationPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - "destination"
+        - "kind"
+        - "denied"
+        - "limit"
+        - "reason"
+        - "actor"
+        - "set_at"
+        - "expires_at"
+        - "revision"
+        - "delivery"
+        - "recipients"
+        - "unconfirmed"
+      properties:
+        destination:
+          type: string
+        kind:
+          type: string
+          enum:
+            - "limit"
+            - "deny"
+            - "allow"
+          description: "allow is a return to the default capacity, recorded when a policy expires."
+        denied:
+          type: boolean
+        limit:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Bits per second; null for the default capacity or a deny."
+        reason:
+          type: string
+        actor:
+          type: string
+          description: "Account ID of the operator, local for the local development profile, or system for a change of the dispatcher itself."
+        set_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revision:
+          type: integer
+          format: int64
+          description: "Revision of the destination's policy history, increasing by one per event."
+        delivery:
+          type: string
+          enum:
+            - "confirmed"
+            - "unconfirmed"
+        recipients:
+          type: integer
+          description: "Executors holding an allocation on the destination when the policy was applied in this dispatcher lifetime."
+        unconfirmed:
+          type: integer
+          description: "Recipients that did not acknowledge the policy: refused, unreachable, or legacy executors that cannot confirm ordered application."
+    DestinationPolicies:
+      type: object
+      additionalProperties: false
+      required:
+        - "destinations"
+      properties:
+        destinations:
+          type: array
+          items:
+            $ref: "#/components/schemas/DestinationPolicy"
     PaymentIntentRequest:
       type: "object"
       additionalProperties: false

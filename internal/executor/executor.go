@@ -37,6 +37,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/isolation"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
@@ -87,6 +88,7 @@ type Executor struct {
 	bandwidthRevision uint64 // highest snapshot received, protected by mu
 	bandwidthApplied  uint64 // highest snapshot successfully published
 	running           map[uuid.UUID]RunningDebuglet
+	revoked           *netpolicy.Revocations // destinations the dispatcher denied; every run's policy shares it
 	mu                sync.RWMutex
 	limiter           *app.Limiter
 	packetCount       ratelimit.PacketCount
@@ -141,7 +143,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 		return nil, err
 	}
 	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport, retired: &node.retired,
-		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
+		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter, revoked: netpolicy.NewRevocations(),
 		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget, supervisor: node.supervisor,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
 		delivering: make(map[uuid.UUID]struct{}), outputDelivering: make(map[uuid.UUID]struct{}),

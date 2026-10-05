@@ -5,6 +5,7 @@ package wasm
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/guestio"
 )
@@ -114,5 +116,28 @@ func TestHostIORealPipeDeadlines(t *testing.T) {
 	}
 	if result := HostIOWrite(env)(ctx, mod, h, 0, 4); uint32(result>>32) != guestio.Closed {
 		t.Fatal(result)
+	}
+}
+
+// A socket closed because its destination was denied is an ordinary closed
+// socket to the guest, and a denied dial is a policy denial.
+func TestHostIORevokedAndDeniedDestinations(t *testing.T) {
+	mod, env := newGuestModule(t), newReceiveEnv()
+	h, err := env.Registry.Add(&scriptedSocket{typ: socket.SocketTypeTCP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed := env.Registry.CloseRemote(func(string) bool { return true }); closed != 1 {
+		t.Fatalf("closed %d sockets", closed)
+	}
+	ctx := context.Background()
+	if result := HostIORead(env)(ctx, mod, h, 0, 4); uint32(result>>32) != guestio.Closed {
+		t.Fatalf("read of a revoked socket = %x", result)
+	}
+	if result := HostIOClose(env)(ctx, h); uint32(result>>32) != guestio.Closed {
+		t.Fatalf("close of a revoked socket = %x", result)
+	}
+	if result := ioResult(-1, fmt.Errorf("connect: %w", netpolicy.ErrDestinationDenied)); uint32(result>>32) != guestio.Denied {
+		t.Fatalf("denied dial = %x", result)
 	}
 }

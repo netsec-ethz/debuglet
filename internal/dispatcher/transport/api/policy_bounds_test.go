@@ -328,7 +328,8 @@ func TestDestinationLimitBoundsMatchTheDocumentedRange(t *testing.T) {
 	// The boundaries of the documented range are applied.
 	for _, limit := range []int64{0, 1000, maxBandwidthBPS} {
 		f := modeNewFixture(t)
-		rec := f.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit})
+		dlExpectPolicyRecord(f.mock, destination, limit)
+		rec := f.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit, Reason: "capacity planning"})
 		modeAssertStatus(t, rec, http.StatusNoContent)
 		f.expectationsMet("destination limit")
 	}

@@ -82,6 +82,7 @@ type Dispatcher struct {
 	settlementAfter int64
 
 	destinations *resource.DestinationsUsage
+	policies     destinationPolicies
 	Payment      *payments.PaymentHandler
 	scheduler    *schedule.JobScheduler
 	reservations map[uuid.UUID]schedule.Request
@@ -176,6 +177,11 @@ func (d *Dispatcher) RestoreScheduler(ctx context.Context) error {
 	if d.restored {
 		return errors.New("debuglet schedule was already restored in this dispatcher lifetime")
 	}
+	// Recorded destination policies govern admission before the first
+	// executor registers or any floor is reserved again.
+	if err := d.restoreDestinationPoliciesLocked(ctx); err != nil {
+		return err
+	}
 	now := d.now()
 	queries := database.New(d.db)
 	debuglets, err := queries.ListDebugletsEndAfter(ctx, models.NewUTCTime(now.Add(-expiredWindowGrace)))
@@ -251,28 +257,3 @@ func (d *Dispatcher) GetVersion() string         { return d.version }
 func (d *Dispatcher) GetKeyStore() *tag.KeyStore { return d.keystore }
 
 var ErrOrderedBandwidthUnsupported = errors.New("executor upgrade required for ordered destination updates")
-
-// SetDestinationLimit records the limit of destination and sends the share it
-// recomputes to every executor holding an allocation there, waiting up to
-// five seconds, on a context of its own, for those deliveries. A limit below
-// the floors already charged or reserved there is refused with resource.ErrCapacityFull
-// before anything is recorded or sent. Otherwise the limit governs admission
-// at once and stays recorded whether or not every executor acknowledged; the
-// error joins the failed deliveries.
-func (d *Dispatcher) SetDestinationLimit(destination string, limit bitrate.Bitrate) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	work, err := d.captureFairshareAfter(ctx, nil, []string{destination}, func() error {
-		// Runs admitted for a window still ahead hold their floors only in
-		// the scheduler; a lower limit would fail them at their allocation.
-		if reserved := d.scheduler.QueryMaxDest(destination, d.now(), maxReservableTime); limit < reserved {
-			return fmt.Errorf("%s destination limit below its reserved floors (want %s, reserved %s): %w", destination, limit, reserved, resource.ErrCapacityFull)
-		}
-		return d.destinations.SetLimit(destination, limit)
-	})
-	if err != nil {
-		return err
-	}
-	work.requireOrdered = true
-	return work.send(ctx)
-}
