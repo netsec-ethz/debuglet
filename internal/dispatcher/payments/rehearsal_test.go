@@ -722,6 +722,9 @@ func drillFailedRefund(r *rehearsal) {
 		if decided, err = database.New(r.db).GetOrderSettlement(r.ctx(), database.GetOrderSettlementParams{TransactionID: testTxID, OrderID: 1}); err != nil {
 			t.Fatal(err)
 		}
+		if outcome, err := r.h.RefundOutcomeOf(r.ctx(), testTxID); outcome != RefundFailed || err != nil {
+			t.Fatalf("refund outcome (%v, %v), want %v", outcome, err, RefundFailed)
+		}
 	})
 	r.step("passes and reconciliation", func() {
 		r.pass(0)
@@ -754,6 +757,9 @@ func drillFailedRefund(r *rehearsal) {
 	after, err := database.New(r.db).GetOrderSettlement(r.ctx(), database.GetOrderSettlementParams{TransactionID: testTxID, OrderID: 1})
 	if err != nil || after != decided {
 		t.Fatalf("the settlement of the failed refund changed: %+v, was %+v (%v)", after, decided, err)
+	}
+	if outcome, err := r.h.RefundOutcomeOf(r.ctx(), testTxID); outcome != RefundSent || err != nil {
+		t.Fatalf("refund outcome after the confirmed refund (%v, %v), want %v", outcome, err, RefundSent)
 	}
 	r.expectTables(`
 transactions
@@ -873,7 +879,11 @@ func drillDisabled(r *rehearsal) {
 		disabled("refund", r.h.SettleTerminalOrder(r.ctx(), &runs[1], 3))
 		disabled("RefundDebugletOrder", r.h.RefundDebugletOrder(&runs[1], rehearsalBuyer, r.ctx()))
 		disabled("RefundTransaction", r.h.RefundTransaction(testTxID, r.ctx()))
-		disabled("RefundUnadmittedTransaction", r.h.RefundUnadmittedTransaction(testTxID, r.ctx()))
+		outcome, err := r.h.RefundUnadmittedTransaction(testTxID, r.ctx())
+		disabled("RefundUnadmittedTransaction", err)
+		if outcome != RefundLocal {
+			t.Fatalf("refused RefundUnadmittedTransaction outcome %v, want %v", outcome, RefundLocal)
+		}
 		disabled("PayoutExecutor", r.h.PayoutExecutor(earningOf(t, r.db, testExecutor), r.ctx()))
 		disabled("TransferUSDC", r.h.TransferUSDC(1, testWallet, r.ctx()))
 		disabled("ReconcileTransfers", r.h.ReconcileTransfers(r.ctx(), 10))
