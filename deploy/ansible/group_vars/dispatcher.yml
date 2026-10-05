@@ -43,11 +43,12 @@ dispatcher_github_oauth_env_file: "{{ playbook_dir }}/secrets/{{ debuglet_env }}
 dispatcher_github_oauth_callback_url: "https://{{ dispatcher_base_url }}/api/auth/github/callback"
 dispatcher_github_oauth_success_url: "https://{{ dispatcher_base_url }}/console/"
 
-# CILogon sign-in. Its CILOGON_CLIENT_ID and CILOGON_CLIENT_SECRET live in the
-# same owner-only env file as the GitHub credentials, which the unit loads. The
+# CILogon sign-in. CILOGON_CLIENT_ID and CILOGON_CLIENT_SECRET stay in their
+# own ignored, owner-only file, which the unit loads only when this is on. The
 # client registered at CILogon must list exactly the callback URL below; a
 # client approved on cilogon.org does not work against test.cilogon.org.
 dispatcher_cilogon_oidc_enabled: false
+dispatcher_cilogon_oidc_env_file: "{{ playbook_dir }}/secrets/{{ debuglet_env }}/cilogon_oidc.env"
 dispatcher_cilogon_oidc_issuer: "https://cilogon.org"
 dispatcher_cilogon_oidc_callback_url: "https://{{ dispatcher_base_url }}/api/auth/cilogon/callback"
 dispatcher_cilogon_oidc_success_url: "https://{{ dispatcher_base_url }}/console/"

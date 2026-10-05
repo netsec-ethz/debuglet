@@ -117,13 +117,15 @@ printf '%s\n' 'dispatcher.fixture.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF
 # OAuth stays enabled in the rendered production profile. These credentials
 # belong only to this offline fixture; no provider is contacted.
 printf '%s\n' 'GITHUB_OAUTH_CLIENT_ID=fixture-client' \
-	'GITHUB_OAUTH_CLIENT_SECRET=fixture-secret' \
-	'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
-	'CILOGON_CLIENT_SECRET=fixture-secret' >"$work/github-oauth.env"
+	'GITHUB_OAUTH_CLIENT_SECRET=fixture-secret' >"$work/github-oauth.env"
 chmod 0600 "$work/github-oauth.env"
-# The same file without CILogon entries, for the preflight refusal below.
-grep -v '^CILOGON_' "$work/github-oauth.env" >"$work/github-only.env"
-chmod 0600 "$work/github-only.env"
+# CILogon is enabled in the production profile too, from its own file.
+printf '%s\n' 'CILOGON_CLIENT_ID=cilogon:/client_id/fixture' \
+	'CILOGON_CLIENT_SECRET=fixture-secret' >"$work/cilogon_oidc.env"
+chmod 0600 "$work/cilogon_oidc.env"
+# A CILogon file that lacks the secret, for the preflight refusal below.
+grep -v '^CILOGON_CLIENT_SECRET' "$work/cilogon_oidc.env" >"$work/cilogon-incomplete.env"
+chmod 0600 "$work/cilogon-incomplete.env"
 
 # The inventory carries the host layout only. Everything a role would write to
 # a managed host is redirected with extra variables, which outrank both the
@@ -149,6 +151,7 @@ known_hosts_file: $work/known_hosts
 dispatcher_addr: dispatcher.fixture.invalid
 dispatcher_base_url: api.fixture.invalid
 dispatcher_github_oauth_env_file: $work/github-oauth.env
+dispatcher_cilogon_oidc_env_file: $work/cilogon_oidc.env
 dispatcher_grpc_port: 19001
 dispatcher_http_port: 19000
 deploy_version: fixture-1.2.3
@@ -303,8 +306,8 @@ refuses 'a database directory inside the configuration is refused' 'neither' \
 	-e "state_dir=$host/etc/debuglet/state"
 refuses 'a cleartext channel to a remote dispatcher is refused' 'literal loopback address' \
 	-e executor_disable_tls=true
-refuses 'CILogon without its credentials is refused' 'needs CILOGON_CLIENT_ID' \
-	-e "dispatcher_github_oauth_env_file=$work/github-only.env"
+refuses 'CILogon without its credentials is refused' 'cilogon_oidc.env.example' \
+	-e "dispatcher_cilogon_oidc_env_file=$work/cilogon-incomplete.env"
 refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certificate nothing presents' \
 	-e dispatcher_disable_tls=true
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \
@@ -436,6 +439,9 @@ expect 'the credentialed origin follows the API domain' "$dispatcher_toml" \
 	'["https://api.fixture.invalid"]'
 expect 'the production profile enables CILogon sign-in' "$dispatcher_toml" \
 	'callback_url = "https://api.fixture.invalid/api/auth/cilogon/callback"'
+expect 'the dispatcher unit loads the CILogon credentials' \
+	"$host/etc/systemd/system/debuglet-dispatcher.service" \
+	"EnvironmentFile=$host/etc/debuglet/dispatcher/cilogon-oidc.env"
 expect 'the executor carries its UUID identity' "$executor_toml" \
 	'executor_id = "5fe02882-0410-416c-9935-235090bcba0d"'
 
