@@ -175,6 +175,11 @@ changes; the linked API and deployment documentation contains operational detail
   `clock.max_error_ms` instead of reporting `clock: not_checked`: synchronized within the bound passes; unsynced or
   above the bound stays `not_checked` with the reason (the executor admits
   runs with degraded clock readiness); non-Linux hosts remain `not_checked`.
+- Operator `/metrics` adds executor daemon resources, owned TCX counter
+  attachment presence and the dispatcher-side disclosure delivery lag;
+  `deploy/monitoring/health-alerts.yml` alerts on low executor state storage
+  and on a disclosure lag above 90 s or unknown
+  (`docs/operations/metrics.md`, `docs/operations/monitoring.md`).
 
 ### Changed
 - Ended run windows now record local allocation reclamation separately from

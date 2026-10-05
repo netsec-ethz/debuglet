@@ -154,6 +154,12 @@ func newCredential(prefix string) (token, selector string, digest []byte, err er
 	return prefix + "_" + selector + "." + verifier, selector, digest, nil
 }
 
+// NewRecoveryCredential creates the same recovery-code format used by account
+// registration. Host administration stores its digest with a bounded lifetime.
+func NewRecoveryCredential() (token, selector string, digest []byte, err error) {
+	return newCredential(recoveryPrefix)
+}
+
 // parseCredential splits a presented credential of the expected kind. A value
 // of another kind, a malformed one or an oversized one is rejected without
 // touching the database.

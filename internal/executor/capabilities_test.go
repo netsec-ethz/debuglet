@@ -76,6 +76,9 @@ func TestCapabilityReportsUseLocalRuntimeObservations(t *testing.T) {
 	if v := p.GetVantagePoint(); v.GetSchemaVersion() != 1 || v.GetScionIsdAs() != "" || len(v.GetListeners()) != 0 {
 		t.Fatalf("plain vantage report: %v", v)
 	}
+	if v := p.GetVantagePoint(); v.GetResources() == nil || v.GetCounterAttachment() != "unknown" {
+		t.Fatal("resource observation missing or fallback claimed an attached counter")
+	}
 	calls := daemon.calls.Load()
 	for i := 0; i < 20; i++ {
 		if caps, vantage := scion.capabilityReport(t.Context(), false); caps != nil || vantage != nil {

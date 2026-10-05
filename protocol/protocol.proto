@@ -358,6 +358,21 @@ message VantagePointReport {
   string scion_host = 8; // Local host selected toward the configured SCION control service.
   string scion_path_target = 9; // Operator-configured remote ISD-AS; empty untested.
   ProbeState scion_paths = 10; // Daemon path availability, not data-plane reachability.
+  HostResources resources = 11; // Process and state-filesystem observations; operator metrics only.
+  string counter_attachment = 12; // present, missing or unknown: owned TCX links, not proof of packet policing.
+}
+
+message HostResourceValue {
+  optional uint64 value = 1;
+  string unavailable = 2; // missing, permission, read, limit, invalid or unsupported; empty with value.
+}
+
+// Collected sequentially, not an atomic host snapshot. A missing field is unknown.
+message HostResources {
+  HostResourceValue process_rss_bytes = 1;
+  HostResourceValue open_fds = 2;
+  HostResourceValue state_available_bytes = 3;
+  HostResourceValue state_capacity_bytes = 4;
 }
 
 message ReflectAddressRequest {

@@ -31,7 +31,7 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	MinimumDispatcherVersion int64 = 19
+	MinimumDispatcherVersion int64 = 20
 	MinimumExecutorVersion   int64 = 6
 )
 
@@ -70,6 +70,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
+			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
 			"measurement_profiles":       {"id", "user_id", "document"},
 			"measurement_requests":       {"debuglet_id", "document"},
