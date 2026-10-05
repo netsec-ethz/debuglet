@@ -185,9 +185,9 @@ an executor upgrade is required. Reconnection never retargets an old update.
 
 ### Destination policies
 
-API 1.15. `PATCH /destination` (operator) states the complete policy of one
-destination: `limit`, or `denied: true`, which refuses every new allocation
-there whatever its floor and records no limit; `denied: false` lifts a deny.
+API 1.16. `PATCH /destination` (operator) states the complete policy of one
+destination: `limit`, or `denied: true`, which refuses every new submission
+and allocation there whatever its floor and records no limit; `denied: false` lifts a deny.
 `reason` (at most 500 bytes) is required to deny or to lower the limit, and
 `expires_at` (RFC 3339, in the future) returns the destination to the default
 capacity at that time. Answers: 204 recorded and delivered, 400 invalid, 403
@@ -202,6 +202,7 @@ expiry), `denied`, `limit` (null for the default), `reason`, `actor` (account
 ID, `local`, or `system`), `set_at`, `expires_at`, `revision`, and `delivery`
 (`confirmed` or `unconfirmed`) with `recipients` and `unconfirmed` counts for
 the executors that held an allocation when it was applied in this dispatcher
-lifetime. A deny is sent as a zero limit with the denied flag. It does not yet
-stop runs that are already running; see
+lifetime. A deny is sent as a zero limit with the denied flag; an executor of
+this release closes the active sockets to the destination before it
+acknowledges, an older one only applies the zero limit and reads unconfirmed. See
 [destination limits and opt-outs](operations/configuration.md#destination-limits-and-opt-outs).

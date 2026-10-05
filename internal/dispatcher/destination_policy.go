@@ -14,6 +14,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 )
 
@@ -167,17 +168,6 @@ func (d *Dispatcher) changeDestinationPolicy(ctx context.Context, destination st
 	if err != nil {
 		return err
 	}
-	// A denied destination is sent with a zero limit, which an executor that
-	// does not know the flag still applies, and the flag itself.
-	d.mu.RLock()
-	for _, r := range work.recipients {
-		for _, update := range r.updates {
-			if d.destinations.Denied(update.GetAddress()) {
-				update.Denied, update.BitsLimit = true, 0
-			}
-		}
-	}
-	d.mu.RUnlock()
 	work.requireOrdered = true
 	sendErr := work.send(ctx)
 
@@ -349,4 +339,15 @@ func (d *Dispatcher) DestinationLimit(destination string) bitrate.Bitrate {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.destinations.Cap(destination)
+}
+
+// destinationLimitLocked is the wire form of the share of one destination.
+// Every snapshot an executor receives is its complete set, so each builder
+// marks a denied destination: with the flag, and with a zero limit that an
+// executor which does not know the flag still applies. The caller holds d.mu.
+func (d *Dispatcher) destinationLimitLocked(address string, limit bitrate.Bitrate) *pb.DestinationLimit {
+	if d.destinations.Denied(address) {
+		return &pb.DestinationLimit{Address: address, Denied: true}
+	}
+	return &pb.DestinationLimit{Address: address, BitsLimit: int64(limit)}
 }

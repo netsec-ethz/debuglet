@@ -263,8 +263,8 @@ func TestDestinationPolicyValidatesBeforeRecording(t *testing.T) {
 // TestDestinationDenyIsSentListedAndRefusesNewWork drives a deny through the
 // real routes: the executor holding an allocation receives the destination
 // with a zero limit and the denied flag, the listing reports the deny with its
-// actor, reason, expiry and confirmed delivery, and a new allocation there is
-// refused.
+// actor, reason, expiry and confirmed delivery, and a new submission naming
+// it is refused like exhausted capacity.
 func TestDestinationDenyIsSentListedAndRefusesNewWork(t *testing.T) {
 	f := ccNewFixture(t)
 	contract := oaContract(t)
@@ -295,14 +295,14 @@ func TestDestinationDenyIsSentListedAndRefusesNewWork(t *testing.T) {
 	}
 
 	f.peer.setUploadHook(nil)
-	sub := f.submit(f.client(f.root.URL, false), nil)
+	batch, err := client.Prepare([]client.Request{ccRequest(nil)})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
 	ctx, cancel := f.requestCtx()
 	defer cancel()
-	if _, err := f.peer.direct.DebugletAllocate(ctx, &pb.DebugletAllocateRequest{
-		DebugletId: sub.IDs[0], ExecutorId: ccExecutorID, TransactionId: sub.TransactionID,
-		Policy: &pb.DebugletPolicy{Addresses: []string{destination}, FloorBw: ccFloorBW, CeilBw: ccFloorBW},
-	}); err == nil {
-		t.Fatal("an allocation on a denied destination was admitted")
+	if _, err := f.client(f.root.URL, false).SubmitTEST(ctx, batch); err == nil || !strings.Contains(err.Error(), "409") || !strings.Contains(err.Error(), CodeCapacityExhausted) {
+		t.Fatalf("submission naming a denied destination answered %v, want 409 %s", err, CodeCapacityExhausted)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 )
 
@@ -201,5 +202,82 @@ func TestDestinationPolicyReportsExecutorsThatDidNotAcknowledge(t *testing.T) {
 	policy, _ := dpPolicy(t, d, destination)
 	if policy.Recipients != 2 || policy.Unconfirmed != 2 {
 		t.Fatalf("listed %+v, want two unconfirmed recipients", policy)
+	}
+}
+
+// dpLimitOf returns the last limit an executor received for destination.
+func dpLimitOf(t *testing.T, requests []*pb.BandwidthRequest, destination string) *pb.DestinationLimit {
+	t.Helper()
+	for i := len(requests) - 1; i >= 0; i-- {
+		for _, limit := range requests[i].GetLimits() {
+			if limit.GetAddress() == destination {
+				return limit
+			}
+		}
+	}
+	t.Fatalf("no update carried %s", destination)
+	return nil
+}
+
+// TestEverySnapshotCarriesTheDeny states that a snapshot built after a deny
+// for any other reason, here an allocation on another destination and the
+// snapshot a session's pending reconciliation resends, still marks the denied
+// destination: an executor takes every revised snapshot as its complete set,
+// so a snapshot without the flag would lift the deny there.
+func TestEverySnapshotCarriesTheDeny(t *testing.T) {
+	peer := &tgPeer{}
+	f := newTGFixture(t, peer)
+	const denied, other = "192.0.2.126", "192.0.2.127"
+	dlHold(t, f, denied)
+	if err := f.d.SetDestinationPolicy(t.Context(), "operator", denied, DestinationPolicyChange{Denied: true, Reason: "owner request"}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(dlBandwidth(peer))
+	dlHold(t, f, other)
+	pushed := dlBandwidth(peer)[before:]
+	if len(pushed) == 0 {
+		t.Fatal("the allocation on another destination sent nothing")
+	}
+	if limit := dpLimitOf(t, pushed, denied); !limit.GetDenied() || limit.GetBitsLimit() != 0 {
+		t.Fatalf("unrelated update carried %v for the denied destination", limit)
+	}
+	if limit := dpLimitOf(t, pushed, other); limit.GetDenied() || limit.GetBitsLimit() == 0 {
+		t.Fatalf("unrelated update carried %v for the allowed destination", limit)
+	}
+	f.d.mu.Lock()
+	snapshot := f.d.allocationSnapshot(tgExecutorID)
+	f.d.mu.Unlock()
+	if limit := dpLimitOf(t, []*pb.BandwidthRequest{{Limits: snapshot}}, denied); !limit.GetDenied() || limit.GetBitsLimit() != 0 {
+		t.Fatalf("reconciliation snapshot carried %v for the denied destination", limit)
+	}
+}
+
+// TestSubmissionNamingADeniedDestinationIsRefused states that admission
+// refuses a run naming a denied destination, whatever its floor, as it
+// refuses exhausted capacity, and reserves nothing for it.
+func TestSubmissionNamingADeniedDestinationIsRefused(t *testing.T) {
+	f := newTGFixture(t, nil)
+	const denied = "192.0.2.128"
+	if err := f.d.SetDestinationPolicy(t.Context(), "operator", denied, DestinationPolicyChange{Denied: true, Reason: "owner request"}); err != nil {
+		t.Fatal(err)
+	}
+	future := f.start
+	spec := arithSpec(0, 1000, tgTimeout, &future)
+	spec.Policy.Addresses = []string{"192.0.2.129", denied}
+	f.d.mu.Lock()
+	request, err := f.d.validateDebugletSpec(&spec)
+	f.d.mu.Unlock()
+	if !errors.Is(err, resource.ErrDenied) || !errors.Is(err, resource.ErrCapacityFull) {
+		t.Fatalf("submission to a denied destination: request %+v, error %v", request, err)
+	}
+	if reserved := f.d.scheduler.QueryMaxDest(denied, future.Add(-time.Hour), future.Add(time.Hour)); reserved != 0 {
+		t.Fatalf("refused submission reserved %d", reserved)
+	}
+	spec.Policy.Addresses = []string{"192.0.2.129"}
+	f.d.mu.Lock()
+	_, err = f.d.validateDebugletSpec(&spec)
+	f.d.mu.Unlock()
+	if err != nil {
+		t.Fatalf("submission to an allowed destination: %v", err)
 	}
 }

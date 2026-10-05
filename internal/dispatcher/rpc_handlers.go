@@ -648,7 +648,7 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 	}
 	for _, dest := range dests {
 		for id, limit := range d.destinations.Fairshare(dest) {
-			perExec[id] = append(perExec[id], &pb.DestinationLimit{Address: dest, BitsLimit: int64(limit)})
+			perExec[id] = append(perExec[id], d.destinationLimitLocked(dest, limit))
 		}
 	}
 	for id, updates := range perExec {
@@ -774,7 +774,7 @@ func (work *fairshareWork) send(ctx context.Context) error {
 func (d *Dispatcher) allocationSnapshot(executorID string) []*pb.DestinationLimit {
 	var updates []*pb.DestinationLimit
 	for address, limit := range d.destinations.ForExecutor(executorID) {
-		updates = append(updates, &pb.DestinationLimit{Address: address, BitsLimit: int64(limit)})
+		updates = append(updates, d.destinationLimitLocked(address, limit))
 	}
 	return updates
 }
