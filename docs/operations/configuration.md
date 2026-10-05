@@ -77,8 +77,8 @@ recovered monotonic clock as disclosure.
 Recovery also requires the previous process's signers to be retired. A TCX
 attachment ends with its process and needs no action. A legacy tc filter,
 used on kernels without TCX, outlives its process and keeps signing with its
-last key, so each start on a configured interface first removes the tagger
-filters an earlier process left there (logging each removal); if it cannot
+last key. Startup removes stale tagger filters only from the interface selected
+for packet counting (logging each removal); if it cannot
 list or remove them, or finds another filter at the tagger's priority, it
 discloses no tail. It then checks every interface in its network namespace
 for remaining filters at that priority, even when the new configuration uses
