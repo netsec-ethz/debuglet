@@ -536,6 +536,87 @@ func TestNotFoundResubmitsTheStoredTransactionOnce(t *testing.T) {
 	}
 }
 
+// The recovery window is measured from reservation, not the last lookup, and
+// survives repeated not-found answers. Stopping resubmission never releases
+// uncertain money; lookups can still confirm a late chain result.
+func TestNotFoundTransferStopsResubmittingAfterRecoveryWindow(t *testing.T) {
+	for _, initialState := range []string{transferReserved, transferUnknown} {
+		t.Run(initialState, func(t *testing.T) {
+			db, h, chain := unknownPayout(t)
+			stored := onlyTransfer(t, db)
+			if _, err := db.Exec(`UPDATE chain_transfers SET state = ?, updated_at = ?`, initialState,
+				models.NewUTCTime(time.Now().Add(-2*staleReservation))); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				chain.lookups = []lookupResult{{outcome: sui.TransferNotFound}}
+				chain.executeErrs = []error{errLostResponse}
+				reconcile(t, h)
+			}
+			if len(chain.Executed()) != 4 {
+				t.Fatalf("%d executions before window elapsed, want 4", len(chain.Executed()))
+			}
+			for _, sent := range chain.Executed() {
+				if !bytes.Equal(sent, stored.SignedTransaction) {
+					t.Fatal("resubmission changed the signed transaction")
+				}
+			}
+			if _, err := db.Exec(`UPDATE chain_transfers SET created_at = ?`,
+				models.NewUTCTime(time.Now().Add(-automaticResubmissionWindow-time.Second))); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				chain.lookups = []lookupResult{{outcome: sui.TransferNotFound}}
+				reconcile(t, h)
+				row := onlyTransfer(t, db)
+				if row.State != transferUnknown || row.Digest != stored.Digest ||
+					!bytes.Equal(row.SignedTransaction, stored.SignedTransaction) || row.Signature != stored.Signature ||
+					!strings.Contains(row.Detail, "automatic resubmission stopped") || !strings.Contains(row.Detail, "later payouts") {
+					t.Fatalf("expired recovery row %+v", row)
+				}
+			}
+			if len(chain.Executed()) != 4 || chain.prepares != 1 || earningOf(t, db, testExecutor).CurrentBalance != 0 {
+				t.Fatalf("expired transfer executed/rebuilt/released: calls %v, earning %+v", chain.Calls(), earningOf(t, db, testExecutor))
+			}
+			creditEarning(t, db, testExecutor, 7)
+			if err := h.PayoutExecutor(earningOf(t, db, testExecutor), t.Context()); !errors.Is(err, errPayoutNotReserved) {
+				t.Fatalf("later payout error %v, want unresolved reservation", err)
+			}
+			if len(transferRows(t, db)) != 1 || earningOf(t, db, testExecutor).CurrentBalance != 7 {
+				t.Fatal("later payout bypassed the unresolved reservation")
+			}
+			chain.lookups = []lookupResult{{err: errors.New("node unavailable")}}
+			reconcile(t, h)
+			if !strings.Contains(onlyTransfer(t, db).Detail, "automatic resubmission stopped") {
+				t.Fatal("an inconclusive lookup hid the abandonment detail")
+			}
+			chain.lookups = []lookupResult{{outcome: sui.TransferConfirmed, verified: true}}
+			reconcile(t, h)
+			if row := onlyTransfer(t, db); row.State != transferConfirmed || row.Digest != stored.Digest {
+				t.Fatalf("late confirmed row %+v", row)
+			}
+			if len(chain.Executed()) != 4 || earningOf(t, db, testExecutor).CurrentBalance != 7 {
+				t.Fatal("late confirmation sent or released money")
+			}
+		})
+	}
+}
+
+func TestResubmissionNotBroadcastKeepsEarlierOutcomeUnknown(t *testing.T) {
+	db, h, chain := unknownPayout(t)
+	stored := onlyTransfer(t, db)
+	chain.lookups = []lookupResult{{outcome: sui.TransferNotFound}}
+	chain.executeErrs = []error{fmt.Errorf("%w: local submission refused", sui.ErrNotBroadcast)}
+	reconcile(t, h)
+	if row := onlyTransfer(t, db); row.State != transferUnknown || row.Digest != stored.Digest ||
+		!strings.Contains(row.Detail, "earlier outcome remains unknown") {
+		t.Fatalf("not-broadcast resubmission %+v", row)
+	}
+	if earningOf(t, db, testExecutor).CurrentBalance != 0 || chain.prepares != 1 {
+		t.Fatal("refused resubmission released or rebuilt uncertain money")
+	}
+}
+
 // A stop between the reservation and the chain call leaves the transfer
 // reserved. Reconciliation leaves a fresh reservation alone, and resolves an
 // old one by its digest.
@@ -877,5 +958,52 @@ func TestSettlementPassSendsAnOwedRefundOnce(t *testing.T) {
 	}
 	if n, row := settlementOf(t, db); n != 1 || row.Kind != settlementRefund {
 		t.Fatalf("%d settlement rows, first %+v", n, row)
+	}
+}
+
+func TestInvalidStoredRefundAddressRecordsFailedRefundOnce(t *testing.T) {
+	for _, mode := range []string{"terminal run", "unadmitted transaction"} {
+		t.Run(mode, func(t *testing.T) {
+			db, h, chain := transferFixture(t)
+			if mode == "terminal run" {
+				seedFailedUSDCRun(t, db)
+			} else {
+				seedUSDCTransaction(t, db, testPrice)
+			}
+			if _, err := db.Exec(`UPDATE debuglet_order SET refund_address = 'unusable-address'`); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "terminal run" {
+				if settled, failed, _, _, err := h.SettlePendingOrders(t.Context(), 0, 32); settled != 1 || failed != 0 || err != nil {
+					t.Fatalf("settlement pass: settled %d failed %d error %v", settled, failed, err)
+				}
+			} else if outcome, err := h.RefundUnadmittedTransaction(testTxID, t.Context()); outcome != RefundFailed || err != nil {
+				t.Fatalf("refund outcome %v, error %v", outcome, err)
+			}
+			row := onlyTransfer(t, db)
+			if row.State != transferFailed || row.Amount != testPrice || row.Receiver != "unusable-address" ||
+				row.Digest != "" || len(row.SignedTransaction) != 0 || row.Signature != "" ||
+				!strings.Contains(row.Detail, "invalid refund address") || !strings.Contains(row.Detail, "amount remains owed") {
+				t.Fatalf("failed refund row %+v", row)
+			}
+			if orderState(t, db) != models.Refunded {
+				t.Fatal("invalid refund remains eligible for settlement")
+			}
+			if outcome, err := h.RefundOutcomeOf(t.Context(), testTxID); outcome != RefundFailed || err != nil {
+				t.Fatalf("visible refund outcome %v, error %v", outcome, err)
+			}
+			for range 2 {
+				if settled, failed, _, _, err := h.SettlePendingOrders(t.Context(), 0, 32); settled != 0 || failed != 0 || err != nil {
+					t.Fatalf("repeat pass: settled %d failed %d error %v", settled, failed, err)
+				}
+				reconcile(t, h)
+			}
+			if n, settlement := settlementOf(t, db); n != 1 || settlement.Kind != settlementRefund || settlement.Amount != testPrice {
+				t.Fatalf("%d settlement records: %+v", n, settlement)
+			}
+			if len(transferRows(t, db)) != 1 || len(chain.Calls()) != 0 {
+				t.Fatalf("invalid refund retried or called chain: %v", chain.Calls())
+			}
+		})
 	}
 }

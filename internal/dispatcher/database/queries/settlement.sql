@@ -33,8 +33,8 @@ SET current_balance = current_balance + sqlc.arg(amount)
 WHERE executor_id = sqlc.arg(executor_id) AND currency = sqlc.arg(currency);
 
 -- name: InsertChainTransfer :one
-INSERT INTO chain_transfers (kind, executor_id, transaction_id, order_id, amount, currency, receiver, state, digest, signed_transaction, signature, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO chain_transfers (kind, executor_id, transaction_id, order_id, amount, currency, receiver, state, digest, signed_transaction, signature, detail, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: UpdateChainTransfer :execrows

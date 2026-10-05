@@ -134,7 +134,9 @@ one row in the dispatcher's `chain_transfers` table.
 
 1. **Prepare.** The dispatcher selects coins and gas, builds and signs the
    transaction and computes its digest. This only reads from the chain. If it
-   fails, nothing is recorded and nothing is sent.
+   fails transiently, nothing is recorded and nothing is sent. An old order
+   with an invalid refund address instead records a `failed` refund and the
+   amount owed, without calling the chain; its detail names the invalid address.
 2. **Reserve.** One database transaction records the local decision and the
    transfer row in state `reserved`, with the digest, the signed transaction
    and its signature. For a payout the decision is subtracting exactly the
@@ -177,7 +179,8 @@ between the reservation and the submission):
 | Executed successfully, and the receiver's credit matches the amount and coin | `confirmed` |
 | Executed successfully, but the node returned no balance changes to check the credit against | `unknown` |
 | Executed with failure status | `failed` (a payout's amount returns to the balance) |
-| Not found, row `reserved` or `unknown` | the stored signed transaction is submitted again and the outcome recorded as above |
+| Not found, row `reserved` or `unknown`, reserved less than one hour ago | the stored signed transaction is submitted again; a refusal to broadcast this attempt keeps the earlier outcome `unknown` |
+| Not found, row `reserved` or `unknown`, reserved at least one hour ago | `unknown`, with automatic resubmission stopped and operator action named in the detail |
 | Not found, row `sent` | `unknown` |
 | Lookup error, or a credit that does not match | `unknown` |
 
@@ -186,7 +189,12 @@ transfer `unknown` and the pass continues with the next transfer.
 
 A resubmission sends the identical signed bytes, which have the same digest,
 so the chain executes the transfer at most once. A transfer is never rebuilt
-with new bytes because a response was lost.
+with new bytes because a response was lost. The one-hour window runs from the
+stored `created_at`, survives restarts, and is an application recovery policy,
+not a claim that the chain transaction has expired. After that window,
+reconciliation still looks up the digest and can record a late confirmation or
+an executed failure. An unresolved payout keeps its amount reserved and blocks
+later payouts for that executor and currency; its stored detail states this.
 
 ## What an operator sees
 
@@ -197,7 +205,9 @@ is the time of the last check.
   executor's balance; the next payout pass tries again with a new transfer.
 - **`failed` refund**: the orders stay refunded and the amount is owed to the
   buyer's refund address. It is not retried automatically; the row is the
-  record of what is owed. A buyer whose paid order is refunded because
+  record of what is owed. For an invalid address on an old order, the operator
+  must verify a corrected address before arranging repayment; no chain
+  transaction was prepared or sent. A buyer whose paid order is refunded because
   submissions are paused is told whether the refund was sent, is pending
   confirmation, or could not be sent and is owed.
 - **`unknown`**: reconciliation keeps checking it every minute. A payout in
@@ -236,8 +246,8 @@ itself:
    reaches `confirmed` and that the digest on the row is the one a Sui Testnet
    explorer shows for the transfer.
 
-The following have been exercised only against local fixtures and remain open
-until a live service confirms them during that rehearsal:
+During that rehearsal, verify the following properties against the deployment's
+selected Sui endpoints and payment kit:
 
 - The GraphQL fields the listener relies on: `serviceConfig.availableRange`
   for indexer coverage, and `Event.sequenceNumber` as the event's position,

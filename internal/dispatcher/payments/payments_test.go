@@ -65,7 +65,7 @@ const (
 	testOrderID  = int64(1)
 	testExecutor = "exec-1"
 	testHash     = "hash-1"
-	testRefund   = "0xrefund"
+	testRefund   = "0x00000000000000000000000000000000000000000000000000000000000000bb"
 	testPrice    = int64(7)
 )
 
@@ -1176,7 +1176,7 @@ func TestRefundTransactionSpendsTheTransactionItself(t *testing.T) {
 	}
 	if _, err := queries.CreateDebugletOrder(ctx, database.CreateDebugletOrderParams{
 		TransactionID: id, OrderID: 1, ExecutorID: "executor", Price: 1000,
-		Currency: "USDC", RefundAddress: "0xrefund", State: int64(models.Outstanding),
+		Currency: "USDC", RefundAddress: testRefund, State: int64(models.Outstanding),
 	}); err != nil {
 		t.Fatal(err)
 	}
