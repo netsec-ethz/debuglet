@@ -26,10 +26,14 @@ when no answer is possible, it is `pending`. The reference verifier
 [`tools/verify_pcap.py`](../tools/verify_pcap.py), mirrored by the website's
 `verify.ts`, uses the same routes and falls back to the deprecated
 `GET /executors/by-ip` (account required, the caller's own runs among the
-executor's last 20) and `GET /executors/{id}/tesla` (current chain only). An
-executor restart still loses the last `d` epochs of its chain: the dispatcher
-accepts a disclosure for an earlier recorded chain (`tesla_key_anchor` on the
-heartbeat), but the executor does not yet re-derive and disclose that tail.
+executor's last 20) and `GET /executors/{id}/tesla` (current chain only). With
+a configured TESLA seed and intact generation history, an executor restart can
+recover its immediately previous chain for disclosure only. Recovery requires a ready
+clock and retirement of the previous signers; the heartbeat carries that
+chain's due keys in `extra_disclosures`. See the [recovery conditions and
+retention limits](operations/configuration.md#executor-tesla-key-schedule),
+including rapid restarts and the lack of a durable dispatcher acknowledgement.
+A copied seed or a rolled-back generation database is not a recovery plan.
 Before disclosure only the executor can check a tag, through the server
 method.
 
@@ -381,9 +385,10 @@ and groups and the receipt key, not the packets.
 2. #71(a): durable disclosed-key history, a dated run-by-address record, and
    `GET /attribution/candidates` and `/attribution/keys`. The old routes are
    deprecated. *Landed* (dispatcher schema 14, API 1.11), with the dispatcher
-   side of disclosing an old chain's tail after an executor restart; the
-   executor side, re-deriving the previous chain from its seed and
-   generation and disclosing it with `tesla_key_anchor`, is open.
+   side of disclosing an old chain's tail after an executor restart. The
+   executor also re-derives the immediately previous chain from its seed and
+   generation record (executor schema 8) and sends due keys in
+   `extra_disclosures`, subject to the recovery conditions above.
 3. #73: `dbl verify` offline, `client.Verify` and `ReadCapture`, result
    categories, work caps, the evidence bundle, and shared vectors with
    `verify_pcap.py`. *Landed*: the tag functions moved to `pkg/tagspec`,
