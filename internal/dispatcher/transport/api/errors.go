@@ -175,7 +175,9 @@ func requestDiagnostic(c echo.Context, cause error, additional ...string) string
 		return ""
 	}
 	detail := cause.Error()
-	secrets := append(additional, c.Request().Header.Get("Authorization"), c.Request().Header.Get("X-CSRF-Token"))
+	// An authorization code and state arrive in the query of a sign-in callback.
+	secrets := append(additional, c.Request().Header.Get("Authorization"), c.Request().Header.Get(csrfHeaderName),
+		c.QueryParam("code"), c.QueryParam("state"))
 	if scheme, token, ok := strings.Cut(c.Request().Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
 		secrets = append(secrets, token)
 	}

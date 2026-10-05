@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"syscall"
 	"testing"
@@ -59,6 +60,8 @@ func TestHeterogeneousExecutorCapabilitiesSelection(t *testing.T) {
 
 	enabled, disabled := true, false
 	kernelConfig, scionConfig := fixtureConfig(), fixtureConfig()
+	kernelConfig.Database.Path = filepath.Join(t.TempDir(), "executor.sqlite")
+	scionConfig.Database.Path = filepath.Join(t.TempDir(), "executor.sqlite")
 	kernelConfig.Network.PacketCounter, kernelConfig.Network.Interface = "auto", "lo"
 	kernelConfig.Network.Policy.ICMP = &enabled
 	scionConfig.Network.Policy.ICMP, scionConfig.Network.Policy.SCION = &disabled, &enabled
@@ -72,6 +75,14 @@ func TestHeterogeneousExecutorCapabilitiesSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 		report := hello.GetCapabilities()
+		vantage := hello.GetVantagePoint()
+		if got, want := vantage.GetCounterAttachment(), []string{"present", "unknown"}[i]; got != want {
+			t.Fatalf("executor %d attachment=%s, want %s", i, got, want)
+		}
+		resources := vantage.GetResources()
+		if resources.GetProcessRssBytes().GetValue() == 0 || resources.GetOpenFds().GetValue() == 0 || resources.GetStateCapacityBytes().GetValue() == 0 || resources.GetStateAvailableBytes().Value == nil {
+			t.Fatalf("executor %d missing local resource observations: %v", i, resources)
+		}
 		// The kernel node's runs get the eBPF tagger, the other's the pure-Go
 		// one; neither tags IPv6 or SCION.
 		wantIPv4 := []string{tagger.ModeEBPF, debuglet.UserspaceTagging()}[i]

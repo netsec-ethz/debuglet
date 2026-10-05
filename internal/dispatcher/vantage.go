@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/observability"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
@@ -18,13 +19,15 @@ import (
 // vantageReport is a validated executor VantagePointReport. It is replaced,
 // never mutated, so snapshots may share it.
 type vantageReport struct {
-	scionHost       string
-	scionPathTarget string
-	scionPaths      *wire.ProbeState
-	isdAS           string // Canonical; empty unknown.
-	listeners       []string
-	clock           *wire.ClockReport  // Nil unknown.
-	platform        *wire.HostPlatform // Nil unknown; operator-only.
+	scionHost         string
+	scionPathTarget   string
+	scionPaths        *wire.ProbeState
+	isdAS             string // Canonical; empty unknown.
+	listeners         []string
+	clock             *wire.ClockReport           // Nil unknown.
+	platform          *wire.HostPlatform          // Nil unknown; operator-only.
+	resources         *observability.HostSnapshot // Nil unknown; operator metrics only.
+	counterAttachment string                      // present, missing, or unknown; operator metrics only.
 }
 
 // Unknown versions and malformed ISD-AS or listeners discard the whole report,
@@ -41,6 +44,11 @@ func vantageFromReport(report *pb.VantagePointReport) *vantageReport {
 	}
 	if report.Platform != nil {
 		out.platform = platformFromReport(report.Platform)
+	}
+	out.resources = resourcesFromReport(report.GetResources())
+	out.counterAttachment = "unknown"
+	if state := report.GetCounterAttachment(); state == "present" || state == "missing" {
+		out.counterAttachment = state
 	}
 	return out
 }

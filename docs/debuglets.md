@@ -67,3 +67,16 @@ without it rejects the guest at linking, naming the missing module. Existing
 ABI-v1 guests remain supported without recompilation. The baseline ABI label
 alone does not advertise this extension; use a release that includes it. The
 [extension contract](development/guest-io.md) records its wire signatures.
+
+### Other languages
+
+Any WebAssembly module that targets `wasm32-wasip1` and imports only the
+functions of the ABI runs on the executor; the Go SDK is the only supported way
+to produce one. The Rust bindings (`examples/debuglets/rust/debuglet`) and the
+C header (`examples/debuglets/c/common/debuglet_api.h`) are experimental. They
+declare the TCP, TLS, listener and ICMPv4 imports with the frozen signatures,
+but not UDP, the address getters, `drain_connection` or `debuglet_io_v1`. One
+retained guest per language runs on the engine in the test suite. Python and
+JavaScript guests are not currently supported (their samples were removed in
+0.2.0); [Guest languages](development/guest-languages.md) records what was
+measured and why.

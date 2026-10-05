@@ -28,23 +28,9 @@ func OpenForService(ctx context.Context, role Role, path string) (*sql.DB, error
 	if err != nil {
 		return nil, err
 	}
-	absolute, err := policy.locate(path)
+	absolute, err := policy.checkForService(ctx, path)
 	if err != nil {
 		return nil, err
-	}
-	if err := policy.Check(ctx, absolute); err != nil {
-		var sqliteErr *sqlite.Error
-		if !errors.As(err, &sqliteErr) || sqliteErr.Code() != sqlite3.SQLITE_READONLY_ROLLBACK {
-			return nil, err
-		}
-		// SQLite names a rollback journal beside the resolved database file.
-		absolute, err = filepath.EvalSymlinks(absolute)
-		if err != nil {
-			return nil, err
-		}
-		if err := policy.checkRecoveryCopy(ctx, absolute); err != nil {
-			return nil, fmt.Errorf("check interrupted database before recovery: %w", err)
-		}
 	}
 	db, err := sqlitedb.Open(absolute)
 	if err != nil {
@@ -57,6 +43,41 @@ func OpenForService(ctx context.Context, role Role, path string) (*sql.DB, error
 		return nil, err
 	}
 	return db, nil
+}
+
+// CheckForService verifies a database before launching its daemon. A hot
+// rollback journal is recovered only in a temporary copy; the database and
+// journal are left unchanged. The daemon must still call OpenForService to
+// recover the original. This is not an offline-backup or stopped-writer check.
+func CheckForService(ctx context.Context, role Role, path string) error {
+	policy, err := PolicyFor(role)
+	if err != nil {
+		return err
+	}
+	_, err = policy.checkForService(ctx, path)
+	return err
+}
+
+func (policy Policy) checkForService(ctx context.Context, path string) (string, error) {
+	absolute, err := policy.locate(path)
+	if err != nil {
+		return "", err
+	}
+	if err := policy.Check(ctx, absolute); err != nil {
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code() != sqlite3.SQLITE_READONLY_ROLLBACK {
+			return "", err
+		}
+		// SQLite names a rollback journal beside the resolved database file.
+		absolute, err = filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return "", err
+		}
+		if err := policy.checkRecoveryCopy(ctx, absolute); err != nil {
+			return "", fmt.Errorf("check interrupted database before recovery: %w", err)
+		}
+	}
+	return absolute, nil
 }
 
 func (p Policy) checkRecoveryCopy(ctx context.Context, path string) error {
