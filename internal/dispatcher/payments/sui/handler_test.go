@@ -862,3 +862,34 @@ func TestNewSuiPaymentHandlerRejectsUnusableConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestNewSuiPaymentHandlerRedactsInvalidEndpoints(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(c *config.SuiConfig)
+		want   string
+	}{
+		{"grpc credentials", func(c *config.SuiConfig) {
+			c.GRPCEndpoint = "https://endpoint-user:endpoint-password@fullnode.invalid:443"
+		}, "sui.grpc_endpoint must be host:port"},
+		{"grpc port query token", func(c *config.SuiConfig) {
+			c.GRPCEndpoint = "fullnode.invalid:443?token=query-secret"
+		}, "sui.grpc_endpoint has an invalid port"},
+		{"graphql parse credentials and query token", func(c *config.SuiConfig) {
+			c.GraphQLURL = "https://endpoint-user:endpoint-password@graphql.invalid/%zz?token=query-secret"
+		}, "sui.graphql_url must be an absolute http(s) URL"},
+		{"graphql scheme credentials and query token", func(c *config.SuiConfig) {
+			c.GraphQLURL = "ftp://endpoint-user:endpoint-password@graphql.invalid/graphql?token=query-secret"
+		}, "sui.graphql_url must be an absolute http(s) URL"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := suiConfig(t)
+			tc.mutate(&cfg.Sui)
+			h, err := NewSuiPaymentHandler(cfg, nil, zap.NewNop(), nil)
+			if h != nil || err == nil || err.Error() != tc.want {
+				t.Fatalf("NewSuiPaymentHandler = (%v, %v), want only %q", h, err, tc.want)
+			}
+		})
+	}
+}

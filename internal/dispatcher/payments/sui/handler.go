@@ -112,14 +112,14 @@ func validateConfig(c config.SuiConfig) error {
 	}
 	host, port, err := net.SplitHostPort(c.GRPCEndpoint)
 	if err != nil || host == "" {
-		return fmt.Errorf("sui.grpc_endpoint %q must be host:port", c.GRPCEndpoint)
+		return errors.New("sui.grpc_endpoint must be host:port")
 	}
 	if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
-		return fmt.Errorf("sui.grpc_endpoint %q has an invalid port", c.GRPCEndpoint)
+		return errors.New("sui.grpc_endpoint has an invalid port")
 	}
 	u, err := url.Parse(c.GraphQLURL)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return fmt.Errorf("sui.graphql_url %q must be an absolute http(s) URL", c.GraphQLURL)
+		return errors.New("sui.graphql_url must be an absolute http(s) URL")
 	}
 	for _, field := range []struct{ name, value string }{
 		{"sui.address", c.Address},
