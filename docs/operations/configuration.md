@@ -99,7 +99,8 @@ for the current chain and the old chain's disclosure continues. The heartbeat
 offers the old chain's final key until one heartbeat that carried it
 succeeded; the dispatcher's durable record of it is not confirmed back. A tail
 whose final key no heartbeat delivered within 24 hours of its final
-disclosure is dropped with a warning.
+disclosure is dropped with a warning; this retention interval uses the same
+recovered monotonic clock as disclosure.
 
 Recovery also requires the previous process's signers to be retired. A TCX
 attachment ends with its process and needs no action. A legacy tc filter,
@@ -107,8 +108,14 @@ used on kernels without TCX, outlives its process and keeps signing with its
 last key, so each start on a configured interface first removes the tagger
 filters an earlier process left there (logging each removal); if it cannot
 list or remove them, or finds another filter at the tagger's priority, it
-discloses no tail. Only the configured interface is checked: a filter left on
-an interface an earlier configuration named is not removed.
+discloses no tail. It then checks every interface in its network namespace
+for remaining filters at that priority, even when the new configuration uses
+fallback packet counting or no interface. A remaining filter withholds
+recovery; filters on other interfaces are never removed automatically. This
+also withholds recovery when another executor has a live legacy tagger on
+another interface, since the recorded chain does not identify its attachment.
+Before restarting to recover a tail, stop the previous process and remove its
+stale filters, or select its previous interface so startup can retire them.
 
 The keys of the last d epochs before a restart are still never disclosed, and
 packets tagged in them (the last 15 minutes by default) can never be verified,

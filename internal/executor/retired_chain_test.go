@@ -412,6 +412,47 @@ func TestRetiredChainFollowsTheMonotonicClock(t *testing.T) {
 	}
 }
 
+// steppedRetiredClock observes t after a wall step; only its wall reading
+// includes the step, as on a host whose monotonic clock continued normally.
+type steppedRetiredClock time.Duration
+
+func (c steppedRetiredClock) Elapsed(origin, t time.Time) (time.Duration, time.Duration) {
+	wall := t.Sub(origin)
+	return wall - time.Duration(c), wall
+}
+
+func TestRetiredChainRetentionFollowsTheMonotonicClock(t *testing.T) {
+	origin := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	recovery := origin.Add(25 * time.Second)
+	for _, step := range []time.Duration{25 * time.Hour, -25 * time.Hour} {
+		t.Run(step.String(), func(t *testing.T) {
+			schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte(retiredSeed), EpochLength: time.Second, DisclosureDelay: 11, ChainLength: 20,
+				Epoch: origin, DisclosureOnly: true, Clock: recoveredClock{wall: recovery, at: recovery, host: steppedRetiredClock(step)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			holder := &retiredChain{schedule: schedule, logger: zap.NewNop()}
+			for _, check := range []struct {
+				since time.Duration
+				epoch int64
+			}{
+				{time.Second, 15},
+				{5 * time.Second, 19},
+				{5*time.Second + retiredDeliveryLimit - time.Nanosecond, 19},
+			} {
+				got := holder.disclosures(recovery.Add(check.since + step))
+				key, _ := schedule.KeyAtEpoch(check.epoch)
+				if holder.schedule == nil || len(got) != 1 || got[0].GetEpoch() != check.epoch || !bytes.Equal(got[0].GetKey(), key) {
+					t.Fatalf("%v since recovery with wall step %v: disclosed %v, kept %v; want k_%d", check.since, step, got, holder.schedule != nil, check.epoch)
+				}
+			}
+			if got := holder.disclosures(recovery.Add(5*time.Second + retiredDeliveryLimit + step)); holder.schedule != nil || len(got) != 0 {
+				t.Fatalf("retained the chain beyond the elapsed retention interval: %v", got)
+			}
+		})
+	}
+}
+
 // A retired chain stays until a heartbeat delivered its final key, however
 // the heartbeat cadence changed: the previous chain had I = 1 s, d = 11 and
 // L = 20, so k_19 is due 30 s after its origin; the restart at +25 s runs

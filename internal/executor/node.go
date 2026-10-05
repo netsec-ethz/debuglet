@@ -137,11 +137,9 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	// A legacy tc filter of an earlier process outlives it and keeps signing
 	// with its last key, so it is removed before that chain's keys can be
 	// disclosed; this process has attached no tagger yet.
-	var signers error
-	if iface != nil {
-		if signers = ebpf.RetireStaleFilters(iface, logger); signers != nil {
-			logger.Warn("Could not retire tagger filters an earlier executor process left attached", zap.String("interface", iface.Name), zap.Error(signers))
-		}
+	signers := ebpf.RetireStaleFilters(iface, logger)
+	if signers != nil {
+		logger.Warn("Could not retire tagger filters an earlier executor process left attached", zap.String("interface", cfg.Network.Interface), zap.Error(signers))
 	}
 	retired := deriveRetiredChain(context.Background(), executordb.New(db), cfg.Tesla.Seed, generation, !schedule.Config().ClockUnready, signers, time.Now(), logger)
 	pc, err := counter(iface, logger)
@@ -306,7 +304,9 @@ func (r *retiredChain) disclosures(now time.Time) []*protocol.TeslaDisclosure {
 	if r.schedule == nil {
 		return nil
 	}
-	if final := r.schedule.FinalDisclosure(); !now.Before(final.Add(retiredDeliveryLimit)) {
+	cfg := r.schedule.Config()
+	elapsed, _ := cfg.Clock.Elapsed(cfg.Epoch, now)
+	if final := r.schedule.FinalDisclosure(); elapsed >= final.Sub(cfg.Epoch)+retiredDeliveryLimit {
 		r.logger.Warn("Dropped the previous TESLA chain without a delivered final key", zap.Time("final_disclosure_at", final))
 		r.schedule = nil
 		return nil
