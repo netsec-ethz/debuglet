@@ -160,13 +160,21 @@ A payout is not started while the same executor and currency has a `reserved`,
 `sent` or `unknown` payout. A balance without a payout wallet is not paid out;
 each payout pass logs how many such balances it skipped.
 
-A failed run's refund is attempted when the run ends. If that attempt never
-reserved its transfer, for example because the dispatcher stopped first, the
-periodic settlement pass sends it. The pass never takes an order that already
+A failed run's refund is attempted when the run ends. If its executor exit code
+was recorded and that attempt never reserved its transfer, the periodic
+settlement pass sends it. The pass never takes an order that already
 has a refund transfer, whatever that transfer's state, so one order is
 refunded by at most one transfer; an uncertain outcome is resolved by
 reconciliation below. While chain payments are disabled, the pass leaves
 chain-currency orders as they are.
+
+A dispatcher-recorded cancellation may have no executor exit code. If its
+initial refund fails before reserving a transfer, the periodic settlement pass
+does not retry it. Inspect the order, settlement and transfer records and
+reconcile them with chain history before arranging repayment. Never send a
+replacement for an existing reserved, sent or unknown transfer; reconcile that
+transfer first. Automatic recovery for cancellation refunds is tracked in
+[#392](https://github.com/netsec-ethz/debuglet/issues/392).
 
 ## Reconciliation
 
