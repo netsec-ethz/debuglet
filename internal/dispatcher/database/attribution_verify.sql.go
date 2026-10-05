@@ -137,9 +137,9 @@ func (q *Queries) RetireAttributionReceiptKeys(ctx context.Context, arg RetireAt
 
 const spendAttributionVerifyBudget = `-- name: SpendAttributionVerifyBudget :one
 INSERT INTO attribution_verify_budget (executor_id, chain_id, epoch, used)
-VALUES (?1, ?2, ?3, 1)
-ON CONFLICT (executor_id, chain_id, epoch) DO UPDATE SET used = used + 1
-WHERE attribution_verify_budget.used < 16
+VALUES (?, ?, ?, ?)
+ON CONFLICT (executor_id, chain_id, epoch) DO UPDATE SET used = attribution_verify_budget.used + excluded.used
+WHERE attribution_verify_budget.used + excluded.used <= 16
 RETURNING used
 `
 
@@ -147,13 +147,22 @@ type SpendAttributionVerifyBudgetParams struct {
 	ExecutorID string
 	ChainID    string
 	Epoch      int64
+	Used       int64
 }
 
-// Counts one executor query of a chain epoch, unless the limit R = 16 is
-// reached (dispatcher.VerifyBudget): then no row is returned. One statement,
-// so concurrent requests never both take the last query.
+// Charges the candidate trials of one executor query (one per candidate
+// run) to a chain epoch, unless they would exceed the limit R = 16
+// (dispatcher.VerifyBudget): then no row is returned and nothing is charged.
+// The caller never asks for more than 16 trials, so a first charge always
+// fits. One statement, so concurrent requests never both take the last
+// trials.
 func (q *Queries) SpendAttributionVerifyBudget(ctx context.Context, arg SpendAttributionVerifyBudgetParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, spendAttributionVerifyBudget, arg.ExecutorID, arg.ChainID, arg.Epoch)
+	row := q.db.QueryRowContext(ctx, spendAttributionVerifyBudget,
+		arg.ExecutorID,
+		arg.ChainID,
+		arg.Epoch,
+		arg.Used,
+	)
 	var used int64
 	err := row.Scan(&used)
 	return used, err

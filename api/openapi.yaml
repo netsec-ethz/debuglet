@@ -3699,7 +3699,7 @@ paths:
     post:
       operationId: "verifyAttribution"
       summary: "Verify captured packets with the executor's help before disclosure."
-      description: "Added in API 1.15. Groups up to 256 packets by source address and epoch of each candidate chain, at most 16 groups, and gives each group a verdict. A group whose key is on record is checked against it (method offline) and spends nothing. Before disclosure the dispatcher asks the executor, which still holds the key, whether one candidate run reproduces every tag of the group (method server); the executor never returns tags or keys. Every such question spends one of 16 queries per executor, chain and epoch, shared by all requesters; it is spent before the question is relayed and is not refunded when the answer is lost. An exhausted budget or an unavailable executor leaves the group pending. The receipt is an Ed25519 signature over canonical JSON of the dispatcher, the API version, the dispatcher's query time, the packet digest and every group's verdict; it shows what was asked and answered when, not when a packet was captured. Public and rate-limited per client address."
+      description: "Added in API 1.15. Groups up to 256 packets by source address and epoch of each candidate chain, at most 16 groups, and gives each group a verdict. A group whose key is on record is checked against it (method offline) and spends nothing. Before disclosure the dispatcher asks the executor, which still holds the key, whether one candidate run reproduces every tag of the group (method server); the executor never returns tags or keys. Every such question charges one trial per candidate run to a budget of 16 trials per executor, chain and epoch, shared by all requesters; it is charged before the question is relayed and is not refunded when the answer is lost. A group with more candidates than trials remain, an unavailable executor, or an answer that no single candidate reproduces every tag (reason unmatched, decided offline after disclosure) leaves the group pending. The receipt is an Ed25519 signature over canonical JSON of the dispatcher, the API version, the dispatcher's query time, the packet digest and every group's verdict; it shows what was asked and answered when, not when a packet was captured. Public and rate-limited per client address."
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
@@ -7231,7 +7231,7 @@ components:
         limit:
           type: integer
           format: int64
-          description: "Executor queries per executor, chain and epoch, shared by every requester."
+          description: "Candidate trials per executor, chain and epoch, shared by every requester: an executor query charges one per candidate run."
         remaining:
           type: integer
           format: int64
@@ -7277,7 +7277,7 @@ components:
             - "unsupported"
         reason:
           type: string
-          description: "Machine reason of any verdict but verified (docs/verification.md#results); pending adds budget_exhausted and executor_unavailable."
+          description: "Machine reason of any verdict but verified (docs/verification.md#results); pending adds budget_exhausted, executor_unavailable and unmatched (no single candidate reproduces every tag; the offline check after disclosure decides per run)."
         method:
           type: string
           description: "server when the executor answered, offline when a disclosed key did, empty when nothing was checked."
@@ -7288,6 +7288,10 @@ components:
             type: integer
         budget:
           $ref: "#/components/schemas/AttributionVerifyBudget"
+        pending_until:
+          type: string
+          format: date-time
+          description: "For a pending group with a chain: when its key is due for disclosure; retry then."
     AttributionReceipt:
       type: object
       additionalProperties: false

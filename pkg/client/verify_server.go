@@ -172,10 +172,12 @@ type serverAnswer struct {
 
 // applyReceipts changes the pending groups that verified receipts answered.
 // The packets of a group a receipt covers take the executor's verdict: the
-// one run that reproduces every tag is verified, a mismatch is invalid (or
-// unmatched within a split group), anything the executor could not check is
-// unsupported. Packets of the group no receipt covers stay pending in an
-// entry of their own. Only answers with method server count: an answer from
+// one run that reproduces every tag is verified, anything the executor could
+// not check is unsupported. An answer that no single candidate reproduces
+// every tag (pending, unmatched) leaves the group pending: two runs from one
+// address in one epoch answer so as well as forged traffic, and the offline
+// check after disclosure splits the group per run. Packets of the group no
+// receipt covers stay pending in an entry of their own. Only answers with method server count: an answer from
 // a key disclosed since is repeated offline after a retry.
 func applyReceipts(groups []VerifyGroup, receipts []EvidenceReceipt, payloads []AttributionReceiptPayload, times []time.Time) []VerifyGroup {
 	answers := map[int][]serverAnswer{}
@@ -295,16 +297,6 @@ func serverVerdict(g VerifyGroup, sent []int, answers map[int][]serverAnswer) (V
 		out.keys = []int64{}
 		out.Detail = fmt.Sprintf("every packet carries a valid tag of run %s on executor %s, as the executor confirmed before the key was disclosed (receipt key %s)",
 			a.RunID, a.ExecutorID, out.ReceiptKeyID)
-		return out, true
-	}
-	if _, ok := covered(string(VerdictInvalid)); ok && len(runs) == 0 {
-		out.Unmatched = len(sent)
-		if g.Split != nil {
-			out.Verdict, out.Reason = VerdictUnsupported, ReasonUnmatched
-		} else {
-			out.Verdict, out.Reason = VerdictInvalid, ReasonTagMismatch
-		}
-		out.Detail = fmt.Sprintf("%d packets carry no valid tag of the run(s) active from this address, as the executor answered before disclosure", len(sent))
 		return out, true
 	}
 	return VerifyGroup{}, false

@@ -265,7 +265,9 @@ func TestAttributionVerifyRelaysToTheExecutorBeforeDisclosure(t *testing.T) {
 		method                string
 	}{
 		{answer: &pb.VerifyTagsResponse{Verdict: "matched", RunId: run}, verdict: "verified", want: run, method: "server"},
-		{answer: &pb.VerifyTagsResponse{Verdict: "unmatched"}, verdict: "invalid", reason: "tag_mismatch", method: "server"},
+		// No single candidate reproduces every tag: two runs in one group
+		// answer so too, so the offline check after disclosure decides.
+		{answer: &pb.VerifyTagsResponse{Verdict: "unmatched"}, verdict: "pending", reason: "unmatched", method: "server"},
 		{answer: &pb.VerifyTagsResponse{Verdict: "ambiguous"}, verdict: "unsupported", reason: "ambiguous", method: "server"},
 		{answer: &pb.VerifyTagsResponse{Verdict: "unsupported", Reason: "unknown_chain"}, verdict: "unsupported", reason: "unknown_chain", method: "server"},
 		// An answer outside the protocol is no answer, but the query is spent.
@@ -292,6 +294,9 @@ func TestAttributionVerifyRelaysToTheExecutorBeforeDisclosure(t *testing.T) {
 		if g.Verdict != tc.verdict || g.Reason != tc.reason || g.RunID != tc.want || g.Method != tc.method || g.Source != "127.0.0.1" ||
 			g.Epoch != e || g.ChainID != tag.ChainID(chain.anchor()) || g.ExecutorID != ccExecutorID || !slices.Equal(g.Packets, []int{0, 1}) {
 			t.Fatalf("case %d: group %+v (executor asked %d times; %s)", i, g, peer.callCount(), unexpected)
+		}
+		if pending := g.Verdict == "pending"; pending != (g.PendingUntil != nil) || (pending && !g.PendingUntil.Equal(chain.due(e))) {
+			t.Fatalf("case %d: pending_until %v; want %s for a pending group only", i, g.PendingUntil, chain.due(e))
 		}
 		if g.Budget == nil || g.Budget.Limit != 16 || g.Budget.Remaining != int64(15-i) || !g.Budget.ResetsAt.Equal(chain.due(e)) {
 			t.Fatalf("case %d: budget %+v; want 16, %d remaining, resetting at %s", i, g.Budget, 15-i, chain.due(e))
@@ -541,4 +546,78 @@ func TestAttributionReceiptKeysListRotatedKeys(t *testing.T) {
 		t.Fatalf("after rotation %+v; want %s retired and %s current", keys.Keys, first.Keys[0].KeyID, replacement.KeyID())
 	}
 	oaCheckResponse(t, oaContract(t), http.MethodGet, routeReceiptKeys, http.StatusOK, body)
+}
+
+// TestAttributionVerifyChargesCandidateTrials charges one trial per candidate
+// run a query tests: a group with three candidates spends three, a group
+// with more candidates than trials remain is pending without spending, and
+// the count survives a restart.
+func TestAttributionVerifyChargesCandidateTrials(t *testing.T) {
+	f, peer, chain := vtFixture(t)
+	_, _, owner := authAccount(t, f, "trial owner")
+	f.peer.setUploadHook(nil)
+	var runs []string
+	for _, name := range []string{"one", "two", "three"} {
+		runs = append(runs, f.submit(owner, []string{name}).IDs[0])
+	}
+	ctx, cancel := f.requestCtx()
+	defer cancel()
+	at := time.Now()
+	e := chain.epochOf(at)
+	packets := []dispatcher.VerifyPacket{{Data: vtPacket(chain, "127.0.0.1", e, runs[0], 1), CapturedAt: at}}
+	var asked [][]string
+	peer.script(func(req *pb.VerifyTagsRequest) (*pb.VerifyTagsResponse, error) {
+		asked = append(asked, slices.Clone(req.GetCandidateRunIds()))
+		return &pb.VerifyTagsResponse{Verdict: "matched", RunId: runs[0]}, nil
+	})
+	used := func() int64 {
+		n, err := f.queries.GetAttributionVerifyBudget(ctx, database.GetAttributionVerifyBudgetParams{ExecutorID: ccExecutorID, ChainID: tag.ChainID(chain.anchor()), Epoch: e})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// Five queries of three candidates each spend 15 trials.
+	for i := range 5 {
+		groups, err := f.d.VerifyAttribution(ctx, packets)
+		if err != nil || len(groups) != 1 || groups[0].Verdict != "verified" || groups[0].Budget.Remaining != int64(13-3*i) {
+			t.Fatalf("query %d: %+v, %v", i+1, groups, err)
+		}
+	}
+	if used() != 15 || len(asked) != 5 {
+		t.Fatalf("%d trials on record after %d queries; want 15 after 5", used(), len(asked))
+	}
+	for _, candidates := range asked {
+		got := slices.Clone(candidates)
+		slices.Sort(got)
+		want := slices.Clone(runs)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Fatalf("the executor tested %v; want exactly the three charged candidates %v", candidates, runs)
+		}
+	}
+	// One trial is left, fewer than the group's three candidates: pending,
+	// nothing charged, the executor not asked.
+	groups, err := f.d.VerifyAttribution(ctx, packets)
+	if err != nil || groups[0].Verdict != "pending" || groups[0].Reason != "budget_exhausted" || groups[0].Budget.Remaining != 1 ||
+		groups[0].PendingUntil == nil || !groups[0].PendingUntil.Equal(chain.due(e)) || !groups[0].Budget.ResetsAt.Equal(chain.due(e)) {
+		t.Fatalf("over the remaining trials: %+v, %v", groups, err)
+	}
+	if used() != 15 || len(asked) != 5 {
+		t.Fatalf("an exhausted group spent trials (%d) or asked the executor (%d)", used(), len(asked))
+	}
+
+	f.d.Close()
+	restarted, err := dispatcher.New(zap.NewNop(), f.db, "restarted", time.Minute, time.Minute,
+		payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, zap.NewNop()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restarted.Close)
+	if groups, err := restarted.VerifyAttribution(ctx, packets); err != nil || groups[0].Verdict != "pending" || groups[0].Budget.Remaining != 1 {
+		t.Fatalf("after a restart: %+v, %v; want one trial left", groups, err)
+	}
+	if used() != 15 {
+		t.Fatalf("a restart changed the count to %d", used())
+	}
 }

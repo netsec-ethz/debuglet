@@ -168,21 +168,30 @@ candidates of its chain:
   (`not_disclosed`) within two minutes of its due time and `missing`
   (`keys_missing`) after.
 - Otherwise, when the executor is connected with that chain, the dispatcher
-  spends one query of the budget of that executor, chain and epoch, in its
-  own transaction, and then asks the executor over the control session
-  which candidate run, if any, reproduces the tag of every packet. The
-  executor never returns tags or keys. `matched` is `verified` with the run,
-  `unmatched` is `invalid` (`tag_mismatch`), `ambiguous` and every executor
-  refusal (`unknown_chain`, `epoch_unavailable`,
-  `attribution_unavailable`, `too_many`, `malformed`) are `unsupported`
-  with that reason; all have `method: server`. An exhausted budget is
-  `pending` (`budget_exhausted`), an executor that is not connected or does
-  not answer `pending` (`executor_unavailable`).
+  charges the group's candidate runs, one trial each, to the budget of that
+  executor, chain and epoch, in its own transaction, and then asks the
+  executor over the control session which of exactly those candidates, if
+  any, reproduces the tag of every packet. The executor never returns tags
+  or keys. `matched` is `verified` with the run; `unmatched` is `pending`
+  (`unmatched`) until the key's disclosure time: no single candidate
+  reproduces every tag, which two legitimate runs from one address in one
+  epoch answer as well as forged traffic, so the offline check after
+  disclosure decides, per run. `ambiguous` and every executor refusal
+  (`unknown_chain`, `epoch_unavailable`, `attribution_unavailable`,
+  `too_many`, `malformed`) are `unsupported` with that reason. All of these
+  have `method: server`. A group with more candidates than trials remain is
+  `pending` (`budget_exhausted`) and charges nothing; an executor that is
+  not connected or does not answer is `pending` (`executor_unavailable`).
+  A pending group gives `pending_until`, the key's disclosure time.
 
-A query is spent before it is relayed and is never refunded: an answer lost
-to a crash, a timeout or a broken session still counts, so neither a
-restart nor a failure resets the budget. A disconnected executor is not
-asked, so nothing is spent for it. The server answers for the whole group:
+The budget counts candidate trials because a query with N candidates tests
+the presented tags against N derived keys: a forger who submits fabricated
+tags learns, per trial, whether one guess matches one run's key. Trials are
+charged before the query is relayed and never refunded: an answer lost to a
+crash, a timeout or a broken session still counts, so neither a restart nor
+a failure resets the budget. A disconnected executor is not asked, so
+nothing is charged for it. Only an answer from a disclosed key, which is
+already split per run, is `invalid` (`tag_mismatch`). The server answers for the whole group:
 unlike the offline check it does not split a group whose packets reproduce
 different runs, and it checks the epoch of the capture time only, not the
 one before it.
@@ -214,7 +223,7 @@ old ones when the dispatcher does not offer them.
 | --- | --- |
 | `verified` | Every packet in the group carries a valid tag for the named run at the named epoch (±1 epoch of clock skew). The group also records whether this was established by `server` or `offline`. |
 | `invalid` | History covers the time and no candidate run reproduces any packet of the group. `reason` is `tag_mismatch` or `no_run` (no run was active from that address). |
-| `pending` | The key is not yet disclosed and no server answer was possible. This happens with `--offline`, when the executor is offline, or when the budget is exhausted. `pending_until` is the disclosure time; retry then. |
+| `pending` | The key is not yet disclosed and no server answer decided the group. This happens with `--offline`, when the executor is offline, when the budget is exhausted, or when the executor found no single candidate that reproduces every tag (`unmatched`). `pending_until` is the disclosure time; retry then. |
 | `missing` | The dispatcher no longer holds, or never held, the schedule or keys for that time (before `retained_from`, or lost). This is no evidence either way. |
 | `unsupported` | The group cannot be checked. `reason` is one of IPv6, SCION, unknown link type, truncated packet, unknown or legacy (pre-v1) tag spec, too many candidates, or over a work cap. |
 
@@ -236,8 +245,9 @@ of its packets matches. Every entry of a split group carries `split`:
 match count can be read against the group's non-matches.
 
 Machine reasons (`reason`): `invalid` has `tag_mismatch`, `no_run`;
-`pending` has `not_disclosed`, and from the server also `budget_exhausted`
-and `executor_unavailable`; `missing` has `not_retained`
+`pending` has `not_disclosed`, and from the server also `budget_exhausted`,
+`executor_unavailable` and `unmatched` (no single candidate reproduces
+every tag; the offline check after disclosure decides per run); `missing` has `not_retained`
 (before `retained_from`) and `keys_missing` (the run is on record but no key
 at or above the epoch is); `unsupported` has `ipv6`, `not_ipv4`,
 `too_short`, `malformed`, `fragment` (the tag spec's own reasons),
@@ -337,12 +347,13 @@ packets carry it as `captured_at`.
 | Candidates per lookup | 32 | Larger answers are `unsupported: too many candidates` |
 | Keys per page | 1024 epochs | |
 | Packets per `POST /attribution/verify` | 256, body ≤ 64 KiB, ≤ 16 groups | |
-| Server budget `R` per (executor, chain, epoch) | 16 group queries, shared by all requesters, durable across restarts, never refunded | Each query tests at most one guess of a 16-bit tag, so forgery succeeds with probability at most `R/65536 ≈ 0.02 %` |
+| Server budget `R` per (executor, chain, epoch) | 16 candidate trials (a query charges one per candidate run), shared by all requesters, durable across restarts, never refunded | Each trial tests at most one guess of a 16-bit tag against one run's key, so a forged tag for any candidate of that epoch succeeds with probability at most `R/65536 ≈ 0.02 %` |
 | Clock skew | ±1 epoch | As today |
 | History retention | Operator-configured, default 90 days | `missing` before `retained_from` |
 
 An exhausted budget only delays verification until disclosure (`pending`). It
-cannot make a valid group `invalid`. Queries are also rate-limited per client
+cannot make a valid group `invalid`, and neither can a server answer. A
+group with more than 16 candidates cannot use the server method. Queries are also rate-limited per client
 address, which makes exhausting a budget cost several addresses.
 
 ## Privacy

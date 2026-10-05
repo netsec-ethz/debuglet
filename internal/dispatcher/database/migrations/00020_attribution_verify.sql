@@ -1,9 +1,10 @@
 -- +goose up
 -- Server-assisted verification (docs/verification.md, POST /attribution/verify).
 
--- The executor queries spent per chain epoch, shared by every requester. A
--- query is counted before it is relayed, so neither a crash nor a restart can
--- refund it. A row is deleted once the epoch's key is due for disclosure, when
+-- The candidate trials spent per chain epoch, shared by every requester: an
+-- executor query charges one trial per candidate run it tests. A query is
+-- charged before it is relayed, so neither a crash nor a restart can refund
+-- it. A row is deleted once the epoch's key is due for disclosure, when
 -- no further query of that epoch is relayed.
 CREATE TABLE attribution_verify_budget (
     executor_id TEXT NOT NULL,

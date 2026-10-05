@@ -64,9 +64,11 @@ changes; the linked API and deployment documentation contains operational detail
   groups: a group whose key is disclosed is checked against the key store; a
   group whose key is not yet disclosed is relayed to its executor over the
   control session (`VerifyTags`), which answers yes or no for the whole group
-  and never returns tags or keys. Each relayed question spends one of 16
-  queries per executor, chain and epoch, shared by every requester, spent
-  durably before the relay and never refunded. Every answer carries an
+  and never returns tags or keys. Each relayed question charges one trial
+  per candidate run to a budget of 16 trials per executor, chain and epoch,
+  shared by every requester, charged durably before the relay and never
+  refunded. An answer that no single candidate reproduces every tag stays
+  pending (`unmatched`) for the offline check after disclosure. Every answer carries an
   Ed25519 receipt over the dispatcher, API version, the dispatcher's query
   time, the packet digest and the verdicts; `GET /attribution/receipt-keys`
   lists the keys with their validity, and `[attribution] receipt_key_path`

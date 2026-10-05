@@ -126,6 +126,7 @@ func (h *Handler) PostAttributionVerify(c echo.Context) error {
 		if g.Budget != nil {
 			group.Budget = &wire.AttributionVerifyBudget{Limit: g.Budget.Limit, Remaining: g.Budget.Remaining, ResetsAt: g.Budget.ResetsAt}
 		}
+		group.PendingUntil = g.PendingUntil
 		if g.Method == dispatcher.VerifyMethodServer {
 			spent++
 		}

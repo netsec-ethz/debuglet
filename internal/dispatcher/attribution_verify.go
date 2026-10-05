@@ -35,7 +35,9 @@ import (
 
 // Limits of server-assisted verification (docs/verification.md#limits).
 const (
-	// VerifyBudget is R, the executor queries per executor, chain and epoch.
+	// VerifyBudget is R, the candidate trials per executor, chain and epoch:
+	// a query charges one trial for every candidate run the executor tests,
+	// since each tests a guessed tag against another derived key.
 	VerifyBudget = 16
 	// MaxVerifyPackets bounds the packets of one request.
 	MaxVerifyPackets = 256
@@ -66,8 +68,14 @@ const (
 	VerifyMethodOffline = "offline"
 	VerifyMethodServer  = "server"
 
-	// VerifyBudgetExhausted: every query of the epoch has been spent.
+	// VerifyBudgetExhausted: the trials left for the epoch are fewer than
+	// the group's candidates.
 	VerifyBudgetExhausted = "budget_exhausted"
+	// VerifyUnmatched: the executor found no single candidate that
+	// reproduces every tag. Two runs from one source in one epoch answer so
+	// as well as forged traffic, so the offline check after disclosure
+	// decides, per run.
+	VerifyUnmatched = "unmatched"
 	// VerifyExecutorUnavailable: the executor did not answer.
 	VerifyExecutorUnavailable = "executor_unavailable"
 )
@@ -83,16 +91,19 @@ type VerifyPacket struct {
 }
 
 // VerifyGroupResult is the verdict of one group. Packets are indices into the
-// request. Budget is set for a group that has a chain.
+// request. Budget is set for a group that has a chain, PendingUntil for a
+// pending group that the disclosure of its key decides.
 type VerifyGroupResult struct {
 	Source, ChainID, ExecutorID, RunID string
 	Epoch                              int64
 	Verdict, Reason, Method            string
 	Packets                            []int
 	Budget                             *VerifyBudgetState
+	PendingUntil                       *time.Time
 }
 
-// VerifyBudgetState is the budget of one executor, chain and epoch.
+// VerifyBudgetState is the budget of one executor, chain and epoch, in
+// candidate trials.
 type VerifyBudgetState struct {
 	Limit, Remaining int64
 	ResetsAt         time.Time
@@ -267,6 +278,7 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 	source := netip.AddrFrom4([4]byte(packets[indices[0]].Data[12:16])).String()
 	out := VerifyGroupResult{Source: source, ChainID: row.ChainID, ExecutorID: row.ExecutorID, Epoch: epoch, Packets: indices}
 	due := c.epochStart(epoch + row.DelayEpochs)
+	pendingUntil := due.UTC()
 	budget := &VerifyBudgetState{Limit: VerifyBudget, Remaining: VerifyBudget, ResetsAt: due.UTC()}
 	switch {
 	case row.TagSpec != tagspec.Version:
@@ -315,13 +327,12 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 	d.mu.RUnlock()
 	if owner == nil {
 		// Nothing is asked, so nothing is spent.
-		out.Verdict, out.Reason = VerifyPending, VerifyExecutorUnavailable
+		out.Verdict, out.Reason, out.PendingUntil = VerifyPending, VerifyExecutorUnavailable, &pendingUntil
 		return out
 	}
-	used, err := d.spendVerifyBudget(ctx, row.ExecutorID, row.ChainID, epoch, now)
+	used, err := d.spendVerifyBudget(ctx, row.ExecutorID, row.ChainID, epoch, int64(len(c.runs)), now)
 	if errors.Is(err, sql.ErrNoRows) {
-		budget.Remaining = 0
-		out.Verdict, out.Reason = VerifyPending, VerifyBudgetExhausted
+		out.Verdict, out.Reason, out.PendingUntil = VerifyPending, VerifyBudgetExhausted, &pendingUntil
 		return out
 	}
 	if err != nil {
@@ -330,17 +341,25 @@ func (d *Dispatcher) verifyGroup(ctx context.Context, c verifyChain, epoch int64
 		return out
 	}
 	budget.Remaining = max(VerifyBudget-used, 0)
-	out.Verdict, out.Reason, out.RunID = d.relayVerify(ctx, owner, row.Anchor, epoch, c.runs, indices, packets)
-	if out.Verdict != VerifyPending {
+	var answered bool
+	out.Verdict, out.Reason, out.RunID, answered = d.relayVerify(ctx, owner, row.Anchor, epoch, c.runs, indices, packets)
+	if answered {
 		out.Method = VerifyMethodServer
+	}
+	if out.Verdict == VerifyPending {
+		out.PendingUntil = &pendingUntil
 	}
 	return out
 }
 
-// spendVerifyBudget counts one query of the epoch, in its own transaction,
-// and returns the queries used. It returns sql.ErrNoRows when the budget is
-// exhausted. Counts of epochs already due for disclosure are dropped first.
-func (d *Dispatcher) spendVerifyBudget(ctx context.Context, executorID, chainID string, epoch int64, now time.Time) (int64, error) {
+// spendVerifyBudget charges trials to the epoch, in its own transaction, and
+// returns the trials used. It returns sql.ErrNoRows, charging nothing, when
+// fewer than trials remain. Counts of epochs already due for disclosure are
+// dropped first.
+func (d *Dispatcher) spendVerifyBudget(ctx context.Context, executorID, chainID string, epoch, trials int64, now time.Time) (int64, error) {
+	if trials < 1 || trials > VerifyBudget {
+		return 0, sql.ErrNoRows
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -351,7 +370,7 @@ func (d *Dispatcher) spendVerifyBudget(ctx context.Context, executorID, chainID 
 		return 0, err
 	}
 	used, err := q.SpendAttributionVerifyBudget(ctx, database.SpendAttributionVerifyBudgetParams{
-		ExecutorID: executorID, ChainID: chainID, Epoch: epoch,
+		ExecutorID: executorID, ChainID: chainID, Epoch: epoch, Used: trials,
 	})
 	if err != nil {
 		return 0, err
@@ -419,19 +438,20 @@ var executorReasons = map[string]bool{
 }
 
 // relayVerify asks the executor about one group over its control session,
-// the way confirmRunRetirement inspects retained work.
-func (d *Dispatcher) relayVerify(ctx context.Context, owner *rpc.SessionOwner, anchor []byte, epoch int64, runs []string, indices []int, packets []VerifyPacket) (verdict, reason, run string) {
+// the way confirmRunRetirement inspects retained work. answered reports a
+// verdict the executor gave.
+func (d *Dispatcher) relayVerify(ctx context.Context, owner *rpc.SessionOwner, anchor []byte, epoch int64, runs []string, indices []int, packets []VerifyPacket) (verdict, reason, run string, answered bool) {
 	call, cancel := context.WithTimeout(ctx, verifyRelayTimeout)
 	defer cancel()
 	mutation, err := owner.AdmitMutation(call)
 	if err != nil {
-		return VerifyPending, VerifyExecutorUnavailable, ""
+		return VerifyPending, VerifyExecutorUnavailable, "", false
 	}
 	defer mutation.Finish()
 	client, available := d.Bidi.GetClientFor(owner)
 	verifier, supported := client.(tagVerifier)
 	if !available || !supported {
-		return VerifyPending, VerifyExecutorUnavailable, ""
+		return VerifyPending, VerifyExecutorUnavailable, "", false
 	}
 	req := &pb.VerifyTagsRequest{ChainAnchor: anchor, Epoch: epoch, CandidateRunIds: runs}
 	binding := owner.Binding()
@@ -443,22 +463,23 @@ func (d *Dispatcher) relayVerify(ctx context.Context, owner *rpc.SessionOwner, a
 	if err != nil || reply == nil {
 		d.logger.Info("An executor did not answer a verification query; the query stays spent",
 			zap.String("executorID", owner.ExecutorID()), zap.Error(err))
-		return VerifyPending, VerifyExecutorUnavailable, ""
+		return VerifyPending, VerifyExecutorUnavailable, "", false
 	}
 	switch reply.GetVerdict() {
 	case "matched":
 		if slices.Contains(runs, reply.GetRunId()) {
-			return VerifyVerified, "", reply.GetRunId()
+			return VerifyVerified, "", reply.GetRunId(), true
 		}
 	case "unmatched":
-		return VerifyInvalid, "tag_mismatch", ""
+		// Not invalid: two legitimate runs in one group answer so too.
+		return VerifyPending, VerifyUnmatched, "", true
 	case "ambiguous":
-		return VerifyUnsupported, "ambiguous", ""
+		return VerifyUnsupported, "ambiguous", "", true
 	case "unsupported":
 		if executorReasons[reply.GetReason()] {
-			return VerifyUnsupported, reply.GetReason(), ""
+			return VerifyUnsupported, reply.GetReason(), "", true
 		}
 	}
 	d.logger.Warn("An executor answered a verification query outside the protocol", zap.String("executorID", owner.ExecutorID()))
-	return VerifyPending, VerifyExecutorUnavailable, ""
+	return VerifyPending, VerifyExecutorUnavailable, "", false
 }

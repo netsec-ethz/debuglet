@@ -236,7 +236,7 @@ pending      198.51.100.4  2026-09-29T10:20Z  5 packets  until 2026-09-29T10:36Z
 ```
 
 Keys are disclosed about 15 minutes after use, so with `--offline`, or when
-the executor cannot answer or the epoch's 16 server queries are spent, a
+the executor cannot answer or the epoch's 16 candidate trials are spent, a
 fresh capture is `pending`; run the command again after the time it names.
 A server verdict rests on the dispatcher's receipt: it shows what was asked
 and answered when, not when the packets were captured; compare its key with

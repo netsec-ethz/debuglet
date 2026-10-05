@@ -20,6 +20,11 @@ import (
 // executor confirms every group for run, signing receipts with key, and GET
 // /attribution/receipt-keys with the key.
 func serveVerify(t *testing.T, f *fakeServer, chain *testChain, run string, key ed25519.PrivateKey) {
+	serveVerifyAnswer(t, f, chain, run, "verified", "", key)
+}
+
+// serveVerifyAnswer is serveVerify with the given verdict and reason.
+func serveVerifyAnswer(t *testing.T, f *fakeServer, chain *testChain, run, verdict, reason string, key ed25519.PrivateKey) {
 	t.Helper()
 	public := key.Public().(ed25519.PublicKey)
 	keyID := ReceiptKeyID(public)
@@ -39,8 +44,11 @@ func serveVerify(t *testing.T, f *fakeServer, chain *testChain, run string, key 
 			packets[i] = i
 		}
 		e := chain.sched.epochOf(req.Packets[0].CapturedAt)
+		if verdict != "verified" {
+			run = ""
+		}
 		group := wire.AttributionReceiptGroup{ChainID: chain.sched.ChainID, Epoch: e, ExecutorID: chain.executor, Method: "server",
-			Packets: packets, RunID: run, Source: srcA.String(), Verdict: "verified"}
+			Packets: packets, Reason: reason, RunID: run, Source: srcA.String(), Verdict: verdict}
 		payload, err := wire.CanonicalReceiptPayload(wire.AttributionReceiptPayload{
 			APIVersion: "1.15", Dispatcher: "http://dispatcher.test", Groups: []wire.AttributionReceiptGroup{group},
 			PacketsDigest: wire.PacketsDigest(req.Packets), QueryAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -50,7 +58,7 @@ func serveVerify(t *testing.T, f *fakeServer, chain *testChain, run string, key 
 		}
 		resp := AttributionVerifyResponse{
 			Groups: []AttributionVerifyGroup{{Source: group.Source, Epoch: e, ChainID: group.ChainID, ExecutorID: group.ExecutorID,
-				RunID: run, Verdict: "verified", Method: "server", Packets: packets,
+				RunID: run, Verdict: verdict, Reason: reason, Method: "server", Packets: packets,
 				Budget: &wire.AttributionVerifyBudget{Limit: 16, Remaining: 15, ResetsAt: chain.sched.dueAt(e)}}},
 			Receipt: AttributionReceipt{KeyID: keyID, Payload: payload, Signature: ed25519.Sign(key, payload)},
 		}
@@ -175,5 +183,48 @@ func TestVerifyKeepsGroupsPendingWithoutTheServerMethod(t *testing.T) {
 	}
 	if ev := rep.Evidence(); len(ev.Receipts) != 0 || ev.ReceiptKeys != nil {
 		t.Fatalf("a bundle without server answers carries receipts: %+v", ev.Receipts)
+	}
+}
+
+// TestVerifyKeepsAnUnmatchedServerAnswerPending leaves a group pending when
+// the executor finds no single candidate that reproduces every tag: two
+// runs in one group answer so too, and the offline check after disclosure
+// decides per run. The bundle keeps the receipt and checks out again.
+func TestVerifyKeepsAnUnmatchedServerAnswerPending(t *testing.T) {
+	chain := newTestChain("exec-zrh-1", 1, 1000, 90)
+	chain.sched.T0UnixNs = time.Now().Add(-time.Hour).UnixNano()
+	src := &fakeSource{now: time.Now(), runs: []fakeRun{
+		{ip: srcA, run: runA, chain: chain, from: chain.at(0, 0), to: time.Now().Add(time.Hour)},
+		{ip: srcA, run: runB, chain: chain, from: chain.at(0, 0), to: time.Now().Add(time.Hour)},
+	}}
+	f := newFakeServer(t, "")
+	serveAttribution(t, f, src)
+	_, key, _ := ed25519.GenerateKey(nil)
+	serveVerifyAnswer(t, f, chain, "", "pending", "unmatched", key)
+	now := chain.sched.epochOf(time.Now())
+	pkts := packetsAt(chain.at(now, 0), chain.tag(now, runA, probe(srcA, 80, 1)), chain.tag(now, runB, probe(srcA, 90, 2)))
+	rep, err := f.client(t, Options{}).Verify(t.Context(), pkts, VerifyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := onlyGroup(t, rep)
+	if g.Verdict != VerdictPending || g.Reason != ReasonNotDisclosed || g.PendingUntil == nil || !g.PendingUntil.Equal(chain.sched.dueAt(now)) ||
+		f.count(http.MethodPost, "/attribution/verify") != 1 {
+		t.Fatalf("group %+v; want it pending until the disclosure", g)
+	}
+	ev := rep.Evidence()
+	if len(ev.Receipts) != 1 {
+		t.Fatalf("receipts %+v", ev.Receipts)
+	}
+	var buf bytes.Buffer
+	if err := WriteEvidence(&buf, ev); err != nil {
+		t.Fatal(err)
+	}
+	read, err := ReadEvidence(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := VerifyEvidence(t.Context(), read); err != nil || again.Counts != (VerifyCounts{Pending: 1}) {
+		t.Fatalf("the bundle does not check out: %+v, %v", again.Counts, err)
 	}
 }

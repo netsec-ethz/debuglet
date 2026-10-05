@@ -28,8 +28,9 @@ type AttributionVerifyRequest struct {
 	Packets []AttributionVerifyPacket `json:"packets"`
 }
 
-// AttributionVerifyBudget is the executor query budget of one chain epoch,
-// shared by every requester. ResetsAt is when the epoch's key is due for
+// AttributionVerifyBudget is the budget of one chain epoch in candidate
+// trials, shared by every requester: an executor query charges one trial per
+// candidate run it tests. ResetsAt is when the epoch's key is due for
 // disclosure; from then on the group is checked against the disclosed key.
 type AttributionVerifyBudget struct {
 	Limit     int64     `json:"limit"`
@@ -39,18 +40,20 @@ type AttributionVerifyBudget struct {
 
 // AttributionVerifyGroup is the verdict of one packet group: the packets of
 // one source address in one epoch of one chain. Packets are indices into the
-// request's packets. Budget is set for a group that has a chain.
+// request's packets. Budget is set for a group that has a chain;
+// PendingUntil, for a pending group, is when its key is due for disclosure.
 type AttributionVerifyGroup struct {
-	Source     string                   `json:"source"`
-	Epoch      int64                    `json:"epoch"`
-	ChainID    string                   `json:"chain_id"`
-	ExecutorID string                   `json:"executor_id"`
-	RunID      string                   `json:"run_id"`
-	Verdict    string                   `json:"verdict"`
-	Reason     string                   `json:"reason"`
-	Method     string                   `json:"method"`
-	Packets    []int                    `json:"packets"`
-	Budget     *AttributionVerifyBudget `json:"budget,omitempty"`
+	Source       string                   `json:"source"`
+	Epoch        int64                    `json:"epoch"`
+	ChainID      string                   `json:"chain_id"`
+	ExecutorID   string                   `json:"executor_id"`
+	RunID        string                   `json:"run_id"`
+	Verdict      string                   `json:"verdict"`
+	Reason       string                   `json:"reason"`
+	Method       string                   `json:"method"`
+	Packets      []int                    `json:"packets"`
+	Budget       *AttributionVerifyBudget `json:"budget,omitempty"`
+	PendingUntil *time.Time               `json:"pending_until,omitempty"`
 }
 
 // AttributionReceipt is a detached Ed25519 signature by the key KeyID over

@@ -1,11 +1,14 @@
--- Counts one executor query of a chain epoch, unless the limit R = 16 is
--- reached (dispatcher.VerifyBudget): then no row is returned. One statement,
--- so concurrent requests never both take the last query.
+-- Charges the candidate trials of one executor query (one per candidate
+-- run) to a chain epoch, unless they would exceed the limit R = 16
+-- (dispatcher.VerifyBudget): then no row is returned and nothing is charged.
+-- The caller never asks for more than 16 trials, so a first charge always
+-- fits. One statement, so concurrent requests never both take the last
+-- trials.
 -- name: SpendAttributionVerifyBudget :one
 INSERT INTO attribution_verify_budget (executor_id, chain_id, epoch, used)
-VALUES (sqlc.arg(executor_id), sqlc.arg(chain_id), sqlc.arg(epoch), 1)
-ON CONFLICT (executor_id, chain_id, epoch) DO UPDATE SET used = used + 1
-WHERE attribution_verify_budget.used < 16
+VALUES (?, ?, ?, ?)
+ON CONFLICT (executor_id, chain_id, epoch) DO UPDATE SET used = attribution_verify_budget.used + excluded.used
+WHERE attribution_verify_budget.used + excluded.used <= 16
 RETURNING used;
 
 -- name: GetAttributionVerifyBudget :one
