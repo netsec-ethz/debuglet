@@ -38,7 +38,12 @@ type chainBackend interface {
 	Start(ctx context.Context) error
 	CreatePaymentIntent(db database.DBTX, transactionId string, price int64, currency string, hash string, ctx context.Context) (sui.SuiPaymentIntent, error)
 	RefundDebuglet(debugletOrder *database.DebugletOrder, refundAddress string, ctx context.Context) error
-	TransferCoins(amount uint64, cointype string, refundAddress string, ctx context.Context) error
+	// TransferCoins is PrepareTransfer followed by ExecuteTransfer. It returns
+	// the transfer's digest whenever one was computed, also with an error.
+	TransferCoins(amount uint64, cointype string, receiver string, ctx context.Context) (string, error)
+	PrepareTransfer(ctx context.Context, amount uint64, coinType string, receiver string) (*sui.PreparedTransfer, error)
+	ExecuteTransfer(ctx context.Context, prepared *sui.PreparedTransfer) error
+	LookupTransfer(ctx context.Context, digest string, expect *sui.TransferExpectation) (sui.TransferOutcome, bool, error)
 }
 
 // payoutLoop is the subset of *PayoutTicker that PaymentHandler uses.
@@ -48,15 +53,20 @@ type payoutLoop interface {
 
 // paymentDeps carries the constructors of the two chain-mode services. The
 // production set is defined by productionDeps; tests substitute scripted ones.
+// newChain fails on an unusable [sui] configuration.
 type paymentDeps struct {
-	newChain  func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) chainBackend
+	newChain  func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) (chainBackend, error)
 	newPayout func(db *sql.DB, h Handler, logger *zap.Logger) payoutLoop
 }
 
 func productionDeps() paymentDeps {
 	return paymentDeps{
-		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) chainBackend {
-			return sui.NewSuiPaymentHandler(cfg, db, logger, tf)
+		newChain: func(cfg *config.DispatcherConfig, db *sql.DB, logger *zap.Logger, tf sui.TransactionFulfiller) (chainBackend, error) {
+			h, err := sui.NewSuiPaymentHandler(cfg, db, logger, tf)
+			if err != nil {
+				return nil, err // not a typed nil inside the interface
+			}
+			return h, nil
 		},
 		newPayout: func(db *sql.DB, h Handler, logger *zap.Logger) payoutLoop {
 			return NewPayoutTicker(db, h, logger)
@@ -82,23 +92,29 @@ type DummyIntent struct {
 	AuthKey       string
 }
 
-func NewPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger) *PaymentHandler {
+func NewPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger) (*PaymentHandler, error) {
 	return newPaymentHandler(db, cfg, logger, productionDeps())
 }
 
 // newPaymentHandler is the single construction path. In disabled mode neither
 // factory is invoked, so no chain client, event listener, keystore read or
 // payout ticker exists; the handler then serves database-backed TEST payments
-// only. In enabled mode both factories are invoked exactly once.
-func newPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger, deps paymentDeps) *PaymentHandler {
+// only and construction cannot fail. In enabled mode both factories are
+// invoked exactly once, the payout factory only after the chain backend was
+// built.
+func newPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Logger, deps paymentDeps) (*PaymentHandler, error) {
 	handler := &PaymentHandler{db: db, logger: logger, cfg: cfg}
 	if cfg.Sui.Disabled {
 		logger.Info("blockchain payments are disabled; only TEST payments are available")
-		return handler
+		return handler, nil
 	}
-	handler.sui = deps.newChain(cfg, db, logger, handler)
+	chain, err := deps.newChain(cfg, db, logger, handler)
+	if err != nil {
+		return nil, fmt.Errorf("blockchain payments: %w", err)
+	}
+	handler.sui = chain
 	handler.pt = deps.newPayout(db, handler, logger)
-	return handler
+	return handler, nil
 }
 
 // chainDisabled reports whether chain payment actions are switched off. It is
@@ -493,7 +509,7 @@ func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Con
 
 	switch currency {
 	case "USDC":
-		err = p.sui.TransferCoins(uint64(totalRefundValue), sui.GetCoinType("USDC", p.cfg.Sui.Network), refundAddress, ctx)
+		_, err = p.sui.TransferCoins(uint64(totalRefundValue), sui.GetCoinType("USDC", p.cfg.Sui.Network), refundAddress, ctx)
 	default:
 		err = fmt.Errorf("Refunds are not supported for currency %s", orders[0].Currency)
 	}
@@ -524,8 +540,16 @@ func (p *PaymentHandler) TransferUSDC(amount uint64, receiver string, ctx contex
 	if err := p.requireChain("USDC", "transfer USDC"); err != nil {
 		return err
 	}
+	coinType := sui.GetCoinType("USDC", p.cfg.Sui.Network)
+	if coinType == "" {
+		return fmt.Errorf("transfer USDC: no USDC coin type on network %q", p.cfg.Sui.Network)
+	}
+	if err := sui.ValidAddress(receiver); err != nil {
+		return fmt.Errorf("transfer USDC: receiver: %w", err)
+	}
 	// This backend's signature takes ctx last, unlike the rest of this package.
-	return p.sui.TransferCoins(amount, receiver, sui.GetCoinType("USDC", p.cfg.Sui.Network), ctx)
+	_, err := p.sui.TransferCoins(amount, coinType, receiver, ctx)
+	return err
 }
 
 func (p *PaymentHandler) PayoutExecutor(earning database.Earning, ctx context.Context) error {
@@ -534,7 +558,8 @@ func (p *PaymentHandler) PayoutExecutor(earning database.Earning, ctx context.Co
 	}
 	switch earning.Currency {
 	case "USDC":
-		return p.sui.TransferCoins(uint64(earning.CurrentBalance), sui.GetCoinType("USDC", p.cfg.Sui.Network), earning.SuiWalletAddress, ctx)
+		_, err := p.sui.TransferCoins(uint64(earning.CurrentBalance), sui.GetCoinType("USDC", p.cfg.Sui.Network), earning.SuiWalletAddress, ctx)
+		return err
 	default:
 		return fmt.Errorf("Unknown/unallowed currency %s", earning.Currency)
 	}

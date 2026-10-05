@@ -252,7 +252,7 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ph := payments.NewPaymentHandler(db, cfg, logger)
+	ph, _ := payments.NewPaymentHandler(db, cfg, logger)
 	d, err := dispatcher.New(logger, db, "wf-test", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)
@@ -587,7 +587,7 @@ func TestWalletFreeHTTPFlow(t *testing.T) {
 	if after := wfTakeSnapshot(t, db2); after != completed {
 		t.Fatalf("rows differ after reopen:\nbefore:\n%s\nafter:\n%s", completed, after)
 	}
-	ph2 := payments.NewPaymentHandler(db2, cfg, logger)
+	ph2, _ := payments.NewPaymentHandler(db2, cfg, logger)
 	paid, err := ph2.IsPaid(ctx, txID)
 	if err != nil {
 		t.Fatalf("IsPaid after reopen: %v", err)
