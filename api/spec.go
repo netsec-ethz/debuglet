@@ -35,8 +35,10 @@ const (
 	// 1.12 added measurement workflows, payload deletion and structured request field failures.
 	// 1.13 added linked provider identities and scoped browser-approved credentials.
 	// 1.14 added local allocation reclamation to recovery inspection.
-	// 1.15 added payment quotes, the account's order history and the
-	// account's payment features.
+	// 1.15 added payment quotes, the account's order history, the account's
+	// payment features, usage allowances (GET /me/allowance, POST
+	// /operator/accounts/{id}/allowance) and executor earnings
+	// (GET /operator/executors/{id}/earnings).
 	Minor = 15
 	// VersionHeader carries the contract version a client requires on requests
 	// and the version the dispatcher implements on responses.

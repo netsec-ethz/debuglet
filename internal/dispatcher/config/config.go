@@ -27,6 +27,7 @@ type DispatcherConfig struct {
 	Retention          RetentionConfig          `toml:"retention"`
 	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
 	Attribution        AttributionConfig        `toml:"attribution"`
+	Allowance          AllowanceConfig          `toml:"allowance"`
 	// Executors holds optional operator display metadata by executor ID.
 	Executors map[string]ExecutorDisplay `toml:"executors"`
 	Metadata  MetadataConfig             `toml:"metadata"`
@@ -153,6 +154,7 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 	cfg.Output = DefaultOutputConfig()
 	cfg.Admission = DefaultAdmissionConfig()
 	cfg.Attribution = DefaultAttributionConfig()
+	cfg.Allowance = DefaultAllowanceConfig()
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
 		return nil, document, err
@@ -189,6 +191,9 @@ func (cfg *DispatcherConfig) Validate() error {
 		return errors.New("output.account_bytes and output.node_bytes must be positive outside the explicit local-development profile")
 	}
 	if err := cfg.Attribution.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.Allowance.Validate(); err != nil {
 		return err
 	}
 	if err := validateExecutors(cfg.Executors); err != nil {

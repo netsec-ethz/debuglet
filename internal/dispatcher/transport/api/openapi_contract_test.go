@@ -380,6 +380,14 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			if _, err := authenticated.Orders(ctx, client.OrdersPage{Limit: 5}); err != nil {
 				t.Fatalf("Orders: %v", err)
 			}
+			// Allowances are disabled in this fixture, and the account owns no
+			// executor: both answer their documented 404.
+			if _, err := authenticated.Allowance(ctx); err == nil {
+				t.Fatal("Allowance succeeded while allowances are disabled")
+			}
+			if _, err := authenticated.ExecutorEarnings(ctx, oaExecutorID); err == nil {
+				t.Fatal("ExecutorEarnings of an executor the account does not own succeeded")
+			}
 			if _, err := authenticated.Measurements(ctx, client.MeasurementOptions{Limit: 5}); err != nil {
 				t.Fatalf("Measurements: %v", err)
 			}
@@ -439,6 +447,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/operator/executors", nil)
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/executors", []byte(`{"name":"contract node"}`))
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/executors/00000000-0000-0000-0000-00000000dead/enrollment-token", nil)
+			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/accounts/00000000-0000-0000-0000-00000000dead/allowance", []byte(`{"reason":"trial","idempotency_key":"contract"}`))
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/executor-enrollment", []byte(`{"executor_id":"00000000-0000-0000-0000-00000000dead","token":"unused","csr":"unused"}`))
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/candidates?ip=not-an-ip&at=2026-09-29T10:00:00Z", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/keys?executor_id=no-such-executor&chain_id=none&from_epoch=1&to_epoch=5", nil)

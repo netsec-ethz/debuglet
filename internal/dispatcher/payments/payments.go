@@ -226,9 +226,12 @@ func (p *PaymentHandler) CreateDummyIntent(transactionId string, price int64, ha
 	return p.createDummyIntent(p.db, transactionId, price, hash, ctx)
 }
 
+// testIntentLifetime is how long a TEST intent stays valid after it is created.
+const testIntentLifetime = 5 * time.Minute
+
 func (p *PaymentHandler) createDummyIntent(db database.DBTX, transactionId string, price int64, hash string, ctx context.Context) error {
 	//TODO check if we can fetch a timestamp from chain to avoid drift
-	expiresAt := time.Now().Add(time.Minute * 5)
+	expiresAt := time.Now().Add(testIntentLifetime)
 
 	queries := database.New(db)
 	if t, err := queries.CreateTransaction(ctx, database.CreateTransactionParams{

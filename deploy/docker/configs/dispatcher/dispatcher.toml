@@ -60,3 +60,11 @@ path = "/var/lib/debuglet/dispatcher.db"
 # list leaves credential-free wildcard CORS in place.
 [cors]
 allowed_origins = []
+
+# Usage allowances cap the TEST intents of accounts at the TEST units an
+# operator granted them (POST /operator/accounts/{id}/allowance). They are
+# usage credits, not money; nothing grants them automatically. Enabling them
+# is a deployment choice.
+[allowance]
+enabled = false
+default_grant = 30000000
