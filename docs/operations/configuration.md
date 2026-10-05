@@ -21,6 +21,19 @@ The dispatcher prunes older records on its expiry loop, at startup and hourly: r
 
 The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
 
+### Destination limits and opt-outs
+
+An operator account sets the policy of one destination with `PATCH /destination` and lists the current policies with `GET /destinations` ([API](../api.md#destination-policies)). A destination is the exact address string runs declare; no normalization is applied, so a policy for `192.0.2.1` does not cover `192.0.2.1:443` or a hostname.
+
+To honour an opt-out request, deny the destination with a reason, for example `{"destination":"192.0.2.1","denied":true,"reason":"opt-out request from the address owner"}`, optionally with `expires_at` (RFC 3339). Then:
+
+- Every new allocation on the destination is refused, whatever its floor, including a zero floor. A submission naming it can still be accepted and then fails when its executor allocates it.
+- The deny is appended to the dispatcher database before it applies, with the operator account as actor, the reason, the time and a revision. Events are never changed or deleted. The dispatcher applies the latest event of every destination again at startup, before any executor connects, so a restart no longer loses it.
+- The deny is sent at once to every executor holding an allocation on the destination as a zero limit with the denied flag. `GET /destinations` reports `delivery: confirmed` when every such executor acknowledged it, and `unconfirmed` with the number that did not (refused, unreachable, or a legacy executor that cannot confirm ordered application). The count describes the application in the current dispatcher lifetime; a policy restored at startup has no recipients, because no allocation survives a restart.
+- At `expires_at` the expiry loop returns the destination to the default capacity and records an `allow` event with actor `system` and reason `expired`.
+
+What a deny does not do yet: it does not stop traffic that is already running. Executors of this release that received the deny apply the zero limit, which reduces every run on the destination to its admitted floor bandwidth, and keep sending at that floor until the run ends or is cancelled. Closing active connections on the denied flag is a separate executor change. Until it is deployed, cancel the affected runs as well when traffic has to stop before their windows end, and verify the outcome before reporting that traffic has stopped.
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
@@ -103,7 +116,7 @@ binaries are installed; it does not change the state's contents or retention.
 | Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
 | Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
 | CLI configuration | Connection profiles and saved credentials in the configured CLI directory. These are separate from daemon state and are excluded from foreground state backups. |
-| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, dispatcher destination limits and undisclosed executor TESLA keys. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
+| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, undisclosed executor TESLA keys. Destination policies are kept in the dispatcher database; the delivery state reported for them is memory only. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
 
 See [output limits](#executor-output-limits) for the configured byte, frame and
 record budgets, [daemon log retention](services.md#foreground-daemon-logs) for

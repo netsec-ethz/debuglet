@@ -802,6 +802,7 @@ type DestinationLimit struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
 	BitsLimit     int64                  `protobuf:"varint,2,opt,name=bits_limit,json=bitsLimit,proto3" json:"bits_limit,omitempty"`
+	Denied        bool                   `protobuf:"varint,3,opt,name=denied,proto3" json:"denied,omitempty"` // The destination is opted out: refuse new connections and close active ones.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -848,6 +849,13 @@ func (x *DestinationLimit) GetBitsLimit() int64 {
 		return x.BitsLimit
 	}
 	return 0
+}
+
+func (x *DestinationLimit) GetDenied() bool {
+	if x != nil {
+		return x.Denied
+	}
+	return false
 }
 
 type BandwidthRequest struct {
@@ -3361,11 +3369,12 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vdebuglet_id\x18\x01 \x01(\tR\n" +
 	"debugletId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x0f\n" +
-	"\rAbortResponse\"K\n" +
+	"\rAbortResponse\"c\n" +
 	"\x10DestinationLimit\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x1d\n" +
 	"\n" +
-	"bits_limit\x18\x02 \x01(\x03R\tbitsLimit\"k\n" +
+	"bits_limit\x18\x02 \x01(\x03R\tbitsLimit\x12\x16\n" +
+	"\x06denied\x18\x03 \x01(\bR\x06denied\"k\n" +
 	"\x10BandwidthRequest\x12;\n" +
 	"\x06limits\x18\x01 \x03(\v2#.debuglet.protocol.DestinationLimitR\x06limits\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\"/\n" +

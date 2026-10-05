@@ -63,3 +63,71 @@ func TestFairshareKeepsFloorsBelowTheLimit(t *testing.T) {
 		t.Fatalf("fairshare yielded %d executors, want %d", yielded, len(floors))
 	}
 }
+
+// TestDenyRefusesEveryFloorAndAllowRestores states that a denied destination
+// refuses new allocations and capacity queries whatever their floor, zero
+// included, that a recorded allocation stays and is shared zero, and that
+// Allow restores admission without touching the limit.
+func TestDenyRefusesEveryFloorAndAllowRestores(t *testing.T) {
+	d := NewDestinations(1000)
+	const dest = "192.0.2.110"
+	held := uuid.New()
+	if err := d.Insert(held, dest, "dlm-a", 10, 80); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetLimit(dest, 500); err != nil {
+		t.Fatal(err)
+	}
+	before := d.Snapshot()
+	d.Deny(dest)
+	if !d.Denied(dest) {
+		t.Fatal("denied destination not reported as denied")
+	}
+	for _, floor := range []bitrate.Bitrate{0, 10} {
+		if err := d.CheckCapacity(dest, floor); !errors.Is(err, ErrDenied) {
+			t.Fatalf("CheckCapacity(floor %s) = %v, want %v", floor, err, ErrDenied)
+		}
+		if err := d.Allocate(uuid.New(), "dlm-b", []string{"192.0.2.111", dest}, floor, 80); !errors.Is(err, ErrDenied) {
+			t.Fatalf("Allocate(floor %s) = %v, want %v", floor, err, ErrDenied)
+		}
+	}
+	if after := d.Snapshot(); after != before {
+		t.Fatalf("refused allocations changed the bookkeeping:\n%s\nwant\n%s", after, before)
+	}
+	for id, limit := range d.Fairshare(dest) {
+		if id != "dlm-a" || limit != 0 {
+			t.Fatalf("denied destination shared %s to %s, want 0 to dlm-a", limit, id)
+		}
+	}
+	if got := d.Cap(dest); got != 500 {
+		t.Fatalf("deny changed the limit to %s", got)
+	}
+	d.Allow(dest)
+	if err := d.Allocate(uuid.New(), "dlm-b", []string{dest}, 0, 80); err != nil {
+		t.Fatalf("allocation after Allow: %v", err)
+	}
+	d.Remove(held, dest)
+	if got := d.Used(dest); got != 0 {
+		t.Fatalf("release of the allocation held through the deny left %s charged", got)
+	}
+}
+
+// TestLimitAndDenyAreIndependent states that a zero limit is not a deny: it
+// still admits a zero floor, and ResetLimit returns to the default.
+func TestLimitAndDenyAreIndependent(t *testing.T) {
+	d := NewDestinations(1000)
+	const dest = "192.0.2.112"
+	if err := d.SetLimit(dest, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CheckCapacity(dest, 0); err != nil {
+		t.Fatalf("zero limit refused a zero floor: %v", err)
+	}
+	if err := d.CheckCapacity(dest, 1); !errors.Is(err, ErrCapacityFull) {
+		t.Fatalf("zero limit admitted a floor: %v", err)
+	}
+	d.ResetLimit(dest)
+	if got := d.Cap(dest); got != 1000 {
+		t.Fatalf("reset limit is %s, want the default 1000", got)
+	}
+}

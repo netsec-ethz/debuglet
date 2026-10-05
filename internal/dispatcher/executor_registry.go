@@ -417,6 +417,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 				d.expireOwner(owner)
 			}
 			lastSweep = d.sweepEndedWindows(lastSweep)
+			d.expireDestinationPolicies()
 			if now := d.now(); lastRetention.IsZero() || now.Sub(lastRetention) >= 10*time.Second {
 				d.sweepPayloadRetention()
 				lastRetention = now

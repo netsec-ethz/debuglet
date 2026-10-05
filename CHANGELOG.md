@@ -47,6 +47,17 @@ changes; the linked API and deployment documentation contains operational detail
   snapshot without the flag allows the destination again; executors and
   dispatchers that do not set it behave as before. See
   `docs/operations/socket-limits.md` for the bound.
+- Recorded destination opt-outs (API 1.15, dispatcher schema 20). `PATCH
+  /destination` accepts `denied`, `reason` and `expires_at`; a denied
+  destination refuses every new allocation, zero floors included. Each change
+  is appended to the dispatcher database with its operator account before it
+  applies, is applied again at startup, and an expiry is recorded as an
+  `allow` event of the dispatcher. `GET /destinations` lists the current
+  policies with their delivery state. Executors receive a denied destination
+  as a zero limit with the new `DestinationLimit.denied` flag; runs already
+  running are reduced to their floor and are not yet stopped. Dispatcher
+  databases require the explicit upgrade to schema 20. See
+  `docs/operations/configuration.md#destination-limits-and-opt-outs`.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

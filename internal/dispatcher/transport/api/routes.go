@@ -179,6 +179,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET(routeDisclosures, h.GetAttributionKeys)
 	// destination
 	e.PATCH("/destination", h.PatchDestinationLimit)
+	e.GET("/destinations", h.GetDestinationPolicies)
 	// payment
 	// e.GET("payment/balance", h.GetBalance)
 	e.PUT("/payment/intent", h.PutPaymentIntent)
