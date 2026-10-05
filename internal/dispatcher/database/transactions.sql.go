@@ -464,29 +464,38 @@ func (q *Queries) InsertOrderSettlement(ctx context.Context, arg InsertOrderSett
 }
 
 const listPendingSettlements = `-- name: ListPendingSettlements :many
-SELECT d.id, d.uuid, d.start_time, d.end_time, d.usage, d.ceil_bw, d.executor_id, d.addresses, d.state, d.error, d.transaction_id, d.order_id, d.dispatcher_incarnation, d.session_id, e.exit_code FROM debuglet_order o
+SELECT d.id, d.uuid, d.start_time, d.end_time, d.usage, d.ceil_bw, d.executor_id, d.addresses, d.state, d.error, d.transaction_id, d.order_id, d.dispatcher_incarnation, d.session_id, e.exit_code, o.currency FROM debuglet_order o
 JOIN debuglets d ON d.id = o.debuglet_id
   AND d.transaction_id = o.transaction_id AND d.order_id = o.order_id
 JOIN measurement_execution e ON e.debuglet_id = d.id
 WHERE o.state = ?1 AND d.state = ?2
-  AND e.exit_code IS NOT NULL
+  AND e.exit_code IS NOT NULL AND (e.exit_code = 0 OR o.currency = 'TEST')
+  AND d.id > ?3
 ORDER BY d.id
-LIMIT ?3
+LIMIT ?4
 `
 
 type ListPendingSettlementsParams struct {
 	OutstandingState int64
 	ExitedState      models.DebugletRunState
+	AfterID          int64
 	RowLimit         int64
 }
 
 type ListPendingSettlementsRow struct {
 	Debuglet Debuglet
 	ExitCode sql.NullInt64
+	Currency string
 }
 
+// Only wholly local settlements: credits of any currency and TEST refunds.
 func (q *Queries) ListPendingSettlements(ctx context.Context, arg ListPendingSettlementsParams) ([]ListPendingSettlementsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listPendingSettlements, arg.OutstandingState, arg.ExitedState, arg.RowLimit)
+	rows, err := q.db.QueryContext(ctx, listPendingSettlements,
+		arg.OutstandingState,
+		arg.ExitedState,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -510,6 +519,7 @@ func (q *Queries) ListPendingSettlements(ctx context.Context, arg ListPendingSet
 			&i.Debuglet.DispatcherIncarnation,
 			&i.Debuglet.SessionID,
 			&i.ExitCode,
+			&i.Currency,
 		); err != nil {
 			return nil, err
 		}

@@ -267,7 +267,11 @@ func (p *PaymentHandler) RefundDebugletOrder(debuglet *database.Debuglet, refund
 // the decision in order_settlements in the same SQL transaction, together with
 // the earnings credit or the chain refund. The conditional state write is the
 // cheap guard against a second settlement, the settlement row's primary key the
-// durable one; any failure rolls back all of it.
+// durable one; any failure rolls back all of it. A USDC refund is sent inside
+// the SQL transaction, so a failure after the transfer may leave the order
+// Outstanding although the money moved: chain refunds are therefore attempted
+// once, from the terminal path, and are not retried automatically until a
+// durable transfer record takes them over.
 func (p *PaymentHandler) settleOrder(ctx context.Context, debuglet *database.Debuglet, kind string, refundAddress string, chainOnly bool) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -352,24 +356,35 @@ func (p *PaymentHandler) settleOrder(ctx context.Context, debuglet *database.Deb
 }
 
 // SettlePendingOrders applies SettleTerminalOrder to at most limit Outstanding
-// orders whose run is terminal with a recorded exit code, in run order. A run
-// without a recorded exit code is not settled: nothing infers its outcome. An
-// order that fails stays Outstanding for a later pass and the others are still
-// settled; the numbers of settled and failed orders are returned with the
-// first failure.
-func (p *PaymentHandler) SettlePendingOrders(ctx context.Context, limit int) (settled, failed int, err error) {
+// orders whose run is terminal with a recorded exit code and whose run id is
+// above after, in run order. A run without a recorded exit code is not settled:
+// nothing infers its outcome. Only wholly local settlements are retried, credits
+// and TEST refunds; a chain refund is never sent again from here and is counted
+// as deferred. An order that fails stays Outstanding for a later pass and the
+// others are still settled. next is the last run id attempted, or 0 once the
+// listing is exhausted, so that the following pass continues after it and a
+// failing order never keeps later ones from being attempted. The first failure
+// is returned with the counts.
+func (p *PaymentHandler) SettlePendingOrders(ctx context.Context, after int64, limit int) (settled, failed, deferred int, next int64, err error) {
 	pending, err := database.New(p.db).ListPendingSettlements(ctx, database.ListPendingSettlementsParams{
-		OutstandingState: int64(models.Outstanding), ExitedState: models.RunStateExited, RowLimit: int64(limit),
+		OutstandingState: int64(models.Outstanding), ExitedState: models.RunStateExited, AfterID: after, RowLimit: int64(limit),
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to list pending settlements: %w", err)
+		return 0, 0, 0, after, fmt.Errorf("failed to list pending settlements: %w", err)
 	}
 	var first error
+	exhausted := len(pending) < limit
 	for _, row := range pending {
 		if ctx.Err() != nil {
+			exhausted = false
 			break
 		}
 		run := row.Debuglet
+		next = run.ID
+		if row.ExitCode.Int64 != 0 && isChainCurrency(row.Currency) {
+			deferred++
+			continue
+		}
 		if err := p.SettleTerminalOrder(ctx, &run, int32(row.ExitCode.Int64)); err != nil {
 			p.logger.Debug("Order settlement remains pending", zap.String("debugletID", run.Uuid.String()))
 			failed++
@@ -381,7 +396,15 @@ func (p *PaymentHandler) SettlePendingOrders(ctx context.Context, limit int) (se
 		settled++
 		p.logger.Info("Settled order of terminal run", zap.String("debugletID", run.Uuid.String()), zap.Int64("exitCode", row.ExitCode.Int64))
 	}
-	return settled, failed, first
+	if deferred > 0 {
+		p.logger.Debug("Chain refunds are not retried automatically", zap.Int("deferred", deferred))
+	}
+	if exhausted {
+		next = 0
+	} else if next == 0 {
+		next = after
+	}
+	return settled, failed, deferred, next, first
 }
 
 // RefundTransaction retains transaction-wide refunds, including claimed orders.
