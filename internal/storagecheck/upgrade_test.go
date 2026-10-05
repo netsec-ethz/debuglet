@@ -55,7 +55,7 @@ func TestUpgradeOwnsDatabaseAcrossCommits(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			path := fixture(t, Executor, 5)
 			modify(t, path, "PRAGMA journal_mode="+mode)
-			owner, err := openUpgrade(t.Context(), path)
+			owner, err := OpenExclusive(t.Context(), path)
 			if err != nil {
 				t.Fatal(err)
 			}

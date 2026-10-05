@@ -27,6 +27,7 @@ type DispatcherConfig struct {
 	Retention          RetentionConfig          `toml:"retention"`
 	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
 	Attribution        AttributionConfig        `toml:"attribution"`
+	Allowance          AllowanceConfig          `toml:"allowance"`
 	// Executors holds optional operator display metadata by executor ID.
 	Executors map[string]ExecutorDisplay `toml:"executors"`
 	Metadata  MetadataConfig             `toml:"metadata"`
@@ -153,6 +154,7 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 	cfg.Output = DefaultOutputConfig()
 	cfg.Admission = DefaultAdmissionConfig()
 	cfg.Attribution = DefaultAttributionConfig()
+	cfg.Allowance = DefaultAllowanceConfig()
 	document, err := configcheck.Decode(data, &cfg)
 	if err != nil {
 		return nil, document, err
@@ -191,6 +193,9 @@ func (cfg *DispatcherConfig) Validate() error {
 	if err := cfg.Attribution.Validate(); err != nil {
 		return err
 	}
+	if err := cfg.Allowance.Validate(); err != nil {
+		return err
+	}
 	if err := validateExecutors(cfg.Executors); err != nil {
 		return err
 	}
@@ -225,6 +230,8 @@ func (cfg *DispatcherConfig) Validate() error {
 			return errors.New("server.local_development requires sui.disabled = true; it serves unauthenticated requests as an operator and is only for a local environment")
 		case cfg.Server.BindHost == "":
 			return errors.New("server.local_development requires server.bind_host to be a loopback address; it serves unauthenticated requests as an operator and must not listen on every interface")
+		case cfg.Server.BehindTLSTerminator:
+			return errors.New("server.local_development requires server.behind_tls_terminator = false; it serves unauthenticated requests as an operator and must not be published through a TLS terminator")
 		}
 	}
 	if err := configcheck.LogLevel("logging.log_level", cfg.Logging.LogLevel); err != nil {

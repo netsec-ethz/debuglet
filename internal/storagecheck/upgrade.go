@@ -73,7 +73,7 @@ func Upgrade(ctx context.Context, role Role, path string, opts ...UpgradeOption)
 	if version == policy.Current {
 		return version, policy.Check(ctx, absolute)
 	}
-	db, err = openUpgrade(ctx, absolute)
+	db, err = OpenExclusive(ctx, absolute)
 	if err != nil {
 		return 0, err
 	}
@@ -101,13 +101,15 @@ func Upgrade(ctx context.Context, role Role, path string, opts ...UpgradeOption)
 	return version, nil
 }
 
-// openUpgrade takes SQLite ownership before the first migration. With one
+// OpenExclusive takes SQLite ownership for offline maintenance. With one
 // connection in EXCLUSIVE locking mode, COMMIT retains the database lock until
 // Close; goose can still use its normal per-migration transactions. This also
 // applies to WAL databases and does not rely on every writer using a sidecar
 // lock. It cannot establish that an idle daemon has stopped; operators must
 // still stop the service before upgrading it.
-func openUpgrade(ctx context.Context, path string) (*sql.DB, error) {
+// The caller must check the schema and prove shutdown separately, and keep
+// this connection open until its complete maintenance operation has finished.
+func OpenExclusive(ctx context.Context, path string) (*sql.DB, error) {
 	db, err := sqlitedb.Open(path)
 	if err != nil {
 		return nil, err
@@ -115,7 +117,7 @@ func openUpgrade(ctx context.Context, path string) (*sql.DB, error) {
 	for _, statement := range []string{"PRAGMA locking_mode = EXCLUSIVE", "BEGIN EXCLUSIVE", "COMMIT"} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			db.Close()
-			return nil, fmt.Errorf("cannot acquire exclusive database access for %q: stop every daemon using it and retry the upgrade: %w", path, err)
+			return nil, fmt.Errorf("cannot acquire exclusive database access for %q: stop every daemon using it and retry maintenance: %w", path, err)
 		}
 	}
 	return db, nil

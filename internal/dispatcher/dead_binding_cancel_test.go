@@ -34,7 +34,7 @@ func assertCancelledWithoutSession(t *testing.T, f *tgFixture, run tgDebuglet) {
 	t.Helper()
 	tgAssertRow(t, f.row(t, run.id), models.RunStateExited, tgText(deadCancelError))
 	tgAssertReserved(t, f, run, 0)
-	tgAssertOrder(t, f, run, models.Outstanding)
+	tgAssertOrder(t, f, run, models.Refunded)
 	request, err := f.d.Cancellation(f.ctx, run.id)
 	if err != nil || request.Disposition != "unresolved" || request.Reason != "original_binding_unavailable" || request.AcknowledgedAt != nil || request.AttemptedAt != nil {
 		t.Fatalf("local terminal claimed remote evidence: %+v, %v", request, err)
@@ -166,7 +166,7 @@ func TestRestoreSchedulerNamesRunsOfAPreviousLifetime(t *testing.T) {
 
 	core, logs := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
-	ph := payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
+	ph, _ := payments.NewPaymentHandler(f.db, &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}}, logger)
 	d, err := New(logger, f.db, "tg-restart", time.Minute, time.Minute, ph)
 	if err != nil {
 		t.Fatal(err)

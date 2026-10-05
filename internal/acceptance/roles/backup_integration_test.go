@@ -201,7 +201,9 @@ func seedRetained(t *testing.T, state string, binding controlsession.Binding, wa
 			t.Fatal(err)
 		}
 		if started {
-			if _, err := q.UpdateDebugletStarted(t.Context(), executordb.UpdateDebugletStartedParams{Uuid: id, StartedAt: now}); err != nil {
+			// Seed the historical schema before the candidate upgrades it;
+			// current ownership queries require the current schema.
+			if _, err := db.ExecContext(t.Context(), "UPDATE debuglets SET started_at=? WHERE uuid=?", now, id); err != nil {
 				t.Fatal(err)
 			}
 		}

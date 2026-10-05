@@ -216,7 +216,7 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 	executorDB := openDB("executor.sqlite", executordb.MigrationFS())
 	dispatcherDB := openDB("dispatcher.sqlite", dispatcherdb.MigrationFS())
 	logger := zap.NewNop()
-	payment := payments.NewPaymentHandler(dispatcherDB, &dispatcherconfig.DispatcherConfig{Sui: dispatcherconfig.SuiConfig{Disabled: true}}, logger)
+	payment, _ := payments.NewPaymentHandler(dispatcherDB, &dispatcherconfig.DispatcherConfig{Sui: dispatcherconfig.SuiConfig{Disabled: true}}, logger)
 	d, err := dispatcher.New(logger, dispatcherDB, "cancellation-fixture", time.Minute, time.Second, payment)
 	if err != nil {
 		t.Fatal(err)
@@ -372,9 +372,9 @@ func TestRejectedAllocationFinalizesBothSQLiteOwners(t *testing.T) {
 		t.Fatalf("duplicate report: %+v", extra)
 	default:
 	}
-	// The existing TEST refund limitation is preserved; no credit is invented.
+	// The failed run refunds its TEST order locally; no credit is invented.
 	order, err := queries.GetDebugletOrder(ctx, dispatcherdb.GetDebugletOrderParams{TransactionID: transaction, OrderID: 1})
-	if err != nil || order.State != int64(models.Outstanding) {
+	if err != nil || order.State != int64(models.Refunded) {
 		t.Fatalf("TEST order = %+v, err=%v", order, err)
 	}
 }

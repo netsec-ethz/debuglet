@@ -48,3 +48,10 @@ normal submission-uncertainty rules instead of automatically replaying work.
 This is the executor-node storage control. The dispatcher adds separate
 [account admission and HTTP batch limits](account-admission.md); their
 reservations do not replace the executor's retained rows.
+
+After successful managed shutdown, an administrator can explicitly
+[archive one retained run](executor-recovery.md#archive-one-interrupted-run-locally).
+This separate local decision excludes its execution row from queue admission
+charges and future restoration, while preserving the original evidence and
+actual disk bytes. Output-spool limits and dispatcher account reservations are
+unchanged.

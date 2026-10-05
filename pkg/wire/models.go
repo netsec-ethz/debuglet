@@ -101,6 +101,9 @@ type User struct {
 	Name string `json:"name"`
 	// Role reports the account's permissions; it is not a credential.
 	Role string `json:"role"`
+	// Economics is reported by API 1.15 and later; it is nil from an older
+	// dispatcher.
+	Economics *Economics `json:"economics,omitempty"`
 }
 
 // Version reports a dispatcher's version identities. Version is the configured

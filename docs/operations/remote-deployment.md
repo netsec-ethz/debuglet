@@ -1,6 +1,6 @@
 # Run Debuglet across hosts
 
-A networked deployment has one dispatcher and one or more executors on Linux amd64 hosts. Every role runs the same Debuglet release. Use TLS, authenticate users, and keep the local-development profile disabled.
+A networked deployment has one dispatcher and one or more executors on Linux amd64 hosts. Every role runs the same Debuglet release. Use TLS, authenticate users, and keep the local-development profile disabled. Running a second dispatcher, against the same database or a separate one, is unsupported, and the dispatcher does not detect one at startup. To recover from a dispatcher outage, restart the dispatcher as described in [dispatcher outage](dispatcher-outage.md); [backup and restore](backup-restore.md) covers generated local TEST state.
 
 Use the full release bundle for the bundled samples. The native daemons accept
 operator-supplied configuration; `dbl up`, `dbl executor up`, and `dbl service
