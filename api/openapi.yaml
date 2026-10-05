@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.14"
+  version: "1.15"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -3909,6 +3909,117 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /payment/quote:
+    post:
+      operationId: "quotePayment"
+      summary: "Price a batch of debuglets without creating an intent."
+      description: "Added in API 1.15. Takes the body of PUT /payment/intent and prices it with the same rule, without writing anything: no transaction, no auth key, no order and no run. A batch the intent would refuse (an empty batch, an unknown executor, an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer) is answered 200 with every problem in the quote's errors and total empty. retry is not evaluated. Each quote counts against the account request quota like an intent. The intent prices the batch again when it is created and returns its own quote. See docs/api.md for the pricing rule."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentIntentRequest"
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "The quote of the batch."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+        "400":
+          description: "Malformed body (invalid_request) or an unsupported payment method (unsupported_payment_method), or an unsupported Debuglet-API-Version (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit. Also returned for more than 128 orders, a decoded module over 24 MiB, or a logical stored run over 32 MiB."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: "The body is not application/json (unsupported_media_type)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "Account request quota reached (account_quota_exceeded); Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+            Retry-After:
+              description: "Optional integer seconds for request-rate refusal only."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The quote could not be computed."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "A chain payment method was requested while blockchain payments are disabled (payments_disabled)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /payment/{transaction_id}/status:
     get:
       operationId: "getPaymentStatus"
@@ -4068,6 +4179,86 @@ paths:
               description: "Contract version this dispatcher implements."
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/orders:
+    get:
+      operationId: "listMyOrders"
+      summary: "Page the account's payment intents and their orders."
+      description: "Added in API 1.15. Requires an authenticated account, including when local development is enabled. Lists only the caller's own intents, newest expiry first; an intent expires five minutes after it is created, so this is the order of creation. Each intent lists its orders with their prices, settlement and admitted run. limit defaults to 25 (1-100); before is the next value of the previous page."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: "string"
+        - name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            format: "int64"
+        - name: "before"
+          in: "query"
+          required: false
+          description: "The next value of the previous page. A value that is not one of the caller's intents selects an empty page."
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "One page of the caller's payment intents."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderHistory"
+        "400":
+          description: "Invalid limit or before (invalid_request), or an unsupported Debuglet-API-Version (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request did not authenticate as an account (unauthorized). The local development profile does not serve this route without a credential either."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The order history could not be read."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
           content:
             application/json:
               schema:
@@ -7070,6 +7261,8 @@ components:
             - $ref: "#/components/schemas/SuiIntent"
         retry:
           $ref: "#/components/schemas/RetryReceipt"
+        quote:
+          $ref: "#/components/schemas/Quote"
     DummyIntent:
       type: object
       description: "Intent of the TEST method. It records bookkeeping only and moves no funds."
@@ -7133,6 +7326,167 @@ components:
           enum:
             - "user"
             - "operator"
+        economics:
+          $ref: "#/components/schemas/Economics"
+    Economics:
+      type: object
+      description: "Added in API 1.15. The payment features this dispatcher offers the account now, so a client can hide what is unavailable. It reports configuration, not a balance."
+      additionalProperties: false
+      required:
+        - payment_methods
+        - chain_payments
+        - allowances
+      properties:
+        payment_methods:
+          type: array
+          description: "The methods PUT /payment/intent admits now: TEST, and USDC when blockchain payments are enabled."
+          items:
+            type: string
+        chain_payments:
+          type: boolean
+          description: "Whether blockchain payments are enabled on this dispatcher."
+        allowances:
+          type: boolean
+          description: "Whether usage allowances are offered. Always false in this version."
+    Quote:
+      type: object
+      description: "Added in API 1.15. The price of a batch. Amounts are decimal strings of integer base units of currency. A quote is not a reservation; the intent prices again when it is created."
+      additionalProperties: false
+      required:
+        - pricing_rule
+        - currency
+        - unit
+        - total
+        - orders
+        - errors
+      properties:
+        pricing_rule:
+          type: string
+          description: "Name of the pricing rule, bw-s-ceil-ms-v1 in this version. A changed rule has a new name."
+        currency:
+          type: string
+          description: "The requested payment method, which is the currency of every order."
+        unit:
+          type: string
+          description: "The base unit of the amounts: TEST units, micro-USDC or base units."
+        total:
+          type: string
+          description: "The sum of the order prices. Empty unless every order was priced."
+        orders:
+          type: array
+          description: "One entry per requested debuglet, in request order."
+          items:
+            $ref: "#/components/schemas/QuotedOrder"
+        errors:
+          type: array
+          description: "Problems of the batch as a whole, such as an empty batch or a total that does not fit a signed 64-bit integer."
+          items:
+            $ref: "#/components/schemas/FieldError"
+    QuotedOrder:
+      type: object
+      additionalProperties: false
+      required:
+        - order_id
+        - executor_id
+        - price
+        - errors
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        executor_id:
+          type: string
+        price:
+          type: string
+          description: "The order's price, empty when it could not be priced."
+        errors:
+          type: array
+          description: "Why the order could not be priced or admitted in this batch; empty when it can."
+          items:
+            $ref: "#/components/schemas/FieldError"
+    OrderHistory:
+      type: object
+      description: "Added in API 1.15. One page of the account's payment intents."
+      additionalProperties: false
+      required:
+        - intents
+        - next
+      properties:
+        intents:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderHistoryIntent"
+        next:
+          type: string
+          description: "The before value of the following page; empty on the last page."
+    OrderHistoryIntent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - method
+        - status
+        - price
+        - currency
+        - pricing_rule
+        - expires_at
+        - orders
+      properties:
+        id:
+          type: string
+          description: "The transaction ID the intent returned."
+        method:
+          type: string
+        status:
+          type: string
+          description: "outstanding, paid, refunded, expired or aborted; unknown for a state this version does not name. Clients must tolerate new values."
+        price:
+          type: string
+          description: "The recorded total, a decimal string of base units."
+        currency:
+          type: string
+          description: "The recorded currency. Empty for a TEST intent recorded before 0.2.0-rc.2."
+        pricing_rule:
+          type: string
+          description: "The pricing rule the intent was priced with; empty when the dispatcher did not record it."
+        expires_at:
+          type: string
+          format: date-time
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderHistoryOrder"
+    OrderHistoryOrder:
+      type: object
+      additionalProperties: false
+      required:
+        - order_id
+        - executor_id
+        - price
+        - currency
+        - settlement
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        executor_id:
+          type: string
+        price:
+          type: string
+          description: "The reserved price, a decimal string of base units."
+        currency:
+          type: string
+        settlement:
+          type: string
+          description: "pending until the run's outcome is settled, then credited to the executor or refunded, as in RunCost."
+          enum:
+            - "pending"
+            - "credited"
+            - "refunded"
+        run_id:
+          type: string
+          format: uuid
+          description: "The run the order admitted; absent until it is admitted."
     AccountResponse:
       type: object
       description: "An account together with the credentials just issued for it. Both credentials are returned exactly once, by the operation that minted them. Store them where only their owner can read them; the dispatcher keeps only their digests."

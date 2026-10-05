@@ -97,3 +97,5 @@ API 1.11 adds the public attribution lookups `GET /attribution/candidates` and `
 API 1.12 adds measurement profiles, batch details, explicit retry lineage, listener readiness and owner payload deletion. Retry clients require 1.12 so a dispatcher that only supports attribution cannot silently accept a request without retaining its retry identity. Dispatcher schema 15 stores the workflow metadata; schema 16 adds account reservations and payload tombstones.
 
 Dispatcher schema 21 records one settlement per order and the pricing rule of each transaction; this build refuses an older dispatcher database, so upgrade it explicitly before starting this build.
+
+API 1.15 adds `POST /payment/quote`, the `quote` field of the payment intent response, the `economics` field of `GET /me` and `GET /me/orders`. The quote and order history require 1.15 from the Go client; no dispatcher schema change is involved.

@@ -121,6 +121,9 @@ type IntentResponse struct {
 	Retry  *wire.RetryReceipt `json:"retry,omitempty"`
 	Method string             `json:"method"`
 	Intent any                `json:"intent"`
+	// Quote states the prices the intent stored. It is absent when a retry
+	// recovers an intent created earlier.
+	Quote *wire.Quote `json:"quote,omitempty"`
 }
 
 type SuiIntent struct {

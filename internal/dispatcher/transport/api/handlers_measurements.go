@@ -100,20 +100,13 @@ func runDetail(ctx context.Context, q *database.Queries, run database.Debuglet) 
 		return detail, err
 	}
 	if err == nil {
-		cost := &wire.RunCost{Currency: order.Currency, Unit: "base units", Reserved: strconv.FormatInt(order.Price, 10), Settlement: "pending"}
-		if order.Currency == "USDC" {
-			cost.Unit = "micro-USDC"
-		}
-		if order.Currency == "TEST" {
-			cost.Unit = "TEST units"
-		}
-		if order.State == int64(models.Credited) {
-			cost.Settlement = "credited"
+		cost := &wire.RunCost{Currency: order.Currency, Unit: currencyUnit(order.Currency),
+			Reserved: strconv.FormatInt(order.Price, 10), Settlement: orderSettlement(order.State)}
+		switch cost.Settlement {
+		case "credited":
 			charged := cost.Reserved
 			cost.Charged = &charged
-		}
-		if order.State == int64(models.Refunded) {
-			cost.Settlement = "refunded"
+		case "refunded":
 			charged := "0"
 			cost.Charged = &charged
 		}

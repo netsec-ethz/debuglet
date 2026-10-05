@@ -182,9 +182,11 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// payment
 	// e.GET("payment/balance", h.GetBalance)
 	e.PUT("/payment/intent", h.PutPaymentIntent)
+	e.POST("/payment/quote", h.PostPaymentQuote)
 	e.GET("/payment/:transaction_id/status", h.GetPaymentStatus)
 	// user
 	e.GET("/me", h.GetMe)
+	e.GET("/me/orders", h.GetMyOrders)
 	e.GET("/user-ids", h.ListUserIDs)
 	e.PUT("/user", h.CreateUser)
 	e.GET("/list-debuglets", h.ListUserDebuglets)

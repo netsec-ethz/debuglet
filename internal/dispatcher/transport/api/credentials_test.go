@@ -64,10 +64,21 @@ func TestAPICredentialScopesAudienceAndRevocation(t *testing.T) {
 	if s, _ := authAs(t, f, issued.Token, http.MethodGet, "/me", nil); s != 200 {
 		t.Fatalf("account read %d", s)
 	}
+	if s, _ := authAs(t, f, issued.Token, http.MethodGet, "/me/orders", nil); s != 200 {
+		t.Fatalf("account order history %d", s)
+	}
 	for _, target := range []string{"/list-debuglets", "/user-ids", "/me/credentials"} {
 		if s, _ := authAs(t, f, issued.Token, http.MethodGet, target, nil); s != 403 {
 			t.Fatalf("ungranted %s = %d", target, s)
 		}
+	}
+	quote := []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)
+	if s, _ := authAs(t, f, issued.Token, http.MethodPost, "/payment/quote", quote); s != 403 {
+		t.Fatalf("ungranted quote = %d", s)
+	}
+	measuring := createTestCredential(t, f, browser, "measurements:read")
+	if s, _ := authAs(t, f, measuring.Token, http.MethodPost, "/payment/quote", quote); s != 200 {
+		t.Fatalf("granted quote = %d", s)
 	}
 	if s, _ := authStatus(t, f, http.MethodGet, "/me", nil, map[string]string{"Cookie": sessionCookieName + "=" + issued.Token}); s != 401 {
 		t.Fatalf("API token used as cookie %d", s)

@@ -768,7 +768,9 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"PATCH /destination":                            {anonymous: http.StatusUnauthorized, target: "/destination", body: []byte(`{"destination":"127.0.0.1","limit":1000000}`)},
 	"PUT /payment/intent":                           {anonymous: http.StatusUnauthorized, target: "/payment/intent", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /payment/:transaction_id/status":           {anonymous: http.StatusUnauthorized, target: "/payment/none/status"},
+	"POST /payment/quote":                           {anonymous: http.StatusUnauthorized, target: "/payment/quote", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /me":                                       {anonymous: http.StatusUnauthorized, target: "/me"},
+	"GET /me/orders":                                {anonymous: http.StatusUnauthorized, target: "/me/orders"},
 	"GET /user-ids":                                 {anonymous: http.StatusUnauthorized, target: "/user-ids"},
 	// Registering an account is the credential issuer: it has to be
 	// reachable by a caller that has no credential yet.
