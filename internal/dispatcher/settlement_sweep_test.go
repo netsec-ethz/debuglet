@@ -4,12 +4,122 @@
 package dispatcher
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 )
+
+func TestSettlementSweepRecoversCancellationAfterRestart(t *testing.T) {
+	f := newTGFixture(t, nil)
+	run := f.seedDirect(t, tgFloorA)
+	ssClaim(t, f, run)
+	registryRegister(t, f.d, tgExecutorID)
+	ssRefuseSettlements(t, f)
+	if err := f.abort(t, run.id, "cancelled via API"); err != nil {
+		t.Fatal(err)
+	}
+	tgAssertRow(t, f.row(t, run.id), models.RunStateExited, tgText(deadCancelError))
+	tgAssertOrder(t, f, run, models.Outstanding)
+
+	loop := newWELoop()
+	g := reopenTG(t, f, loop.install)
+	ssAllowSettlements(t, g)
+	if err := g.d.RestoreScheduler(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	loop.tick(t)
+	tgAssertOrder(t, g, run, models.Refunded)
+	tgAssertEarnings(t, g, 0)
+	if n := ssSettlements(t, g, "refund"); n != 1 {
+		t.Fatalf("refund settlements = %d, want 1", n)
+	}
+	if observed, err := g.q.GetMeasurementExecution(g.ctx, run.row.ID); !errors.Is(err, sql.ErrNoRows) && (err != nil || observed.ExitCode.Valid || observed.TerminalObservedNs.Valid) {
+		t.Fatalf("cancellation invented an execution observation: %+v, %v", observed, err)
+	}
+	if err := g.abort(t, run.id, "second cancellation"); err != nil {
+		t.Fatal(err)
+	}
+	if settled, failed, _, _, err := g.ph.SettlePendingOrders(g.ctx, 0, settlementSweepLimit); settled != 0 || failed != 0 || err != nil {
+		t.Fatalf("repeat pass: settled %d, failed %d, error %v", settled, failed, err)
+	}
+}
+
+func TestSettlementSweepPreservesCancellationTerminalWinner(t *testing.T) {
+	for _, first := range []string{"completion", "cancellation", "concurrent"} {
+		t.Run(first, func(t *testing.T) {
+			f := newTGFixture(t, nil)
+			run := f.seedDirect(t, tgFloorA)
+			ssClaim(t, f, run)
+			if _, err := f.d.requestCancellation(f.ctx, run.row.ID, "cancelled"); err != nil {
+				t.Fatal(err)
+			}
+			identity, err := f.q.GetDebugletIdentityByUUID(f.ctx, run.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ssRefuseSettlements(t, f)
+			calls := []func() error{
+				func() error { return f.exit(t, run.id, 0, nil) },
+				func() error { return f.d.recordCancellationResult(f.ctx, identity, run.id, "cancelled") },
+			}
+			if first == "cancellation" {
+				calls[0], calls[1] = calls[1], calls[0]
+			}
+			errs := make([]error, len(calls))
+			if first == "concurrent" {
+				start := make(chan struct{})
+				var wg sync.WaitGroup
+				for i, call := range calls {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						<-start
+						errs[i] = call()
+					}()
+				}
+				close(start)
+				wg.Wait()
+			} else {
+				for i, call := range calls {
+					errs[i] = call()
+				}
+			}
+			for _, err := range errs {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			winner := f.row(t, run.id)
+			g := reopenTG(t, f)
+			ssAllowSettlements(t, g)
+			if settled, failed, _, _, err := g.ph.SettlePendingOrders(g.ctx, 0, 32); settled != 1 || failed != 0 || err != nil {
+				t.Fatalf("settled %d, failed %d, error %v", settled, failed, err)
+			}
+			record, err := g.q.GetCancellation(g.ctx, run.row.ID)
+			if err != nil || record.TerminalRecordedAt.Valid != winner.Error.Valid {
+				t.Fatalf("decision does not match winner: %+v, %v; winner %+v", record, err, winner)
+			}
+			wantState, wantEarnings := models.Credited, tgOrderPrice(tgFloorA)
+			if winner.Error.Valid {
+				wantState, wantEarnings = models.Refunded, 0
+			}
+			tgAssertOrder(t, g, run, wantState)
+			tgAssertEarnings(t, g, wantEarnings)
+			if err := g.abort(t, run.id, "duplicate after restart"); err != nil {
+				t.Fatal(err)
+			}
+			if settled, failed, _, _, err := g.ph.SettlePendingOrders(g.ctx, 0, 32); settled != 0 || failed != 0 || err != nil {
+				t.Fatalf("duplicate settled %d, failed %d, error %v", settled, failed, err)
+			}
+			tgAssertRow(t, g.row(t, run.id), winner.State, winner.Error)
+		})
+	}
+}
 
 // ssSettlements counts the recorded order settlements of kind.
 func ssSettlements(t *testing.T, f *tgFixture, kind string) int {
@@ -129,6 +239,11 @@ func TestSettlementSweepSkipsRunsWithoutATerminalExitCode(t *testing.T) {
 	if _, err := f.db.ExecContext(f.ctx, "UPDATE debuglets SET state = ? WHERE uuid = ?", models.RunStateExited, unknown.id); err != nil {
 		t.Fatal(err)
 	}
+	// Even a retained request and ACK do not prove cancellation won.
+	if _, err := f.d.requestCancellation(f.ctx, unknown.row.ID, "old request"); err != nil {
+		t.Fatal(err)
+	}
+	cleanupExec(t, f, "UPDATE debuglet_cancellations SET acknowledged_at=1")
 
 	if settled, failed, _, _, err := f.ph.SettlePendingOrders(f.ctx, 0, settlementSweepLimit); settled != 0 || failed != 0 || err != nil {
 		t.Fatalf("pass settled %d, failed %d, error %v", settled, failed, err)
@@ -146,7 +261,18 @@ func TestSettlementSweepSkipsRunsWithoutATerminalExitCode(t *testing.T) {
 func TestSettlementSweepIsBoundedByItsLimit(t *testing.T) {
 	f := newTGFixture(t, nil)
 	first, second := f.seedDirect(t, tgFloorA), f.seedDirect(t, tgFloorB)
-	g := ssExitRefused(t, f, []ssExit{{first, 0}, {second, 0}})
+	ssRefuseSettlements(t, f)
+	ssClaim(t, f, first)
+	ssClaim(t, f, second)
+	if err := f.exit(t, first.id, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	registryRegister(t, f.d, tgExecutorID)
+	if err := f.abort(t, second.id, "cancelled via API"); err != nil {
+		t.Fatal(err)
+	}
+	g := reopenTG(t, f)
+	ssAllowSettlements(t, g)
 
 	settled, failed, _, next, err := g.ph.SettlePendingOrders(g.ctx, 0, 1)
 	if settled != 1 || failed != 0 || next != first.row.ID || err != nil {
@@ -157,8 +283,8 @@ func TestSettlementSweepIsBoundedByItsLimit(t *testing.T) {
 	if settled, failed, _, next, err := g.ph.SettlePendingOrders(g.ctx, next, 1); settled != 1 || failed != 0 || next != second.row.ID || err != nil {
 		t.Fatalf("next pass settled %d, failed %d, next %d, error %v", settled, failed, next, err)
 	}
-	tgAssertOrder(t, g, second, models.Credited)
-	tgAssertEarnings(t, g, tgOrderPrice(tgFloorA)+tgOrderPrice(tgFloorB))
+	tgAssertOrder(t, g, second, models.Refunded)
+	tgAssertEarnings(t, g, tgOrderPrice(tgFloorA))
 }
 
 // A closed dispatcher does not sweep.

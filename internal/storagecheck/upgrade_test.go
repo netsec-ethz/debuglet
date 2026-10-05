@@ -124,6 +124,9 @@ func TestUpgradePreservesPreviousPopulatedSchemas(t *testing.T) {
 						t.Fatalf("retained %s records=%d", table, got)
 					}
 				}
+				if got := count(t, path, "SELECT COUNT(*) FROM debuglet_cancellations WHERE debuglet_id=1 AND terminal_recorded_at IS NULL"); got != 1 {
+					t.Fatal("upgrade invented a cancellation terminal decision")
+				}
 			} else if got := count(t, path, "SELECT COUNT(*) FROM tesla_chains WHERE generation=1 AND anchor=x'010203' AND chain_length=1000"); got != 1 {
 				t.Fatalf("historical chain descriptors=%d", got)
 			}

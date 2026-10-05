@@ -168,13 +168,17 @@ refunded by at most one transfer; an uncertain outcome is resolved by
 reconciliation below. While chain payments are disabled, the pass leaves
 chain-currency orders as they are.
 
-A dispatcher-recorded cancellation may have no executor exit code. If its
-initial refund fails before reserving a transfer, the periodic settlement pass
-does not retry it. Inspect the order, settlement and transfer records and
-reconcile them with chain history before arranging repayment. Never send a
+A dispatcher-recorded cancellation may have no executor exit code. From
+dispatcher schema 26, its terminal decision is retained with the cancellation
+record. If its initial refund fails before reserving a transfer, the periodic
+settlement pass retries it, including after restart. This does not claim that
+the executor acknowledged the cancellation or stopped.
+
+Historical cancellations without that decision or an observed exit code are
+not retried automatically. Inspect their order, settlement and transfer records
+and reconcile them with chain history before arranging repayment. Never send a
 replacement for an existing reserved, sent or unknown transfer; reconcile that
-transfer first. Automatic recovery for cancellation refunds is tracked in
-[#392](https://github.com/netsec-ethz/debuglet/issues/392).
+transfer first.
 
 ## Reconciliation
 

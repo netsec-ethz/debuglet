@@ -232,3 +232,16 @@ func TestSettlementPassDefersChainOrdersWhileDisabled(t *testing.T) {
 		t.Fatalf("order state %v, want %v", got, models.Outstanding)
 	}
 }
+
+func TestSettlementPassDefersCancelledChainOrderWhileDisabled(t *testing.T) {
+	db := newRefundDatabase(t)
+	h, rec := newDisabledHandler(t, db, true, true)
+	seedCancelledUSDCRun(t, db)
+	settled, failed, deferred, _, err := h.SettlePendingOrders(t.Context(), 0, 32)
+	if settled != 0 || failed != 0 || deferred != 1 || err != nil {
+		t.Fatalf("disabled pass: settled %d, failed %d, deferred %d, error %v", settled, failed, deferred, err)
+	}
+	if orderState(t, db) != models.Outstanding || len(rec.chain.Calls()) != 0 {
+		t.Fatal("disabled pass settled or reached the chain")
+	}
+}

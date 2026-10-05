@@ -442,12 +442,13 @@ func (p *PaymentHandler) refundOnChain(ctx context.Context, transactionID string
 	})
 }
 
-// SettlePendingOrders applies SettleTerminalOrder to at most limit Outstanding
-// orders whose run is terminal with a recorded exit code and whose run id is
-// above after, in run order. A run without a recorded exit code is not settled:
-// nothing infers its outcome. A chain refund is taken only while no refund
-// transfer covers the order: one reserved by an earlier attempt, in any state,
-// is left to ReconcileTransfers, so a pass never sends a refund twice. While
+// SettlePendingOrders settles at most limit Outstanding orders whose run is
+// terminal with an observed exit code or a recorded dispatcher cancellation,
+// and whose run id is above after, in run order. A cancellation refunds without
+// inventing an observed exit; a request alone cannot decide it. A chain refund
+// is taken only while no refund transfer covers the order: one reserved by an
+// earlier attempt, in any state, is left to ReconcileTransfers, so a pass never
+// sends a refund twice. While
 // chain payments are disabled, chain-currency orders are counted as deferred
 // and not attempted. An order that fails stays Outstanding for a later pass and
 // the others are still settled. next is the last run id attempted, or 0 once the
@@ -474,7 +475,11 @@ func (p *PaymentHandler) SettlePendingOrders(ctx context.Context, after int64, l
 			deferred++
 			continue
 		}
-		if err := p.SettleTerminalOrder(ctx, &run, int32(row.ExitCode.Int64)); err != nil {
+		kind := settlementRefund
+		if row.ExitCode.Valid && row.ExitCode.Int64 == 0 {
+			kind = settlementCredit
+		}
+		if err := p.settleOrder(ctx, &run, kind, "", false); err != nil {
 			p.logger.Debug("Order settlement remains pending", zap.String("debugletID", run.Uuid.String()))
 			failed++
 			if first == nil {
@@ -483,7 +488,7 @@ func (p *PaymentHandler) SettlePendingOrders(ctx context.Context, after int64, l
 			continue
 		}
 		settled++
-		p.logger.Info("Settled order of terminal run", zap.String("debugletID", run.Uuid.String()), zap.Int64("exitCode", row.ExitCode.Int64))
+		p.logger.Info("Settled order of terminal run", zap.String("debugletID", run.Uuid.String()), zap.String("settlement", kind))
 	}
 	if deferred > 0 {
 		p.logger.Debug("Chain settlements wait while chain payments are disabled", zap.Int("deferred", deferred))
