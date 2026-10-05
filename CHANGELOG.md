@@ -35,6 +35,18 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- Executor: a destination the dispatcher marks `denied` in a bandwidth
+  snapshot (#74; `DestinationLimit.denied`, additive) is refused for new
+  connections, datagrams and accepted peers, by name and by the addresses
+  the name resolved to, and the active TCP, TLS, UDP and ICMP sockets of
+  every run to it are closed before the snapshot's revision is
+  acknowledged, including a connection still being made at that moment. A
+  guest using `debuglet_io_v1` sees a closed socket and continues; a guest
+  blocked in a legacy socket import fails as on a lost connection. One
+  `Destination revoked` log line per run carries the socket count. A later
+  snapshot without the flag allows the destination again; executors and
+  dispatchers that do not set it behave as before. See
+  `docs/operations/socket-limits.md` for the bound.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

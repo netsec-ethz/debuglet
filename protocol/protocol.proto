@@ -86,6 +86,7 @@ message AbortResponse {}
 message DestinationLimit {
   string address = 1;
   int64 bits_limit = 2;
+  bool denied = 3; // The destination is opted out: refuse new connections and close active ones.
 }
 
 message BandwidthRequest {

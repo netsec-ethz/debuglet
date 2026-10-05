@@ -73,6 +73,9 @@ type Policy struct {
 	now   func() time.Time
 	mu    sync.Mutex
 	cache map[string]resolution
+	// seen holds every address each name resolved to during the run, so a
+	// denied name's connections are found even after its answer changed.
+	seen map[string]map[netip.Addr]struct{}
 }
 
 // resolution is one name's answer and the moment it was obtained. A failure is
@@ -218,6 +221,9 @@ func (d Destination) CheckSocket(network, address string) error {
 		return fmt.Errorf("%w: %s is not a resolved address", ErrDenied, host)
 	}
 	addr = Normalize(addr)
+	if err := d.op.revoked.checkDeclared(d.Key); err != nil {
+		return err
+	}
 	admitted := false
 	for _, candidate := range d.Addrs {
 		if candidate.Addr() != addr {
@@ -295,8 +301,8 @@ func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target strin
 			refusal = errors.Join(refusal, err)
 			continue
 		}
-		if _, ok := denied[candidate]; ok {
-			refusal = errors.Join(refusal, fmt.Errorf("%w: %s resolves an opted-out destination", ErrDenied, candidate))
+		if err, ok := denied[candidate]; ok {
+			refusal = errors.Join(refusal, err)
 			continue
 		}
 		if err := p.op.CheckAddr(candidate); err != nil {
@@ -306,6 +312,10 @@ func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target strin
 		key, ok := allowed[candidate]
 		if !ok {
 			refusal = errors.Join(refusal, fmt.Errorf("%w: %s", ErrNotInPolicy, candidate))
+			continue
+		}
+		if err := p.op.revoked.checkDeclared(key); err != nil {
+			refusal = errors.Join(refusal, err)
 			continue
 		}
 		if destination.Key == "" {
@@ -346,8 +356,8 @@ func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort
 	if err != nil {
 		return Match{}, err
 	}
-	if _, ok := denied[peer]; ok {
-		return Match{}, fmt.Errorf("%w: %s is an opted-out destination", ErrDenied, peer)
+	if err, ok := denied[peer]; ok {
+		return Match{}, err
 	}
 	if err := p.op.CheckAddr(peer); err != nil {
 		return Match{}, err
@@ -359,6 +369,9 @@ func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort
 	key, ok := allowed[peer]
 	if !ok {
 		return Match{}, fmt.Errorf("%w: %s", ErrNotInPolicy, peer)
+	}
+	if err := p.op.revoked.checkDeclared(key); err != nil {
+		return Match{}, err
 	}
 	return Match{Key: key}, nil
 }
@@ -393,6 +406,7 @@ func (p *Policy) resolve(ctx context.Context, host string) ([]netip.Addr, error)
 		entry.err = fmt.Errorf("failed to resolve %q: %w", host, err)
 	} else {
 		entry.addrs = normalizeAll(addrs)
+		p.see(host, entry.addrs)
 	}
 	p.remember(host, entry)
 	return slices.Clone(entry.addrs), entry.err
@@ -411,6 +425,21 @@ func (p *Policy) cached(host string) (resolution, bool) {
 		return resolution{}, false
 	}
 	return entry, true
+}
+
+func (p *Policy) see(host string, addrs []netip.Addr) {
+	key := revocationKey(host)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.seen == nil {
+		p.seen = make(map[string]map[netip.Addr]struct{})
+	}
+	if p.seen[key] == nil {
+		p.seen[key] = make(map[netip.Addr]struct{})
+	}
+	for _, addr := range addrs {
+		p.seen[key][addr] = struct{}{}
+	}
 }
 
 func (p *Policy) remember(host string, entry resolution) {
@@ -457,26 +486,83 @@ func (p *Policy) allowlist(ctx context.Context) (map[netip.Addr]string, error) {
 	return allowed, nil
 }
 
-// deniedAddrs resolves the operator's opted-out names. It is only a lookup
-// when the operator configured one.
-func (p *Policy) deniedAddrs(ctx context.Context) (map[netip.Addr]struct{}, error) {
-	hosts := p.op.DeniedHosts()
-	if len(hosts) == 0 {
+// deniedAddrs resolves the opted-out names, the operator's and those the
+// dispatcher denied, to the refusal of each of their addresses. It is only a
+// lookup when there is such a name.
+func (p *Policy) deniedAddrs(ctx context.Context) (map[netip.Addr]error, error) {
+	hosts, revoked := p.op.DeniedHosts(), p.op.revoked.hosts()
+	if len(hosts) == 0 && len(revoked) == 0 {
 		return nil, nil
 	}
-	denied := make(map[netip.Addr]struct{})
-	for _, host := range hosts {
+	denied := make(map[netip.Addr]error)
+	add := func(host string, refusal func(netip.Addr) error) {
 		addrs, err := p.resolve(ctx, host)
 		if err != nil {
 			// An opted-out name that cannot be resolved denies nothing extra;
 			// the name itself is still denied by CheckHost.
-			continue
+			return
 		}
 		for _, addr := range addrs {
-			denied[addr] = struct{}{}
+			if _, ok := denied[addr]; !ok {
+				denied[addr] = refusal(addr)
+			}
 		}
 	}
+	for _, host := range hosts {
+		add(host, func(addr netip.Addr) error {
+			return fmt.Errorf("%w: %s resolves an opted-out destination", ErrDenied, addr)
+		})
+	}
+	for _, host := range revoked {
+		add(host, func(addr netip.Addr) error {
+			return fmt.Errorf("%w: %s resolves %s", ErrDestinationDenied, addr, host)
+		})
+	}
 	return denied, nil
+}
+
+// Revoked reports whether a socket connected to remote, written "host:port",
+// reaches a destination the dispatcher denied: the address itself, or an
+// address this run resolved a denied name to. It uses only the answers the
+// run already obtained, so it never waits for the resolver.
+func (p *Policy) Revoked(remote string) bool {
+	if p == nil || p.op.revoked == nil {
+		return false
+	}
+	host, _, err := splitHostPort(remote)
+	if err != nil {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	for _, alias := range aliases(addr) {
+		if p.op.revoked.checkDeclared(alias.String()) != nil {
+			return true
+		}
+	}
+	addr = Normalize(addr)
+	names := p.op.revoked.hosts()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, name := range names {
+		if _, ok := p.seen[name][addr]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// WatchRevocations registers closeRevoked, which closes this run's sockets
+// that Revoked reports, with the executor's denied destinations, so the
+// update that denies a destination closes them. The run calls stop when it
+// ends.
+func (p *Policy) WatchRevocations(run string, closeRevoked func() int) (stop func()) {
+	if p == nil {
+		return func() {}
+	}
+	return p.op.revoked.watch(run, closeRevoked)
 }
 
 func normalizeAll(addrs []netip.Addr) []netip.Addr {
