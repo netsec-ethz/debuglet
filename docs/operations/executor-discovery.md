@@ -194,7 +194,9 @@ network = "SWITCH (AS559)"
 
 Every key is optional. Text is printable UTF-8 of at most 64 characters without
 leading or trailing space; the dispatcher refuses to start otherwise. Changes
-take effect when the dispatcher restarts.
+take effect when the dispatcher restarts. The Ansible deployment renders these
+tables from each executor's `executor_display_*` inventory variables, keyed by
+its `executor_id` (see [the deployment guide](../../deploy/README.md)).
 
 `--asn` matches a known origin ASN of either the observed control address or
 advertised literal address. `--country` matches the displayed country, including
@@ -283,7 +285,8 @@ changes host state or contacts a time source.
   the probe of that hello.
 - `capabilities.enforcement_reason`: why the executor uses the `fallback`
   counter: `configured` (`packet_counter = "fallback"`), `no_interface`,
-  `not_permitted` (the eBPF attach lacked privilege), `unsupported` or
+  `not_permitted` (the eBPF load or attach lacked privilege: the executor
+  needs `CAP_BPF`, `CAP_PERFMON` and `CAP_NET_ADMIN`), `unsupported` or
   `attach_failed`. The executor log keeps the full error. Empty for `ebpf` and
   when unknown.
 - `clock`: `{value, source, observed_at}` in `GET /executors`. The value is the

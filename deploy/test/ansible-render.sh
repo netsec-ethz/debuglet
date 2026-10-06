@@ -26,7 +26,9 @@
 #   8. applying the same variables again changes nothing (check mode reports
 #      no change),
 #   9. a configuration-only update renders the version installed on each host
-#      and refuses another one.
+#      and refuses another one,
+#  10. executor labels, the advertised address, the IPv4 reflector and the
+#      executor's capability set render where the daemons read them.
 #
 # It needs a built release package in deploy/dist (./deploy/scripts/build-linux.sh)
 # and the pinned provisioner, so run it through deploy/test/provisioner-check.sh.
@@ -163,6 +165,11 @@ all:
       hosts:
         executor.fixture.invalid:
           executor_id: 5fe02882-0410-416c-9935-235090bcba0d
+          executor_public_host: 192.0.2.10
+          executor_display_name: Fixture lab
+          executor_display_city: Zürich
+          executor_display_country: CH
+          executor_display_network: SWITCH (AS559)
 EOF
 
 cat >"$work/fixture.yml" <<EOF
@@ -322,6 +329,16 @@ refuses 'a wildcard credentialed origin is refused' 'wildcard is refused' \
 	-e '{"dispatcher_cors_allowed_origins": ["*"]}'
 refuses 'a non-UUID executor identity is refused' 'must be a lowercase UUID' \
 	-e 'executor_id=executor-1'
+refuses 'a lower-case executor country is refused' 'ISO 3166-1 alpha-2' \
+	-e executor_display_country=ch
+refuses 'an executor label with trailing space is refused' 'without leading or trailing space' \
+	-e '{"executor_display_city": "Zurich "}'
+refuses 'an executor label over 64 characters is refused' 'at most 64 characters' \
+	-e "executor_display_name=$(printf 'x%.0s' $(seq 65))"
+refuses 'a public address with a port is refused' 'bare public' \
+	-e executor_public_host=192.0.2.10:9000
+refuses 'a named IPv4 reflector is refused' 'literal IPv4' \
+	-e executor_connectivity_ipv4_reflector=dispatcher.fixture.invalid:19001
 refuses 'colliding listener ports are refused' 'must differ' \
 	-e 'dispatcher_grpc_port=19000'
 refuses 'a database directory inside the configuration is refused' 'neither' \
@@ -505,6 +522,18 @@ expect 'the dispatcher unit loads the CILogon credentials' \
 expect 'the executor carries its UUID identity' "$executor_toml" \
 	'executor_id = "5fe02882-0410-416c-9935-235090bcba0d"'
 
+# Vantage-point metadata: the executor advertises its public address, and the
+# dispatcher labels it under its identity with exactly the inventory's values.
+expect 'the executor advertises its public address' "$executor_toml" 'public_host = "192.0.2.10"'
+expect 'the dispatcher labels the executor under its identity' "$dispatcher_toml" \
+	'[executors."5fe02882-0410-416c-9935-235090bcba0d"]'
+expect 'the dispatcher renders the executor display name' "$dispatcher_toml" 'display_name = "Fixture lab"'
+expect 'the dispatcher renders the executor city' "$dispatcher_toml" 'city = "Z\u00fcrich"'
+expect 'the dispatcher renders the executor country' "$dispatcher_toml" 'country = "CH"'
+expect 'the dispatcher renders the executor network' "$dispatcher_toml" 'network = "SWITCH (AS559)"'
+# A dispatcher reached by name has no literal to reflect against.
+refute 'no reflector is rendered for a named dispatcher' "$executor_toml" '[connectivity]'
+
 # Transport security: the dispatcher serves its own listeners and the executor
 # verifies them, so the rendered files name the material on both sides.
 expect 'the dispatcher serves TLS on its own listeners' "$dispatcher_toml" 'disable = false'
@@ -586,6 +615,29 @@ if run "$work/tls-render.log" "$work/tls-render.yml" \
 else
 	check 'the transport keys render when they are set' fail
 	tail -20 "$work/tls-render.log" >&2
+fi
+
+# A dispatcher reached at an IPv4 literal is the executor's IPv4 reflector,
+# on the gRPC port it already dials; nothing else is opened for it.
+mkdir -p "$work/reflector"
+if run "$work/reflector-render.log" "$work/tls-render.yml" --limit executors \
+	-e "tls_template_dir=$playbooks" -e "tls_render_dir=$work/reflector" \
+	-e dispatcher_addr=127.0.0.1; then
+	check 'the IPv4 reflector renders for a literal dispatcher address' pass
+	expect 'the reflector is the dialled gRPC endpoint' "$work/reflector/executor.toml" \
+		'ipv4_reflector = "127.0.0.1:19001"'
+	output=$(timeout 10 "$host/opt/debuglet/prod/bin/debuglet-executor" \
+		--config "$work/reflector/executor.toml" 2>&1 || true)
+	case $output in
+		*"$host/var/lib/debuglet/executor-prod/executor.db"*)
+			check 'the installed executor accepts the reflector and reaches its database' pass ;;
+		*)
+			check 'the installed executor accepts the reflector and reaches its database' fail
+			printf '%s\n' "$output" | head -5 >&2 ;;
+	esac
+else
+	check 'the IPv4 reflector renders for a literal dispatcher address' fail
+	tail -20 "$work/reflector-render.log" >&2
 fi
 
 # Opt-in certificate installation preserves the explicit client trust source,
@@ -896,6 +948,33 @@ for env in prod dev; do
 		tail -20 "$work/identities-$env.log" >&2
 	fi
 done
+
+# The unit's ambient set, where it is used, is the binary's capability set:
+# the eBPF tagger needs cap_perfmon to pass the verifier and the pure-Go
+# tagger cap_net_raw. Only a kernel that charges BPF maps to RLIMIT_MEMLOCK
+# gets the limit lifted, in place of cap_sys_resource.
+identities() {
+	local name=$1
+	shift
+	(cd "$playbooks" && ANSIBLE_CONFIG=ansible.cfg ansible-playbook \
+		-i "$work/inventory.yml" -e @vars/prod.yml \
+		-e "template_dir=$playbooks" -e "output_dir=$work/$name" "$@" \
+		"$work/identities.yml") >"$work/identities-$name.log" 2>&1
+}
+mkdir -p "$work/caps-old" "$work/caps-new"
+if identities caps-old -e executor_ambient_caps=true -e ansible_kernel=5.10.0-28-amd64 &&
+	identities caps-new -e executor_ambient_caps=true -e ansible_kernel=5.15.0-130-generic; then
+	expect 'the ambient set is the executor capability set' "$work/caps-new/prod.service" \
+		'AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_PERFMON CAP_BPF'
+	expect 'the bounding set is the executor capability set' "$work/caps-new/prod.service" \
+		'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_PERFMON CAP_BPF'
+	refute 'the executor is not granted cap_sys_resource' "$work/caps-new/prod.service" 'CAP_SYS_RESOURCE'
+	refute 'a memcg-accounting kernel keeps the memlock limit' "$work/caps-new/prod.service" 'LimitMEMLOCK'
+	expect 'an older kernel lifts the memlock limit' "$work/caps-old/prod.service" 'LimitMEMLOCK=infinity'
+else
+	check 'the executor capability set renders' fail
+	tail -20 "$work/identities-caps-old.log" "$work/identities-caps-new.log" >&2
+fi
 
 # A legacy unsuffixed unit may belong to the other environment. Even when
 # dev already has state, retiring that unit requires an explicit selection.
