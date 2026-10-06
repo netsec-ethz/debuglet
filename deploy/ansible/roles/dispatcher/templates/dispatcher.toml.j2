@@ -58,6 +58,24 @@ keystore_path = "{{ dispatcher_sui_keystore_path }}"
 [database]
 path = "{{ state_dir }}/dispatcher/dispatcher.db"
 
+{# Operator labels, one table per labelled executor in the inventory, keyed by
+   its executor_id (see executor_display_* in group_vars/executors.yml). #}
+{% for name in groups['executors'] | default([]) | sort %}
+{%   set executor = hostvars[name] %}
+{%   set labels = {
+       'display_name': executor.executor_display_name | default(''),
+       'city': executor.executor_display_city | default(''),
+       'country': executor.executor_display_country | default(''),
+       'network': executor.executor_display_network | default('')} %}
+{%   if executor.executor_id is defined and (labels.values() | select | list | length) > 0 %}
+# {{ name }}
+[executors.{{ executor.executor_id | to_json }}]
+{%     for key in ['display_name', 'city', 'country', 'network'] if labels[key] %}
+{{ key }} = {{ labels[key] | to_json }}
+{%     endfor %}
+
+{%   endif %}
+{% endfor %}
 [cors]
 allowed_origins = {{ dispatcher_cors_allowed_origins | to_json }}
 
