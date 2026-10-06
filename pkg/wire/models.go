@@ -58,6 +58,9 @@ type Executor struct {
 	// is operator-only and never part of this public listing.
 	Clock      ObservedClock `json:"clock"`
 	IPMetadata *IPMetadata   `json:"ip_metadata,omitempty"`
+	// ProbeAddressing (API 1.16) adds the RIPE Atlas-style is_public,
+	// address, prefix and ASN fields of each address family.
+	ProbeAddressing
 }
 
 // State is a debuglet's reported state. Unknown state strings are preserved.

@@ -79,6 +79,11 @@ claim it. Older readers reject 1.2 rather than discarding the relationship.
   Platform detail is operator-only elsewhere and appears here because a result
   is readable only by its owner and operators. Earlier files omit these fields,
   which reads as `null` (or an empty reason).
+- Also within schema 1, `addressing`: the [probe addresses](operations/executor-discovery.md#probe-addresses)
+  of the listing at admission, `is_public`, the dispatcher-observed
+  `address_v4` and `address_v6` (recorded for a private executor too), their
+  prefixes and ASNs, and `address_observations` with how and when each was
+  seen. Files written before it omit the field, which reads as `null`.
 - Each vantage-point value names its `source`: `operator`,
   `executor-reported` or `dispatcher-observed` (`database:<name>@<version>` is
   reserved for later lookups). Capabilities, `scion_isd_as`, `clock`,

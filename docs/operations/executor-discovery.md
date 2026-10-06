@@ -224,7 +224,8 @@ coordinates are never read or published. Missing city means country precision.
 
 `ip_metadata.observed` and `.advertised` keep the two lookup results separate.
 `address_source` says whether the lookup key was dispatcher-observed or
-executor-reported; raw IPs are not in the public listing. Each `asn` and
+executor-reported; `ip_metadata` carries no address itself. The observed
+addresses are listed separately as [probe addresses](#probe-addresses). Each `asn` and
 `location` has `value`, `source`, `observed_at` (registration time in Unix
 seconds) and `reason`. `source` is `database:<database_type>@<build_epoch>`,
 using the file's embedded metadata. It identifies the data, not its correctness.
@@ -266,6 +267,93 @@ again. Existing results retain the old source/version and values.
 `provenance.vantage_point.ip_metadata` adds these same lookup facts to schema 1
 of result format 1.1. Files predating the field remain readable. No separate
 live metadata table or database-update service is required.
+
+### Probe addresses
+
+API 1.16 adds the addressing of a [RIPE Atlas](https://atlas.ripe.net/) probe
+record to each `GET /executors` entry:
+
+```json
+"is_public": true,
+"address_v4": "192.0.2.10",
+"address_v6": "2001:db8:10::7",
+"prefix_v4": "192.0.2.0/24",
+"prefix_v6": "2001:db8::/32",
+"asn_v4": 64500,
+"asn_v6": 64500,
+"address_observations": {
+  "v4": {"source": "dispatcher-observed", "via": "control", "observed_at": 1791250000,
+         "lookup_source": "database:GeoLite2-ASN@1790000000", "lookup_reason": ""},
+  "v6": {"source": "dispatcher-observed", "via": "reflection", "observed_at": 1791249700,
+         "lookup_source": "database:GeoLite2-ASN@1790000000", "lookup_reason": ""}
+}
+```
+
+`address_v4` and `address_v6` are the last addresses of each family that the
+dispatcher itself observed for the executor in its current control session.
+An executor's claim is never used: `public_host` and the hello's source IP are
+not observations. Two connections are observed, both authenticated with the
+executor's certificate and current control-session credentials, so another
+host cannot submit or spoof them:
+
+- `via: control` is the peer address of the control connection. It is
+  current while that session lives, so `observed_at` is the session's last
+  heartbeat. It is preferred for its own family, which keeps a multi-homed
+  executor's address from alternating between paths.
+- `via: reflection` is the peer address of the executor's last
+  `ReflectAddress` call over the other family. The dispatcher records the
+  TCP peer of the call, never a value in the request, and `observed_at` is
+  the call's receipt.
+
+To observe the family its control connection does not use, an executor calls
+the address reflection over each family every 10 minutes. It resolves the host
+of its configured `dispatcher.addr` for that family (only that family when the
+host is a literal) and verifies the dispatcher's certificate for that name, as
+on the control connection, so a resolved address that is not the dispatcher
+fails the handshake. A family with a configured `connectivity.ipv4_reflector`
+or `ipv6_reflector` is not called again: its 30-second
+[connectivity check](#controlled-connectivity-observations) already reflects
+it. A family that does not work is simply not observed; it affects neither the
+connectivity report nor admission. Operators can turn the calls off:
+
+```toml
+[connectivity]
+observe_addresses = false   # default true
+```
+
+A replacement control session starts without the previous session's
+observations, as for the connectivity checks, so an executor that moved does
+not keep its old address; until the next call its other family is null. A
+published address is where the executor reached the dispatcher from, which
+need not be the source of every measurement packet, and it can be a
+non-global address when the executor reaches the dispatcher over a private
+network.
+
+`prefix_v4/v6` and `asn_v4/v6` are looked up from those addresses in the
+[offline ASN database](#offline-asn-and-approximate-location), with the
+database and any negative reason in `lookup_source` and `lookup_reason`. They
+are null when no database is configured, or for a non-global or unknown
+address.
+
+An executor can make itself private, as a RIPE Atlas host can:
+
+```toml
+[metadata]
+address_opt_out = true   # default false: public
+```
+
+The listing then reports `is_public: false` and withholds both addresses from
+everyone but established operators. Nothing else changes: prefixes, ASNs,
+`address_observations`, `ip_metadata` and location stay public. Location has
+its own opt-out, `location_opt_out`, independent of this one; the
+[vantage-point note](../vantage-points.md#privacy) explains the choice.
+Restart the executor to publish a changed preference. Executors that predate
+the setting are public. The admission snapshot records the same fields,
+including a private executor's addresses, as `provenance.vantage_point.addressing`.
+
+`dbl nodes` shows the addresses in its `ADDRESS_V4` and `ADDRESS_V6` columns
+(`private` when withheld, `-` when unknown); `--output json` carries every
+field.
 
 ## Host probes
 

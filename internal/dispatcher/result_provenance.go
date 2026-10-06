@@ -72,7 +72,15 @@ func admissionVantagePoint(entry *executorEntry, now time.Time) *wire.VantagePoi
 		PublicHost: labelled(host, wire.SourceExecutorReported),
 		SCIONISDAS: admissionISDAS(entry, now), Display: entry.Display(),
 		Clock: admissionClock(entry, now), Platform: admissionPlatform(entry, now),
+		Addressing: admissionAddressing(entry),
 	}
+}
+
+// Caller holds the registry lock. The run's owner sees the addresses of a
+// private executor, as it sees source_ip.
+func admissionAddressing(entry *executorEntry) *wire.ProbeAddressing {
+	out := entry.Addressing(true)
+	return &out
 }
 
 func labelled(value, source string) wire.LabelledString {

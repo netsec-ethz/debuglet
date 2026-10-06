@@ -77,6 +77,10 @@ type VantagePoint struct {
 	// to the run's owner and operators.
 	Clock    LabelledReport[ClockReport]  `json:"clock"`
 	Platform LabelledReport[HostPlatform] `json:"platform"`
+	// Addressing is the RIPE Atlas-style addressing at admission, with the
+	// addresses of a private executor too. Added within schema 1; absent in
+	// earlier files, which means null.
+	Addressing *ProbeAddressing `json:"addressing,omitempty"`
 }
 
 // LabelledReport is an expiring report as known at admission, like

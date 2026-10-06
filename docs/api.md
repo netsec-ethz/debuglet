@@ -64,6 +64,8 @@ An account's allowance is `granted`, the sum of its grants, less what its `TEST`
 
 API 1.9 also adds `admission`, operator `display` metadata, the executor-reported `scion_isd_as` and `listeners` to `GET /executors`. Each value carries a source label; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata). It also adds the executor's host probes: `capabilities.icmp`, `capabilities.enforcement_reason` and `clock`. Host platform detail is operator-only and is never listed; it appears only in result provenance ([host probes](operations/executor-discovery.md#host-probes)).
 
+API 1.16 adds RIPE Atlas-style addressing to every entry: `is_public`, the dispatcher-observed `address_v4` and `address_v6`, their `prefix_v4`, `prefix_v6`, `asn_v4` and `asn_v6`, and `address_observations` with how and when each address was seen. A private executor's addresses are withheld from everyone but operators; nothing else is ([probe addresses](operations/executor-discovery.md#probe-addresses)).
+
 ## Probe attribution
 
 API 1.11 adds two public routes for [probe verification](verification.md). They need no credential and are rate-limited per client address; an excess answers `429 rate_limited` with `Retry-After`. Behind a reverse proxy the address is the proxy's unless the proxy is listed in `[attribution] trusted_proxies` ([configuration](operations/configuration.md#dispatcher-attribution-history)).

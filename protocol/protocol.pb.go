@@ -2718,8 +2718,12 @@ type VantagePointReport struct {
 	ScionPaths        *ProbeState         `protobuf:"bytes,10,opt,name=scion_paths,json=scionPaths,proto3" json:"scion_paths,omitempty"`                      // Daemon path availability, not data-plane reachability.
 	Resources         *HostResources      `protobuf:"bytes,11,opt,name=resources,proto3" json:"resources,omitempty"`                                          // Process and state-filesystem observations; operator metrics only.
 	CounterAttachment string              `protobuf:"bytes,12,opt,name=counter_attachment,json=counterAttachment,proto3" json:"counter_attachment,omitempty"` // present, missing or unknown: owned TCX links, not proof of packet policing.
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Hide the dispatcher-observed addresses from the public executor listing
+	// (is_public false); prefix, ASN and location stay public. Read at
+	// registration; false for older peers, which are public.
+	AddressOptOut bool `protobuf:"varint,13,opt,name=address_opt_out,json=addressOptOut,proto3" json:"address_opt_out,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VantagePointReport) Reset() {
@@ -2834,6 +2838,13 @@ func (x *VantagePointReport) GetCounterAttachment() string {
 		return x.CounterAttachment
 	}
 	return ""
+}
+
+func (x *VantagePointReport) GetAddressOptOut() bool {
+	if x != nil {
+		return x.AddressOptOut
+	}
+	return false
 }
 
 type HostResourceValue struct {
@@ -3636,7 +3647,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x12disclosure_held_ms\x18\a \x01(\x03H\x02R\x10disclosureHeldMs\x88\x01\x01B\x12\n" +
 	"\x10_installed_epochB\x16\n" +
 	"\x14_last_refresh_age_msB\x15\n" +
-	"\x13_disclosure_held_ms\"\xdc\x04\n" +
+	"\x13_disclosure_held_ms\"\x84\x05\n" +
 	"\x12VantagePointReport\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12 \n" +
 	"\fscion_isd_as\x18\x02 \x01(\tR\n" +
@@ -3653,7 +3664,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	" \x01(\v2\x1d.debuglet.protocol.ProbeStateR\n" +
 	"scionPaths\x12>\n" +
 	"\tresources\x18\v \x01(\v2 .debuglet.protocol.HostResourcesR\tresources\x12-\n" +
-	"\x12counter_attachment\x18\f \x01(\tR\x11counterAttachment\"Z\n" +
+	"\x12counter_attachment\x18\f \x01(\tR\x11counterAttachment\x12&\n" +
+	"\x0faddress_opt_out\x18\r \x01(\bR\raddressOptOut\"Z\n" +
 	"\x11HostResourceValue\x12\x19\n" +
 	"\x05value\x18\x01 \x01(\x04H\x00R\x05value\x88\x01\x01\x12 \n" +
 	"\vunavailable\x18\x02 \x01(\tR\vunavailableB\b\n" +

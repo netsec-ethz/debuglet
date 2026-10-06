@@ -79,3 +79,31 @@ func TestNodeIPMetadataDocumentKeepsExactFields(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeAddressingDocumentKeepsExactFields(t *testing.T) {
+	observation := `{"source":"dispatcher-observed","via":"control","observed_at":1790598500,"lookup_source":null,"lookup_reason":"no_database"}`
+	public := `,"is_public":true,"address_v4":"127.0.0.1","address_v6":null,"prefix_v4":null,"prefix_v6":null,"asn_v4":null,"asn_v6":null,"address_observations":{"v4":` + observation + `,"v6":null}`
+	old := `,"is_public":null,"address_v4":null,"address_v6":null,"prefix_v4":null,"prefix_v6":null,"asn_v4":null,"asn_v6":null,"address_observations":null`
+	for _, tc := range []struct {
+		name, fields string
+		valid        bool
+	}{
+		{"omitted", "", true},
+		{"older dispatcher", old, true},
+		{"observed", public, true},
+		{"unknown family", strings.Replace(public, `"v6":null`, `"v6":null,"v5":null`, 1), false},
+		{"missing family", strings.Replace(public, `,"v6":null`, "", 1), false},
+		{"unknown observation field", strings.Replace(public, `"via":"control"`, `"via":"control","other":1`, 1), false},
+		{"null observation time", strings.Replace(public, `"observed_at":1790598500`, `"observed_at":null`, 1), false},
+		{"duplicate address", public + `,"address_v4":null`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`[{"id":"` + testExecutor + `","ready":true,"last_seen":1790598500,"version":"test","tesla_delay_sec":2,"tesla_anchor_timestamp_ns":0,"tesla_anchor_key":null,"price_per_bw":0,"currency":"TEST"` + tc.fields + `}]`)
+			var nodes []client.Node
+			err := decodeCommand(commandResult{Started: true, Stdout: raw}, &nodes)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t error=%v", tc.valid, err)
+			}
+		})
+	}
+}
