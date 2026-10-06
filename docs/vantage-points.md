@@ -19,7 +19,7 @@ admission:
 | --- | --- |
 | `operator` | Set by the operator in the dispatcher configuration. Values from an executor's own configuration, such as `public_host`, arrive over the control connection and are `executor-reported`, since the dispatcher cannot tell them from measurements. |
 | `executor-reported` | Measured or introspected by the executor itself. |
-| `dispatcher-observed` | Seen directly by the dispatcher: the control connection's remote IP and the result of a controlled connect-back reachability test. |
+| `dispatcher-observed` | Seen directly by the dispatcher: the remote IP of the control connection or of an address reflection call, and the result of a controlled connect-back reachability test. |
 | `database:<name>@<version>` | Looked up by the dispatcher in an offline database, keyed on a dispatcher-observed or advertised address. The version comes from the database file's own metadata. |
 
 Executor claims are never labelled verified. A `dispatcher-observed` value
@@ -59,17 +59,48 @@ always `unknown`, never a guessed value.
 
 ## Privacy
 
+Debuglet follows the [RIPE Atlas](https://atlas.ripe.net/docs/apis/rest-api-manual/probes/)
+probe model. A RIPE Atlas probe, home probes included, is public by default:
+its addresses, prefixes, ASNs and location are published. A probe's host can
+make it private, which hides only its addresses. Debuglet executors are the
+same kind of vantage point and are measured against the same expectations, so
+the public listing publishes the same facts and offers the same opt-out.
+
 | Data | Visibility |
 | --- | --- |
 | Network (ASN, AS name, prefix, ISD-AS, address families, reachability) | Public |
-| Location, at most city and country | Public |
+| Dispatcher-observed address of each family (`address_v4`, `address_v6`) | Public, unless the executor is private (`is_public` false); then operator, and the run's owner through its result provenance |
+| Location, at most city and country | Public, unless the executor opts out of location |
 | Measurement capabilities, including the ICMP probe and fallback reason | Public |
 | Clock sync state, kernel error estimates and clock readiness | Public |
 | Host platform (OS, kernel, architecture, CPU, memory, build version) | Operator, and the run's owner through its result provenance |
-| Control-connection source IP and advertised public host | Operator, and the run's owner through its result provenance |
+| Advertised public host, reported (hello) source IP, connectivity endpoints and the SCION host | Operator, and the run's owner through its result provenance |
 
-Location is never finer than city. An executor can opt out of location; the
-dispatcher then publishes no automatic location for it.
+Only addresses the dispatcher itself observed are published: the peer address
+of the executor's authenticated control connection and of its authenticated
+address reflection calls. The executor's own claims, such as `public_host`,
+are not observations and stay operator-only. A published address is the
+address the executor reaches the dispatcher from; packets it sends elsewhere
+may leave from another one. An address is already public in practice whenever
+the executor measures from it, since every probe it sends carries it; the
+public `GET /attribution/candidates` lookup answers for an address the querier
+already holds, whether the executor is public or not.
+
+`is_public` and the location opt-out are independent, as in RIPE Atlas, where
+a private probe keeps its location public and the location is the host's own
+choice. Making an executor private (`metadata.address_opt_out`) hides only
+its addresses; prefix, ASN and any location stay public. Opting out of
+location (`metadata.location_opt_out`) hides only the automatic city and
+country; the addresses stay public unless the executor is also private. An
+executor that wants neither published sets both. Location is never finer than
+city.
+
+Executors are public by default, including executors that predate the
+setting: their observed addresses appear in the listing from API 1.16 on.
+Before then the control-connection source IP was operator-only. An executor
+that must stay private needs a release that sends `address_opt_out` (an older
+executor cannot) and the setting before it registers with a dispatcher of
+this release.
 
 ## Refresh
 
@@ -101,3 +132,6 @@ last outcome with an explicit stale flag. The admission snapshot keeps the last 
 6. Dual-stack egress reflection against the authenticated dispatcher (#239
    part 2). Local SCION host/path metadata is reported separately; external
    SCION data-plane and listener reachability remain untested.
+7. RIPE Atlas-style addressing in API 1.16: the observed `address_v4` and
+   `address_v6`, their prefixes and ASNs, and `is_public`; see
+   [probe addresses](operations/executor-discovery.md#probe-addresses).

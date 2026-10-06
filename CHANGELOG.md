@@ -40,6 +40,27 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- API 1.16: RIPE Atlas-style probe addressing in `GET /executors`. Each entry
+  reports `is_public` and the last dispatcher-observed `address_v4` and
+  `address_v6` with their `prefix_v4/v6` and `asn_v4/v6` from the offline ASN
+  database, and `address_observations` (`via` control or reflection,
+  `observed_at`, lookup source and reason). Only addresses the dispatcher saw
+  on the executor's authenticated connections are listed, never
+  `public_host`. Executors call the existing address reflection over each
+  family every 10 minutes, resolving their `dispatcher.addr` and verifying the
+  dispatcher certificate, so both families are observed without a configured
+  reflector (`[connectivity] observe_addresses = false` turns this off).
+  `[metadata] address_opt_out = true` makes an executor private: its
+  addresses are withheld from everyone but operators, while prefix, ASN and
+  location stay public, as for a private RIPE Atlas probe. It is independent
+  of `location_opt_out`. Results record the same fields in
+  `provenance.vantage_point.addressing`. `dbl nodes` adds `ADDRESS_V4` and
+  `ADDRESS_V6` columns. **Privacy:** executors are public by default,
+  including executors that predate the setting, so their control-connection
+  address, operator-only until now, is listed once the dispatcher is
+  upgraded. To keep one private, upgrade it and set `address_opt_out`
+  before the dispatcher is upgraded
+  (`docs/vantage-points.md#privacy`).
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

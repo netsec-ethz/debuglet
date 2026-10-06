@@ -39,9 +39,14 @@ type ExecutorConfig struct {
 	Connectivity ConnectivityConfig
 }
 
-// MetadataConfig controls publication of automatically derived location.
+// MetadataConfig controls publication of automatically derived location and
+// of the addresses the dispatcher observes.
 type MetadataConfig struct {
 	LocationOptOut bool `toml:"location_opt_out"`
+	// AddressOptOut makes the executor private (is_public false): the public
+	// listing then withholds its observed addresses. Prefix, ASN and
+	// location stay public, as for a private RIPE Atlas probe.
+	AddressOptOut bool `toml:"address_opt_out"`
 }
 
 // ClockConfig bounds the kernel's estimated clock error the executor accepts
@@ -324,6 +329,9 @@ func DecodeConfig(data []byte) (*ExecutorConfig, configcheck.Document, error) {
 	}
 	if cfg.Dispatcher.YamuxAddr == "" {
 		cfg.Dispatcher.YamuxAddr = cfg.Dispatcher.Addr
+	}
+	if !document.Set("connectivity", "observe_addresses") {
+		cfg.Connectivity.ObserveAddresses = true
 	}
 
 	if err := cfg.Validate(); err != nil {

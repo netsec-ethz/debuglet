@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -27,8 +28,10 @@ Filters return ready matching executors only. Unknown capability reports and an
 unknown ISD-AS do not match. Capacity means advertised total bandwidth, not free
 admission capacity. NAME is the dispatcher operator's label; LOCATION prefers
 operator location and otherwise shows approximate database location with its source;
-ISD_AS is the executor's own report. --output json also carries admission, the
-operator's network label and the reported listener transports.
+ISD_AS is the executor's own report. ADDRESS_V4 and ADDRESS_V6 are the addresses
+the dispatcher last observed, "private" when the executor withholds them. --output
+json also carries admission, the operator's network label, the reported listener
+transports and each address family's prefix, ASN and observation time.
 
 Lists the dispatcher's registered executors. JSON output is always an array.
 `
@@ -89,7 +92,7 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION\tIPV4\tIPV6\tTCP_LISTENER\tUDP_LISTENER")
+		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tADDRESS_V4\tADDRESS_V6\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION\tIPV4\tIPV6\tTCP_LISTENER\tUDP_LISTENER")
 		for _, n := range nodes {
 			location := n.Display
 			location.City, location.Country = n.Location()
@@ -112,12 +115,30 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 			if connectivity == nil {
 				connectivity = &wire.Connectivity{}
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
-				labelText(n.Display.DisplayName), nodeLocation(location), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata), locationSource(location),
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
+				labelText(n.Display.DisplayName), nodeLocation(location), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata),
+				addressColumn(n.AddressV4, n.IsPublic), addressColumn(n.AddressV6, n.IsPublic), locationSource(location),
 				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution, reachabilityColumn(connectivity.IPv4), reachabilityColumn(connectivity.IPv6), reachabilityColumn(connectivity.TCPListener), reachabilityColumn(connectivity.UDPListener))
 		}
 		return tw.Flush()
 	})
+}
+
+// addressColumn shows an observed address, "private" when a private executor's
+// address is withheld and "-" when none is known. A value that is not an
+// address is not printed.
+func addressColumn(address *string, public *bool) string {
+	if address == nil {
+		if public != nil && !*public {
+			return "private"
+		}
+		return "-"
+	}
+	ip, err := netip.ParseAddr(*address)
+	if err != nil {
+		return "invalid"
+	}
+	return ip.String()
 }
 
 func reachabilityColumn(r wire.Reachability) string {

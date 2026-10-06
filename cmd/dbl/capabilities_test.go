@@ -89,7 +89,7 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	mux.HandleFunc("GET /executors", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id":"old","ready":true},
-{"id":"lab","ready":true,"admission":"maintenance",
+{"id":"lab","ready":true,"admission":"maintenance","is_public":false,"address_v4":null,"address_v6":null,"asn_v4":64500,
  "display":{"display_name":{"value":"ETH lab","source":"operator"},"city":{"value":"Zurich","source":"operator"},"country":{"value":"CH","source":"operator"},"network":{"value":null,"source":null}},
  "scion_isd_as":{"value":"1-ff00:0:110","source":"executor-reported","observed_at":1},
  "listeners":{"value":["udp","scion"],"source":"executor-reported","observed_at":1}}]`))
@@ -98,7 +98,7 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	const header = "ID READY NAME LOCATION ISD_AS ASN LOCATION_SOURCE LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION IPV4 IPV6 TCP_LISTENER UDP_LISTENER"
+	const header = "ID READY NAME LOCATION ISD_AS ASN ADDRESS_V4 ADDRESS_V6 LOCATION_SOURCE LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION IPV4 IPV6 TCP_LISTENER UDP_LISTENER"
 	if len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != header {
 		t.Fatalf("table: %q", stdout)
 	}
@@ -107,6 +107,12 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "ETH lab  Zurich,CH  1-ff00:0:110") {
 		t.Fatalf("vantage row: %q", lines[2])
+	}
+	if fields := strings.Fields(lines[1]); fields[6] != "-" || fields[7] != "-" {
+		t.Fatalf("legacy addresses: %q", lines[1])
+	}
+	if fields := strings.Fields(lines[2]); fields[7] != "private" || fields[8] != "private" {
+		t.Fatalf("private addresses: %q", lines[2])
 	}
 	// The default table stays compact; admission, network and listeners are
 	// in --output json only.

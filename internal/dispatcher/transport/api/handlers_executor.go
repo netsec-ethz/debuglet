@@ -39,6 +39,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 			Listeners:              listeners,
 			Clock:                  e.Clock(),
 			IPMetadata:             e.IPMetadata(),
+			ProbeAddressing:        e.Addressing(caller.Operator),
 			ID:                     e.ID,
 			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,
