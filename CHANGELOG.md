@@ -10,6 +10,8 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-10-06
+
 ### Security
 - Releases are signed. The production release signer is
   `releases@debuglet.netsec.ethz.ch` (Ed25519,
@@ -350,6 +352,24 @@ changes; the linked API and deployment documentation contains operational detail
   run's mark; a refused mark fails the listener instead of trying the next
   port.
 
+### Known limitations
+- Chain payments (USDC on Sui: payouts, refunds and receipt reconciliation)
+  are not part of this release and are not supported. Every shipped
+  configuration keeps `[sui] disabled = true`; leave it so. `TEST` payments
+  and allowances work as before. The payment schema migrations are included
+  and are applied by the database upgrade either way.
+- Production executors tag packets only once deployed with the capabilities
+  in `executor_capabilities` (`cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf`);
+  check `tagging.ipv4` in `GET /executors`. Capability reports can say
+  `attribution: available` while `tagging.ipv4` is `none`.
+- An executor whose clock is unsynchronized keeps tagging, a restarted
+  executor never discloses the last d keys of its previous chain, and
+  destination opt-outs are not yet durable. Server-assisted verification of
+  packets newer than the disclosure delay (about 15 minutes) is not
+  available: such packets verify as `pending`.
+- The browser verifier on the website still implements the pre-v1 tag
+  scheme; use `dbl verify` or `tools/verify_pcap.py`.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
@@ -485,7 +505,8 @@ changes; the linked API and deployment documentation contains operational detail
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.3.0-rc.1...HEAD
+[0.3.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0...v0.3.0-rc.1
 [0.2.0]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0
 [0.2.0-rc.3]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2
