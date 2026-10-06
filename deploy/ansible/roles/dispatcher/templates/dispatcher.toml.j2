@@ -95,3 +95,11 @@ success_url = "{{ dispatcher_cilogon_oidc_success_url }}"
 public_url = {{ dispatcher_authentication_public_url | to_json }}
 device_verification_url = {{ dispatcher_authentication_device_verification_url | to_json }}
 {% endif %}
+{% if dispatcher_ris_asn_enabled | bool %}
+
+# Executor ASN and announced prefix, looked up in the database the
+# debuglet-ris-asn timer rebuilds daily from RIPE RIS. The dispatcher loads a
+# replaced file within a minute, without a restart.
+[metadata]
+asn_database = {{ dispatcher_ris_asn_database | to_json }}
+{% endif %}

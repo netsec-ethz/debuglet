@@ -6,8 +6,10 @@ to 6 of the delivery order below have landed for controlled TCP/UDP peers. Today
 admission-time vantage point, executors report schema-1
 [capabilities](operations/executor-discovery.md), their SCION ISD-AS,
 listener transports and ICMP, clock and host-platform probes, and operators may
-label executors with a display name, city, country and network. Optional
-offline MMDB files now supply ASN and approximate country/city location. Keep this note in step with the code as each step below lands.
+label executors with a display name, city, country and network. An offline
+MMDB file built daily from RIPE RIS supplies ASN and announced prefix, as RIPE
+Atlas does for its probes; an optional operator MMDB file can supply
+approximate country/city location. Keep this note in step with the code as each step below lands.
 
 ## Provenance
 
@@ -20,7 +22,7 @@ admission:
 | `operator` | Set by the operator in the dispatcher configuration. Values from an executor's own configuration, such as `public_host`, arrive over the control connection and are `executor-reported`, since the dispatcher cannot tell them from measurements. |
 | `executor-reported` | Measured or introspected by the executor itself. |
 | `dispatcher-observed` | Seen directly by the dispatcher: the remote IP of the control connection or of an address reflection call, and the result of a controlled connect-back reachability test. |
-| `database:<name>@<version>` | Looked up by the dispatcher in an offline database, keyed on a dispatcher-observed or advertised address. The version comes from the database file's own metadata. |
+| `database:<name>@<version>` | Looked up by the dispatcher in an offline database, keyed on a dispatcher-observed or advertised address. The version comes from the database file's own metadata. The RIS-derived ASN database is `database:Debuglet-RIS-ASN@<epoch>`, where the epoch is the generation time of the RIS dumps it was built from. |
 
 Executor claims are never labelled verified. A `dispatcher-observed` value
 describes the control connection, which need not be the measurement egress.
@@ -50,12 +52,22 @@ per address family and for SCION, `null` when the report had none.
 
 ## Geolocation and ASN
 
-Debuglet bundles no database and makes no online lookups. An operator may
-configure the path of an offline MMDB file on the dispatcher (for example
-DB-IP Lite or IPinfo Lite) and accepts that database's licence and update
-procedure. Without it, ASN and location are `unknown`. Loopback, private
-(RFC 1918), CGNAT (100.64.0.0/10), IPv6 ULA and other non-global addresses are
-always `unknown`, never a guessed value.
+Debuglet bundles no database and makes no online lookups; every lookup is in
+an offline MMDB file on the dispatcher. ASN and prefix follow RIPE Atlas's
+method: the origin AS of the longest matching prefix announced in BGP, taken
+from RIPE RIS routing data. The dispatcher builds that database itself from
+RIS's daily dumps, counting only prefixes at least 10 RIS peers see and
+attributing a prefix with several origins to the one the most peers see. The
+managed deployment rebuilds it daily and the dispatcher switches to a new file
+without a restart; see
+[executor discovery](operations/executor-discovery.md#asn-and-prefix-from-ripe-ris).
+Location is not derived from a geolocation database in the managed
+deployment: as with RIPE Atlas, it comes from the operator (or the host). An
+operator may still configure an offline city database of their own (for
+example DB-IP Lite or IPinfo Lite) and accepts its licence and update
+procedure. Without a database, ASN and location are `unknown`. Loopback,
+private (RFC 1918), CGNAT (100.64.0.0/10), IPv6 ULA and other non-global
+addresses are always `unknown`, never a guessed value.
 
 ## Privacy
 
@@ -110,7 +122,9 @@ this release.
 
 ## Refresh
 
-Metadata is collected at registration and on every reconnect. Executor probe
+Metadata is collected at registration and on every reconnect. The RIS ASN
+database is rebuilt daily; a replaced database applies to registrations after
+the switch, and admitted results keep the source they were looked up with. Executor probe
 results (ICMP, platform, clock, SCION, egress) use the existing capability
 cadence: reported at most every 30 seconds on the heartbeat and expired after
 90 seconds without a new report. Expired legacy capability values become unknown in the live
@@ -132,7 +146,10 @@ last outcome with an explicit stale flag. The admission snapshot keeps the last 
    [configuration, opt-out and database updates](operations/executor-discovery.md#offline-asn-and-approximate-location).
    IP metadata is collected at registration, includes negative lookup reasons,
    and is retained in admission snapshots. SCION host-address reporting and
-   measured reachability are described below.
+   measured reachability are described below. ASN and announced prefix now
+   come from a database the dispatcher builds from RIPE RIS, as RIPE Atlas
+   derives them, and a replaced database is loaded without a restart; see
+   [ASN and prefix from RIPE RIS](operations/executor-discovery.md#asn-and-prefix-from-ripe-ris).
 5. Controlled TCP/UDP connect-back reachability and field-level admission
    refusal (#239 part 1); see [controlled observations](operations/executor-discovery.md#controlled-connectivity-observations).
 6. Dual-stack egress reflection against the authenticated dispatcher (#239
