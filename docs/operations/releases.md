@@ -12,6 +12,31 @@ trust settings or `DEBUGLET_REQUIRE_SIGNATURE=1` are supplied. It never falls
 back to unsigned installation after a verification failure. Preparing a signed Actions artifact does not publish a GitHub release or
 provide durable retention.
 
+## Production signer
+
+Debuglet releases after v0.2.0 are signed by this key:
+
+| Field | Value |
+| --- | --- |
+| Identity | `releases@debuglet.netsec.ethz.ch` |
+| Namespace | `debuglet-release` |
+| Key | Ed25519, fingerprint `SHA256:vETQG+wE6uwMv4MBFfx7dxo8IWpvR8z6/Sw7MT2WwQo` |
+| Trust file | [`configs/release-allowed-signers`](../../configs/release-allowed-signers) |
+
+Use the trust file from a checkout you obtained independently of the release,
+and confirm the fingerprint through a second channel, such as the Debuglet
+website or the maintainers, before relying on it:
+
+```sh
+awk '{print $3, $4}' configs/release-allowed-signers | ssh-keygen -lf -
+```
+
+Install it with `install -m 0644 configs/release-allowed-signers
+/etc/debuglet/release-allowed-signers` and use
+`DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch` in the commands
+below. A rotation changes this file and this section in a reviewed commit, as
+described in [Rotate a signer](#rotate-a-signer).
+
 ## Install with provisioned trust
 
 Use Linux amd64 with a POSIX shell, GNU tar, coreutils, Python 3.11 or later, and
