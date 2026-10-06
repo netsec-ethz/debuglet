@@ -1,0 +1,29 @@
+# Rebuilds the dispatcher's ASN database from RIPE RIS. The build is written
+# to a staging file next to the database, verified with the dispatcher's own
+# loader and renamed into place; the running dispatcher loads it within a
+# minute. A failed build leaves the database in use unchanged.
+[Unit]
+Description=Debuglet dispatcher ASN database refresh from RIPE RIS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ debuglet_user }}
+Group={{ debuglet_group }}
+Environment=GOMEMLIMIT=384MiB
+ExecStart={{ payload_prefix }}/bin/debuglet-dispatcher \
+    -build-asn-database {{ dispatcher_ris_asn_database }} \
+    -ris-min-peers {{ dispatcher_ris_asn_min_peers }}
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=1G
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ dispatcher_ris_asn_database | dirname }}
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=debuglet-ris-asn

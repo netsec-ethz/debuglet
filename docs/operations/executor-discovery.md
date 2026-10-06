@@ -206,21 +206,77 @@ location source; `--output json` includes the detailed lookup records below.
 
 ### Offline ASN and approximate location
 
-The dispatcher can load optional operator-supplied MMDB files at startup:
+The dispatcher can load optional MMDB files at startup:
 
 ```toml
 [metadata]
-asn_database = "/var/lib/debuglet/GeoLite2-ASN.mmdb"
+asn_database = "/var/lib/debuglet/dispatcher/ris-asn.mmdb"
 city_database = "/var/lib/debuglet/GeoLite2-City.mmdb"
 ```
 
-Debuglet bundles no database, downloads none and makes no online or DNS lookup.
-Acquire data under its provider's licence. Supported records use the
-GeoIP2-compatible MMDB keys `autonomous_system_number`,
-`autonomous_system_organization`, `country.iso_code` and `city.names.en`.
-Other MMDB layouts are not implicitly translated. The ASN record includes the
-covering database prefix. Location is approximate, at most country and city;
-coordinates are never read or published. Missing city means country precision.
+Debuglet bundles no database and makes no online or DNS lookup when it looks
+an address up. The recommended ASN database is built from RIPE RIS routing
+data by the dispatcher itself (below); the managed deployment does this and
+configures no city database, since an executor's location comes from its
+operator. Any other database is the operator's, acquired under its provider's
+licence. Supported records use the GeoIP2-compatible MMDB keys
+`autonomous_system_number`, `autonomous_system_organization`,
+`country.iso_code` and `city.names.en`. Other MMDB layouts are not implicitly
+translated. The ASN record includes the covering prefix: the announced prefix
+when the record carries `announced_prefix_length`, as RIS builds do, otherwise
+the database's own tree prefix. A record without an AS name has an empty
+`name`. Location is approximate, at most country and city; coordinates are
+never read or published. Missing city means country precision.
+
+#### ASN and prefix from RIPE RIS
+
+The ASN method matches RIPE Atlas, which derives a probe's `prefix_v4`/`v6`
+and `asn_v4`/`v6` from RIPE RIS: an address belongs to the longest matching
+prefix announced in BGP, and to that prefix's origin AS.
+
+```sh
+debuglet-dispatcher -build-asn-database /var/lib/debuglet/dispatcher/ris-asn.mmdb
+```
+
+downloads RIPE RIS's daily `riswhoisdump.IPv4.gz` and `riswhoisdump.IPv6.gz`
+(<https://www.ris.ripe.net/dumps/>) and RIPE's AS names
+(<https://ftp.ripe.net/ripe/asnames/asn.txt>), about 15 MB in all, and builds
+the database in under a minute with about 0.5 GB of memory. Each dump lists
+every (origin, prefix) pair in the combined RIS routing tables and how many RIS
+peers see it.
+
+- **Visibility.** A pair counts only when at least `-ris-min-peers` RIS peers
+  see it, 10 by default. RIS has several hundred full-table peers, so this is
+  a small fraction that still drops what only a handful see: leaks, transient
+  more-specifics and peers' internal routes. Today it keeps about 1.13 million
+  IPv4 and 265,000 IPv6 prefixes of 1.25 million and 306,000.
+- **Several origins (MOAS).** A prefix is attributed to the origin the most
+  RIS peers see, the lowest AS number on a tie, so a rebuild from the same
+  dumps gives the same answer. About 0.4% of prefixes have several origins.
+- **Excluded.** AS sets with more than one member (the origin is ambiguous),
+  origins IANA reserves (private, documentation, `AS_TRANS`), prefixes shorter
+  than /8 (IPv4) or /16 (IPv6) such as default routes, and prefixes that are
+  not entirely global unicast, which a lookup never reaches anyway. An address
+  in an excluded prefix falls to the covering prefix that remains, or is
+  `not_found`.
+- **Names.** `name` is RIPE's AS name text, for example
+  `RIPE-NCC-AS Reseaux IP Europeens Network Coordination Centre (RIPE NCC), NL`,
+  shortened to 128 characters, and empty for an AS RIPE does not list.
+- **Provenance.** The database type is `Debuglet-RIS-ASN` and its build epoch
+  is the generation time of the older of the two dumps, so values carry
+  `source = "database:Debuglet-RIS-ASN@<epoch>"` and rebuilding from the same
+  dumps yields the same source.
+
+The build fails closed and then leaves the existing file untouched: a download
+shorter than its announced length, a gzip stream whose checksum fails, a dump
+without its generation time or `% End of dump` marker, an unreadable line, an
+AS-name file cut mid-line, a dump older than `-ris-max-age` (72 hours by
+default), or fewer than 500,000 IPv4 prefixes, 100,000 IPv6 prefixes or 50,000
+AS names. RIPE publishes no checksums, so lengths, gzip checksums and these
+markers are what can be verified. The new file is written next to the old one,
+looked up through the dispatcher's own loader for the first address of every
+selected prefix, and only then renamed into place. A database already built
+from the same or newer dumps is kept.
 
 `ip_metadata.observed` and `.advertised` keep the two lookup results separate.
 `address_source` says whether the lookup key was dispatcher-observed or
@@ -257,12 +313,31 @@ listings and new admission snapshots, including when an operator location is
 set. Existing immutable results are unchanged; explicitly configured operator
 location remains visible. Older executors default to allowing automatic lookup.
 
-To update databases, obtain and validate replacement files under the provider's
-licence, then atomically rename them into the configured paths and restart the
-dispatcher. Never overwrite or truncate an open MMDB file in place. Startup
-rejects missing, malformed or unverifiable configured databases; unset paths
-are supported and produce unknown values. Reconnecting executors are looked up
-again. Existing results retain the old source/version and values.
+Startup rejects missing, malformed or unverifiable configured databases;
+unset paths are supported and produce unknown values. To update a database,
+atomically rename a replacement into the configured path; `-build-asn-database`
+does this itself. Never overwrite or truncate an open MMDB file in place. No
+restart is needed, so no executor control connection is dropped: the
+dispatcher checks both configured paths every minute and, when one holds a
+different file, opens and verifies it as at startup before switching to it. It
+logs `Loaded a replaced IP metadata database` with the new source. A
+replacement that fails verification, or a removed file, is logged once as
+`Refused a replaced IP metadata database` and the previous database stays in
+use. Lookups happen at registration, as before: executors registering or
+reconnecting after the switch get the new values, while executors already
+registered and existing results keep the values and source they were looked up
+with.
+
+The managed deployment (`deploy/ansible`) runs the build daily from the
+`debuglet-ris-asn.timer` systemd timer on the dispatcher host, as the service
+account with write access to the dispatcher state directory only, and builds
+the first database during deployment, before the configuration names it, so
+the dispatcher host needs HTTPS access to `www.ris.ripe.net` and
+`ftp.ripe.net`. `dispatcher_ris_asn_enabled` (on for prod and dev),
+`dispatcher_ris_asn_min_peers` and `dispatcher_ris_asn_schedule` in
+`group_vars/dispatcher.yml` control it. A failed run shows in
+`systemctl status debuglet-ris-asn` and the journal; the dispatcher keeps the
+previous database, and the next day's run tries again.
 
 `provenance.vantage_point.ip_metadata` adds these same lookup facts to schema 1
 of result format 1.1. Files predating the field remain readable. No separate

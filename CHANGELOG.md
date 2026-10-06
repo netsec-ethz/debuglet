@@ -78,6 +78,31 @@ changes; the linked API and deployment documentation contains operational detail
   upgraded. To keep one private, upgrade it and set `address_opt_out`
   before the dispatcher is upgraded
   (`docs/vantage-points.md#privacy`).
+- Executor ASN and prefix from RIPE RIS, the method RIPE Atlas uses for its
+  probes: the origin AS of the longest matching prefix announced in BGP.
+  `debuglet-dispatcher -build-asn-database PATH` downloads RIS's daily whois
+  dumps and RIPE's AS names, keeps (origin, prefix) pairs at least
+  `-ris-min-peers` RIS peers see (default 10), attributes a prefix with
+  several origins to the one the most peers see (lowest AS number on a tie),
+  and atomically replaces PATH with a GeoIP2-ASN-compatible MMDB it has
+  verified through the dispatcher's own loader. Values carry
+  `database:Debuglet-RIS-ASN@<dump generation time>` and the announced prefix
+  (the new optional `announced_prefix_length` record key). Short downloads,
+  failed gzip checksums, dumps without their end marker or older than
+  `-ris-max-age`, and near-empty tables are refused and the existing file is
+  kept. An AS that RIPE does not name now has an empty `name` instead of an
+  `invalid_record` lookup.
+- The dispatcher reloads a replaced `[metadata]` database without a restart:
+  it checks the configured paths every minute, verifies a new file as at
+  startup and keeps the previous database (logging once) if it fails.
+  Executors registering afterwards are looked up in the new file; registered
+  executors and admitted results keep their values and source.
+- Deployment: the `debuglet-ris-asn` systemd timer rebuilds the ASN database
+  daily on the dispatcher host, and the first build runs during deployment.
+  Enabled for prod and dev with `dispatcher_ris_asn_enabled`; the dispatcher
+  host needs HTTPS access to `www.ris.ripe.net` and `ftp.ripe.net`. No city
+  database is configured: location comes from the operator. See
+   `docs/operations/executor-discovery.md#asn-and-prefix-from-ripe-ris`.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and

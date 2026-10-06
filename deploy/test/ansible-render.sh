@@ -27,7 +27,11 @@
 #      no change),
 #   9. a configuration-only update renders the version installed on each host
 #      and refuses another one,
-#  10. executor labels, the advertised address, the IPv4 reflector and the
+#  10. the RIS ASN database refresh: the timer and its unit are installed and
+#      name the database the dispatcher configuration reads, a configuration
+#      update refuses to name a database no deployment has built, and
+#      disabling it removes the units and the configuration entry.
+#  11. executor labels, the advertised address, the IPv4 reflector and the
 #      executor's capability set render where the daemons read them.
 #
 # It needs a built release package in deploy/dist (./deploy/scripts/build-linux.sh)
@@ -370,6 +374,10 @@ refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certifi
 	-e dispatcher_disable_tls=true
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \
 	-e dispatcher_disable_tls=true -e dispatcher_require_client_cert=true
+refuses 'a RIS peer threshold below one is refused' 'dispatcher_ris_asn_min_peers must be a positive integer' \
+	-e dispatcher_ris_asn_min_peers=0
+refuses 'a RIS ASN database outside the dispatcher state is refused' 'the only directory the refresh' \
+	-e "dispatcher_ris_asn_database=$host/etc/debuglet/ris-asn.mmdb"
 
 refuses 'CILogon requires its own private credential file' 'cilogon_oidc.env.example' \
 	-e "@$work/cilogon.yml" -e "dispatcher_cilogon_oidc_env_file=$work/missing.env"
@@ -481,6 +489,8 @@ executor_toml=$host/etc/debuglet/executor-prod/executor.toml
 for file in "$dispatcher_toml" "$executor_toml" \
 	"$host/etc/systemd/system/debuglet-dispatcher.service" \
 	"$host/etc/systemd/system/debuglet-executor-prod.service" \
+	"$host/etc/systemd/system/debuglet-ris-asn.service" \
+	"$host/etc/systemd/system/debuglet-ris-asn.timer" \
 	"$host/var/lib/debuglet/dispatcher/dispatcher.db" \
 	"$host/var/lib/debuglet/executor-prod/executor.db" \
 	"$host/opt/debuglet/prod/bin/dbl" \
@@ -508,6 +518,31 @@ else
 	check 'the production profile renders CILogon enabled' fail
 fi
 refute 'browser CLI approval is absent by default' "$dispatcher_toml" '[authentication]'
+# The production profile looks executor ASNs up in the RIS database, which the
+# refresh unit writes to exactly the path the configuration names. The fixture
+# drives no systemd, so no build runs and nothing is downloaded.
+ris_database=$host/var/lib/debuglet/dispatcher/ris-asn.mmdb
+ris_service=$host/etc/systemd/system/debuglet-ris-asn.service
+ris_timer=$host/etc/systemd/system/debuglet-ris-asn.timer
+expect 'the production profile reads the RIS ASN database' "$dispatcher_toml" \
+	"asn_database = \"$ris_database\""
+refute 'no city database is configured' "$dispatcher_toml" 'city_database'
+expect 'the refresh builds the database the dispatcher reads' "$ris_service" \
+	"-build-asn-database $ris_database"
+expect 'the refresh runs the installed dispatcher' "$ris_service" \
+	"ExecStart=$host/opt/debuglet/prod/bin/debuglet-dispatcher"
+expect 'the refresh applies the RIS visibility threshold' "$ris_service" '-ris-min-peers 10'
+expect 'the refresh runs as the service account' "$ris_service" "User=$(id -un)"
+expect 'the refresh writes only the dispatcher state directory' "$ris_service" \
+	"ReadWritePaths=$host/var/lib/debuglet/dispatcher"
+expect 'the refresh is a one-shot job' "$ris_service" 'Type=oneshot'
+expect 'the refresh runs daily' "$ris_timer" 'OnCalendar=*-*-* 04:30:00 UTC'
+expect 'a missed refresh runs at the next boot' "$ris_timer" 'Persistent=true'
+if [ ! -e "$ris_database" ]; then
+	check 'the fixture deployment downloads no RIS data' pass
+else
+	check 'the fixture deployment downloads no RIS data' fail
+fi
 expect 'the executor dials the configured control address' "$executor_toml" \
 	'addr = "dispatcher.fixture.invalid:19001"'
 expect 'the executor dials the configured yamux address' "$executor_toml" \
@@ -779,6 +814,18 @@ fi
 # which it reads from the host's deployment record, and refuses a version that
 # names another release. The fixture's deploy_version names none, so the
 # accepted run passes the installed one explicitly, as an operator may.
+# The dispatcher refuses to start with a configured database that does not
+# exist, and only a deployment builds the first one.
+if run "$work/update-config-ris.log" update-config.yml -e "deploy_version=$release_version"; then
+	check 'a configuration update refuses to name a RIS database no deployment built' fail
+elif grep -qF 'Run deploy-dispatcher.yml (or site.yml) once' "$work/update-config-ris.log"; then
+	check 'a configuration update refuses to name a RIS database no deployment built' pass
+else
+	check 'a configuration update refuses to name a RIS database no deployment built' fail
+	tail -10 "$work/update-config-ris.log" >&2
+fi
+# A stand-in for the database a managed host's first build writes.
+printf 'fixture RIS ASN database\n' >"$ris_database"
 if run "$work/update-config.log" update-config.yml -e "deploy_version=$release_version"; then
 	check 'a configuration update applies against the fixture host' pass
 else
@@ -850,6 +897,23 @@ fi
 refute 'browser CLI approval is removed with its URLs' "$dispatcher_toml" '[authentication]'
 refute 'disabled CILogon is not loaded by systemd' \
 	"$host/etc/systemd/system/debuglet-dispatcher.service" 'cilogon-oidc.env'
+
+# Disabling the RIS refresh removes its units and the configuration entry, and
+# leaves the last database in place.
+if run "$work/ris-disable.log" deploy-dispatcher.yml --limit dispatcher \
+	-e "deploy_version=$release_version" -e dispatcher_ris_asn_enabled=false; then
+	check 'the RIS ASN refresh can be disabled' pass
+else
+	check 'the RIS ASN refresh can be disabled' fail
+	tail -20 "$work/ris-disable.log" >&2
+fi
+if [ ! -e "$ris_service" ] && [ ! -e "$ris_timer" ] && [ -f "$ris_database" ]; then
+	check 'disabling the RIS refresh removes its units only' pass
+else
+	check 'disabling the RIS refresh removes its units only' fail
+fi
+refute 'a disabled RIS refresh configures no ASN database' "$dispatcher_toml" 'asn_database'
+refute 'a disabled RIS refresh renders no metadata section' "$dispatcher_toml" '[metadata]'
 
 # -------------------------------------------------- shared executor host ---
 # Snapshot prod, including links, before applying dev to the same temporary

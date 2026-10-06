@@ -183,6 +183,22 @@
         fail_msg: Set both dispatcher_authentication_public_url and dispatcher_authentication_device_verification_url, or leave both empty.
         quiet: true
 
+    - name: Require a usable RIS ASN database refresh
+      ansible.builtin.assert:
+        that:
+          - dispatcher_ris_asn_min_peers | string is match('^[1-9][0-9]*$')
+          - dispatcher_ris_asn_database is match('^/')
+          - (dispatcher_ris_asn_database | dirname) == (state_dir ~ '/dispatcher')
+          - dispatcher_ris_asn_database is match('^[A-Za-z0-9/._-]+$')
+        fail_msg: >-
+          dispatcher_ris_asn_min_peers must be a positive integer and
+          dispatcher_ris_asn_database a plain file name in the dispatcher state
+          directory {{ state_dir }}/dispatcher, the only directory the refresh
+          unit may write. Got {{ dispatcher_ris_asn_min_peers }} and
+          {{ dispatcher_ris_asn_database }}.
+        quiet: true
+      when: dispatcher_ris_asn_enabled | bool
+
     - name: Require a supported CILogon issuer
       ansible.builtin.assert:
         that:
