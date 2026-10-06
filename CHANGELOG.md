@@ -11,6 +11,11 @@ changes; the linked API and deployment documentation contains operational detail
 ## [Unreleased]
 
 ### Security
+- Releases are signed. The production release signer is
+  `releases@debuglet.netsec.ethz.ch` (Ed25519,
+  `SHA256:vETQG+wE6uwMv4MBFfx7dxo8IWpvR8z6/Sw7MT2WwQo`); its trust file is
+  `configs/release-allowed-signers`. See
+  [Signed releases](docs/operations/releases.md#production-signer).
 - The TESLA disclosure delay is configurable and at least two epochs.
   Previously the key of epoch i was disclosed shortly after epoch i+1 began,
   while verifiers accepted epochs t-1, t and t+1 for a packet of epoch t.
