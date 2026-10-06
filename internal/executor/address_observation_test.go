@@ -4,10 +4,12 @@
 package executor
 
 import (
+	"net/netip"
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/config"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
 func TestAddressTargetsSkipConfiguredReflectorsAndOtherLiteralFamily(t *testing.T) {
@@ -56,5 +58,28 @@ func TestObserveAddressesIsOptional(t *testing.T) {
 	e.observeAddresses(t.Context(), controlsession.Binding{})
 	if !e.addressNext.IsZero() {
 		t.Fatal("observation without a transport was scheduled")
+	}
+}
+
+func TestAddressSelfCheckReportsOnlyBooleans(t *testing.T) {
+	if _, ok := localIPv4Private(netip.AddrPort{}); ok {
+		t.Fatal("no dispatcher address produced a result")
+	}
+	if _, ok := localIPv4Private(netip.MustParseAddrPort("[::1]:9090")); ok {
+		t.Fatal("an IPv6 dispatcher produced an IPv4 result")
+	}
+	// Loopback is not RFC 1918; choosing the source sends nothing.
+	if private, ok := localIPv4Private(netip.MustParseAddrPort("127.0.0.1:9")); !ok || private {
+		t.Fatalf("loopback source: private=%t ok=%t", private, ok)
+	}
+	e := &Executor{}
+	if e.addressSelfCheck() != nil {
+		t.Fatal("self-check before the first round")
+	}
+	private := true
+	e.addressCheck = &pb.AddressSelfCheck{Ipv4LocalPrivate: &private, ResolvesA: true}
+	got := e.addressSelfCheck()
+	if got == e.addressCheck || got.Ipv4LocalPrivate == e.addressCheck.Ipv4LocalPrivate || !got.GetIpv4LocalPrivate() || !got.ResolvesA || got.ResolvesAaaa {
+		t.Fatalf("self-check copy: %+v", got)
 	}
 }

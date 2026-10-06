@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -23,6 +24,7 @@ const (
   dbl nodes [--protocol NAME ...] [--enforcement ebpf|fallback] [--min-capacity-bps N]
             [--isd-as ISD-AS] [--asn NUMBER] [--country CODE]
             [--address-family ipv4|ipv6] [--reachable-listener tcp|udp|scion]
+  dbl nodes --status connected,disconnected,abandoned,never_connected
 
 Filters return ready matching executors only. Unknown capability reports and an
 unknown ISD-AS do not match. Capacity means advertised total bandwidth, not free
@@ -32,6 +34,12 @@ ISD_AS is the executor's own report. ADDRESS_V4 and ADDRESS_V6 are the addresses
 the dispatcher last observed, "private" when the executor withholds them. --output
 json also carries admission, the operator's network label, the reported listener
 transports and each address family's prefix, ASN and observation time.
+
+--status (API 1.17) lists executors by status instead: connected, disconnected,
+abandoned (disconnected for more than 30 days) or never_connected (enrolled,
+never registered); comma-separated or repeated. It cannot be combined with the
+filters, which select ready executors. STATUS and TAGS show each executor's
+status and its host and system tags.
 
 Lists the dispatcher's registered executors. JSON output is always an array.
 `
@@ -64,6 +72,16 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	fs := newCommandFlagSet("nodes")
 	var filter client.ExecutorFilter
 	capabilityFlags(fs, &filter)
+	var statuses []string
+	fs.Func("status", "executor status: connected, disconnected, abandoned or never_connected; comma-separated or repeatable", func(value string) error {
+		for _, status := range strings.Split(value, ",") {
+			if !slices.Contains(wire.ProbeStatuses, status) {
+				return fmt.Errorf("unknown status %q", status)
+			}
+			statuses = append(statuses, status)
+		}
+		return nil
+	})
 	if code, ok := parseCommandFlags(fs, args, nodesUsage, stdout, stderr); !ok {
 		return code
 	}
@@ -73,13 +91,18 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	if err := filter.Validate(); err != nil {
 		return usageError("dbl nodes", nodesUsage, stderr, "%v", err)
 	}
+	if len(statuses) > 0 && !filter.Empty() {
+		return usageError("dbl nodes", nodesUsage, stderr, "--status cannot be combined with filters, which select ready executors")
+	}
 	c, code, ok := connect(ctx, "dbl nodes", options, false, stderr)
 	if !ok {
 		return code
 	}
 	var nodes []client.Node
 	var err error
-	if filter.Empty() {
+	if len(statuses) > 0 {
+		nodes, err = c.Probes(ctx, statuses...)
+	} else if filter.Empty() {
 		nodes, err = c.Nodes(ctx)
 	} else {
 		nodes, err = c.DiscoverExecutors(ctx, filter)
@@ -92,7 +115,7 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 	}
 	return emit("dbl nodes", options.Output, stdout, stderr, nodes, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tADDRESS_V4\tADDRESS_V6\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION\tIPV4\tIPV6\tTCP_LISTENER\tUDP_LISTENER")
+		fmt.Fprintln(tw, "ID\tREADY\tNAME\tLOCATION\tISD_AS\tASN\tADDRESS_V4\tADDRESS_V6\tLOCATION_SOURCE\tLAST_SEEN\tVERSION\tPRICE_PER_BW\tCURRENCY\tPROTOCOLS\tENFORCEMENT\tCAPACITY_BPS\tATTRIBUTION\tIPV4\tIPV6\tTCP_LISTENER\tUDP_LISTENER\tSTATUS\tTAGS")
 		for _, n := range nodes {
 			location := n.Display
 			location.City, location.Country = n.Location()
@@ -115,10 +138,11 @@ func nodesCommand(ctx context.Context, args []string, options globalOptions, std
 			if connectivity == nil {
 				connectivity = &wire.Connectivity{}
 			}
-			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
+			fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, n.Ready,
 				labelText(n.Display.DisplayName), nodeLocation(location), observedText(n.SCIONISDAS), nodeASN(n.IPMetadata),
 				addressColumn(n.AddressV4, n.IsPublic), addressColumn(n.AddressV6, n.IsPublic), locationSource(location),
-				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution, reachabilityColumn(connectivity.IPv4), reachabilityColumn(connectivity.IPv6), reachabilityColumn(connectivity.TCPListener), reachabilityColumn(connectivity.UDPListener))
+				lastSeen, n.Version, n.PricePerBw, n.Currency, protocols, enforcement, capacity, attribution, reachabilityColumn(connectivity.IPv4), reachabilityColumn(connectivity.IPv6), reachabilityColumn(connectivity.TCPListener), reachabilityColumn(connectivity.UDPListener),
+				statusColumn(n.Status), tagsColumn(n.Tags))
 		}
 		return tw.Flush()
 	})
@@ -139,6 +163,32 @@ func addressColumn(address *string, public *bool) string {
 		return "invalid"
 	}
 	return ip.String()
+}
+
+// statusColumn shows a documented status; an older dispatcher reports none.
+func statusColumn(status *wire.ProbeStatusName) string {
+	if status == nil {
+		return "unknown"
+	}
+	if !slices.Contains(wire.ProbeStatuses, status.Name) {
+		return "invalid"
+	}
+	return status.Name
+}
+
+// tagsColumn joins the tags, leaving out any that is not a plain tag name so
+// that a server cannot write control characters to the terminal.
+func tagsColumn(tags []string) string {
+	shown := []string{}
+	for _, tag := range tags {
+		if tag != "" && strings.Trim(tag, "abcdefghijklmnopqrstuvwxyz0123456789-") == "" {
+			shown = append(shown, tag)
+		}
+	}
+	if len(shown) == 0 {
+		return "-"
+	}
+	return strings.Join(shown, ",")
 }
 
 func reachabilityColumn(r wire.Reachability) string {

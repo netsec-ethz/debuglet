@@ -61,6 +61,9 @@ type Executor struct {
 	// ProbeAddressing (API 1.16) adds the RIPE Atlas-style is_public,
 	// address, prefix and ASN fields of each address family.
 	ProbeAddressing
+	// ProbeStatus (API 1.17) adds the RIPE Atlas-style status history and
+	// host and system tags.
+	ProbeStatus
 }
 
 // State is a debuglet's reported state. Unknown state strings are preserved.

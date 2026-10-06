@@ -98,7 +98,7 @@ func TestNodesShowsVantageColumnsAndFiltersISDAS(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	const header = "ID READY NAME LOCATION ISD_AS ASN ADDRESS_V4 ADDRESS_V6 LOCATION_SOURCE LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION IPV4 IPV6 TCP_LISTENER UDP_LISTENER"
+	const header = "ID READY NAME LOCATION ISD_AS ASN ADDRESS_V4 ADDRESS_V6 LOCATION_SOURCE LAST_SEEN VERSION PRICE_PER_BW CURRENCY PROTOCOLS ENFORCEMENT CAPACITY_BPS ATTRIBUTION IPV4 IPV6 TCP_LISTENER UDP_LISTENER STATUS TAGS"
 	if len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != header {
 		t.Fatalf("table: %q", stdout)
 	}
@@ -151,17 +151,50 @@ func TestNodesShowAttribution(t *testing.T) {
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 5 || !strings.HasSuffix(strings.TrimSpace(lines[0]), "UDP_LISTENER") {
+	if len(lines) != 5 || !strings.HasSuffix(strings.Join(strings.Fields(lines[0]), " "), "UDP_LISTENER STATUS TAGS") {
 		t.Fatalf("nodes table:\n%s", stdout)
 	}
 	for i, want := range []string{"unknown", "available", "unavailable(refresh_failing)", "unavailable"} {
-		if fields := strings.Fields(lines[i+1]); fields[len(fields)-5] != want {
-			t.Errorf("row %d attribution %q, want %q", i, fields[len(fields)-5], want)
+		if fields := strings.Fields(lines[i+1]); fields[len(fields)-7] != want {
+			t.Errorf("row %d attribution %q, want %q", i, fields[len(fields)-7], want)
 		}
 	}
 	code, stdout, stderr = runCLI(context.Background(), "--endpoint", fx.endpoint(), "--output", "json", "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	if !strings.Contains(stdout, `"refresh_error":"put failed"`) || !strings.Contains(stdout, `"disclosure_held_since":1700000000`) {
 		t.Fatalf("JSON dropped attribution details: %s", stdout)
+	}
+}
+
+// --status asks API 1.17 for executors by status and the table shows each
+// status and its tags, without unprintable tag text.
+func TestNodesListsByStatus(t *testing.T) {
+	var query, version string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /executors", func(w http.ResponseWriter, r *http.Request) {
+		query, version = r.URL.RawQuery, r.Header.Get("Debuglet-API-Version")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"gone","ready":false,"status":{"name":"abandoned","since":1},"tags":["home","system-ipv4-works","\u001b[31m"]},
+{"id":"new","ready":false,"status":{"name":"never_connected","since":null},"tags":[]}]`))
+	})
+	fx := newFixture(t, mux)
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes", "--status", "abandoned,never_connected")
+	assertCode(t, code, exitOK, stdout, stderr)
+	if query != "status=abandoned&status=never_connected" || version != "1.17" {
+		t.Fatalf("request query %q version %q", query, version)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 3 || !strings.HasSuffix(strings.Join(strings.Fields(lines[1]), " "), "abandoned home,system-ipv4-works") {
+		t.Fatalf("table: %q", stdout)
+	}
+	if !strings.HasSuffix(strings.Join(strings.Fields(lines[2]), " "), "never_connected -") || strings.Contains(stdout, "\x1b") {
+		t.Fatalf("table: %q", stdout)
+	}
+	requests := fx.total()
+	for _, args := range [][]string{{"nodes", "--status", "online"}, {"nodes", "--status", "connected", "--protocol", "tcp"}} {
+		code, stdout, stderr = runCLI(context.Background(), append([]string{"--endpoint", fx.endpoint()}, args...)...)
+		if code == exitOK || fx.total() != requests {
+			t.Fatalf("%v: %d %q %q", args, code, stdout, stderr)
+		}
 	}
 }

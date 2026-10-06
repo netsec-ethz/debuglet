@@ -35,6 +35,7 @@ func (e *Executor) probeConnectivity(ctx context.Context, binding controlsession
 	if vantage == nil {
 		return func() {}
 	}
+	vantage.AddressCheck = e.addressSelfCheck()
 	now := time.Now()
 	e.capabilityMu.Lock()
 	if now.Before(e.connectivityNext) {

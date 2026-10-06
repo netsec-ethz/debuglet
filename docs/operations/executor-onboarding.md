@@ -15,6 +15,10 @@ account owns the machine; it does not need dispatcher administrator privileges.
      --executor YOUR-EXECUTOR-ID --state-dir ./debuglet-node
    ```
 
+   Add `--host-tag` once per public tag that describes the host, such as
+   `--host-tag home --host-tag fibre` (see
+   [probe status and tags](executor-discovery.md#probe-status-and-tags)).
+
 4. Paste the one-time setup token when prompted. The command generates the
    machine's private key locally, obtains its certificate, initializes its
    database, and writes its configuration. The private key stays on the machine.

@@ -66,6 +66,8 @@ API 1.9 also adds `admission`, operator `display` metadata, the executor-reporte
 
 API 1.16 adds RIPE Atlas-style addressing to every entry: `is_public`, the dispatcher-observed `address_v4` and `address_v6`, their `prefix_v4`, `prefix_v6`, `asn_v4` and `asn_v6`, and `address_observations` with how and when each address was seen. A private executor's addresses are withheld from everyone but operators; nothing else is ([probe addresses](operations/executor-discovery.md#probe-addresses)).
 
+API 1.17 adds RIPE Atlas-style status and tags to every entry: `status` (`connected`, `disconnected`, `abandoned` or `never_connected`, with `since`), `status_since`, `first_connected`, `last_connected`, `total_uptime` and `tags` (host tags, then `system-` tags). `GET /executors?status=...` also lists executors that are not connected; without the parameter the listing is unchanged. See [probe status and tags](operations/executor-discovery.md#probe-status-and-tags).
+
 ## Probe attribution
 
 API 1.11 adds two public routes for [probe verification](verification.md). They need no credential and are rate-limited per client address; an excess answers `429 rate_limited` with `Retry-After`. Behind a reverse proxy the address is the proxy's unless the proxy is listed in `[attribution] trusted_proxies` ([configuration](operations/configuration.md#dispatcher-attribution-history)).

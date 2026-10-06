@@ -26,6 +26,10 @@ type addressSighting struct {
 type probeAddresses struct {
 	// optOut is the executor's address_opt_out, read at registration.
 	optOut bool
+	// hostTags are the executor's canonical host tags, read at registration.
+	hostTags []string
+	// registeredAt is when this control session registered.
+	registeredAt time.Time
 	// reflected holds the last ReflectAddress peer of each family, IPv4
 	// first. A replacement session starts empty, like its reflections.
 	reflected [2]addressSighting
@@ -70,13 +74,16 @@ func (e *RegisteredExecutor) sightings() [2]addressSighting {
 // The addresses are withheld unless the executor is public or the caller may
 // see private detail (an established operator); prefix and ASN are not.
 func (e *RegisteredExecutor) Addressing(private bool) wire.ProbeAddressing {
-	public := !e.probe.optOut
+	return addressing(e.sightings(), !e.probe.optOut, private)
+}
+
+func addressing(sightings [2]addressSighting, public, private bool) wire.ProbeAddressing {
 	out := wire.ProbeAddressing{IsPublic: &public, AddressObservations: &wire.AddressObservations{}}
 	addresses := [2]**string{&out.AddressV4, &out.AddressV6}
 	prefixes := [2]**string{&out.PrefixV4, &out.PrefixV6}
 	asns := [2]**uint32{&out.ASNV4, &out.ASNV6}
 	observations := [2]**wire.AddressObservation{&out.AddressObservations.V4, &out.AddressObservations.V6}
-	for i, sighting := range e.sightings() {
+	for i, sighting := range sightings {
 		if sighting.address == "" {
 			continue
 		}

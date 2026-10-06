@@ -152,7 +152,11 @@ func (d *Dispatcher) OnResources(ctx context.Context, mutation *rpc.Mutation, re
 }
 
 func (d *Dispatcher) OnExecutorConnected(ctx context.Context, owner *rpc.SessionOwner, hello *pb.HelloResponse, sourceIP string) error {
-	return d.RegisterExecutor(ctx, owner, hello, sourceIP)
+	if err := d.RegisterExecutor(ctx, owner, hello, sourceIP); err != nil {
+		return err
+	}
+	d.recordProbeConnected(owner.ExecutorID())
+	return nil
 }
 
 func (d *Dispatcher) OnExecutorDisconnected(owner *rpc.SessionOwner) {

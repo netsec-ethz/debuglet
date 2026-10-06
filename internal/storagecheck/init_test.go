@@ -51,6 +51,8 @@ func TestBootstrapFresh(t *testing.T) {
 					"retry_requests":             "caller_scope request_id parent_run_id transaction_id request_hash intent_metadata",
 					"allocation_reclamations":    "debuglet_id reclaimed_at",
 					"allowance_grants":           "id user_id amount currency granted_by reason idempotency_key granted_at",
+					"probe_status":               "executor_id first_connected last_connected connected status_since total_uptime is_public host_tags version",
+					"probe_addresses":            "executor_id family address via first_observed last_observed",
 					"payment_receipts":           "tx_digest event_seq nonce disposition amount coin_type receiver checkpoint observed_at detail",
 					"chain_transfers":            "id kind executor_id transaction_id order_id amount currency receiver state digest signed_transaction signature detail created_at updated_at",
 					"account_run_reservations":   "debuglet_id account_id queued_bytes retired_at last_retirement_check",
@@ -79,7 +81,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{
