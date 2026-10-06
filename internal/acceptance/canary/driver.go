@@ -485,7 +485,9 @@ func strictCLIDocument(data []byte, out any) error {
 
 // probeAddressingFields are the RIPE Atlas-style addressing fields (API
 // 1.16). The CLI emits each of them, null when the dispatcher predates them.
-var probeAddressingFields = []string{"is_public", "address_v4", "address_v6", "prefix_v4", "prefix_v6", "asn_v4", "asn_v6", "address_observations"}
+var probeAddressingFields = []string{"is_public", "address_v4", "address_v6", "prefix_v4", "prefix_v6", "asn_v4", "asn_v6", "address_observations",
+	// The status history and tags (API 1.17).
+	"status", "status_since", "first_connected", "last_connected", "total_uptime", "tags"}
 
 var nodeNullable = func() map[string]bool {
 	out := map[string]bool{"tesla_anchor_key": true}
@@ -520,6 +522,22 @@ func checkNodeVantage(fields map[string]json.RawMessage) error {
 	if raw, present := fields["address_observations"]; present {
 		if err := checkNodeAddressObservations(raw); err != nil {
 			return err
+		}
+	}
+	if raw, present := fields["status"]; present && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if _, err := strictFields(raw, []string{"name", "since"}, nil, map[string]bool{"since": true}); err != nil {
+			return err
+		}
+	}
+	if raw, present := fields["tags"]; present {
+		var tags []*string
+		if json.Unmarshal(raw, &tags) != nil {
+			return errors.New("invalid node tags")
+		}
+		for _, tag := range tags {
+			if tag == nil {
+				return errors.New("invalid node tags")
+			}
 		}
 	}
 	if raw, present := fields["capability_observation"]; present {

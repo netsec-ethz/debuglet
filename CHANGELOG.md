@@ -40,6 +40,23 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- API 1.17: RIPE Atlas-style status history and tags in `GET /executors`:
+  `status` (`connected`, `disconnected`, `abandoned` after 30 days
+  disconnected, `never_connected` for enrolled executors that never
+  registered) with `since`, `status_since`, `first_connected`,
+  `last_connected`, `total_uptime` and `tags`. `?status=` also lists
+  executors that are not connected; the default listing is unchanged.
+  Host tags come from a fixed vocabulary in `[metadata] host_tags`, also
+  settable with `dbl executor join --host-tag`. System tags are derived:
+  `system-ipv4/ipv6-works` and `-capable`, `system-ipv4-rfc1918` (the
+  executor reports only whether its local IPv4 source is RFC 1918),
+  `system-ipv4/ipv6-stable-1d/30d/90d` from the address history and
+  `system-resolves-a/aaaa-correctly` from the executor's address observation
+  of the dispatcher name. `dbl nodes` adds `--status` and the `STATUS` and
+  `TAGS` columns; the Go client adds `Probes`. Dispatcher schema 24 stores
+  the history (`probe_status`, `probe_addresses`) and fills it from the
+  recorded TESLA chains; this build requires it, so upgrade the dispatcher
+  database explicitly (`make deploy-upgrade-db`) before starting it.
 - API 1.16: RIPE Atlas-style probe addressing in `GET /executors`. Each entry
   reports `is_public` and the last dispatcher-observed `address_v4` and
   `address_v6` with their `prefix_v4/v6` and `asn_v4/v6` from the offline ASN

@@ -256,6 +256,9 @@ func TestExecutorJoinWritesUsablePrivateIdentity(t *testing.T) {
 	if cfg.Tesla.EpochSeconds != 30 || cfg.Tesla.Delay != 0 {
 		t.Fatalf("unexpected TESLA epoch configuration: %+v", cfg.Tesla)
 	}
+	if len(cfg.Metadata.HostTags) != 0 || cfg.Metadata.AddressOptOut {
+		t.Fatalf("unexpected host metadata: %+v", cfg.Metadata)
+	}
 	if _, err := tls.LoadX509KeyPair(cfg.Credentials.ClientCert, cfg.Credentials.ClientKey); err != nil {
 		t.Fatal(err)
 	}
@@ -446,5 +449,35 @@ func TestExecutorJoinMissingDaemonDoesNotEnroll(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "install the full Debuglet bundle") {
 		t.Fatalf("missing installation guidance: %s", stderr.String())
+	}
+}
+
+func TestExecutorJoinWritesValidatedHostTags(t *testing.T) {
+	fixture := newJoinFixture(t, nil)
+	state := filepath.Join(t.TempDir(), "executor")
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), append(fixture.args(state), "--host-tag", "fibre", "--host-tag", "home"), &stdout, &stderr); code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(state, "service.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := executorconfig.DecodeConfig(data)
+	if err != nil || strings.Join(cfg.Metadata.HostTags, ",") != "home,fibre" {
+		t.Fatalf("host tags: %+v %v", cfg.Metadata, err)
+	}
+	// An unknown tag is refused before anything is sent or written.
+	other := filepath.Join(t.TempDir(), "other")
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), append(fixture.args(other), "--host-tag", "moon"), &stdout, &stderr); code == exitOK || !strings.Contains(stderr.String(), "unknown host tag") {
+		t.Fatalf("unknown tag accepted: %d %s", code, stderr.String())
+	}
+	if fixture.requests.Load() != 1 {
+		t.Fatalf("requests = %d", fixture.requests.Load())
+	}
+	if _, err := os.Stat(other); !os.IsNotExist(err) {
+		t.Fatalf("state written for a refused tag: %v", err)
 	}
 }

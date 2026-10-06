@@ -83,7 +83,9 @@ func TestNodeIPMetadataDocumentKeepsExactFields(t *testing.T) {
 func TestNodeAddressingDocumentKeepsExactFields(t *testing.T) {
 	observation := `{"source":"dispatcher-observed","via":"control","observed_at":1790598500,"lookup_source":null,"lookup_reason":"no_database"}`
 	public := `,"is_public":true,"address_v4":"127.0.0.1","address_v6":null,"prefix_v4":null,"prefix_v6":null,"asn_v4":null,"asn_v6":null,"address_observations":{"v4":` + observation + `,"v6":null}`
-	old := `,"is_public":null,"address_v4":null,"address_v6":null,"prefix_v4":null,"prefix_v6":null,"asn_v4":null,"asn_v6":null,"address_observations":null`
+	old := `,"is_public":null,"address_v4":null,"address_v6":null,"prefix_v4":null,"prefix_v6":null,"asn_v4":null,"asn_v6":null,"address_observations":null` +
+		`,"status":null,"status_since":null,"first_connected":null,"last_connected":null,"total_uptime":null,"tags":null`
+	status := public + `,"status":{"name":"connected","since":1790598000},"status_since":1790598000,"first_connected":1790000000,"last_connected":1790598500,"total_uptime":600,"tags":["home","system-ipv4-works"]`
 	for _, tc := range []struct {
 		name, fields string
 		valid        bool
@@ -96,6 +98,9 @@ func TestNodeAddressingDocumentKeepsExactFields(t *testing.T) {
 		{"unknown observation field", strings.Replace(public, `"via":"control"`, `"via":"control","other":1`, 1), false},
 		{"null observation time", strings.Replace(public, `"observed_at":1790598500`, `"observed_at":null`, 1), false},
 		{"duplicate address", public + `,"address_v4":null`, false},
+		{"status and tags", status, true},
+		{"unknown status field", strings.Replace(status, `"since":1790598000}`, `"since":1790598000,"id":1}`, 1), false},
+		{"null tag", strings.Replace(status, `"tags":["home"`, `"tags":[null`, 1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := []byte(`[{"id":"` + testExecutor + `","ready":true,"last_seen":1790598500,"version":"test","tesla_delay_sec":2,"tesla_anchor_timestamp_ns":0,"tesla_anchor_key":null,"price_per_bw":0,"currency":"TEST"` + tc.fields + `}]`)

@@ -62,8 +62,9 @@ func (e *Executor) addressTargets() []addressTarget {
 // resolves the configured dispatcher name and calls the authenticated address
 // reflection over that family. The dispatcher records the peer address of the
 // call, never a value the executor sends, and TLS verifies that the resolved
-// address is the dispatcher. Outcomes are not reported: a family that does not
-// work is simply not observed. Called only by the serialized heartbeat loop.
+// address is the dispatcher. A family that does not work is simply not
+// observed. The round also records the address self-check that the next
+// vantage-point reports carry. Called only by the serialized heartbeat loop.
 func (e *Executor) observeAddresses(ctx context.Context, binding controlsession.Binding) {
 	if !e.cfg.Connectivity.ObserveAddresses || e.Bidi == nil {
 		return
@@ -76,6 +77,12 @@ func (e *Executor) observeAddresses(ctx context.Context, binding controlsession.
 	}
 	e.addressNext = now.Add(addressObservationInterval)
 	e.capabilityMu.Unlock()
+	check := &pb.AddressSelfCheck{}
+	var mu sync.Mutex
+	var v4 netip.AddrPort
+	if reflector, err := netip.ParseAddrPort(e.cfg.Connectivity.IPv4Reflector); err == nil {
+		v4 = reflector
+	}
 	var wg sync.WaitGroup
 	for _, target := range e.addressTargets() {
 		wg.Add(1)
@@ -91,13 +98,69 @@ func (e *Executor) observeAddresses(ctx context.Context, binding controlsession.
 				}
 				address = addresses[0].Unmap()
 			}
+			endpoint := netip.AddrPortFrom(address, target.port)
+			if target.network == "ip4" {
+				mu.Lock()
+				v4 = endpoint
+				mu.Unlock()
+			}
 			nonce := make([]byte, connectivity.TokenSize)
 			if _, err := rand.Read(nonce); err != nil {
 				return
 			}
-			endpoint := netip.AddrPortFrom(address, target.port).String()
-			_, _ = e.Bidi.ReflectAddressAs(callCtx, binding, endpoint, target.host, &pb.ReflectAddressRequest{ExecutorId: e.cfg.Identity.ExecutorID, Nonce: nonce})
+			_, err := e.Bidi.ReflectAddressAs(callCtx, binding, endpoint.String(), target.host, &pb.ReflectAddressRequest{ExecutorId: e.cfg.Identity.ExecutorID, Nonce: nonce})
+			if err != nil || target.literal.IsValid() {
+				return
+			}
+			mu.Lock()
+			if target.network == "ip4" {
+				check.ResolvesA = true
+			} else {
+				check.ResolvesAaaa = true
+			}
+			mu.Unlock()
 		}(target)
 	}
 	wg.Wait()
+	if private, ok := localIPv4Private(v4); ok {
+		check.Ipv4LocalPrivate = &private
+	}
+	e.capabilityMu.Lock()
+	e.addressCheck = check
+	e.capabilityMu.Unlock()
+}
+
+// localIPv4Private reports whether the local IPv4 source the kernel selects
+// toward the dispatcher is a private (RFC 1918) address. Connecting a UDP
+// socket chooses the route and source without sending a packet.
+func localIPv4Private(dispatcher netip.AddrPort) (private, ok bool) {
+	if !dispatcher.IsValid() || !dispatcher.Addr().Unmap().Is4() {
+		return false, false
+	}
+	conn, err := net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(netip.AddrPortFrom(dispatcher.Addr().Unmap(), dispatcher.Port())))
+	if err != nil {
+		return false, false
+	}
+	defer conn.Close()
+	local := conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr().Unmap()
+	if !local.Is4() || local.IsUnspecified() {
+		return false, false
+	}
+	return local.IsPrivate(), true
+}
+
+// addressSelfCheck is the last round's self-check for a vantage-point report;
+// nil before the first round.
+func (e *Executor) addressSelfCheck() *pb.AddressSelfCheck {
+	e.capabilityMu.Lock()
+	defer e.capabilityMu.Unlock()
+	if e.addressCheck == nil {
+		return nil
+	}
+	out := &pb.AddressSelfCheck{ResolvesA: e.addressCheck.ResolvesA, ResolvesAaaa: e.addressCheck.ResolvesAaaa}
+	if e.addressCheck.Ipv4LocalPrivate != nil {
+		private := *e.addressCheck.Ipv4LocalPrivate
+		out.Ipv4LocalPrivate = &private
+	}
+	return out
 }

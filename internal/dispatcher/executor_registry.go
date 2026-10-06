@@ -246,7 +246,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	}
 	record.display = display
 	record.collectIPMetadata(metadataDB, hello.GetVantagePoint().GetLocationOptOut())
-	record.probe.optOut = hello.GetVantagePoint().GetAddressOptOut()
+	record.probe = probeFromHello(hello.GetVantagePoint(), record.LastSeen)
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -425,6 +425,7 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 				lastRetention = now
 			}
 			lastPrune = d.pruneAttributionDue(lastPrune)
+			d.flushProbeStatusDue()
 		}
 	}
 }

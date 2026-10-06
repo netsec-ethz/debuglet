@@ -71,10 +71,16 @@ the public listing publishes the same facts and offers the same opt-out.
 | Network (ASN, AS name, prefix, ISD-AS, address families, reachability) | Public |
 | Dispatcher-observed address of each family (`address_v4`, `address_v6`) | Public, unless the executor is private (`is_public` false); then operator, and the run's owner through its result provenance |
 | Location, at most city and country | Public, unless the executor opts out of location |
+| Status history (status, first and last connection, total uptime) and host and system tags | Public |
 | Measurement capabilities, including the ICMP probe and fallback reason | Public |
 | Clock sync state, kernel error estimates and clock readiness | Public |
 | Host platform (OS, kernel, architecture, CPU, memory, build version) | Operator, and the run's owner through its result provenance |
 | Advertised public host, reported (hello) source IP, connectivity endpoints and the SCION host | Operator, and the run's owner through its result provenance |
+
+The executor's NAT system tag is derived from a single boolean the executor
+reports, whether its local IPv4 source toward the dispatcher is an RFC 1918
+address; the local address itself never leaves the host. Host tags are the
+host's own public description, chosen from a fixed vocabulary.
 
 Only addresses the dispatcher itself observed are published: the peer address
 of the executor's authenticated control connection and of its authenticated
@@ -135,3 +141,8 @@ last outcome with an explicit stale flag. The admission snapshot keeps the last 
 7. RIPE Atlas-style addressing in API 1.16: the observed `address_v4` and
    `address_v6`, their prefixes and ASNs, and `is_public`; see
    [probe addresses](operations/executor-discovery.md#probe-addresses).
+8. RIPE Atlas-style status history and host and system tags in API 1.17,
+   stored in dispatcher schema 24; see
+   [probe status and tags](operations/executor-discovery.md#probe-status-and-tags).
+   A DNS self-check against a name other than the dispatcher's own is later
+   work.

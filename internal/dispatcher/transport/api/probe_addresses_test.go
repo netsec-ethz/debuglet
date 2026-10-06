@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -63,5 +66,60 @@ func TestPrivateExecutorWithholdsOnlyAddresses(t *testing.T) {
 	authGrantOperator(t, f, account.ID)
 	if n := list()["private-probe"]; n.AddressV4 == nil || *n.AddressV4 != "192.0.2.77" {
 		t.Fatalf("operator does not see the private address: %+v", n.ProbeAddressing)
+	}
+}
+
+// The status filter adds known executors that are not connected; without it
+// the listing is the connected executors, now with status and tags.
+func TestExecutorStatusFilter(t *testing.T) {
+	f := ccNewFixtureWith(t)
+	_, token, c := authAccount(t, f, "status-viewer")
+	if _, err := f.db.ExecContext(f.ctx, `INSERT INTO users (uuid, name) VALUES (?, 'status-owner')`, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(f.ctx, `INSERT INTO owned_executors (executor_id, user_id, name, created_at) SELECT 'enrolled-probe', id, 'lab', CURRENT_TIMESTAMP FROM users WHERE name = 'status-owner'`); err != nil {
+		t.Fatal(err)
+	}
+	get := func(query string) (int, []wire.Executor) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/executors"+query, nil).WithContext(f.ctx)
+		req.Header.Set("Authorization", "Bearer "+token)
+		f.root.Config.Handler.ServeHTTP(rec, req)
+		oaCheckResponse(t, oaContract(t), http.MethodGet, "/executors", rec.Code, rec.Body.Bytes())
+		var nodes []wire.Executor
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &nodes); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return rec.Code, nodes
+	}
+	code, nodes := get("")
+	if code != http.StatusOK || len(nodes) != 1 || nodes[0].Status == nil || nodes[0].Status.Name != wire.ProbeConnected || nodes[0].FirstConnected == nil ||
+		!slices.Contains(nodes[0].Tags, wire.TagIPv4Capable) {
+		t.Fatalf("default listing: %d %+v", code, nodes)
+	}
+	code, nodes = get("?status=never_connected")
+	if code != http.StatusOK || len(nodes) != 1 || nodes[0].ID != "enrolled-probe" || nodes[0].Status.Name != wire.ProbeNeverConnected || nodes[0].Ready || nodes[0].Admission != wire.AdmissionOffline {
+		t.Fatalf("never connected listing: %d %+v", code, nodes)
+	}
+	code, nodes = get("?status=connected,disconnected&status=never_connected")
+	if code != http.StatusOK || len(nodes) != 2 || nodes[0].ID != ccExecutorID || nodes[1].ID != "enrolled-probe" {
+		t.Fatalf("combined listing: %d %+v", code, nodes)
+	}
+	if code, _ := get("?status=online"); code != http.StatusBadRequest {
+		t.Fatalf("unknown status answered %d", code)
+	}
+	probes, err := c.Probes(f.ctx, wire.ProbeConnected, wire.ProbeNeverConnected)
+	if err != nil || len(probes) != 2 {
+		t.Fatalf("SDK probes: %+v %v", probes, err)
+	}
+	if _, err := c.Probes(f.ctx, "online"); err == nil {
+		t.Fatal("SDK accepted an unknown status")
+	}
+	// Discovery for submission still sees only connected executors.
+	if nodes, err := c.Nodes(f.ctx); err != nil || len(nodes) != 1 {
+		t.Fatalf("SDK nodes: %+v %v", nodes, err)
 	}
 }

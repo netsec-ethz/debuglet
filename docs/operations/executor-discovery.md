@@ -323,7 +323,9 @@ observe_addresses = false   # default true
 
 A replacement control session starts without the previous session's
 observations, as for the connectivity checks, so an executor that moved does
-not keep its old address; until the next call its other family is null. A
+not keep its old address; until the next call its other family is null. An
+executor that is not connected is listed (API 1.17) with the last addresses
+the dispatcher recorded for it. A
 published address is where the executor reached the dispatcher from, which
 need not be the source of every measurement packet, and it can be a
 non-global address when the executor reaches the dispatcher over a private
@@ -354,6 +356,77 @@ including a private executor's addresses, as `provenance.vantage_point.addressin
 `dbl nodes` shows the addresses in its `ADDRESS_V4` and `ADDRESS_V6` columns
 (`private` when withheld, `-` when unknown); `--output json` carries every
 field.
+
+### Probe status and tags
+
+API 1.17 adds the status history and tags of a RIPE Atlas probe record:
+
+```json
+"status": {"name": "connected", "since": 1791000000},
+"status_since": 1791000000,
+"first_connected": 1780000000,
+"last_connected": 1791257000,
+"total_uptime": 9504000,
+"tags": ["home", "fibre", "system-ipv4-works", "system-ipv4-capable",
+         "system-ipv4-stable-1d", "system-ipv4-stable-30d", "system-ipv6-capable",
+         "system-ipv4-rfc1918", "system-resolves-a-correctly"]
+```
+
+| Status | Meaning | `since` |
+| --- | --- | --- |
+| `connected` | The executor has a control session (its `admission` may still be `offline` until the first heartbeat). | Start of the connected streak. |
+| `disconnected` | It has none, and was last connected at most 30 days ago. | `last_connected`. |
+| `abandoned` | It was last connected more than 30 days ago. | `last_connected` plus 30 days. |
+| `never_connected` | It was enrolled (an owned or enrolled executor ID) but has never registered. | `null` |
+
+The dispatcher records the history in its database (schema 24). A
+registration records the executor as connected; once a minute the dispatcher
+advances `last_connected` and `total_uptime` of every registered executor and
+records any other as disconnected at its last record, so a disconnection is
+known to within a minute. A registration within two minutes of the last record
+of a connected streak, such as a replacement session or a dispatcher restart,
+continues the streak. `total_uptime` counts connected seconds from the
+upgrade to schema 24; `first_connected` of an executor known before it comes
+from its first recorded TESLA chain.
+
+`GET /executors` keeps listing connected executors only. Ask for others with
+`?status=disconnected,abandoned,never_connected` (comma-separated or
+repeated; add `connected` to include those too). An entry that is not
+connected carries its `id`, `display`, `version`, `last_seen` (its
+`last_connected`), `admission: offline`, its status fields, host tags and the
+last addresses the dispatcher recorded for it, under the same `is_public`
+rule; its other fields are zero or null and it cannot run work. `dbl nodes
+--status ...` and `Client.Probes(ctx, statuses...)` use this parameter and
+require API 1.17; `dbl nodes` adds `STATUS` and `TAGS` columns.
+
+**Host tags** are the executor's own description, chosen from a fixed
+vocabulary and set in its configuration, or with `dbl executor join
+--host-tag`:
+
+```toml
+[metadata]
+host_tags = ["home", "fibre"]
+```
+
+`home`, `office`, `datacentre`, `academic`, `cloud`, `dsl`, `cable`, `fibre`,
+`wifi`, `mobile`, `satellite` and `nat`; at most eight. The executor refuses to
+start with an unknown or repeated tag, and the dispatcher drops a malformed
+list. They are read at registration, like the opt-outs.
+
+**System tags** are derived by the dispatcher for connected executors:
+
+| Tag | When |
+| --- | --- |
+| `system-ipv4-works`, `system-ipv6-works` | A fresh measured [connectivity](#controlled-connectivity-observations) check over the family succeeded, or the family's [observed address](#probe-addresses) is current: the control connection's, or a reflection within the last 25 minutes. |
+| `system-ipv4-capable`, `system-ipv6-capable` | An address of the family was observed in the current control session, or a fresh connectivity check succeeded. |
+| `system-ipv4-rfc1918` | The executor reports that its local IPv4 source toward the dispatcher is an RFC 1918 address while the observed IPv4 address is global: it is behind a NAT. Only that boolean leaves the host. |
+| `system-ipv4-stable-1d`, `-30d`, `-90d` (and `ipv6`) | The family's current observed address has been the recorded address for at least 1, 30 or 90 days. |
+| `system-resolves-a-correctly`, `system-resolves-aaaa-correctly` | In the executor's last [address observation](#probe-addresses) round, its resolver answered the dispatcher's name with an A (AAAA) record whose address then passed the dispatcher's TLS identity check. This is stricter than RIPE Atlas's check: the family must also reach the dispatcher. |
+
+The NAT and DNS tags come from the executor's report and expire with it, as
+other vantage-point reports do; they are absent for older executors, for a
+literal `dispatcher.addr` (DNS) and with `observe_addresses = false`. Address
+stability starts from the upgrade to schema 24.
 
 ## Host probes
 

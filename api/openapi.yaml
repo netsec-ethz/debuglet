@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.16"
+  version: "1.17"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -3523,10 +3523,17 @@ paths:
           description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
           schema:
             type: string
+        - name: "status"
+          in: "query"
+          required: false
+          description: "Added in API 1.17. Comma-separated status names, which may also be repeated: connected, disconnected, abandoned and never_connected. Without it only connected executors are listed, as before. An executor that is not connected is listed with id, display, version, last_seen (its last_connected), admission offline, its status fields, host tags and last observed addressing; its other fields are zero or null. An older dispatcher ignores the parameter and lists connected executors, so a client requires API 1.17 to use it."
+          schema:
+            type: string
+            example: "connected,disconnected"
       security: []
       responses:
         "200":
-          description: "The registered executors. The body is null when no executor is registered."
+          description: "The executors with the requested statuses: the registered (connected) ones first, then the others in ID order. The body is null when none is listed."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3537,7 +3544,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExecutorList"
         "400":
-          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version), or status names an unknown status (invalid_request)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The executor status history could not be read for a status filter that asks for executors that are not connected (internal). Without one, the connected executors are listed as connected since their registration instead."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -7078,6 +7096,34 @@ components:
           description: "Added in API 1.16. As asn_v4, for IPv6."
         address_observations:
           $ref: "#/components/schemas/AddressObservations"
+        status:
+          $ref: "#/components/schemas/ProbeStatusName"
+        status_since:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Unix seconds the current status began; equals status.since. Null for never_connected."
+        first_connected:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Unix seconds of the first registration the dispatcher recorded (from schema 24, or the executor's first recorded TESLA chain). Null for never_connected."
+        last_connected:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Unix seconds the executor was last known connected: its last heartbeat while connected, recorded at most a minute apart. Null for never_connected."
+        total_uptime:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Seconds the executor has been connected since the dispatcher began recording it (schema 24), at one-minute resolution. Null for never_connected."
+        tags:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: "Added in API 1.17. The host tags the executor set in its configuration, from the fixed vocabulary home, office, datacentre, academic, cloud, dsl, cable, fibre, wifi, mobile, satellite and nat, then the system tags the dispatcher derives, which start with system-: system-ipv4-works, system-ipv6-works, system-ipv4-capable, system-ipv6-capable, system-ipv4-rfc1918, system-resolves-a-correctly, system-resolves-aaaa-correctly and system-ipv4/ipv6-stable-1d/30d/90d. System tags are derived only for connected executors. Clients must ignore unknown tags."
         last_seen:
           type: integer
           format: int64
@@ -7315,6 +7361,28 @@ components:
           nullable: true
           description: "Dispatcher receipt time of the report in Unix seconds."
       description: "Added in API 1.9. All fields are null together."
+    ProbeStatusName:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - name
+        - since
+      properties:
+        name:
+          type: string
+          enum:
+            - connected
+            - disconnected
+            - abandoned
+            - never_connected
+          description: "connected: the executor has a control session (its admission may still be offline until the first heartbeat). disconnected: it has none and was last connected at most 30 days ago. abandoned: it was last connected more than 30 days ago. never_connected: it was enrolled but has never registered. Clients must treat an unknown name as not connected."
+        since:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Unix seconds the status began: the start of the connected streak, last_connected for disconnected, last_connected plus 30 days for abandoned, null for never_connected."
+      description: "Added in API 1.17. The executor's status, after RIPE Atlas's probe status."
     AddressObservations:
       type: object
       nullable: true
@@ -7371,7 +7439,7 @@ components:
             - "lookup_error"
             - "invalid_record"
           description: "Empty when the database knew the address; otherwise why the prefix and ASN are null."
-      description: "Null when no address of the family was observed in the current control session."
+      description: "Null when no address of the family was observed: for a connected executor, in its current control session; for another, ever, within the retained history."
     ProbeAddressing:
       type: object
       nullable: true
