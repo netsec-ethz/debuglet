@@ -1,10 +1,8 @@
 ---
 # Ansible collections the deployment roles use, pinned to exact versions.
 #
-# The provisioner carries community.general, although the roles no longer
-# call its modules: the executor role used its `capabilities` module, which
-# only adds capabilities, and now runs setcap itself to grant an exact set.
-# Dropping the collection is a separate provisioner rebuild.
+# Only one collection is used directly: community.general, for the
+# `capabilities` module the executor role applies to the installed binary.
 # community.library_inventory_filtering_v1 is its dependency and is pinned
 # here as well, so the set installs the same way whether or not dependency
 # resolution changes upstream.
