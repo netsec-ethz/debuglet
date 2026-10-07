@@ -21,9 +21,9 @@ be verified. `dbl verify` and `client.Verify` check a capture offline against
 these routes and write and check [evidence bundles](#evidence). A group
 whose key is not disclosed yet is sent to `POST /attribution/verify`, whose
 executor answers before disclosure (method `server`); with `--offline`, or
-when no answer is possible, it is `pending`. The reference verifier
-[`tools/verify_pcap.py`](../tools/verify_pcap.py), mirrored by the website's
-`verify.ts`, uses the same routes and falls back to the deprecated
+when no answer is possible, it is `pending`. The tag-algorithm reference
+[`tools/verify_pcap.py`](../tools/verify_pcap.py) uses the same dated lookup
+routes and falls back to the deprecated
 `GET /executors/by-ip` (account required, the caller's own runs among the
 executor's last 20) and `GET /executors/{id}/tesla` (current chain only). With
 a configured TESLA seed and intact generation history, an executor restart can
@@ -47,7 +47,7 @@ one epoch. Each group is verified in one of two ways:
 | Method | When | How | Proves to |
 | --- | --- | --- | --- |
 | `server` | Key not yet disclosed | The dispatcher relays the group to the executor, which still holds `k_t` and answers yes or no for the whole group. The dispatcher signs a receipt. The dispatcher never holds an undisclosed key. | Anyone who trusts the dispatcher's receipt key |
-| `offline` | Key disclosed | The verifier fetches the dated schedule and the disclosed keys and checks the tags itself. | Whoever trusts the capture timestamps |
+| `offline` | Key disclosed | The verifier fetches the dated schedule and the disclosed keys and checks the tags itself. | Whoever independently trusts the schedule/run history and capture timestamps |
 
 After disclosure anyone can compute valid tags, so an offline check only
 shows that the packets came from the run *if they were captured before the
@@ -112,10 +112,11 @@ evidence bundle was written.
 | 3 | No group is `invalid`, but at least one is `pending`, `missing` or `unsupported`. |
 | 124, 130 | The command timed out or was interrupted, as for every command; nothing is concluded. |
 
-The website's verify page follows the same flow and output. It parses the
-capture in the browser and uses the same endpoints, categories and bundle
-format. Before uploading packets for a `server` check, it asks the user for
-permission.
+The result and fixture contracts below are the integration contract for
+companion browser implementations. Authenticated bundle and clock support in
+a browser requires a separately identified companion change; this repository's
+CLI and Go checks do not establish that browser support. A browser implementation
+must ask the user before uploading packets for a `server` check.
 
 ## SDK
 
@@ -130,10 +131,12 @@ rep, err := c.Verify(ctx, pkts, client.VerifyOptions{At: t, Offline: false})
 ```
 
 `Verify` works on a client without a credential. `dbl verify` is a thin
-wrapper around it. `tools/verify_pcap.py` remains the reference
-implementation. It, the SDK and `verify.ts` must give the same result for the
-shared vectors of tag spec v1: good, altered, truncated, expired-history and
-every supported link type.
+wrapper around it. `tools/verify_pcap.py` remains the tag-spec-v1 algorithm
+and dated-lookup reference. It does not authenticate evidence bundles, signing
+identities or receiver clock records; use `dbl verify` or `pkg/client` for those
+checks. The Python tool, SDK and companion implementations must agree on the
+shared tag-spec-v1 vectors: good, altered, truncated, expired-history and every
+supported link type.
 
 ## HTTP API
 
