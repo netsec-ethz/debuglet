@@ -107,3 +107,23 @@ never replays an ambiguous submission. On success, failure, deadline or caller
 cancellation it requests cancellation of every known run, then inspects cleanup
 under an independent ten-second bound. `confirmed_absent` records a current
 executor observation; `unconfirmed` requires follow-up using the returned IDs.
+
+## Coordinate a batch of debuglets
+
+An experiment submits a fixed set of ordinary runs together. Choose each run's
+executor, WASM, arguments and policy independently. The existing transaction ID
+groups their results. `Client.SubmitExperimentTEST` accepts a saved definition
+and returns a receipt with run IDs and program hashes; `ExportExperiment` reads
+the group's results and `CancelExperiment` requests cancellation of its known runs.
+
+Each guest finishes its setup, then calls `debuglet.Ready(ctx, metadata)`. Once
+all batch members have declared readiness, it receives their bounded metadata
+and a common future start time. Call `debuglet.WaitStart(ctx, experiment)` before
+starting the measurement. Hosts need synchronized clocks for close timing;
+this is not a guarantee of simultaneous execution. Experiment traffic uses the
+normal permitted sockets, while readiness travels through the dispatcher.
+
+The [five-executor example](../examples/experiments/README.md) includes a manifest,
+runner and UDP guest. It requires the new dispatcher and executor readiness
+extension; it does not add a console flow. Missing members, retries and partial
+results remain decisions for the experiment's author, within the run deadlines.

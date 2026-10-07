@@ -6,6 +6,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 
 - [CLI reference](cli.md) — commands, local demo, and scriptable workflows.
 - [Go client library](client.md) — submit debuglets and read results from an application.
+- [Reusable and coordinated measurements](measurements.md) — saved profiles, retries and experiments across executors.
 - [Portable results](results.md) — export retained output and admission facts for offline analysis.
 - [Controlled latency experiment](research/latency-evaluation.md) — compare native and WASM probes under known local network faults.
 - [Write a debuglet](debuglets.md) — execution model and Go authoring interface.
