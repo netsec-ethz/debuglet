@@ -32,7 +32,10 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const soakLifetime = 120 * time.Second
+const (
+	soakLifetime    = 120 * time.Second
+	soakMaximumJobs = 122 // 120 healthy runs and two expiry attempts.
+)
 
 // TestInstalledScheduleSoak measures a declared small TEST profile through its
 // actual finite TESLA lifetime. Exhaustion is a refusal, not automatic rotation.
@@ -108,7 +111,8 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		}
 	}
 	emit(map[string]any{"event": "configuration", "source": assets.Manifest.SourceSHA, "version": assets.Manifest.Version,
-		"executors": 2, "max_debuglets_per_executor": 4, "maximum_jobs": 122, "epoch_seconds": 1,
+		"executors": 2, "max_debuglets_per_executor": 4, "maximum_jobs": soakMaximumJobs,
+		"operator_reserved_active_jobs": soakMaximumJobs, "epoch_seconds": 1,
 		"chain_length": 120, "schedule_lifetime_seconds": 120, "max_start_delay_seconds": 3,
 		"max_completion_seconds": 8, "max_rss_bytes": 512 << 20, "max_rss_growth_bytes": 128 << 20,
 		"max_fds": 128, "max_fd_growth": 32, "max_storage_bytes": 256 << 20, "packet_counter": "fallback",
@@ -168,9 +172,14 @@ func TestInstalledScheduleSoak(t *testing.T) {
 			}
 		}
 	}
+	// The bounded retirement sweep can lag this one-run-per-second workload.
+	// Budget for every declared run remaining reserved through the soak; only
+	// confirmed executor retirement may release that admission capacity.
+	admission := dispatcherconfig.DefaultAdmissionConfig()
+	admission.Operator.ActiveJobs = soakMaximumJobs
 	dbPath := filepath.Join(work, "dispatcher", "state.sqlite")
 	d := launch("dispatcher", assets.Dispatcher, storagecheck.Dispatcher, dispatcherconfig.DispatcherConfig{
-		Admission:   dispatcherconfig.DefaultAdmissionConfig(),
+		Admission:   admission,
 		Attribution: dispatcherconfig.DefaultAttributionConfig(),
 		Server:      dispatcherconfig.ServerConfig{BindHost: "127.0.0.1", LocalDevelopment: true, Version: assets.Manifest.Version},
 		TLS:         dispatcherconfig.TLSConfig{Disable: true}, Sui: dispatcherconfig.SuiConfig{Disabled: true},
@@ -361,7 +370,7 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		}
 	}
 	loadStart := time.Now()
-	for completed < 120 && time.Now().Add(8*time.Second).Before(firstExpiry) {
+	for completed < soakMaximumJobs-2 && time.Now().Add(8*time.Second).Before(firstExpiry) {
 		start := time.Now().Unix() + 2
 		prepared, nonces := batch(start)
 		for i := range ids {
