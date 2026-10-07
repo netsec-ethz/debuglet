@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/pkg/wire"
+	experimentwire "github.com/netsec-ethz/debuglet/pkg/wire/experiment"
 )
 
 // MaxExperimentMetadata is the opaque metadata allowance for one participant.
-const MaxExperimentMetadata = wire.MaxExperimentMetadata
+const MaxExperimentMetadata = experimentwire.MaxExperimentMetadata
 const experimentBufferBytes = 1 << 20
 
 // ErrExperimentLate means the agreed start passed before the guest could wait.
@@ -26,8 +26,8 @@ var ErrExperimentUnavailable = errors.New("debuglet: experiment readiness unavai
 // host supplies run identity and authorization; metadata grants no network access.
 // Waiting is limited to 30 seconds, the caller's deadline and the run's lifetime.
 // Cancellation is checked between bounded host calls (at most one second each).
-func Ready(ctx context.Context, metadata []byte) (wire.Experiment, error) {
-	var result wire.Experiment
+func Ready(ctx context.Context, metadata []byte) (experimentwire.Experiment, error) {
+	var result experimentwire.Experiment
 	if len(metadata) > MaxExperimentMetadata {
 		return result, ErrTooLarge
 	}
@@ -79,7 +79,7 @@ func Ready(ctx context.Context, metadata []byte) (wire.Experiment, error) {
 // WaitStart waits for the agreed wall-clock time. It rejects a start already in
 // the past; callers should record their observed start themselves. This helper
 // cannot guarantee synchronized clocks or simultaneous execution across hosts.
-func WaitStart(ctx context.Context, experiment wire.Experiment) error {
+func WaitStart(ctx context.Context, experiment experimentwire.Experiment) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
