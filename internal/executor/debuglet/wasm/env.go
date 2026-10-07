@@ -31,6 +31,8 @@ type WasmEnv struct {
 	closeErr     error
 	lateCloseErr error
 
+	Experiment ExperimentControl
+
 	DebugletID uuid.UUID
 	Policy     scheduler.Policy
 	// Net is the network policy every transport is checked against. It is the

@@ -31,6 +31,10 @@ func (c *leaseScriptClient) Heartbeat(context.Context, *pb.HeartbeatRequest, ...
 	c.calls.Add(1)
 	return &pb.HeartbeatResponse{}, nil
 }
+func (c *leaseScriptClient) ExperimentReady(context.Context, *pb.ExperimentReadyRequest, ...grpc.CallOption) (*pb.ExperimentReadyResponse, error) {
+ c.calls.Add(1)
+ return &pb.ExperimentReadyResponse{}, nil
+}
 func (c *leaseScriptClient) BindSession(ctx context.Context, in *pb.BindSessionRequest, _ ...grpc.CallOption) (*pb.BindSessionResponse, error) {
 	c.calls.Add(1)
 	return c.bind(ctx, in)
@@ -92,7 +96,8 @@ func TestClientLeaseGuardsWithoutWatchdog(t *testing.T) {
 	if _, err = cached.Heartbeat(context.Background(), &pb.HeartbeatRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	before := raw.calls.Load()
+	if _, err = cached.ExperimentReady(context.Background(), &pb.ExperimentReadyRequest{}); err != nil { t.Fatal(err) }
+ before := raw.calls.Load()
 	offset.Store(int64(time.Second))
 	committed := false
 	if err = b.CommitLease(binding, func() { committed = true }); err == nil || committed {
@@ -113,7 +118,8 @@ func TestClientLeaseGuardsWithoutWatchdog(t *testing.T) {
 	if err = stream.SendMsg(&pb.DebugletStreamRequest{}); err == nil {
 		t.Fatal("cached stream SendMsg escaped lease guard")
 	}
-	if raw.calls.Load() != before || raw.stream.sends.Load() != 1 {
+	if _, err = cached.ExperimentReady(context.Background(), &pb.ExperimentReadyRequest{}); err == nil { t.Fatal("cached experiment call escaped lease guard") }
+ if raw.calls.Load() != before || raw.stream.sends.Load() != 1 {
 		t.Fatal("expired operation reached transport")
 	}
 	if err = stream.CloseSend(); err != nil {
