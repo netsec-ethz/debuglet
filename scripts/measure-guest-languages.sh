@@ -50,12 +50,18 @@ docker run --rm --init --cpus 3 --memory 5g \
 python3 - "$out" <<'PY'
 import json, pathlib, sys
 out = pathlib.Path(sys.argv[1])
-for name in ('go', 'javascript', 'python'):
-    result = json.loads((out / f'{name}-1.json').read_text())
-    if name == 'python':
-        assert result['error'] and 'encodings' in result['stderr'] and not result['stdout'], result
-    else:
-        assert not result['error'] and 'Hello from Debuglet!' in result['stdout'], result
+for name in ('go', 'javascript', 'python', 'python-filesystem'):
+    for i in range(1, 4 if name == 'python-filesystem' else 6):
+        result = json.loads((out / f'{name}-{i}.json').read_text())
+        assert result['filesystem_mounted'] == (name == 'python-filesystem'), result
+        assert not result['non_wasi_imports'], result
+        if name == 'python':
+            assert result['error'] == 'module closed with exit_code(1)', result
+            assert 'Fatal Python error: Failed to import encodings module' in result['stderr'], result
+            assert not result['stdout'] and result['first_stdout_ms'] is None, result
+        else:
+            assert not result['error'] and 'Hello from Debuglet!' in result['stdout'], result
+            assert result['first_stdout_ms'] is not None, result
     print(name, result['bytes'], 'bytes;', result['maxrss_kib'], 'KiB peak RSS')
 PY
 printf 'Measurements: %s\n' "$out"
