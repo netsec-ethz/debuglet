@@ -56,9 +56,14 @@ type simScenario struct {
 type simTrace struct {
 	Scenario simScenario `json:"scenario"`
 	Steps    []struct {
-		Index    int  `json:"index"`
-		Rejected bool `json:"rejected"`
-		Skipped  bool `json:"skipped"`
+		Index    int             `json:"index"`
+		Rejected bool            `json:"rejected"`
+		Skipped  bool            `json:"skipped"`
+		Assigned bitrate.Bitrate `json:"assigned"`
+		Updates  []struct {
+			ID  string          `json:"id"`
+			CBW bitrate.Bitrate `json:"cbw"`
+		} `json:"updates"`
 	} `json:"steps"`
 	Allocations map[string]bitrate.Bitrate `json:"allocations"`
 	Violation   json.RawMessage            `json:"violation"`
@@ -114,6 +119,7 @@ func replaySimulator(t *testing.T, trace simTrace) {
 	limiters := map[string]*app.Limiter{}
 	sources := map[string]string{}
 	active := map[string]*simJob{}
+	simRates := map[string]bitrate.Bitrate{}
 	touched := map[string]bool{}
 	runID := func(id string) uuid.UUID { return uuid.NewSHA1(uuid.NameSpaceOID, []byte(id)) }
 	request := func(j *simJob) schedule.Request {
@@ -174,8 +180,18 @@ func replaySimulator(t *testing.T, trace simTrace) {
 			}
 		}
 		execSums := map[string]bitrate.Bitrate{}
+		simExecSums := map[string]bitrate.Bitrate{}
+		simDestSums := map[string]bitrate.Bitrate{}
 		addrSums := map[[2]string]bitrate.Bitrate{}
 		for _, j := range active {
+			rate, ok := simRates[j.ID]
+			if !ok || rate < j.Floor || rate > j.Ceil {
+				violation(i, "simulator share %s=%d violates policy", j.ID, rate)
+			}
+			simExecSums[j.Executor] += rate
+			for _, dest := range j.Destinations {
+				simDestSums[dest] += rate
+			}
 			limit, _, err := executor(j.Executor).GetExecLimit(runID(j.ID))
 			if err != nil || limit < j.Floor || limit > j.Ceil {
 				violation(i, "runtime executor share %s=%d: %v", j.ID, limit, err)
@@ -190,8 +206,13 @@ func replaySimulator(t *testing.T, trace simTrace) {
 			}
 		}
 		for exec, cap := range capacity {
-			if scheduler.QueryMaxExec(exec, from, to) != execFloors[exec] || execSums[exec] > cap {
+			if scheduler.QueryMaxExec(exec, from, to) != execFloors[exec] || execSums[exec] > cap || simExecSums[exec] > cap {
 				violation(i, "executor %s reservation or runtime capacity violated", exec)
+			}
+		}
+		for dest, sum := range simDestSums {
+			if sum > usage.Cap(dest) {
+				violation(i, "simulator shares on %s exceed capacity", dest)
 			}
 		}
 		for key, sum := range addrSums {
@@ -211,6 +232,7 @@ func replaySimulator(t *testing.T, trace simTrace) {
 			violation(i, "removed runtime job %s retained", j.ID)
 		}
 		delete(active, j.ID)
+		delete(simRates, j.ID)
 	}
 	for i, raw := range trace.Scenario.Events {
 		var event simEvent
@@ -252,6 +274,7 @@ func replaySimulator(t *testing.T, trace simTrace) {
 				violation(i, "runtime admission: %v", err)
 			}
 			active[j.ID] = j
+			simRates[j.ID] = step.Assigned
 			for _, dest := range j.Destinations {
 				touched[dest] = true
 			}
@@ -281,7 +304,16 @@ func replaySimulator(t *testing.T, trace simTrace) {
 		default:
 			violation(i, "unknown event")
 		}
+		for _, update := range step.Updates {
+			if active[update.ID] == nil {
+				violation(i, "simulator updated inactive job %s", update.ID)
+			}
+			simRates[update.ID] = update.CBW
+		}
 		check(i)
+	}
+	if !maps.Equal(simRates, trace.Allocations) {
+		t.Fatal("final simulator rates differ from replayed updates")
 	}
 	if !slices.Equal(slices.Sorted(maps.Keys(active)), slices.Sorted(maps.Keys(trace.Allocations))) {
 		t.Fatal("final active membership differs")
