@@ -243,10 +243,16 @@ func TestCloseDuringRunDefersRuntimeDisposal(t *testing.T) {
 	deb := &Debuglet{env: &wasm.WasmEnv{Logger: zap.NewNop().Sugar()}, runtime: rt, compiled: compiled}
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
+	ctx, cancel := context.WithCancelCause(context.Background())
 	done, closeDone := make(chan struct{}), make(chan struct{})
 	var runErr, closeErr error
-	go func() { defer close(done); runErr = deb.Run(context.Background(), make(chan []byte), nil) }()
-	t.Cleanup(func() { unblock(); _ = deb.Close(context.Background()); joinRuntimeTest(t, done) })
+	go func() { defer close(done); runErr = deb.Run(ctx, make(chan []byte), nil) }()
+	t.Cleanup(func() {
+		cancel(errors.New("test teardown"))
+		unblock()
+		_ = deb.Close(context.Background())
+		joinRuntimeTest(t, done)
+	})
 	joinRuntimeTest(t, entered)
 	// A second caller cannot become an owner while the first is executing.
 	if err := deb.Run(context.Background(), make(chan []byte), nil); err == nil || instantiations.Load() != 1 {
@@ -256,6 +262,9 @@ func TestCloseDuringRunDefersRuntimeDisposal(t *testing.T) {
 	t.Cleanup(func() { unblock(); joinRuntimeTest(t, closeDone) })
 	joinRuntimeTest(t, canceled)
 	joinRuntimeTest(t, closeDone)
+	if ctx.Err() != nil {
+		t.Fatalf("Close canceled the caller context: %v", context.Cause(ctx))
+	}
 	if closeErr != nil || rt.calls.Load() != 0 || compiled.calls.Load() != 0 {
 		t.Fatalf("early cleanup=%v runtime=%d compiled=%d", closeErr, rt.calls.Load(), compiled.calls.Load())
 	}
