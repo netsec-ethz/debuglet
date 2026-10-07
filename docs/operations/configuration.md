@@ -88,14 +88,56 @@ TRACER design uses, far beyond that bound. Tags become verifiable once the
 delay has elapsed.
 
 The keys live only in the running executor, and every start builds a new
-chain. The keys of the last d epochs before a restart are therefore never
-disclosed, and packets tagged in them (the last 15 minutes by default) can
-never be verified. (The dispatcher already accepts a disclosure for an earlier
-chain it has on record, named by `tesla_key_anchor` on the heartbeat, but the
-executor does not yet re-derive and disclose its previous chain's tail.) Stop an executor only once its last attributed packets are
-d epochs old. When the chain runs out, the executor logs
-`final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
-disclosed; restart it after that time.
+chain. When `[tesla] seed` is configured, a start re-derives the previous
+chain from the seed and its record, and the heartbeat discloses that chain's
+remaining keys at their due instants, under its own anchor. The re-derived
+chain only discloses: it never signs again, and no tagger holds it. Its epochs
+advance on the monotonic clock from the start, which places the recorded
+origin with its ready wall clock, so a later wall-clock step neither advances
+nor delays a disclosure; if the clock loses readiness later, that is reported
+for the current chain and the old chain's disclosure continues. The heartbeat
+offers the old chain's final key until one heartbeat that carried it
+succeeded; the dispatcher's durable record of it is not confirmed back. A tail
+whose final key no heartbeat delivered within 24 hours of its final
+disclosure is dropped with a warning; this retention interval uses the same
+recovered monotonic clock as disclosure.
+
+Recovery also requires the previous process's signers to be retired. A TCX
+attachment ends with its process and needs no action. A legacy tc filter,
+used on kernels without TCX, outlives its process and keeps signing with its
+last key. Startup removes stale tagger filters only from the interface selected
+for packet counting (logging each removal); if it cannot
+list or remove them, or finds another filter at the tagger's priority, it
+discloses no tail. It then checks every interface in its network namespace
+for remaining filters at that priority, even when the new configuration uses
+fallback packet counting or no interface. A remaining filter withholds
+recovery; filters on other interfaces are never removed automatically. This
+also withholds recovery when another executor has a live legacy tagger on
+another interface, since the recorded chain does not identify its attachment.
+Before restarting to recover a tail, stop the previous process and remove its
+stale filters, or select its previous interface so startup can retire them.
+
+The keys of the last d epochs before a restart are still never disclosed, and
+packets tagged in them (the last 15 minutes by default) can never be verified,
+when:
+
+- no seed is configured (each chain's tail is random);
+- the previous chain was recorded before the executor kept its disclosure
+  delay (chains started by an earlier release);
+- the host clock is not ready at the new start, since its wall reading places
+  the recorded origin;
+- the previous process's tagger filters could not be removed;
+- the re-derived chain does not match the recorded anchor, for example after
+  the seed was changed (logged as an error);
+- the new start comes more than 24 hours after the previous chain's final key
+  was due (the same bound a running executor keeps an undelivered tail for);
+- the executor restarted more than once before the earlier chain's final key
+  was delivered (only the immediately previous chain is re-derived).
+
+Each start logs once which of these applies. Without a seed, stop an executor
+only once its last attributed packets are d epochs old. When the chain runs
+out, the executor logs `final_disclosure_at`, d − 1 epochs after the expiry,
+when its last key is disclosed; restart it after that time.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
 never disclosed while an installed copy can still sign. The schedule and every
@@ -145,7 +187,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 24 and executor schema 7 are the current schema boundaries.
+Dispatcher schema 24 and executor schema 8 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows

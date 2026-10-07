@@ -31,6 +31,16 @@ changes; the linked API and deployment documentation contains operational detail
   - The key schedule never signs with the key of an epoch below one it has
     already signed with. See `docs/tag-spec.md` §10.
 
+### Added
+- An executor with a configured `[tesla] seed` discloses the tail of its
+  previous chain after a restart: it re-derives that chain, which never signs
+  again, and sends its due keys beside the current one in the heartbeat's new
+  `extra_disclosures` field, until the final key is out. Executor schema 8
+  records each chain's disclosure delay; chains recorded before it, starts
+  without a seed and starts on an unready clock still lose the tail. The
+  dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
+  against its recorded chain.
+
 ## [0.3.0-rc.1] - 2026-10-06
 
 ### Security

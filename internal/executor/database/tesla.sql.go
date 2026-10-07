@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -17,17 +18,19 @@ INSERT INTO tesla_chains (
     epoch_base,
     delay_ns,
     chain_length,
-    created_at
-) VALUES (?, ?, ?, ?, ?, ?)
+    created_at,
+    disclosure_delay
+) VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateTeslaChainParams struct {
-	Generation  int64
-	Anchor      []byte
-	EpochBase   time.Time
-	DelayNs     int64
-	ChainLength int64
-	CreatedAt   time.Time
+	Generation      int64
+	Anchor          []byte
+	EpochBase       time.Time
+	DelayNs         int64
+	ChainLength     int64
+	CreatedAt       time.Time
+	DisclosureDelay sql.NullInt64
 }
 
 func (q *Queries) CreateTeslaChain(ctx context.Context, arg CreateTeslaChainParams) error {
@@ -38,12 +41,33 @@ func (q *Queries) CreateTeslaChain(ctx context.Context, arg CreateTeslaChainPara
 		arg.DelayNs,
 		arg.ChainLength,
 		arg.CreatedAt,
+		arg.DisclosureDelay,
 	)
 	return err
 }
 
+const getTeslaChain = `-- name: GetTeslaChain :one
+SELECT generation, anchor, epoch_base, delay_ns, chain_length, created_at, disclosure_delay FROM tesla_chains
+WHERE generation = ?
+`
+
+func (q *Queries) GetTeslaChain(ctx context.Context, generation int64) (TeslaChain, error) {
+	row := q.db.QueryRowContext(ctx, getTeslaChain, generation)
+	var i TeslaChain
+	err := row.Scan(
+		&i.Generation,
+		&i.Anchor,
+		&i.EpochBase,
+		&i.DelayNs,
+		&i.ChainLength,
+		&i.CreatedAt,
+		&i.DisclosureDelay,
+	)
+	return i, err
+}
+
 const listTeslaChains = `-- name: ListTeslaChains :many
-SELECT generation, anchor, epoch_base, delay_ns, chain_length, created_at FROM tesla_chains
+SELECT generation, anchor, epoch_base, delay_ns, chain_length, created_at, disclosure_delay FROM tesla_chains
 ORDER BY generation
 `
 
@@ -63,6 +87,7 @@ func (q *Queries) ListTeslaChains(ctx context.Context) ([]TeslaChain, error) {
 			&i.DelayNs,
 			&i.ChainLength,
 			&i.CreatedAt,
+			&i.DisclosureDelay,
 		); err != nil {
 			return nil, err
 		}

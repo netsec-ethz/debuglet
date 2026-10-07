@@ -78,7 +78,10 @@ type Executor struct {
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
 	chainReport *chainReport
-	logger      *zap.Logger
+	// retired is the node's previous chain, whose due keys each heartbeat
+	// discloses beside the current chain's.
+	retired *retiredChain
+	logger  *zap.Logger
 	// scheduler is responsible for storing full debuglet specs
 	// until the debuglet should be started. It will call OnStart
 	// when a debuglet is to be started.
@@ -139,7 +142,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport,
+	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport, retired: &node.retired,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter,
 		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget, supervisor: node.supervisor,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
@@ -328,7 +331,7 @@ func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level
 	case schedule.Exhausted(now):
 		if !r.exhausted {
 			r.exhausted = true
-			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; raise tesla.chain_length and restart the executor after final_disclosure_at, since a restart before then never discloses the keys of the chain's last epochs",
+			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; raise tesla.chain_length and restart the executor after final_disclosure_at, since without tesla.seed a restart before then never discloses the keys of the chain's last epochs",
 				[]zap.Field{zap.Time("expired_at", expiry), zap.Time("final_disclosure_at", schedule.FinalDisclosure())}
 		}
 	case expiry.Sub(now) < time.Hour:
@@ -362,12 +365,13 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			capabilities, vantage := e.capabilityReport(ctx, false)
 			finishConnectivity := e.probeConnectivity(ctx, binding, vantage)
 			req := &protocol.HeartbeatRequest{
-				ExecutorId:    e.cfg.Identity.ExecutorID,
-				TimestampNs:   now.UnixNano(),
-				TeslaKeyEpoch: epoch,
-				TeslaKey:      key,
-				Capabilities:  capabilities,
-				VantagePoint:  vantage,
+				ExecutorId:       e.cfg.Identity.ExecutorID,
+				TimestampNs:      now.UnixNano(),
+				TeslaKeyEpoch:    epoch,
+				TeslaKey:         key,
+				Capabilities:     capabilities,
+				VantagePoint:     vantage,
+				ExtraDisclosures: e.retired.disclosures(now),
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))
@@ -376,6 +380,9 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 				callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 				_, err = client.Heartbeat(callCtx, req)
 				cancel()
+			}
+			if err == nil {
+				e.retired.delivered(req.ExtraDisclosures)
 			}
 			if err != nil {
 				e.logger.Error("Failed to send heartbeat", zap.Error(err))

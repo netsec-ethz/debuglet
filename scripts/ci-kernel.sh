@@ -40,9 +40,9 @@ sha256sum internal/executor/{ratelimit,tagger}/ebpf/*_bpfel.{o,go} > .cache/ci/e
 "$ci_go" test -json -count=1 -timeout="${CI_TEST_TIMEOUT:-2m}" \
     ./internal/executor/tagger ./internal/executor/tagger/ebpf ./internal/executor/ratelimit/ebpf \
     | tee .cache/ci/kernel-tests.json
-# Only the capability selection test here: it needs the loaded eBPF counter.
+# Executor restart and capability checks require real kernel attachments.
 "$ci_go" test -json -count=1 -timeout="${CI_TEST_TIMEOUT:-2m}" \
-    -run '^TestHeterogeneousExecutorCapabilitiesSelection$' ./internal/executor \
+    -run '^Test(HeterogeneousExecutorCapabilitiesSelection|RestartRetiresAStaleTaggerFilterBeforeTheTail|RestartWithChangedNetworkWithholdsRetiredTail)$' ./internal/executor \
     | tee -a .cache/ci/kernel-tests.json
 # Only the tagged-run listener test here: it needs the loaded eBPF tagger.
 "$ci_go" test -json -count=1 -timeout="${CI_TEST_TIMEOUT:-2m}" \
@@ -72,6 +72,8 @@ required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger", "TestTaggedDatagramsReachTheWire"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestBPFCounterLinuxLoad"),
     ("github.com/netsec-ethz/debuglet/internal/executor", "TestHeterogeneousExecutorCapabilitiesSelection"),
+    ("github.com/netsec-ethz/debuglet/internal/executor", "TestRestartRetiresAStaleTaggerFilterBeforeTheTail"),
+    ("github.com/netsec-ethz/debuglet/internal/executor", "TestRestartWithChangedNetworkWithholdsRetiredTail"),
     ("github.com/netsec-ethz/debuglet/internal/executor/debuglet", "TestKernelTaggedRunBindsIPv4Only"),
 }
 passed = {(e.get("Package"), e.get("Test")) for e in events if e.get("Action") == "pass"}
