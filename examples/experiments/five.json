@@ -1,0 +1,84 @@
+{
+  "participants": [
+    {
+      "order_id": 0,
+      "executor_id": "executor-1",
+      "wasm_path": "examples/experiments/peer/debuglet.wasm",
+      "sha256": "",
+      "args": [],
+      "policy": {
+        "floor_bw": 1000000,
+        "ceil_bw": 1000000,
+        "timeout_ms": 60000,
+        "addresses": [
+          "192.0.2.0/24"
+        ],
+        "listen_udp": true
+      }
+    },
+    {
+      "order_id": 1,
+      "executor_id": "executor-2",
+      "wasm_path": "examples/experiments/peer/debuglet.wasm",
+      "sha256": "",
+      "args": [],
+      "policy": {
+        "floor_bw": 1000000,
+        "ceil_bw": 1000000,
+        "timeout_ms": 60000,
+        "addresses": [
+          "192.0.2.0/24"
+        ],
+        "listen_udp": true
+      }
+    },
+    {
+      "order_id": 2,
+      "executor_id": "executor-3",
+      "wasm_path": "examples/experiments/peer/debuglet.wasm",
+      "sha256": "",
+      "args": [],
+      "policy": {
+        "floor_bw": 1000000,
+        "ceil_bw": 1000000,
+        "timeout_ms": 60000,
+        "addresses": [
+          "192.0.2.0/24"
+        ],
+        "listen_udp": true
+      }
+    },
+    {
+      "order_id": 3,
+      "executor_id": "executor-4",
+      "wasm_path": "examples/experiments/peer/debuglet.wasm",
+      "sha256": "",
+      "args": [],
+      "policy": {
+        "floor_bw": 1000000,
+        "ceil_bw": 1000000,
+        "timeout_ms": 60000,
+        "addresses": [
+          "192.0.2.0/24"
+        ],
+        "listen_udp": true
+      }
+    },
+    {
+      "order_id": 4,
+      "executor_id": "executor-5",
+      "wasm_path": "examples/experiments/peer/debuglet.wasm",
+      "sha256": "",
+      "args": [],
+      "policy": {
+        "floor_bw": 1000000,
+        "ceil_bw": 1000000,
+        "timeout_ms": 60000,
+        "addresses": [
+          "192.0.2.0/24"
+        ],
+        "listen_udp": true
+      }
+    }
+  ]
+}
