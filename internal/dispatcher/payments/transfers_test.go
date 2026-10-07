@@ -888,12 +888,23 @@ BEGIN SELECT RAISE(ABORT, 'transfer refused'); END;`); err != nil {
 // kept. A settlement pass then selects nothing for the order and reaches the
 // chain backend zero times; reconciliation resolves the transfer.
 func TestSettlementPassLeavesAnUnknownRefundToReconciliation(t *testing.T) {
-	for name, block := range map[string]bool{"no answer": true, "lost response": false} {
-		t.Run(name, func(t *testing.T) {
-			db, h, chain := transferFixture(t)
-			run := seedFailedUSDCRun(t, db)
+	for _, tc := range []struct {
+		name             string
+		block, cancelled bool
+	}{
+		{"no answer", true, false}, {"lost response", false, false},
+		{"cancelled no answer", true, true}, {"cancelled lost response", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRehearsal(t, false, false)
+			db, h, chain := r.db, r.h, r.chain.transferChain
+			seed := seedFailedUSDCRun
+			if tc.cancelled {
+				seed = seedCancelledUSDCRun
+			}
+			run := seed(t, db)
 			ctx := t.Context()
-			if block {
+			if tc.block {
 				chain.blockExecute = true
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, waitBound/2)
@@ -910,6 +921,9 @@ func TestSettlementPassLeavesAnUnknownRefundToReconciliation(t *testing.T) {
 			if row := onlyTransfer(t, db); row.State != transferUnknown || len(row.SignedTransaction) == 0 || row.Signature == "" {
 				t.Fatalf("refund row %+v", row)
 			}
+			original := onlyTransfer(t, db)
+			r.restart()
+			db, h = r.db, r.h
 			calls := len(chain.Calls())
 			for range 2 {
 				settled, failed, deferred, next, err := h.SettlePendingOrders(t.Context(), 0, 32)
@@ -919,6 +933,9 @@ func TestSettlementPassLeavesAnUnknownRefundToReconciliation(t *testing.T) {
 			}
 			if got := chain.Calls()[calls:]; len(got) != 0 {
 				t.Fatalf("settlement passes reached the chain backend: %v", got)
+			}
+			if row := onlyTransfer(t, db); row.Digest != original.Digest || row.Signature != original.Signature || !bytes.Equal(row.SignedTransaction, original.SignedTransaction) {
+				t.Fatal("settlement retry replaced the uncertain transfer")
 			}
 			chain.lookups = []lookupResult{{outcome: sui.TransferConfirmed, verified: true}}
 			reconcile(t, h)

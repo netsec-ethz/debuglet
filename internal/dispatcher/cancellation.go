@@ -6,11 +6,13 @@ package dispatcher
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,6 +39,34 @@ func (d *Dispatcher) failCancellation(ctx context.Context, run int64, reason str
 		return status.Errorf(codes.Internal, "failed to record cancellation disposition: %v", err)
 	}
 	return nil
+}
+
+// recordCancellationTerminal commits the local terminal decision with its
+// refund obligation. It records no executor outcome or acknowledgement.
+func (d *Dispatcher) recordCancellationTerminal(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) (database.Debuglet, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return database.Debuglet{}, err
+	}
+	defer tx.Rollback()
+	q := database.New(tx)
+	run, err := q.CompleteDebuglet(ctx, database.CompleteDebugletParams{
+		ExitedState: models.RunStateExited, Error: terminalError(-1, &reason), Uuid: id,
+		ExecutorID: identity.ExecutorID, DispatcherIncarnation: identity.DispatcherIncarnation, SessionID: identity.SessionID,
+	})
+	if err != nil {
+		return run, err
+	}
+	marked, err := q.RecordCancellationTerminal(ctx, database.RecordCancellationTerminalParams{
+		DebugletID: run.ID, TerminalRecordedAt: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true},
+	})
+	if err != nil {
+		return run, err
+	}
+	if marked != 1 {
+		return run, errors.New("cancellation request missing")
+	}
+	return run, tx.Commit()
 }
 
 // Cancellation is a read-only snapshot. It never retries delivery, repairs a

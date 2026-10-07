@@ -78,7 +78,7 @@ func (q *Queries) FailCancellation(ctx context.Context, arg FailCancellationPara
 }
 
 const getCancellation = `-- name: GetCancellation :one
-SELECT debuglet_id, request_id, reason, requested_at, attempted_at, acknowledged_at, failure FROM debuglet_cancellations WHERE debuglet_id = ?
+SELECT debuglet_id, request_id, reason, requested_at, attempted_at, acknowledged_at, failure, terminal_recorded_at FROM debuglet_cancellations WHERE debuglet_id = ?
 `
 
 func (q *Queries) GetCancellation(ctx context.Context, debugletID int64) (DebugletCancellation, error) {
@@ -92,6 +92,25 @@ func (q *Queries) GetCancellation(ctx context.Context, debugletID int64) (Debugl
 		&i.AttemptedAt,
 		&i.AcknowledgedAt,
 		&i.Failure,
+		&i.TerminalRecordedAt,
 	)
 	return i, err
+}
+
+const recordCancellationTerminal = `-- name: RecordCancellationTerminal :execrows
+UPDATE debuglet_cancellations SET terminal_recorded_at = COALESCE(terminal_recorded_at, ?)
+WHERE debuglet_id = ?
+`
+
+type RecordCancellationTerminalParams struct {
+	TerminalRecordedAt sql.NullInt64
+	DebugletID         int64
+}
+
+func (q *Queries) RecordCancellationTerminal(ctx context.Context, arg RecordCancellationTerminalParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordCancellationTerminal, arg.TerminalRecordedAt, arg.DebugletID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
