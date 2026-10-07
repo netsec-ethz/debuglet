@@ -54,6 +54,7 @@ Commands:
                                         obtain and store a session credential
   logout                                revoke and forget the stored credential
   whoami                                show the selected session's account
+  allowance                             show the account's remaining TEST units
   config --role ROLE --file FILE        inspect redacted daemon configuration
   doctor [--role ROLE --file FILE] [--connection]
                                         diagnose local setup or a saved connection

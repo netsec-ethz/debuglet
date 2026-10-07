@@ -42,6 +42,17 @@ Creating a `USDC` intent requires `refund_address` to be a Sui address: `0x` fol
 
 The intent prices the batch again when it is created and returns the result as `quote` in its response, in the same shape, so a client can compare it with an earlier quote; a changed `pricing_rule` means the server's rule changed in between. An intent recovered through an explicit retry does not repeat its quote.
 
+A quote is an immediate snapshot, with no promised validity interval, expiry
+timestamp or price lock. Editing the batch invalidates the client's displayed
+review; fetch a fresh quote for the exact edited batch. Before payment or run
+submission, compare the intent's rule, currency, units, total and per-order
+prices with that review. If they differ, show the new price and require a new
+review; do not pay or submit automatically. If an intent expires before use,
+discard it and request a fresh quote and intent. Quote generation and intent
+creation both recheck supported policy and price; normal submission still
+checks current capacity. A successful quote does not reserve capacity or
+guarantee admission. There is no server-side quote token to expire or consume.
+
 `GET /me` adds `economics`: `payment_methods` lists the methods the intent admits now (`TEST`, and `USDC` when blockchain payments are enabled), `chain_payments` whether blockchain payments are enabled and `allowances` whether usage allowances are enabled on this dispatcher (see [usage allowances](#usage-allowances-api-115)).
 
 `GET /me/orders` pages the caller's own payment intents, newest first. An intent has no stored creation time, so the order is that of its expiry time, which is creation plus five minutes, then of its ID. `limit` is 1 to 100 (default 25); pass the `next` value of a page as `before` to read the following one, and `next` is empty on the last page. Each intent reports `id`, `method`, `status` (`outstanding`, `paid`, `refunded`, `expired`, `aborted`, or `unknown`), its recorded `price` and `currency`, `pricing_rule` (empty when the dispatcher did not record one) and `expires_at`, and each of its orders `order_id`, `executor_id`, `price`, `currency`, `settlement` (`pending`, `credited` or `refunded`, as in run detail costs) and, once admitted, `run_id`. Another account's intents are never listed; a `before` value that is not one of your intents returns an empty page.
@@ -133,6 +144,17 @@ API 1.10 adds authenticated `GET` and `POST /operator/executors`, plus
 `POST /operator/executors/{id}/enrollment-token`. These are ordinary account
 operations scoped to the caller's machines; they do not grant dispatcher-wide
 operator privileges. Inventory includes pending and offline machines.
+
+API 1.20 adds `admission` to each inventory entry: `ready` (subject to normal
+admission checks), `maintenance` (the dispatcher has paused new submissions), or
+`offline` (no ready control session, including pending enrollment). `ready` and
+`status` continue to describe the control connection even during dispatcher
+maintenance. `drain_status` is `unknown`: the control protocol does not observe
+the executor host's service manager or completed joined shutdown. Display this
+as unavailable, including when the field is absent or unrecognized; neither
+offline nor maintenance proves an executor was safely drained. Confirm a drain
+on the executor host with the [managed service procedure](operations/services.md).
+These read-only fields do not grant remote drain or service-control authority.
 
 `POST /executor-enrollment` exchanges a single-use setup token and a signed CSR
 for a machine certificate. It uses the token in the request body rather than a

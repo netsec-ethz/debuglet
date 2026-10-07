@@ -22,9 +22,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/demo/service"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
@@ -95,6 +98,8 @@ func operatorRequest(t *testing.T, f *ccFixture, token, method, path string, pay
 
 func TestOwnedExecutorEnrollmentAndRecovery(t *testing.T) {
 	f, csr := operatorFixture(t)
+	switchFile := filepath.Join(t.TempDir(), "maintenance")
+	t.Setenv(dispatcher.MaintenanceFileEnv, switchFile)
 	_, alice, _ := authAccount(t, f, "Alice")
 	_, bob, _ := authAccount(t, f, "Bob")
 	var setup ExecutorSetupResponse
@@ -105,6 +110,9 @@ func TestOwnedExecutorEnrollmentAndRecovery(t *testing.T) {
 	}
 	if setup.Executor.Name != "Alice's node" || setup.Executor.Status != "pending" || setup.Executor.Ready || setup.Token == "" || setup.ExpiresAt < time.Now().Add(23*time.Hour).Unix() {
 		t.Fatalf("unexpected setup: %+v", setup.Executor)
+	}
+	if setup.Executor.Admission != wire.AdmissionOffline || setup.Executor.DrainStatus != "unknown" {
+		t.Fatalf("pending executor admission or drain invented: %+v", setup.Executor)
 	}
 	var list OwnedExecutorsResponse
 	operatorRequest(t, f, bob, http.MethodGet, "/operator/executors", nil, 200, &list)
@@ -138,7 +146,7 @@ func TestOwnedExecutorEnrollmentAndRecovery(t *testing.T) {
 	}
 	operatorRequest(t, f, "", http.MethodPost, "/executor-enrollment", request, 401, nil)
 	operatorRequest(t, f, alice, http.MethodGet, "/operator/executors", nil, 200, &list)
-	if list.Executors[0].Status != "offline" || list.Executors[0].Ready {
+	if list.Executors[0].Status != "offline" || list.Executors[0].Ready || list.Executors[0].Admission != wire.AdmissionOffline || list.Executors[0].DrainStatus != "unknown" {
 		t.Fatalf("issued certificate was reported connected: %+v", list)
 	}
 
@@ -168,8 +176,26 @@ func TestOwnedExecutorEnrollmentAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	operatorRequest(t, f, alice, http.MethodGet, "/operator/executors", nil, 200, &list)
-	if list.Executors[0].Status != "online" || !list.Executors[0].Ready || list.Executors[0].Version != "operator-test" {
+	if list.Executors[0].Status != "online" || !list.Executors[0].Ready || list.Executors[0].Version != "operator-test" || list.Executors[0].Admission != wire.AdmissionReady {
 		t.Fatalf("connected executor not ready: %+v", list)
+	}
+	if err := service.WriteMaintenance(switchFile, "operator maintenance", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	operatorRequest(t, f, alice, http.MethodGet, "/operator/executors", nil, 200, &list)
+	if list.Executors[0].Admission != wire.AdmissionMaintenance || list.Executors[0].DrainStatus != "unknown" || !list.Executors[0].Ready {
+		t.Fatalf("dispatcher maintenance conflated with executor drain: %+v", list)
+	}
+	operatorRequest(t, f, bob, http.MethodGet, "/operator/executors", nil, 200, &list)
+	if len(list.Executors) != 0 {
+		t.Fatalf("maintenance exposed another account's inventory: %+v", list)
+	}
+	if _, err := service.ClearMaintenance(switchFile); err != nil {
+		t.Fatal(err)
+	}
+	operatorRequest(t, f, alice, http.MethodGet, "/operator/executors", nil, 200, &list)
+	if list.Executors[0].Admission != wire.AdmissionReady || list.Executors[0].DrainStatus != "unknown" {
+		t.Fatalf("resuming admission changed unobserved drain state: %+v", list)
 	}
 }
 

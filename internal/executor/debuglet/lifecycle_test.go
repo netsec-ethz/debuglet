@@ -283,6 +283,55 @@ func TestCloseDuringRunDefersRuntimeDisposal(t *testing.T) {
 	}
 }
 
+// A parent's Done can wake its owner's Close watcher before cancellation has
+// reached every child. Hold propagation to reproduce that ordering without
+// relying on the scheduler, while retaining the caller's original cause.
+type delayedCancellationContext struct {
+	context.Context
+	done      chan struct{}
+	propagate chan struct{}
+}
+
+func (c *delayedCancellationContext) Done() <-chan struct{} { return c.done }
+
+func (c *delayedCancellationContext) AfterFunc(f func()) func() bool {
+	return context.AfterFunc(c.Context, func() {
+		<-c.propagate
+		f()
+	})
+}
+
+func TestClosePreservesCallerCauseBeforeChildPropagation(t *testing.T) {
+	parent, cancel := context.WithCancelCause(context.Background())
+	ctx := &delayedCancellationContext{Context: parent, done: make(chan struct{}), propagate: make(chan struct{})}
+	entered, finished := make(chan struct{}), make(chan struct{})
+	rt := &closeErrorRuntime{instantiate: func(child context.Context) (api.Module, error) {
+		close(entered)
+		<-child.Done()
+		return nil, context.Cause(child)
+	}}
+	deb := &Debuglet{env: &wasm.WasmEnv{Logger: zap.NewNop().Sugar()}, runtime: rt, compiled: &closeErrorCompiled{}}
+	var runErr error
+	go func() { defer close(finished); runErr = deb.Run(ctx, make(chan []byte), nil) }()
+	t.Cleanup(func() {
+		cancel(context.Canceled)
+		close(ctx.propagate)
+		_ = deb.Close(context.Background())
+		joinRuntimeTest(t, finished)
+	})
+	joinRuntimeTest(t, entered)
+	cause := errors.New("operator cancellation before child propagation")
+	cancel(cause)
+	close(ctx.done)
+	if err := deb.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	joinRuntimeTest(t, finished)
+	if !errors.Is(runErr, cause) {
+		t.Fatalf("Close replaced the caller's cancellation cause: %v", runErr)
+	}
+}
+
 func TestRunRefusesRuntimeStillInitializing(t *testing.T) {
 	rt := &closeErrorRuntime{instantiate: func(context.Context) (api.Module, error) {
 		t.Fatal("Run entered runtime before initialization returned")

@@ -35,6 +35,15 @@ The optional `[allowance]` section caps what authenticated accounts may reserve 
 
 Nothing is granted automatically, at sign-up or later. An operator account grants an account an amount with a reason and an idempotency key through `POST /operator/accounts/{id}/allowance`; a request without an amount grants `default_grant`, which at a price of 1 covers ten runs of 100,000 bit/s for 30 seconds. Grants are never changed, reset or renewed, and an account's ceiling is the sum of its grants. While allowances are enabled, an account's `TEST` intent is created only if its remaining allowance covers the price, otherwise it is refused with `allowance_exceeded`; the request without a credential that the local development profile admits is not capped. See [the API reference](../api.md#usage-allowances-api-115) for how reservations are counted.
 
+The operator decides who receives a grant and records its reason. Authentication
+does not establish one account per person: allowances provide no Sybil resistance
+on their own. Review related accounts and prior grants before issuing additional
+units; a different idempotency key intentionally creates another grant. There is
+no automatic refill, hosting reward or cash redemption. Users can inspect the
+recorded totals with `dbl allowance` or the SDK's `Allowance` method. Accounts
+without grants cannot reserve positive-cost work when allowances are enabled;
+zero-cost work still remains subject to the ordinary admission quotas.
+
 ### Dispatcher blockchain payments
 
 The `[sui]` section configures chain payments. Every shipped configuration sets `disabled = true` and leaves the other fields empty; in that mode they are ignored and the dispatcher serves `TEST` payments only. `server.local_development = true` requires `disabled = true`. Enabling chain payments is an operator decision with its own profile and checklist; see [chain payments](payments.md).

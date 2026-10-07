@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.19"
+  version: "1.20"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -6031,6 +6031,12 @@ components:
           description: "pending means no certificate is bound; offline means enrolled without a ready control session; online means ready. Clients must tolerate future values."
         ready:
           type: "boolean"
+        admission:
+          type: "string"
+          description: "ready, maintenance (dispatcher admission paused) or offline (no ready control session, including pending enrollment). A snapshot, not a capacity guarantee; absent on older dispatchers."
+        drain_status:
+          type: "string"
+          description: "unknown: the control protocol does not observe the executor host's joined service shutdown. Offline and dispatcher maintenance never prove a safe executor drain. Absent on older dispatchers; clients must treat absent or unrecognized values as unavailable."
         last_seen:
           type: "integer"
           format: "int64"
