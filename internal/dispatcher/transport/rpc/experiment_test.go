@@ -35,7 +35,7 @@ func TestExperimentReadyUsesBoundAuthenticatedSession(t *testing.T) {
 		{"owner", "executor", false, codes.OK},
 		{"foreign executor", "foreign", false, codes.PermissionDenied},
 		{"empty executor", "", false, codes.PermissionDenied},
-		{"missing credentials", "executor", true, codes.PermissionDenied},
+		{"missing credentials", "executor", true, codes.FailedPrecondition},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := f.directCall(f.client, owner, func(ctx context.Context, client pb.DispatcherServiceClient) error {

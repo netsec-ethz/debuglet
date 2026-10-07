@@ -46,7 +46,7 @@ func installedRendezvous(t *testing.T) (context.Context, demo.Assets, string, in
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	var children []*demo.Child
 	var logs []*os.File
 	t.Cleanup(func() {
