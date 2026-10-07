@@ -120,6 +120,9 @@ const (
 
 // VerifyOptions tune Verify.
 type VerifyOptions struct {
+	// CaptureClock is supplied independently by the capture operator. Its bound
+	// may increase ClockTolerance; its digest must bind the exact capture.
+	CaptureClock *CaptureClockTrust
 	// At, when set, is taken as the capture time of every packet instead of
 	// the capture's own timestamps.
 	At time.Time
@@ -237,7 +240,10 @@ type VerifyReport struct {
 	// HistoryAuthenticated means every used lookup was signed by a dispatcher
 	// key obtained through this client's trusted connection or supplied by the
 	// caller, not merely by a public key embedded in an evidence bundle.
-	HistoryAuthenticated   bool `json:"history_authenticated"`
+	HistoryAuthenticated bool `json:"history_authenticated"`
+	// CaptureTimeTrusted means an independent receiver record bound these
+	// exact timestamps to the named schedule origins.
+	CaptureTimeTrusted     bool `json:"capture_time_trusted"`
 	SchedulesAuthenticated bool `json:"schedules_authenticated"`
 	// Packets counts the packets checked.
 	Packets int           `json:"packets"`
@@ -376,6 +382,16 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 	tolerance := opts.ClockTolerance
 	if tolerance == 0 {
 		tolerance = DefaultClockTolerance
+	}
+	if opts.CaptureClock != nil {
+		if !opts.At.IsZero() {
+			return VerifyReport{}, errors.New("client: receiver clock trust cannot be combined with a timestamp override")
+		}
+		bound, err := opts.CaptureClock.tolerance()
+		if err != nil {
+			return VerifyReport{}, err
+		}
+		tolerance = max(tolerance, bound)
 	}
 	v := &verifier{
 		src: src, now: now, tolerance: tolerance, packets: packets,
@@ -559,6 +575,12 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 	if !opts.At.IsZero() {
 		at := opts.At.UTC()
 		rep.At = &at
+	}
+	if opts.CaptureClock != nil {
+		if err := opts.CaptureClock.check(rep.Evidence()); err != nil {
+			return VerifyReport{}, err
+		}
+		rep.CaptureTimeTrusted = true
 	}
 	return rep, nil
 }

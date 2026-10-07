@@ -398,6 +398,75 @@ history. No private key is exported, and no additional signing key is provisione
 `api_version` is the API version the client requires. With `--at`, `at` records
 the override and the packets carry it as `captured_at`.
 
+## Receiver clock acceptance
+
+A valid packet tag and signed schedule do not establish when a packet arrived.
+The default one-second tolerance is an assumption, not a measurement. Reports
+set `capture_time_trusted: false` unless the caller supplies a receiver clock
+record obtained independently from the evidence. The CLI states this condition
+in text output as well. Dispatcher and executor signatures have their own
+`history_authenticated` and `schedules_authenticated` flags.
+
+The capture operator must measure or conservatively bound receiver time relative
+to the **exact signed schedule origins** used for verification. Include both
+machines' reference uncertainty, capture timestamping error and drift over the
+whole observation interval. A receiver-to-UTC observation alone does not bound
+an executor whose origin is unmeasured. A synchronized flag, the kernel's clock
+estimate, or the executor's local wall/monotonic drift threshold does not provide
+this cross-host bound. Debuglet validates the supplied record; it does not obtain
+or certify a time reference. Without that observation the result remains
+conditional, even when all signatures verify.
+
+To produce a reviewable record:
+
+1. Save the capture and the reference-observation log on the receiver. Record the
+   measured interval and the combined worst-case error for every relevant
+   executor's chain origin. Keep the log at the `source` reference named below.
+2. Run `dbl verify probe.pcap --offline --evidence provisional.json` to obtain the
+   normalized packet digest and the executor/chain/origin identities. This step
+   alone makes no clock claim. If using `--source`, use the same filter in every
+   step; it changes the packet digest.
+3. The trusted observer writes `receiver-clock.json` using those identities and
+   the **independent observation**, then transfers it over an authenticated
+   channel. Do not accept a clock record supplied by an untrusted evidence author.
+
+```json
+{
+  "packets_digest": "sha256:<packets.digest from the receiver's own export>",
+  "source": "receiver observation log identifier and reference used",
+  "observed_at": "2026-10-07T10:00:00Z",
+  "valid_until": "2026-10-07T10:01:00Z",
+  "max_error_ns": 2000000,
+  "schedules": [{"executor_id":"...", "chain_id":"...", "origin_unix_ns":1791366000000000000}]
+}
+```
+
+The numbers illustrate the format; they are not a measured bound for a deployment.
+The record is at most 128 KiB and names at most 128 schedule origins. Its positive
+combined error bound is at most 24 hours; a bound too large for the disclosure
+window produces an inconclusive result. Each packet's timestamp **plus and minus**
+the bound must fit inside `[observed_at, valid_until)`. The digest binds the
+normalized packet bytes and timestamps, preventing a later timestamp edit from
+reusing the observation.
+
+Run `dbl verify probe.pcap --offline --clock receiver-clock.json --evidence
+verified.json` (on one command line). The SDK equivalent is
+`VerifyOptions{CaptureClock: &record}`. Verification rounds the bound upward to
+milliseconds and uses at least the existing tolerance, plus the protocol's
+five-second early-disclosure allowance. A key is usable only while
+`captured_at + applied_bound < scheduled_disclosure - 5 seconds`.
+`--at` overrides cannot carry receiver clock trust.
+
+For later offline checks, place that independently obtained record in the
+`capture_clock` field of the existing trust file and run
+`dbl verify verified.json --trust trusted-dispatcher.json`. Strict rechecks reject
+an evidence bundle whose applied tolerance was smaller than the measured bound.
+Keep the dispatcher keys and executor certificate pins in that trust file too.
+A delayed check may run after `valid_until`: the observation must cover the
+original packet arrival, not the time someone opens the bundle. Packets captured
+after disclosure, expired observations at capture time, or unknown schedule
+origins never gain authority by being checked later.
+
 ## Limits
 
 | Limit | Value | Why |
@@ -407,6 +476,9 @@ the override and the packets carry it as `captured_at`.
 | Hash walk per chain | At most `chain_length`, done once per chain and cached; at most 2²⁴ SHA-256 steps per `Verify` | Keys are checked against `k0` without an unbounded walk |
 | Lookups per `Verify` | 1024 candidate lookups (one per group: an address and the shortest epoch of the runs the lookup names, or a second for an address without a run; round-robin over addresses, busiest first), 256 key pages | Bounded requests at the dispatcher's rate limit (paced to 10 per second, burst 40, so the cap takes under two minutes); groups beyond are `unsupported: work_cap` |
 | Evidence bundle | 256 MiB | |
+| Signed lookup payload | 2 MiB, 32 candidates | Includes bounded public certificate proofs |
+| Executor schedule proof | 32 KiB on control registration; certificate 16 KiB, signature 1024 bytes | |
+| Independent trust/clock record | 128 KiB | At most 128 keys, certificate pins and schedule origins each |
 | Candidates per lookup | 32 | Larger answers are `unsupported: too many candidates` |
 | Keys per page | 1024 epochs | |
 | Packets per `POST /attribution/verify` | 256, body ≤ 64 KiB, ≤ 16 source/epoch groups and ≤ 16 result subsets | |

@@ -386,7 +386,7 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 	if ev.Packets.Count != len(ev.Packets.Items) || len(ev.Packets.Items) == 0 || len(ev.Packets.Items) > MaxCapturePackets {
 		return VerifyReport{}, errors.New("client: evidence does not check out: the packet count is wrong")
 	}
-	if len(ev.Lookups) > maxVerifyLookups || len(ev.Chains) > maxVerifyLookups*maxVerifyCandidates || ev.ClockToleranceMS < 0 {
+	if len(ev.Lookups) > maxVerifyLookups || len(ev.Chains) > maxVerifyLookups*maxVerifyCandidates || ev.ClockToleranceMS < 0 || ev.ClockToleranceMS > int64((1<<63-1)/time.Millisecond) {
 		return VerifyReport{}, errors.New("client: evidence exceeds the verification limits")
 	}
 	for _, p := range ev.Packets.Items {
@@ -396,6 +396,11 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 	}
 	if ev.Packets.Digest != PacketDigest(ev.Packets.Items) {
 		return VerifyReport{}, ErrEvidenceDigest
+	}
+	if trust != nil && trust.CaptureClock != nil {
+		if err := trust.CaptureClock.check(ev); err != nil {
+			return VerifyReport{}, err
+		}
 	}
 	keys := ev.ReceiptKeys
 	issuer := ev.Dispatcher.Issuer
@@ -468,6 +473,7 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 	rep.material.receiptKeys = ev.ReceiptKeys
 	rep.material.issuer = ev.Dispatcher.Issuer
 	rep.HistoryAuthenticated = trust != nil
+	rep.CaptureTimeTrusted = trust != nil && trust.CaptureClock != nil
 	rep.SchedulesAuthenticated = trust != nil && trust.ExecutorCertificates != nil
 	if len(ev.Receipts) > 0 {
 		rep.material.receipts, rep.material.receiptKeys = ev.Receipts, ev.ReceiptKeys

@@ -21,6 +21,7 @@ import (
 // Pin old keys before a dispatcher is retired; a bundle cannot establish its
 // own identity by supplying another public key.
 type EvidenceTrust struct {
+	CaptureClock         *CaptureClockTrust   `json:"capture_clock,omitempty"`
 	Dispatcher           string               `json:"dispatcher"`
 	Keys                 []EvidenceReceiptKey `json:"keys"`
 	ExecutorCertificates map[string]string    `json:"executor_certificates,omitempty"`
@@ -109,6 +110,11 @@ func ReadEvidenceTrust(data []byte) (EvidenceTrust, error) {
 		decoded, err := hex.DecodeString(fingerprint)
 		if executor == "" || len(executor) > 128 || err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != fingerprint {
 			return trust, errors.New("client: invalid executor certificate pin")
+		}
+	}
+	if trust.CaptureClock != nil {
+		if _, err := trust.CaptureClock.tolerance(); err != nil {
+			return trust, err
 		}
 	}
 	return trust, nil
