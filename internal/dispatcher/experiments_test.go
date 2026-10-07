@@ -12,6 +12,7 @@ import (
  "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
  "github.com/netsec-ethz/debuglet/internal/dispatcher/models"
  "github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+ "github.com/netsec-ethz/debuglet/internal/sqlitedb"
  "github.com/netsec-ethz/debuglet/pkg/wire"
  pb "github.com/netsec-ethz/debuglet/protocol"
  "google.golang.org/grpc/codes"
@@ -63,10 +64,15 @@ func TestExperimentFiveMemberReleaseAndRestart(t *testing.T) {
  if _, err := experimentReady(t, f, ids[0], []byte("changed")); status.Code(err) != codes.AlreadyExists { t.Fatalf("metadata replacement: %v", err) }
  // A new dispatcher reconstructs no live original sessions. Durable release
  // survives, but a replacement control identity cannot replay the old run.
- restarted, err := New(f.d.logger, f.db, "restart", time.Minute, time.Minute, f.ph)
+ var path string
+ if err := f.db.QueryRow("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&path); err != nil { t.Fatal(err) }
+ reopened, err := sqlitedb.Open(path)
+ if err != nil { t.Fatal(err) }
+ defer reopened.Close()
+ restarted, err := New(f.d.logger, reopened, "restart", time.Minute, time.Minute, f.ph)
  if err != nil { t.Fatal(err) }
  defer restarted.Close()
- barrier, err := database.New(f.db).GetExperimentBarrier(f.ctx, group)
+ barrier, err := database.New(reopened).GetExperimentBarrier(f.ctx, group)
  if err != nil || barrier.StartTimeNs != first.StartTimeNs { t.Fatalf("lost persisted release: %+v %v", barrier, err) }
  owner, err := rpc.NewSessionOwner(tgExecutorID, effectTestBinding(t), time.Minute)
  if err != nil { t.Fatal(err) }
