@@ -132,6 +132,8 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_schedule_remaining_seconds` | Minimum nonnegative remaining signing lifetime, using the announced start, epoch length and chain length on the dispatcher's clock. |
 | `executor_clock_estimated_error_seconds` | Maximum reported kernel error estimate; this is not a measured uncertainty bound. |
 | `executor_disclosure_held_seconds` | Maximum reported age of an installed-key disclosure hold. It does not measure delivery or durable storage of keys at the dispatcher. |
+| `executors_disclosure_completion_unknown` | Executors without a fresh sender schedule-clock completion sample. |
+| `executor_disclosure_completion_upper_bound_seconds` | Maximum executor-reported current-generation time from the oldest newly acknowledged key becoming due to receipt of its durable-storage acknowledgment, including the reply path. |
 | `executors_disclosure_lag_unknown` | Executors whose disclosure delivery lag cannot be determined. |
 | `executor_disclosure_lag_seconds` | Maximum disclosure delivery lag: time since the oldest due key became disclosable without this dispatcher having verified and recorded it; zero when every due key of each executor's current chain is stored. |
 
@@ -246,3 +248,32 @@ failures have their own fixed reasons. Host filesystem calls have no imposed
 kernel deadline; the configured database directory must be on a supported
 local filesystem. Non-Linux host measurements are explicitly unsupported.
 Available disk bytes are an observation, not a promise a future write succeeds.
+
+### Sender disclosure completion
+
+`executor_disclosure_completion_upper_bound_seconds` complements the dispatcher
+backlog gauge. After verifying and committing a key, the dispatcher acknowledges
+coverage through a requested epoch. A duplicate or later committed key can cover
+earlier epochs without another database write. The acknowledgment establishes
+that verified durable completion happened before the reply; it does not promise
+indefinite archive retention. Failed writes, rejected disclosures and memory-only
+stores produce no durable receipt. Replies are bounded to five requested chains.
+
+The executor measures from the scheduled due time of the oldest newly covered
+positive epoch to receipt of the acknowledgment, using that current generation's
+local schedule clock. This includes holder/scheduling delay, delivery, verification,
+storage and the return path. Lost replies and retries can increase the upper bound;
+skipped epochs are included. The high-water mark survives control reconnects, but
+duplicate replies do not renew a sample. The separate observation is unavailable
+before a receipt, after a failed call or missing receipt, and once its actual sample
+age reaches one minute. Missing samples are not zero. Fresh report receipt alone
+does not refresh the sample's age.
+
+This is an executor-reported local-clock completion bound, not exact commit time,
+one-way latency, a receiver retrieval measurement or independently calibrated clock
+uncertainty. Linux monotonic clocks can exclude suspend. Observed clock-unready,
+degraded clock health or wall/monotonic drift invalidates the observation for that
+generation, even if the clock later recovers. Recovered chains have no original
+monotonic reading and remain timing-unknown; their final keys are retained until a
+matching durable receipt arrives or the existing retention limit expires. Older
+dispatchers return no receipts, so this observation remains unknown with them.

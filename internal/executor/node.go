@@ -56,7 +56,8 @@ type Node struct {
 	closeOnce     sync.Once
 	closeErr      error
 	// chainReport outlives sessions so the end of the chain is reported once.
-	chainReport chainReport
+	chainReport        chainReport
+	disclosureDelivery disclosureDelivery
 	// retired outlives sessions so the previous chain's tail is disclosed
 	// across reconnects.
 	retired retiredChain
@@ -291,8 +292,8 @@ func (c recoveredClock) Elapsed(origin, t time.Time) (time.Duration, time.Durati
 	return c.wall.Sub(origin.Round(0)) + since, wall
 }
 
-// retiredChain holds the chain the previous start retired until a heartbeat
-// that carried its final key k_{L-1} succeeded; a later key covers every
+// retiredChain holds the chain the previous start retired until the dispatcher
+// acknowledges durable coverage of its final key k_{L-1}; a later key covers every
 // earlier one, so only the final one needs to arrive.
 type retiredChain struct {
 	mu       sync.Mutex
@@ -326,9 +327,9 @@ func (r *retiredChain) disclosures(now time.Time) []*protocol.TeslaDisclosure {
 	return []*protocol.TeslaDisclosure{{Anchor: r.schedule.Anchor(), Epoch: epoch, Key: key}}
 }
 
-// delivered records that a heartbeat carrying sent succeeded, and drops the
-// retired chain once that included its final key.
-func (r *retiredChain) delivered(sent []*protocol.TeslaDisclosure) {
+// delivered drops the retired chain only after durable coverage of its final key.
+// The caller has bounded and matched these receipts against this request.
+func (r *retiredChain) delivered(receipts []*protocol.TeslaDisclosureReceipt) {
 	if r == nil {
 		return
 	}
@@ -337,9 +338,9 @@ func (r *retiredChain) delivered(sent []*protocol.TeslaDisclosure) {
 	if r.schedule == nil {
 		return
 	}
-	for _, d := range sent {
-		if d.GetEpoch() == r.schedule.ChainLength()-1 && bytes.Equal(d.GetAnchor(), r.schedule.Anchor()) {
-			r.logger.Info("Delivered the previous TESLA chain's final key", zap.Int64("epoch", d.GetEpoch()))
+	for _, d := range receipts {
+		if d.GetStoredThroughEpoch() == r.schedule.ChainLength()-1 && bytes.Equal(d.GetAnchor(), r.schedule.Anchor()) {
+			r.logger.Info("Delivered the previous TESLA chain's final key", zap.Int64("epoch", d.GetStoredThroughEpoch()))
 			r.schedule = nil
 			return
 		}

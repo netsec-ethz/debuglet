@@ -143,7 +143,16 @@ message TeslaDisclosure {
   int64 epoch = 2;
   bytes key = 3;
 }
-message HeartbeatResponse {}
+// Witnessed completion of a verified key commit, subject to archive retention. A later key
+// reconstructs every earlier epoch; this is not an insertion receipt.
+message TeslaDisclosureReceipt {
+  bytes anchor = 1;
+  int64 stored_through_epoch = 2;
+}
+message HeartbeatResponse {
+  // At most the current disclosure plus four requested earlier chains.
+  repeated TeslaDisclosureReceipt disclosure_receipts = 1;
+}
 
 message ResourcesRequest {
   string executor_id = 1;
@@ -433,6 +442,7 @@ message VantagePointReport {
   AddressSelfCheck address_check = 15; // Optional; absent is unknown.
   NetworkDenials network_denials = 16; // Operator-only policy observations; absent is unknown.
   PacketDropObservations packet_drops = 17; // Local TCX verdicts, not end-to-end enforcement; absent is unknown.
+  DisclosureDeliveryObservation disclosure_delivery = 18; // Sender schedule-clock completion bound; absent is unknown.
 }
 
 // Cumulative counts from the current counter instance, reset when it restarts.
@@ -520,4 +530,13 @@ message HostPlatform {
   uint32 cpus = 4;           // Logical CPUs usable by the process.
   optional uint64 memory_bytes = 5; // Total physical memory.
   string build_version = 6;  // Executor build version.
+}
+
+// Current in-process generation only. Includes the return path after durable
+// storage, not one-way latency or independently calibrated clock uncertainty.
+message DisclosureDeliveryObservation {
+  bytes anchor = 1;
+  int64 stored_through_epoch = 2;
+  int64 scheduled_to_ack_ns = 3;
+  int64 sample_age_ns = 4; // Actual monotonic age; repeating a report never refreshes it.
 }

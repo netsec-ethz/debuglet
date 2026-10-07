@@ -147,6 +147,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 		}
 		gauge("executors_schedule_unknown", "Registered executors without a usable current schedule observation.", h.ScheduleUnknown)
 		gauge("executors_schedule_expired", "Registered executors whose announced signing schedule expired on the dispatcher clock.", h.ScheduleExpired)
+		gauge("executors_disclosure_completion_unknown", "Registered executors without a fresh sender schedule-clock durable-disclosure completion sample.", h.DisclosureCompletion.Unknown)
 		gauge("executors_disclosure_lag_unknown", "Registered executors whose disclosure delivery lag cannot be determined.", h.DisclosureLag.Unknown)
 		for _, metric := range []struct {
 			name, help string
@@ -156,6 +157,7 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 			{"executor_schedule_remaining_seconds", "Minimum remaining signing lifetime of announced executor schedules, using the dispatcher clock.", h.ScheduleRemainingSeconds, h.ScheduleUnknown},
 			{"executor_clock_estimated_error_seconds", "Maximum reported kernel clock error estimate; not an independently verified uncertainty bound.", h.ClockEstimatedErrorSeconds, h.ClockEstimateUnknown},
 			{"executor_disclosure_held_seconds", "Maximum reported installed-key disclosure hold age; not end-to-end key delivery lag.", &h.DisclosureHeldSeconds, h.AttributionUnknown},
+			{"executor_disclosure_completion_upper_bound_seconds", "Maximum executor-reported current-generation schedule-clock bound from disclosure due to durable acknowledgment, including the reply path; not calibrated one-way latency.", h.DisclosureCompletion.Value, h.DisclosureCompletion.Unknown},
 			{"executor_disclosure_lag_seconds", "Maximum time since the oldest due key became disclosable without this dispatcher verifying and recording it.", h.DisclosureLag.Value, h.DisclosureLag.Unknown},
 		} {
 			reason := ""

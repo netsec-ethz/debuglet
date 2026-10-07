@@ -441,3 +441,14 @@ func (ks *KeyStore) PrintKeys() {
 		}
 	}
 }
+
+// DurableThrough returns cached verified coverage backed by a successful durable
+// write (or read of that record). Memory-only stores cannot acknowledge durable
+// delivery. It performs no I/O and a cache miss is unknown.
+func (ks *KeyStore) DurableThrough(executorID string, anchor []byte) (int64, bool) {
+	if ks.backend == nil {
+		return 0, false
+	}
+	epoch, cached := ks.CachedLatest(executorID, anchor)
+	return epoch, cached && epoch > 0
+}

@@ -4,11 +4,13 @@
 package dispatcher
 
 import (
+	"bytes"
 	"math"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/observability"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
 // ExecutorHealthMetrics aggregates the registry's validated reports. Missing,
@@ -38,6 +40,7 @@ type ExecutorHealthMetrics struct {
 
 	// DisclosureLag is the maximum disclosure delivery lag in seconds.
 	DisclosureLag                     ExecutorResourceMetric
+	DisclosureCompletion              ExecutorResourceMetric
 	RefusedAdmissions, RevokedSockets ExecutorResourceMetric
 	DropVerdicts, DropSKBBytes        [2]ExecutorResourceMetric // Ingress, egress; current counter instance.
 }
@@ -69,6 +72,19 @@ func (m *ExecutorHealthMetrics) observe(e *executorEntry, now time.Time, connect
 		resources = e.vantage.resources
 	}
 	m.observeResources(resources)
+	var completion *float64
+	if e.vantage != nil && fresh(e.vantageObserved) && e.vantage.disclosureDelivery != nil &&
+		e.Capabilities != nil && fresh(e.capabilityObserved) && e.Capabilities.Attribution != nil &&
+		e.Capabilities.Attribution.Reason != "clock_unready" && e.Capabilities.Attribution.Reason != "clock_drift" {
+		d := e.vantage.disclosureDelivery
+		age := now.Sub(e.vantageObserved)
+		if bytes.Equal(d.Anchor, e.TeslaAnchorKey) && d.StoredThroughEpoch < e.TeslaChainLength &&
+			time.Duration(d.SampleAgeNs) < pb.DisclosureSampleLifetime-age {
+			seconds := float64(d.ScheduledToAckNs) / float64(time.Second)
+			completion = &seconds
+		}
+	}
+	m.DisclosureCompletion.observe(completion, false)
 	var refused, revoked *float64
 	if e.vantage != nil && fresh(e.vantageObserved) && e.vantage.networkDenials != nil {
 		r, c := float64(e.vantage.networkDenials.RefusedAdmissions), float64(e.vantage.networkDenials.RevokedSockets)

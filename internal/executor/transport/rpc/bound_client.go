@@ -21,7 +21,13 @@ func (c *boundDispatcherClient) Heartbeat(ctx context.Context, in *pb.HeartbeatR
 		return nil, err
 	}
 	out, err := c.client.Heartbeat(c.credentials.Outgoing(ctx), in, opts...)
-	return out, c.credentials.RedactError(err)
+	if err != nil {
+		return nil, c.credentials.RedactError(err)
+	}
+	if err := c.owner.CheckLease(c.credentials.Binding); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 func (c *boundDispatcherClient) Resources(ctx context.Context, in *pb.ResourcesRequest, opts ...grpc.CallOption) (*pb.ResourcesResponse, error) {
 	if err := c.owner.CheckLease(c.credentials.Binding); err != nil {
