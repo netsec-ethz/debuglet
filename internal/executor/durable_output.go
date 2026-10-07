@@ -93,6 +93,8 @@ func quotaReceipt(receipt *pb.DebugletStreamResponse) bool {
 // validateQuotaReceipt checks a remote rejection before it can change the
 // producer's durable loss reason. The store rechecks before deleting a suffix.
 func (e *Executor) validateQuotaReceipt(ctx context.Context, id uuid.UUID, receipt *pb.DebugletStreamResponse) error {
+	ctx, cancel := context.WithTimeout(ctx, outputCallTimeout)
+	defer cancel()
 	end := receipt.GetEnd()
 	if !pb.ValidOutputEnd(end) || receipt.GetCommittedSequence() != end.GetLastSequence() {
 		return outputstore.ErrAcknowledgement
@@ -110,6 +112,8 @@ func (e *Executor) validateQuotaReceipt(ctx context.Context, id uuid.UUID, recei
 // acknowledgeOutput is called with a joined producer before accepting a quota
 // receipt that abandons a local suffix. Other receipts delete only their prefix.
 func (e *Executor) acknowledgeOutput(ctx context.Context, id uuid.UUID, receipt *pb.DebugletStreamResponse) error {
+	ctx, cancel := context.WithTimeout(ctx, outputCallTimeout)
+	defer cancel()
 	if receipt == nil {
 		return outputstore.ErrAcknowledgement
 	}
@@ -162,7 +166,10 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 	input := make(chan []byte, outputQueueFrames)
 	storageCtx, storageCancel := context.WithCancel(context.WithoutCancel(op.ctx))
 	deliveryCtx, deliveryCancel := context.WithCancel(op.ctx)
-	p := &outputPump{Input: input, done: make(chan struct{}), producerDone: make(chan struct{}), cancel: func() { deliveryCancel(); storageCancel() }}
+	// Cleanup may stop a slow delivery after the producer has joined. Its
+	// accepted queue and final marker still belong to this worker; canceling
+	// their storage context would strand an open run that cannot be retried.
+	p := &outputPump{Input: input, done: make(chan struct{}), producerDone: make(chan struct{}), cancel: deliveryCancel}
 	go func() {
 		defer close(p.done)
 		defer storageCancel()
@@ -193,7 +200,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 					rejected = receipt
 					fail(outputstore.ErrOutputLimit)
 				}
-			} else if err := e.output.Acknowledge(storageCtx, spec.DebugletID, receipt.GetCommittedSequence(), receipt.GetEnd()); err != nil {
+			} else if err := e.acknowledgeOutput(storageCtx, spec.DebugletID, receipt); err != nil {
 				fail(err)
 			}
 		}
@@ -249,7 +256,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 				deliveryCancel()
 				return
 			}
-			if err := e.output.Acknowledge(storageCtx, spec.DebugletID, receipt.GetCommittedSequence(), receipt.GetEnd()); err != nil {
+			if err := e.acknowledgeOutput(storageCtx, spec.DebugletID, receipt); err != nil {
 				fail(err)
 				deliveryCancel()
 			}
