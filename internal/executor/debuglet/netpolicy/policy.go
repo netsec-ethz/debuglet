@@ -413,9 +413,11 @@ func embeddedV4(addr netip.Addr) (netip.Addr, bool) {
 // own sockets here, so the update that denies a destination closes the active
 // connections to it before it returns.
 type Revocations struct {
-	mu       sync.Mutex
-	denied   map[string]struct{} // DestinationKey of each denied destination
-	watchers map[*revocationWatch]struct{}
+	mu                sync.Mutex
+	denied            map[string]struct{} // DestinationKey of each denied destination
+	watchers          map[*revocationWatch]struct{}
+	refusedAdmissions uint64
+	revokedSockets    uint64
 }
 
 type revocationWatch struct {
@@ -460,9 +462,30 @@ func (r *Revocations) Update(destinations []string, replace bool) []Revoked {
 	for _, watch := range watchers {
 		if closed := watch.close(); closed > 0 {
 			revoked = append(revoked, Revoked{Run: watch.run, Sockets: closed})
+			r.mu.Lock()
+			r.revokedSockets += uint64(closed)
+			r.mu.Unlock()
 		}
 	}
 	return revoked
+}
+
+// DenialObservations counts final network policy admission refusals and sockets
+// actually closed by revocation during this executor session. These are not
+// denied packet/byte counters or evidence about packets already in transit.
+func (r *Revocations) DenialObservations() (refusedAdmissions, revokedSockets uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.refusedAdmissions, r.revokedSockets
+}
+
+func (r *Revocations) observeAdmission(err error) {
+	if r == nil || !(errors.Is(err, ErrDenied) || errors.Is(err, ErrNotInPolicy) || errors.Is(err, ErrUntagged) || errors.Is(err, ErrTransportUnavailable)) {
+		return
+	}
+	r.mu.Lock()
+	r.refusedAdmissions++
+	r.mu.Unlock()
 }
 
 // watch registers close for run until the returned stop is called.

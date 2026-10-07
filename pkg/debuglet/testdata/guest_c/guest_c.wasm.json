@@ -6,5 +6,15 @@
   "target": "wasm32-wasip1",
   "build": "clang --target=wasm32-wasip1 -Oz -s -Wall -Werror -o guest_c.wasm main.c",
   "sha256": "ad4523fbce3146f41feca0ff1ddbace82e5b5863faa8f100882eb21c1cd18d2b",
-  "bytes": 27813
+  "bytes": 27813,
+  "sources": [
+    {
+      "path": "examples/debuglets/c/common/debuglet_api.h",
+      "sha256": "03e0e2715cdac7389dcdf2b08f469810e1154983077fb859ed23ef5912ad011b"
+    },
+    {
+      "path": "pkg/debuglet/testdata/guest_c/main.c",
+      "sha256": "c81bd5b873c6bf825ebefb8c1c1c3600d47f08d11c987b7d00dcae0cb16d9b1a"
+    }
+  ]
 }

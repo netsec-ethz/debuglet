@@ -1,12 +1,12 @@
 # C debuglets
 
-These examples and the header are experimental. They are maintained with the repository as experimental; there is no separate release or version promise. The project's CI does not build them. Use the [Go examples](../go/README.md) for supported development; the Go SDK in [`pkg/debuglet`](../../../pkg/debuglet) is the complete reference for the host interface.
+These examples and the header are experimental. They are maintained with the repository as experimental; there is no separate release or version promise. The `guest-languages` CI job rebuilds them and tests fresh source-package consumers. Use the [Go examples](../go/README.md) for supported development; the Go SDK in [`pkg/debuglet`](../../../pkg/debuglet) is the complete reference for the host interface.
 
 The examples use [`common/debuglet_api.h`](common/debuglet_api.h) to call the executor's WebAssembly imports. Its declarations are part of guest ABI `debuglet-go-wasi-imports-v1` and use exactly the signatures that ABI freezes.
 
 ## What is checked
 
-A C guest built on the header is retained in [`pkg/debuglet/testdata/guest_c`](../../../pkg/debuglet/testdata/guest_c), and `TestForeignGuestsOnCurrentHost` runs it on the executor's engine: a TCP read until end of stream, a listener that echoes one message, and a refused connection. The retained module is rebuilt by hand when the header changes; its record names the toolchain.
+A C guest built on the header is retained in [`pkg/debuglet/testdata/guest_c`](../../../pkg/debuglet/testdata/guest_c), and `TestForeignGuestsOnCurrentHost` runs it on the executor's engine: a TCP read until end of stream, a listener that echoes one message, and a refused connection. The retained module and its source-hash record are deliberately updated when the header changes; CI checks the rebuild.
 
 Tested toolchain: wasi-sdk 25 (`ghcr.io/webassembly/wasi-sdk:wasi-sdk-25` container), target `wasm32-wasip1`.
 
@@ -42,3 +42,13 @@ cp /path/to/debuglet/examples/debuglets/c/common/debuglet_api.h .
 ```
 
 The header is licensed under the Apache License 2.0, like the rest of the repository.
+
+### Rebuild and consumer validation
+
+From the repository root on Linux amd64, run
+`bash scripts/ci-guest-languages.sh`. CI uses the same digest-pinned compilers
+to rebuild the retained fixtures, check source/binary hashes and run fresh
+package consumers against the current host. Source packages and test results
+are written under `.cache/guest-languages/`. These are experimental source
+packages; no registry publication or supported release is implied. See
+[guest language coverage and limits](../../../docs/development/guest-languages.md).
