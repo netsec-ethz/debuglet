@@ -20,9 +20,9 @@ permit the peer hosts; metadata does not grant network access. `dbl up` has only
 one executor and is not sufficient for this example.
 
 ```sh
-make wasm SAMPLE_DIR=examples/experiments/peer
+GOOS=wasip1 GOARCH=wasm go build -o examples/experiments/peer/debuglet.wasm ./examples/experiments/peer
 # Use your existing saved connection and login:
-dbl executor list
+dbl nodes
 cp examples/experiments/five.json experiment-definition.json
 # Replace executor-1 through executor-5 with actual IDs and the example
 # addresses with peer IPs/CIDRs allowed by your operator policy.
@@ -35,7 +35,7 @@ The WASM paths in the definition are relative to your working directory. Set
 leave it empty to record the submitted digest. The runner uses the same saved
 connection and credentials as `dbl`; `-config` and `-dispatcher` select another
 profile. `-endpoint http://127.0.0.1:9000` explicitly selects a local development
-dispatcher without reading credentials. Remote TEST use also needs
+dispatcher; saved credentials are only used for that exact endpoint. Remote TEST use also needs
 `-allow-remote-test` and server authorization. No payment activation is performed.
 
 The receipt file must not already exist. It is written even when submission
@@ -56,8 +56,11 @@ jq -r '.results[].output.entries[].output | @base64d' experiment-results.json
 acknowledgement is not proof of termination. A missing participant is bounded by
 the guest/dispatcher deadlines; a lost UDP datagram is bounded by each run's
 `timeout_ms`. This example fails rather than retrying packets or replacing members.
-The guest uses a 45s readiness deadline; keep its policy budget longer (the sample
-uses 60s). Ready metadata is limited to 4KiB per participant.
+Ready waits for at most 30 seconds and is also bounded by the run lifetime and
+caller deadline. Keep the policy budget longer (the sample uses 60s). Metadata
+is limited to 4KiB per participant. The guest requires the optional
+`debuglet_experiment_v1.ready` host extension. Declaring readiness is persistent;
+cancelling the local wait does not withdraw it. Cancel the run to withdraw.
 
 The shared start is a requested time, not atomic distributed execution. Host
 clocks may differ, and these guest-reported timestamps are not a clock

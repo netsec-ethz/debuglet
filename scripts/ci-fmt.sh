@@ -49,6 +49,7 @@ if [[ -s "$errors" ]]; then
 fi
 
 if [[ -s "$report" ]]; then
+    "$gofmt_bin" -d -- "${files[@]}" > .cache/ci/gofmt.diff
     echo "Unformatted tracked Go files ($(wc -l <"$report" | tr -d ' ')), also listed in $report:" >&2
     sed 's/^/  /' "$report" >&2
     echo 'Format them with the supported toolchain, then commit the result:' >&2

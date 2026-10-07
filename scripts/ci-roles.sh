@@ -10,6 +10,8 @@ mkdir -p .cache/ci
 evidence="$(realpath .cache/ci)/role-evidence"
 mkdir -p -m 0700 "$evidence"
 export DEBUGLET_ROLE_EVIDENCE_DIR="$evidence"
+GOOS=wasip1 GOARCH=wasm "${GO:-go}" build -mod=readonly -trimpath -o "$evidence/experiment-peer.wasm" ./examples/experiments/peer
+export DEBUGLET_EXPERIMENT_WASM="$evidence/experiment-peer.wasm"
 # Exercise the actual previous release, not a rebuild with a similar version.
 previous="$(realpath .cache/ci)/previous-release"
 mkdir -p "$previous"
@@ -27,7 +29,7 @@ sh "$previous/install.sh" --archive "$previous/debuglet-v0.2.0-linux-amd64.tar.g
   > .cache/ci/role-previous-install.log
 export DEBUGLET_PREVIOUS_INSTALL_ROOT="$previous/installed/lib/debuglet/v0.2.0"
 "${GO:-go}" test -mod=readonly -json -tags=roles_integration -count=1 -timeout=5m \
-  ./internal/acceptance/roles -run '^TestInstalled(Roles|BackupRestore|Recovery|Output|ReleasedCompatibility|ReleasedUpgrade|Rendezvous)$' | tee .cache/ci/role-tests.json
+  ./internal/acceptance/roles -run '^TestInstalled(Roles|BackupRestore|Recovery|Output|ReleasedCompatibility|ReleasedUpgrade|Rendezvous|Experiment)$' | tee .cache/ci/role-tests.json
 python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalledRoles \
   --test ./internal/acceptance/roles:TestInstalledBackupRestore \
   --test ./internal/acceptance/roles:TestInstalledRecovery \
@@ -35,6 +37,7 @@ python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalled
   --test ./internal/acceptance/roles:TestInstalledReleasedCompatibility \
   --test ./internal/acceptance/roles:TestInstalledReleasedUpgrade \
   --test ./internal/acceptance/roles:TestInstalledRendezvous \
+  --test ./internal/acceptance/roles:TestInstalledExperiment \
   --test ./internal/acceptance/roles:TestInstalledRecovery/graceful \
   --test ./internal/acceptance/roles:TestInstalledRecovery/terminated \
   --evidence .cache/ci/role-tests.json

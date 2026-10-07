@@ -29,9 +29,10 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// TestInstalledRendezvous runs the installed command and exact packaged guest
-// across two real executor processes. Every listener and target is loopback.
-func TestInstalledRendezvous(t *testing.T) {
+type installedLaunch func(string, string, storagecheck.Role, any) readiness.Record
+
+func installedRendezvous(t *testing.T) (context.Context, demo.Assets, string, installedLaunch) {
+	t.Helper()
 	root, evidence := os.Getenv("DEBUGLET_LOCAL_INSTALL_ROOT"), os.Getenv("DEBUGLET_ROLE_EVIDENCE_DIR")
 	if !filepath.IsAbs(root) || !filepath.IsAbs(evidence) {
 		t.Fatal("absolute installed and evidence directories required")
@@ -119,6 +120,13 @@ func TestInstalledRendezvous(t *testing.T) {
 			}
 		}
 	}
+	return ctx, assets, work, launch
+}
+
+// TestInstalledRendezvous runs the installed command and exact packaged guest
+// across two real executor processes. Every listener and target is loopback.
+func TestInstalledRendezvous(t *testing.T) {
+	ctx, assets, work, launch := installedRendezvous(t)
 	d := launch("dispatcher", assets.Dispatcher, storagecheck.Dispatcher, dispatcherconfig.DispatcherConfig{
 		Admission:   dispatcherconfig.DefaultAdmissionConfig(),
 		Attribution: dispatcherconfig.DefaultAttributionConfig(),
