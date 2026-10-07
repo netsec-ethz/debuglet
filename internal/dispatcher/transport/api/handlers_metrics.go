@@ -43,6 +43,7 @@ func (h *Handler) GetMetrics(c echo.Context) error {
 		health := h.observeHealth(c.Request().Context())
 		control := dispatcher.ControlMetrics{ObservedAt: time.Now().UTC(), RegistryUnavailable: "unavailable"}
 		control.Runs.Unavailable = "unavailable"
+		control.Settlement.Unavailable = "unavailable"
 		if h.dispatcher != nil {
 			control = h.dispatcher.CollectMetrics(c.Request().Context())
 		}
@@ -109,6 +110,8 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 			{"executor_state_available_bytes_min", "Minimum reported executor state-filesystem bytes available to unprivileged writes; excludes quotas.", h.StateAvailable},
 			{"executor_state_capacity_bytes_min", "Minimum reported executor state-filesystem capacity; not a sum across distinct filesystems.", h.StateCapacity},
 			{"executor_state_available_ratio_min", "Minimum reported available fraction of an executor state filesystem; excludes quotas.", h.StateAvailableRatio},
+			{"executor_network_refused_admissions_max", "Maximum current-session network policy admission refusals reported by an executor; not denied packets or bytes.", h.RefusedAdmissions},
+			{"executor_network_revoked_sockets_max", "Maximum current-session sockets closed by destination revocation reported by an executor; not proof of receiver traffic termination.", h.RevokedSockets},
 		} {
 			reason := ""
 			if control.Registered == 0 {
@@ -171,9 +174,25 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 			gauge(metric.name, metric.help, *metric.value.Value)
 		}
 	}
+	if available("settlement_backlog", control.Settlement.Unavailable) {
+		s := control.Settlement
+		for _, group := range []struct {
+			name, help string
+			states     []string
+			counts     []int
+		}{
+			{"settlement_pending_orders", "Outstanding terminal orders awaiting a durable settlement decision, including disabled chain currencies.", []string{"credit", "refund"}, []int{s.PendingCredit, s.PendingRefund}},
+			{"settlement_transfers", "Retained unconfirmed transfers by durable state; failed transfers require operator attention, not automatic retry.", []string{"reserved", "sent", "unknown", "failed"}, []int{s.Reserved, s.Sent, s.Unknown, s.Failed}},
+		} {
+			fmt.Fprintf(&out, "# HELP debuglet_%s %s\n# TYPE debuglet_%s gauge\n", group.name, group.help, group.name)
+			for i, state := range group.states {
+				fmt.Fprintf(&out, "debuglet_%s{state=%q} %d\n", group.name, state, group.counts[i])
+			}
+		}
+	}
 	// These require timestamps, finality or authoritative subsystem contracts
 	// that the current process does not persist or expose. Silence is not zero.
-	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds", "settlement_backlog"} {
+	for _, name := range []string{"interrupted_runs", "queue_age_seconds", "start_delay_seconds", "allocation_age_seconds", "output_lag_seconds", "output_truncated", "output_complete", "enforcement_verified", "denied_traffic", "clock_uncertainty_seconds"} {
 		available(name, "unsupported")
 	}
 	return out.String() + availability.String()

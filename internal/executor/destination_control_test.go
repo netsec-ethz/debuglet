@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -94,6 +95,14 @@ func TestDestinationDenyControlPathAndReconnect(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(d.Close)
+			operator := newAbuseDrillAPI(t, d, db)
+			// A report does not carry authority. The account must receive the
+			// operator role through the normal host administration path first.
+			operator.expect(t, http.MethodGet, "/destinations", "", false, nil, http.StatusUnauthorized)
+			operator.expect(t, http.MethodGet, "/destinations", operator.session.Token, false, nil, http.StatusForbidden)
+			if _, err := db.Exec("UPDATE users SET role='operator' WHERE uuid=?", operator.account.ID); err != nil {
+				t.Fatal(err)
+			}
 			f := newRecoveryHarnessWithServer(t, newOperationPeer(), func(f *recoveryHarness) {
 				f.server.Close()
 				d.Bidi.Close()
@@ -229,7 +238,7 @@ func TestDestinationDenyControlPathAndReconnect(t *testing.T) {
 			started := time.Now()
 			result := make(chan error, 1)
 			go func() {
-				result <- d.SetDestinationPolicy(t.Context(), "operator", "127.0.0.1", dispatcher.DestinationPolicyChange{Denied: true, Reason: "local opt-out fixture"})
+				result <- operator.deny(t.Context())
 			}()
 			if lost {
 				select {
@@ -269,9 +278,20 @@ func TestDestinationDenyControlPathAndReconnect(t *testing.T) {
 			if udpPackets.Load() != quiet {
 				t.Fatal("UDP traffic continued after TCP termination")
 			}
+			t.Logf("incident=destination-opt-out at=%s actor=%s delivery_lost=%v stop_elapsed=%s tcp_bytes=%d udp_packets=%d quiet_window=150ms", time.Now().UTC().Format(time.RFC3339Nano), operator.account.ID, lost, time.Since(started), tcpBytes.Load(), quiet)
 			policies, err := d.ListDestinationPolicies(t.Context())
 			if err != nil || len(policies) != 1 || policies[0].Recipients != 1 || (policies[0].Unconfirmed != 0) != lost {
 				t.Fatalf("delivery accounting: %+v, %v", policies, err)
+			}
+			if policies[0].Actor != operator.account.ID {
+				t.Fatal("policy omitted the authenticated approval actor")
+			}
+			operator.expect(t, http.MethodGet, "/destinations", operator.session.Token, false, nil, http.StatusOK)
+			if !lost {
+				_, report := s.executor.capabilityReport(t.Context(), true)
+				if report.GetNetworkDenials().GetRevokedSockets() == 0 {
+					t.Fatal("acknowledged live-socket revocation missing from executor observations")
+				}
 			}
 			s.Stop(nil)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

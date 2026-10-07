@@ -70,10 +70,38 @@ structured interruption reason. Accordingly `queue_age_seconds`,
 unsupported. The supported scheduled-start overdue gauge does not substitute
 for these observations.
 
-Denied traffic, independently verified enforcement, TESLA clock uncertainty
-and settlement backlog remain unsupported. Disclosure delivery lag is observed
+Denied packet/byte counts, independently verified enforcement and independently
+measured TESLA clock uncertainty remain unsupported. Policy refusal and socket
+revocation observations are available below. Disclosure delivery lag is observed
 at the dispatcher only (see executor health below). Collection never changes
 admission, packet enforcement, terminal state, payment or readiness decisions.
+
+## Settlement backlog
+
+The payment subsystem reads its durable obligations without contacting a chain
+or attempting settlement. `settlement_pending_orders{state="credit|refund"}`
+counts outstanding orders whose terminal run has an observed exit or a recorded
+cancellation and no covering refund transfer. It uses the same eligibility and
+decision as the settlement sweep. Unclaimed paid orders and admitted runs that
+are still active do not represent a pending terminal settlement.
+
+`settlement_transfers{state="reserved|sent|unknown|failed"}` counts retained
+transfer rows in each state. Confirmed transfers are excluded. A failed transfer
+requires operator attention; it is not an automatic retry. A sent or unknown
+transfer does not establish that funds moved. Counts include stored chain
+obligations while payments are disabled, so disabling payments cannot produce a
+misleading empty backlog. These are row counts, never currency amounts, and
+cannot be summed into money owed. Pending orders and transfers are separate
+stages; the covering-transfer exclusion prevents counting the same refund in
+both stages.
+
+`observation_available{observation="settlement_backlog",reason="..."}` reports
+availability for the entire group. The payment reader uses one SQLite snapshot,
+a two-second context and at most 10,001 scalar rows for each stage. More than
+10,000 eligible orders or unconfirmed transfers yields `reason="limit"`; a
+database failure or timeout yields `reason="storage"`. All settlement numbers
+are then omitted. No receiver, transaction, executor or account labels are
+exported. A successful empty snapshot reports known zeros.
 
 ## Executor health
 
@@ -92,6 +120,8 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_state_available_bytes_min` | Least space available to unprivileged writes on any executor database filesystem. |
 | `executor_state_capacity_bytes_min` | Smallest such filesystem capacity. |
 | `executor_state_available_ratio_min` | Lowest available/capacity ratio, calculated per executor before aggregation. Quotas and inode exhaustion require host monitoring. |
+| `executor_network_refused_admissions_max` | Largest count in a current executor session of final network-policy refusals at outbound destination and resolved-peer admission. |
+| `executor_network_revoked_sockets_max` | Largest count in a current executor session of sockets actually closed by destination revocation. |
 | `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held`, `clock_unready`, `clock_drift` and `unknown`. |
 | `executors_clock_readiness{state="..."}` | Counts for `ready`, `degraded` and `unknown`, from the kernel clock report and its configured error threshold. |
 | `executors_schedule_unknown` | Executors without a usable fresh schedule observation. |
@@ -139,6 +169,18 @@ executors lacking that observation. A known zero remains numeric. A partial
 maximum/minimum is withheld rather than appearing to cover the whole registry.
 These resource and attachment details are available only through operator metrics,
 not public executor discovery. Older executors omit them and count as unknown.
+
+The two network observations use the same freshness and completeness rules and
+also export `<metric>_unknown`. They are gauges of current executor sessions;
+reconnect, restart or removal of an executor can reduce them. Do not use
+`rate()` or interpret them as lifetime fleet counters. One refused admission
+increments once, even if several candidate addresses were refused. If another
+candidate is admitted, that operation is not counted. Transport/policy/untagged
+refusals are counted; a target lookup or connection failure is not a denial.
+Revocation counts the sockets the close operation reports, after closing them.
+These observations do not count denied packets or bytes, prove successful
+receiver-side traffic termination, or validate packet-counter coverage. A
+denial before these two policy admission boundaries is outside this metric.
 
 ## Collection limits
 

@@ -28,6 +28,7 @@ type vantageReport struct {
 	platform          *wire.HostPlatform          // Nil unknown; operator-only.
 	resources         *observability.HostSnapshot // Nil unknown; operator metrics only.
 	counterAttachment string                      // present, missing, or unknown; operator metrics only.
+	networkDenials    *pb.NetworkDenials          // Nil unknown; operator metrics only, never public discovery.
 	addressCheck      *addressCheck               // Nil unknown; only system tags read it.
 }
 
@@ -47,6 +48,9 @@ func vantageFromReport(report *pb.VantagePointReport) *vantageReport {
 		out.platform = platformFromReport(report.Platform)
 	}
 	out.resources = resourcesFromReport(report.GetResources())
+	if denials := report.GetNetworkDenials(); denials != nil && denials.RefusedAdmissions <= 1<<53 && denials.RevokedSockets <= 1<<53 {
+		out.networkDenials = &pb.NetworkDenials{RefusedAdmissions: denials.RefusedAdmissions, RevokedSockets: denials.RevokedSockets}
+	}
 	out.addressCheck = addressCheckFromReport(report.GetAddressCheck())
 	out.counterAttachment = "unknown"
 	if state := report.GetCounterAttachment(); state == "present" || state == "missing" {

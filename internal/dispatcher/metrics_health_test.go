@@ -15,6 +15,42 @@ import (
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
+func TestMetricsNetworkDenialsRequireFreshCompleteObservations(t *testing.T) {
+	now := time.Now().UTC()
+	e := &executorEntry{RegisteredExecutor: &RegisteredExecutor{}}
+	read := func(denials *pb.NetworkDenials, at time.Time, connected bool) ExecutorHealthMetrics {
+		e.vantage, e.vantageObserved = vantageFromReport(&pb.VantagePointReport{SchemaVersion: 1, NetworkDenials: denials}), at
+		var h ExecutorHealthMetrics
+		h.observe(e, now, connected)
+		return h
+	}
+	for _, tc := range []struct {
+		name      string
+		denials   *pb.NetworkDenials
+		at        time.Time
+		connected bool
+	}{
+		{"older executor", nil, now, true},
+		{"stale", &pb.NetworkDenials{}, now.Add(-capabilityLifetime), true},
+		{"future", &pb.NetworkDenials{}, now.Add(time.Second), true},
+		{"disconnected", &pb.NetworkDenials{}, now, false},
+		{"overflow", &pb.NetworkDenials{RefusedAdmissions: 1 << 54}, now, true},
+	} {
+		h := read(tc.denials, tc.at, tc.connected)
+		if h.RefusedAdmissions.Unknown != 1 || h.RevokedSockets.Unknown != 1 || h.RefusedAdmissions.Value != nil || h.RevokedSockets.Value != nil {
+			t.Fatalf("%s: %+v", tc.name, h)
+		}
+	}
+	h := read(&pb.NetworkDenials{RefusedAdmissions: 7, RevokedSockets: 2}, now, true)
+	if h.RefusedAdmissions.Unknown != 0 || h.RevokedSockets.Unknown != 0 || *h.RefusedAdmissions.Value != 7 || *h.RevokedSockets.Value != 2 {
+		t.Fatalf("fresh: %+v", h)
+	}
+	h = read(&pb.NetworkDenials{}, now, true)
+	if h.RefusedAdmissions.Value == nil || *h.RefusedAdmissions.Value != 0 || h.RevokedSockets.Value == nil || *h.RevokedSockets.Value != 0 {
+		t.Fatalf("new session zero: %+v", h)
+	}
+}
+
 func TestMetricsHealthUsesFreshReportsAndExpiresWithoutHeartbeat(t *testing.T) {
 	f := newTGFixture(t, nil)
 	observed := time.Now().UTC()
