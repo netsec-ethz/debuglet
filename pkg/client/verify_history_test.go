@@ -6,8 +6,10 @@ package client
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +126,30 @@ func TestSignedHistoryRejectsReplayForAnotherQuery(t *testing.T) {
 			source := &clientSource{c: c, pace: newPacer(0, 1, time.Now), receiptKeys: []EvidenceReceiptKey{key}}
 			if _, err := source.candidates(t.Context(), netip.MustParseAddr(srcA.String()), at); err == nil {
 				t.Fatal("replayed signed lookup accepted")
+			}
+		})
+	}
+}
+
+func TestEvidenceCapsCandidatesBeforeOperatorProofWork(t *testing.T) {
+	chain := newTestChain("exec", 1, 1000, 2)
+	source := &fakeSource{runs: []fakeRun{{ip: srcA, run: runA, chain: chain, from: testT0, to: testNow}}}
+	report := runOffline(t, source, packetsAt(chain.at(100, 0), chain.tag(100, runA, probe(srcA, 64, 1))), VerifyOptions{})
+	for _, signed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("signed=%v", signed), func(t *testing.T) {
+			ev := report.Evidence()
+			candidate := ev.Lookups[0].Candidates[0]
+			candidate.Schedule.OperatorProof = &wire.AttributionScheduleProof{Certificate: []byte("invalid DER")}
+			ev.Lookups[0].Candidates = make([]EvidenceCandidate, maxAttributionCandidates+1)
+			for i := range ev.Lookups[0].Candidates {
+				ev.Lookups[0].Candidates[i] = candidate
+			}
+			if signed {
+				ev.Lookups[0].Statement = &wire.AttributionReceipt{}
+			}
+			_, err := VerifyEvidence(t.Context(), ev)
+			if err == nil || !strings.Contains(err.Error(), "32-candidate limit") {
+				t.Fatalf("candidate limit was not checked before certificate/signature work: %v", err)
 			}
 		})
 	}

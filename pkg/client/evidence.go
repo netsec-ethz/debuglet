@@ -389,6 +389,11 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 	if len(ev.Lookups) > maxVerifyLookups || len(ev.Chains) > maxVerifyLookups*maxVerifyCandidates || ev.ClockToleranceMS < 0 || ev.ClockToleranceMS > int64((1<<63-1)/time.Millisecond) {
 		return VerifyReport{}, errors.New("client: evidence exceeds the verification limits")
 	}
+	for i, lookup := range ev.Lookups {
+		if len(lookup.Candidates) > maxAttributionCandidates {
+			return VerifyReport{}, fmt.Errorf("client: evidence lookup %d exceeds the %d-candidate limit", i, maxAttributionCandidates)
+		}
+	}
 	for _, p := range ev.Packets.Items {
 		if len(p.Data) > tagspec.MaxInput {
 			return VerifyReport{}, errors.New("client: evidence does not check out: a packet holds more than 64 bytes")

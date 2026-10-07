@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -120,35 +121,55 @@ func (p *schedulePeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloRespon
 	return p.response, nil
 }
 
-func TestAttributionScheduleProofFromEnrolledControlPeer(t *testing.T) {
-	f := newOutputTLS(t)
-	token, err := f.store.Issue(f.ctx, "output-executor", time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	anchor := bytes.Repeat([]byte{7}, 32)
-	schedule := wire.AttributionSchedule{ChainID: tag.ChainID(anchor), K0: anchor, T0UnixNs: time.Now().UnixNano(), EpochSeconds: 60, DisclosureDelayEpochs: 15, ChainLength: 100, TagSpec: 1}
-	proof, err := wire.SignAttributionSchedule("output-executor", schedule, f.identity.Certificate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(proof)
-	hello := &pb.HelloResponse{ExecutorId: "output-executor", EnrollmentToken: &token, Currency: "TEST", PricePerBwS: 1, OutputVersion: pb.OutputVersion,
-		TeslaAnchorKey: anchor, TeslaAnchorTimestampNs: schedule.T0UnixNs, TeslaDelaySec: 60, TeslaDisclosureDelayEpochs: 15, TeslaChainLength: 100, TeslaScheduleProof: raw,
-		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Tagging: &pb.TaggingMode{TagSpec: "debuglet-tag-v1", Ipv4: "none", Ipv6: "none", Scion: "none"}}}
-	tlsConfig := f.ca.ClientConfig(f.identity, "")
-	connection, err := erpc.NewBidiClient(erpc.BidiOptions{Logger: zap.NewNop(), Address: f.direct.Addr().String(), YamuxAddress: f.reverse.Addr().String(), TLSConfig: tlsConfig, TLSCreds: credentials.NewTLS(tlsConfig.Clone())}, testpeer.ExecutorState{Service: &schedulePeer{response: hello}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.clients = append(f.clients, connection)
-	f.workers.Add(1)
-	go func() { defer f.workers.Done(); _ = connection.ConnectAndServe(f.ctx) }()
-	if err := connection.WaitReadyContext(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	saved, err := database.New(f.d.db).GetAttributionChain(f.ctx, database.GetAttributionChainParams{ExecutorID: "output-executor", ChainID: schedule.ChainID})
-	if err != nil || !bytes.Equal(saved.ScheduleProof, raw) {
-		t.Fatalf("enrolled control proof: %v", err)
+func TestAttributionScheduleProofUsesControlEnrollment(t *testing.T) {
+	for _, enforce := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enrollment=%v", enforce), func(t *testing.T) {
+			f := newOutputTLSWithEnrollment(t, enforce)
+			token := ""
+			if enforce {
+				var err error
+				token, err = f.store.Issue(f.ctx, "output-executor", time.Hour)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			anchor := bytes.Repeat([]byte{7}, 32)
+			schedule := wire.AttributionSchedule{ChainID: tag.ChainID(anchor), K0: anchor, T0UnixNs: time.Now().UnixNano(), EpochSeconds: 60, DisclosureDelayEpochs: 15, ChainLength: 100, TagSpec: 1}
+			proof, err := wire.SignAttributionSchedule("output-executor", schedule, f.identity.Certificate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(proof)
+			hello := &pb.HelloResponse{ExecutorId: "output-executor", EnrollmentToken: &token, Currency: "TEST", PricePerBwS: 1, OutputVersion: pb.OutputVersion,
+				TeslaAnchorKey: anchor, TeslaAnchorTimestampNs: schedule.T0UnixNs, TeslaDelaySec: 60, TeslaDisclosureDelayEpochs: 15, TeslaChainLength: 100, TeslaScheduleProof: raw,
+				Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Tagging: &pb.TaggingMode{TagSpec: "debuglet-tag-v1", Ipv4: "none", Ipv6: "none", Scion: "none"}}}
+			tlsConfig := f.ca.ClientConfig(f.identity, "")
+			connection, err := erpc.NewBidiClient(erpc.BidiOptions{Logger: zap.NewNop(), Address: f.direct.Addr().String(), YamuxAddress: f.reverse.Addr().String(), TLSConfig: tlsConfig, TLSCreds: credentials.NewTLS(tlsConfig.Clone())}, testpeer.ExecutorState{Service: &schedulePeer{response: hello}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.clients = append(f.clients, connection)
+			f.workers.Add(1)
+			go func() { defer f.workers.Done(); _ = connection.ConnectAndServe(f.ctx) }()
+			if err := connection.WaitReadyContext(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			saved, err := database.New(f.d.db).GetAttributionChain(f.ctx, database.GetAttributionChainParams{ExecutorID: "output-executor", ChainID: schedule.ChainID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if enforce && !bytes.Equal(saved.ScheduleProof, raw) {
+				t.Fatal("enrolled proof was not retained")
+			}
+			if !enforce && len(saved.ScheduleProof) != 0 {
+				t.Fatal("optional client identity endorsed a self-supplied certificate")
+			}
+			f.d.mu.RLock()
+			fingerprint := f.d.executors["output-executor"].owner.CredentialFingerprint()
+			f.d.mu.RUnlock()
+			if enforce != (fingerprint != "") {
+				t.Fatalf("unexpected control enrollment identity %q", fingerprint)
+			}
+		})
 	}
 }

@@ -57,6 +57,11 @@ type outputTLSFixture struct {
 
 func newOutputTLS(t *testing.T) *outputTLSFixture {
 	t.Helper()
+	return newOutputTLSWithEnrollment(t, true)
+}
+
+func newOutputTLSWithEnrollment(t *testing.T, enforce bool) *outputTLSFixture {
+	t.Helper()
 	d := newTerminalPeerDispatcher(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	f := &outputTLSFixture{t: t, d: d, ctx: ctx, store: enrollment.NewStore(d.db)}
@@ -82,11 +87,14 @@ func newOutputTLS(t *testing.T) *outputTLSFixture {
 		f.direct.Close()
 		t.Fatal(err)
 	}
-	directTLS := f.ca.ServerConfig(server, true)
+	directTLS := f.ca.ServerConfig(server, enforce)
 	directTLS.NextProtos = []string{"h2"}
 	f.direct = tls.NewListener(f.direct, directTLS)
-	f.reverse = drpc.VerifiedClientListener(tls.NewListener(f.reverse, f.ca.ServerConfig(server, true)), zap.NewNop())
-	d.Bidi.EnforceEnrollment(f.store)
+	f.reverse = tls.NewListener(f.reverse, f.ca.ServerConfig(server, enforce))
+	if enforce {
+		f.reverse = drpc.VerifiedClientListener(f.reverse, zap.NewNop())
+		d.Bidi.EnforceEnrollment(f.store)
+	}
 	f.workers.Add(2)
 	go func() { defer f.workers.Done(); _ = d.Bidi.ServeGRPCListener(ctx, f.direct) }()
 	go func() { defer f.workers.Done(); _ = d.Bidi.ServeYamux(ctx, f.reverse) }()

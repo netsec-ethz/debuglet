@@ -377,7 +377,11 @@ contains the leaf certificate DER and a signature over the stable JSON object
 `{"format":"debuglet-tesla-schedule-v1","executor_id":...,"schedule":...}`,
 with `operator_proof` omitted from the schedule. The dispatcher accepts it only
 when its certificate fingerprint matches the enrolled, authenticated control
-peer. Dispatcher schema 29 persists it unchanged; reannouncement cannot replace
+peer. A dispatcher configured with optional client identity continues to accept
+TLS connections without enrollment, but discards their unbound schedule proofs
+and records only unsigned executor claims. It never treats an embedded
+certificate as a trust root. Previously signed history cannot be downgraded by
+an unenrolled reannouncement. Dispatcher schema 29 persists accepted proofs unchanged; reannouncement cannot replace
 its parameters or remove the proof. Disclosures and a dispatcher restart keep it.
 The signature covers the anchor, chain ID, origin, interval, delay, length and tag
 specification. This is executor-origin evidence, not a separate account-key
