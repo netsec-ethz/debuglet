@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"net/netip"
 	"time"
 
@@ -116,11 +118,55 @@ func (b attributionBackend) Get(executorID string, anchor []byte, epoch int64) (
 
 // recordChain puts the chain an executor announced on record. An executor
 // without an anchor has nothing to record.
-func (d *Dispatcher) recordChain(ctx context.Context, executorID string, chain tag.Chain, seen time.Time) error {
+func (d *Dispatcher) recordChain(ctx context.Context, executorID string, chain tag.Chain, proof []byte, fingerprint string, seen time.Time) error {
 	if d.db == nil || len(chain.Anchor) == 0 {
 		return nil
 	}
-	return database.New(d.db).RecordAttributionChain(ctx, chainParams(executorID, chain, seen))
+	if len(proof) == 0 {
+		q := database.New(d.db)
+		stored, err := q.GetAttributionChain(ctx, database.GetAttributionChainParams{ExecutorID: executorID, ChainID: tag.ChainID(chain.Anchor)})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if len(stored.ScheduleProof) > 0 {
+			return errors.New("signed executor schedule cannot be replaced by an unsigned announcement")
+		}
+		return q.RecordAttributionChain(ctx, chainParams(executorID, chain, seen))
+	}
+	if len(proof) > 32<<10 {
+		return errors.New("executor schedule proof exceeds 32 KiB")
+	}
+	var signature wire.AttributionScheduleProof
+	if err := json.Unmarshal(proof, &signature); err != nil {
+		return fmt.Errorf("executor schedule proof: %w", err)
+	}
+	schedule := wire.AttributionSchedule{ChainID: tag.ChainID(chain.Anchor), K0: chain.Anchor, T0UnixNs: chain.Start.UnixNano(), EpochSeconds: int64(chain.Interval / time.Second), DisclosureDelayEpochs: chain.DisclosureDelay, ChainLength: chain.Length, TagSpec: chain.TagSpec, OperatorProof: &signature}
+	if err := wire.VerifyAttributionSchedule(executorID, schedule, fingerprint); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := database.New(tx)
+	if err := q.RecordAttributionChain(ctx, chainParams(executorID, chain, seen)); err != nil {
+		return err
+	}
+	row, err := q.GetAttributionChain(ctx, database.GetAttributionChainParams{ExecutorID: executorID, ChainID: schedule.ChainID})
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(row.Anchor, chain.Anchor) || row.T0Ns != schedule.T0UnixNs || row.IntervalNs != int64(chain.Interval) || row.DelayEpochs != chain.DisclosureDelay || row.ChainLength != chain.Length || row.TagSpec != chain.TagSpec {
+		return errors.New("executor schedule conflicts with recorded history")
+	}
+	if len(row.ScheduleProof) > 0 && !bytes.Equal(row.ScheduleProof, proof) {
+		return errors.New("executor schedule proof conflicts with recorded history")
+	}
+	if _, err := q.RecordAttributionScheduleProof(ctx, database.RecordAttributionScheduleProofParams{ExecutorID: executorID, ChainID: schedule.ChainID, ScheduleProof: proof}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // recordedChain returns a chain of executorID with the given anchor from the

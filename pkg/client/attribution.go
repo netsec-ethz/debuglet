@@ -46,6 +46,10 @@ const (
 // time before RetainedFrom is no evidence either way. This optional API 1.11
 // route is absent on older dispatchers, which answer 404.
 func (c *Client) AttributionCandidates(ctx context.Context, ip string, at time.Time) (AttributionCandidates, error) {
+	return c.attributionCandidates(ctx, ip, at, false)
+}
+
+func (c *Client) attributionCandidates(ctx context.Context, ip string, at time.Time, signed bool) (AttributionCandidates, error) {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return AttributionCandidates{}, errors.New("client: attribution lookup needs an IP address")
@@ -54,6 +58,9 @@ func (c *Client) AttributionCandidates(ctx context.Context, ip string, at time.T
 		return AttributionCandidates{}, errors.New("client: attribution lookup needs a time")
 	}
 	query := url.Values{"ip": {addr.String()}, "at": {at.UTC().Format(time.RFC3339Nano)}}
+	if signed {
+		query.Set("signed", "true")
+	}
 	data, err := c.do(ctx, http.MethodGet, routeAttributionCandidates, query, nil, http.StatusOK)
 	if err != nil {
 		return AttributionCandidates{}, err
@@ -62,7 +69,8 @@ func (c *Client) AttributionCandidates(ctx context.Context, ip string, at time.T
 	if err := c.decode(http.MethodGet, routeAttributionCandidates, data, &doc); err != nil {
 		return AttributionCandidates{}, err
 	}
-	valid := doc.Candidates != nil && len(doc.Candidates) <= maxAttributionCandidates && !doc.RetainedFrom.IsZero()
+	answerIP, answerErr := netip.ParseAddr(doc.IP)
+	valid := answerErr == nil && answerIP.Unmap() == addr.Unmap() && doc.At.Equal(at) && doc.Candidates != nil && len(doc.Candidates) <= maxAttributionCandidates && !doc.RetainedFrom.IsZero()
 	for _, candidate := range doc.Candidates {
 		s := candidate.Schedule
 		valid = valid && isCanonicalUUID(candidate.RunID) && !isNilUUID(candidate.RunID) &&

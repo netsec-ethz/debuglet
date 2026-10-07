@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 28: durable one-shot experiment readiness.
-	MinimumDispatcherVersion int64 = 28
+	// Schema 29: authenticated executor schedule history.
+	MinimumDispatcherVersion int64 = 29
 	MinimumExecutorVersion   int64 = 8
 )
 
@@ -86,7 +86,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"retry_requests":             {"caller_scope", "request_id", "parent_run_id", "transaction_id", "request_hash", "intent_metadata"},
 			"account_run_reservations":   {"debuglet_id", "account_id", "queued_bytes", "retired_at", "last_retirement_check"},
 			"payload_tombstones":         {"debuglet_id", "deleted_at", "reason", "workload_sha256", "certificate_sha256"},
-			"attribution_chains":         {"executor_id", "chain_id", "anchor", "t0_ns", "interval_ns", "delay_epochs", "chain_length", "tag_spec", "first_seen_ns", "last_seen_ns"},
+			"attribution_chains":         {"executor_id", "chain_id", "anchor", "t0_ns", "interval_ns", "delay_epochs", "chain_length", "tag_spec", "first_seen_ns", "last_seen_ns", "schedule_proof"},
 			"attribution_keys":           {"executor_id", "chain_id", "epoch", "key", "disclosed_at_ns"},
 			"attribution_runs":           {"debuglet_id", "chain_id", "source_ip", "source_ip_observed", "active_from_ns", "active_to_ns"},
 			"attribution_retention":      {"singleton", "retained_from_ns"},

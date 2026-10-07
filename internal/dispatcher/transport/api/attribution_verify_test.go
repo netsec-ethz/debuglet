@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/netip"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -28,6 +30,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
+	"github.com/netsec-ethz/debuglet/internal/testtls"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/netsec-ethz/debuglet/pkg/tagspec"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
@@ -757,5 +760,72 @@ func TestAttributionVerifyChargesCandidateTrials(t *testing.T) {
 	}
 	if used() != 15 {
 		t.Fatalf("a restart changed the count to %d", used())
+	}
+}
+
+func TestAttributionSignedHistorySurvivesOfflineExport(t *testing.T) {
+	f, _, chain := vtFixture(t)
+	run := vtRun(t, f)
+	ca, err := testtls.NewAuthority(t.TempDir(), "retained-schedule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := ca.Issue("executor", testtls.Options{Client: true, NotBefore: chain.t0.Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule := wire.AttributionSchedule{ChainID: tag.ChainID(chain.anchor()), K0: chain.anchor(), T0UnixNs: chain.t0.UnixNano(), EpochSeconds: 60, DisclosureDelayEpochs: chain.delay, ChainLength: chain.length, TagSpec: 1}
+	proof, err := wire.SignAttributionSchedule(ccExecutorID, schedule, identity.Certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(proof)
+	if _, err := f.queries.RecordAttributionScheduleProof(t.Context(), database.RecordAttributionScheduleProofParams{ExecutorID: ccExecutorID, ChainID: schedule.ChainID, ScheduleProof: raw}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	epoch := chain.epochOf(at)
+	if err := f.queries.InsertAttributionKey(t.Context(), database.InsertAttributionKeyParams{ExecutorID: ccExecutorID, ChainID: tag.ChainID(chain.anchor()), Epoch: epoch, Key: chain.key(epoch), DisclosedAtNs: 1}); err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(f.root.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/public-api")
+		r.Host = target.Host
+		proxy.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	c, err := client.New(front.URL+"/public-api", client.Options{HTTPClient: front.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := client.CapturedPacket{Data: vtPacket(chain, "127.0.0.1", epoch, run, 1), CapturedAt: at}
+	report, err := c.Verify(t.Context(), []client.CapturedPacket{packet}, client.VerifyOptions{Offline: true})
+	if err != nil || report.Counts.Verified != 1 || !report.HistoryAuthenticated {
+		t.Fatalf("live history: %+v, %v", report, err)
+	}
+	ev := report.Evidence()
+	if len(ev.Lookups) != 1 || ev.Lookups[0].Statement == nil || len(ev.ReceiptKeys) == 0 {
+		t.Fatalf("unsigned export: %+v", ev.Lookups)
+	}
+	if ev.Dispatcher.URL != front.URL+"/public-api" || ev.Dispatcher.Issuer != f.root.URL {
+		t.Fatalf("API address and signed issuer must remain distinct: %+v", ev.Dispatcher)
+	}
+	keys, err := c.AttributionReceiptKeys(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := client.EvidenceTrust{Dispatcher: f.root.URL, ExecutorCertificates: map[string][]string{ccExecutorID: {wire.AttributionCertificateID(proof.Certificate)}}}
+	for _, k := range keys.Keys {
+		trust.Keys = append(trust.Keys, client.EvidenceReceiptKey{KeyID: k.KeyID, PublicKey: k.PublicKey, ValidFrom: k.ValidFrom, ValidTo: k.ValidTo})
+	}
+	// There are no network reads when verifying this exported history.
+	f.root.Close()
+	if got, err := client.VerifyEvidenceWithTrust(t.Context(), ev, trust); err != nil || !got.HistoryAuthenticated || !got.SchedulesAuthenticated || got.Counts.Verified != 1 {
+		t.Fatalf("offline export: %+v, %v", got, err)
 	}
 }

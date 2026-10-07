@@ -5,6 +5,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"math"
 	"net"
@@ -103,18 +104,37 @@ func (h *Handler) GetAttributionCandidates(c echo.Context) error {
 		if row.SourceIpObserved == 1 {
 			source = "observed"
 		}
+		var proof *wire.AttributionScheduleProof
+		if len(row.ScheduleProof) > 0 {
+			if err := json.Unmarshal(row.ScheduleProof, &proof); err != nil {
+				return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read executor schedule proof", err)
+			}
+		}
 		resp.Candidates = append(resp.Candidates, wire.AttributionCandidate{
 			ExecutorID: row.ExecutorID, RunID: row.Uuid.String(),
 			ActiveFrom: time.Unix(0, row.ActiveFromNs).UTC(), ActiveTo: time.Unix(0, row.ActiveToNs).UTC(),
 			IPSource: source,
 			Schedule: wire.AttributionSchedule{
 				ChainID: row.ChainID, K0: row.Anchor, T0UnixNs: row.T0Ns, EpochSeconds: int64(time.Duration(row.IntervalNs) / time.Second),
-				DisclosureDelayEpochs: row.DelayEpochs, ChainLength: row.ChainLength, TagSpec: row.TagSpec,
+				DisclosureDelayEpochs: row.DelayEpochs, ChainLength: row.ChainLength, TagSpec: row.TagSpec, OperatorProof: proof,
 			},
 			DisclosedThrough:     row.DisclosedThrough,
 			DisclosedThroughAtNs: row.DisclosedThroughAtNs,
 			NextDisclosureAtNs:   nextDisclosureAtNs(row.T0Ns, row.IntervalNs, row.DelayEpochs, row.DisclosedThrough),
 		})
+	}
+	if c.QueryParam("signed") == "true" {
+		signer, err := h.receiptSigner(ctx)
+		if err != nil {
+			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, "attribution signing is unavailable", err)
+		}
+		payload, err := wire.AttributionHistoryBytes(wire.AttributionHistoryPayload{
+			Format: wire.AttributionHistoryFormat, Dispatcher: h.receiptDispatcher(c), SignedAt: time.Now().UTC(), Lookup: resp,
+		})
+		if err != nil {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to sign attribution history", err)
+		}
+		resp.Statement = &wire.AttributionReceipt{KeyID: signer.KeyID(), Payload: payload, Signature: signer.Sign(payload)}
 	}
 	return c.JSON(http.StatusOK, resp)
 }

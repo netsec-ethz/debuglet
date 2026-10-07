@@ -292,10 +292,11 @@ type HelloResponse struct {
 	TeslaDisclosureDelayEpochs int64 `protobuf:"varint,20,opt,name=tesla_disclosure_delay_epochs,json=teslaDisclosureDelayEpochs,proto3" json:"tesla_disclosure_delay_epochs,omitempty"`
 	// TESLA chain length L: the chain serves epochs below it. Zero from an
 	// executor that predates it; the schedule's length is then unknown.
-	TeslaChainLength int64  `protobuf:"varint,21,opt,name=tesla_chain_length,json=teslaChainLength,proto3" json:"tesla_chain_length,omitempty"`
-	BandwidthVersion uint32 `protobuf:"varint,22,opt,name=bandwidth_version,json=bandwidthVersion,proto3" json:"bandwidth_version,omitempty"` // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	TeslaChainLength   int64  `protobuf:"varint,21,opt,name=tesla_chain_length,json=teslaChainLength,proto3" json:"tesla_chain_length,omitempty"`
+	TeslaScheduleProof []byte `protobuf:"bytes,23,opt,name=tesla_schedule_proof,json=teslaScheduleProof,proto3" json:"tesla_schedule_proof,omitempty"` // JSON AttributionScheduleProof signed by the enrolled TLS identity.
+	BandwidthVersion   uint32 `protobuf:"varint,22,opt,name=bandwidth_version,json=bandwidthVersion,proto3" json:"bandwidth_version,omitempty"`        // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *HelloResponse) Reset() {
@@ -473,6 +474,13 @@ func (x *HelloResponse) GetTeslaChainLength() int64 {
 		return x.TeslaChainLength
 	}
 	return 0
+}
+
+func (x *HelloResponse) GetTeslaScheduleProof() []byte {
+	if x != nil {
+		return x.TeslaScheduleProof
+	}
+	return nil
 }
 
 func (x *HelloResponse) GetBandwidthVersion() uint32 {
@@ -4003,7 +4011,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12#\n" +
 	"\rsession_token\x18\x04 \x01(\fR\fsessionToken\x12*\n" +
 	"\x11lease_duration_ms\x18\x05 \x01(\x03R\x0fleaseDurationMs\x12%\n" +
-	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\x8f\b\n" +
+	"\x0eoutput_version\x18\x06 \x01(\rR\routputVersion\"\xc1\b\n" +
 	"\rHelloResponse\x12\x1f\n" +
 	"\vexecutor_id\x18\x01 \x01(\tR\n" +
 	"executorId\x12\x18\n" +
@@ -4030,7 +4038,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\fcapabilities\x18\x12 \x01(\v2'.debuglet.protocol.ExecutorCapabilitiesR\fcapabilities\x12J\n" +
 	"\rvantage_point\x18\x13 \x01(\v2%.debuglet.protocol.VantagePointReportR\fvantagePoint\x12A\n" +
 	"\x1dtesla_disclosure_delay_epochs\x18\x14 \x01(\x03R\x1ateslaDisclosureDelayEpochs\x12,\n" +
-	"\x12tesla_chain_length\x18\x15 \x01(\x03R\x10teslaChainLength\x12+\n" +
+	"\x12tesla_chain_length\x18\x15 \x01(\x03R\x10teslaChainLength\x120\n" +
+	"\x14tesla_schedule_proof\x18\x17 \x01(\fR\x12teslaScheduleProof\x12+\n" +
 	"\x11bandwidth_version\x18\x16 \x01(\rR\x10bandwidthVersionB\x0e\n" +
 	"\f_public_hostB\r\n" +
 	"\v_sui_walletB\x13\n" +

@@ -1,9 +1,8 @@
 # Probe verification
 
 This note records how the recipient of a probe checks which Debuglet run sent
-it. It is a design for #71, #73 and #341; steps 1 to 4 of the
-[delivery order](#delivery-order) have landed, the rest has not. Keep it in
-step with the code as each step lands. The tag
+it. The [delivery order](#delivery-order) records the supported protocol
+and remaining limits. The tag
 algorithm itself is specified in the [tag spec](tag-spec.md) (tag spec
 v1).
 
@@ -334,17 +333,148 @@ its first 256 packets; the rest stays a separate `pending` entry. The
 embedded receipt keys are the dispatcher's claim like the rest of the
 bundle: compare their IDs with `GET /attribution/receipt-keys` of the
 dispatcher you trust.
-The lookups and schedules remain the dispatcher's claims, and until #71(b)
-nothing in the bundle authenticates them: the chain walk ties every key to
-the recorded `k0`, but `k0` and the other schedule fields (`t0_unix_ns`,
-`epoch_seconds`, `disclosure_delay_epochs`, `chain_length`, `tag_spec`) and
-the lookups can be edited consistently. A larger `disclosure_delay_epochs`,
-for example, turns a `key_public` group into a `verified` one that still
-recomputes. A bundle therefore shows that its record is self-consistent,
-not that the dispatcher said it; check the schedule against the dispatcher
-(or, after #71(b), the operator signature) before relying on it. `api_version` is the API
-version the client requires. With `--at`, `at` records the override and the
-packets carry it as `captured_at`.
+`GET /attribution/candidates?signed=true` adds a `statement` under the existing
+receipt key. It signs the complete dated lookup: source address, capture query
+time, retention boundary, candidate run IDs and intervals, every schedule field,
+and disclosure observations. Its payload uses the stable JSON encoding of
+`wire.AttributionHistoryPayload`, with format `debuglet-attribution-history-v1`,
+issuer `dispatcher`, `signed_at`, and `lookup` (without its statement).
+`client.Verify` requests these statements and saves them with the signing keys.
+Old dispatchers may return unsigned history; it remains usable as an explicitly
+unauthenticated historical claim. A configured signer that cannot be read answers
+503 to a signed request, rather than substituting unsigned data.
+
+`VerifyEvidence` checks included history signatures and the exact metadata they
+bind, as well as packet receipts. An embedded key alone does not establish who
+signed the bundle. For authenticated offline use, save a trust file separately
+while the dispatcher's HTTPS identity is known:
+
+```json
+{"dispatcher":"https://dispatcher.example","keys":[{"key_id":"…","public_key":"<base64 Ed25519 key>","valid_from":"…","valid_to":null}]}
+```
+
+The keys and validity intervals come from `GET /attribution/receipt-keys`.
+The trust file's `dispatcher` pins the signed issuer, not the URL used to retrieve
+it. Behind a TLS terminator or path-prefix proxy, those may differ: evidence
+records the API address as `dispatcher.url` and the signed identity as
+`dispatcher.issuer`. The issuer is `[authentication] public_url` when configured;
+otherwise it is the backend request origin. Live verification obtains keys from
+the configured API endpoint and verifies statements with those keys; it does not
+infer an issuer from forwarding headers. Configure `public_url` for a stable
+identity before exporting evidence across deployments.
+Keep retired keys for older statements. Run `dbl verify evidence.json --trust
+trusted-dispatcher.json`, or call `VerifyEvidenceWithTrust`. These require every
+lookup and packet receipt to verify under a separately supplied key and the
+same dispatcher identity. Missing, replaced, or edited statements fail; replacing
+a public key inside the evidence cannot replace a pinned key. The report sets
+`history_authenticated` only when history has been verified against trusted keys.
+This authenticates what the dispatcher said; it does not authenticate capture
+timestamps or make packet attribution prove a measurement conclusion.
+
+In API 1.21 each newly registered, TLS-authenticated executor also signs its
+schedule using its existing enrolled certificate key. `schedule.operator_proof`
+contains the leaf certificate DER and a signature over the stable JSON object
+`{"format":"debuglet-tesla-schedule-v1","executor_id":...,"schedule":...}`,
+with `operator_proof` omitted from the schedule. The dispatcher accepts it only
+when its certificate fingerprint matches the enrolled, authenticated control
+peer. A dispatcher configured with optional client identity continues to accept
+TLS connections without enrollment, but discards their unbound schedule proofs
+and records only unsigned executor claims. It never treats an embedded
+certificate as a trust root. Previously signed history cannot be downgraded by
+an unenrolled reannouncement. Dispatcher schema 29 persists accepted proofs unchanged; reannouncement cannot replace
+its parameters or remove the proof. Disclosures and a dispatcher restart keep it.
+The signature covers the anchor, chain ID, origin, interval, delay, length and tag
+specification. This is executor-origin evidence, not a separate account-key
+signature or a certificate of clock quality.
+
+For independent executor-origin verification, add `executor_certificates` to
+the trust file: an object mapping each executor ID to an array of lowercase
+SHA-256 certificate fingerprints (DER bytes), for example
+`{"executor_certificates":{"node-1":["<old fingerprint>","<current fingerprint>"]}}`. Obtain those pins from the operator through
+an authenticated channel, separately from the bundle. Every candidate must have
+a valid proof under its pin; the report then sets `schedules_authenticated`.
+Certificate validity is checked at the signed chain origin, so a retained proof
+remains checkable after certificate expiry. A proof's embedded certificate alone
+never establishes trust. Old histories without this proof remain usable as
+unsigned executor claims, and strict executor trust rejects them. Preserve old
+certificate pins together with the dispatcher keys and evidence before pruning
+history. No private key is exported, and no additional signing key is provisioned.
+
+`api_version` is the API version the client requires. With `--at`, `at` records
+the override and the packets carry it as `captured_at`.
+
+## Receiver clock acceptance
+
+A valid packet tag and signed schedule do not establish when a packet arrived.
+The default one-second tolerance is an assumption, not a measurement. Reports
+set `capture_time_trusted: false` unless the caller supplies a receiver clock
+record obtained independently from the evidence. The CLI states this condition
+in text output as well. Dispatcher and executor signatures have their own
+`history_authenticated` and `schedules_authenticated` flags.
+
+The capture operator must measure or conservatively bound receiver time relative
+to the **exact signed schedule origins** used for verification. Include both
+machines' reference uncertainty, capture timestamping error and drift over the
+whole observation interval. A receiver-to-UTC observation alone does not bound
+an executor whose origin is unmeasured. A synchronized flag, the kernel's clock
+estimate, or the executor's local wall/monotonic drift threshold does not provide
+this cross-host bound. Debuglet validates the supplied record; it does not obtain
+or certify a time reference. Without that observation the result remains
+conditional, even when all signatures verify.
+
+To produce a reviewable record:
+
+1. Save the capture and the reference-observation log on the receiver. Record the
+   measured interval and the combined worst-case error for every relevant
+   executor's chain origin. Keep the log at the `source` reference named below.
+2. Run `dbl verify probe.pcap --offline --evidence provisional.json` to obtain the
+   normalized packet digest and the executor/chain/origin identities. This step
+   alone makes no clock claim. If using `--source`, use the same filter in every
+   step; it changes the packet digest.
+3. The trusted observer writes `receiver-clock.json` using those identities and
+   the **independent observation**, then transfers it over an authenticated
+   channel. Do not accept a clock record supplied by an untrusted evidence author.
+
+```json
+{
+  "packets_digest": "sha256:<packets.digest from the receiver's own export>",
+  "source": "receiver observation log identifier and reference used",
+  "observed_at": "2026-10-07T10:00:00Z",
+  "valid_until": "2026-10-07T10:01:00Z",
+  "max_error_ns": 2000000,
+  "schedules": [{"executor_id":"...", "chain_id":"...", "origin_unix_ns":1791366000000000000}]
+}
+```
+
+The numbers illustrate the format; they are not a measured bound for a deployment.
+The record is at most 128 KiB and names at most 128 schedule origins. Its positive
+combined error bound is at most 24 hours; a bound too large for the disclosure
+window produces an inconclusive result. Each packet's timestamp **plus and minus**
+the bound must fit inside `[observed_at, valid_until)`. The digest binds the
+normalized packet bytes and timestamps, preventing a later timestamp edit from
+reusing the observation.
+
+Run `dbl verify probe.pcap --offline --clock receiver-clock.json --evidence
+verified.json` (on one command line). The SDK equivalent is
+`VerifyOptions{CaptureClock: &record}`. Verification rounds the bound upward to
+milliseconds and uses at least the existing tolerance, plus the protocol's
+five-second early-disclosure allowance. A key is usable only while
+`captured_at + applied_bound < scheduled_disclosure - 5 seconds`.
+`--at` overrides cannot carry receiver clock trust. Tag-spec v1 still checks the
+capture epoch and its predecessor; the observation does not expand that matching
+window or its false-match bound. A deployment requiring a wider clock/delay
+window needs a separately versioned matching policy, not a larger claimed error
+bound alone.
+
+For later offline checks, place that independently obtained record in the
+`capture_clock` field of the existing trust file and run
+`dbl verify verified.json --trust trusted-dispatcher.json`. Strict rechecks reject
+an evidence bundle whose applied tolerance was smaller than the measured bound.
+Keep the dispatcher keys and executor certificate pins in that trust file too.
+A delayed check may run after `valid_until`: the observation must cover the
+original packet arrival, not the time someone opens the bundle. Packets captured
+after disclosure, expired observations at capture time, or unknown schedule
+origins never gain authority by being checked later.
 
 ## Limits
 
@@ -355,6 +485,9 @@ packets carry it as `captured_at`.
 | Hash walk per chain | At most `chain_length`, done once per chain and cached; at most 2²⁴ SHA-256 steps per `Verify` | Keys are checked against `k0` without an unbounded walk |
 | Lookups per `Verify` | 1024 candidate lookups (one per group: an address and the shortest epoch of the runs the lookup names, or a second for an address without a run; round-robin over addresses, busiest first), 256 key pages | Bounded requests at the dispatcher's rate limit (paced to 10 per second, burst 40, so the cap takes under two minutes); groups beyond are `unsupported: work_cap` |
 | Evidence bundle | 256 MiB | |
+| Signed lookup payload | 2 MiB, 32 candidates | Includes bounded public certificate proofs |
+| Executor schedule proof | 32 KiB on control registration; certificate 16 KiB, signature 1024 bytes | |
+| Independent trust/clock record | 128 KiB | At most 128 keys, certificate pins and schedule origins each |
 | Candidates per lookup | 32 | Larger answers are `unsupported: too many candidates` |
 | Keys per page | 1024 epochs | |
 | Packets per `POST /attribution/verify` | 256, body ≤ 64 KiB, ≤ 16 source/epoch groups and ≤ 16 result subsets | |
@@ -400,5 +533,8 @@ and groups and the receipt key, not the packets.
    session, budget `R`, receipts and `/attribution/receipt-keys`. The command
    selects the method automatically. *Landed* (dispatcher schema 25, API
    1.18).
-5. #71(b, c): operator-signed schedule parameters, carried in candidates and
-   evidence; chain rollover with an overlap window.
+5. #71(b): executor-signed schedule parameters, carried in candidates and
+   evidence with independently pinned certificate verification. *Landed*
+   (dispatcher schema 29, API 1.21). Chain exhaustion still stops attributed
+   signing until restart; seamless rollover is not supported. The previous-chain
+   tail recovery and backup limits above remain unchanged.
