@@ -10,6 +10,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/transport/rpc"
@@ -61,11 +62,12 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	}
 	capabilities, vantage := e.capabilityReport(ctx, true)
 	resp := &pb.HelloResponse{
-		ExecutorId:       e.cfg.Identity.ExecutorID,
-		BandwidthVersion: 2,
-		Version:          e.cfg.Identity.Version,
-		Capabilities:     capabilities,
-		VantagePoint:     vantage,
+		ExecutorId:          e.cfg.Identity.ExecutorID,
+		BandwidthVersion:    2,
+		EgressBudgetVersion: 1,
+		Version:             e.cfg.Identity.Version,
+		Capabilities:        capabilities,
+		VantagePoint:        vantage,
 		// The dispatcher records the address it observes on the control
 		// connection, which is what probe recipients see. Reporting an
 		// address here would only be a hint, so leave it empty.
@@ -115,6 +117,9 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 		return nil, err
 	}
 
+	if err := netpolicy.ValidateEgressGrant(policy.GetEgressGrant()); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	var startTime *time.Time
 	if st := req.GetStartTime(); st != nil {
 		if !st.IsValid() {
@@ -140,6 +145,7 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 			ListenUDP:   policy.GetListenUdp(),
 			ListenTCP:   policy.GetListenTcp(),
 			ListenSCION: policy.GetListenScion(),
+			EgressGrant: policy.GetEgressGrant(),
 		},
 	}
 	if _, err := scheduler.StoredRunBytes(spec); err != nil {

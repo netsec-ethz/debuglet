@@ -46,6 +46,7 @@ type Resolver interface {
 // Run is the job's half of the policy: the destinations the submitter declared
 // and the capabilities the submission requested.
 type Run struct {
+	Egress      *Egress
 	Addresses   []string
 	RequireICMP bool
 	ListenTCP   bool
@@ -133,6 +134,9 @@ func (p *Policy) Available(t Transport) error {
 	if p == nil {
 		return fmt.Errorf("%w: no network policy is installed", ErrTransportUnavailable)
 	}
+	if t == SCION && p.run.Egress != nil {
+		return fmt.Errorf("%w: SCION is not supported by aggregate egress grants", ErrTransportUnavailable)
+	}
 	if !p.op.Enabled(t) {
 		return fmt.Errorf("%w: %s is disabled by the operator network policy", ErrTransportUnavailable, t)
 	}
@@ -189,7 +193,8 @@ type Destination struct {
 	// empty when the guest gave an address literal.
 	ServerName string
 
-	op Operator
+	op     Operator
+	egress *Egress
 }
 
 // DialAddresses are the literals the host dials, in the order it should try
@@ -241,7 +246,10 @@ func (d Destination) CheckSocket(network, address string) error {
 	if err := d.op.CheckPort(port); err != nil {
 		return err
 	}
-	return d.op.CheckAddr(addr)
+	if err := d.op.CheckAddr(addr); err != nil {
+		return err
+	}
+	return d.egress.Connect(addr)
 }
 
 // Match is an admitted address that the host did not resolve itself: an
@@ -287,7 +295,7 @@ func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target strin
 	// order the resolver gave them. Admitting only the first would make a
 	// destination whose first address is unreachable unreachable altogether,
 	// which dialling the name never was.
-	destination := Destination{Key: "", op: p.op}
+	destination := Destination{Key: "", op: p.op, egress: p.run.Egress}
 	if !isAddrLiteral(host) {
 		destination.ServerName = host
 	}
@@ -306,6 +314,10 @@ func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target strin
 			continue
 		}
 		if err := p.op.CheckAddr(candidate); err != nil {
+			refusal = errors.Join(refusal, err)
+			continue
+		}
+		if err := p.run.Egress.CheckAddress(candidate); err != nil {
 			refusal = errors.Join(refusal, err)
 			continue
 		}
@@ -371,6 +383,9 @@ func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort
 		return Match{}, fmt.Errorf("%w: %s", ErrNotInPolicy, peer)
 	}
 	if err := p.op.revoked.checkDeclared(key); err != nil {
+		return Match{}, err
+	}
+	if err := p.run.Egress.CheckAddress(peer); err != nil {
 		return Match{}, err
 	}
 	return Match{Key: key}, nil
@@ -636,4 +651,11 @@ func splitHostPort(address string) (string, int, error) {
 func isAddrLiteral(host string) bool {
 	_, err := netip.ParseAddr(strings.Trim(host, "[]"))
 	return err == nil
+}
+
+func (p *Policy) Egress() *Egress {
+	if p == nil {
+		return nil
+	}
+	return p.run.Egress
 }

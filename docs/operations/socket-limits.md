@@ -84,3 +84,6 @@ outside the supported shared-pilot socket accounting profile. The optional
 [shared runtime profile](guest-isolation.md) separately contains compiler and
 WASI processes; these socket counters still do not impose kernel limits on the
 parent's networking code.
+
+For limits shared across accounts, executor nodes and destination groups, see
+[aggregate egress budgets](aggregate-egress.md).

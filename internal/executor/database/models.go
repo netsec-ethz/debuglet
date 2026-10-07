@@ -29,6 +29,7 @@ type Debuglet struct {
 	StartedAt             UTCTime
 	DispatcherIncarnation string
 	SessionID             string
+	EgressGrant           []byte
 }
 
 type DebugletExit struct {

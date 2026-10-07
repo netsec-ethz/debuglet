@@ -5,7 +5,9 @@ package scheduler
 
 import (
 	"errors"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/uploadsize"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -42,6 +44,17 @@ func (l QueueLimits) Validate() error {
 // columns, text columns and a fixed per-row charge. It checks lengths before
 // serializing argument/address lists, and does not allocate payload copies.
 func StoredRunBytes(spec Spec) (int64, error) {
+	grant := []byte{}
+	if spec.Policy.EgressGrant != nil {
+		if err := netpolicy.ValidateEgressGrant(spec.Policy.EgressGrant); err != nil {
+			return 0, errors.Join(ErrUploadLimit, err)
+		}
+		var err error
+		grant, err = protojson.Marshal(spec.Policy.EgressGrant)
+		if err != nil {
+			return 0, err
+		}
+	}
 	return uploadsize.StoredBytes(spec.Wasm, spec.Args, spec.Policy.Addresses,
-		spec.TransactionID, spec.Binding.Incarnation, spec.Binding.SessionID)
+		spec.TransactionID, spec.Binding.Incarnation, spec.Binding.SessionID, string(grant))
 }

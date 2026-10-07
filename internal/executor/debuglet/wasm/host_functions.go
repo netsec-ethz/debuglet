@@ -89,6 +89,7 @@ func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, 
 	}
 
 	opts := hostconn.HostConnOpts{
+		Egress:           env.Net.Egress(),
 		ConnAddr:         key,
 		MaximumBandwidth: min(limit.Executor, limit.Address),
 		SocketType:       socketType,
@@ -425,6 +426,9 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 				continue
 			}
 			match, err := env.Net.AdmitAddr(ctx, netpolicy.Inbound, peer)
+			if err == nil {
+				err = env.Net.Egress().Connect(peer.Addr())
+			}
 			if err != nil {
 				env.warnPrivate("hostAcceptTCP: peer refused", fmt.Errorf("peer %s: %w", peer, err))
 				env.RecordCleanupError(conn.Close())

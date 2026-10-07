@@ -222,6 +222,31 @@ type Earning struct {
 	SuiWalletAddress string
 }
 
+type EgressClock struct {
+	ID         int64
+	ObservedAt int64
+}
+
+type EgressGrant struct {
+	RunUuid     string
+	PolicyHash  string
+	WindowStart int64
+	WindowEnd   int64
+	GrantJson   []byte
+}
+
+type EgressReservation struct {
+	RunUuid           string
+	Bucket            string
+	BitsPerSecond     int64
+	BurstBytes        int64
+	Bytes             int64
+	AttemptsPerSecond int64
+	AttemptBurst      int64
+	Attempts          int64
+	Targets           int64
+}
+
 type ExecutorEnrollment struct {
 	ExecutorID  string
 	Fingerprint string

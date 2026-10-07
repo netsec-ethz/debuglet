@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
 	"sort"
 	"sync"
 	"time"
@@ -168,7 +169,14 @@ func (d *Dispatcher) reserveAccountRuns(ctx context.Context, q *database.Queries
 			return err
 		}
 		spec := specs[i]
-		charges[i], err = uploadsize.StoredBytes(spec.Wasm, spec.Args, spec.Policy.Addresses, spec.TransactionID, rows[i].DispatcherIncarnation, rows[i].SessionID)
+		var grant []byte
+		if spec.Policy.EgressGrant != nil {
+			grant, err = protojson.Marshal(spec.Policy.EgressGrant)
+			if err != nil {
+				return err
+			}
+		}
+		charges[i], err = uploadsize.StoredBytes(spec.Wasm, spec.Args, spec.Policy.Addresses, spec.TransactionID, rows[i].DispatcherIncarnation, rows[i].SessionID, string(grant))
 		if err != nil {
 			return err
 		}

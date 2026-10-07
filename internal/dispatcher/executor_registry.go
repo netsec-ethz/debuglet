@@ -145,10 +145,11 @@ type executorEntry struct {
 	owner *rpc.SessionOwner
 	// Legacy peers require ordered sends; revised peers also fence application
 	// after a timed-out RPC. Pending work is retried by this session's heartbeat.
-	bandwidthTail     chan struct{}
-	bandwidthVersion  uint32
-	bandwidthRevision uint64
-	bandwidthPending  bool
+	bandwidthTail       chan struct{}
+	egressBudgetVersion uint32
+	bandwidthVersion    uint32
+	bandwidthRevision   uint64
+	bandwidthPending    bool
 }
 
 type registrationOperation struct{ cancel context.CancelFunc }
@@ -263,7 +264,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 			commitErr = err
 			return
 		}
-		d.executors[record.ID] = &executorEntry{RegisteredExecutor: record, owner: owner, bandwidthVersion: hello.GetBandwidthVersion()}
+		d.executors[record.ID] = &executorEntry{RegisteredExecutor: record, owner: owner, bandwidthVersion: hello.GetBandwidthVersion(), egressBudgetVersion: hello.GetEgressBudgetVersion()}
 		if d.expiryDone == nil {
 			d.expiryDone = make(chan struct{})
 			startExpiry = d.expiryDone
