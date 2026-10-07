@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,9 @@ import (
 // Pin old keys before a dispatcher is retired; a bundle cannot establish its
 // own identity by supplying another public key.
 type EvidenceTrust struct {
-	Dispatcher string               `json:"dispatcher"`
-	Keys       []EvidenceReceiptKey `json:"keys"`
+	Dispatcher           string               `json:"dispatcher"`
+	Keys                 []EvidenceReceiptKey `json:"keys"`
+	ExecutorCertificates map[string]string    `json:"executor_certificates,omitempty"`
 }
 
 func (s *clientSource) historyKeys(ctx context.Context, id string) error {
@@ -39,13 +41,16 @@ func (s *clientSource) historyKeys(ctx context.Context, id string) error {
 	return nil
 }
 
+func historySchedule(s EvidenceSchedule) wire.AttributionSchedule {
+	return wire.AttributionSchedule{ChainID: s.ChainID, K0: s.K0, T0UnixNs: s.T0UnixNs, EpochSeconds: s.EpochSeconds, DisclosureDelayEpochs: s.DisclosureDelayEpochs, ChainLength: s.ChainLength, TagSpec: s.TagSpec, OperatorProof: s.OperatorProof}
+}
+
 func historyLookup(lookup EvidenceLookup) wire.AttributionCandidates {
 	out := wire.AttributionCandidates{IP: lookup.IP, At: lookup.At, RetainedFrom: lookup.RetainedFrom, Truncated: lookup.Truncated, Candidates: []wire.AttributionCandidate{}}
 	for _, c := range lookup.Candidates {
-		s := c.Schedule
 		out.Candidates = append(out.Candidates, wire.AttributionCandidate{
 			ExecutorID: c.ExecutorID, RunID: c.RunID, ActiveFrom: c.ActiveFrom, ActiveTo: c.ActiveTo, IPSource: c.IPSource,
-			Schedule:         wire.AttributionSchedule{ChainID: s.ChainID, K0: s.K0, T0UnixNs: s.T0UnixNs, EpochSeconds: s.EpochSeconds, DisclosureDelayEpochs: s.DisclosureDelayEpochs, ChainLength: s.ChainLength, TagSpec: s.TagSpec},
+			Schedule:         historySchedule(c.Schedule),
 			DisclosedThrough: c.DisclosedThrough, DisclosedThroughAtNs: c.DisclosedThroughAtNs, NextDisclosureAtNs: c.NextDisclosureAtNs,
 		})
 	}
@@ -54,7 +59,7 @@ func historyLookup(lookup EvidenceLookup) wire.AttributionCandidates {
 
 func checkHistory(lookup EvidenceLookup, dispatcher string, keys []EvidenceReceiptKey) error {
 	proof := lookup.Statement
-	if proof == nil || len(proof.Payload) > 128<<10 || len(lookup.Candidates) > maxAttributionCandidates {
+	if proof == nil || len(proof.Payload) > 2<<20 || len(lookup.Candidates) > maxAttributionCandidates {
 		return errors.New("client: missing or excessive history statement")
 	}
 	i := slices.IndexFunc(keys, func(k EvidenceReceiptKey) bool { return k.KeyID == proof.KeyID })
@@ -69,7 +74,7 @@ func checkHistory(lookup EvidenceLookup, dispatcher string, keys []EvidenceRecei
 	if err := decodeStrict(proof.Payload, &payload); err != nil {
 		return fmt.Errorf("client: history statement: %w", err)
 	}
-	if payload.Format != wire.AttributionHistoryFormat || payload.Dispatcher != dispatcher || payload.SignedAt.Before(key.ValidFrom) || (key.ValidTo != nil && !payload.SignedAt.Before(*key.ValidTo)) {
+	if payload.Format != wire.AttributionHistoryFormat || payload.Dispatcher == "" || payload.Dispatcher != dispatcher || payload.SignedAt.Before(key.ValidFrom) || (key.ValidTo != nil && !payload.SignedAt.Before(*key.ValidTo)) {
 		return errors.New("client: history statement has a different issuer, format or invalid signing time")
 	}
 	expected, err := wire.AttributionHistoryBytes(wire.AttributionHistoryPayload{Format: payload.Format, Dispatcher: dispatcher, SignedAt: payload.SignedAt, Lookup: historyLookup(lookup)})
@@ -95,6 +100,15 @@ func ReadEvidenceTrust(data []byte) (EvidenceTrust, error) {
 	for _, key := range trust.Keys {
 		if len(key.PublicKey) != ed25519.PublicKeySize || ReceiptKeyID(key.PublicKey) != key.KeyID || key.ValidFrom.IsZero() || (key.ValidTo != nil && !key.ValidTo.After(key.ValidFrom)) {
 			return trust, errors.New("client: invalid evidence trust key")
+		}
+	}
+	if len(trust.ExecutorCertificates) > 128 {
+		return trust, errors.New("client: too many trusted executor certificates")
+	}
+	for executor, fingerprint := range trust.ExecutorCertificates {
+		decoded, err := hex.DecodeString(fingerprint)
+		if executor == "" || len(executor) > 128 || err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != fingerprint {
+			return trust, errors.New("client: invalid executor certificate pin")
 		}
 	}
 	return trust, nil

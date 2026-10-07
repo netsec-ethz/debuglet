@@ -1,9 +1,8 @@
 # Probe verification
 
 This note records how the recipient of a probe checks which Debuglet run sent
-it. It is a design for #71, #73 and #341; steps 1 to 4 of the
-[delivery order](#delivery-order) have landed, the rest has not. Keep it in
-step with the code as each step lands. The tag
+it. The [delivery order](#delivery-order) records the supported protocol
+and remaining limits. The tag
 algorithm itself is specified in the [tag spec](tag-spec.md) (tag spec
 v1).
 
@@ -355,6 +354,14 @@ while the dispatcher's HTTPS identity is known:
 ```
 
 The keys and validity intervals come from `GET /attribution/receipt-keys`.
+The trust file's `dispatcher` pins the signed issuer, not the URL used to retrieve
+it. Behind a TLS terminator or path-prefix proxy, those may differ: evidence
+records the API address as `dispatcher.url` and the signed identity as
+`dispatcher.issuer`. The issuer is `[authentication] public_url` when configured;
+otherwise it is the backend request origin. Live verification obtains keys from
+the configured API endpoint and verifies statements with those keys; it does not
+infer an issuer from forwarding headers. Configure `public_url` for a stable
+identity before exporting evidence across deployments.
 Keep retired keys for older statements. Run `dbl verify evidence.json --trust
 trusted-dispatcher.json`, or call `VerifyEvidenceWithTrust`. These require every
 lookup and packet receipt to verify under a separately supplied key and the
@@ -363,6 +370,30 @@ a public key inside the evidence cannot replace a pinned key. The report sets
 `history_authenticated` only when history has been verified against trusted keys.
 This authenticates what the dispatcher said; it does not authenticate capture
 timestamps or make packet attribution prove a measurement conclusion.
+
+In API 1.21 each newly registered, TLS-authenticated executor also signs its
+schedule using its existing enrolled certificate key. `schedule.operator_proof`
+contains the leaf certificate DER and a signature over the stable JSON object
+`{"format":"debuglet-tesla-schedule-v1","executor_id":...,"schedule":...}`,
+with `operator_proof` omitted from the schedule. The dispatcher accepts it only
+when its certificate fingerprint matches the enrolled, authenticated control
+peer. Dispatcher schema 29 persists it unchanged; reannouncement cannot replace
+its parameters or remove the proof. Disclosures and a dispatcher restart keep it.
+The signature covers the anchor, chain ID, origin, interval, delay, length and tag
+specification. This is executor-origin evidence, not a separate account-key
+signature or a certificate of clock quality.
+
+For independent executor-origin verification, add `executor_certificates` to
+the trust file: an object mapping each executor ID to its lowercase SHA-256
+certificate fingerprint (DER bytes). Obtain those pins from the operator through
+an authenticated channel, separately from the bundle. Every candidate must have
+a valid proof under its pin; the report then sets `schedules_authenticated`.
+Certificate validity is checked at the signed chain origin, so a retained proof
+remains checkable after certificate expiry. A proof's embedded certificate alone
+never establishes trust. Old histories without this proof remain usable as
+unsigned executor claims, and strict executor trust rejects them. Preserve old
+certificate pins together with the dispatcher keys and evidence before pruning
+history. No private key is exported, and no additional signing key is provisioned.
 
 `api_version` is the API version the client requires. With `--at`, `at` records
 the override and the packets carry it as `captured_at`.
@@ -421,5 +452,8 @@ and groups and the receipt key, not the packets.
    session, budget `R`, receipts and `/attribution/receipt-keys`. The command
    selects the method automatically. *Landed* (dispatcher schema 25, API
    1.18).
-5. #71(b, c): operator-signed schedule parameters, carried in candidates and
-   evidence; chain rollover with an overlap window.
+5. #71(b): executor-signed schedule parameters, carried in candidates and
+   evidence with independently pinned certificate verification. *Landed*
+   (dispatcher schema 29, API 1.21). Chain exhaustion still stops attributed
+   signing until restart; seamless rollover is not supported. The previous-chain
+   tail recovery and backup limits above remain unchanged.

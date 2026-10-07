@@ -161,7 +161,12 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 		if trustPath == "" {
 			rep, err = client.VerifyEvidence(ctx, ev)
 		} else {
-			data, readErr := os.ReadFile(trustPath)
+			f, readErr := os.Open(trustPath)
+			if readErr != nil {
+				return fail("read trust: %v", readErr)
+			}
+			data, readErr := io.ReadAll(io.LimitReader(f, (128<<10)+1))
+			f.Close()
 			if readErr != nil {
 				return fail("read trust: %v", readErr)
 			}

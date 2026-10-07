@@ -76,6 +76,7 @@ type Executor struct {
 	clockReason   string
 	cfg           config.ExecutorConfig
 	teslaSchedule *tesla.KeySchedule
+	scheduleProof []byte
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
 	chainReport *chainReport
@@ -144,7 +145,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, chainReport: &node.chainReport, retired: &node.retired,
+	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, scheduleProof: node.scheduleProof, chainReport: &node.chainReport, retired: &node.retired,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter, revoked: netpolicy.NewRevocations(),
 		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget, supervisor: node.supervisor,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),

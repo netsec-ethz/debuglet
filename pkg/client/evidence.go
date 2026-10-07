@@ -72,6 +72,9 @@ type EvidenceTool struct {
 
 // EvidenceDispatcher names the dispatcher whose history a bundle records.
 type EvidenceDispatcher struct {
+	// Issuer is the signed identity; URL is the API retrieval address, which may
+	// differ behind a TLS terminator or a path-prefix proxy.
+	Issuer     string `json:"issuer,omitempty"`
 	URL        string `json:"url"`
 	APIVersion string `json:"api_version"`
 }
@@ -130,7 +133,8 @@ type EvidenceSchedule struct {
 	ChainLength int64 `json:"chain_length"`
 	// TagSpec is the executor-reported tag specification version; 0 is the
 	// unversioned pre-v1 tag, which is unsupported.
-	TagSpec int64 `json:"tag_spec"`
+	TagSpec       int64                          `json:"tag_spec"`
+	OperatorProof *wire.AttributionScheduleProof `json:"operator_proof,omitempty"`
 }
 
 // EvidenceKey is one disclosed chain key.
@@ -213,7 +217,7 @@ func (r VerifyReport) Evidence() Evidence {
 	ev := Evidence{
 		Format: EvidenceFormat, FormatVersion: EvidenceFormatVersion, CreatedAt: r.CheckedAt,
 		Tool:    EvidenceTool{Name: "github.com/netsec-ethz/debuglet/pkg/client", Version: toolVersion()},
-		TagSpec: tagspec.Version, Dispatcher: EvidenceDispatcher{URL: r.Dispatcher, APIVersion: m.apiVersion},
+		TagSpec: tagspec.Version, Dispatcher: EvidenceDispatcher{URL: r.Dispatcher, APIVersion: m.apiVersion, Issuer: m.issuer},
 		At: r.At, ClockToleranceMS: r.ClockToleranceMS,
 		Groups: []EvidenceGroup{}, Lookups: m.lookups, Chains: []EvidenceChain{}, Receipts: []EvidenceReceipt{},
 		ReceiptKeys: m.receiptKeys,
@@ -394,20 +398,40 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 		return VerifyReport{}, ErrEvidenceDigest
 	}
 	keys := ev.ReceiptKeys
+	issuer := ev.Dispatcher.Issuer
+	if issuer == "" {
+		issuer = ev.Dispatcher.URL
+	}
 	if trust != nil {
-		if ev.Dispatcher.URL != trust.Dispatcher {
+		if issuer != trust.Dispatcher {
 			return VerifyReport{}, errors.New("client: evidence names a different dispatcher")
 		}
 		keys = trust.Keys
 	}
 	for i, lookup := range ev.Lookups {
+		for _, candidate := range lookup.Candidates {
+			fingerprint := ""
+			if trust != nil && trust.ExecutorCertificates != nil {
+				fingerprint = trust.ExecutorCertificates[candidate.ExecutorID]
+				if fingerprint == "" {
+					return VerifyReport{}, fmt.Errorf("client: no trusted certificate for executor %s", candidate.ExecutorID)
+				}
+			} else if candidate.Schedule.OperatorProof != nil {
+				fingerprint = wire.AttributionCertificateID(candidate.Schedule.OperatorProof.Certificate)
+			}
+			if fingerprint != "" {
+				if err := wire.VerifyAttributionSchedule(candidate.ExecutorID, historySchedule(candidate.Schedule), fingerprint); err != nil {
+					return VerifyReport{}, fmt.Errorf("client: executor schedule: %w", err)
+				}
+			}
+		}
 		if lookup.Statement == nil {
 			if trust != nil {
 				return VerifyReport{}, fmt.Errorf("client: evidence lookup %d is unsigned", i)
 			}
 			continue
 		}
-		if err := checkHistory(lookup, ev.Dispatcher.URL, keys); err != nil {
+		if err := checkHistory(lookup, issuer, keys); err != nil {
 			return VerifyReport{}, fmt.Errorf("client: evidence lookup %d: %w", i, err)
 		}
 	}
@@ -442,7 +466,9 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 	}
 	rep.At = ev.At
 	rep.material.receiptKeys = ev.ReceiptKeys
+	rep.material.issuer = ev.Dispatcher.Issuer
 	rep.HistoryAuthenticated = trust != nil
+	rep.SchedulesAuthenticated = trust != nil && trust.ExecutorCertificates != nil
 	if len(ev.Receipts) > 0 {
 		rep.material.receipts, rep.material.receiptKeys = ev.Receipts, ev.ReceiptKeys
 		rep.Groups = applyReceipts(rep.Groups, ev.Receipts, payloads, itemTimes(ev.Packets.Items))

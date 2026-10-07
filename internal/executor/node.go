@@ -38,22 +38,23 @@ var (
 // Node retains the resource identity which must survive network reconnects.
 // Its one session reservation is lifecycle ownership, never lease authority.
 type Node struct {
-	cfg          config.ExecutorConfig
-	logger       *zap.Logger
-	schedule     *tesla.KeySchedule
-	packetCount  ratelimit.PacketCount
-	socketBudget *socket.DescriptorBudget
-	supervisor   *isolation.Supervisor
-	iface        *net.Interface
-	output       *outputstore.Store
-	outputFailed atomic.Bool
-	opts         rpc.BidiOptions
-	newBidi      func(rpc.BidiOptions, rpc.ExecutorState) (*rpc.BidiClient, error)
-	mu           sync.Mutex
-	closed       bool
-	active       *Session
-	closeOnce    sync.Once
-	closeErr     error
+	cfg           config.ExecutorConfig
+	logger        *zap.Logger
+	schedule      *tesla.KeySchedule
+	scheduleProof []byte
+	packetCount   ratelimit.PacketCount
+	socketBudget  *socket.DescriptorBudget
+	supervisor    *isolation.Supervisor
+	iface         *net.Interface
+	output        *outputstore.Store
+	outputFailed  atomic.Bool
+	opts          rpc.BidiOptions
+	newBidi       func(rpc.BidiOptions, rpc.ExecutorState) (*rpc.BidiClient, error)
+	mu            sync.Mutex
+	closed        bool
+	active        *Session
+	closeOnce     sync.Once
+	closeErr      error
 	// chainReport outlives sessions so the end of the chain is reported once.
 	chainReport chainReport
 	// retired outlives sessions so the previous chain's tail is disclosed
@@ -130,6 +131,13 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if err != nil {
 		return nil, sessionEnd(controlsession.LocalFailure, err)
 	}
+	var scheduleProof []byte
+	if tlsConfig != nil {
+		scheduleProof, err = signSchedule(cfg.Identity.ExecutorID, schedule, tlsConfig.Certificates[0])
+		if err != nil {
+			return nil, sessionEnd(controlsession.LocalFailure, fmt.Errorf("sign TESLA schedule: %w", err))
+		}
+	}
 	if schedule.Config().ClockUnready {
 		logger.Error("TESLA chain started while the host clock was not ready; packets are not attributable and tagging nodes admit no runs until the executor restarts with a ready clock",
 			zap.String("clock_state", clock.State), zap.String("clock_readiness", clock.Readiness), zap.String("clock_reason", clock.Reason))
@@ -152,7 +160,7 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if pc == nil {
 		return nil, sessionEnd(controlsession.LocalFailure, errors.New("packet counter constructor returned nil"))
 	}
-	n := &Node{supervisor: supervisor, socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
+	n := &Node{supervisor: supervisor, socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, scheduleProof: scheduleProof, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
 	n.retired.schedule, n.retired.logger = retired, logger
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()),

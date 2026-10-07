@@ -5,8 +5,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -53,6 +55,7 @@ func (c *Client) Verify(ctx context.Context, packets []CapturedPacket, opts Veri
 	rep, err := verifyOffline(ctx, src, packets, opts, time.Now())
 	if err == nil {
 		rep.material.receiptKeys = src.receiptKeys
+		rep.material.issuer = src.issuer
 		rep.HistoryAuthenticated = strings.HasPrefix(c.origin, "https://") && len(rep.material.lookups) > 0
 		for _, lookup := range rep.material.lookups {
 			rep.HistoryAuthenticated = rep.HistoryAuthenticated && lookup.Statement != nil
@@ -200,6 +203,7 @@ type clientSource struct {
 	c           *Client
 	pace        *pacer
 	receiptKeys []EvidenceReceiptKey
+	issuer      string
 }
 
 // paced runs call at the pacer's rate, retrying after the Retry-After while
@@ -242,7 +246,7 @@ func (s *clientSource) candidates(ctx context.Context, ip netip.Addr, at time.Ti
 			IPSource: c.IPSource, DisclosedThrough: c.DisclosedThrough, DisclosedThroughAtNs: c.DisclosedThroughAtNs, NextDisclosureAtNs: c.NextDisclosureAtNs,
 			Schedule: EvidenceSchedule{
 				ChainID: s.ChainID, K0: s.K0, T0UnixNs: s.T0UnixNs, EpochSeconds: s.EpochSeconds,
-				DisclosureDelayEpochs: s.DisclosureDelayEpochs, ChainLength: s.ChainLength, TagSpec: s.TagSpec,
+				DisclosureDelayEpochs: s.DisclosureDelayEpochs, ChainLength: s.ChainLength, TagSpec: s.TagSpec, OperatorProof: s.OperatorProof,
 			},
 		})
 	}
@@ -250,9 +254,17 @@ func (s *clientSource) candidates(ctx context.Context, ip netip.Addr, at time.Ti
 		if err := s.historyKeys(ctx, out.Statement.KeyID); err != nil {
 			return EvidenceLookup{}, err
 		}
-		if err := checkHistory(out, s.c.origin+s.c.basePath, s.receiptKeys); err != nil {
+		var statement wire.AttributionHistoryPayload
+		if err := json.Unmarshal(out.Statement.Payload, &statement); err != nil {
 			return EvidenceLookup{}, err
 		}
+		if s.issuer != "" && s.issuer != statement.Dispatcher {
+			return EvidenceLookup{}, errors.New("client: inconsistent history issuer")
+		}
+		if err := checkHistory(out, statement.Dispatcher, s.receiptKeys); err != nil {
+			return EvidenceLookup{}, err
+		}
+		s.issuer = statement.Dispatcher
 	}
 	return out, nil
 }

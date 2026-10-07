@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/netip"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -768,15 +770,32 @@ func TestAttributionSignedHistorySurvivesOfflineExport(t *testing.T) {
 	if err := f.queries.InsertAttributionKey(t.Context(), database.InsertAttributionKeyParams{ExecutorID: ccExecutorID, ChainID: tag.ChainID(chain.anchor()), Epoch: epoch, Key: chain.key(epoch), DisclosedAtNs: 1}); err != nil {
 		t.Fatal(err)
 	}
-	c := f.client(f.root.URL, false)
+	target, err := url.Parse(f.root.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/public-api")
+		r.Host = target.Host
+		proxy.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	c, err := client.New(front.URL+"/public-api", client.Options{HTTPClient: front.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	packet := client.CapturedPacket{Data: vtPacket(chain, "127.0.0.1", epoch, run, 1), CapturedAt: at}
 	report, err := c.Verify(t.Context(), []client.CapturedPacket{packet}, client.VerifyOptions{Offline: true})
-	if err != nil || report.Counts.Verified != 1 {
+	if err != nil || report.Counts.Verified != 1 || !report.HistoryAuthenticated {
 		t.Fatalf("live history: %+v, %v", report, err)
 	}
 	ev := report.Evidence()
 	if len(ev.Lookups) != 1 || ev.Lookups[0].Statement == nil || len(ev.ReceiptKeys) == 0 {
 		t.Fatalf("unsigned export: %+v", ev.Lookups)
+	}
+	if ev.Dispatcher.URL != front.URL+"/public-api" || ev.Dispatcher.Issuer != f.root.URL {
+		t.Fatalf("API address and signed issuer must remain distinct: %+v", ev.Dispatcher)
 	}
 	keys, err := c.AttributionReceiptKeys(t.Context())
 	if err != nil {

@@ -49,16 +49,17 @@ type AllowanceGrant struct {
 }
 
 type AttributionChain struct {
-	ExecutorID  string
-	ChainID     string
-	Anchor      []byte
-	T0Ns        int64
-	IntervalNs  int64
-	DelayEpochs int64
-	ChainLength int64
-	TagSpec     int64
-	FirstSeenNs int64
-	LastSeenNs  int64
+	ExecutorID    string
+	ChainID       string
+	Anchor        []byte
+	T0Ns          int64
+	IntervalNs    int64
+	DelayEpochs   int64
+	ChainLength   int64
+	TagSpec       int64
+	FirstSeenNs   int64
+	LastSeenNs    int64
+	ScheduleProof []byte
 }
 
 type AttributionKey struct {

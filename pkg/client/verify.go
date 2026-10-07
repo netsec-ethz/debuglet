@@ -237,7 +237,8 @@ type VerifyReport struct {
 	// HistoryAuthenticated means every used lookup was signed by a dispatcher
 	// key obtained through this client's trusted connection or supplied by the
 	// caller, not merely by a public key embedded in an evidence bundle.
-	HistoryAuthenticated bool `json:"history_authenticated"`
+	HistoryAuthenticated   bool `json:"history_authenticated"`
+	SchedulesAuthenticated bool `json:"schedules_authenticated"`
 	// Packets counts the packets checked.
 	Packets int           `json:"packets"`
 	Counts  VerifyCounts  `json:"counts"`
@@ -248,6 +249,7 @@ type VerifyReport struct {
 
 // verifyMaterial is what an evidence bundle needs to repeat the check.
 type verifyMaterial struct {
+	issuer     string
 	packets    []CapturedPacket
 	lookups    []EvidenceLookup
 	chains     map[chainRef]*chainState

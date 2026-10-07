@@ -69,7 +69,8 @@ func (c *Client) attributionCandidates(ctx context.Context, ip string, at time.T
 	if err := c.decode(http.MethodGet, routeAttributionCandidates, data, &doc); err != nil {
 		return AttributionCandidates{}, err
 	}
-	valid := doc.Candidates != nil && len(doc.Candidates) <= maxAttributionCandidates && !doc.RetainedFrom.IsZero()
+	answerIP, answerErr := netip.ParseAddr(doc.IP)
+	valid := answerErr == nil && answerIP.Unmap() == addr.Unmap() && doc.At.Equal(at) && doc.Candidates != nil && len(doc.Candidates) <= maxAttributionCandidates && !doc.RetainedFrom.IsZero()
 	for _, candidate := range doc.Candidates {
 		s := candidate.Schedule
 		valid = valid && isCanonicalUUID(candidate.RunID) && !isNilUUID(candidate.RunID) &&

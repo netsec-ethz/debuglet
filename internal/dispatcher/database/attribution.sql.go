@@ -38,7 +38,7 @@ func (q *Queries) EndAttributionRun(ctx context.Context, arg EndAttributionRunPa
 }
 
 const getAttributionChain = `-- name: GetAttributionChain :one
-SELECT executor_id, chain_id, anchor, t0_ns, interval_ns, delay_epochs, chain_length, tag_spec, first_seen_ns, last_seen_ns FROM attribution_chains WHERE executor_id = ? AND chain_id = ?
+SELECT executor_id, chain_id, anchor, t0_ns, interval_ns, delay_epochs, chain_length, tag_spec, first_seen_ns, last_seen_ns, schedule_proof FROM attribution_chains WHERE executor_id = ? AND chain_id = ?
 `
 
 type GetAttributionChainParams struct {
@@ -60,6 +60,7 @@ func (q *Queries) GetAttributionChain(ctx context.Context, arg GetAttributionCha
 		&i.TagSpec,
 		&i.FirstSeenNs,
 		&i.LastSeenNs,
+		&i.ScheduleProof,
 	)
 	return i, err
 }
@@ -142,7 +143,7 @@ func (q *Queries) LatestAttributionKey(ctx context.Context, arg LatestAttributio
 
 const listAttributionCandidates = `-- name: ListAttributionCandidates :many
 SELECT d.uuid, d.executor_id, r.source_ip_observed, r.active_from_ns, r.active_to_ns,
-       c.chain_id, c.anchor, c.t0_ns, c.interval_ns, c.delay_epochs, c.chain_length, c.tag_spec,
+       c.chain_id, c.anchor, c.t0_ns, c.interval_ns, c.delay_epochs, c.chain_length, c.tag_spec, c.schedule_proof,
        CAST(COALESCE((SELECT MAX(k.epoch) FROM attribution_keys k
                       WHERE k.executor_id = c.executor_id AND k.chain_id = c.chain_id), 0) AS INTEGER) AS disclosed_through,
        CAST(COALESCE((SELECT k.disclosed_at_ns FROM attribution_keys k
@@ -177,6 +178,7 @@ type ListAttributionCandidatesRow struct {
 	DelayEpochs          int64
 	ChainLength          int64
 	TagSpec              int64
+	ScheduleProof        []byte
 	DisclosedThrough     int64
 	DisclosedThroughAtNs int64
 }
@@ -203,6 +205,7 @@ func (q *Queries) ListAttributionCandidates(ctx context.Context, arg ListAttribu
 			&i.DelayEpochs,
 			&i.ChainLength,
 			&i.TagSpec,
+			&i.ScheduleProof,
 			&i.DisclosedThrough,
 			&i.DisclosedThroughAtNs,
 		); err != nil {
@@ -377,6 +380,26 @@ func (q *Queries) RecordAttributionRun(ctx context.Context, arg RecordAttributio
 		arg.ActiveToNs,
 	)
 	return err
+}
+
+const recordAttributionScheduleProof = `-- name: RecordAttributionScheduleProof :execrows
+UPDATE attribution_chains SET schedule_proof = ?1
+WHERE executor_id = ?2 AND chain_id = ?3
+  AND (schedule_proof IS NULL OR schedule_proof = ?1)
+`
+
+type RecordAttributionScheduleProofParams struct {
+	ScheduleProof []byte
+	ExecutorID    string
+	ChainID       string
+}
+
+func (q *Queries) RecordAttributionScheduleProof(ctx context.Context, arg RecordAttributionScheduleProofParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordAttributionScheduleProof, arg.ScheduleProof, arg.ExecutorID, arg.ChainID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const touchAttributionChain = `-- name: TouchAttributionChain :exec

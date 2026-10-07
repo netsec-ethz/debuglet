@@ -235,7 +235,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	// recorded for attribution names a chain whose schedule can be read. It
 	// records the tag specification the hello reported with it.
 	// A canceled registration is classified below, like any other.
-	if err := d.recordChain(callCtx, record.ID, record.teslaChain(), record.LastSeen); err != nil && callCtx.Err() == nil {
+	if err := d.recordChain(callCtx, record.ID, record.teslaChain(), hello.GetTeslaScheduleProof(), owner.CredentialFingerprint(), record.LastSeen); err != nil && callCtx.Err() == nil {
 		return fmt.Errorf("record the executor's TESLA chain: %w", err)
 	}
 	record.capabilityObserved = record.LastSeen
