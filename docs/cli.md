@@ -215,10 +215,15 @@ dbl verify evidence.json
 ```
 
 `verify` tells the recipient of probes which Debuglet run, if any, sent them.
-It needs no account: it reads the dispatcher's public attribution history,
-checks the tags on this machine and never uploads packets. It prints one line
-per group of packets (one source address in one 10-second epoch, by default)
-and then what each verdict means and what to do next:
+It needs no account: it reads the dispatcher's public attribution history and
+checks the tags on this machine. A group whose key is not disclosed yet is
+sent to the dispatcher (the first 64 bytes of at most 256 of its packets),
+whose executor confirms or rejects the tags before disclosure; the line then
+says `via server` and names the key of the dispatcher's signed receipt, which
+`verify` checks and the evidence bundle keeps. `--offline` never uploads
+packets and leaves such groups `pending`. It prints one line per group of
+packets (one source address in one 10-second epoch, by default) and then
+what each verdict means and what to do next:
 
 ```
 verified     run 6f1c2b1d…  executor exec-zrh-1  192.0.2.4  2026-09-29T09:02Z  40 packets  via offline
@@ -230,8 +235,12 @@ pending      198.51.100.4  2026-09-29T10:20Z  5 packets  until 2026-09-29T10:36Z
 - pending: the keys of 1 group are not disclosed yet. Retry after 10:36 UTC (2026-09-29), or keep an evidence bundle now with --evidence.
 ```
 
-Keys are disclosed about 15 minutes after use, so a fresh capture is
-`pending`; run the command again after the time it names. `invalid` means the
+Keys are disclosed about 15 minutes after use, so with `--offline`, or when
+the executor cannot answer or the epoch's 16 candidate trials are spent, a
+fresh capture is `pending`; run the command again after the time it names.
+A server verdict rests on the dispatcher's receipt: it shows what was asked
+and answered when, not when the packets were captured; compare its key with
+`GET /attribution/receipt-keys`. `invalid` means the
 packets were not sent by the named address's runs (`no_run`: no run was
 active; `tag_mismatch`: no packet's tag matches). A group whose packets
 carry tags of different runs, as when one executor runs two measurements
@@ -244,7 +253,7 @@ way; `unsupported` names what cannot be checked (IPv6, fragments, a snap
 length below 64 bytes, a legacy executor). `--output json` prints the full
 report. `--at TIME` takes TIME as the capture time of every packet.
 `--evidence FILE` writes a bundle that `dbl verify FILE` checks again later
-without the capture or the dispatcher. `--source ADDRESS[/BITS],…` checks
+without the capture or the dispatcher, including every receipt's signature. `--source ADDRESS[/BITS],…` checks
 only the packets from those addresses: every other address costs history
 lookups (one per second of its traffic without a run), and one check makes
 at most 1024. Exit status: 0 all verified, 1 error (usage errors included:

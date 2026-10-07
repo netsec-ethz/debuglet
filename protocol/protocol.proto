@@ -265,6 +265,21 @@ message InspectRetainedRunResponse {
   optional RetainedRun run = 2; // Present exactly when status is FOUND.
 }
 
+// Pre-disclosure verification of one packet group (docs/verification.md, server method).
+// The executor answers for the whole group and never returns tags or keys.
+message VerifyTagsRequest {
+  ControlBinding control_binding = 1; // Same rule as InspectRetainedRun: names the armed session.
+  bytes chain_anchor = 2;             // k_0 of the chain the epoch belongs to.
+  int64 epoch = 3;                    // The epoch the packets were captured in (verifier's mapping).
+  repeated string candidate_run_ids = 4; // At most 32 canonical lowercase run IDs active from the source.
+  repeated bytes packets = 5;         // At most 256 entries, each the first min(64, Total Length) bytes of the captured IPv4 packet, tag in place.
+}
+message VerifyTagsResponse {
+  string verdict = 1; // matched, unmatched, ambiguous or unsupported.
+  string run_id = 2;  // The one candidate that reproduces every tag, when matched.
+  string reason = 3;  // For unsupported: unknown_chain, epoch_unavailable, attribution_unavailable, too_many, malformed.
+}
+
 // ============================================================
 // ====================== SERVICE DEFS ========================
 // ============================================================
@@ -295,6 +310,7 @@ service ExecutorService {
   // or deleting it. An executor without inspection answers UNIMPLEMENTED,
   // which is never a missing-row answer.
   rpc InspectRetainedRun(InspectRetainedRunRequest) returns (InspectRetainedRunResponse);
+  rpc VerifyTags(VerifyTagsRequest) returns (VerifyTagsResponse);
 }
 
 // Positive process capabilities observed by this executor. These are not

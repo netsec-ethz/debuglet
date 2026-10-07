@@ -26,7 +26,16 @@ type AttributionConfig struct {
 	// default, trusts no forwarding header, so every client behind a proxy
 	// shares the proxy's allowance.
 	TrustedProxies []string `toml:"trusted_proxies"`
+	// ReceiptKeyPath is the PEM file holding the Ed25519 private key that
+	// signs the receipts of POST /attribution/verify. It is created, owner
+	// readable only, when absent. Empty means DefaultReceiptKeyFile in the
+	// directory of the database.
+	ReceiptKeyPath string `toml:"receipt_key_path"`
 }
+
+// DefaultReceiptKeyFile is the receipt key file used when
+// attribution.receipt_key_path is empty, beside the database.
+const DefaultReceiptKeyFile = "attribution-receipt-key.pem"
 
 // MaxAttributionTrustedProxies bounds attribution.trusted_proxies.
 const MaxAttributionTrustedProxies = 64
