@@ -33,7 +33,7 @@ const (
 const (
 	// Schema 24: the executor listing reads probe_status and probe_addresses.
 	MinimumDispatcherVersion int64 = 24
-	MinimumExecutorVersion   int64 = 7
+	MinimumExecutorVersion   int64 = 8
 )
 
 // Policy is the schema contract of one database for this build.
@@ -124,7 +124,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglets":             {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":         {"debuglet_id", "output"},
 			"debuglet_exits":        {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
-			"tesla_chains":          {"generation", "anchor", "epoch_base", "delay_ns", "chain_length"},
+			"tesla_chains":          {"generation", "anchor", "epoch_base", "delay_ns", "chain_length", "disclosure_delay"},
 			"output_runs":           {"run_id", "dispatcher_incarnation", "session_id", "output_version", "last_sequence", "acknowledged_sequence", "emitted_bytes", "queued_bytes", "queued_frames", "status", "reason", "end_acknowledged", "receipt_sequence", "receipt_reason"},
 			"output_frames":         {"run_id", "sequence", "timestamp_ns", "output"},
 			"output_usage":          {"singleton", "charged_bytes"},

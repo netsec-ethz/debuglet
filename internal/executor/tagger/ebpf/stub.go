@@ -45,3 +45,7 @@ func (bt *BPFTagger) Close() error { return nil }
 
 // Schedule is a no-op stub.
 func (bt *BPFTagger) Schedule() *tesla.KeySchedule { return nil }
+
+// RetireStaleFilters has nothing to remove: no tagger filter is attached off
+// Linux.
+func RetireStaleFilters(iface *net.Interface, logger *zap.Logger) error { return nil }

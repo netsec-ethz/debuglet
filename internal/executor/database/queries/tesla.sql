@@ -8,8 +8,13 @@ INSERT INTO tesla_chains (
     epoch_base,
     delay_ns,
     chain_length,
-    created_at
-) VALUES (?, ?, ?, ?, ?, ?);
+    created_at,
+    disclosure_delay
+) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetTeslaChain :one
+SELECT * FROM tesla_chains
+WHERE generation = ?;
 
 -- name: ListTeslaChains :many
 SELECT * FROM tesla_chains
