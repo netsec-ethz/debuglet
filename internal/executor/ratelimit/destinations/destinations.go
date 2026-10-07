@@ -7,6 +7,7 @@
 package destinations
 
 import (
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"iter"
 	"net/netip"
 
@@ -30,6 +31,7 @@ type Resolved struct {
 
 // Add records one more attachment of debuglet id, which asked for addr, to ip.
 func (r *Resolved) Add(addr string, id uuid.UUID, ip netutil.IPv6) {
+	addr = netpolicy.DestinationKey(addr)
 	if r.byAddr == nil {
 		r.byAddr = make(map[key]map[netutil.IPv6]int)
 	}
@@ -46,6 +48,7 @@ func (r *Resolved) Add(addr string, id uuid.UUID, ip netutil.IPv6) {
 // itself when it is an IP literal, otherwise every IP its attachments to addr
 // currently reach. The caller must not call Add or Remove while iterating.
 func (r *Resolved) Targets(addr string, id uuid.UUID) iter.Seq[netutil.IPv6] {
+	addr = netpolicy.DestinationKey(addr)
 	return func(yield func(netutil.IPv6) bool) {
 		if ip, err := netip.ParseAddr(addr); err == nil {
 			yield(netutil.ToIPv6(ip))
@@ -63,6 +66,7 @@ func (r *Resolved) Targets(addr string, id uuid.UUID) iter.Seq[netutil.IPv6] {
 // of debuglet id through addr to ip remain, and false when there was none to
 // drop, in which case nothing changes.
 func (r *Resolved) Remove(addr string, id uuid.UUID, ip netutil.IPv6) (remaining int, ok bool) {
+	addr = netpolicy.DestinationKey(addr)
 	k := key{addr, id}
 	ips := r.byAddr[k]
 	attachments := ips[ip]

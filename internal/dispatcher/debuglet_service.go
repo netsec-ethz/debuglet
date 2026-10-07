@@ -413,6 +413,11 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 	}
 
 	for _, dest := range spec.Policy.Addresses {
+		// A denied destination admits nothing, whatever the floor; it is
+		// refused like exhausted capacity, which every caller already maps.
+		if d.destinations.Denied(dest) {
+			return nil, fmt.Errorf("destination '%s': %w: %w", dest, resource.ErrDenied, resource.ErrCapacityFull)
+		}
 		if total, exact := bitrate.Add(d.scheduler.QueryMaxDest(dest, from, to), r.Use); !exact || total > d.destinations.Cap(dest) {
 			return nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, resource.ErrCapacityFull)
 		}

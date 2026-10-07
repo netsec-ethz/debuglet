@@ -95,6 +95,10 @@ type recoveryHarness struct {
 }
 
 func newRecoveryHarness(t *testing.T, peer *operationPeer) *recoveryHarness {
+	return newRecoveryHarnessWithServer(t, peer, nil)
+}
+
+func newRecoveryHarnessWithServer(t *testing.T, peer *operationPeer, replace func(*recoveryHarness)) *recoveryHarness {
 	t.Helper()
 	// Register directory disposal before the harness join, so a failed
 	// assertion cannot unlink SQLite while an owned finalizer is still running.
@@ -115,6 +119,9 @@ func newRecoveryHarness(t *testing.T, peer *operationPeer) *recoveryHarness {
 	f.server, err = drpc.NewBidiServer(zap.NewNop(), f.peer, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if replace != nil {
+		replace(f)
 	}
 	listen := func(serve func(context.Context, net.Listener) error) string {
 		t.Helper()

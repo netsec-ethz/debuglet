@@ -51,7 +51,7 @@ message HelloResponse {
   // TESLA chain length L: the chain serves epochs below it. Zero from an
   // executor that predates it; the schedule's length is then unknown.
   int64 tesla_chain_length = 21;
-  uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots.
+  uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
 }
 
 message DebugletPolicy {
@@ -86,6 +86,7 @@ message AbortResponse {}
 message DestinationLimit {
   string address = 1;
   int64 bits_limit = 2;
+  bool denied = 3; // The destination is opted out: refuse new connections and close active ones.
 }
 
 message BandwidthRequest {

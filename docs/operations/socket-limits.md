@@ -42,6 +42,41 @@ capacity. A single run cannot consume all 1,024 guest slots, but many runs can
 exhaust the shared guest budget. No capacity guarantee is made for unrelated
 processes on the same host.
 
+## Destinations denied at runtime
+
+The dispatcher can mark a destination `denied` in the bandwidth snapshot it
+sends to an executor. The executor then refuses new connections, datagram
+sends and accepted peers for that destination, by the name the dispatcher
+gives and by every address a run resolved that name to, with the public
+failure `destination refused: denied by the operator network policy`
+(`Denied` for a recoverable `debuglet_io_v1` dial). It also closes, for every
+run, the connected and accepted sockets whose peer is such an address. A
+guest using the recoverable `debuglet_io_v1` imports observes a closed socket
+(`Closed`), as for a lost connection, and continues with its other sockets. A
+guest blocked in a legacy socket import fails as it does when a connection is
+lost, with the generic public failure. The executor logs one `Destination
+revoked: active sockets closed` line per affected run with the run ID and the
+number of sockets closed. A connection that was being made while the denial
+arrived is checked again when it is registered and is closed instead of being
+handed to the guest (a recoverable dial reports `Closed`; an accepted peer is
+skipped).
+
+A version-2 acknowledgement confirms that admission is refused and the
+active sockets have closed. If delivery fails or the executor cannot confirm
+revocation, the dispatcher retires that exact control session within the
+five-second delivery deadline. It cannot renew its lease through successful
+health probes. Remote cleanup may take the remaining negotiated lease
+duration; retirement itself is not a remote acknowledgement.
+Connections closed this way do not resume when a later snapshot allows the
+destination again; the guest has to connect anew. Traffic sent or received
+before the close is not charged back. Limits of this mechanism: SCION
+connections and the run's listeners themselves are not closed (an inbound
+peer of a denied destination is refused per connection and per datagram); a
+denied name is matched to the addresses the run itself resolved it to; and an
+executor denial set belongs to its control session. The dispatcher retains
+the policy durably, refuses new denied work after reconnect, and includes
+denials in every full allocation snapshot.
+
 SCION remains disabled by the supported default network policy. Its registry
 now enforces its 16-destination capacity, including pending dials; this does not
 establish a descriptor bound for the external SCION stack. Enabling SCION is

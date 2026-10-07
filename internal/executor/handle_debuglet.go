@@ -148,6 +148,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, op *debugletOperation) 
 		if policyErr != nil {
 			return nil, fmt.Errorf("invalid operator network policy: %w", policyErr)
 		}
+		operator = operator.WithRevocations(e.revoked)
 		local := debuglet.New(e.logger, spec.DebugletID, spec.TransactionID, spec.Policy, operator,
 			e.teslaSchedule, e.limiter, e.packetCount, e.iface, e.portManager, socket.NewBudget(socket.DefaultLimits(), e.socketBudget))
 		deb = local

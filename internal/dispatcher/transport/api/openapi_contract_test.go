@@ -454,6 +454,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/attribution/verify", []byte(`{"packets":[]}`))
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/attribution/receipt-keys", nil)
 			oaRaw(t, raw, http.MethodPatch, deployment.url+"/destination", []byte(`{"destination":"127.0.0.1","limit":1000000}`))
+			oaRaw(t, raw, http.MethodGet, deployment.url+"/destinations", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/payment/"+submission.TransactionID+"/status", nil)
 			oaRaw(t, raw, http.MethodPut, deployment.url+"/user", []byte(`{"name":"   "}`))
 			// A client requiring a contract this dispatcher does not serve is

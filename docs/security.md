@@ -162,7 +162,11 @@ have different observation limits. Neither a resource reservation nor a traffic
 counter proves destination consent.
 
 An operator can change a dispatcher destination limit, but this does not
-represent an authenticated opt-out by the destination. Limits, policy changes
+represent an authenticated opt-out by the destination. To honour an opt-out
+request, an operator denies the destination with `PATCH /destination`
+(`denied`, `reason`) and checks its delivery with `GET /destinations`; see
+[destination limits and opt-outs](operations/configuration.md#destination-limits-and-opt-outs).
+Limits, policy changes
 and cancellation each have different delivery and persistence guarantees. Follow
 the [operator security guide](https://github.com/netsec-ethz/debuglet/wiki/Security-and-supported-scope)
 and verify the reported outcome before claiming that traffic has stopped.

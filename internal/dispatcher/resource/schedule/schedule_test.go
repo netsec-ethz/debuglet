@@ -186,3 +186,18 @@ func TestZeroDurationWindow(t *testing.T) {
 		t.Fatalf("QueryMaxDest after remove = %d; want 0", got)
 	}
 }
+
+func TestEquivalentDestinationReservationsShareOneKey(t *testing.T) {
+	s := New(time.Second)
+	from := time.Unix(1000, 0)
+	to := from.Add(time.Minute)
+	r := Request{Executor: "executor", Destination: []string{"TARGET.Example.:443", "target.example."}, From: from, To: to, Use: 100}
+	s.Submit(r)
+	if got := s.QueryMaxDest("target.example", from, to); got != 100 {
+		t.Fatalf("equivalent reservations charged %d, want 100", got)
+	}
+	s.Remove(r)
+	if got := s.QueryMaxDest("TARGET.EXAMPLE.", from, to); got != 0 {
+		t.Fatalf("removed alias reservation retained %d", got)
+	}
+}
