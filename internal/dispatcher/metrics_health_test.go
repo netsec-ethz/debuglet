@@ -15,6 +15,53 @@ import (
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
+func TestMetricsPacketDropsRequireFreshCounterObservations(t *testing.T) {
+	now := time.Now().UTC()
+	read := func(drops *pb.PacketDropObservations, mode, attachment string, at time.Time, connected bool) ExecutorHealthMetrics {
+		e := &executorEntry{RegisteredExecutor: &RegisteredExecutor{}}
+		e.Capabilities = capabilitiesFromReport(&pb.ExecutorCapabilities{SchemaVersion: 1, EnforcementMode: mode}, at)
+		e.capabilityObserved = at
+		e.vantage = vantageFromReport(&pb.VantagePointReport{SchemaVersion: 1, CounterAttachment: attachment, PacketDrops: drops})
+		e.vantageObserved = at
+		if drops != nil {
+			drops.IngressVerdicts = 999
+		} // Trust boundary copies the report.
+		var h ExecutorHealthMetrics
+		h.observe(e, now, connected)
+		return h
+	}
+	for _, tc := range []struct {
+		name, mode, attachment string
+		at                     time.Time
+		connected              bool
+		drops                  *pb.PacketDropObservations
+	}{
+		{"absent", "ebpf", "present", now, true, nil},
+		{"fallback", "fallback", "present", now, true, &pb.PacketDropObservations{}},
+		{"missing", "ebpf", "missing", now, true, &pb.PacketDropObservations{}},
+		{"unknown attachment", "ebpf", "unknown", now, true, &pb.PacketDropObservations{}},
+		{"stale", "ebpf", "present", now.Add(-capabilityLifetime), true, &pb.PacketDropObservations{}},
+		{"future", "ebpf", "present", now.Add(time.Second), true, &pb.PacketDropObservations{}},
+		{"disconnected", "ebpf", "present", now, false, &pb.PacketDropObservations{}},
+		{"overflow", "ebpf", "present", now, true, &pb.PacketDropObservations{EgressSkbBytes: 1 << 54}},
+	} {
+		h := read(tc.drops, tc.mode, tc.attachment, tc.at, tc.connected)
+		for i := range 2 {
+			if h.DropVerdicts[i].Unknown != 1 || h.DropVerdicts[i].Value != nil || h.DropSKBBytes[i].Unknown != 1 || h.DropSKBBytes[i].Value != nil {
+				t.Fatalf("%s: %+v", tc.name, h)
+			}
+		}
+	}
+	for _, count := range []uint64{7, 0} {
+		h := read(&pb.PacketDropObservations{IngressVerdicts: count, IngressSkbBytes: count * 40, EgressVerdicts: count, EgressSkbBytes: count * 40}, "ebpf", "present", now, true)
+		for i := range 2 {
+			if h.DropVerdicts[i].Unknown != 0 || h.DropVerdicts[i].Value == nil || *h.DropVerdicts[i].Value != float64(count) || h.DropSKBBytes[i].Value == nil || *h.DropSKBBytes[i].Value != float64(count*40) {
+				t.Fatalf("fresh or reset totals: %+v", h)
+			}
+		}
+	}
+}
+
 func TestMetricsNetworkDenialsRequireFreshCompleteObservations(t *testing.T) {
 	now := time.Now().UTC()
 	e := &executorEntry{RegisteredExecutor: &RegisteredExecutor{}}

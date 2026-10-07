@@ -37,6 +37,20 @@
 #define NS_PER_SEC (1000000000ULL)
 #define MAX_BURST_BYTES (65536ULL)
 
+struct drop_totals {
+  __u64 verdicts;
+  __u64 bytes;
+};
+
+// Local TCX drop verdicts, not wire packets: one skb may contain several
+// segments. Fixed keys are ingress (0) and egress (1), with no traffic labels.
+struct {
+  __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+  __type(key, __u32);
+  __type(value, struct drop_totals);
+  __uint(max_entries, 2);
+} drop_stats SEC(".maps");
+
 struct tb_state {
   __u64 tokens;
   __u64 t_last;
@@ -357,6 +371,14 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
   bpf_spin_unlock(&exec_state->lock);
 
 release:
+  if (action == TCX_DROP) {
+    __u32 direction = is_ingress ? 0 : 1;
+    struct drop_totals *totals = bpf_map_lookup_elem(&drop_stats, &direction);
+    if (totals) {
+      __sync_fetch_and_add(&totals->verdicts, 1);
+      __sync_fetch_and_add(&totals->bytes, skb->len);
+    }
+  }
   if (looked_up_sk)
     bpf_sk_release(looked_up_sk);
   return action;

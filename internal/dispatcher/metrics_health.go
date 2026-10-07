@@ -39,6 +39,7 @@ type ExecutorHealthMetrics struct {
 	// DisclosureLag is the maximum disclosure delivery lag in seconds.
 	DisclosureLag                     ExecutorResourceMetric
 	RefusedAdmissions, RevokedSockets ExecutorResourceMetric
+	DropVerdicts, DropSKBBytes        [2]ExecutorResourceMetric // Ingress, egress; current counter instance.
 }
 
 // A numeric aggregate is publishable only when all registered observations are
@@ -75,6 +76,19 @@ func (m *ExecutorHealthMetrics) observe(e *executorEntry, now time.Time, connect
 	}
 	m.RefusedAdmissions.observe(refused, false)
 	m.RevokedSockets.observe(revoked, false)
+	var drops [4]*float64
+	if e.Capabilities != nil && fresh(e.capabilityObserved) && e.Capabilities.EnforcementMode == "ebpf" &&
+		e.vantage != nil && fresh(e.vantageObserved) && e.vantage.packetDrops != nil {
+		d := e.vantage.packetDrops
+		for i, count := range []uint64{d.IngressVerdicts, d.IngressSkbBytes, d.EgressVerdicts, d.EgressSkbBytes} {
+			value := float64(count)
+			drops[i] = &value
+		}
+	}
+	for i := range 2 {
+		m.DropVerdicts[i].observe(drops[2*i], false)
+		m.DropSKBBytes[i].observe(drops[2*i+1], false)
+	}
 	switch {
 	case e.Capabilities == nil || !fresh(e.capabilityObserved):
 		m.AttachmentUnknown++

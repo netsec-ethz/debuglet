@@ -27,7 +27,7 @@ func TestCounterObjectOwnershipList(t *testing.T) {
 		countPrograms: countPrograms{HandleEgress: new(ebpf.Program), HandleIngress: new(ebpf.Program)},
 		countMaps: countMaps{
 			DebugletSkMap: new(ebpf.Map), ExecPacketSizeMap: new(ebpf.Map), ExecRatesMap: new(ebpf.Map),
-			PacketSizeMap: new(ebpf.Map), RatesMap: new(ebpf.Map),
+			PacketSizeMap: new(ebpf.Map), RatesMap: new(ebpf.Map), DropStats: new(ebpf.Map),
 		},
 	}
 	// These uninitialized handles are only identity witnesses. Do not Close
@@ -36,6 +36,7 @@ func TestCounterObjectOwnershipList(t *testing.T) {
 		"handle_egress": objects.HandleEgress, "handle_ingress": objects.HandleIngress,
 		"debuglet_sk_map": objects.DebugletSkMap, "exec_packet_size_map": objects.ExecPacketSizeMap,
 		"exec_rates_map": objects.ExecRatesMap, "packet_size_map": objects.PacketSizeMap, "rates_map": objects.RatesMap,
+		"drop_stats": objects.DropStats,
 	}
 	for _, resource := range counterObjectResources(&objects) {
 		if want[resource.name] != resource.closer {
@@ -337,8 +338,8 @@ func TestBPFCounterLinuxLoad(t *testing.T) {
 			t.Errorf("counter cleanup: %v", err)
 		}
 	})
-	if len(count.cleanup.resources) != 9 {
-		t.Fatalf("owned kernel handles=%d want=9", len(count.cleanup.resources))
+	if len(count.cleanup.resources) != 10 {
+		t.Fatalf("owned kernel handles=%d want=10", len(count.cleanup.resources))
 	}
 	if state := count.AttachmentState(); state != "present" {
 		t.Fatalf("attached counter observation: %s", state)

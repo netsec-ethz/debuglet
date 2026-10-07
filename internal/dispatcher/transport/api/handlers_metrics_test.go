@@ -18,6 +18,31 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestPacketDropMetricsKeepDirectionAndOmitIncompleteTotals(t *testing.T) {
+	count, size := 3.0, 237.0
+	c := dispatcher.ControlMetrics{Registered: 1}
+	for i := range 2 {
+		c.Health.DropVerdicts[i] = dispatcher.ExecutorResourceMetric{Value: &count}
+		c.Health.DropSKBBytes[i] = dispatcher.ExecutorResourceMetric{Value: &size}
+	}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	for _, direction := range []string{"ingress", "egress"} {
+		for _, want := range []string{`debuglet_executor_counter_drop_verdicts_max{direction="` + direction + `"} 3`, `debuglet_executor_counter_drop_skb_bytes_max{direction="` + direction + `"} 237`} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("missing %s", want)
+			}
+		}
+	}
+	c.Health.DropVerdicts[1].Unknown = 1
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, `debuglet_executor_counter_drop_verdicts_max{direction="egress"}`) || !strings.Contains(out, `debuglet_observation_available{observation="executor_counter_drop_verdicts_max_egress",reason="incomplete"} 0`) {
+		t.Fatal("incomplete drop total became numeric")
+	}
+	if !strings.Contains(out, `debuglet_observation_available{observation="enforcement_verified",reason="unsupported"} 0`) {
+		t.Fatal("local drops implied verified enforcement")
+	}
+}
+
 func TestSettlementMetricsUnavailableNeverBecomesZero(t *testing.T) {
 	c := dispatcher.ControlMetrics{Settlement: payments.SettlementMetrics{PendingCredit: 1, PendingRefund: 2, Reserved: 3, Sent: 4, Unknown: 5, Failed: 6}}
 	out := formatMetrics(c, observability.HostSnapshot{})

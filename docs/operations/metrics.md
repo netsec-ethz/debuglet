@@ -70,9 +70,10 @@ structured interruption reason. Accordingly `queue_age_seconds`,
 unsupported. The supported scheduled-start overdue gauge does not substitute
 for these observations.
 
-Denied packet/byte counts, independently verified enforcement and independently
-measured TESLA clock uncertainty remain unsupported. Policy refusal and socket
-revocation observations are available below. Disclosure delivery lag is observed
+Complete denied wire-packet/byte counts, independently verified enforcement and
+independently measured TESLA clock uncertainty remain unsupported. Local TCX drop
+verdicts, policy refusals and socket revocations are observed as described below.
+Disclosure delivery lag is observed
 at the dispatcher only (see executor health below). Collection never changes
 admission, packet enforcement, terminal state, payment or readiness decisions.
 
@@ -122,6 +123,8 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_state_available_ratio_min` | Lowest available/capacity ratio, calculated per executor before aggregation. Quotas and inode exhaustion require host monitoring. |
 | `executor_network_refused_admissions_max` | Largest count in a current executor session of final network-policy refusals at outbound destination and resolved-peer admission. |
 | `executor_network_revoked_sockets_max` | Largest count in a current executor session of sockets actually closed by destination revocation. |
+| `executor_counter_drop_verdicts_max{direction="..."}` | Largest cumulative number of local TCX drop verdicts from a current counter instance. |
+| `executor_counter_drop_skb_bytes_max{direction="..."}` | Largest cumulative sum of socket-buffer lengths at those drop verdicts. |
 | `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held`, `clock_unready`, `clock_drift` and `unknown`. |
 | `executors_clock_readiness{state="..."}` | Counts for `ready`, `degraded` and `unknown`, from the kernel clock report and its configured error threshold. |
 | `executors_schedule_unknown` | Executors without a usable fresh schedule observation. |
@@ -136,6 +139,27 @@ Mode, attachment, attribution and clock groups each partition `executors_registe
 Missing, malformed, future-dated or 90-second-old reports become `unknown`, as
 do reports from disconnected sessions. A missing report does not clear a known
 problem by claiming recovery. New valid reports restore the current observation.
+The drop gauges read the counter's own fixed-size per-CPU map, updated only when
+its TCX program returns a drop verdict. They are sampled with the normal fresh
+capability observation, at most once per 30 seconds. Both owned hooks must still
+be attached and both directions must be readable; a missing attachment, failed
+read, fallback counter or older executor reports unknown, never a fabricated
+zero. No destination, account or run labels are exported. Each direction has an
+availability sample and unknown count with `_ingress` or `_egress` appended to
+its metric name (followed by `_unknown` for the count).
+
+Totals start at zero with a new counter instance and span control reconnects
+while that counter remains alive. The exported maxima are gauges, not monotonic
+Prometheus counters; restarts and registry changes can lower them. The two
+fields are independent cumulative observations, not an atomic packet-size sample.
+An skb is a kernel socket buffer: segmentation and coalescing can make it contain
+several wire packets, and its length includes the headers visible at that hook.
+These observations do not count traffic that bypasses this program, drops by
+other programs, application-level refusals or fallback socket throttling. A
+positive count proves those local verdicts happened; zero does not verify
+end-to-end enforcement. `enforcement_verified` and the complete `denied_traffic`
+observation remain unsupported.
+
 The `executor_health` availability sample says whether registry aggregation
 completed, not whether the executors are healthy.
 

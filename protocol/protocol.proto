@@ -432,6 +432,17 @@ message VantagePointReport {
   repeated string host_tags = 14;
   AddressSelfCheck address_check = 15; // Optional; absent is unknown.
   NetworkDenials network_denials = 16; // Operator-only policy observations; absent is unknown.
+  PacketDropObservations packet_drops = 17; // Local TCX verdicts, not end-to-end enforcement; absent is unknown.
+}
+
+// Cumulative counts from the current counter instance, reset when it restarts.
+// Bytes are skb lengths at TCX_DROP, including headers; segmentation/coalescing
+// means verdicts and bytes are not on-wire packet/byte counts.
+message PacketDropObservations {
+  uint64 ingress_verdicts = 1;
+  uint64 ingress_skb_bytes = 2;
+  uint64 egress_verdicts = 3;
+  uint64 egress_skb_bytes = 4;
 }
 
 // Counts for this executor session, observed at network policy boundaries.
