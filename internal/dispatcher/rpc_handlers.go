@@ -15,6 +15,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -90,25 +91,45 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		})
 		entry.Write(zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
 	}
-	// A key for another chain of this executor is verified against that
-	// chain's recorded schedule, so the tail of a chain can be disclosed after
-	// the executor restarted onto a new one. An anchor not on record names no
-	// chain the dispatcher knows, and its key is dropped.
-	if anchor := req.GetTeslaKeyAnchor(); len(anchor) > 0 && len(req.GetTeslaKey()) > 0 && !bytes.Equal(anchor, chain.Anchor) {
+	d.storeDisclosure(ctx, execID, chain, seen, req.GetTeslaKeyAnchor(), req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	// Keys of earlier chains, such as the tail of the chain a restart retired,
+	// follow the same path. The keystore keeps at most maxExtraDisclosures
+	// chains per executor, so a longer list is refused whole.
+	if extra := req.GetExtraDisclosures(); len(extra) > maxExtraDisclosures {
+		d.logger.Warn("Refused a heartbeat's extra TESLA disclosures", zap.String("executor_id", daemonlog.Identifier(execID)), zap.Int("count", len(extra)))
+	} else {
+		for _, disclosure := range extra {
+			d.storeDisclosure(ctx, execID, chain, seen, disclosure.GetAnchor(), disclosure.GetEpoch(), disclosure.GetKey())
+		}
+	}
+	return &pb.HeartbeatResponse{}, nil
+}
+
+// maxExtraDisclosures bounds the extra disclosures one heartbeat may carry; it
+// matches the chains the keystore keeps per executor.
+const maxExtraDisclosures = 4
+
+// storeDisclosure verifies one disclosed key and stores it. An empty anchor
+// names chain, the session's own. A key for another chain of this executor is
+// verified against that chain's recorded schedule, so the tail of a chain can
+// be disclosed after the executor restarted onto a new one. An anchor not on
+// record names no chain the dispatcher knows, and its key is dropped.
+func (d *Dispatcher) storeDisclosure(ctx context.Context, execID string, chain tag.Chain, seen time.Time, anchor []byte, epoch int64, key []byte) {
+	if len(anchor) > 0 && len(key) > 0 && !bytes.Equal(anchor, chain.Anchor) {
 		recorded, ok, err := d.recordedChain(ctx, execID, anchor)
 		if err != nil {
 			d.logger.Warn("Failed to read the recorded TESLA chain of a disclosure", zap.String("executor_id", execID), zap.Error(err))
-			return &pb.HeartbeatResponse{}, nil
+			return
 		}
 		if !ok {
 			d.logger.Debug("Dropped a disclosed TESLA key for a chain not on record", zap.String("executor_id", execID), zap.String("chain", tag.ChainID(anchor)))
-			return &pb.HeartbeatResponse{}, nil
+			return
 		}
 		chain = recorded
 	}
 	// A disclosure that does not verify against the chain is dropped; the
 	// heartbeat still counts, and the chain is logged once rather than per beat.
-	err = d.keystore.Store(execID, chain, seen, req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	err := d.keystore.Store(execID, chain, seen, epoch, key)
 	var rejected *tag.RejectedError
 	if errors.As(err, &rejected) {
 		switch {
@@ -126,7 +147,6 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		// executor's next heartbeat discloses the key again.
 		d.logger.Warn("Failed to record disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
 	}
-	return &pb.HeartbeatResponse{}, nil
 }
 
 func (d *Dispatcher) OnResources(ctx context.Context, mutation *rpc.Mutation, req *pb.ResourcesRequest) (*pb.ResourcesResponse, error) {
@@ -152,7 +172,11 @@ func (d *Dispatcher) OnResources(ctx context.Context, mutation *rpc.Mutation, re
 }
 
 func (d *Dispatcher) OnExecutorConnected(ctx context.Context, owner *rpc.SessionOwner, hello *pb.HelloResponse, sourceIP string) error {
-	return d.RegisterExecutor(ctx, owner, hello, sourceIP)
+	if err := d.RegisterExecutor(ctx, owner, hello, sourceIP); err != nil {
+		return err
+	}
+	d.recordProbeConnected(owner.ExecutorID())
+	return nil
 }
 
 func (d *Dispatcher) OnExecutorDisconnected(owner *rpc.SessionOwner) {
@@ -327,7 +351,7 @@ func repeatsPolicy(requested *pb.DebugletPolicy, floor, ceil bitrate.Bitrate, de
 func destinationSet(addresses []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(addresses))
 	for _, address := range addresses {
-		set[address] = struct{}{}
+		set[netpolicy.DestinationKey(address)] = struct{}{}
 	}
 	return set
 }
@@ -646,9 +670,15 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 			return nil, err
 		}
 	}
+	seen := make(map[string]struct{}, len(dests))
 	for _, dest := range dests {
+		dest = netpolicy.DestinationKey(dest)
+		if _, duplicate := seen[dest]; duplicate {
+			continue
+		}
+		seen[dest] = struct{}{}
 		for id, limit := range d.destinations.Fairshare(dest) {
-			perExec[id] = append(perExec[id], &pb.DestinationLimit{Address: dest, BitsLimit: int64(limit)})
+			perExec[id] = append(perExec[id], d.destinationLimitLocked(dest, limit))
 		}
 	}
 	for id, updates := range perExec {
@@ -657,7 +687,7 @@ func (d *Dispatcher) captureFairshareAfter(ctx context.Context, origin *rpc.Muta
 		var admitErr error
 		entry := d.executors[id]
 		var revision uint64
-		ordered := entry != nil && entry.bandwidthVersion == 1
+		ordered := entry != nil && entry.bandwidthVersion >= 1
 		if entry != nil && (owner == nil || id != owner.ExecutorID() || entry.owner == owner) {
 			entry.bandwidthPending = true
 			entry.bandwidthRevision++
@@ -774,7 +804,7 @@ func (work *fairshareWork) send(ctx context.Context) error {
 func (d *Dispatcher) allocationSnapshot(executorID string) []*pb.DestinationLimit {
 	var updates []*pb.DestinationLimit
 	for address, limit := range d.destinations.ForExecutor(executorID) {
-		updates = append(updates, &pb.DestinationLimit{Address: address, BitsLimit: int64(limit)})
+		updates = append(updates, d.destinationLimitLocked(address, limit))
 	}
 	return updates
 }
@@ -798,7 +828,7 @@ func (d *Dispatcher) reconcileFairshare(ctx context.Context, origin *rpc.Mutatio
 		return
 	}
 	entry.bandwidthRevision++
-	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion == 1, wait: entry.bandwidthTail, done: make(chan struct{})}
+	r := fairshareRecipient{owner: owner, mutation: mutation, updates: d.allocationSnapshot(owner.ExecutorID()), ordered: entry.bandwidthVersion >= 1, wait: entry.bandwidthTail, done: make(chan struct{})}
 	r.revision = entry.bandwidthRevision
 	entry.bandwidthTail = r.done
 	d.mu.Unlock()

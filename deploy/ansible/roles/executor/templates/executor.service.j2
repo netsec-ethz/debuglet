@@ -21,9 +21,15 @@ SyslogIdentifier={{ executor_service }}
 # systemd hands these to the process at exec (ambient set). On restricted
 # environments (some containers/EdgeNet) manipulating the ambient set fails with
 # 203/EXEC; set executor_ambient_caps=false there and rely on the binary's file
-# capabilities (setcap, applied by the executor role) instead.
-AmbientCapabilities=CAP_NET_ADMIN CAP_BPF
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_BPF
+# capabilities (setcap, applied by the executor role) instead. The set is
+# executor_capabilities in group_vars/executors.yml.
+AmbientCapabilities={{ executor_capabilities | map('upper') | join(' ') }}
+CapabilityBoundingSet={{ executor_capabilities | map('upper') | join(' ') }}
+{% endif %}
+{% if (executor_enable_bpf | default(true)) and ansible_kernel is defined and ansible_kernel is version('5.11', '<') %}
+# Before Linux 5.11 BPF maps count against RLIMIT_MEMLOCK. Lifting it here
+# spares the executor CAP_SYS_RESOURCE (see executor_capabilities).
+LimitMEMLOCK=infinity
 {% endif %}
 
 [Install]

@@ -141,7 +141,7 @@ func TestBackupIncludesOfflineWALWithoutChangingSource(t *testing.T) {
 	if _, err := db.ExecContext(t.Context(), "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(t.Context(), "INSERT INTO tesla_chains VALUES(1,x'010203','2026-09-28T12:00:00Z',1000000000,100,'2026-09-28T12:00:00Z')"); err != nil {
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO tesla_chains (generation, anchor, epoch_base, delay_ns, chain_length, created_at) VALUES(1,x'010203','2026-09-28T12:00:00Z',1000000000,100,'2026-09-28T12:00:00Z')"); err != nil {
 		t.Fatal(err)
 	}
 	offline := privateSchemaDir(t)

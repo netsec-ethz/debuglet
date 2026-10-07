@@ -11,6 +11,93 @@ changes; the linked API and deployment documentation contains operational detail
 ## [Unreleased]
 
 ### Security
+- The executor stops tagging when its clock cannot place packets in the
+  epochs a verifier derives from capture time. Epochs advance on the
+  monotonic clock from the announced chain origin; previously a chain started
+  on an unsynchronised clock, or a wall-clock step or suspend afterwards, left
+  the executor tagging and reporting attribution as available although
+  honest packets mapped to the wrong epoch.
+  - Attribution gains the reasons `clock_unready` (the host clock readiness
+    was not `ready` when the chain started; it holds until a restart) and
+    `clock_drift` (wall and monotonic time elapsed since the origin differ by
+    more than min(epoch length / 2, 1 s); it clears by itself if the drift
+    returns within the bound, while a persistent drift needs a restart). No
+    key signs while either holds; a kernel tagger stops at its next
+    scheduled refresh, at most one epoch later if the slot removal succeeds.
+  - A node that tags packets refuses new runs with `FailedPrecondition`
+    while either reason holds; a node whose tagging mode is `none` admits
+    them. The executor logs an error when a chain starts on a clock that is
+    not ready.
+  - The key schedule never signs with the key of an epoch below one it has
+    already signed with. See `docs/tag-spec.md` §10.
+
+### Added
+- The executor answers pre-disclosure tag verification queries over the
+  control session (`VerifyTags`): for one group of captured packets of one
+  epoch it reports which candidate run, if any, reproduces every tag, without
+  returning tags or keys. It refuses disclosable epochs, unknown chains and
+  untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
+- Server-assisted probe verification (#341, API 1.18, dispatcher schema 25).
+  `POST /attribution/verify` checks up to 256 captured packets in at most 16
+  groups: a group whose key is disclosed is checked against the key store; a
+  group whose key is not yet disclosed is relayed to its executor over the
+  control session (`VerifyTags`), which answers yes or no for the whole group
+  and never returns tags or keys. Each relayed question charges one trial
+  per candidate run to a budget of 16 trials per executor, chain and epoch,
+  shared by every requester, charged durably before the relay and never
+  refunded. An answer that no single candidate reproduces every tag stays
+  pending (`unmatched`) for the offline check after disclosure. Every answer carries an
+  Ed25519 receipt over the dispatcher, API version, the dispatcher's query
+  time, the packet digest and the verdicts; `GET /attribution/receipt-keys`
+  lists the keys with their validity, and `[attribution] receipt_key_path`
+  names the key file, created when absent. `client.Verify` and `dbl verify`
+  send pending groups unless `--offline`, report `via server` with the
+  receipt key, and keep receipts and keys in the evidence bundle, which
+  `client.VerifyEvidence` checks again. The dispatcher's minimum supported
+  schema is 25.
+- An executor with a configured `[tesla] seed` discloses the tail of its
+  previous chain after a restart: it re-derives that chain, which never signs
+  again, and sends its due keys beside the current one in the heartbeat's new
+  `extra_disclosures` field, until the final key is out. Executor schema 8
+  records each chain's disclosure delay; chains recorded before it, starts
+  without a seed and starts on an unready clock still lose the tail. The
+  dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
+  against its recorded chain.
+- Executor: a destination the dispatcher marks `denied` in a bandwidth
+  snapshot (#74; `DestinationLimit.denied`, additive) is refused for new
+  connections, datagrams and accepted peers, by name and by the addresses
+  the name resolved to, and the active TCP, TLS, UDP and ICMP sockets of
+  every run to it are closed before the snapshot's revision is
+  acknowledged, including a connection still being made at that moment. A
+  guest using `debuglet_io_v1` sees a closed socket and continues; a guest
+  blocked in a legacy socket import fails as on a lost connection. One
+  `Destination revoked` log line per run carries the socket count. A later
+  snapshot without the flag allows the destination again; executors and
+  dispatchers that do not set it behave as before. See
+  `docs/operations/socket-limits.md` for the bound.
+- Recorded destination opt-outs (API 1.19, dispatcher schema 26). `PATCH
+  /destination` accepts `denied`, `reason` and `expires_at`; a denied
+  destination refuses every new submission and allocation, zero floors
+  included. Each change
+  is appended to the dispatcher database with its operator account before it
+  applies, is applied again at startup, and an expiry is recorded as an
+  `allow` event of the dispatcher. `GET /destinations` lists the current
+  policies with their delivery state. Executors receive a denied destination
+  as a zero limit with the new `DestinationLimit.denied` flag in every
+  snapshot; executors of this release close the active sockets (see the
+  executor entry), older ones reduce running runs to their floor and are
+  listed as unconfirmed. Dispatcher
+  databases require the explicit upgrade to schema 26. See
+  `docs/operations/configuration.md#destination-limits-and-opt-outs`.
+
+## [0.3.0-rc.1] - 2026-10-06
+
+### Security
+- Releases are signed. The production release signer is
+  `releases@debuglet.netsec.ethz.ch` (Ed25519,
+  `SHA256:vETQG+wE6uwMv4MBFfx7dxo8IWpvR8z6/Sw7MT2WwQo`); its trust file is
+  `configs/release-allowed-signers`. See
+  [Signed releases](docs/operations/releases.md#production-signer).
 - The TESLA disclosure delay is configurable and at least two epochs.
   Previously the key of epoch i was disclosed shortly after epoch i+1 began,
   while verifiers accepted epochs t-1, t and t+1 for a packet of epoch t.
@@ -35,6 +122,69 @@ changes; the linked API and deployment documentation contains operational detail
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 
 ### Added
+- API 1.17: RIPE Atlas-style status history and tags in `GET /executors`:
+  `status` (`connected`, `disconnected`, `abandoned` after 30 days
+  disconnected, `never_connected` for enrolled executors that never
+  registered) with `since`, `status_since`, `first_connected`,
+  `last_connected`, `total_uptime` and `tags`. `?status=` also lists
+  executors that are not connected; the default listing is unchanged.
+  Host tags come from a fixed vocabulary in `[metadata] host_tags`, also
+  settable with `dbl executor join --host-tag`. System tags are derived:
+  `system-ipv4/ipv6-works` and `-capable`, `system-ipv4-rfc1918` (the
+  executor reports only whether its local IPv4 source is RFC 1918),
+  `system-ipv4/ipv6-stable-1d/30d/90d` from the address history and
+  `system-resolves-a/aaaa-correctly` from the executor's address observation
+  of the dispatcher name. `dbl nodes` adds `--status` and the `STATUS` and
+  `TAGS` columns; the Go client adds `Probes`. Dispatcher schema 24 stores
+  the history (`probe_status`, `probe_addresses`) and fills it from the
+  recorded TESLA chains; this build requires it, so upgrade the dispatcher
+  database explicitly (`make deploy-upgrade-db`) before starting it.
+- API 1.16: RIPE Atlas-style probe addressing in `GET /executors`. Each entry
+  reports `is_public` and the last dispatcher-observed `address_v4` and
+  `address_v6` with their `prefix_v4/v6` and `asn_v4/v6` from the offline ASN
+  database, and `address_observations` (`via` control or reflection,
+  `observed_at`, lookup source and reason). Only addresses the dispatcher saw
+  on the executor's authenticated connections are listed, never
+  `public_host`. Executors call the existing address reflection over each
+  family every 10 minutes, resolving their `dispatcher.addr` and verifying the
+  dispatcher certificate, so both families are observed without a configured
+  reflector (`[connectivity] observe_addresses = false` turns this off).
+  `[metadata] address_opt_out = true` makes an executor private: its
+  addresses are withheld from everyone but operators, while prefix, ASN and
+  location stay public, as for a private RIPE Atlas probe. It is independent
+  of `location_opt_out`. Results record the same fields in
+  `provenance.vantage_point.addressing`. `dbl nodes` adds `ADDRESS_V4` and
+  `ADDRESS_V6` columns. **Privacy:** executors are public by default,
+  including executors that predate the setting, so their control-connection
+  address, operator-only until now, is listed once the dispatcher is
+  upgraded. To keep one private, upgrade it and set `address_opt_out`
+  before the dispatcher is upgraded
+  (`docs/vantage-points.md#privacy`).
+- Executor ASN and prefix from RIPE RIS, the method RIPE Atlas uses for its
+  probes: the origin AS of the longest matching prefix announced in BGP.
+  `debuglet-dispatcher -build-asn-database PATH` downloads RIS's daily whois
+  dumps and RIPE's AS names, keeps (origin, prefix) pairs at least
+  `-ris-min-peers` RIS peers see (default 10), attributes a prefix with
+  several origins to the one the most peers see (lowest AS number on a tie),
+  and atomically replaces PATH with a GeoIP2-ASN-compatible MMDB it has
+  verified through the dispatcher's own loader. Values carry
+  `database:Debuglet-RIS-ASN@<dump generation time>` and the announced prefix
+  (the new optional `announced_prefix_length` record key). Short downloads,
+  failed gzip checksums, dumps without their end marker or older than
+  `-ris-max-age`, and near-empty tables are refused and the existing file is
+  kept. An AS that RIPE does not name now has an empty `name` instead of an
+  `invalid_record` lookup.
+- The dispatcher reloads a replaced `[metadata]` database without a restart:
+  it checks the configured paths every minute, verifies a new file as at
+  startup and keeps the previous database (logging once) if it fails.
+  Executors registering afterwards are looked up in the new file; registered
+  executors and admitted results keep their values and source.
+- Deployment: the `debuglet-ris-asn` systemd timer rebuilds the ASN database
+  daily on the dispatcher host, and the first build runs during deployment.
+  Enabled for prod and dev with `dispatcher_ris_asn_enabled`; the dispatcher
+  host needs HTTPS access to `www.ris.ripe.net` and `ftp.ripe.net`. No city
+  database is configured: location comes from the operator. See
+   `docs/operations/executor-discovery.md#asn-and-prefix-from-ripe-ris`.
 - `dbl verify` and `client.Verify`: offline probe verification (#73,
   `docs/verification.md`, delivery step 3). `client.ReadCapture` reads pcap
   and pcapng (Ethernet, raw IP, Linux SLL/SLL2, loopback) up to 64 MiB and
@@ -282,6 +432,24 @@ changes; the linked API and deployment documentation contains operational detail
   run's mark; a refused mark fails the listener instead of trying the next
   port.
 
+### Known limitations
+- Chain payments (USDC on Sui: payouts, refunds and receipt reconciliation)
+  are not part of this release and are not supported. Every shipped
+  configuration keeps `[sui] disabled = true`; leave it so. `TEST` payments
+  and allowances work as before. The payment schema migrations are included
+  and are applied by the database upgrade either way.
+- Production executors tag packets only once deployed with the capabilities
+  in `executor_capabilities` (`cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf`);
+  check `tagging.ipv4` in `GET /executors`. Capability reports can say
+  `attribution: available` while `tagging.ipv4` is `none`.
+- An executor whose clock is unsynchronized keeps tagging, a restarted
+  executor never discloses the last d keys of its previous chain, and
+  destination opt-outs are not yet durable. Server-assisted verification of
+  packets newer than the disclosure delay (about 15 minutes) is not
+  available: such packets verify as `pending`.
+- The browser verifier on the website still implements the pre-v1 tag
+  scheme; use `dbl verify` or `tools/verify_pcap.py`.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
@@ -417,7 +585,8 @@ changes; the linked API and deployment documentation contains operational detail
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/netsec-ethz/debuglet/compare/v0.3.0-rc.1...HEAD
+[0.3.0-rc.1]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0...v0.3.0-rc.1
 [0.2.0]: https://github.com/netsec-ethz/debuglet/compare/v0.1.0...v0.2.0
 [0.2.0-rc.3]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.2...v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/netsec-ethz/debuglet/compare/v0.2.0-rc.1...v0.2.0-rc.2

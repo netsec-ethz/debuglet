@@ -47,8 +47,17 @@ packet_counter = "{{ executor_packet_counter }}"
 # applied to traffic leaving this interface, so leaving it empty disables
 # tagging entirely (see executor_interface in group_vars/executors.yml).
 interface = "{{ executor_interface }}"
+# The address the executor advertises; public_ports is the inbound pool for
+# run listeners (see executor_public_host in group_vars/executors.yml).
 public_host = "{{ executor_public_host }}"
 public_ports = "{{ executor_public_ports }}"
+{% if executor_connectivity_ipv4_reflector | trim %}
+
+# IPv4 egress check against this executor's own dispatcher, over the control
+# channel's TLS identity (see executor_connectivity_ipv4_reflector).
+[connectivity]
+ipv4_reflector = "{{ executor_connectivity_ipv4_reflector | trim }}"
+{% endif %}
 
 [logging]
 log_level = "{{ executor_log_level }}"

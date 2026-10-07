@@ -97,10 +97,18 @@ type tgPeer struct {
 	beforeUpload func(ctx context.Context, req *pb.UploadRequest) error
 	abortErr     error
 	bandwidthErr error
+
+	// predatesDenial advertises bandwidth version 1: ordered snapshots, but
+	// no revocation of a denied destination.
+	predatesDenial bool
 }
 
 func (p *tgPeer) Hello(context.Context, *pb.HelloRequest) (*pb.HelloResponse, error) {
-	return &pb.HelloResponse{ExecutorId: tgExecutorID, Version: "tg-peer", BandwidthVersion: 1, Currency: tgCurrency, PricePerBwS: tgPrice}, nil
+	version := uint32(2)
+	if p.predatesDenial {
+		version = 1
+	}
+	return &pb.HelloResponse{ExecutorId: tgExecutorID, Version: "tg-peer", BandwidthVersion: version, Currency: tgCurrency, PricePerBwS: tgPrice}, nil
 }
 
 func (p *tgPeer) Upload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadResponse, error) {

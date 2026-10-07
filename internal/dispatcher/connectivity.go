@@ -95,6 +95,7 @@ func (d *Dispatcher) OnReflectAddress(ctx context.Context, mutation *rpc.Mutatio
 		return nil, status.Error(codes.FailedPrecondition, "executor session unavailable")
 	}
 	entry.reflections[index] = reflectionReceipt{nonce: bytes.Clone(req.Nonce), address: ip.String(), observed: d.now()}
+	entry.probe.reflected[index] = d.addressSightingLocked(ip, entry.reflections[index].observed)
 	return &pb.ReflectAddressResponse{Address: ip.String()}, nil
 }
 

@@ -152,7 +152,7 @@ func attributionFromReport(report *pb.AttributionState, observed time.Time) *wir
 		}
 	case "unavailable":
 		switch report.GetReason() {
-		case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held":
+		case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "clock_unready", "clock_drift":
 		default:
 			return nil
 		}

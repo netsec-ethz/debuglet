@@ -31,9 +31,9 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 23: usage allowances are read from allowance_grants.
-	MinimumDispatcherVersion int64 = 23
-	MinimumExecutorVersion   int64 = 7
+	// Schema 27: cancellation terminal decisions are read for refund recovery.
+	MinimumDispatcherVersion int64 = 27
+	MinimumExecutorVersion   int64 = 8
 )
 
 // Policy is the schema contract of one database for this build.
@@ -74,6 +74,8 @@ func PolicyFor(role Role) (Policy, error) {
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
 			"allowance_grants":           {"id", "user_id", "amount", "granted_by", "reason", "idempotency_key", "granted_at"},
+			"probe_status":               {"executor_id", "first_connected", "last_connected", "connected", "status_since", "total_uptime", "is_public", "host_tags", "version"},
+			"probe_addresses":            {"executor_id", "family", "address", "via", "first_observed", "last_observed"},
 			"payment_receipts":           {"tx_digest", "event_seq", "nonce", "disposition", "amount", "checkpoint", "observed_at"},
 			"chain_transfers":            {"id", "kind", "transaction_id", "amount", "state", "digest", "signed_transaction", "signature", "updated_at"},
 			"measurement_profiles":       {"id", "user_id", "document"},
@@ -86,7 +88,9 @@ func PolicyFor(role Role) (Policy, error) {
 			"attribution_keys":           {"executor_id", "chain_id", "epoch", "key", "disclosed_at_ns"},
 			"attribution_runs":           {"debuglet_id", "chain_id", "source_ip", "source_ip_observed", "active_from_ns", "active_to_ns"},
 			"attribution_retention":      {"singleton", "retained_from_ns"},
-			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure"},
+			"attribution_verify_budget":  {"executor_id", "chain_id", "epoch", "used"},
+			"attribution_receipt_keys":   {"key_id", "public_key", "valid_from_ns", "valid_to_ns"},
+			"debuglet_cancellations":     {"debuglet_id", "request_id", "reason", "requested_at", "attempted_at", "acknowledged_at", "failure", "terminal_recorded_at"},
 			"debuglets":                  {"uuid", "ceil_bw", "transaction_id", "order_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":              {"debuglet_id", "output", "source_sequence"},
 			"debuglet_provenance":        {"debuglet_id", "document"},
@@ -95,6 +99,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
 			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
 			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
+			"destination_policy_events":  {"destination", "kind", "limit_bps", "reason", "actor", "requested_at_ns", "expires_at_ns", "revision"},
 			"debuglet_users":             {"debuglet_id", "user_id"},
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
 			"executor_enrollments":       {"executor_id", "fingerprint"},
@@ -122,7 +127,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglets":             {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
 			"debuglet_logs":         {"debuglet_id", "output"},
 			"debuglet_exits":        {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
-			"tesla_chains":          {"generation", "anchor", "epoch_base", "delay_ns", "chain_length"},
+			"tesla_chains":          {"generation", "anchor", "epoch_base", "delay_ns", "chain_length", "disclosure_delay"},
 			"output_runs":           {"run_id", "dispatcher_incarnation", "session_id", "output_version", "last_sequence", "acknowledged_sequence", "emitted_bytes", "queued_bytes", "queued_frames", "status", "reason", "end_acknowledged", "receipt_sequence", "receipt_reason"},
 			"output_frames":         {"run_id", "sequence", "timestamp_ns", "output"},
 			"output_usage":          {"singleton", "charged_bytes"},

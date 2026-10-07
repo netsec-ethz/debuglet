@@ -64,12 +64,23 @@ An account's allowance is `granted`, the sum of its grants, less what its `TEST`
 
 API 1.9 also adds `admission`, operator `display` metadata, the executor-reported `scion_isd_as` and `listeners` to `GET /executors`. Each value carries a source label; see [executor discovery](operations/executor-discovery.md#vantage-point-metadata). It also adds the executor's host probes: `capabilities.icmp`, `capabilities.enforcement_reason` and `clock`. Host platform detail is operator-only and is never listed; it appears only in result provenance ([host probes](operations/executor-discovery.md#host-probes)).
 
+API 1.16 adds RIPE Atlas-style addressing to every entry: `is_public`, the dispatcher-observed `address_v4` and `address_v6`, their `prefix_v4`, `prefix_v6`, `asn_v4` and `asn_v6`, and `address_observations` with how and when each address was seen. A private executor's addresses are withheld from everyone but operators; nothing else is ([probe addresses](operations/executor-discovery.md#probe-addresses)).
+
+API 1.17 adds RIPE Atlas-style status and tags to every entry: `status` (`connected`, `disconnected`, `abandoned` or `never_connected`, with `since`), `status_since`, `first_connected`, `last_connected`, `total_uptime` and `tags` (host tags, then `system-` tags). `GET /executors?status=...` also lists executors that are not connected; without the parameter the listing is unchanged. See [probe status and tags](operations/executor-discovery.md#probe-status-and-tags).
+
 ## Probe attribution
 
 API 1.11 adds two public routes for [probe verification](verification.md). They need no credential and are rate-limited per client address; an excess answers `429 rate_limited` with `Retry-After`. Behind a reverse proxy the address is the proxy's unless the proxy is listed in `[attribution] trusted_proxies` ([configuration](operations/configuration.md#dispatcher-attribution-history)).
 
 - `GET /attribution/candidates?ip=&at=` lists the runs active from `ip` within one epoch of `at` (RFC 3339), oldest first and at most 32 (`truncated` when more matched). Each candidate gives `executor_id`, `run_id`, `active_from`, `active_to`, `ip_source` (`observed` or `advertised`), the chain `schedule` `{chain_id, k0, t0_unix_ns, epoch_seconds, disclosure_delay_epochs, chain_length, tag_spec}`, `disclosed_through` (the latest disclosed epoch, 0 for none), `disclosed_through_at_ns` (when the dispatcher recorded that key) and `next_disclosure_at_ns` (the earliest disclosure time of the next key). `tag_spec` is 1 for debuglet-tag-v1 and 0 for a legacy chain whose executor did not report debuglet-tag-v1, which a v1 verifier reports as unsupported. The answer's `retained_from` is the start of the retained history: before it, no candidate is no evidence either way.
 - `GET /attribution/keys?executor_id=&chain_id=&from_epoch=&to_epoch=` returns a chain's disclosed keys in ascending epoch order, at most 1024 epochs per page, with `next_epoch` for the next page. Only keys that verified against `k0` are recorded, but a verifier checks each against `k0` itself.
+
+API 1.18 adds the server-assisted check, public and under the same rate limit:
+
+- `POST /attribution/verify` takes `{packets: [{data, captured_at}]}`: 1 to 256 packets, each the base64 of the first min(64, Total Length) bytes of the IPv4 packet with its capture time, in a body of at most 64 KiB that forms at most 16 groups (one per source address and epoch of each candidate chain). Each group in `groups` gives `source`, `epoch`, `chain_id`, `executor_id`, `run_id`, `verdict`, `reason`, `method` (`server` when the executor answered before disclosure, `offline` when a disclosed key did, empty when nothing was checked), `packets` (indices into the request) and, for a group with a chain, `budget` `{limit, remaining, resets_at}` in candidate trials and, when pending, `pending_until`. `receipt` `{key_id, payload, signature}` is an Ed25519 signature over the canonical JSON in `payload`. `503 service_unavailable` means the receipt key could not be read or created.
+- `GET /attribution/receipt-keys` lists every receipt key `{key_id, public_key, valid_from, valid_to}`, oldest first; `valid_to` is null for the current key.
+
+[Probe verification](verification.md#http-api) defines the groups, the budget and the receipt.
 
 A candidate names the run and its executor, never the account; a run ID grants no access to owner routes. `GET /executors/by-ip` and `GET /executors/{id}/tesla` are deprecated in favour of these routes and keep working within API major 1.
 
@@ -201,12 +212,47 @@ for permission scopes, expiry, provider setup and current limits.
 Allocation delivery failures return `Unavailable` to the executor; the recorded
 allocation is idempotent and stays until normal release or window reclamation.
 Each exact session retries pending delivery on its heartbeat, with no separate
-notification worker. Executors advertising bandwidth version 1 apply complete
+notification worker. Executors advertising bandwidth version 1 or later apply complete
 allocation snapshots in revision order, including after an older RPC times out.
 An acknowledgement means the current packet-counter updates succeeded.
 
-`PATCH /destination` records its accepted admission cap even if delivery fails.
+`PATCH /destination` records its accepted policy even if delivery fails.
 A failed response means some executors have not confirmed it; inspect the named
 executor in dispatcher diagnostics. Legacy executors remain compatible for run
 allocation but cannot confirm ordered live changes: this operation reports that
 an executor upgrade is required. Reconnection never retargets an old update.
+
+### Destination policies
+
+API 1.19. `PATCH /destination` (operator) states the complete policy of one
+destination: `limit`, or `denied: true`, which refuses every new submission
+and allocation there whatever its floor and records no limit; `denied: false` lifts a deny.
+Destination keys use the executor policy normalization: host without port,
+lower-case name without a final dot, or canonical IP without mapping/zone.
+Equivalent spellings address the same policy, reservation and limiter.
+`reason` (at most 500 bytes) is required to deny or to lower the limit, and
+`expires_at` (RFC 3339, in the future) returns the destination to the default
+capacity at that time. Answers: 204 recorded and delivered, 400 invalid, 403
+not an operator, 409 a limit below the floors admitted there (a deny is never
+refused for floors), 500 recorded but not acknowledged by every executor
+holding an allocation there.
+
+Each change is appended to the dispatcher database before it applies and is
+applied again after a restart. `GET /destinations` (operator) lists the latest
+event of every destination: `kind` (`limit`, `deny`, or `allow` for an
+expiry), `denied`, `limit` (null for the default), `reason`, `actor` (account
+ID, `local`, or `system`), `set_at`, `expires_at`, `revision`, and `delivery`
+(`confirmed` or `unconfirmed`) with `recipients` and `unconfirmed` counts for
+the executors that held an allocation when it was applied in this dispatcher
+lifetime. A deny is sent as a zero limit with the denied flag. An executor of
+this release (bandwidth version 2) closes the active sockets to the destination
+before it acknowledges; only its acknowledgement confirms a deny. An executor
+that predates this release only applies the zero limit, stays unconfirmed even
+when it acknowledges, and the PATCH answers 500 asking for its upgrade.
+An unconfirmed deny retires only its captured control session within the
+five-second delivery deadline, preventing further lease renewal. Remote work
+stops no later than its existing lease expiry under the supported control
+contract; delivery remains unconfirmed. Reconnecting does not remove the
+durable policy. A failure to record the change answers 500 "destination policy could not be
+recorded"; nothing was applied and the previous policy stays in force. See
+[destination limits and opt-outs](operations/configuration.md#destination-limits-and-opt-outs).

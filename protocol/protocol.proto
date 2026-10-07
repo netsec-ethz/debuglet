@@ -51,7 +51,7 @@ message HelloResponse {
   // TESLA chain length L: the chain serves epochs below it. Zero from an
   // executor that predates it; the schedule's length is then unknown.
   int64 tesla_chain_length = 21;
-  uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots.
+  uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
 }
 
 message DebugletPolicy {
@@ -86,6 +86,7 @@ message AbortResponse {}
 message DestinationLimit {
   string address = 1;
   int64 bits_limit = 2;
+  bool denied = 3; // The destination is opted out: refuse new connections and close active ones.
 }
 
 message BandwidthRequest {
@@ -114,6 +115,16 @@ message HeartbeatRequest {
   // of this executor that the dispatcher has on record, so the tail of a chain
   // can still be disclosed after the executor restarted onto a new one.
   bytes tesla_key_anchor = 7;
+  // Keys of earlier chains of this executor that are due now, beside the
+  // current chain's key above: after a restart, the tail of the chain it
+  // retired. Each names its chain by anchor, as tesla_key_anchor does.
+  repeated TeslaDisclosure extra_disclosures = 8;
+}
+// One disclosed chain key k_epoch of the chain whose anchor k_0 is anchor.
+message TeslaDisclosure {
+  bytes anchor = 1;
+  int64 epoch = 2;
+  bytes key = 3;
 }
 message HeartbeatResponse {}
 
@@ -255,6 +266,21 @@ message InspectRetainedRunResponse {
   optional RetainedRun run = 2; // Present exactly when status is FOUND.
 }
 
+// Pre-disclosure verification of one packet group (docs/verification.md, server method).
+// The executor answers for the whole group and never returns tags or keys.
+message VerifyTagsRequest {
+  ControlBinding control_binding = 1; // Same rule as InspectRetainedRun: names the armed session.
+  bytes chain_anchor = 2;             // k_0 of the chain the epoch belongs to.
+  int64 epoch = 3;                    // The epoch the packets were captured in (verifier's mapping).
+  repeated string candidate_run_ids = 4; // At most 32 canonical lowercase run IDs active from the source.
+  repeated bytes packets = 5;         // At most 256 entries, each the first min(64, Total Length) bytes of the captured IPv4 packet, tag in place.
+}
+message VerifyTagsResponse {
+  string verdict = 1; // matched, unmatched, ambiguous or unsupported.
+  string run_id = 2;  // The one candidate that reproduces every tag, when matched.
+  string reason = 3;  // For unsupported: unknown_chain, epoch_unavailable, attribution_unavailable, too_many, malformed.
+}
+
 // ============================================================
 // ====================== SERVICE DEFS ========================
 // ============================================================
@@ -285,6 +311,7 @@ service ExecutorService {
   // or deleting it. An executor without inspection answers UNIMPLEMENTED,
   // which is never a missing-row answer.
   rpc InspectRetainedRun(InspectRetainedRunRequest) returns (InspectRetainedRunResponse);
+  rpc VerifyTags(VerifyTagsRequest) returns (VerifyTagsResponse);
 }
 
 // Positive process capabilities observed by this executor. These are not
@@ -334,7 +361,7 @@ message TaggingMode {
 // measured on the executor's clock when the report was built.
 message AttributionState {
   string state = 1;  // available or unavailable.
-  string reason = 2; // Empty when available; epoch_zero, chain_exhausted, refresh_failing or disclosure_held.
+  string reason = 2; // Empty when available; epoch_zero, chain_exhausted, refresh_failing, disclosure_held, clock_unready or clock_drift.
   int64 epoch = 3;   // Current key-schedule epoch.
   optional int64 installed_epoch = 4;     // Oldest epoch a kernel tagger slot may still sign with; absent when none holds a key.
   optional int64 last_refresh_age_ms = 5; // Since the oldest last successful kernel key install; absent without one.
@@ -360,6 +387,26 @@ message VantagePointReport {
   ProbeState scion_paths = 10; // Daemon path availability, not data-plane reachability.
   HostResources resources = 11; // Process and state-filesystem observations; operator metrics only.
   string counter_attachment = 12; // present, missing or unknown: owned TCX links, not proof of packet policing.
+  // Hide the dispatcher-observed addresses from the public executor listing
+  // (is_public false); prefix, ASN and location stay public. Read at
+  // registration; false for older peers, which are public.
+  bool address_opt_out = 13;
+  // Host tags from the executor's configuration, from a fixed vocabulary
+  // (pkg/wire HostTags). Read at registration; a malformed list is dropped.
+  repeated string host_tags = 14;
+  AddressSelfCheck address_check = 15; // Optional; absent is unknown.
+}
+
+// What the executor learned from its last address observation round, reduced
+// to booleans so that no local address leaves the host.
+message AddressSelfCheck {
+  // The executor's local IPv4 source toward the dispatcher is a private
+  // (RFC 1918) address; absent when unknown.
+  optional bool ipv4_local_private = 1;
+  // The executor's resolver answered the dispatcher's name with an A (AAAA)
+  // record whose address then passed the dispatcher's TLS identity check.
+  bool resolves_a = 2;
+  bool resolves_aaaa = 3;
 }
 
 message HostResourceValue {

@@ -60,7 +60,7 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
 		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
-	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
+	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, AddressOptOut: e.cfg.Metadata.AddressOptOut, HostTags: e.cfg.Metadata.HostTags, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	stateDir := ""
 	if e.cfg.Database.Path != "" {
 		stateDir = filepath.Dir(e.cfg.Database.Path)
@@ -212,6 +212,21 @@ func (e *Executor) tagging() tagger.Mode {
 		counter = e.packetCount.Type()
 	}
 	return debuglet.ExpectedTagging(e.iface, counter)
+}
+
+// clockRefusal returns the attribution reason for which a node refuses new
+// runs: a clock condition, on a node that tags packets. Its taggers sign
+// nothing while it holds, so a run would get no attribution although the node
+// is set up to give it one. A node that tags nothing has none to lose and
+// admits runs. Empty otherwise.
+func clockRefusal(reason string, mode func() tagger.Mode) string {
+	if reason != tesla.UnattributableClockUnready && reason != tesla.UnattributableClockDrift {
+		return ""
+	}
+	if mode() == tagger.Untagged {
+		return ""
+	}
+	return reason
 }
 
 // maxRefreshError bounds the refresh error text a report carries; the

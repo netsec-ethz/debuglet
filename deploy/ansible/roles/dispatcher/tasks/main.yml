@@ -46,6 +46,64 @@
     force: false # never overwrite an existing database: it holds recorded runs
   notify: Restart dispatcher
 
+# The RIS ASN database refresh. The dispatcher refuses to start with a
+# configured database that does not exist, so a first build runs before the
+# configuration names the file.
+- name: Install the RIS ASN database refresh units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ systemd_unit_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - debuglet-ris-asn.service
+    - debuglet-ris-asn.timer
+  when: dispatcher_ris_asn_enabled | bool
+  notify: Reload systemd
+
+- name: Inspect the RIS ASN database
+  ansible.builtin.stat:
+    path: "{{ dispatcher_ris_asn_database }}"
+  register: dispatcher_ris_asn_file
+  when: dispatcher_ris_asn_enabled | bool
+
+- name: Build the first RIS ASN database
+  ansible.builtin.systemd:
+    name: debuglet-ris-asn.service
+    state: started
+    daemon_reload: true
+  when:
+    - dispatcher_ris_asn_enabled | bool
+    - debuglet_manage_services | bool
+    - not dispatcher_ris_asn_file.stat.exists
+
+- name: Inspect the RIS ASN refresh timer
+  ansible.builtin.stat:
+    path: "{{ systemd_unit_dir }}/debuglet-ris-asn.timer"
+  register: dispatcher_ris_asn_timer
+  when: not (dispatcher_ris_asn_enabled | bool)
+
+- name: Stop the RIS ASN database refresh
+  ansible.builtin.systemd:
+    name: debuglet-ris-asn.timer
+    state: stopped
+    enabled: false
+  when:
+    - not (dispatcher_ris_asn_enabled | bool)
+    - debuglet_manage_services | bool
+    - dispatcher_ris_asn_timer.stat.exists
+
+- name: Remove the RIS ASN database refresh units
+  ansible.builtin.file:
+    path: "{{ systemd_unit_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - debuglet-ris-asn.service
+    - debuglet-ris-asn.timer
+  when: not (dispatcher_ris_asn_enabled | bool)
+  notify: Reload systemd
+
 - name: Deploy dispatcher configuration
   ansible.builtin.template:
     src: dispatcher.toml.j2
@@ -95,3 +153,13 @@
     state: started
     daemon_reload: true
   when: debuglet_manage_services | bool
+
+- name: Enable the daily RIS ASN database refresh
+  ansible.builtin.systemd:
+    name: debuglet-ris-asn.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - dispatcher_ris_asn_enabled | bool
+    - debuglet_manage_services | bool

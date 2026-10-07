@@ -58,6 +58,9 @@ type Handler struct {
 	// attributionLimiter bounds the public attribution routes per client
 	// address. See handlers_attribution.go.
 	attributionLimiter *addressLimiter
+	// receipts signs the receipts of POST /attribution/verify. See
+	// handlers_attribution_verify.go.
+	receipts receiptState
 }
 
 type GitHubOAuthConfig struct {
@@ -179,8 +182,11 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// attribution
 	e.GET(routeAttributionCandidates, h.GetAttributionCandidates)
 	e.GET(routeDisclosures, h.GetAttributionKeys)
+	e.POST(routeAttributionVerify, h.PostAttributionVerify)
+	e.GET(routeReceiptKeys, h.GetAttributionReceiptKeys)
 	// destination
 	e.PATCH("/destination", h.PatchDestinationLimit)
+	e.GET("/destinations", h.GetDestinationPolicies)
 	// payment
 	// e.GET("payment/balance", h.GetBalance)
 	e.PUT("/payment/intent", h.PutPaymentIntent)

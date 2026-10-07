@@ -15,7 +15,7 @@ var OpenAPI []byte
 const (
 	// Version is the HTTP API contract version as major.minor. It equals the
 	// info.version field of OpenAPI.
-	Version = "1.15"
+	Version = "1.19"
 	// Major is the compatibility number of Version. Clients that require a
 	// different major version are answered with an explicit incompatibility
 	// error instead of a best-effort response.
@@ -39,7 +39,13 @@ const (
 	// payment features, usage allowances (GET /me/allowance, POST
 	// /operator/accounts/{id}/allowance) and executor earnings
 	// (GET /operator/executors/{id}/earnings).
-	Minor = 15
+	// 1.16 added the RIPE Atlas-style is_public, address, prefix and ASN
+	// fields of each address family to GET /executors.
+	// 1.17 added the RIPE Atlas-style status history and tags to GET
+	// /executors and its status filter.
+	// 1.18 added server-assisted verification and receipt keys.
+	// 1.19 added recorded destination policies: deny, reason, expiry and their listing.
+	Minor = 19
 	// VersionHeader carries the contract version a client requires on requests
 	// and the version the dispatcher implements on responses.
 	VersionHeader = "Debuglet-API-Version"

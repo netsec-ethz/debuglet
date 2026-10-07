@@ -413,6 +413,11 @@ func (d *Dispatcher) validateDebugletSpec(spec *models.DebugletSpec) (*schedule.
 	}
 
 	for _, dest := range spec.Policy.Addresses {
+		// A denied destination admits nothing, whatever the floor; it is
+		// refused like exhausted capacity, which every caller already maps.
+		if d.destinations.Denied(dest) {
+			return nil, fmt.Errorf("destination '%s': %w: %w", dest, resource.ErrDenied, resource.ErrCapacityFull)
+		}
 		if total, exact := bitrate.Add(d.scheduler.QueryMaxDest(dest, from, to), r.Use); !exact || total > d.destinations.Cap(dest) {
 			return nil, fmt.Errorf("time [%s, %s] destination '%s' capacity exceeded: %w", from, to, dest, resource.ErrCapacityFull)
 		}
@@ -604,16 +609,8 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 // recordCancellationResult uses only the run's original binding. Terminal
 // selection and cleanup are shared with exits; payment runs only for the winner.
 func (d *Dispatcher) recordCancellationResult(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
-	msg := reason
 	queries := database.New(d.db)
-	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
-		ExitedState:           models.RunStateExited,
-		Error:                 terminalError(-1, &msg),
-		Uuid:                  id,
-		ExecutorID:            identity.ExecutorID,
-		DispatcherIncarnation: identity.DispatcherIncarnation,
-		SessionID:             identity.SessionID,
-	})
+	deb, err := d.recordCancellationTerminal(ctx, identity, id, reason)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return status.Errorf(codes.Internal, "failed to record cancellation: %v", err)

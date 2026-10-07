@@ -6,6 +6,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,37 @@ func TestMetricsConcurrentCollectionRefusesWithoutWaiting(t *testing.T) {
 	e.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Retry-After") != "1" {
 		t.Fatalf("busy scrape: %d %s", recorder.Code, recorder.Body)
+	}
+}
+
+// The attribution state series name the clock reasons with fixed labels and
+// sum to the registered executors.
+func TestMetricsAttributionStatesSumToRegistered(t *testing.T) {
+	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 4, Health: dispatcher.ExecutorHealthMetrics{
+		AttributionAvailable: 1, ClockUnready: 1, ClockDrift: 1, AttributionUnknown: 1}}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	sum := 0
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "debuglet_executors_attribution_state{") {
+			continue
+		}
+		_, value, _ := strings.Cut(line, " ")
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			t.Fatalf("value of %q: %v", line, err)
+		}
+		sum += n
+	}
+	if sum != c.Registered {
+		t.Fatalf("attribution states sum to %d, want %d:\n%s", sum, c.Registered, out)
+	}
+	for _, want := range []string{`debuglet_executors_attribution_state{state="clock_unready"} 1`, `debuglet_executors_attribution_state{state="clock_drift"} 1`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if !strings.Contains(formatMetrics(dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 1}, observability.HostSnapshot{}), `debuglet_executors_attribution_state{state="clock_drift"} 0`) {
+		t.Fatal("clock_drift label not fixed")
 	}
 }
 

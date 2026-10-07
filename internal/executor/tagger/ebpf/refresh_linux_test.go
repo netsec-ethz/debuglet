@@ -51,6 +51,22 @@ func refreshTagger(t *testing.T, epoch time.Time) (*BPFTagger, *observer.Observe
 	}, logs
 }
 
+// epochEntry is the map entry of measurementID in epoch e, read from the chain
+// without CurrentKey, which never returns a key of an epoch below one it has
+// already returned.
+func epochEntry(t *testing.T, ks *tesla.KeySchedule, measurementID []byte, e int64) akEntry {
+	t.Helper()
+	k, err := ks.KeyAtEpoch(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ak, err := tesla.DeriveAK(k, measurementID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return akFromKey(ak)
+}
+
 func (bt *BPFTagger) refreshState() (error, time.Time) {
 	bt.refreshMu.Lock()
 	defer bt.refreshMu.Unlock()
@@ -241,7 +257,7 @@ func TestDisclosureNeverNamesInstalledKey(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if held, usable, _ := akEntryAt(ks, bt.measureID, refreshStart.Add(time.Duration(idx)*refreshEpoch)); filled && usable && held == slot {
+				if filled && idx >= 1 && epochEntry(t, ks, bt.measureID, idx) == slot {
 					t.Fatalf("at %v: disclosed epoch %d while its key is still installed", now.Sub(refreshStart), idx)
 				}
 				// Aligned refreshes never hold disclosure back: k_{t-d}, and

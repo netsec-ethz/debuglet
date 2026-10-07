@@ -601,7 +601,7 @@ func TestOperatorReachesAdministrationButNotPrivateRuns(t *testing.T) {
 		t.Fatalf("the operator cannot enumerate accounts: %d (%s)", status, code)
 	}
 	if status, code := authAs(t, f, operatorToken, http.MethodPatch, "/destination",
-		[]byte(`{"destination":"127.0.0.1","limit":1000000}`)); status != http.StatusNoContent {
+		[]byte(`{"destination":"127.0.0.1","limit":1000000,"reason":"capacity planning"}`)); status != http.StatusNoContent {
 		t.Fatalf("the operator cannot change a destination limit: %d (%s)", status, code)
 	}
 	for _, target := range []string{"/debuglet/" + id + "/state", "/debuglet/" + id + "/logs"} {
@@ -761,6 +761,8 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"GET /executors/:id/tesla":                      {anonymous: http.StatusOK, target: "/executors/" + ccExecutorID + "/tesla", public: true},
 	"GET /attribution/candidates":                   {anonymous: http.StatusOK, target: "/attribution/candidates?ip=127.0.0.1&at=2026-09-29T10:00:00Z", public: true},
 	"GET /attribution/keys":                         {anonymous: http.StatusNotFound, target: "/attribution/keys?executor_id=" + ccExecutorID + "&chain_id=none", public: true},
+	"POST /attribution/verify":                      {anonymous: http.StatusBadRequest, target: "/attribution/verify", body: []byte(`{"packets":[]}`), public: true},
+	"GET /attribution/receipt-keys":                 {anonymous: http.StatusServiceUnavailable, target: "/attribution/receipt-keys", public: true},
 	"GET /operator/executors":                       {anonymous: http.StatusUnauthorized, target: "/operator/executors"},
 	"POST /operator/executors":                      {anonymous: http.StatusUnauthorized, target: "/operator/executors", body: []byte(`{"name":"node"}`)},
 	"POST /operator/executors/:id/enrollment-token": {anonymous: http.StatusUnauthorized, target: "/operator/executors/" + authSampleID + "/enrollment-token"},
@@ -768,6 +770,7 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"POST /operator/accounts/:id/allowance":         {anonymous: http.StatusUnauthorized, target: "/operator/accounts/" + authSampleID + "/allowance", body: []byte(`{"reason":"trial","idempotency_key":"k"}`)},
 	"POST /executor-enrollment":                     {anonymous: http.StatusServiceUnavailable, target: "/executor-enrollment", body: []byte(`{}`), public: true},
 	"PATCH /destination":                            {anonymous: http.StatusUnauthorized, target: "/destination", body: []byte(`{"destination":"127.0.0.1","limit":1000000}`)},
+	"GET /destinations":                             {anonymous: http.StatusUnauthorized, target: "/destinations"},
 	"PUT /payment/intent":                           {anonymous: http.StatusUnauthorized, target: "/payment/intent", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /payment/:transaction_id/status":           {anonymous: http.StatusUnauthorized, target: "/payment/none/status"},
 	"POST /payment/quote":                           {anonymous: http.StatusUnauthorized, target: "/payment/quote", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},

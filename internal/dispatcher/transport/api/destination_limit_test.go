@@ -1,12 +1,15 @@
 package api
 
 import (
+	"encoding/json"
 	"go.uber.org/zap"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
@@ -45,7 +48,7 @@ func TestDestinationLimitAnswersWhetherItWasDelivered(t *testing.T) {
 	const destination = "127.0.0.1"
 	patch := func(what string, limit int64, want int) []byte {
 		t.Helper()
-		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit})
+		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit, Reason: "capacity planning"})
 		wfExpect(t, what, status, want, body)
 		oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
 		return body
@@ -98,7 +101,7 @@ func TestDestinationLimitBelowTheFloorsAnswersConflict(t *testing.T) {
 	const destination = "127.0.0.1"
 	patch := func(what string, limit int64, want int) []byte {
 		t.Helper()
-		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit})
+		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit, Reason: "capacity planning"})
 		wfExpect(t, what, status, want, body)
 		oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
 		return body
@@ -131,7 +134,7 @@ func TestDestinationLimitBelowTheReservedFloorsAnswersConflict(t *testing.T) {
 	const destination = "127.0.0.1"
 	patch := func(what string, limit int64, want int) []byte {
 		t.Helper()
-		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit})
+		status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: limit, Reason: "capacity planning"})
 		wfExpect(t, what, status, want, body)
 		oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
 		return body
@@ -167,11 +170,190 @@ func TestDestinationLimitLegacyPeerReturnsUpgradeInstruction(t *testing.T) {
 	f := ccNewFixturePeer(t, zap.NewNop(), peer, LocalDevelopment(true))
 	dlAllocate(t, f, "127.0.0.1")
 	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
-	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: "127.0.0.1", Limit: 2 * ccFloorBW})
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: "127.0.0.1", Limit: 2 * ccFloorBW, Reason: "capacity planning"})
 	wfExpect(t, "legacy ordered update", status, http.StatusInternalServerError, body)
 	envelope := envelopeOf(t, "legacy ordered update", body)
 	if envelope.Code != CodeInternal || !strings.Contains(envelope.Message, "upgrade legacy executors") {
 		t.Fatalf("no actionable legacy outcome: %+v", envelope)
 	}
 	oaCheckResponse(t, oaContract(t), http.MethodPatch, "/destination", status, body)
+}
+
+// dlExpectPolicyRecord scripts the recording of one destination policy event,
+// the first of its destination, on a sqlmock database.
+func dlExpectPolicyRecord(mock sqlmock.Sqlmock, destination string, limit int64) {
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT CAST\\(COALESCE\\(MAX\\(revision\\), 0\\) AS INTEGER\\) FROM destination_policy_events").
+		WithArgs(destination).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow(0))
+	mock.ExpectQuery("INSERT INTO destination_policy_events").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "destination", "kind", "limit_bps", "reason", "actor", "requested_at_ns", "expires_at_ns", "revision"}).
+			AddRow(1, destination, "limit", limit, "capacity planning", "local", time.Now().UnixNano(), nil, 1))
+	mock.ExpectCommit()
+}
+
+func dlPolicies(t *testing.T, raw *wfClient, contract *contract) []DestinationPolicyResponse {
+	t.Helper()
+	status, body := raw.do(http.MethodGet, "/destinations", nil)
+	wfExpect(t, "destination policies", status, http.StatusOK, body)
+	oaCheckResponse(t, contract, http.MethodGet, "/destinations", status, body)
+	var listed DestinationPoliciesResponse
+	if err := json.Unmarshal(body, &listed); err != nil {
+		t.Fatalf("decode destination policies: %v", err)
+	}
+	return listed.Destinations
+}
+
+// TestDestinationPolicyRequiresAnOperator states that neither listing nor
+// changing destination policies is open to an account without the operator
+// role.
+func TestDestinationPolicyRequiresAnOperator(t *testing.T) {
+	f := ccNewFixtureWith(t)
+	account, token, _ := authAccount(t, f, "destination submitter")
+	bearer := map[string]string{"Authorization": "Bearer " + token}
+	deny := []byte(`{"destination":"192.0.2.10","limit":0,"denied":true,"reason":"owner request"}`)
+	if status, code := authStatus(t, f, http.MethodPatch, "/destination", deny, bearer); status != http.StatusForbidden {
+		t.Fatalf("submitter deny: %d (%s), want 403", status, code)
+	}
+	if status, code := authStatus(t, f, http.MethodGet, "/destinations", nil, bearer); status != http.StatusForbidden {
+		t.Fatalf("submitter list: %d (%s), want 403", status, code)
+	}
+	authGrantOperator(t, f, account.ID)
+	if status, code := authStatus(t, f, http.MethodPatch, "/destination", deny, bearer); status != http.StatusNoContent {
+		t.Fatalf("operator deny: %d (%s), want 204", status, code)
+	}
+	status, _, body, _ := authRequest(t, f, http.MethodGet, "/destinations", nil, bearer)
+	var listed DestinationPoliciesResponse
+	if err := json.Unmarshal(body, &listed); status != http.StatusOK || err != nil || len(listed.Destinations) != 1 {
+		t.Fatalf("operator list: %d %s (%v)", status, body, err)
+	}
+	if got := listed.Destinations[0]; got.Actor != account.ID || !got.Denied || got.Reason != "owner request" {
+		t.Fatalf("recorded policy %+v, want a deny by %s", got, account.ID)
+	}
+}
+
+// TestDestinationPolicyValidatesBeforeRecording states that a change without
+// a required reason, with an oversized reason or with an unusable expiry is
+// refused with 400 and records nothing.
+func TestDestinationPolicyValidatesBeforeRecording(t *testing.T) {
+	f := ccNewFixture(t)
+	contract := oaContract(t)
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	for _, tc := range []struct {
+		what string
+		req  DestinationLimitRequest
+	}{
+		{"deny without reason", DestinationLimitRequest{Destination: "192.0.2.11", Denied: true}},
+		{"lowered limit without reason", DestinationLimitRequest{Destination: "192.0.2.11", Limit: 1000}},
+		{"oversized reason", DestinationLimitRequest{Destination: "192.0.2.11", Denied: true, Reason: strings.Repeat("r", 501)}},
+		{"expiry not RFC 3339", DestinationLimitRequest{Destination: "192.0.2.11", Denied: true, Reason: "x", ExpiresAt: "tomorrow"}},
+		{"expiry in the past", DestinationLimitRequest{Destination: "192.0.2.11", Denied: true, Reason: "x", ExpiresAt: "2020-01-01T00:00:00Z"}},
+		{"empty destination", DestinationLimitRequest{Denied: true, Reason: "x"}},
+	} {
+		status, body := raw.do(http.MethodPatch, "/destination", tc.req)
+		wfExpect(t, tc.what, status, http.StatusBadRequest, body)
+		oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
+	}
+	if listed := dlPolicies(t, raw, contract); len(listed) != 0 {
+		t.Fatalf("refused changes recorded %+v", listed)
+	}
+	// Raising the limit above the current one needs no reason.
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: "192.0.2.11", Limit: maxBandwidthBPS})
+	wfExpect(t, "raised limit", status, http.StatusNoContent, body)
+}
+
+// TestDestinationDenyIsSentListedAndRefusesNewWork drives a deny through the
+// real routes: the executor holding an allocation receives the destination
+// with a zero limit and the denied flag, the listing reports the deny with its
+// actor, reason, expiry and confirmed delivery, and a new submission naming
+// it is refused like exhausted capacity.
+func TestDestinationDenyIsSentListedAndRefusesNewWork(t *testing.T) {
+	f := ccNewFixture(t)
+	contract := oaContract(t)
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	const destination = "127.0.0.1"
+	dlAllocate(t, f, destination)
+	before := len(dlBandwidths(f.peer))
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{
+		Destination: destination, Denied: true, Reason: "owner request", ExpiresAt: expires.Format(time.RFC3339)})
+	wfExpect(t, "deny", status, http.StatusNoContent, body)
+	pushed := dlBandwidths(f.peer)[before:]
+	if len(pushed) != 1 {
+		t.Fatalf("the executor received %d bandwidth updates, want 1", len(pushed))
+	}
+	if limits := pushed[0].GetLimits(); len(limits) != 1 || limits[0].GetAddress() != destination || limits[0].GetBitsLimit() != 0 || !limits[0].GetDenied() {
+		t.Fatalf("pushed update %v, want %s denied with a zero limit", limits, destination)
+	}
+	listed := dlPolicies(t, raw, contract)
+	if len(listed) != 1 {
+		t.Fatalf("listed %+v, want one policy", listed)
+	}
+	got := listed[0]
+	if got.Destination != destination || got.Kind != "deny" || !got.Denied || got.Limit != nil || got.Reason != "owner request" ||
+		got.Actor != "local" || got.Revision != 1 || got.ExpiresAt == nil || !got.ExpiresAt.Equal(expires) ||
+		got.Delivery != "confirmed" || got.Recipients != 1 || got.Unconfirmed != 0 {
+		t.Fatalf("listed %+v", got)
+	}
+
+	f.peer.setUploadHook(nil)
+	batch, err := client.Prepare([]client.Request{ccRequest(nil)})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	ctx, cancel := f.requestCtx()
+	defer cancel()
+	if _, err := f.client(f.root.URL, false).SubmitTEST(ctx, batch); err == nil || !strings.Contains(err.Error(), "409") || !strings.Contains(err.Error(), CodeCapacityExhausted) {
+		t.Fatalf("submission naming a denied destination answered %v, want 409 %s", err, CodeCapacityExhausted)
+	}
+}
+
+// TestDestinationDenyReportsALegacyExecutorAsUnconfirmed states that an
+// executor which cannot acknowledge ordered application is counted as not
+// having confirmed the deny, while the deny itself stays recorded.
+func TestDestinationDenyReportsALegacyExecutorAsUnconfirmed(t *testing.T) {
+	peer := &cpPeer{id: ccExecutorID, price: ccPricePerBwS, currency: "TEST", legacyBandwidth: true}
+	f := ccNewFixturePeer(t, zap.NewNop(), peer, LocalDevelopment(true))
+	dlAllocate(t, f, "127.0.0.1")
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: "127.0.0.1", Denied: true, Reason: "owner request"})
+	wfExpect(t, "legacy deny", status, http.StatusInternalServerError, body)
+	listed := dlPolicies(t, raw, oaContract(t))
+	if len(listed) != 1 || !listed[0].Denied || listed[0].Delivery != "unconfirmed" || listed[0].Recipients != 1 || listed[0].Unconfirmed != 1 {
+		t.Fatalf("listed %+v, want one unconfirmed deny", listed)
+	}
+	if limits := dlBandwidths(peer); len(limits) == 0 || limits[len(limits)-1].GetLimits()[0].GetBitsLimit() != 0 {
+		t.Fatalf("legacy executor did not receive the zero limit: %v", limits)
+	}
+}
+
+// TestDestinationPolicyThatCannotBeRecordedSaysSo states that PATCH
+// /destination does not claim a deny was recorded when its event could not
+// be written, and that the previous policy stays authoritative.
+func TestDestinationPolicyThatCannotBeRecordedSaysSo(t *testing.T) {
+	f := ccNewFixture(t)
+	contract := oaContract(t)
+	raw := &wfClient{t: t, base: f.root.URL, http: f.root.Client()}
+	const destination = "192.0.2.131"
+	status, body := raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Limit: 5 * ccFloorBW, Reason: "capacity planning"})
+	wfExpect(t, "limit", status, http.StatusNoContent, body)
+	if _, err := f.db.ExecContext(t.Context(), `CREATE TRIGGER dl_refuse BEFORE INSERT ON destination_policy_events
+BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	status, body = raw.do(http.MethodPatch, "/destination", DestinationLimitRequest{Destination: destination, Denied: true, Reason: "owner request"})
+	wfExpect(t, "unrecorded deny", status, http.StatusInternalServerError, body)
+	oaCheckResponse(t, contract, http.MethodPatch, "/destination", status, body)
+	if envelope := envelopeOf(t, "unrecorded deny", body); envelope.Code != CodeInternal || envelope.Message != "destination policy could not be recorded" {
+		t.Fatalf("unrecorded deny answered %+v", envelope)
+	}
+	if _, err := f.db.ExecContext(t.Context(), `DROP TRIGGER dl_refuse`); err != nil {
+		t.Fatal(err)
+	}
+	listed := dlPolicies(t, raw, contract)
+	if len(listed) != 1 || listed[0].Kind != "limit" || listed[0].Denied || listed[0].Revision != 1 {
+		t.Fatalf("listed %+v, want the previous limit", listed)
+	}
+	if got := f.d.DestinationLimit(destination); got != bitrate.Bitrate(5*ccFloorBW) {
+		t.Fatalf("limit after an unrecorded deny is %s", got)
+	}
 }

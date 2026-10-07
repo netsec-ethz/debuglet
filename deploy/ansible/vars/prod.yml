@@ -14,3 +14,6 @@ dispatcher_base_url: debuglet.netsec.ethz.ch
 # CILogon client cilogon:/client_id/f8b81eedbc869260bc6eefee48cb9be is approved
 # for https://debuglet.netsec.ethz.ch/api/auth/cilogon/callback.
 dispatcher_cilogon_oidc_enabled: true
+
+# Executor ASN and prefix from RIPE RIS; see group_vars/dispatcher.yml.
+dispatcher_ris_asn_enabled: true

@@ -24,7 +24,8 @@ func TestCancellationMigrationPreservesRunsWithoutInventingRequests(t *testing.T
 	if err != nil || !reflect.DeepEqual(got, run) {
 		t.Fatalf("migration changed run: %+v, %v", got, err)
 	}
-	if _, err := q.GetCancellation(ctx, run.ID); !errors.Is(err, sql.ErrNoRows) {
+	var cancellation int64
+	if err := db.QueryRowContext(ctx, "SELECT debuglet_id FROM debuglet_cancellations WHERE debuglet_id = ?", run.ID).Scan(&cancellation); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("migration invented cancellation: %v", err)
 	}
 }

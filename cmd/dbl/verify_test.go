@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/netsec-ethz/debuglet/pkg/tagspec"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 const verifyRun = "6f1c2b1d-4c8e-4a6f-9d3b-2e1c4a57aaaa"
@@ -30,7 +33,10 @@ type verifyFixture struct {
 	*fixture
 }
 
-func newVerifyFixture(t *testing.T) *verifyFixture {
+func newVerifyFixture(t *testing.T) *verifyFixture { return newVerifyFixtureWith(t, nil) }
+
+// newVerifyFixtureWith lets extra add routes to the fixture dispatcher.
+func newVerifyFixtureWith(t *testing.T, extra func(*verifyFixture, *http.ServeMux)) *verifyFixture {
 	const length = 1000
 	v := &verifyFixture{keys: make([][]byte, length+1), t0: time.Now().Add(-time.Hour).Truncate(time.Second)}
 	tail := sha256.Sum256([]byte("verify fixture"))
@@ -64,6 +70,9 @@ func newVerifyFixture(t *testing.T) *verifyFixture {
 		}
 		writeJSONResponse(w, http.StatusOK, doc)
 	})
+	if extra != nil {
+		extra(v, mux)
+	}
 	v.fixture = newFixture(t, mux)
 	return v
 }
@@ -287,4 +296,71 @@ func TestVerifyCommandExitCodesDoNotCollide(t *testing.T) {
 			t.Fatalf("stderr: %s", errout)
 		}
 	})
+}
+
+// TestVerifyCommandServerMethod checks a group whose key is not disclosed:
+// the dispatcher's executor confirms it, the output names the method and the
+// receipt key, and the evidence bundle checks the receipt again offline.
+func TestVerifyCommandServerMethod(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(nil)
+	public := key.Public().(ed25519.PublicKey)
+	keyID := client.ReceiptKeyID(public)
+	v := newVerifyFixtureWith(t, func(v *verifyFixture, mux *http.ServeMux) {
+		mux.HandleFunc("GET /attribution/receipt-keys", func(w http.ResponseWriter, r *http.Request) {
+			writeJSONResponse(w, http.StatusOK, client.AttributionReceiptKeys{Keys: []client.AttributionReceiptKey{{KeyID: keyID, PublicKey: public, ValidFrom: v.t0}}})
+		})
+		mux.HandleFunc("POST /attribution/verify", func(w http.ResponseWriter, r *http.Request) {
+			var req wire.AttributionVerifyRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONResponse(w, http.StatusBadRequest, map[string]string{"code": "invalid_request", "message": "bad"})
+				return
+			}
+			group := wire.AttributionReceiptGroup{ChainID: "c0ffee", Epoch: v.epoch(req.Packets[0].CapturedAt), ExecutorID: "exec-zrh-1",
+				Method: "server", Packets: []int{0}, RunID: verifyRun, Source: "192.0.2.7", Verdict: "verified"}
+			payload, _ := wire.CanonicalReceiptPayload(wire.AttributionReceiptPayload{APIVersion: "1.18", Dispatcher: "http://dispatcher.test",
+				Groups: []wire.AttributionReceiptGroup{group}, PacketsDigest: wire.PacketsDigest(req.Packets), QueryAt: time.Now().UTC().Format(time.RFC3339Nano)})
+			writeJSONResponse(w, http.StatusOK, client.AttributionVerifyResponse{
+				Groups: []client.AttributionVerifyGroup{{Source: group.Source, Epoch: group.Epoch, ChainID: group.ChainID, ExecutorID: group.ExecutorID,
+					RunID: verifyRun, Verdict: "verified", Method: "server", Packets: []int{0}}},
+				Receipt: client.AttributionReceipt{KeyID: keyID, Payload: payload, Signature: ed25519.Sign(key, payload)},
+			})
+		})
+	})
+	now := v.epoch(time.Now())
+	capture := writeCapture(t, verifyPacket{v.at(now), v.probe(probeSrc, now, 1)})
+
+	code, out, errout := runCLI(context.Background(), "--endpoint", v.endpoint(), "verify", capture, "--offline")
+	assertCode(t, code, verifyExitInconclusive, out, errout)
+	for _, r := range v.requests {
+		if r.Method != http.MethodGet {
+			t.Fatalf("--offline sent %s %s", r.Method, r.Path)
+		}
+	}
+
+	evidence := filepath.Join(t.TempDir(), "evidence.json")
+	code, out, errout = runCLI(context.Background(), "--endpoint", v.endpoint(), "verify", capture, "--evidence", evidence)
+	assertCode(t, code, verifyExitVerified, out, errout)
+	for _, want := range []string{"via server  receipt key " + keyID, "verified (server)", "with the executor's answers before disclosure"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	code, out, errout = runCLI(context.Background(), "verify", evidence)
+	assertCode(t, code, verifyExitVerified, out, errout)
+	if !strings.Contains(out, "receipt key "+keyID) || !strings.Contains(out, "1 receipt checked") {
+		t.Fatalf("evidence output:\n%s", out)
+	}
+	raw, err := os.ReadFile(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := filepath.Join(t.TempDir(), "tampered.json")
+	if err := os.WriteFile(tampered, bytes.Replace(raw, []byte(keyID), []byte("00000000000000000000000000000000"), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errout = runCLI(context.Background(), "verify", tampered)
+	assertCode(t, code, verifyExitError, out, errout)
+	if !strings.Contains(errout, "does not verify") {
+		t.Fatalf("tampered receipt: %s", errout)
+	}
 }

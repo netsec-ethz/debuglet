@@ -5,6 +5,8 @@ package dispatcher
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -110,5 +112,68 @@ func TestIPMetadataPreservesOperatorDisplayAndExplicitUnknown(t *testing.T) {
 	}
 	if !locationsDiffer(&wire.GeoLocation{Country: "CH"}, &wire.GeoLocation{Country: "DE"}) || locationsDiffer(&wire.GeoLocation{Country: "CH"}, &wire.GeoLocation{Country: "CH", City: "Fixture city"}) {
 		t.Fatal("location disagreement mixed unknown values")
+	}
+}
+
+// A database replaced while the dispatcher runs applies to registrations
+// after the switch; the registered executor and admitted snapshots keep the
+// values and source they were looked up with.
+func TestIPMetadataReloadAppliesToLaterRegistrations(t *testing.T) {
+	d, _, _ := newRegistryFixture(t)
+	path := filepath.Join(t.TempDir(), "asn.mmdb")
+	replace := func(fixture string) {
+		t.Helper()
+		data, err := os.ReadFile(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path+".staging", data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(path+".staging", path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replace("../ipmetadata/testdata/asn.mmdb")
+	databases, err := ipmetadata.Open(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer databases.Close()
+	if err = d.ConfigureIPMetadata(databases); err != nil {
+		t.Fatal(err)
+	}
+	hello := registryHello("lab")
+	host := "200.1.1.1"
+	hello.PublicHost = &host
+	register := func() *executorEntry {
+		t.Helper()
+		owner := registryOwner(t, "lab")
+		t.Cleanup(func() { owner.Retire() })
+		if err := registryRegisterWithSetup(t.Context(), d, owner, hello, "8.8.8.8"); err != nil {
+			t.Fatal(err)
+		}
+		owner.MarkRegistered()
+		return d.executors["lab"]
+	}
+	first := register()
+	snapshot := admissionVantagePoint(first, time.Now())
+	if v := first.IPMetadata().Advertised.ASN; v.Value == nil || v.Value.Number != 64500 || *v.Source != "database:Debuglet-Test-ASN@1700000000" {
+		t.Fatalf("first registration: %+v", v)
+	}
+
+	replace("../ipmetadata/testdata/different.mmdb")
+	if r := databases.Reload(); len(r) != 1 || r[0].Err != nil {
+		t.Fatalf("reload: %+v", r)
+	}
+	if v := first.IPMetadata().Advertised.ASN; v.Value.Number != 64500 || *v.Source != "database:Debuglet-Test-ASN@1700000000" {
+		t.Fatalf("the registered executor was looked up again: %+v", v)
+	}
+	if v := snapshot.IPMetadata.Advertised.ASN; v.Value.Number != 64500 || *v.Source != "database:Debuglet-Test-ASN@1700000000" {
+		t.Fatalf("an admitted snapshot changed: %+v", v)
+	}
+	second := register()
+	if v := second.IPMetadata().Advertised.ASN; v.Value == nil || v.Value.Number != 64501 || *v.Source != "database:Debuglet-Test-Different@1700000000" {
+		t.Fatalf("re-registration after the reload: %+v", v)
 	}
 }

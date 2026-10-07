@@ -183,6 +183,22 @@
         fail_msg: Set both dispatcher_authentication_public_url and dispatcher_authentication_device_verification_url, or leave both empty.
         quiet: true
 
+    - name: Require a usable RIS ASN database refresh
+      ansible.builtin.assert:
+        that:
+          - dispatcher_ris_asn_min_peers | string is match('^[1-9][0-9]*$')
+          - dispatcher_ris_asn_database is match('^/')
+          - (dispatcher_ris_asn_database | dirname) == (state_dir ~ '/dispatcher')
+          - dispatcher_ris_asn_database is match('^[A-Za-z0-9/._-]+$')
+        fail_msg: >-
+          dispatcher_ris_asn_min_peers must be a positive integer and
+          dispatcher_ris_asn_database a plain file name in the dispatcher state
+          directory {{ state_dir }}/dispatcher, the only directory the refresh
+          unit may write. Got {{ dispatcher_ris_asn_min_peers }} and
+          {{ dispatcher_ris_asn_database }}.
+        quiet: true
+      when: dispatcher_ris_asn_enabled | bool
+
     - name: Require a supported CILogon issuer
       ansible.builtin.assert:
         that:
@@ -434,6 +450,56 @@
       check_mode: false
       when: dispatcher_executor_onboarding_enabled | bool
 
+    # The dispatcher renders the executors' operator labels (executor_display_*
+    # in group_vars/executors.yml) and refuses to start on a malformed one, so
+    # they are checked here, for every executor in the inventory, before the
+    # dispatcher is touched.
+    - name: Require well-formed operator labels for the executors
+      ansible.builtin.assert:
+        that:
+          - item.value is string
+          - item.value | length <= 64
+          - item.value == item.value | trim
+          - item.value is not search('[\\x00-\\x1f\\x7f]')
+          - item.key != 'country' or item.value == '' or item.value is match('^[A-Z]{2}$')
+        fail_msg: >-
+          executor_display_{{ item.key }} of {{ item.host }} must be printable
+          text of at most 64 characters without leading or trailing space,
+          and a country an upper-case ISO 3166-1 alpha-2 code. Got
+          {{ item.value | to_json }}.
+        quiet: true
+      loop: >-
+        {%- set out = [] -%}
+        {%- for name in groups['executors'] | default([]) | sort -%}
+        {%-   for key in ['name', 'city', 'country', 'network'] -%}
+        {%-     set _ = out.append({'host': name, 'key': key,
+                  'value': hostvars[name]['executor_display_' ~ key] | default('')}) -%}
+        {%-   endfor -%}
+        {%- endfor -%}
+        {{ out }}
+      loop_control:
+        label: "{{ item.host }} executor_display_{{ item.key }}"
+
+    - name: Require one labelled table per executor identity
+      ansible.builtin.assert:
+        that:
+          - labelled | unique | length == labelled | length
+        fail_msg: >-
+          Two labelled executors in the inventory share an executor_id, which
+          would render the same [executors."ID"] table twice: {{ labelled | to_json }}.
+        quiet: true
+      vars:
+        labelled: >-
+          {%- set out = [] -%}
+          {%- for name in groups['executors'] | default([]) -%}
+          {%-   set h = hostvars[name] -%}
+          {%-   if h.executor_id is defined and (h.executor_display_name | default('') ~ h.executor_display_city | default('')
+                  ~ h.executor_display_country | default('') ~ h.executor_display_network | default('')) -%}
+          {%-     set _ = out.append(h.executor_id) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
 - name: Check executor variables
   hosts: executors
   connection: local
@@ -681,3 +747,27 @@
           {{ executor_disable_tls }}.
         quiet: true
       when: executor_tls_server_name | default('') | length > 0
+
+    # A bare address: the executor advertises it as given and the dispatcher
+    # looks it up, so a port, scheme or URL here would only report not_ip.
+    - name: Require a bare public address
+      ansible.builtin.assert:
+        that:
+          - executor_public_host is string
+          - executor_public_host == '' or executor_public_host is match('^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$')
+            or executor_public_host is match('^[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*$')
+        fail_msg: >-
+          executor_public_host must be empty or the executor's bare public
+          address, with no scheme or port. Got {{ executor_public_host }}.
+        quiet: true
+
+    - name: Require the IPv4 reflector to be a literal endpoint
+      ansible.builtin.assert:
+        that:
+          - (executor_connectivity_ipv4_reflector | trim) is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}:[0-9]{1,5}$')
+        fail_msg: >-
+          executor_connectivity_ipv4_reflector must be a literal IPv4
+          address:port of this executor's dispatcher, or empty. Got
+          {{ executor_connectivity_ipv4_reflector | trim }}.
+        quiet: true
+      when: executor_connectivity_ipv4_reflector | trim | length > 0

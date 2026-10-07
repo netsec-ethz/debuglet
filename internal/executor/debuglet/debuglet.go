@@ -74,6 +74,9 @@ type Debuglet struct {
 
 	transactionID string
 	tagging       tagger.Mode
+	// stopRevocations ends the registration that closes this run's sockets
+	// to a destination the dispatcher denies.
+	stopRevocations func()
 }
 
 // New creates a ready-to-initialise Debuglet backed by a wazero Runtime.
@@ -139,14 +142,16 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 		PortManager: portManager,
 	}
 	env.RecordCleanupError(constructorCleanup)
+	stopRevocations := env.Net.WatchRevocations(debugletID.String(), func() int { return env.Registry.CloseRemote(env.Net.Revoked) })
 
 	return &Debuglet{
-		id:            debugletID,
-		policy:        policy,
-		createdAt:     time.Now(),
-		env:           &env,
-		transactionID: transactionID,
-		tagging:       mode,
+		id:              debugletID,
+		policy:          policy,
+		createdAt:       time.Now(),
+		env:             &env,
+		transactionID:   transactionID,
+		tagging:         mode,
+		stopRevocations: stopRevocations,
 	}
 }
 
@@ -468,6 +473,9 @@ func (d *Debuglet) Close(ctx context.Context) error {
 			rt, compiled = nil, nil
 		}
 		d.mu.Unlock()
+		if d.stopRevocations != nil {
+			d.stopRevocations()
+		}
 		if d.env != nil {
 			_ = d.env.Close()
 			if d.env.Limiter != nil {

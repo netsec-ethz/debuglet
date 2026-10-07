@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.15"
+  version: "1.19"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -3523,10 +3523,17 @@ paths:
           description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
           schema:
             type: string
+        - name: "status"
+          in: "query"
+          required: false
+          description: "Added in API 1.17. Comma-separated status names, which may also be repeated: connected, disconnected, abandoned and never_connected. Without it only connected executors are listed, as before. An executor that is not connected is listed with id, display, version, last_seen (its last_connected), admission offline, its status fields, host tags and last observed addressing; its other fields are zero or null. An older dispatcher ignores the parameter and lists connected executors, so a client requires API 1.17 to use it."
+          schema:
+            type: string
+            example: "connected,disconnected"
       security: []
       responses:
         "200":
-          description: "The registered executors. The body is null when no executor is registered."
+          description: "The executors with the requested statuses: the registered (connected) ones first, then the others in ID order. The body is null when none is listed."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3537,7 +3544,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExecutorList"
         "400":
-          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version). This route has no other documented 400."
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version), or status names an unknown status (invalid_request)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The executor status history could not be read for a status filter that asks for executors that are not connected (internal). Without one, the connected executors are listed as connected since their registration instead."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3904,11 +3922,185 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /attribution/verify:
+    post:
+      operationId: "verifyAttribution"
+      summary: "Verify captured packets with the executor's help before disclosure."
+      description: "Added in API 1.18. Groups up to 256 packets by source address and epoch of each candidate chain, at most 16 groups, and gives each group a verdict. A group whose key is on record is checked against it (method offline) and spends nothing. Disclosed results split by run, ambiguous packets and unmatched packets; a response contains at most 16 such result subsets. Before disclosure the dispatcher asks the executor, which still holds the key, whether one candidate run reproduces every tag of the group (method server); the executor never returns tags or keys. Every such question charges one trial per candidate run to a budget of 16 trials per executor, chain and epoch, shared by all requesters; it is charged before the question is relayed and is not refunded when the answer is lost. A group with more candidates than trials remain, an unavailable executor, or an answer that no single candidate reproduces every tag (reason unmatched, decided offline after disclosure) leaves the group pending. The receipt is an Ed25519 signature over canonical JSON of the dispatcher, the API version, the dispatcher's query time, the packet digest and every group's verdict; it shows what was asked and answered when, not when a packet was captured. Public and rate-limited per client address."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttributionVerifyRequest"
+      responses:
+        "200":
+          description: "A verdict per group and the signed receipt."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionVerifyResponse"
+        "400":
+          description: "The body is not a request of 1 to 256 packets of 1 to 64 bytes each with a capture time, or the packets form more than 16 groups (invalid_request), or the Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 65536 bytes (payload_too_large)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "The client address sent more attribution requests than it admits (rate_limited): 10 per second with a burst of 40, counted per TCP peer address and per /64 for IPv6. Retry after Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+            Retry-After:
+              description: "Seconds to wait before retrying."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The attribution history could not be read (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The receipt key could not be read or created (service_unavailable)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /attribution/receipt-keys:
+    get:
+      operationId: "getAttributionReceiptKeys"
+      summary: "List the keys that verify verification receipts."
+      description: "Added in API 1.18. Every Ed25519 key this dispatcher has signed receipts with, with its validity: a receipt verifies under the key named by its key_id when its query_at lies within valid_from and valid_to. Public and rate-limited per client address."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      security: []
+      responses:
+        "200":
+          description: "The receipt keys, oldest first."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttributionReceiptKeys"
+        "400":
+          description: "The Debuglet-API-Version request header requires a contract version this dispatcher does not serve (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "The client address sent more attribution requests than it admits (rate_limited): 10 per second with a burst of 40, counted per TCP peer address and per /64 for IPv6. Retry after Retry-After seconds."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+            Retry-After:
+              description: "Seconds to wait before retrying."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The receipt keys could not be read (internal_error)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The receipt key could not be read or created (service_unavailable)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /destination:
     patch:
       operationId: "setDestinationLimit"
-      summary: "Set the bandwidth limit of one destination."
-      description: "An operator operation outside the researcher-facing flow. It records the limit, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Current executors apply acknowledged full snapshots in session revision order, so an older delivery cannot overwrite a newer one. Failed application stays pending and is retried on that exact session’s heartbeat. Legacy executors may receive the limit but cannot confirm ordered application; the response instructs the operator to upgrade them. This route does not guarantee workload revocation."
+      summary: "Set the bandwidth limit of one destination, or deny it."
+      description: "An operator operation outside the researcher-facing flow. Each request states the complete policy of the destination: a limit, or a deny, which refuses every new submission (409 capacity_exhausted on PUT /debuglet) and allocation there whatever its floor and records no limit. A reason is required to deny or to lower the limit; expires_at returns the destination to the default capacity at that time, recorded as an allow event by the actor system. The policy is appended to the destination's durable history with the operator account as its actor before it applies, and it is applied again when the dispatcher restarts. A deny is sent to executors holding an allocation as a zero limit with the denied flag. An executor of this release, advertising bandwidth version 2, closes the active sockets to the destination before it acknowledges, and only its acknowledgement confirms a deny. An executor that predates this release only applies the zero limit, so a run admitted before the deny keeps its admitted floor until it ends; it is counted as unconfirmed even when it acknowledges. It records the policy, which applies to admission at once, and pushes the share it recomputes to every executor holding an allocation on the destination, with a five-second delivery timeout. Repeating the request records the same limit and pushes it again. Current executors apply acknowledged full snapshots in session revision order, so an older delivery cannot overwrite a newer one. Failed application stays pending and is retried on that exact session’s heartbeat. Legacy executors may receive the limit but cannot confirm ordered application; the response instructs the operator to upgrade them. This route does not guarantee workload revocation."
       requestBody:
         required: true
         content:
@@ -3924,14 +4116,14 @@ paths:
             type: string
       responses:
         "204":
-          description: "The limit was recorded and every executor holding an allocation on the destination acknowledged the recomputed share."
+          description: "The policy was recorded and every executor holding an allocation on the destination acknowledged the recomputed share."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
               schema:
                 type: string
         "400":
-          description: "Malformed body (invalid_request) or a limit outside its documented range (invalid_policy)."
+          description: "Malformed body, an empty or oversized destination, a missing or oversized reason, or an expires_at that is not a future RFC 3339 time (invalid_request), or a limit outside its documented range (invalid_policy). Nothing is recorded."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3986,7 +4178,86 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: "The limit was recorded but at least one executor did not acknowledge ordered application (internal_error). Pending delivery is retried on heartbeat; the request may also be repeated. Legacy peers require an executor upgrade first."
+          description: "The policy was recorded but at least one executor did not acknowledge ordered application, or a deny reached an executor that predates destination denials and cannot revoke active traffic (internal_error); GET /destinations counts it as unconfirmed. Pending delivery is retried on heartbeat; the request may also be repeated. Legacy peers require an executor upgrade first. When the change itself could not be recorded the message is 'destination policy could not be recorded': nothing was applied and the previous policy stays in force."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /destinations:
+    get:
+      operationId: "listDestinationPolicies"
+      summary: "List the current policy of every destination that has one."
+      description: "An operator operation. Each entry is the latest recorded event of its destination: its kind, limit, reason, actor, set and expiry times and revision, and whether every executor that held an allocation on the destination when it was applied in this dispatcher lifetime acknowledged it. After a restart no allocation survives, so a restored policy has no recipients and reads confirmed."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          description: "Contract version the client requires, as major or major.minor. A version this dispatcher does not serve is answered 400 with code unsupported_api_version; an absent or empty value states no requirement. The discovery routes /version and /openapi.yaml and the health routes answer whatever this header says."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "The current destination policies, ordered by destination."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DestinationPolicies"
+        "400":
+          description: "An unsupported Debuglet-API-Version (unsupported_api_version)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "The authenticated account is not an operator (forbidden)."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The body exceeds 33554432 bytes (payload_too_large). A declared length above the limit is refused without reading the body; a body of unknown length is cut at the limit, so a decode that needs more fails with this answer. No handler sees a byte beyond the limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The recorded policies could not be read (internal_error)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -6942,7 +7213,9 @@ components:
             - chain_exhausted
             - refresh_failing
             - disclosure_held
-          description: "Empty when available. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch."
+            - clock_unready
+            - clock_drift
+          description: "Empty when available. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch. clock_unready: the host clock was not ready when the key chain started, so its announced origin is not trusted until the executor restarts. clock_drift: the executor's wall clock has moved away from the monotonic clock its epochs advance on by more than min(epoch length / 2, 1 s) since the chain started."
         epoch:
           type: integer
           format: int64
@@ -7042,6 +7315,70 @@ components:
           $ref: "#/components/schemas/ObservedList"
         clock:
           $ref: "#/components/schemas/ObservedClock"
+        is_public:
+          type: boolean
+          nullable: true
+          description: "Added in API 1.16. False when the executor set metadata.address_opt_out: the public listing then withholds address_v4 and address_v6, and nothing else. Prefixes, ASNs, location and every other field stay public, as for a private RIPE Atlas probe. An established operator always sees the addresses. True by default, including for executors that predate the setting."
+        address_v4:
+          type: string
+          nullable: true
+          description: "Added in API 1.16. The last IPv4 address the dispatcher itself observed for the executor: the peer of its control connection, or of an authenticated address reflection call over IPv4 (address_observations.v4 says which and when). Never the executor's own claim such as public_host. Null when none was observed in the current control session, or when is_public is false and the caller is not an operator. It may be a non-global address when the executor reaches the dispatcher over a private network."
+        address_v6:
+          type: string
+          nullable: true
+          description: "Added in API 1.16. As address_v4, for IPv6."
+        prefix_v4:
+          type: string
+          nullable: true
+          description: "Added in API 1.16. The prefix of the offline ASN database record covering the observed IPv4 address. Public even when is_public is false. Null when the address is unknown, not global or not in the database."
+        prefix_v6:
+          type: string
+          nullable: true
+          description: "Added in API 1.16. As prefix_v4, for IPv6."
+        asn_v4:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 4294967295
+          nullable: true
+          description: "Added in API 1.16. The origin ASN of prefix_v4. Public even when is_public is false."
+        asn_v6:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 4294967295
+          nullable: true
+          description: "Added in API 1.16. As asn_v4, for IPv6."
+        address_observations:
+          $ref: "#/components/schemas/AddressObservations"
+        status:
+          $ref: "#/components/schemas/ProbeStatusName"
+        status_since:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Unix seconds the current status began; equals status.since. Null for never_connected."
+        first_connected:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Unix seconds of the first registration the dispatcher recorded (from schema 24, or the executor's first recorded TESLA chain). Null for never_connected."
+        last_connected:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Unix seconds the executor was last known connected: its last heartbeat while connected, recorded at most a minute apart. Null for never_connected."
+        total_uptime:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Added in API 1.17. Seconds the executor has been connected since the dispatcher began recording it (schema 24), at one-minute resolution. Null for never_connected."
+        tags:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: "Added in API 1.17. The host tags the executor set in its configuration, from the fixed vocabulary home, office, datacentre, academic, cloud, dsl, cable, fibre, wifi, mobile, satellite and nat, then the system tags the dispatcher derives, which start with system-: system-ipv4-works, system-ipv6-works, system-ipv4-capable, system-ipv6-capable, system-ipv4-rfc1918, system-resolves-a-correctly, system-resolves-aaaa-correctly and system-ipv4/ipv6-stable-1d/30d/90d. System tags are derived only for connected executors. Clients must ignore unknown tags."
         last_seen:
           type: integer
           format: int64
@@ -7279,6 +7616,129 @@ components:
           nullable: true
           description: "Dispatcher receipt time of the report in Unix seconds."
       description: "Added in API 1.9. All fields are null together."
+    ProbeStatusName:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - name
+        - since
+      properties:
+        name:
+          type: string
+          enum:
+            - connected
+            - disconnected
+            - abandoned
+            - never_connected
+          description: "connected: the executor has a control session (its admission may still be offline until the first heartbeat). disconnected: it has none and was last connected at most 30 days ago. abandoned: it was last connected more than 30 days ago. never_connected: it was enrolled but has never registered. Clients must treat an unknown name as not connected."
+        since:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Unix seconds the status began: the start of the connected streak, last_connected for disconnected, last_connected plus 30 days for abandoned, null for never_connected."
+      description: "Added in API 1.17. The executor's status, after RIPE Atlas's probe status."
+    AddressObservations:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - v4
+        - v6
+      properties:
+        v4:
+          $ref: "#/components/schemas/AddressObservation"
+        v6:
+          $ref: "#/components/schemas/AddressObservation"
+      description: "Added in API 1.16. How and when address_v4 and address_v6 were observed, one record per family. It never carries the address, so it is the same for public and private executors."
+    AddressObservation:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - source
+        - via
+        - observed_at
+        - lookup_source
+        - lookup_reason
+      properties:
+        source:
+          type: string
+          enum:
+            - dispatcher-observed
+        via:
+          type: string
+          enum:
+            - control
+            - reflection
+          description: "control: the peer address of the executor's control connection, preferred for its family. reflection: the peer address of the executor's last authenticated ReflectAddress call over this family."
+        observed_at:
+          type: integer
+          format: int64
+          description: "Unix seconds of the last observation: the last heartbeat of the control session that carries the control address, or the receipt of the last reflection call."
+        lookup_source:
+          type: string
+          nullable: true
+          pattern: "^database:[^@\\s]+@[1-9][0-9]*$"
+          description: "The offline ASN database the prefix and ASN come from. Null when no lookup happened."
+        lookup_reason:
+          type: string
+          enum:
+            - ""
+            - "no_database"
+            - "no_address"
+            - "not_ip"
+            - "non_global"
+            - "opted_out"
+            - "not_found"
+            - "lookup_error"
+            - "invalid_record"
+          description: "Empty when the database knew the address; otherwise why the prefix and ASN are null."
+      description: "Null when no address of the family was observed: for a connected executor, in its current control session; for another, ever, within the retained history."
+    ProbeAddressing:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - is_public
+        - address_v4
+        - address_v6
+        - prefix_v4
+        - prefix_v6
+        - asn_v4
+        - asn_v6
+        - address_observations
+      properties:
+        is_public:
+          type: boolean
+          nullable: true
+        address_v4:
+          type: string
+          nullable: true
+        address_v6:
+          type: string
+          nullable: true
+        prefix_v4:
+          type: string
+          nullable: true
+        prefix_v6:
+          type: string
+          nullable: true
+        asn_v4:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 4294967295
+          nullable: true
+        asn_v6:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 4294967295
+          nullable: true
+        address_observations:
+          $ref: "#/components/schemas/AddressObservations"
+      description: "The listing's RIPE Atlas-style addressing fields (see ExecutorResponse) as known at admission. The addresses are recorded for a private executor too, since a result is visible only to the run's owner and operators."
     ExecutorList:
       type: array
       nullable: true
@@ -7511,6 +7971,169 @@ components:
           format: int64
           nullable: true
           description: "from_epoch of the next page; null on the last page."
+    AttributionVerifyPacket:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - captured_at
+      properties:
+        data:
+          type: string
+          format: byte
+          description: "Base64 of the first min(64, Total Length) bytes of the IPv4 packet, tag in place."
+        captured_at:
+          type: string
+          format: date-time
+          description: "When the caller says the packet was captured. It selects the epoch and enters the receipt only through the packet digest."
+    AttributionVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - packets
+      properties:
+        packets:
+          type: array
+          description: "1 to 256 packets."
+          items:
+            $ref: "#/components/schemas/AttributionVerifyPacket"
+    AttributionVerifyBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - limit
+        - remaining
+        - resets_at
+      properties:
+        limit:
+          type: integer
+          format: int64
+          description: "Candidate trials per executor, chain and epoch, shared by every requester: an executor query charges one per candidate run."
+        remaining:
+          type: integer
+          format: int64
+        resets_at:
+          type: string
+          format: date-time
+          description: "When the epoch's key is due for disclosure; from then on the group is checked against the disclosed key."
+    AttributionVerifyGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - source
+        - epoch
+        - chain_id
+        - executor_id
+        - run_id
+        - verdict
+        - reason
+        - method
+        - packets
+      properties:
+        source:
+          type: string
+          description: "Source address of the packets; empty for packets without one."
+        epoch:
+          type: integer
+          format: int64
+          description: "Epoch of the capture time under the chain; 0 without a chain."
+        chain_id:
+          type: string
+        executor_id:
+          type: string
+        run_id:
+          type: string
+          description: "The run every tag reproduces, for verified; empty otherwise."
+        verdict:
+          type: string
+          enum:
+            - "verified"
+            - "invalid"
+            - "pending"
+            - "missing"
+            - "unsupported"
+        reason:
+          type: string
+          description: "Machine reason of any verdict but verified (docs/verification.md#results); pending adds budget_exhausted, executor_unavailable and unmatched (no single candidate reproduces every tag; the offline check after disclosure decides per run)."
+        method:
+          type: string
+          description: "server when the executor answered, offline when a disclosed key did, empty when nothing was checked."
+        packets:
+          type: array
+          description: "Indices of the group's packets in the request."
+          items:
+            type: integer
+        budget:
+          $ref: "#/components/schemas/AttributionVerifyBudget"
+        pending_until:
+          type: string
+          format: date-time
+          description: "For a pending group with a chain: when its key is due for disclosure; retry then."
+    AttributionReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - key_id
+        - payload
+        - signature
+      properties:
+        key_id:
+          type: string
+          description: "Hex of the first 16 bytes of SHA-256 of the signing public key."
+        payload:
+          type: string
+          format: byte
+          description: "Base64 of the canonical JSON (keys sorted, no whitespace) of {api_version, dispatcher, groups: [{chain_id, epoch, executor_id, method, packets, reason, run_id, source, verdict}], packets_digest, query_at}. packets_digest is sha256: and the hex SHA-256 over the big-endian uint16 length, the data and the int64 captured_at in Unix nanoseconds of every packet in order; query_at is the dispatcher's clock."
+        signature:
+          type: string
+          format: byte
+          description: "Base64 of the Ed25519 signature over payload."
+    AttributionVerifyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - groups
+        - receipt
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionVerifyGroup"
+        receipt:
+          $ref: "#/components/schemas/AttributionReceipt"
+    AttributionReceiptKey:
+      type: object
+      additionalProperties: false
+      required:
+        - key_id
+        - public_key
+        - valid_from
+        - valid_to
+      properties:
+        key_id:
+          type: string
+        public_key:
+          type: string
+          format: byte
+          description: "Base64 of the 32-byte Ed25519 public key."
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: string
+          format: date-time
+          nullable: true
+          description: "When another key became current; null for the current key."
+    AttributionReceiptKeys:
+      type: object
+      additionalProperties: false
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttributionReceiptKey"
     DestinationLimitRequest:
       type: object
       additionalProperties: false
@@ -7525,7 +8148,87 @@ components:
           format: int64
           minimum: 0
           maximum: 1000000000000000
-          description: "Bandwidth limit in bits per second, at most 1000000000000000 (1 Pbit/s). It becomes the capacity the runs of the destination are shared out of, so it is held to the same range as the bandwidth of a policy."
+          description: "Bandwidth limit in bits per second, at most 1000000000000000 (1 Pbit/s). It becomes the capacity the runs of the destination are shared out of, so it is held to the same range as the bandwidth of a policy. It is not recorded while the destination is denied."
+        denied:
+          type: boolean
+          description: "Deny the destination: every new allocation there is refused, whatever its floor. False, or absent, lifts a deny."
+        reason:
+          type: string
+          description: "Why the policy is set, recorded with it, at most 500 bytes. Required to deny or to lower the limit."
+        expires_at:
+          type: string
+          format: date-time
+          description: "RFC 3339 time, in the future, at which the destination returns to the default capacity. Absent: no expiry."
+    DestinationPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - "destination"
+        - "kind"
+        - "denied"
+        - "limit"
+        - "reason"
+        - "actor"
+        - "set_at"
+        - "expires_at"
+        - "revision"
+        - "delivery"
+        - "recipients"
+        - "unconfirmed"
+      properties:
+        destination:
+          type: string
+        kind:
+          type: string
+          enum:
+            - "limit"
+            - "deny"
+            - "allow"
+          description: "allow is a return to the default capacity, recorded when a policy expires."
+        denied:
+          type: boolean
+        limit:
+          type: integer
+          format: int64
+          nullable: true
+          description: "Bits per second; null for the default capacity or a deny."
+        reason:
+          type: string
+        actor:
+          type: string
+          description: "Account ID of the operator, local for the local development profile, or system for a change of the dispatcher itself."
+        set_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revision:
+          type: integer
+          format: int64
+          description: "Revision of the destination's policy history, increasing by one per event."
+        delivery:
+          type: string
+          enum:
+            - "confirmed"
+            - "unconfirmed"
+        recipients:
+          type: integer
+          description: "Executors holding an allocation on the destination when the policy was applied in this dispatcher lifetime."
+        unconfirmed:
+          type: integer
+          description: "Recipients that did not acknowledge the policy: refused, unreachable, or legacy executors that cannot confirm ordered application."
+    DestinationPolicies:
+      type: object
+      additionalProperties: false
+      required:
+        - "destinations"
+      properties:
+        destinations:
+          type: array
+          items:
+            $ref: "#/components/schemas/DestinationPolicy"
     PaymentIntentRequest:
       type: "object"
       additionalProperties: false
@@ -8218,6 +8921,8 @@ components:
           $ref: "#/components/schemas/ResultLabelledClock"
         platform:
           $ref: "#/components/schemas/ResultLabelledPlatform"
+        addressing:
+          $ref: "#/components/schemas/ProbeAddressing"
       description: "Added in format 1.1. Where the run was to execute, as known at admission. Each value names its source; no label means verified. Null for runs admitted before format 1.1, and always absent from 1.0 files."
       nullable: true
     ResultSourceLabel:

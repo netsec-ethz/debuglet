@@ -51,8 +51,9 @@ const (
 	// were captured before the disclosure, which rests on the capture's own
 	// timestamps.
 	VerifyMethodOffline VerifyMethod = "offline"
-	// VerifyMethodServer is the server-assisted check of #341; this client
-	// does not perform it yet.
+	// VerifyMethodServer: the executor confirmed the tags before their key
+	// was disclosed, and the dispatcher signed a receipt of its answer
+	// (POST /attribution/verify).
 	VerifyMethodServer VerifyMethod = "server"
 )
 
@@ -123,8 +124,8 @@ type VerifyOptions struct {
 	// the capture's own timestamps.
 	At time.Time
 	// Offline never uploads packets: groups whose key is not disclosed yet
-	// are pending. Server-assisted verification (#341) is not implemented
-	// yet, so every verification is offline today.
+	// are pending. Without it, Client.Verify sends the first 64 bytes of the
+	// packets of such groups to the dispatcher for a server-assisted check.
 	Offline bool
 	// ClockTolerance bounds how far the capture host's clock may lag true
 	// time. A key is used only if it was still secret at the capture time
@@ -187,6 +188,9 @@ type VerifyGroup struct {
 	// Split describes the address-and-epoch group this entry was split
 	// from, when not all its packets reproduce one run; nil otherwise.
 	Split *VerifySplit `json:"split,omitempty"`
+	// ReceiptKeyID names the dispatcher key that signed the receipt of a
+	// server verdict.
+	ReceiptKeyID string `json:"receipt_key_id,omitempty"`
 
 	lookup int     // index of the lookup answer that formed the group
 	keys   []int64 // epochs of the named run's chain the verdict used
@@ -244,6 +248,10 @@ type verifyMaterial struct {
 	lookups    []EvidenceLookup
 	chains     map[chainRef]*chainState
 	apiVersion string
+	// receipts are the signed answers of server-assisted checks, with the
+	// keys that verify them.
+	receipts    []EvidenceReceipt
+	receiptKeys []EvidenceReceiptKey
 }
 
 // attributionSource answers the dated lookups of the attribution history: the
@@ -535,6 +543,22 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 		}
 	}
 
+	sortGroups(groups)
+	dispatcher, apiVersion := src.describe()
+	rep := VerifyReport{
+		TagSpec: tagspec.ID, CheckedAt: now.UTC(), Dispatcher: dispatcher,
+		ClockToleranceMS: tolerance.Milliseconds(), Packets: len(packets), Groups: groups, Counts: countGroups(groups),
+		material: verifyMaterial{packets: packets, lookups: v.lookups, chains: v.chains, apiVersion: apiVersion},
+	}
+	if !opts.At.IsZero() {
+		at := opts.At.UTC()
+		rep.At = &at
+	}
+	return rep, nil
+}
+
+// sortGroups orders groups by verdict, run, time, source and reason.
+func sortGroups(groups []VerifyGroup) {
 	rank := map[Verdict]int{VerdictVerified: 0, VerdictInvalid: 1, VerdictPending: 2, VerdictMissing: 3, VerdictUnsupported: 4}
 	slices.SortStableFunc(groups, func(a, b VerifyGroup) int {
 		if rank[a.Verdict] != rank[b.Verdict] {
@@ -551,31 +575,26 @@ func verifyOffline(ctx context.Context, src attributionSource, packets []Capture
 		}
 		return strings.Compare(a.Reason, b.Reason)
 	})
-	dispatcher, apiVersion := src.describe()
-	rep := VerifyReport{
-		TagSpec: tagspec.ID, CheckedAt: now.UTC(), Dispatcher: dispatcher,
-		ClockToleranceMS: tolerance.Milliseconds(), Packets: len(packets), Groups: groups,
-		material: verifyMaterial{packets: packets, lookups: v.lookups, chains: v.chains, apiVersion: apiVersion},
-	}
-	if !opts.At.IsZero() {
-		at := opts.At.UTC()
-		rep.At = &at
-	}
+}
+
+// countGroups counts groups by verdict.
+func countGroups(groups []VerifyGroup) VerifyCounts {
+	var counts VerifyCounts
 	for _, g := range groups {
 		switch g.Verdict {
 		case VerdictVerified:
-			rep.Counts.Verified++
+			counts.Verified++
 		case VerdictInvalid:
-			rep.Counts.Invalid++
+			counts.Invalid++
 		case VerdictPending:
-			rep.Counts.Pending++
+			counts.Pending++
 		case VerdictMissing:
-			rep.Counts.Missing++
+			counts.Missing++
 		default:
-			rep.Counts.Unsupported++
+			counts.Unsupported++
 		}
 	}
-	return rep, nil
+	return counts
 }
 
 // rateLimited turns a request that waited for the rate limit until the

@@ -6,6 +6,7 @@ package schedule
 import (
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule/dyn"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"sync"
 	"time"
 )
@@ -59,6 +60,7 @@ func (j *JobScheduler) Submit(req Request) {
 	j.submitExec(req.Executor, from, to, req.Use)
 	seen := make(map[string]struct{}, len(req.Destination))
 	for _, d := range req.Destination {
+		d = netpolicy.DestinationKey(d)
 		if _, ok := seen[d]; ok {
 			continue
 		}
@@ -104,7 +106,7 @@ func (j *JobScheduler) Remove(req Request) {
 }
 
 func (j *JobScheduler) QueryMaxDest(destination string, from, to time.Time) bitrate.Bitrate {
-	return j.queryMax(j.destTrees, destination, from, to)
+	return j.queryMax(j.destTrees, netpolicy.DestinationKey(destination), from, to)
 }
 
 func (j *JobScheduler) QueryMaxExec(executor string, from, to time.Time) bitrate.Bitrate {

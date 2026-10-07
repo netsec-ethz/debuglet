@@ -16,10 +16,13 @@ The dispatcher keeps the history that probe verification needs in its database: 
 | --- | --- | --- | --- |
 | `retention_days` | days | 90 | 0 (default) or 1–3,650 |
 | `trusted_proxies` | IP addresses or CIDR prefixes | empty | at most 64 |
+| `receipt_key_path` | file path | `attribution-receipt-key.pem` in the database directory | a PEM PKCS #8 Ed25519 private key, or absent |
 
 The dispatcher prunes older records on its expiry loop, at startup and hourly: runs whose interval ended, and keys whose epoch ended, more than one epoch before the cutoff (a lookup at the cutoff lists runs within one epoch of it), and chains with neither left. The cutoff is published as `retained_from`, so a verifier can tell history that is no longer held from a time when no run was active. The history starts when the database is upgraded to schema 14; earlier captures report `missing`. A run's interval is its reserved window, narrowed to the dispatcher's receipt of its exit; the address is the peer the dispatcher observed on the executor's control connection (`ip_source: observed`), or the executor's own claim when none was observed.
 
-The two routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
+`receipt_key_path` names the key that signs the receipts of `POST /attribution/verify`. When the file is absent the dispatcher creates it, mode 0600, the first time `POST /attribution/verify` or `GET /attribution/receipt-keys` needs it; a file that holds no Ed25519 key is refused, never replaced, and those routes answer `503` until it is fixed. The key is never logged. Its public key is recorded with its validity and listed by `GET /attribution/receipt-keys`; a dispatcher started with another key ends the earlier key's validity, so receipts signed before remain checkable. Back the file up with the database. The server method also keeps, per executor, chain and epoch, the candidate trials its executor queries charged (at most 16), dropped once the epoch's key is due.
+
+The attribution routes are rate-limited to 10 requests per second, with a burst of 40, per TCP peer address (per /64 for IPv6). By default forwarding headers are not trusted, so behind a reverse proxy all clients share the proxy's allowance. List the proxies in `trusted_proxies` to count clients separately: for a request whose TCP peer is listed, the client is the right-most `X-Forwarded-For` entry that is not itself listed, and a malformed entry falls back to the last listed hop. Configure the proxy to append the peer it saw to `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A TCP (stream) proxy, such as the rig's `tls-edge` profile, sets no header; rate-limit per client at such a proxy instead.
 
 ### Dispatcher usage allowances
 
@@ -49,11 +52,24 @@ The `[sui]` section configures chain payments. Every shipped configuration sets 
 
 A failed check stops the daemon before any listener is bound, with `configure payments: blockchain payments:` and the field's error. Validation opens no network connection. The listener's stored checkpoint is checked when it starts; see [startup validation](payments.md#startup-validation).
 
+### Destination limits and opt-outs
+
+An operator account sets the policy of one destination with `PATCH /destination` and lists the current policies with `GET /destinations` ([API](../api.md#destination-policies)). Policies, reservations and executor limiters use the same destination key: the host without a port, lower-case DNS names without a final dot, and canonical IP literals without an IPv4 mapping or zone. Thus `192.0.2.1`, `[::ffff:192.0.2.1]:443` and their declared-address forms share a policy and capacity; DNS names are not merged with other names merely because they resolve to the same address. The submitted spelling remains in the run record.
+
+To honour an opt-out request, deny the destination with a reason, for example `{"destination":"192.0.2.1","denied":true,"reason":"opt-out request from the address owner"}`, optionally with `expires_at` (RFC 3339). Then:
+
+- A submission naming the destination is refused with `409 capacity_exhausted`, and every new allocation on it is refused, whatever its floor, including a zero floor.
+- The deny is appended to the dispatcher database before it applies, with the operator account as actor, the reason, the time and a revision. Events are never changed or deleted. The dispatcher applies the latest event of every destination again at startup, before any executor connects, so a restart no longer loses it.
+- The deny is sent at once to every executor holding an allocation on the destination as a zero limit with the denied flag. `GET /destinations` reports `delivery: confirmed` when every such executor acknowledged it, and `unconfirmed` with the number that did not (refused, unreachable, or a legacy executor that cannot confirm ordered application). The count describes the application in the current dispatcher lifetime; a policy restored at startup has no recipients, because no allocation survives a restart.
+- At `expires_at` the expiry loop returns the destination to the default capacity and records an `allow` event with actor `system` and reason `expired`.
+
+Active traffic: an executor of this release advertises bandwidth version 2; it refuses new connections to the destination and closes the active sockets of every run to it, waiting for closes already in progress, before it acknowledges the revision that carries the deny ([socket limits](socket-limits.md#destinations-denied-at-runtime)). Only such an acknowledgement confirms a deny, so `delivery: confirmed` means that has happened on every executor that held an allocation there. An executor that predates this release (bandwidth version 1 or 0) cannot confirm revocation, even if it acknowledges the zero limit; `PATCH /destination` answers 500 asking for its upgrade. Any session whose deny remains unconfirmed is retired after delivery finishes, within the five-second delivery deadline. Successful health probes cannot renew that retired session. An unreachable executor stops its work when its existing negotiated control lease expires: allow the delivery deadline plus that lease duration for remote cleanup. Retirement does not turn an unconfirmed delivery into an acknowledgement; verify the receiver before reporting that traffic has stopped. The retired session cannot be substituted for a successor, and the durable deny still rejects new submissions after reconnect.
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
 
-The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. It does not refuse admission. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
+The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. The readiness when the TESLA key chain starts decides `clock_unready`: a chain started on a clock that is not `ready` tags nothing, and a node that tags packets then refuses new runs until the executor restarts with a ready clock; later readiness changes are reported only. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
 
 ### Executor TESLA key schedule
 
@@ -88,14 +104,56 @@ TRACER design uses, far beyond that bound. Tags become verifiable once the
 delay has elapsed.
 
 The keys live only in the running executor, and every start builds a new
-chain. The keys of the last d epochs before a restart are therefore never
-disclosed, and packets tagged in them (the last 15 minutes by default) can
-never be verified. (The dispatcher already accepts a disclosure for an earlier
-chain it has on record, named by `tesla_key_anchor` on the heartbeat, but the
-executor does not yet re-derive and disclose its previous chain's tail.) Stop an executor only once its last attributed packets are
-d epochs old. When the chain runs out, the executor logs
-`final_disclosure_at`, d − 1 epochs after the expiry, when its last key is
-disclosed; restart it after that time.
+chain. When `[tesla] seed` is configured, a start re-derives the previous
+chain from the seed and its record, and the heartbeat discloses that chain's
+remaining keys at their due instants, under its own anchor. The re-derived
+chain only discloses: it never signs again, and no tagger holds it. Its epochs
+advance on the monotonic clock from the start, which places the recorded
+origin with its ready wall clock, so a later wall-clock step neither advances
+nor delays a disclosure; if the clock loses readiness later, that is reported
+for the current chain and the old chain's disclosure continues. The heartbeat
+offers the old chain's final key until one heartbeat that carried it
+succeeded; the dispatcher's durable record of it is not confirmed back. A tail
+whose final key no heartbeat delivered within 24 hours of its final
+disclosure is dropped with a warning; this retention interval uses the same
+recovered monotonic clock as disclosure.
+
+Recovery also requires the previous process's signers to be retired. A TCX
+attachment ends with its process and needs no action. A legacy tc filter,
+used on kernels without TCX, outlives its process and keeps signing with its
+last key. Startup removes stale tagger filters only from the interface selected
+for packet counting (logging each removal); if it cannot
+list or remove them, or finds another filter at the tagger's priority, it
+discloses no tail. It then checks every interface in its network namespace
+for remaining filters at that priority, even when the new configuration uses
+fallback packet counting or no interface. A remaining filter withholds
+recovery; filters on other interfaces are never removed automatically. This
+also withholds recovery when another executor has a live legacy tagger on
+another interface, since the recorded chain does not identify its attachment.
+Before restarting to recover a tail, stop the previous process and remove its
+stale filters, or select its previous interface so startup can retire them.
+
+The keys of the last d epochs before a restart are still never disclosed, and
+packets tagged in them (the last 15 minutes by default) can never be verified,
+when:
+
+- no seed is configured (each chain's tail is random);
+- the previous chain was recorded before the executor kept its disclosure
+  delay (chains started by an earlier release);
+- the host clock is not ready at the new start, since its wall reading places
+  the recorded origin;
+- the previous process's tagger filters could not be removed;
+- the re-derived chain does not match the recorded anchor, for example after
+  the seed was changed (logged as an error);
+- the new start comes more than 24 hours after the previous chain's final key
+  was due (the same bound a running executor keeps an undelivered tail for);
+- the executor restarted more than once before the earlier chain's final key
+  was delivered (only the immediately previous chain is re-derived).
+
+Each start logs once which of these applies. Without a seed, stop an executor
+only once its last attributed packets are d epochs old. When the chain runs
+out, the executor logs `final_disclosure_at`, d − 1 epochs after the expiry,
+when its last key is disclosed; restart it after that time.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
 never disclosed while an installed copy can still sign. The schedule and every
@@ -131,7 +189,7 @@ binaries are installed; it does not change the state's contents or retention.
 | Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
 | Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
 | CLI configuration | Connection profiles and saved credentials in the configured CLI directory. These are separate from daemon state and are excluded from foreground state backups. |
-| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, dispatcher destination limits and undisclosed executor TESLA keys. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
+| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, undisclosed executor TESLA keys. Destination policies are kept in the dispatcher database; the delivery state reported for them is memory only. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
 
 See [output limits](#executor-output-limits) for the configured byte, frame and
 record budgets, [daemon log retention](services.md#foreground-daemon-logs) for
@@ -145,7 +203,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 23 and executor schema 7 are the current schema boundaries.
+Dispatcher schema 27 and executor schema 8 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
@@ -171,6 +229,16 @@ From dispatcher schema 23, it also keeps `allowance_grants`, one row per usage
 allowance grant (account, amount in TEST units, the granting operator account,
 reason, idempotency key and time). Grants are never changed or removed; the
 table stays empty while allowances are disabled.
+
+From dispatcher schema 24, it also keeps the public status history of each
+executor that has registered (`probe_status`: first and last connection, the
+connected state and since when, total uptime, `is_public`, host tags and
+version) and its observed addresses (`probe_addresses`: one row per run of one
+address per family, with first and last observation). Address runs that ended
+more than 91 days ago are pruned hourly; every family's latest run is kept.
+Status rows are kept indefinitely. The upgrade fills `probe_status` from the
+recorded TESLA chains, so executors known before it keep their first and last
+registration; their uptime and addresses start empty.
 
 ## State and upgrades
 

@@ -99,7 +99,17 @@ func attachSocket(ctx context.Context, env *WasmEnv, conn net.Conn, key string, 
 		env.RecordCleanupError(cleanup.Released(err))
 		return -1, fmt.Errorf("failed to create HostConn: %w", err)
 	}
-	return env.Registry.AddReserved(hc, reservation)
+	if handle, err = env.Registry.AddReserved(hc, reservation); err != nil {
+		return handle, err
+	}
+	// A destination denied while this connection was being made may have been
+	// missed by the close pass. Checked after registration, either the pass or
+	// this check closes it, so it is never handed to the guest.
+	if env.Net.Revoked(hc.RemoteAddr()) {
+		env.Registry.CloseRemote(env.Net.Revoked)
+		return -1, socket.ErrRevoked
+	}
+	return handle, nil
 }
 
 // writeAddr writes addr into the guest buffer at (bufPtr, bufLen) and returns
@@ -431,6 +441,10 @@ func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
 			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP, reservation)
+			if errors.Is(err, socket.ErrRevoked) {
+				env.warnPrivate("hostAcceptTCP: peer revoked", fmt.Errorf("peer %s: %w", peer, err))
+				continue
+			}
 			if err != nil {
 				reservation.Release()
 				env.warnPrivate("hostAcceptTCP: failed to admit connection", fmt.Errorf("peer %s: %w", peer, err))

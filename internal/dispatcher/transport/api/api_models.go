@@ -94,9 +94,40 @@ type ExecutorTeslaResponse struct {
 	NextDisclosureAtNs  int64 `json:"next_disclosure_at_ns"`
 }
 
+// DestinationLimitRequest is the complete policy an operator sets for a
+// destination: its limit, or a deny, which admits nothing and records no limit.
 type DestinationLimitRequest struct {
 	Destination string `json:"destination"`
 	Limit       int64  `json:"limit"`
+	Denied      bool   `json:"denied,omitempty"`
+	// Reason is required to deny a destination or to lower its limit.
+	Reason string `json:"reason,omitempty"`
+	// ExpiresAt, in RFC 3339, is when the default returns; empty never.
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// DestinationPolicyResponse is the current recorded policy of a destination.
+type DestinationPolicyResponse struct {
+	Destination string `json:"destination"`
+	// Kind is limit, deny, or allow for a return to the default.
+	Kind   string `json:"kind"`
+	Denied bool   `json:"denied"`
+	// Limit is null when the destination has the default capacity.
+	Limit     *int64     `json:"limit"`
+	Reason    string     `json:"reason"`
+	Actor     string     `json:"actor"`
+	SetAt     time.Time  `json:"set_at"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	Revision  int64      `json:"revision"`
+	// Delivery is confirmed when every executor holding an allocation on
+	// the destination acknowledged the policy, and unconfirmed otherwise.
+	Delivery    string `json:"delivery"`
+	Recipients  int    `json:"recipients"`
+	Unconfirmed int    `json:"unconfirmed"`
+}
+
+type DestinationPoliciesResponse struct {
+	Destinations []DestinationPolicyResponse `json:"destinations"`
 }
 
 type DebugletStateResponse = wire.State

@@ -62,6 +62,7 @@ type RegisteredExecutor struct {
 	connectivityObserved  time.Time
 	connectivityNext      time.Time
 	reflections           [2]reflectionReceipt
+	probe                 probeAddresses
 
 	// history is a ring buffer of the last lastDebugletHistory
 	// debuglet IDs that were dispatched to this executor.
@@ -245,6 +246,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	}
 	record.display = display
 	record.collectIPMetadata(metadataDB, hello.GetVantagePoint().GetLocationOptOut())
+	record.probe = probeFromHello(hello.GetVantagePoint(), record.LastSeen)
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -418,11 +420,13 @@ func (d *Dispatcher) runExpiry(done chan struct{}) {
 			}
 			lastSweep = d.sweepEndedWindows(lastSweep)
 			lastSettlement = d.sweepPendingSettlements(lastSettlement)
+			d.expireDestinationPolicies()
 			if now := d.now(); lastRetention.IsZero() || now.Sub(lastRetention) >= 10*time.Second {
 				d.sweepPayloadRetention()
 				lastRetention = now
 			}
 			lastPrune = d.pruneAttributionDue(lastPrune)
+			d.flushProbeStatusDue()
 		}
 	}
 }

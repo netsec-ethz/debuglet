@@ -87,10 +87,11 @@ type OutputUsage struct {
 }
 
 type TeslaChain struct {
-	Generation  int64
-	Anchor      []byte
-	EpochBase   time.Time
-	DelayNs     int64
-	ChainLength int64
-	CreatedAt   time.Time
+	Generation      int64
+	Anchor          []byte
+	EpochBase       time.Time
+	DelayNs         int64
+	ChainLength     int64
+	CreatedAt       time.Time
+	DisclosureDelay sql.NullInt64
 }

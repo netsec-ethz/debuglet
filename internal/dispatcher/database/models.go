@@ -69,6 +69,13 @@ type AttributionKey struct {
 	DisclosedAtNs int64
 }
 
+type AttributionReceiptKey struct {
+	KeyID       string
+	PublicKey   []byte
+	ValidFromNs int64
+	ValidToNs   sql.NullInt64
+}
+
 type AttributionRetention struct {
 	Singleton      int64
 	RetainedFromNs int64
@@ -81,6 +88,13 @@ type AttributionRun struct {
 	SourceIpObserved int64
 	ActiveFromNs     int64
 	ActiveToNs       int64
+}
+
+type AttributionVerifyBudget struct {
+	ExecutorID string
+	ChainID    string
+	Epoch      int64
+	Used       int64
 }
 
 type ChainTransfer struct {
@@ -119,13 +133,14 @@ type Debuglet struct {
 }
 
 type DebugletCancellation struct {
-	DebugletID     int64
-	RequestID      string
-	Reason         string
-	RequestedAt    int64
-	AttemptedAt    sql.NullInt64
-	AcknowledgedAt sql.NullInt64
-	Failure        string
+	DebugletID         int64
+	RequestID          string
+	Reason             string
+	RequestedAt        int64
+	AttemptedAt        sql.NullInt64
+	AcknowledgedAt     sql.NullInt64
+	Failure            string
+	TerminalRecordedAt sql.NullInt64
 }
 
 type DebugletLog struct {
@@ -170,6 +185,18 @@ type DebugletProvenance struct {
 type DebugletUser struct {
 	DebugletID int64
 	UserID     int64
+}
+
+type DestinationPolicyEvent struct {
+	ID            int64
+	Destination   string
+	Kind          string
+	LimitBps      sql.NullInt64
+	Reason        string
+	Actor         string
+	RequestedAtNs int64
+	ExpiresAtNs   sql.NullInt64
+	Revision      int64
 }
 
 type DeviceLogin struct {
@@ -315,6 +342,27 @@ type PendingIdentityLink struct {
 	Login           string
 	SessionSelector string
 	ExpiresAt       models.UTCTime
+}
+
+type ProbeAddress struct {
+	ExecutorID    string
+	Family        int64
+	Address       string
+	Via           string
+	FirstObserved int64
+	LastObserved  int64
+}
+
+type ProbeStatus struct {
+	ExecutorID     string
+	FirstConnected int64
+	LastConnected  int64
+	Connected      int64
+	StatusSince    int64
+	TotalUptime    int64
+	IsPublic       int64
+	HostTags       string
+	Version        string
 }
 
 type RetryRequest struct {
