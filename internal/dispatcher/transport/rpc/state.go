@@ -19,6 +19,7 @@ type DispatcherState interface {
 	OnResources(ctx context.Context, mutation *Mutation, req *pb.ResourcesRequest) (*pb.ResourcesResponse, error)
 	OnDebugletState(ctx context.Context, mutation *Mutation, req *pb.DebugletStateRequest) (*pb.DebugletStateResponse, error)
 	OnDebugletAllocate(ctx context.Context, mutation *Mutation, req *pb.DebugletAllocateRequest) (*pb.DebugletAllocateResponse, error)
+	OnExperimentReady(ctx context.Context, mutation *Mutation, req *pb.ExperimentReadyRequest) (*pb.ExperimentReadyResponse, error)
 	OnDebugletExit(ctx context.Context, mutation *Mutation, req *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error)
 
 	OnDebugletStream(owner *SessionOwner, stream grpc.BidiStreamingServer[pb.DebugletStreamRequest, pb.DebugletStreamResponse]) error

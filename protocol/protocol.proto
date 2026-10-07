@@ -285,6 +285,24 @@ message VerifyTagsResponse {
 // ====================== SERVICE DEFS ========================
 // ============================================================
 
+// Bounded, authenticated readiness for the admitted transaction's fixed runs.
+message ExperimentReadyRequest {
+  string debuglet_id = 1;
+  string executor_id = 2;
+  bytes metadata = 3;
+}
+message ExperimentParticipant {
+  string id = 1;
+  string executor_id = 2;
+  bytes metadata = 3;
+  int64 ready_at_ns = 4;
+}
+message ExperimentReadyResponse {
+  string experiment_id = 1;
+  int64 start_time_ns = 2; // Zero means pending; callers poll without holding a mutation.
+  repeated ExperimentParticipant participants = 3;
+}
+
 service DispatcherService {
   // Optional address reflection on this dispatcher's authenticated listener.
   // It returns only the caller's peer address; it cannot initiate a connection.
@@ -295,6 +313,7 @@ service DispatcherService {
   rpc DebugletState(DebugletStateRequest) returns (DebugletStateResponse);
   // Request resource allocation before a debuglet starts. The dispatcher can then have the caller wait until the resources have been allocated.
   rpc DebugletAllocate(DebugletAllocateRequest) returns (DebugletAllocateResponse);
+  rpc ExperimentReady(ExperimentReadyRequest) returns (ExperimentReadyResponse);
   rpc DebugletExit(DebugletExitRequest) returns (DebugletExitResponse);
   rpc DebugletStream(stream DebugletStreamRequest) returns (stream DebugletStreamResponse);
   rpc BindSession(BindSessionRequest) returns (BindSessionResponse);

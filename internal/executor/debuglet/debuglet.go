@@ -157,6 +157,17 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 	}
 }
 
+// SetExperimentControl installs the run-bound dispatcher capability before the
+// runtime is initialized. It is shared by local and isolated worker host calls.
+func (d *Debuglet) SetExperimentControl(control wasm.ExperimentControl) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.initialized || d.closed {
+		panic("experiment control must be set before initialization")
+	}
+	d.env.Experiment = control
+}
+
 // UserspaceTagging is the IPv4 mode the pure-Go tagger gives a run on this
 // host: userspace where it can send tagged datagrams through raw sockets
 // (Linux with CAP_NET_RAW), none elsewhere.
@@ -422,6 +433,10 @@ func (d *Debuglet) createWASMInstance(ctx context.Context, wasmBytes []byte) (er
 	}
 	if _, err := wasm.RegisterIO(rt.NewHostModuleBuilder(guestio.Module), d.env).Instantiate(ctx); err != nil {
 		return fmt.Errorf("createWASMInstance: recoverable I/O module instantiation: %w", err)
+	}
+
+	if _, err := wasm.Register(rt.NewHostModuleBuilder(wasm.ExperimentModule), wasm.ExperimentModule, wasm.Functions(d.env), nil).Instantiate(ctx); err != nil {
+		return fmt.Errorf("createWASMInstance: experiment module instantiation: %w", err)
 	}
 
 	d.mu.Lock()

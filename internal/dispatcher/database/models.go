@@ -236,6 +236,18 @@ type ExecutorEnrollmentToken struct {
 	ExpiresAt  models.UTCTime
 }
 
+type ExperimentBarrier struct {
+	TransactionID string
+	DeadlineNs    int64
+	StartTimeNs   int64
+}
+
+type ExperimentReadiness struct {
+	DebugletID int64
+	Metadata   []byte
+	ReadyAtNs  int64
+}
+
 type MeasurementExecution struct {
 	DebugletID         int64
 	StartedObservedNs  sql.NullInt64

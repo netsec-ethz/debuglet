@@ -27,6 +27,7 @@ const (
 	DispatcherService_Resources_FullMethodName        = "/debuglet.protocol.DispatcherService/Resources"
 	DispatcherService_DebugletState_FullMethodName    = "/debuglet.protocol.DispatcherService/DebugletState"
 	DispatcherService_DebugletAllocate_FullMethodName = "/debuglet.protocol.DispatcherService/DebugletAllocate"
+	DispatcherService_ExperimentReady_FullMethodName  = "/debuglet.protocol.DispatcherService/ExperimentReady"
 	DispatcherService_DebugletExit_FullMethodName     = "/debuglet.protocol.DispatcherService/DebugletExit"
 	DispatcherService_DebugletStream_FullMethodName   = "/debuglet.protocol.DispatcherService/DebugletStream"
 	DispatcherService_BindSession_FullMethodName      = "/debuglet.protocol.DispatcherService/BindSession"
@@ -45,6 +46,7 @@ type DispatcherServiceClient interface {
 	DebugletState(ctx context.Context, in *DebugletStateRequest, opts ...grpc.CallOption) (*DebugletStateResponse, error)
 	// Request resource allocation before a debuglet starts. The dispatcher can then have the caller wait until the resources have been allocated.
 	DebugletAllocate(ctx context.Context, in *DebugletAllocateRequest, opts ...grpc.CallOption) (*DebugletAllocateResponse, error)
+	ExperimentReady(ctx context.Context, in *ExperimentReadyRequest, opts ...grpc.CallOption) (*ExperimentReadyResponse, error)
 	DebugletExit(ctx context.Context, in *DebugletExitRequest, opts ...grpc.CallOption) (*DebugletExitResponse, error)
 	DebugletStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DebugletStreamRequest, DebugletStreamResponse], error)
 	BindSession(ctx context.Context, in *BindSessionRequest, opts ...grpc.CallOption) (*BindSessionResponse, error)
@@ -109,6 +111,16 @@ func (c *dispatcherServiceClient) DebugletAllocate(ctx context.Context, in *Debu
 	return out, nil
 }
 
+func (c *dispatcherServiceClient) ExperimentReady(ctx context.Context, in *ExperimentReadyRequest, opts ...grpc.CallOption) (*ExperimentReadyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExperimentReadyResponse)
+	err := c.cc.Invoke(ctx, DispatcherService_ExperimentReady_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dispatcherServiceClient) DebugletExit(ctx context.Context, in *DebugletExitRequest, opts ...grpc.CallOption) (*DebugletExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DebugletExitResponse)
@@ -164,6 +176,7 @@ type DispatcherServiceServer interface {
 	DebugletState(context.Context, *DebugletStateRequest) (*DebugletStateResponse, error)
 	// Request resource allocation before a debuglet starts. The dispatcher can then have the caller wait until the resources have been allocated.
 	DebugletAllocate(context.Context, *DebugletAllocateRequest) (*DebugletAllocateResponse, error)
+	ExperimentReady(context.Context, *ExperimentReadyRequest) (*ExperimentReadyResponse, error)
 	DebugletExit(context.Context, *DebugletExitRequest) (*DebugletExitResponse, error)
 	DebugletStream(grpc.BidiStreamingServer[DebugletStreamRequest, DebugletStreamResponse]) error
 	BindSession(context.Context, *BindSessionRequest) (*BindSessionResponse, error)
@@ -192,6 +205,9 @@ func (UnimplementedDispatcherServiceServer) DebugletState(context.Context, *Debu
 }
 func (UnimplementedDispatcherServiceServer) DebugletAllocate(context.Context, *DebugletAllocateRequest) (*DebugletAllocateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DebugletAllocate not implemented")
+}
+func (UnimplementedDispatcherServiceServer) ExperimentReady(context.Context, *ExperimentReadyRequest) (*ExperimentReadyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExperimentReady not implemented")
 }
 func (UnimplementedDispatcherServiceServer) DebugletExit(context.Context, *DebugletExitRequest) (*DebugletExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DebugletExit not implemented")
@@ -316,6 +332,24 @@ func _DispatcherService_DebugletAllocate_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DispatcherService_ExperimentReady_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExperimentReadyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DispatcherServiceServer).ExperimentReady(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DispatcherService_ExperimentReady_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DispatcherServiceServer).ExperimentReady(ctx, req.(*ExperimentReadyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DispatcherService_DebugletExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DebugletExitRequest)
 	if err := dec(in); err != nil {
@@ -403,6 +437,10 @@ var DispatcherService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DebugletAllocate",
 			Handler:    _DispatcherService_DebugletAllocate_Handler,
+		},
+		{
+			MethodName: "ExperimentReady",
+			Handler:    _DispatcherService_ExperimentReady_Handler,
 		},
 		{
 			MethodName: "DebugletExit",

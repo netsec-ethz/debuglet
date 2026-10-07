@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 27: cancellation terminal decisions are read for refund recovery.
-	MinimumDispatcherVersion int64 = 27
+	// Schema 28: durable one-shot experiment readiness.
+	MinimumDispatcherVersion int64 = 28
 	MinimumExecutorVersion   int64 = 8
 )
 
@@ -72,6 +72,8 @@ func PolicyFor(role Role) (Policy, error) {
 			"transactions":       nil,
 		}, Tables: map[string][]string{
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
+			"experiment_barriers":        {"transaction_id", "deadline_ns", "start_time_ns"},
+			"experiment_readiness":       {"debuglet_id", "metadata", "ready_at_ns"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
 			"allowance_grants":           {"id", "user_id", "amount", "granted_by", "reason", "idempotency_key", "granted_at"},
 			"probe_status":               {"executor_id", "first_connected", "last_connected", "connected", "status_since", "total_uptime", "is_public", "host_tags", "version"},

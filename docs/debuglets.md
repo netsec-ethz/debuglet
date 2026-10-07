@@ -68,6 +68,11 @@ ABI-v1 guests remain supported without recompilation. The baseline ABI label
 alone does not advertise this extension; use a release that includes it. The
 [extension contract](development/guest-io.md) records its wire signatures.
 
+Coordinated guests using `Ready` require the optional
+`debuglet_experiment_v1.ready` extension on the executor and matching dispatcher
+support. See [coordinated measurements](measurements.md#coordinate-a-batch-of-debuglets)
+and its five-executor example. Existing guests do not acquire this requirement.
+
 ### Other languages
 
 Any WebAssembly module that targets `wasm32-wasip1` and imports only the

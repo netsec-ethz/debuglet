@@ -122,5 +122,6 @@ func Functions(env *WasmEnv) []Function {
 		function(guestio.Module, "write", hostIOWrite(env)),
 		function(guestio.Module, "close", HostIOClose(env)),
 		function(guestio.Module, "deadline", HostIODeadline(env)),
+		function(ExperimentModule, "ready", hostExperimentReady(env)),
 	}
 }

@@ -44,6 +44,7 @@ jobs:
           name: evidence-${{ matrix.lane }}-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             .cache/ci/gofmt.txt
+            .cache/ci/gofmt.diff
             .cache/ci/tests.json
             .cache/ci/race-tests.json
             .cache/ci/kernel-tests.json

@@ -40,6 +40,7 @@ import (
 	hostdebuglet "github.com/netsec-ethz/debuglet/internal/executor/debuglet"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/wasm"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/fallback"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
@@ -117,11 +118,12 @@ func buildGuest(t *testing.T, pkgPath string) []byte {
 // hostOptions describes one job: its destination policy, its listeners, its
 // guest arguments and its execution budget.
 type hostOptions struct {
-	addresses []string
-	listenTCP bool
-	listenUDP bool
-	args      []string
-	budget    time.Duration
+	experiment wasm.ExperimentControl
+	addresses  []string
+	listenTCP  bool
+	listenUDP  bool
+	args       []string
+	budget     time.Duration
 	// operator overrides the executor's network policy. Nil runs the job
 	// under the documented default policy, which is what an executor that
 	// configures nothing applies.
@@ -223,6 +225,7 @@ func startGuest(t *testing.T, wasm []byte, opts hostOptions) *guestRun {
 		t.Fatalf("netpolicy.Parse: %v", err)
 	}
 	deb := hostdebuglet.New(logger, id, "guest-compatibility", policy, operator, schedule, limiter, packetCount, nil, ports, socket.NewBudget(socket.DefaultLimits(), socket.NewDescriptorBudget(socket.DefaultNodeDescriptors)))
+	deb.SetExperimentControl(opts.experiment)
 	initCtx, cancelInit := context.WithTimeout(context.Background(), initTimeout)
 	g := &guestRun{t: t, deb: deb, cancelInit: cancelInit, errCh: make(chan error, 1)}
 	t.Cleanup(g.stop)

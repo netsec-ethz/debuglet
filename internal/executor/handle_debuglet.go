@@ -151,6 +151,7 @@ func (e *Executor) registerDebuglet(spec scheduler.Spec, op *debugletOperation) 
 		operator = operator.WithRevocations(e.revoked)
 		local := debuglet.New(e.logger, spec.DebugletID, spec.TransactionID, spec.Policy, operator,
 			e.teslaSchedule, e.limiter, e.packetCount, e.iface, e.portManager, socket.NewBudget(socket.DefaultLimits(), e.socketBudget))
+		local.SetExperimentControl(runExperiment{executor: e, spec: spec})
 		deb = local
 		if e.supervisor != nil {
 			deb = debuglet.NewWorker(local, e.supervisor)

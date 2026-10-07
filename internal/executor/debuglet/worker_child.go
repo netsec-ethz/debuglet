@@ -72,7 +72,7 @@ func serveWorker(b bridge) error {
 		return b.send(frameCompiled, []byte{1})
 	}
 	functions := wasm.Functions(nil)
-	for _, moduleName := range []string{"env", guestio.Module} {
+	for _, moduleName := range []string{"env", guestio.Module, wasm.ExperimentModule} {
 		if _, err = wasm.Register(rt.NewHostModuleBuilder(moduleName), moduleName, functions, b.proxy).Instantiate(ctx); err != nil {
 			return b.send(frameCompiled, []byte{1})
 		}
