@@ -162,7 +162,10 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 	input := make(chan []byte, outputQueueFrames)
 	storageCtx, storageCancel := context.WithCancel(context.WithoutCancel(op.ctx))
 	deliveryCtx, deliveryCancel := context.WithCancel(op.ctx)
-	p := &outputPump{Input: input, done: make(chan struct{}), producerDone: make(chan struct{}), cancel: func() { deliveryCancel(); storageCancel() }}
+	// Cleanup may stop a slow delivery after the producer has joined. Its
+	// accepted queue and final marker still belong to this worker; canceling
+	// their storage context would strand an open run that cannot be retried.
+	p := &outputPump{Input: input, done: make(chan struct{}), producerDone: make(chan struct{}), cancel: deliveryCancel}
 	go func() {
 		defer close(p.done)
 		defer storageCancel()
