@@ -145,16 +145,18 @@ func TestNodesShowAttribution(t *testing.T) {
 		_, _ = w.Write([]byte(`[{"id":"old","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"]}},` +
 			`{"id":"ok","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"available","reason":"","epoch":3}}},` +
 			`{"id":"failing","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"unavailable","reason":"refresh_failing","epoch":3,"installed_epoch":2,"refresh_error":"put failed","disclosure_held_since":1700000000}}},` +
+			`{"id":"unready","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"unavailable","reason":"clock_unready","epoch":3}}},` +
+			`{"id":"drift","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"unavailable","reason":"clock_drift","epoch":3}}},` +
 			`{"id":"odd","ready":true,"capabilities":{"schema_version":1,"protocols":["tcp"],"attribution":{"state":"unavailable","reason":"\u001b[31m"}}}]`))
 	})
 	fx := newFixture(t, mux)
 	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "nodes")
 	assertCode(t, code, exitOK, stdout, stderr)
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 5 || !strings.HasSuffix(strings.Join(strings.Fields(lines[0]), " "), "UDP_LISTENER STATUS TAGS") {
+	if len(lines) != 7 || !strings.HasSuffix(strings.Join(strings.Fields(lines[0]), " "), "UDP_LISTENER STATUS TAGS") {
 		t.Fatalf("nodes table:\n%s", stdout)
 	}
-	for i, want := range []string{"unknown", "available", "unavailable(refresh_failing)", "unavailable"} {
+	for i, want := range []string{"unknown", "available", "unavailable(refresh_failing)", "unavailable(clock_unready)", "unavailable(clock_drift)", "unavailable"} {
 		if fields := strings.Fields(lines[i+1]); fields[len(fields)-7] != want {
 			t.Errorf("row %d attribution %q, want %q", i, fields[len(fields)-7], want)
 		}

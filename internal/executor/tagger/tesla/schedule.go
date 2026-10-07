@@ -78,9 +78,28 @@
 // # Attribution
 //
 // Attribution reports whether packets tagged now can be attributed: not in
-// epoch 0 or from Expiry, not while a holder's latest refresh failed, and not
-// once an installed key has held disclosure back for longer than one epoch.
-// The executor sends it in its capability report.
+// epoch 0 or from Expiry, not while the clock cannot be trusted (see Time), not
+// while a holder's latest refresh failed, and not once an installed key has
+// held disclosure back for longer than one epoch. The executor sends it in its
+// capability report.
+//
+// # Time
+//
+// Epochs advance on the monotonic clock from Epoch, whose wall reading is the
+// origin the executor announces; a verifier maps a capture's wall time to an
+// epoch from that origin (docs/tag-spec.md). Two clock conditions make that
+// mapping wrong, and CurrentKey returns no key while either holds:
+//
+//   - The host clock was not ready when the chain started (Config.ClockUnready),
+//     so the origin itself may be wrong. This holds for the chain's life; a
+//     restart with a ready clock starts a new chain.
+//   - The wall time elapsed since Epoch differs from the monotonic time elapsed
+//     by more than MaxDrift (Drift): the wall clock was stepped, or the host was
+//     suspended, which the monotonic clock does not count.
+//
+// Local epochs never decrease, so a disclosed key never regains signing
+// authority whatever the wall clock does; CurrentKey also never returns the key
+// of an epoch below the highest one it has already returned.
 package tesla
 
 import (
@@ -90,6 +109,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/pkg/tagspec"
@@ -133,6 +153,10 @@ func DefaultDisclosureDelay(epochLength time.Duration) int64 {
 	return max(d, MinDisclosureDelay)
 }
 
+// verifierClockTolerance is the clock tolerance a verifier applies by default
+// (tools/verify_pcap.py --clock-tolerance), which bounds MaxDrift.
+const verifierClockTolerance = time.Second
+
 // keySize is the length in bytes of one chain key (SHA-256 output).
 const keySize = sha256.Size
 
@@ -166,8 +190,36 @@ type Config struct {
 	DisclosureDelay int64
 
 	// Epoch is the reference wall-clock time that anchors epoch 0.
-	// Defaults to the time NewKeySchedule is called.
+	// Defaults to the time NewKeySchedule is called, whose reading also
+	// carries the monotonic reference the epochs advance from.
 	Epoch time.Time
+
+	// ClockUnready records that the host clock was not ready when Epoch was
+	// read, so the announced origin cannot be trusted: no key signs and
+	// Attribution reports UnattributableClockUnready for the chain's life.
+	ClockUnready bool
+
+	// Clock measures the time elapsed since Epoch. Nil uses the readings of
+	// the instants themselves (see Clock).
+	Clock Clock
+}
+
+// Clock measures the time from a schedule's origin to an instant on the two
+// clocks the schedule compares.
+type Clock interface {
+	// Elapsed returns the time from origin to t on the monotonic clock, which
+	// advances the epochs, and on the wall clock, from which a verifier maps
+	// capture times to epochs.
+	Elapsed(origin, t time.Time) (monotonic, wall time.Duration)
+}
+
+// hostClock reads both from the instants: a time.Now reading carries the
+// host's monotonic reading next to its wall reading. Without a monotonic
+// reading on both instants, monotonic falls back to wall elapsed time.
+type hostClock struct{}
+
+func (hostClock) Elapsed(origin, t time.Time) (time.Duration, time.Duration) {
+	return t.Sub(origin), t.Round(0).Sub(origin.Round(0))
 }
 
 // KeySchedule is a thread-safe TESLA hash-chain key schedule.
@@ -184,10 +236,15 @@ type Config struct {
 // Epoch, has no usable signing key. The first usable key is k_1 at Epoch+I
 // and the last is k_{L-1}; from Expiry, the start of epoch L, no key signs.
 //
-// The set of registered InstalledKeyHolders is the one mutable part; every
-// other field is fixed at construction.
+// The set of registered InstalledKeyHolders and the highest epoch CurrentKey
+// has returned are the mutable parts; every other field is fixed at
+// construction.
 type KeySchedule struct {
 	cfg Config
+
+	// signed is the highest epoch whose key CurrentKey has returned; no lower
+	// epoch's key is returned again.
+	signed atomic.Int64
 
 	// holdersMu guards holders, the kernel taggers whose installed key caps
 	// what DisclosedKey may name.
@@ -237,6 +294,9 @@ func NewKeySchedule(cfg Config) (*KeySchedule, error) {
 	}
 	if cfg.Epoch.IsZero() {
 		cfg.Epoch = time.Now()
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = hostClock{}
 	}
 
 	// Pre-compute the full backward chain into one contiguous buffer.
@@ -310,6 +370,12 @@ const (
 	// UnattributableDisclosureHeld: an installed key has held disclosure back
 	// for longer than MaxDisclosureHold, so the keys of new tags stay withheld.
 	UnattributableDisclosureHeld = "disclosure_held"
+	// UnattributableClockUnready: the host clock was not ready when the chain
+	// started, so its announced origin may map packets to the wrong epoch.
+	UnattributableClockUnready = "clock_unready"
+	// UnattributableClockDrift: the wall clock has moved away from the
+	// monotonic clock since the chain started by more than MaxDrift.
+	UnattributableClockDrift = "clock_drift"
 )
 
 // Attribution is whether packets tagged at one instant can be attributed once
@@ -317,7 +383,9 @@ const (
 type Attribution struct {
 	Epoch int64
 	// Reason is empty when attribution is available, otherwise one of the
-	// Unattributable constants; the first that applies in their order wins.
+	// Unattributable constants; the first that applies in the order
+	// chain_exhausted, clock_unready, clock_drift, epoch_zero,
+	// refresh_failing, disclosure_held wins.
 	Reason string
 	// InstalledEpoch is the oldest epoch a registered holder may still sign
 	// with; it is meaningful only when Installed.
@@ -339,10 +407,40 @@ type Attribution struct {
 // refresh lands is ordinary and stays well inside it.
 func (ks *KeySchedule) MaxDisclosureHold() time.Duration { return ks.cfg.EpochLength }
 
+// MaxDrift is the largest Drift at which a key still signs: half an epoch, and
+// at most the verifier's default clock tolerance of one second. It is a safety
+// threshold beyond which the verifier's epoch mapping is taken to be wrong, not
+// a measured bound on clock uncertainty.
+func (ks *KeySchedule) MaxDrift() time.Duration {
+	return min(ks.cfg.EpochLength/2, verifierClockTolerance)
+}
+
+// Drift returns the wall time elapsed from Epoch to now less the monotonic
+// time elapsed: positive after a forward wall step or a suspend, negative after
+// a backward step.
+func (ks *KeySchedule) Drift(now time.Time) time.Duration {
+	monotonic, wall := ks.cfg.Clock.Elapsed(ks.cfg.Epoch, now)
+	return wall - monotonic
+}
+
+// clockReason is the clock condition that makes attribution unavailable given
+// the drift at one instant, or empty.
+func (ks *KeySchedule) clockReason(drift time.Duration) string {
+	switch {
+	case ks.cfg.ClockUnready:
+		return UnattributableClockUnready
+	case drift > ks.MaxDrift() || -drift > ks.MaxDrift():
+		return UnattributableClockDrift
+	}
+	return ""
+}
+
 // Attribution reports the state at now. Without a registered holder only the
 // epoch decides it, which is also the pure-Go tagger's case.
 func (ks *KeySchedule) Attribution(now time.Time) Attribution {
-	a := Attribution{Epoch: ks.epochOf(now)}
+	monotonic, wall := ks.cfg.Clock.Elapsed(ks.cfg.Epoch, now)
+	a := Attribution{Epoch: ks.epochAt(monotonic)}
+	clock := ks.clockReason(wall - monotonic)
 	var failingSince time.Time
 	ks.holdersMu.Lock()
 	for h := range ks.holders {
@@ -375,6 +473,8 @@ func (ks *KeySchedule) Attribution(now time.Time) Attribution {
 	switch {
 	case a.Epoch >= ks.cfg.ChainLength:
 		a.Reason = UnattributableChainExhausted
+	case clock != "":
+		a.Reason = clock
 	case a.Epoch < 1:
 		a.Reason = UnattributableEpochZero
 	case a.RefreshErr != nil:
@@ -425,9 +525,14 @@ func (ks *KeySchedule) FinalDisclosure() time.Time {
 	return ks.cfg.Epoch.Add(time.Duration(ks.cfg.ChainLength-1+ks.cfg.DisclosureDelay) * ks.cfg.EpochLength)
 }
 
-// epochOf returns the epoch index for a given wall-clock time.
+// epochOf returns the epoch index for a given time.
 func (ks *KeySchedule) epochOf(t time.Time) int64 {
-	elapsed := t.Sub(ks.cfg.Epoch)
+	monotonic, _ := ks.cfg.Clock.Elapsed(ks.cfg.Epoch, t)
+	return ks.epochAt(monotonic)
+}
+
+// epochAt returns the epoch index after the given monotonic time from Epoch.
+func (ks *KeySchedule) epochAt(elapsed time.Duration) int64 {
 	if elapsed < 0 {
 		return 0
 	}
@@ -452,24 +557,25 @@ func (ks *KeySchedule) keyForEpoch(epoch int64) []byte {
 // nil while no key is usable: epochOf maps epoch 0 and any instant before
 // Epoch to 0, whose key is the public anchor (see KeySchedule), and every
 // instant from the start of epoch L to L, whose key k_L is never disclosed.
+// No key is usable either while the clock cannot be trusted (see Time), or for
+// an epoch below the highest one whose key CurrentKey has already returned.
 // Every signing path reads the key here, so this is the one place the rule is
 // decided.
 func (ks *KeySchedule) CurrentKey(t time.Time) []byte {
-	epoch := ks.epochOf(t)
-	if epoch < 1 || epoch >= ks.cfg.ChainLength {
+	monotonic, wall := ks.cfg.Clock.Elapsed(ks.cfg.Epoch, t)
+	epoch := ks.epochAt(monotonic)
+	if epoch < 1 || epoch >= ks.cfg.ChainLength || ks.clockReason(wall-monotonic) != "" {
 		return nil
 	}
-	return ks.keyForEpoch(epoch)
-}
-
-// currentAK derives the per-measurement key at time t, failing while no chain
-// key is usable so no tag is ever derived from the public anchor.
-func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, error) {
-	k := ks.CurrentKey(t)
-	if k == nil {
-		return nil, fmt.Errorf("tesla: no signing key before epoch 1 or from the chain's last epoch on")
+	for {
+		signed := ks.signed.Load()
+		if epoch < signed {
+			return nil
+		}
+		if epoch == signed || ks.signed.CompareAndSwap(signed, epoch) {
+			return ks.keyForEpoch(epoch)
+		}
 	}
-	return DeriveAK(k, measurementID)
 }
 
 // DisclosedKey returns the epoch index and key that should be disclosed at
@@ -485,9 +591,9 @@ func (ks *KeySchedule) currentAK(t time.Time, measurementID []byte) ([]byte, err
 // A registered holder that may still sign with k_e caps the result at e-1, so
 // a key is never disclosed while an installed copy of it can tag packets.
 func (ks *KeySchedule) DisclosedKey(t time.Time) (index int64, key []byte, ok bool) {
-	// The wall-clock epoch, not capped at L, so the last keys are still
-	// disclosed d epochs after their own.
-	elapsed := t.Sub(ks.cfg.Epoch)
+	// The epoch, not capped at L, so the last keys are still disclosed d
+	// epochs after their own.
+	elapsed, _ := ks.cfg.Clock.Elapsed(ks.cfg.Epoch, t)
 	if elapsed < 0 {
 		return 0, nil, false
 	}

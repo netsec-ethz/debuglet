@@ -4,6 +4,7 @@
 package tesla
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/pkg/tagspec"
@@ -47,10 +48,24 @@ func ComputeTag(ak, input []byte) (uint16, error) { return tagspec.ComputeTag(ak
 func PacketTag(ak, packet []byte) (uint16, error) { return tagspec.PacketTag(ak, packet) }
 
 // ComputeTagForPacket derives ak from the chain key at time t and returns the
-// v1 tag of packet. It fails while no chain key is usable and with an
-// *UnsupportedError for a packet v1 does not tag.
+// v1 tag of packet. It fails while no chain key is usable, so no tag is ever
+// derived from the public anchor, and with an *UnsupportedError for a packet
+// v1 does not tag.
 func (ks *KeySchedule) ComputeTagForPacket(t time.Time, measurementID, packet []byte) (uint16, error) {
-	ak, err := ks.currentAK(t, measurementID)
+	k := ks.CurrentKey(t)
+	if k == nil {
+		return 0, fmt.Errorf("tesla: no usable signing key (epoch 0, chain exhausted, untrusted clock or an epoch already passed)")
+	}
+	return TagWithKey(k, measurementID, packet)
+}
+
+// TagWithKey returns the v1 tag of packet under the per-measurement key
+// derived from chainKey, a key the caller obtained from CurrentKey. A signing
+// path that has decided to tag with a key derives the tag from that key
+// rather than asking the schedule again. It fails with an *UnsupportedError
+// for a packet v1 does not tag.
+func TagWithKey(chainKey, measurementID, packet []byte) (uint16, error) {
+	ak, err := DeriveAK(chainKey, measurementID)
 	if err != nil {
 		return 0, err
 	}

@@ -266,3 +266,40 @@ func TestAccountabilityTamperedPacket(t *testing.T) {
 		t.Error("VerifyTag returned true for a tampered packet — verification is broken")
 	}
 }
+
+// TestTagPacketUsesItsAcquiredKey interleaves another signing path between a
+// packet's key decision and its tag derivation: the other caller moves the
+// schedule to the next epoch, after which the schedule refuses the earlier
+// epoch's key. The packet still tags with the key it acquired and never fails.
+func TestTagPacketUsesItsAcquiredKey(t *testing.T) {
+	const delay = 10 * time.Second
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	ks, err := tesla.NewKeySchedule(tesla.Config{Seed: fixedSeed, ChainLength: 16, EpochLength: delay, Epoch: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgr := New(ks, testMeasurementID)
+	at := func(epoch int64) time.Time { return start.Add(time.Duration(epoch) * delay) }
+
+	acquired := ks.CurrentKey(at(5)) // the packet's decision
+	if acquired == nil {
+		t.Fatal("no key in epoch 5")
+	}
+	if ks.CurrentKey(at(6)) == nil { // another run, or a kernel refresh
+		t.Fatal("no key in epoch 6")
+	}
+	if ks.CurrentKey(at(5)) != nil {
+		t.Fatal("schedule returned epoch 5's key after epoch 6's")
+	}
+	pkt := buildIPv4Packet([]byte("acquired key payload"))
+	tagged, err := tgr.tagWithKey(pkt, acquired)
+	if err != nil {
+		t.Fatalf("tag with the acquired key: %v", err)
+	}
+	if ok, err := tesla.VerifyTag(acquired, 5, testMeasurementID, tagged, ReadIPID(tagged)); err != nil || !ok {
+		t.Fatalf("tag does not verify under the acquired key: %v, %v", ok, err)
+	}
+	if untagged, err := tgr.tagWithKey(buildIPv4Packet([]byte("no key")), nil); err != nil || ReadIPID(untagged) != 0 {
+		t.Fatalf("packet without a key: %v, IPID %d", err, ReadIPID(untagged))
+	}
+}

@@ -6960,7 +6960,9 @@ components:
             - chain_exhausted
             - refresh_failing
             - disclosure_held
-          description: "Empty when available. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch."
+            - clock_unready
+            - clock_drift
+          description: "Empty when available. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch. clock_unready: the host clock was not ready when the key chain started, so its announced origin is not trusted until the executor restarts. clock_drift: the executor's wall clock has moved away from the monotonic clock its epochs advance on by more than min(epoch length / 2, 1 s) since the chain started."
         epoch:
           type: integer
           format: int64

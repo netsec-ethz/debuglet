@@ -214,6 +214,21 @@ func (e *Executor) tagging() tagger.Mode {
 	return debuglet.ExpectedTagging(e.iface, counter)
 }
 
+// clockRefusal returns the attribution reason for which a node refuses new
+// runs: a clock condition, on a node that tags packets. Its taggers sign
+// nothing while it holds, so a run would get no attribution although the node
+// is set up to give it one. A node that tags nothing has none to lose and
+// admits runs. Empty otherwise.
+func clockRefusal(reason string, mode func() tagger.Mode) string {
+	if reason != tesla.UnattributableClockUnready && reason != tesla.UnattributableClockDrift {
+		return ""
+	}
+	if mode() == tagger.Untagged {
+		return ""
+	}
+	return reason
+}
+
 // maxRefreshError bounds the refresh error text a report carries; the
 // dispatcher refuses a longer one.
 const maxRefreshError = 128

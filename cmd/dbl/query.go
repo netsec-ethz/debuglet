@@ -241,7 +241,7 @@ func attributionColumn(a *wire.AttributionState) string {
 		return "unknown"
 	}
 	switch a.Reason {
-	case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held":
+	case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "clock_unready", "clock_drift":
 		return "unavailable(" + a.Reason + ")"
 	}
 	return "unavailable"
