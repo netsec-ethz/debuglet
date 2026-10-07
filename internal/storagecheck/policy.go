@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 23: usage allowances are read from allowance_grants.
-	MinimumDispatcherVersion int64 = 23
+	// Schema 24: the executor listing reads probe_status and probe_addresses.
+	MinimumDispatcherVersion int64 = 24
 	MinimumExecutorVersion   int64 = 8
 )
 
@@ -74,6 +74,8 @@ func PolicyFor(role Role) (Policy, error) {
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
 			"allowance_grants":           {"id", "user_id", "amount", "granted_by", "reason", "idempotency_key", "granted_at"},
+			"probe_status":               {"executor_id", "first_connected", "last_connected", "connected", "status_since", "total_uptime", "is_public", "host_tags", "version"},
+			"probe_addresses":            {"executor_id", "family", "address", "via", "first_observed", "last_observed"},
 			"payment_receipts":           {"tx_digest", "event_seq", "nonce", "disposition", "amount", "checkpoint", "observed_at"},
 			"chain_transfers":            {"id", "kind", "transaction_id", "amount", "state", "digest", "signed_transaction", "signature", "updated_at"},
 			"measurement_profiles":       {"id", "user_id", "document"},

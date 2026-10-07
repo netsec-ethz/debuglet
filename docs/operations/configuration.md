@@ -187,7 +187,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 23 and executor schema 8 are the current schema boundaries.
+Dispatcher schema 24 and executor schema 8 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows
@@ -213,6 +213,16 @@ From dispatcher schema 23, it also keeps `allowance_grants`, one row per usage
 allowance grant (account, amount in TEST units, the granting operator account,
 reason, idempotency key and time). Grants are never changed or removed; the
 table stays empty while allowances are disabled.
+
+From dispatcher schema 24, it also keeps the public status history of each
+executor that has registered (`probe_status`: first and last connection, the
+connected state and since when, total uptime, `is_public`, host tags and
+version) and its observed addresses (`probe_addresses`: one row per run of one
+address per family, with first and last observation). Address runs that ended
+more than 91 days ago are pruned hourly; every family's latest run is kept.
+Status rows are kept indefinitely. The upgrade fills `probe_status` from the
+recorded TESLA chains, so executors known before it keep their first and last
+registration; their uptime and addresses start empty.
 
 ## State and upgrades
 

@@ -19,6 +19,15 @@ import (
 // literal address of this dispatcher, under the existing TLS identity and
 // control binding. No request, peer response or DNS result chooses its target.
 func (b *BidiClient) ReflectAddress(ctx context.Context, binding controlsession.Binding, endpoint string, request *pb.ReflectAddressRequest) (*pb.ReflectAddressResponse, error) {
+	return b.ReflectAddressAs(ctx, binding, endpoint, "", request)
+}
+
+// ReflectAddressAs is ReflectAddress to a literal endpoint that the executor
+// resolved from its configured dispatcher name. TLS verifies the dispatcher's
+// certificate for authority, that name, unless tls.server_name overrides it,
+// so a resolved address that is not this dispatcher fails the handshake.
+// An empty authority keeps the endpoint's own.
+func (b *BidiClient) ReflectAddressAs(ctx context.Context, binding controlsession.Binding, endpoint, authority string, request *pb.ReflectAddressRequest) (*pb.ReflectAddressResponse, error) {
 	address, err := netip.ParseAddrPort(endpoint)
 	if err != nil || address.Port() == 0 || address.Addr().IsUnspecified() || address.Addr().IsMulticast() || address.Addr().Zone() != "" {
 		return nil, errors.New("invalid configured reflector")
@@ -43,10 +52,14 @@ func (b *BidiClient) ReflectAddress(ctx context.Context, binding controlsession.
 	if address.Addr().Is4() {
 		family = "tcp4"
 	}
-	connection, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds), grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+	options := []grpc.DialOption{grpc.WithTransportCredentials(creds), grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, family, endpoint)
-	}))
+	})}
+	if authority != "" {
+		options = append(options, grpc.WithAuthority(authority))
+	}
+	connection, err := grpc.NewClient(endpoint, options...)
 	if err != nil {
 		return nil, err
 	}

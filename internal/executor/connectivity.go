@@ -31,9 +31,11 @@ func (e *Executor) initialConnectivityReport() *pb.ConnectivityReport {
 // temporary listeners remain bound until the matching heartbeat returns, then
 // finish joins their responders and releases their actual pool reservations.
 func (e *Executor) probeConnectivity(ctx context.Context, binding controlsession.Binding, vantage *pb.VantagePointReport) func() {
+	e.observeAddresses(ctx, binding)
 	if vantage == nil {
 		return func() {}
 	}
+	vantage.AddressCheck = e.addressSelfCheck()
 	now := time.Now()
 	e.capabilityMu.Lock()
 	if now.Before(e.connectivityNext) {

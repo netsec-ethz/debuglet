@@ -25,6 +25,26 @@
     - name: Use the installed version
       ansible.builtin.import_tasks: tasks/installed-version.yml
 
+    # The dispatcher refuses to start with a configured database that does
+    # not exist. Only a deployment installs the refresh and builds the first
+    # database, so a configuration update does not name a missing one.
+    - name: Inspect the RIS ASN database
+      ansible.builtin.stat:
+        path: "{{ dispatcher_ris_asn_database }}"
+      register: dispatcher_ris_asn_file
+      when: dispatcher_ris_asn_enabled | bool
+
+    - name: Require the RIS ASN database before configuring it
+      ansible.builtin.assert:
+        that:
+          - dispatcher_ris_asn_file.stat.exists
+        fail_msg: >-
+          {{ dispatcher_ris_asn_database }} does not exist yet. Run
+          deploy-dispatcher.yml (or site.yml) once: it installs the
+          debuglet-ris-asn refresh and builds the first database.
+        quiet: true
+      when: dispatcher_ris_asn_enabled | bool
+
     - name: Regenerate dispatcher config
       ansible.builtin.template:
         src: "{{ playbook_dir }}/roles/dispatcher/templates/dispatcher.toml.j2"

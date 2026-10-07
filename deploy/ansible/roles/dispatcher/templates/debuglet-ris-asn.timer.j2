@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Debuglet dispatcher ASN database refresh from RIPE RIS
+
+[Timer]
+OnCalendar={{ dispatcher_ris_asn_schedule }}
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -431,6 +431,60 @@ role then stops and disables it, retaining its unit file. Issue
 new credentials for the selected environment instead of copying an old
 executor's identity.
 
+### Executor capabilities and vantage-point metadata
+
+The executor role gives the installed executor binary exactly the file
+capabilities in `executor_capabilities`
+([`group_vars/executors.yml`](ansible/group_vars/executors.yml)):
+
+| Capability | Needed for |
+| --- | --- |
+| `cap_bpf` | creating the eBPF tagger's and packet counter's maps and programs |
+| `cap_perfmon` | the verifier's pointer comparisons in the tagger; without it the load fails with `R2 pointer comparison prohibited` |
+| `cap_net_admin` | attaching the programs to the TC egress hook of `executor_interface` |
+| `cap_net_raw` | raw sockets for guest ICMP and for the pure-Go tagger used where the eBPF tagger does not load |
+
+Without the first three an executor reports `enforcement_mode: fallback`,
+`enforcement_reason: not_permitted` and at most `tagging.ipv4: userspace`;
+without `cap_net_raw` also `tagging.ipv4: none` and no ICMP. `cap_sys_resource`
+is not granted: from Linux 5.11 BPF memory is charged to the memory cgroup,
+and on an older kernel the unit sets `LimitMEMLOCK=infinity` instead. A host
+that refuses file capabilities keeps deploying with a warning;
+[`ansible/verify.yml`](ansible/verify.yml) fails on any executor whose binary
+lacks the set. Set `executor_enable_bpf: false` for such a host.
+
+Each executor also carries per-host metadata in the inventory. Taking real
+values from the host and from the address's registry keeps them checkable:
+
+```yaml
+executor1.example.com:
+  executor_id: 5fe02882-0410-416c-9935-235090bcba0d
+  # The IPv4 address probes leave from: `curl -4s ifconfig.co` on the host.
+  executor_public_host: 192.0.2.10
+  # Published by the dispatcher in GET /executors with source "operator".
+  executor_display_name: ETH Zurich lab
+  executor_display_city: Zurich
+  executor_display_country: CH            # ISO 3166-1 alpha-2, upper case
+  executor_display_network: SWITCH (AS559) # origin AS of the public address
+```
+
+`executor_public_host` is the address the executor advertises; the
+dispatcher's `ip_metadata.advertised` lookup reads it, and it opens nothing on
+the host. Run listeners need `executor_public_ports` too, the inbound range the
+executor binds guest listeners from: set it only once the host's firewall
+admits exactly that range, and add the matching `connectivity_host` and
+`connectivity_ports` to the dispatcher configuration before expecting listener
+checks. The IPv4 egress check (`connectivity.ipv4`) needs no port: when
+`dispatcher_addr` is an IPv4 literal the executor reflects its address off the
+dispatcher's gRPC port, over the control channel it already uses.
+
+The labels belong to the dispatcher configuration, which renders one
+`[executors."<executor_id>"]` table for each labelled executor in the
+inventory; the preflight checks them for every executor first. A label change
+therefore takes a dispatcher deployment or `update-config.yml --limit
+dispatcher`; capabilities, the public address and the reflector take an
+executor deployment.
+
 ### Upgrading a database
 
 A deployed daemon refuses a database whose schema is older than its release

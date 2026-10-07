@@ -6,11 +6,15 @@
 package ipmetadata
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -18,46 +22,191 @@ import (
 	"github.com/oschwald/maxminddb-golang/v2"
 )
 
-// Databases remain immutable until Close, after dispatcher shutdown. The caller
-// must atomically replace database files, never rewrite a mapped file in place.
-type Databases struct{ asn, city *maxminddb.Reader }
+// Databases holds the configured readers. Reload replaces a reader whose file
+// was atomically renamed over; a lookup in progress keeps the reader it
+// started with, which is closed only after that lookup returns. Never rewrite
+// or truncate a mapped file in place.
+type Databases struct {
+	reloading sync.Mutex // serialises Reload
+	mu        sync.RWMutex
+	asn, city database
+	closed    bool
+}
+
+// database is one configured file. identity describes the file the reader
+// was opened from, failed the last replacement that was refused and missing
+// whether the path was last found absent, so that the same broken or missing
+// file is reported once rather than on every check.
+type database struct {
+	kind, path       string
+	reader           *maxminddb.Reader
+	identity, failed os.FileInfo
+	missing          bool
+}
 
 func Open(asnPath, cityPath string) (*Databases, error) {
-	out := &Databases{}
-	for _, item := range []struct {
-		path string
-		dst  **maxminddb.Reader
-	}{{asnPath, &out.asn}, {cityPath, &out.city}} {
+	out := &Databases{asn: database{kind: "asn", path: asnPath}, city: database{kind: "city", path: cityPath}}
+	for _, item := range []*database{&out.asn, &out.city} {
 		if item.path == "" {
 			continue
 		}
-		reader, err := maxminddb.Open(item.path)
-		if err == nil {
-			err = reader.Verify()
-		}
-		if err == nil && !wire.DatabaseSource(source(reader)) {
-			err = errors.New("database must have a printable database_type and positive build_epoch")
-		}
+		reader, identity, err := openDatabase(item.path)
 		if err != nil {
-			if reader != nil {
-				_ = reader.Close()
-			}
 			_ = out.Close()
-			return nil, fmt.Errorf("open metadata database %q: %w", item.path, err)
+			return nil, err
 		}
-		*item.dst = reader
+		item.reader, item.identity = reader, identity
 	}
 	return out, nil
+}
+
+// openDatabase opens and verifies one file. The file is examined before and
+// after it is mapped, so a rename racing the open is refused rather than
+// recorded under the wrong identity.
+func openDatabase(path string) (*maxminddb.Reader, os.FileInfo, error) {
+	before, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open metadata database %q: %w", path, err)
+	}
+	reader, err := maxminddb.Open(path)
+	if err == nil {
+		err = reader.Verify()
+	}
+	if err == nil && !wire.DatabaseSource(source(reader)) {
+		err = errors.New("database must have a printable database_type and positive build_epoch")
+	}
+	if err == nil {
+		after, statErr := os.Stat(path)
+		if statErr != nil {
+			err = statErr
+		} else if !sameFile(before, after) {
+			err = errReplaced
+		}
+	}
+	if err != nil {
+		if reader != nil {
+			_ = reader.Close()
+		}
+		return nil, nil, fmt.Errorf("open metadata database %q: %w", path, err)
+	}
+	return reader, before, nil
+}
+
+// errReplaced is transient: the next check opens the file now in place.
+var errReplaced = errors.New("file was replaced while it was being opened")
+
+func sameFile(a, b os.FileInfo) bool {
+	return a != nil && b != nil && os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+// Reloaded reports one replacement attempt: Source names the database now in
+// use, and Err why a replacement was refused, in which case the previous
+// database stays in use.
+type Reloaded struct {
+	Kind, Path, Source string
+	Err                error
+}
+
+// Reload reopens each configured database whose file is no longer the one it
+// was opened from, typically because a new file was renamed into place. A
+// replacement is validated as at startup before it is swapped in; when it is
+// refused, the previous database stays in use. Lookups made afterwards use the
+// new database; values already looked up keep their own source.
+func (d *Databases) Reload() []Reloaded {
+	if d == nil {
+		return nil
+	}
+	d.reloading.Lock()
+	defer d.reloading.Unlock()
+	var out []Reloaded
+	for _, item := range []*database{&d.asn, &d.city} {
+		if r, ok := d.reload(item); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (d *Databases) reload(item *database) (Reloaded, bool) {
+	d.mu.RLock()
+	path, current, failed, missing, closed := item.path, item.identity, item.failed, item.missing, d.closed
+	d.mu.RUnlock()
+	if path == "" || closed {
+		return Reloaded{}, false
+	}
+	report := Reloaded{Kind: item.kind, Path: path}
+	now, err := os.Stat(path)
+	if err == nil && (sameFile(now, current) || sameFile(now, failed)) || err != nil && missing {
+		return Reloaded{}, false
+	}
+	var reader *maxminddb.Reader
+	var opened os.FileInfo
+	if err == nil {
+		reader, opened, err = openDatabase(path)
+	} else {
+		err = fmt.Errorf("open metadata database %q: %w", path, err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		if reader != nil {
+			_ = reader.Close()
+		}
+		return Reloaded{}, false
+	}
+	if errors.Is(err, errReplaced) {
+		return Reloaded{}, false
+	}
+	if err != nil {
+		item.failed, item.missing = now, now == nil
+		if item.reader != nil {
+			report.Source = source(item.reader)
+		}
+		report.Err = err
+		return report, true
+	}
+	previous := item.reader
+	item.reader, item.identity, item.failed, item.missing = reader, opened, nil, false
+	report.Source = source(reader)
+	if previous != nil {
+		_ = previous.Close()
+	}
+	return report, true
+}
+
+// Watch calls Reload every interval until ctx ends and passes each result to
+// report. Executors are looked up again when they (re)register, so a
+// replacement applies to registrations after it.
+func (d *Databases) Watch(ctx context.Context, interval time.Duration, report func(Reloaded)) {
+	if d == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, r := range d.Reload() {
+				report(r)
+			}
+		}
+	}
 }
 
 func (d *Databases) Close() error {
 	if d == nil {
 		return nil
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.closed = true
 	var errs []error
-	for _, r := range []*maxminddb.Reader{d.asn, d.city} {
-		if r != nil {
-			errs = append(errs, r.Close())
+	for _, item := range []*database{&d.asn, &d.city} {
+		if item.reader != nil {
+			errs = append(errs, item.reader.Close())
+			item.reader = nil
 		}
 	}
 	return errors.Join(errs...)
@@ -81,14 +230,16 @@ func (d *Databases) Lookup(address, addressSource string, observedAt int64, optO
 		out.ASN.Reason, out.Location.Reason = "not_ip", "not_ip"
 	case !Global(ip):
 		out.ASN.Reason, out.Location.Reason = "non_global", "non_global"
-	default:
+	case d != nil:
 		ip = ip.Unmap()
-		if d != nil && d.asn != nil {
-			out.ASN = lookupASN(d.asn, ip, observedAt)
+		d.mu.RLock()
+		if d.asn.reader != nil {
+			out.ASN = lookupASN(d.asn.reader, ip, observedAt)
 		}
-		if !optOut && d != nil && d.city != nil {
-			out.Location = lookupCity(d.city, ip, observedAt)
+		if !optOut && d.city.reader != nil {
+			out.Location = lookupCity(d.city.reader, ip, observedAt)
 		}
+		d.mu.RUnlock()
 	}
 	if optOut {
 		out.Location = wire.IPLookup[wire.GeoLocation]{ObservedAt: observedAt, Reason: "opted_out"}
@@ -102,6 +253,11 @@ func lookupASN(db *maxminddb.Reader, ip netip.Addr, at int64) wire.IPLookup[wire
 	var record struct {
 		Number uint32 `maxminddb:"autonomous_system_number"`
 		Name   string `maxminddb:"autonomous_system_organization"`
+		// Optional: the length of the announced prefix the record was
+		// built from. The tree node is narrower where more-specific
+		// prefixes are carved out of it, and wider where adjacent
+		// prefixes with equal records are merged.
+		Announced uint16 `maxminddb:"announced_prefix_length"`
 	}
 	result := db.Lookup(ip)
 	if err := result.Decode(&record); err != nil {
@@ -111,11 +267,16 @@ func lookupASN(db *maxminddb.Reader, ip netip.Addr, at int64) wire.IPLookup[wire
 	if !result.Found() {
 		return out
 	}
-	if record.Number == 0 || record.Name == "" || !text(record.Name, 128) {
+	// An unnamed AS is a known number with an unknown name.
+	prefix := result.Prefix()
+	if record.Announced != 0 {
+		prefix = netip.PrefixFrom(ip, int(record.Announced)).Masked()
+	}
+	if record.Number == 0 || record.Name != "" && !text(record.Name, 128) || !prefix.IsValid() {
 		out.Reason = "invalid_record"
 		return out
 	}
-	out.Value = &wire.ASInfo{Number: record.Number, Name: record.Name, Prefix: result.Prefix().String()}
+	out.Value = &wire.ASInfo{Number: record.Number, Name: record.Name, Prefix: prefix.String()}
 	out.Reason = ""
 	return out
 }
@@ -185,6 +346,40 @@ func Global(ip netip.Addr) bool {
 	}
 	for _, prefix := range nonGlobal {
 		if prefix.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// excluded adds to nonGlobal the ranges Global excludes through the netip
+// predicates.
+var excluded = append([]netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("224.0.0.0/4"),
+}, nonGlobal...)
+
+// GlobalPrefix reports whether every address in p is global as Global
+// defines it, so that a database never holds a record Lookup cannot reach.
+func GlobalPrefix(p netip.Prefix) bool {
+	if !p.IsValid() || p.Addr().Is4In6() || p.Addr().Zone() != "" {
+		return false
+	}
+	p = p.Masked()
+	last := p.Addr().AsSlice()
+	for i := range last {
+		if host := p.Bits() - 8*i; host <= 0 {
+			last[i] = 0xff
+		} else if host < 8 {
+			last[i] |= 0xff >> host
+		}
+	}
+	end, _ := netip.AddrFromSlice(last)
+	if !Global(p.Addr()) || !Global(end) {
+		return false
+	}
+	for _, q := range excluded {
+		if p.Overlaps(q) {
 			return false
 		}
 	}

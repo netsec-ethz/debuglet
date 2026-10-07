@@ -6,8 +6,10 @@ on every host, starts with an explicit canary, and stops at the first failure.
 It does not build packages, create accounts, change certificates, deploy a
 dispatcher, apply migrations, or automatically restore state.
 Hosts also listed as dispatchers are refused: their shared command links need
-a separate maintenance plan. Required file capabilities are applied to the
-staged executor before stopping the old service; failure stops the rollout.
+a separate maintenance plan. Required file capabilities (`cap_net_admin`,
+`cap_net_raw`, `cap_perfmon` and `cap_bpf`, see `executor_capabilities` in
+`deploy/ansible/group_vars/executors.yml`) are applied to the staged executor
+before stopping the old service; failure stops the rollout.
 Previously installed candidates are reverified by the signed installer before
 their executables run.
 

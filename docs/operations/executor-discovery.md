@@ -210,7 +210,9 @@ network = "SWITCH (AS559)"
 
 Every key is optional. Text is printable UTF-8 of at most 64 characters without
 leading or trailing space; the dispatcher refuses to start otherwise. Changes
-take effect when the dispatcher restarts.
+take effect when the dispatcher restarts. The Ansible deployment renders these
+tables from each executor's `executor_display_*` inventory variables, keyed by
+its `executor_id` (see [the deployment guide](../../deploy/README.md)).
 
 `--asn` matches a known origin ASN of either the observed control address or
 advertised literal address. `--country` matches the displayed country, including
@@ -220,25 +222,82 @@ location source; `--output json` includes the detailed lookup records below.
 
 ### Offline ASN and approximate location
 
-The dispatcher can load optional operator-supplied MMDB files at startup:
+The dispatcher can load optional MMDB files at startup:
 
 ```toml
 [metadata]
-asn_database = "/var/lib/debuglet/GeoLite2-ASN.mmdb"
+asn_database = "/var/lib/debuglet/dispatcher/ris-asn.mmdb"
 city_database = "/var/lib/debuglet/GeoLite2-City.mmdb"
 ```
 
-Debuglet bundles no database, downloads none and makes no online or DNS lookup.
-Acquire data under its provider's licence. Supported records use the
-GeoIP2-compatible MMDB keys `autonomous_system_number`,
-`autonomous_system_organization`, `country.iso_code` and `city.names.en`.
-Other MMDB layouts are not implicitly translated. The ASN record includes the
-covering database prefix. Location is approximate, at most country and city;
-coordinates are never read or published. Missing city means country precision.
+Debuglet bundles no database and makes no online or DNS lookup when it looks
+an address up. The recommended ASN database is built from RIPE RIS routing
+data by the dispatcher itself (below); the managed deployment does this and
+configures no city database, since an executor's location comes from its
+operator. Any other database is the operator's, acquired under its provider's
+licence. Supported records use the GeoIP2-compatible MMDB keys
+`autonomous_system_number`, `autonomous_system_organization`,
+`country.iso_code` and `city.names.en`. Other MMDB layouts are not implicitly
+translated. The ASN record includes the covering prefix: the announced prefix
+when the record carries `announced_prefix_length`, as RIS builds do, otherwise
+the database's own tree prefix. A record without an AS name has an empty
+`name`. Location is approximate, at most country and city; coordinates are
+never read or published. Missing city means country precision.
+
+#### ASN and prefix from RIPE RIS
+
+The ASN method matches RIPE Atlas, which derives a probe's `prefix_v4`/`v6`
+and `asn_v4`/`v6` from RIPE RIS: an address belongs to the longest matching
+prefix announced in BGP, and to that prefix's origin AS.
+
+```sh
+debuglet-dispatcher -build-asn-database /var/lib/debuglet/dispatcher/ris-asn.mmdb
+```
+
+downloads RIPE RIS's daily `riswhoisdump.IPv4.gz` and `riswhoisdump.IPv6.gz`
+(<https://www.ris.ripe.net/dumps/>) and RIPE's AS names
+(<https://ftp.ripe.net/ripe/asnames/asn.txt>), about 15 MB in all, and builds
+the database in under a minute with about 0.5 GB of memory. Each dump lists
+every (origin, prefix) pair in the combined RIS routing tables and how many RIS
+peers see it.
+
+- **Visibility.** A pair counts only when at least `-ris-min-peers` RIS peers
+  see it, 10 by default. RIS has several hundred full-table peers, so this is
+  a small fraction that still drops what only a handful see: leaks, transient
+  more-specifics and peers' internal routes. Today it keeps about 1.13 million
+  IPv4 and 265,000 IPv6 prefixes of 1.25 million and 306,000.
+- **Several origins (MOAS).** A prefix is attributed to the origin the most
+  RIS peers see, the lowest AS number on a tie, so a rebuild from the same
+  dumps gives the same answer. About 0.4% of prefixes have several origins.
+- **Excluded.** AS sets with more than one member (the origin is ambiguous),
+  origins IANA reserves (private, documentation, `AS_TRANS`), prefixes shorter
+  than /8 (IPv4) or /16 (IPv6) such as default routes, and prefixes that are
+  not entirely global unicast, which a lookup never reaches anyway. An address
+  in an excluded prefix falls to the covering prefix that remains, or is
+  `not_found`.
+- **Names.** `name` is RIPE's AS name text, for example
+  `RIPE-NCC-AS Reseaux IP Europeens Network Coordination Centre (RIPE NCC), NL`,
+  shortened to 128 characters, and empty for an AS RIPE does not list.
+- **Provenance.** The database type is `Debuglet-RIS-ASN` and its build epoch
+  is the generation time of the older of the two dumps, so values carry
+  `source = "database:Debuglet-RIS-ASN@<epoch>"` and rebuilding from the same
+  dumps yields the same source.
+
+The build fails closed and then leaves the existing file untouched: a download
+shorter than its announced length, a gzip stream whose checksum fails, a dump
+without its generation time or `% End of dump` marker, an unreadable line, an
+AS-name file cut mid-line, a dump older than `-ris-max-age` (72 hours by
+default), or fewer than 500,000 IPv4 prefixes, 100,000 IPv6 prefixes or 50,000
+AS names. RIPE publishes no checksums, so lengths, gzip checksums and these
+markers are what can be verified. The new file is written next to the old one,
+looked up through the dispatcher's own loader for the first address of every
+selected prefix, and only then renamed into place. A database already built
+from the same or newer dumps is kept.
 
 `ip_metadata.observed` and `.advertised` keep the two lookup results separate.
 `address_source` says whether the lookup key was dispatcher-observed or
-executor-reported; raw IPs are not in the public listing. Each `asn` and
+executor-reported; `ip_metadata` carries no address itself. The observed
+addresses are listed separately as [probe addresses](#probe-addresses). Each `asn` and
 `location` has `value`, `source`, `observed_at` (registration time in Unix
 seconds) and `reason`. `source` is `database:<database_type>@<build_epoch>`,
 using the file's embedded metadata. It identifies the data, not its correctness.
@@ -270,16 +329,195 @@ listings and new admission snapshots, including when an operator location is
 set. Existing immutable results are unchanged; explicitly configured operator
 location remains visible. Older executors default to allowing automatic lookup.
 
-To update databases, obtain and validate replacement files under the provider's
-licence, then atomically rename them into the configured paths and restart the
-dispatcher. Never overwrite or truncate an open MMDB file in place. Startup
-rejects missing, malformed or unverifiable configured databases; unset paths
-are supported and produce unknown values. Reconnecting executors are looked up
-again. Existing results retain the old source/version and values.
+Startup rejects missing, malformed or unverifiable configured databases;
+unset paths are supported and produce unknown values. To update a database,
+atomically rename a replacement into the configured path; `-build-asn-database`
+does this itself. Never overwrite or truncate an open MMDB file in place. No
+restart is needed, so no executor control connection is dropped: the
+dispatcher checks both configured paths every minute and, when one holds a
+different file, opens and verifies it as at startup before switching to it. It
+logs `Loaded a replaced IP metadata database` with the new source. A
+replacement that fails verification, or a removed file, is logged once as
+`Refused a replaced IP metadata database` and the previous database stays in
+use. Lookups happen at registration, as before: executors registering or
+reconnecting after the switch get the new values, while executors already
+registered and existing results keep the values and source they were looked up
+with.
+
+The managed deployment (`deploy/ansible`) runs the build daily from the
+`debuglet-ris-asn.timer` systemd timer on the dispatcher host, as the service
+account with write access to the dispatcher state directory only, and builds
+the first database during deployment, before the configuration names it, so
+the dispatcher host needs HTTPS access to `www.ris.ripe.net` and
+`ftp.ripe.net`. `dispatcher_ris_asn_enabled` (on for prod and dev),
+`dispatcher_ris_asn_min_peers` and `dispatcher_ris_asn_schedule` in
+`group_vars/dispatcher.yml` control it. A failed run shows in
+`systemctl status debuglet-ris-asn` and the journal; the dispatcher keeps the
+previous database, and the next day's run tries again.
 
 `provenance.vantage_point.ip_metadata` adds these same lookup facts to schema 1
 of result format 1.1. Files predating the field remain readable. No separate
 live metadata table or database-update service is required.
+
+### Probe addresses
+
+API 1.16 adds the addressing of a [RIPE Atlas](https://atlas.ripe.net/) probe
+record to each `GET /executors` entry:
+
+```json
+"is_public": true,
+"address_v4": "192.0.2.10",
+"address_v6": "2001:db8:10::7",
+"prefix_v4": "192.0.2.0/24",
+"prefix_v6": "2001:db8::/32",
+"asn_v4": 64500,
+"asn_v6": 64500,
+"address_observations": {
+  "v4": {"source": "dispatcher-observed", "via": "control", "observed_at": 1791250000,
+         "lookup_source": "database:GeoLite2-ASN@1790000000", "lookup_reason": ""},
+  "v6": {"source": "dispatcher-observed", "via": "reflection", "observed_at": 1791249700,
+         "lookup_source": "database:GeoLite2-ASN@1790000000", "lookup_reason": ""}
+}
+```
+
+`address_v4` and `address_v6` are the last addresses of each family that the
+dispatcher itself observed for the executor in its current control session.
+An executor's claim is never used: `public_host` and the hello's source IP are
+not observations. Two connections are observed, both authenticated with the
+executor's certificate and current control-session credentials, so another
+host cannot submit or spoof them:
+
+- `via: control` is the peer address of the control connection. It is
+  current while that session lives, so `observed_at` is the session's last
+  heartbeat. It is preferred for its own family, which keeps a multi-homed
+  executor's address from alternating between paths.
+- `via: reflection` is the peer address of the executor's last
+  `ReflectAddress` call over the other family. The dispatcher records the
+  TCP peer of the call, never a value in the request, and `observed_at` is
+  the call's receipt.
+
+To observe the family its control connection does not use, an executor calls
+the address reflection over each family every 10 minutes. It resolves the host
+of its configured `dispatcher.addr` for that family (only that family when the
+host is a literal) and verifies the dispatcher's certificate for that name, as
+on the control connection, so a resolved address that is not the dispatcher
+fails the handshake. A family with a configured `connectivity.ipv4_reflector`
+or `ipv6_reflector` is not called again: its 30-second
+[connectivity check](#controlled-connectivity-observations) already reflects
+it. A family that does not work is simply not observed; it affects neither the
+connectivity report nor admission. Operators can turn the calls off:
+
+```toml
+[connectivity]
+observe_addresses = false   # default true
+```
+
+A replacement control session starts without the previous session's
+observations, as for the connectivity checks, so an executor that moved does
+not keep its old address; until the next call its other family is null. An
+executor that is not connected is listed (API 1.17) with the last addresses
+the dispatcher recorded for it. A
+published address is where the executor reached the dispatcher from, which
+need not be the source of every measurement packet, and it can be a
+non-global address when the executor reaches the dispatcher over a private
+network.
+
+`prefix_v4/v6` and `asn_v4/v6` are looked up from those addresses in the
+[offline ASN database](#offline-asn-and-approximate-location), with the
+database and any negative reason in `lookup_source` and `lookup_reason`. They
+are null when no database is configured, or for a non-global or unknown
+address.
+
+An executor can make itself private, as a RIPE Atlas host can:
+
+```toml
+[metadata]
+address_opt_out = true   # default false: public
+```
+
+The listing then reports `is_public: false` and withholds both addresses from
+everyone but established operators. Nothing else changes: prefixes, ASNs,
+`address_observations`, `ip_metadata` and location stay public. Location has
+its own opt-out, `location_opt_out`, independent of this one; the
+[vantage-point note](../vantage-points.md#privacy) explains the choice.
+Restart the executor to publish a changed preference. Executors that predate
+the setting are public. The admission snapshot records the same fields,
+including a private executor's addresses, as `provenance.vantage_point.addressing`.
+
+`dbl nodes` shows the addresses in its `ADDRESS_V4` and `ADDRESS_V6` columns
+(`private` when withheld, `-` when unknown); `--output json` carries every
+field.
+
+### Probe status and tags
+
+API 1.17 adds the status history and tags of a RIPE Atlas probe record:
+
+```json
+"status": {"name": "connected", "since": 1791000000},
+"status_since": 1791000000,
+"first_connected": 1780000000,
+"last_connected": 1791257000,
+"total_uptime": 9504000,
+"tags": ["home", "fibre", "system-ipv4-works", "system-ipv4-capable",
+         "system-ipv4-stable-1d", "system-ipv4-stable-30d", "system-ipv6-capable",
+         "system-ipv4-rfc1918", "system-resolves-a-correctly"]
+```
+
+| Status | Meaning | `since` |
+| --- | --- | --- |
+| `connected` | The executor has a control session (its `admission` may still be `offline` until the first heartbeat). | Start of the connected streak. |
+| `disconnected` | It has none, and was last connected at most 30 days ago. | `last_connected`. |
+| `abandoned` | It was last connected more than 30 days ago. | `last_connected` plus 30 days. |
+| `never_connected` | It was enrolled (an owned or enrolled executor ID) but has never registered. | `null` |
+
+The dispatcher records the history in its database (schema 24). A
+registration records the executor as connected; once a minute the dispatcher
+advances `last_connected` and `total_uptime` of every registered executor and
+records any other as disconnected at its last record, so a disconnection is
+known to within a minute. A registration within two minutes of the last record
+of a connected streak, such as a replacement session or a dispatcher restart,
+continues the streak. `total_uptime` counts connected seconds from the
+upgrade to schema 24; `first_connected` of an executor known before it comes
+from its first recorded TESLA chain.
+
+`GET /executors` keeps listing connected executors only. Ask for others with
+`?status=disconnected,abandoned,never_connected` (comma-separated or
+repeated; add `connected` to include those too). An entry that is not
+connected carries its `id`, `display`, `version`, `last_seen` (its
+`last_connected`), `admission: offline`, its status fields, host tags and the
+last addresses the dispatcher recorded for it, under the same `is_public`
+rule; its other fields are zero or null and it cannot run work. `dbl nodes
+--status ...` and `Client.Probes(ctx, statuses...)` use this parameter and
+require API 1.17; `dbl nodes` adds `STATUS` and `TAGS` columns.
+
+**Host tags** are the executor's own description, chosen from a fixed
+vocabulary and set in its configuration, or with `dbl executor join
+--host-tag`:
+
+```toml
+[metadata]
+host_tags = ["home", "fibre"]
+```
+
+`home`, `office`, `datacentre`, `academic`, `cloud`, `dsl`, `cable`, `fibre`,
+`wifi`, `mobile`, `satellite` and `nat`; at most eight. The executor refuses to
+start with an unknown or repeated tag, and the dispatcher drops a malformed
+list. They are read at registration, like the opt-outs.
+
+**System tags** are derived by the dispatcher for connected executors:
+
+| Tag | When |
+| --- | --- |
+| `system-ipv4-works`, `system-ipv6-works` | A fresh measured [connectivity](#controlled-connectivity-observations) check over the family succeeded, or the family's [observed address](#probe-addresses) is current: the control connection's, or a reflection within the last 25 minutes. |
+| `system-ipv4-capable`, `system-ipv6-capable` | An address of the family was observed in the current control session, or a fresh connectivity check succeeded. |
+| `system-ipv4-rfc1918` | The executor reports that its local IPv4 source toward the dispatcher is an RFC 1918 address while the observed IPv4 address is global: it is behind a NAT. Only that boolean leaves the host. |
+| `system-ipv4-stable-1d`, `-30d`, `-90d` (and `ipv6`) | The family's current observed address has been the recorded address for at least 1, 30 or 90 days. |
+| `system-resolves-a-correctly`, `system-resolves-aaaa-correctly` | In the executor's last [address observation](#probe-addresses) round, its resolver answered the dispatcher's name with an A (AAAA) record whose address then passed the dispatcher's TLS identity check. This is stricter than RIPE Atlas's check: the family must also reach the dispatcher. |
+
+The NAT and DNS tags come from the executor's report and expire with it, as
+other vantage-point reports do; they are absent for older executors, for a
+literal `dispatcher.addr` (DNS) and with `observe_addresses = false`. Address
+stability starts from the upgrade to schema 24.
 
 ## Host probes
 
@@ -299,7 +537,8 @@ changes host state or contacts a time source.
   the probe of that hello.
 - `capabilities.enforcement_reason`: why the executor uses the `fallback`
   counter: `configured` (`packet_counter = "fallback"`), `no_interface`,
-  `not_permitted` (the eBPF attach lacked privilege), `unsupported` or
+  `not_permitted` (the eBPF load or attach lacked privilege: the executor
+  needs `CAP_BPF`, `CAP_PERFMON` and `CAP_NET_ADMIN`), `unsupported` or
   `attach_failed`. The executor log keeps the full error. Empty for `ebpf` and
   when unknown.
 - `clock`: `{value, source, observed_at}` in `GET /executors`. The value is the

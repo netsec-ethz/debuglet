@@ -17,6 +17,12 @@ type ConnectivityConfig struct {
 	IPv6Reflector   string `toml:"ipv6_reflector"`
 	Listeners       bool   `toml:"listeners"`
 	SCIONPathTarget string `toml:"scion_path_target"`
+	// ObserveAddresses (default true) lets the dispatcher observe this
+	// executor's address in each family: every 10 minutes, for each family
+	// without a configured reflector, the executor resolves dispatcher.addr
+	// and calls the address reflection over that family. It feeds the
+	// listing's address_v4 and address_v6 only, never admission.
+	ObserveAddresses bool `toml:"observe_addresses"`
 }
 
 func (c ConnectivityConfig) Validate(plaintext bool) error {

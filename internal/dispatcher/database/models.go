@@ -317,6 +317,27 @@ type PendingIdentityLink struct {
 	ExpiresAt       models.UTCTime
 }
 
+type ProbeAddress struct {
+	ExecutorID    string
+	Family        int64
+	Address       string
+	Via           string
+	FirstObserved int64
+	LastObserved  int64
+}
+
+type ProbeStatus struct {
+	ExecutorID     string
+	FirstConnected int64
+	LastConnected  int64
+	Connected      int64
+	StatusSince    int64
+	TotalUptime    int64
+	IsPublic       int64
+	HostTags       string
+	Version        string
+}
+
 type RetryRequest struct {
 	CallerScope    string
 	RequestID      string

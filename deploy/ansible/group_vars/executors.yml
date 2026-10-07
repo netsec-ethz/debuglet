@@ -75,21 +75,80 @@ executor_tesla_seed: ""
 # which makes probe attribution unverifiable.
 executor_interface: "{{ ansible_default_ipv4.interface | default('') }}"
 
-# Public endpoint for debuglets that request TCP/UDP listeners. Empty disables
-# listening; set both to enable it (see socket.NewPortManager).
+# The executor's public address, set per host in the inventory: the literal
+# IPv4 address its probes leave from (check with `curl -4s ifconfig.co` on the
+# host, or `ip -4 route get 192.0.2.1` where it is the interface address and no
+# NAT is involved). The executor advertises it in its hello, which is what the
+# dispatcher's advertised-address lookup in ip_metadata reads; empty reports
+# no_address. Do not put a private or NAT-internal address here.
+#
+# On its own it opens nothing. Run listeners (debuglets that request TCP/UDP
+# listeners) also need executor_public_ports, the inbound port pool the
+# executor binds guest listeners from (see socket.NewPortManager); leave it
+# empty unless the host's firewall admits exactly that range from the
+# Internet, since a listener nobody can reach only fails runs that ask for one.
 executor_public_host: ""
 executor_public_ports: ""
+
+# The executor's IPv4 egress check (the connectivity object in GET /executors):
+# a literal address:port of this executor's own dispatcher, which reflects the
+# source address it sees over the existing authenticated control channel. It
+# defaults to the gRPC endpoint the executor already dials whenever that is an
+# IPv4 literal, so it needs no port or firewall rule beyond the control
+# channel's. A dispatcher reached by name leaves it unset (the check reports
+# not_configured); set it explicitly, or to "" to turn the check off.
+executor_connectivity_ipv4_reflector: >-
+  {%- set dialled = executor_dispatcher_addr | default(dispatcher_addr) -%}
+  {{ (dialled is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')) | ternary(dialled ~ ':' ~ dispatcher_grpc_port, '') }}
+
+# Operator labels the dispatcher publishes for this executor in the display
+# object of GET /executors, with source "operator". Set them per host; the
+# dispatcher role renders one [executors."<executor_id>"] table for every
+# executor in the inventory with at least one of them set. Each is printable
+# text of at most 64 characters without leading or trailing space; the
+# country is an upper-case ISO 3166-1 alpha-2 code. Take the network from the
+# origin AS of executor_public_host, for example from RIPEstat
+# (https://stat.ripe.net/data/prefix-overview/data.json?resource=ADDRESS), and
+# write it as "SWITCH (AS559)". Labels are not verified against the executor.
+executor_display_name: ""
+executor_display_city: ""
+executor_display_country: ""
+executor_display_network: ""
 
 # Log level: debug | info | warn | error
 executor_log_level: info
 
 # Enable eBPF TC egress tagging (embedded in the binary). This grants the
-# binary cap_net_admin,cap_bpf, without which the TC egress tagger cannot
-# attach and outgoing probes carry no attribution tag — so packet verification
-# depends on it. Set to false on hosts where BPF is unavailable (restricted
-# kernels, containers). When false, capabilities are not set and the systemd
-# unit omits BPF capabilities.
+# binary executor_capabilities below, without which the TC egress tagger
+# cannot load and outgoing probes carry no attribution tag — so packet
+# verification depends on it. Set to false on hosts where BPF is unavailable
+# (restricted kernels, containers). When false, capabilities are not set and
+# the systemd unit omits them.
 executor_enable_bpf: true
+
+# The file capabilities the executor binary runs with, exactly these:
+#
+#   cap_bpf       create the tagger's and packet counter's maps and programs
+#   cap_perfmon   let the verifier accept the tagger's pointer comparisons;
+#                 without it the load fails with "R2 pointer comparison
+#                 prohibited" and the executor falls back (enforcement_reason
+#                 not_permitted)
+#   cap_net_admin attach the programs to the interface's TC egress hook
+#   cap_net_raw   open the raw sockets of guest ICMP and of the pure-Go
+#                 tagger used where the eBPF tagger does not load
+#
+# cap_sys_resource is not needed. Since Linux 5.11 BPF memory is charged to
+# the memory cgroup rather than RLIMIT_MEMLOCK, and cilium/ebpf leaves the
+# limit alone when its probe map, created under cap_bpf, succeeds. On an
+# older kernel the unit lifts the limit itself (LimitMEMLOCK=infinity, set by
+# systemd before the executor starts) rather than granting the capability. A
+# "map create: operation not permitted (MEMLOCK may be too low ...)" error on
+# a newer kernel means cap_bpf is missing, not the limit.
+executor_capabilities:
+  - cap_net_admin
+  - cap_net_raw
+  - cap_perfmon
+  - cap_bpf
 
 # Packet-counter mode rendered into the daemon configuration. `auto` tries
 # eBPF and falls back only after a confirmed clean rollback. Hosts whose

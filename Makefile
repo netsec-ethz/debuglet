@@ -162,8 +162,10 @@ proto:
 generate-sql:
 	GO="$(GO)" bash scripts/ci-generate.sh write-sql
 
+# The executor's capability set; executor_capabilities in
+# deploy/ansible/group_vars/executors.yml says what each one is for.
 setcaps: build
-	sudo setcap cap_net_admin,cap_bpf+ep ./$(EXECUTOR_BINARY)
+	sudo setcap cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf=ep ./$(EXECUTOR_BINARY)
 
 test:
 	$(GO) test $$($(GO) list ./... | grep -v /examples/debuglets/) -v
