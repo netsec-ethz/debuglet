@@ -267,3 +267,18 @@ func TestMetricsDisclosureLagOmittedWhileAnyExecutorUnknown(t *testing.T) {
 		t.Fatal("empty registry appeared numeric")
 	}
 }
+
+func TestDisclosureCompletionMetricsOmitUnknown(t *testing.T) {
+	bound := 2.5
+	c := dispatcher.ControlMetrics{Registered: 1}
+	c.Health.DisclosureCompletion = dispatcher.ExecutorResourceMetric{Value: &bound}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	if !strings.Contains(out, "\ndebuglet_executor_disclosure_completion_upper_bound_seconds 2.5\n") {
+		t.Fatal(out)
+	}
+	c.Health.DisclosureCompletion.Unknown = 1
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, "\ndebuglet_executor_disclosure_completion_upper_bound_seconds ") || !strings.Contains(out, `debuglet_observation_available{observation="executor_disclosure_completion_upper_bound_seconds",reason="incomplete"} 0`) {
+		t.Fatal(out)
+	}
+}

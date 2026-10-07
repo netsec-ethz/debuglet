@@ -91,7 +91,10 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		})
 		entry.Write(zap.Int64("amount", earnings.TotalIncome), zap.Int64("next payout", earnings.CurrentBalance))
 	}
-	d.storeDisclosure(ctx, execID, chain, seen, req.GetTeslaKeyAnchor(), req.GetTeslaKeyEpoch(), req.GetTeslaKey())
+	response := &pb.HeartbeatResponse{}
+	if receipt := d.storeDisclosure(ctx, execID, chain, seen, req.GetTeslaKeyAnchor(), req.GetTeslaKeyEpoch(), req.GetTeslaKey()); receipt != nil {
+		response.DisclosureReceipts = append(response.DisclosureReceipts, receipt)
+	}
 	// Keys of earlier chains, such as the tail of the chain a restart retired,
 	// follow the same path. The keystore keeps at most maxExtraDisclosures
 	// chains per executor, so a longer list is refused whole.
@@ -99,31 +102,33 @@ func (d *Dispatcher) OnHeartbeat(ctx context.Context, mutation *rpc.Mutation, re
 		d.logger.Warn("Refused a heartbeat's extra TESLA disclosures", zap.String("executor_id", daemonlog.Identifier(execID)), zap.Int("count", len(extra)))
 	} else {
 		for _, disclosure := range extra {
-			d.storeDisclosure(ctx, execID, chain, seen, disclosure.GetAnchor(), disclosure.GetEpoch(), disclosure.GetKey())
+			if receipt := d.storeDisclosure(ctx, execID, chain, seen, disclosure.GetAnchor(), disclosure.GetEpoch(), disclosure.GetKey()); receipt != nil {
+				response.DisclosureReceipts = append(response.DisclosureReceipts, receipt)
+			}
 		}
 	}
-	return &pb.HeartbeatResponse{}, nil
+	return response, nil
 }
 
 // maxExtraDisclosures bounds the extra disclosures one heartbeat may carry; it
 // matches the chains the keystore keeps per executor.
-const maxExtraDisclosures = 4
+const maxExtraDisclosures = pb.MaxDisclosureReceipts - 1
 
 // storeDisclosure verifies one disclosed key and stores it. An empty anchor
 // names chain, the session's own. A key for another chain of this executor is
 // verified against that chain's recorded schedule, so the tail of a chain can
 // be disclosed after the executor restarted onto a new one. An anchor not on
 // record names no chain the dispatcher knows, and its key is dropped.
-func (d *Dispatcher) storeDisclosure(ctx context.Context, execID string, chain tag.Chain, seen time.Time, anchor []byte, epoch int64, key []byte) {
+func (d *Dispatcher) storeDisclosure(ctx context.Context, execID string, chain tag.Chain, seen time.Time, anchor []byte, epoch int64, key []byte) *pb.TeslaDisclosureReceipt {
 	if len(anchor) > 0 && len(key) > 0 && !bytes.Equal(anchor, chain.Anchor) {
 		recorded, ok, err := d.recordedChain(ctx, execID, anchor)
 		if err != nil {
 			d.logger.Warn("Failed to read the recorded TESLA chain of a disclosure", zap.String("executor_id", execID), zap.Error(err))
-			return
+			return nil
 		}
 		if !ok {
 			d.logger.Debug("Dropped a disclosed TESLA key for a chain not on record", zap.String("executor_id", execID), zap.String("chain", tag.ChainID(anchor)))
-			return
+			return nil
 		}
 		chain = recorded
 	}
@@ -147,6 +152,14 @@ func (d *Dispatcher) storeDisclosure(ctx context.Context, execID string, chain t
 		// executor's next heartbeat discloses the key again.
 		d.logger.Warn("Failed to record disclosed TESLA key", zap.String("executor_id", execID), zap.Error(err))
 	}
+	if err != nil || epoch <= 0 || len(key) == 0 {
+		return nil
+	}
+	through, ok := d.keystore.DurableThrough(execID, chain.Anchor)
+	if !ok {
+		return nil
+	}
+	return &pb.TeslaDisclosureReceipt{Anchor: append([]byte(nil), chain.Anchor...), StoredThroughEpoch: min(epoch, through)}
 }
 
 func (d *Dispatcher) OnResources(ctx context.Context, mutation *rpc.Mutation, req *pb.ResourcesRequest) (*pb.ResourcesResponse, error) {

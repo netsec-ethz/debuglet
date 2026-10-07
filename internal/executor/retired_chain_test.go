@@ -109,11 +109,11 @@ func TestRestartDisclosesTheRetiredChainTail(t *testing.T) {
 	}
 	// Past its final disclosure the chain is kept until the final key was
 	// delivered; an earlier key does not retire it.
-	holder.delivered(holder.disclosures(origin.Add(4500 * time.Millisecond)))
+	holder.delivered(disclosureTestReceipts(holder.disclosures(origin.Add(4500 * time.Millisecond))))
 	if holder.schedule == nil {
 		t.Fatal("delivering k_2 retired the chain")
 	}
-	holder.delivered(holder.disclosures(origin.Add(20 * time.Second)))
+	holder.delivered(disclosureTestReceipts(holder.disclosures(origin.Add(20 * time.Second))))
 	if holder.schedule != nil || len(holder.disclosures(origin.Add(20*time.Second))) != 0 {
 		t.Fatal("the retired chain was kept after its final key was delivered")
 	}
@@ -256,7 +256,7 @@ func (c *heartbeatCapture) Heartbeat(_ context.Context, req *pb.HeartbeatRequest
 			return nil, err
 		}
 	}
-	return &pb.HeartbeatResponse{}, nil
+	return &pb.HeartbeatResponse{DisclosureReceipts: disclosureTestReceipts(req.ExtraDisclosures)}, nil
 }
 
 func (c *heartbeatCapture) received() []*pb.HeartbeatRequest {
@@ -502,7 +502,7 @@ func TestRetiredChainOutlivesAChangedHeartbeatCadence(t *testing.T) {
 		if len(got) != 1 || got[0].GetEpoch() != 19 || !bytes.Equal(got[0].GetKey(), finalKey) {
 			t.Fatalf("first heartbeat after the restart carried %v; want k_19", got)
 		}
-		holder.delivered(got)
+		holder.delivered(disclosureTestReceipts(got))
 		if holder.schedule != nil {
 			t.Fatal("the chain was kept after its final key was delivered")
 		}
@@ -595,8 +595,18 @@ func TestRetiredChainPastItsFinalDisclosure(t *testing.T) {
 	if len(got) != 1 || got[0].GetEpoch() != 5 || !bytes.Equal(got[0].GetAnchor(), anchor) {
 		t.Fatalf("first heartbeat carried %v; want k_5", got)
 	}
-	holder.delivered(got)
+	holder.delivered(disclosureTestReceipts(got))
 	if holder.schedule != nil {
 		t.Fatal("the delivered chain was kept")
 	}
+}
+
+// Scripted durable responses for the heartbeat delivery tests; dispatcher
+// persistence itself is exercised by the receipt transaction fixtures.
+func disclosureTestReceipts(sent []*pb.TeslaDisclosure) []*pb.TeslaDisclosureReceipt {
+	var out []*pb.TeslaDisclosureReceipt
+	for _, d := range sent {
+		out = append(out, &pb.TeslaDisclosureReceipt{Anchor: d.Anchor, StoredThroughEpoch: d.Epoch})
+	}
+	return out
 }

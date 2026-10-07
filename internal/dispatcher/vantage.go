@@ -19,18 +19,19 @@ import (
 // vantageReport is a validated executor VantagePointReport. It is replaced,
 // never mutated, so snapshots may share it.
 type vantageReport struct {
-	scionHost         string
-	scionPathTarget   string
-	scionPaths        *wire.ProbeState
-	isdAS             string // Canonical; empty unknown.
-	listeners         []string
-	clock             *wire.ClockReport           // Nil unknown.
-	platform          *wire.HostPlatform          // Nil unknown; operator-only.
-	resources         *observability.HostSnapshot // Nil unknown; operator metrics only.
-	counterAttachment string                      // present, missing, or unknown; operator metrics only.
-	networkDenials    *pb.NetworkDenials          // Nil unknown; operator metrics only, never public discovery.
-	packetDrops       *pb.PacketDropObservations  // Nil unknown; local TCX verdicts, operator metrics only.
-	addressCheck      *addressCheck               // Nil unknown; only system tags read it.
+	scionHost          string
+	scionPathTarget    string
+	scionPaths         *wire.ProbeState
+	isdAS              string // Canonical; empty unknown.
+	listeners          []string
+	clock              *wire.ClockReport                 // Nil unknown.
+	platform           *wire.HostPlatform                // Nil unknown; operator-only.
+	resources          *observability.HostSnapshot       // Nil unknown; operator metrics only.
+	counterAttachment  string                            // present, missing, or unknown; operator metrics only.
+	networkDenials     *pb.NetworkDenials                // Nil unknown; operator metrics only, never public discovery.
+	disclosureDelivery *pb.DisclosureDeliveryObservation // Current chain sender timing; operator-only.
+	packetDrops        *pb.PacketDropObservations        // Nil unknown; local TCX verdicts, operator metrics only.
+	addressCheck       *addressCheck                     // Nil unknown; only system tags read it.
 }
 
 // Unknown versions and malformed ISD-AS or listeners discard the whole report,
@@ -49,6 +50,9 @@ func vantageFromReport(report *pb.VantagePointReport) *vantageReport {
 		out.platform = platformFromReport(report.Platform)
 	}
 	out.resources = resourcesFromReport(report.GetResources())
+	if delivery := report.GetDisclosureDelivery(); delivery != nil && len(delivery.Anchor) == 32 && delivery.StoredThroughEpoch > 0 && delivery.ScheduledToAckNs >= 0 && delivery.SampleAgeNs >= 0 && delivery.SampleAgeNs < int64(pb.DisclosureSampleLifetime) {
+		out.disclosureDelivery = &pb.DisclosureDeliveryObservation{Anchor: append([]byte(nil), delivery.Anchor...), StoredThroughEpoch: delivery.StoredThroughEpoch, ScheduledToAckNs: delivery.ScheduledToAckNs, SampleAgeNs: delivery.SampleAgeNs}
+	}
 	if denials := report.GetNetworkDenials(); denials != nil && denials.RefusedAdmissions <= 1<<53 && denials.RevokedSockets <= 1<<53 {
 		out.networkDenials = &pb.NetworkDenials{RefusedAdmissions: denials.RefusedAdmissions, RevokedSockets: denials.RevokedSockets}
 	}

@@ -37,6 +37,7 @@ import (
 // the same probe and are sent, or omitted, together.
 func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
 	now := time.Now()
+	e.disclosureDelivery.checkClock(e.teslaSchedule, now)
 	attribution := attributionReport(e.teslaSchedule, now)
 	tagging := e.tagging()
 	e.capabilityMu.Lock()
@@ -75,6 +76,10 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 		vantage.CounterAttachment = counter.AttachmentState()
 	}
 	vantage.PacketDrops = packetDropReport(e.packetCount, vantage.CounterAttachment)
+	if vantage.Clock.GetReadiness() != "ready" {
+		e.disclosureDelivery.invalidate()
+	}
+	vantage.DisclosureDelivery = e.disclosureDelivery.report(e.teslaSchedule, now)
 	if initial {
 		vantage.Connectivity = e.initialConnectivityReport()
 	}

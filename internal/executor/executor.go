@@ -79,7 +79,8 @@ type Executor struct {
 	scheduleProof []byte
 	// chainReport is the node's, so each end-of-chain line is logged once per
 	// process rather than once per control session.
-	chainReport *chainReport
+	chainReport        *chainReport
+	disclosureDelivery *disclosureDelivery
 	// retired is the node's previous chain, whose due keys each heartbeat
 	// discloses beside the current chain's.
 	retired *retiredChain
@@ -145,7 +146,7 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, scheduleProof: node.scheduleProof, chainReport: &node.chainReport, retired: &node.retired,
+	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, scheduleProof: node.scheduleProof, chainReport: &node.chainReport, disclosureDelivery: &node.disclosureDelivery, retired: &node.retired,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter, revoked: netpolicy.NewRevocations(),
 		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget, supervisor: node.supervisor,
 		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
@@ -378,14 +379,24 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			}
 
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))
+			e.disclosureDelivery.checkClock(e.teslaSchedule, now)
+			var response *protocol.HeartbeatResponse
 			client, err := e.dispatcherClient(ctx, binding)
 			if err == nil {
 				callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-				_, err = client.Heartbeat(callCtx, req)
+				response, err = client.Heartbeat(callCtx, req)
 				cancel()
 			}
+			ack := time.Now()
+			if err == nil && e.Bidi != nil {
+				err = e.Bidi.CheckLease(binding)
+			}
 			if err == nil {
-				e.retired.delivered(req.ExtraDisclosures)
+				receipts := matchingDisclosureReceipts(req, response, e.teslaSchedule.Anchor())
+				e.disclosureDelivery.acknowledge(e.teslaSchedule, receipts, ack)
+				e.retired.delivered(receipts)
+			} else {
+				e.disclosureDelivery.failed()
 			}
 			if err != nil {
 				e.logger.Error("Failed to send heartbeat", zap.Error(err))
