@@ -10,6 +10,27 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Security
+- The executor stops tagging when its clock cannot place packets in the
+  epochs a verifier derives from capture time. Epochs advance on the
+  monotonic clock from the announced chain origin; previously a chain started
+  on an unsynchronised clock, or a wall-clock step or suspend afterwards, left
+  the executor tagging and reporting attribution as available although
+  honest packets mapped to the wrong epoch.
+  - Attribution gains the reasons `clock_unready` (the host clock readiness
+    was not `ready` when the chain started; it holds until a restart) and
+    `clock_drift` (wall and monotonic time elapsed since the origin differ by
+    more than min(epoch length / 2, 1 s); it clears by itself if the drift
+    returns within the bound, while a persistent drift needs a restart). No
+    key signs while either holds; a kernel tagger stops at its next
+    scheduled refresh, at most one epoch later if the slot removal succeeds.
+  - A node that tags packets refuses new runs with `FailedPrecondition`
+    while either reason holds; a node whose tagging mode is `none` admits
+    them. The executor logs an error when a chain starts on a clock that is
+    not ready.
+  - The key schedule never signs with the key of an epoch below one it has
+    already signed with. See `docs/tag-spec.md` §10.
+
 ### Added
 - The executor answers pre-disclosure tag verification queries over the
   control session (`VerifyTags`): for one group of captured packets of one
@@ -34,6 +55,14 @@ changes; the linked API and deployment documentation contains operational detail
   receipt key, and keep receipts and keys in the evidence bundle, which
   `client.VerifyEvidence` checks again. The dispatcher's minimum supported
   schema is 25.
+- An executor with a configured `[tesla] seed` discloses the tail of its
+  previous chain after a restart: it re-derives that chain, which never signs
+  again, and sends its due keys beside the current one in the heartbeat's new
+  `extra_disclosures` field, until the final key is out. Executor schema 8
+  records each chain's disclosure delay; chains recorded before it, starts
+  without a seed and starts on an unready clock still lose the tail. The
+  dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
+  against its recorded chain.
 
 ## [0.3.0-rc.1] - 2026-10-06
 
@@ -53,8 +82,8 @@ changes; the linked API and deployment documentation contains operational detail
     covering 15 minutes (90 epochs at the default 10-second epoch), and an
     explicit value below 2, or with less than 10 s of margin
     ((d − 1) × epoch length), is refused. The installed-key hold still applies.
-  - A restart starts a new chain, so without a configured `[tesla] seed` the
-    keys of the last d epochs before it are never disclosed and those packets cannot be verified; the chain
+  - A restart starts a new chain, so the keys of the last d epochs before it
+    are never disclosed and those packets cannot be verified; the chain
     exhaustion log names `final_disclosure_at`, the time after which a
     restart loses nothing.
   - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
@@ -65,35 +94,8 @@ changes; the linked API and deployment documentation contains operational detail
     at capture time plus `--clock-tolerance`.
   - The browser verifier in debuglet-website needs the same change.
   - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
-- The executor stops tagging when its clock cannot place packets in the
-  epochs a verifier derives from capture time. Epochs advance on the
-  monotonic clock from the announced chain origin; previously a chain started
-  on an unsynchronised clock, or a wall-clock step or suspend afterwards, left
-  the executor tagging and reporting attribution as available although
-  honest packets mapped to the wrong epoch.
-  - Attribution gains the reasons `clock_unready` (the host clock readiness
-    was not `ready` when the chain started; it holds until a restart) and
-    `clock_drift` (wall and monotonic time elapsed since the origin differ by
-    more than min(epoch length / 2, 1 s); it clears by itself if the drift
-    returns within the bound, while a persistent drift needs a restart). No
-    key signs while either holds; a kernel tagger stops at its next
-    scheduled refresh, at most one epoch later if the slot removal succeeds.
-  - A node that tags packets refuses new runs with `FailedPrecondition`
-    while either reason holds; a node whose tagging mode is `none` admits
-    them. The executor logs an error when a chain starts on a clock that is
-    not ready.
-  - The key schedule never signs with the key of an epoch below one it has
-    already signed with. See `docs/tag-spec.md` §10.
 
 ### Added
-- An executor with a configured `[tesla] seed` discloses the tail of its
-  previous chain after a restart: it re-derives that chain, which never signs
-  again, and sends its due keys beside the current one in the heartbeat's new
-  `extra_disclosures` field, until the final key is out. Executor schema 8
-  records each chain's disclosure delay; chains recorded before it, starts
-  without a seed and starts on an unready clock still lose the tail. The
-  dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
-  against its recorded chain.
 - API 1.17: RIPE Atlas-style status history and tags in `GET /executors`:
   `status` (`connected`, `disconnected`, `abandoned` after 30 days
   disconnected, `never_connected` for enrolled executors that never
