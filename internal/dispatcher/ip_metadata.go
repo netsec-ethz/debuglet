@@ -12,8 +12,10 @@ import (
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
-// ConfigureIPMetadata fixes the offline database readers before registration.
-// The caller owns readers and closes them only after dispatcher shutdown.
+// ConfigureIPMetadata sets the offline databases before registration. They
+// may switch to a replaced file while the dispatcher runs (Databases.Reload);
+// each registration's lookups are a snapshot of the database in use then. The
+// caller owns the databases and closes them only after dispatcher shutdown.
 func (d *Dispatcher) ConfigureIPMetadata(databases *ipmetadata.Databases) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

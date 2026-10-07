@@ -1,6 +1,7 @@
 ---
 # Read-only post-deployment checks. This verifies the active systemd unit and
-# the application version recorded by the payload role on each selected host.
+# the application version recorded by the payload role on each selected host,
+# and that each executor binary carries the capabilities its eBPF tagger needs.
 
 - import_playbook: preflight.yml
 
@@ -48,3 +49,31 @@
           - executor_active.stdout == 'active'
           - (executor_record.content | b64decode | from_json).application.version == expected_deploy_version
         quiet: true
+
+    # The role does not fail a deployment on a host that refuses file
+    # capabilities, so this is where a missing one shows: without it the
+    # executor reports tagging.ipv4 other than ebpf. getcap prints
+    # "PATH cap_a,cap_b=ep" for a file that carries them.
+    - name: Read the executor binary's file capabilities
+      ansible.builtin.command:
+        argv:
+          - getcap
+          - "{{ payload_prefix }}/lib/debuglet/{{ (executor_record.content | b64decode | from_json).application.version }}/bin/debuglet-executor"
+      register: executor_getcap
+      changed_when: false
+      when: executor_enable_bpf | default(true) | bool
+
+    - name: Require exactly the executor's capabilities
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((executor_getcap.stdout | regex_search('\\s(\\S+)=ep\\s*$', '\\1') or ['']) | first).split(',') | sort
+            == executor_capabilities | sort
+        fail_msg: >-
+          The executor binary carries "{{ executor_getcap.stdout | trim }}",
+          not {{ executor_capabilities | join(',') }}=ep. Its eBPF tagger
+          cannot load, so its probes are not attributable. Deploy the
+          executors again, or see executor_capabilities in
+          group_vars/executors.yml.
+        quiet: true
+      when: executor_enable_bpf | default(true) | bool

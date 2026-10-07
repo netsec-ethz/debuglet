@@ -37,6 +37,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/ipmetadata"
+	"github.com/netsec-ethz/debuglet/internal/ipmetadata/ris"
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
@@ -62,7 +63,17 @@ func main() {
 	revokeRecovery := flag.String("revoke-account-recovery", "", "Revoke an unused administrator-issued recovery code for this account UUID, then exit")
 	recoveryCase := flag.String("recovery-case", "", "Private support-case reference recording the administrator's independent ownership verification")
 	recoveryOutput := flag.String("recovery-output", "", "Absent file in an owned mode-0700 directory for the one-time recovery code")
+	buildASN := flag.String("build-asn-database", "", "Build the ASN database from RIPE RIS routing data and RIPE AS names, verify it and atomically replace this file with it, then exit; a running dispatcher picks it up within a minute")
+	risMinPeers := flag.Int("ris-min-peers", ris.DefaultMinPeers, "With -build-asn-database, the number of RIS peers that must see a prefix and origin")
+	risMaxAge := flag.Duration("ris-max-age", ris.DefaultMaxAge, "With -build-asn-database, refuse RIS dumps generated longer ago than this")
 	flag.Parse()
+	if handled, err := runASNBuild(flag.CommandLine, *buildASN, *risMinPeers, *risMaxAge); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	recoveryRequested := false
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -273,6 +284,9 @@ func runDispatcher(ctx context.Context, cfg *config.DispatcherConfig, readyFile 
 		return err
 	}
 	defer metadataDB.Close()
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	go metadataDB.Watch(watchCtx, metadataReloadInterval, func(r ipmetadata.Reloaded) { logMetadataReload(logger, r) })
 	paymentHandler, err := payments.NewPaymentHandler(db, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("configure payments: %w", err)

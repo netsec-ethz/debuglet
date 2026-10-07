@@ -217,6 +217,16 @@ allowance grant (account, amount in TEST units, the granting operator account,
 reason, idempotency key and time). Grants are never changed or removed; the
 table stays empty while allowances are disabled.
 
+From dispatcher schema 24, it also keeps the public status history of each
+executor that has registered (`probe_status`: first and last connection, the
+connected state and since when, total uptime, `is_public`, host tags and
+version) and its observed addresses (`probe_addresses`: one row per run of one
+address per family, with first and last observation). Address runs that ended
+more than 91 days ago are pruned hourly; every family's latest run is kept.
+Status rows are kept indefinitely. The upgrade fills `probe_status` from the
+recorded TESLA chains, so executors known before it keep their first and last
+registration; their uptime and addresses start empty.
+
 ## State and upgrades
 
 Daemons never migrate a database at startup. Back up the dispatcher database, use the release's explicit migration process, and deploy a single reviewed version across the service. An interrupted executor run is not resumed after restart.

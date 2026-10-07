@@ -65,6 +65,13 @@ all:
             executor1.example.com:
               ansible_user: deploy
               executor_id: 5fe02882-0410-416c-9935-235090bcba0d
+              # The IPv4 address its probes leave from, and the labels the
+              # dispatcher publishes for it (group_vars/executors.yml).
+              executor_public_host: 192.0.2.10
+              executor_display_name: Example lab
+              executor_display_city: Zurich
+              executor_display_country: CH
+              executor_display_network: SWITCH (AS559)
 
             # A restricted host (container or limited kernel capabilities):
             # executor2.example.com:

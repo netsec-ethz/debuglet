@@ -28,6 +28,7 @@ type vantageReport struct {
 	platform          *wire.HostPlatform          // Nil unknown; operator-only.
 	resources         *observability.HostSnapshot // Nil unknown; operator metrics only.
 	counterAttachment string                      // present, missing, or unknown; operator metrics only.
+	addressCheck      *addressCheck               // Nil unknown; only system tags read it.
 }
 
 // Unknown versions and malformed ISD-AS or listeners discard the whole report,
@@ -46,6 +47,7 @@ func vantageFromReport(report *pb.VantagePointReport) *vantageReport {
 		out.platform = platformFromReport(report.Platform)
 	}
 	out.resources = resourcesFromReport(report.GetResources())
+	out.addressCheck = addressCheckFromReport(report.GetAddressCheck())
 	out.counterAttachment = "unknown"
 	if state := report.GetCounterAttachment(); state == "present" || state == "missing" {
 		out.counterAttachment = state
@@ -205,6 +207,14 @@ func (d *Dispatcher) ConfigureExecutorDisplay(executors map[string]config.Execut
 	}
 	d.display = maps.Clone(executors)
 	return nil
+}
+
+// ConfiguredDisplay is the operator's metadata for an executor ID, registered
+// or not.
+func (d *Dispatcher) ConfiguredDisplay(id string) wire.ExecutorDisplay {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return (&RegisteredExecutor{display: d.display[id]}).Display()
 }
 
 // Display is the operator's metadata, labelled operator where configured.

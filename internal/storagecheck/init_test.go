@@ -53,6 +53,8 @@ func TestBootstrapFresh(t *testing.T) {
 					"retry_requests":             "caller_scope request_id parent_run_id transaction_id request_hash intent_metadata",
 					"allocation_reclamations":    "debuglet_id reclaimed_at",
 					"allowance_grants":           "id user_id amount currency granted_by reason idempotency_key granted_at",
+					"probe_status":               "executor_id first_connected last_connected connected status_since total_uptime is_public host_tags version",
+					"probe_addresses":            "executor_id family address via first_observed last_observed",
 					"payment_receipts":           "tx_digest event_seq nonce disposition amount coin_type receiver checkpoint observed_at detail",
 					"chain_transfers":            "id kind executor_id transaction_id order_id amount currency receiver state digest signed_transaction signature detail created_at updated_at",
 					"account_run_reservations":   "debuglet_id account_id queued_bytes retired_at last_retirement_check",

@@ -15,6 +15,7 @@ github.com/florianl/go-tc v0.4.8 - MIT
 github.com/google/uuid v1.6.0 - BSD-3-Clause
 github.com/hashicorp/yamux v0.1.2 - MPL-2.0
 github.com/labstack/echo/v4 v4.15.4 - MIT
+github.com/maxmind/mmdbwriter v1.2.0 - Apache-2.0 OR MIT
 github.com/netsec-ethz/scion-apps v0.6.0 - Apache-2.0
 github.com/oschwald/maxminddb-golang/v2 v2.6.0 - ISC
 github.com/pelletier/go-toml/v2 v2.2.4 - MIT

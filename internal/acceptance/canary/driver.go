@@ -432,7 +432,7 @@ func strictCLIDocument(data []byte, out any) error {
 			return errors.New("invalid nodes JSON")
 		}
 		for _, node := range nodes {
-			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, []string{"capabilities", "admission", "display", "scion_isd_as", "listeners", "clock", "ip_metadata", "connectivity", "admission_limits", "capability_observation"}, map[string]bool{"tesla_anchor_key": true})
+			fields, err := strictFields(node, []string{"id", "ready", "last_seen", "version", "tesla_delay_sec", "tesla_anchor_timestamp_ns", "tesla_anchor_key", "price_per_bw", "currency"}, append([]string{"capabilities", "admission", "display", "scion_isd_as", "listeners", "clock", "ip_metadata", "connectivity", "admission_limits", "capability_observation"}, probeAddressingFields...), nodeNullable)
 			if err != nil {
 				return err
 			}
@@ -483,9 +483,63 @@ func strictCLIDocument(data []byte, out any) error {
 	return nil
 }
 
+// probeAddressingFields are the RIPE Atlas-style addressing fields (API
+// 1.16). The CLI emits each of them, null when the dispatcher predates them.
+var probeAddressingFields = []string{"is_public", "address_v4", "address_v6", "prefix_v4", "prefix_v6", "asn_v4", "asn_v6", "address_observations",
+	// The status history and tags (API 1.17).
+	"status", "status_since", "first_connected", "last_connected", "total_uptime", "tags"}
+
+var nodeNullable = func() map[string]bool {
+	out := map[string]bool{"tesla_anchor_key": true}
+	for _, key := range probeAddressingFields {
+		out[key] = true
+	}
+	return out
+}()
+
+func checkNodeAddressObservations(raw json.RawMessage) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	families, err := strictFields(raw, []string{"v4", "v6"}, nil, map[string]bool{"v4": true, "v6": true})
+	if err != nil {
+		return err
+	}
+	for _, family := range families {
+		if bytes.Equal(bytes.TrimSpace(family), []byte("null")) {
+			continue
+		}
+		if _, err := strictFields(family, []string{"source", "via", "observed_at", "lookup_source", "lookup_reason"}, nil, map[string]bool{"lookup_source": true}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Node discovery fields keep their documented shape: each value travels
 // with its source label, and observations with their receipt time.
 func checkNodeVantage(fields map[string]json.RawMessage) error {
+	if raw, present := fields["address_observations"]; present {
+		if err := checkNodeAddressObservations(raw); err != nil {
+			return err
+		}
+	}
+	if raw, present := fields["status"]; present && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if _, err := strictFields(raw, []string{"name", "since"}, nil, map[string]bool{"since": true}); err != nil {
+			return err
+		}
+	}
+	if raw, present := fields["tags"]; present {
+		var tags []*string
+		if json.Unmarshal(raw, &tags) != nil {
+			return errors.New("invalid node tags")
+		}
+		for _, tag := range tags {
+			if tag == nil {
+				return errors.New("invalid node tags")
+			}
+		}
+	}
 	if raw, present := fields["capability_observation"]; present {
 		if _, err := strictFields(raw, []string{"state", "observed_at", "expires_at"}, nil, map[string]bool{"observed_at": true, "expires_at": true}); err != nil {
 			return err

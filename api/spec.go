@@ -39,6 +39,10 @@ const (
 	// payment features, usage allowances (GET /me/allowance, POST
 	// /operator/accounts/{id}/allowance) and executor earnings
 	// (GET /operator/executors/{id}/earnings).
+	// 1.16 added the RIPE Atlas-style is_public, address, prefix and ASN
+	// fields of each address family to GET /executors.
+	// 1.17 added the RIPE Atlas-style status history and tags to GET
+	// /executors and its status filter.
 	// 1.18 added server-assisted verification and receipt keys.
 	Minor = 18
 	// VersionHeader carries the contract version a client requires on requests

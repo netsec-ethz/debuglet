@@ -87,33 +87,56 @@
   no_log: true
   notify: Restart executor
 
-# Without these the TC egress tagger cannot attach and probes leave untagged,
-# so this is what makes packet attribution verifiable. Some hosts (restricted
-# containers, noexec/nosuid or non-xattr filesystems) reject file capabilities
-# outright; that costs those nodes their attribution tags but must not fail the
-# whole deploy, so the failure is reported rather than fatal. Set
+# Without these the eBPF tagger cannot load and probes leave untagged, so this
+# is what makes packet attribution verifiable; executor_capabilities in
+# group_vars/executors.yml says what each one is for. The binary gets exactly
+# that set: setcap replaces whatever the file carried before. Some hosts
+# (restricted containers, noexec/nosuid or non-xattr filesystems) reject file
+# capabilities outright; that costs those nodes their attribution tags but
+# must not fail the whole deploy, so the failure is reported rather than
+# fatal, and verify.yml reports the missing capabilities. Set
 # executor_enable_bpf=false on such a host to skip the attempt entirely.
-- name: Set eBPF capabilities on executor binary
-  community.general.capabilities:
+- name: Set the executor's capabilities on its binary
+  when: executor_enable_bpf | default(true) | bool
+  vars:
     # The installed payload itself, not the link next to it: file
     # capabilities live on the executable.
-    path: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
-    capability: "cap_net_admin,cap_bpf+ep"
-    state: present
-  when: executor_enable_bpf | default(true)
-  register: executor_setcap
-  failed_when: false
+    executor_release_binary: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
+  block:
+    - name: Read the executor binary's file capabilities
+      ansible.builtin.command:
+        argv: [getcap, "{{ executor_release_binary }}"]
+      register: executor_getcap
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-- name: Warn when eBPF capabilities could not be set
-  ansible.builtin.debug:
-    msg: >-
-      Could not set cap_net_admin,cap_bpf on the executor binary
-      ({{ executor_setcap.msg | default('unknown error') }}). This node will
-      run without the eBPF egress tagger, so its probes will carry no
-      attribution tag and cannot be verified.
-  when:
-    - executor_enable_bpf | default(true)
-    - executor_setcap.failed | default(false)
+    # getcap prints "PATH cap_a,cap_b=ep" for a file that carries them.
+    - name: Grant exactly the executor's capabilities
+      ansible.builtin.command:
+        argv:
+          - setcap
+          - "{{ executor_capabilities | join(',') }}=ep"
+          - "{{ executor_release_binary }}"
+      register: executor_setcap
+      failed_when: false
+      changed_when: executor_setcap.rc == 0
+      # A running executor keeps the capabilities it started with.
+      notify: Restart executor
+      when: >-
+        ((executor_getcap.stdout | default('') | regex_search('\\s(\\S+)=ep\\s*$', '\\1') or ['']) | first).split(',') | sort
+        != executor_capabilities | sort
+
+    - name: Warn when the capabilities could not be set
+      ansible.builtin.debug:
+        msg: >-
+          Could not set {{ executor_capabilities | join(',') }} on
+          {{ executor_release_binary }}
+          ({{ executor_setcap.stderr | default('') | trim | default('setcap failed', true) }}).
+          This node will run without the eBPF egress tagger, so its probes
+          will carry no attribution tag and cannot be verified, and without
+          cap_net_raw it offers no ICMP.
+      when: executor_setcap.rc | default(0) != 0
 
 - name: Install executor systemd unit
   ansible.builtin.template:
