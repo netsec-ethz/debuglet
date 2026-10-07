@@ -82,6 +82,21 @@ dispatcher_executor_onboarding_dispatcher_url: ""
 dispatcher_executor_onboarding_grpc_address: ""
 dispatcher_executor_onboarding_yamux_address: ""
 
+# Executor ASN and announced prefix from RIPE RIS, the method RIPE Atlas uses
+# for its probes: the origin AS of the longest prefix that at least
+# dispatcher_ris_asn_min_peers RIS peers see. The debuglet-ris-asn timer
+# rebuilds the database daily from RIPE's public dumps (about 15 MB of
+# downloads, under a minute and 0.5 GB of memory), verifies it and renames it
+# into place; the dispatcher picks the new file up within a minute without a
+# restart. The first build runs during deployment, before the configuration
+# names the file, so the dispatcher host needs HTTPS access to
+# www.ris.ripe.net and ftp.ripe.net. Enabled per environment in vars/.
+dispatcher_ris_asn_enabled: false
+dispatcher_ris_asn_database: "{{ state_dir }}/dispatcher/ris-asn.mmdb"
+dispatcher_ris_asn_min_peers: 10
+# RIS regenerates the dumps shortly after midnight UTC.
+dispatcher_ris_asn_schedule: "*-*-* 04:30:00 UTC"
+
 # Blockchain payments. The deployment runs without a wallet: the dispatcher
 # constructs no chain client and rejects USDC/SUI payment actions, while TEST
 # payments keep working. Nothing is inferred from the empty fields; set

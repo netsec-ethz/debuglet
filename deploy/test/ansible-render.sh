@@ -26,7 +26,13 @@
 #   8. applying the same variables again changes nothing (check mode reports
 #      no change),
 #   9. a configuration-only update renders the version installed on each host
-#      and refuses another one.
+#      and refuses another one,
+#  10. the RIS ASN database refresh: the timer and its unit are installed and
+#      name the database the dispatcher configuration reads, a configuration
+#      update refuses to name a database no deployment has built, and
+#      disabling it removes the units and the configuration entry.
+#  11. executor labels, the advertised address, the IPv4 reflector and the
+#      executor's capability set render where the daemons read them.
 #
 # It needs a built release package in deploy/dist (./deploy/scripts/build-linux.sh)
 # and the pinned provisioner, so run it through deploy/test/provisioner-check.sh.
@@ -163,6 +169,11 @@ all:
       hosts:
         executor.fixture.invalid:
           executor_id: 5fe02882-0410-416c-9935-235090bcba0d
+          executor_public_host: 192.0.2.10
+          executor_display_name: Fixture lab
+          executor_display_city: Zürich
+          executor_display_country: CH
+          executor_display_network: SWITCH (AS559)
 EOF
 
 cat >"$work/fixture.yml" <<EOF
@@ -322,6 +333,16 @@ refuses 'a wildcard credentialed origin is refused' 'wildcard is refused' \
 	-e '{"dispatcher_cors_allowed_origins": ["*"]}'
 refuses 'a non-UUID executor identity is refused' 'must be a lowercase UUID' \
 	-e 'executor_id=executor-1'
+refuses 'a lower-case executor country is refused' 'ISO 3166-1 alpha-2' \
+	-e executor_display_country=ch
+refuses 'an executor label with trailing space is refused' 'without leading or trailing space' \
+	-e '{"executor_display_city": "Zurich "}'
+refuses 'an executor label over 64 characters is refused' 'at most 64 characters' \
+	-e "executor_display_name=$(printf 'x%.0s' $(seq 65))"
+refuses 'a public address with a port is refused' 'bare public' \
+	-e executor_public_host=192.0.2.10:9000
+refuses 'a named IPv4 reflector is refused' 'literal IPv4' \
+	-e executor_connectivity_ipv4_reflector=dispatcher.fixture.invalid:19001
 refuses 'colliding listener ports are refused' 'must differ' \
 	-e 'dispatcher_grpc_port=19000'
 refuses 'a database directory inside the configuration is refused' 'neither' \
@@ -353,6 +374,10 @@ refuses 'verifying a dispatcher that serves no TLS is refused' 'verify a certifi
 	-e dispatcher_disable_tls=true
 refuses 'requiring client certificates without TLS is refused' 'cleartext listener has no client certificate' \
 	-e dispatcher_disable_tls=true -e dispatcher_require_client_cert=true
+refuses 'a RIS peer threshold below one is refused' 'dispatcher_ris_asn_min_peers must be a positive integer' \
+	-e dispatcher_ris_asn_min_peers=0
+refuses 'a RIS ASN database outside the dispatcher state is refused' 'the only directory the refresh' \
+	-e "dispatcher_ris_asn_database=$host/etc/debuglet/ris-asn.mmdb"
 
 refuses 'CILogon requires its own private credential file' 'cilogon_oidc.env.example' \
 	-e "@$work/cilogon.yml" -e "dispatcher_cilogon_oidc_env_file=$work/missing.env"
@@ -464,6 +489,8 @@ executor_toml=$host/etc/debuglet/executor-prod/executor.toml
 for file in "$dispatcher_toml" "$executor_toml" \
 	"$host/etc/systemd/system/debuglet-dispatcher.service" \
 	"$host/etc/systemd/system/debuglet-executor-prod.service" \
+	"$host/etc/systemd/system/debuglet-ris-asn.service" \
+	"$host/etc/systemd/system/debuglet-ris-asn.timer" \
 	"$host/var/lib/debuglet/dispatcher/dispatcher.db" \
 	"$host/var/lib/debuglet/executor-prod/executor.db" \
 	"$host/opt/debuglet/prod/bin/dbl" \
@@ -491,6 +518,31 @@ else
 	check 'the production profile renders CILogon enabled' fail
 fi
 refute 'browser CLI approval is absent by default' "$dispatcher_toml" '[authentication]'
+# The production profile looks executor ASNs up in the RIS database, which the
+# refresh unit writes to exactly the path the configuration names. The fixture
+# drives no systemd, so no build runs and nothing is downloaded.
+ris_database=$host/var/lib/debuglet/dispatcher/ris-asn.mmdb
+ris_service=$host/etc/systemd/system/debuglet-ris-asn.service
+ris_timer=$host/etc/systemd/system/debuglet-ris-asn.timer
+expect 'the production profile reads the RIS ASN database' "$dispatcher_toml" \
+	"asn_database = \"$ris_database\""
+refute 'no city database is configured' "$dispatcher_toml" 'city_database'
+expect 'the refresh builds the database the dispatcher reads' "$ris_service" \
+	"-build-asn-database $ris_database"
+expect 'the refresh runs the installed dispatcher' "$ris_service" \
+	"ExecStart=$host/opt/debuglet/prod/bin/debuglet-dispatcher"
+expect 'the refresh applies the RIS visibility threshold' "$ris_service" '-ris-min-peers 10'
+expect 'the refresh runs as the service account' "$ris_service" "User=$(id -un)"
+expect 'the refresh writes only the dispatcher state directory' "$ris_service" \
+	"ReadWritePaths=$host/var/lib/debuglet/dispatcher"
+expect 'the refresh is a one-shot job' "$ris_service" 'Type=oneshot'
+expect 'the refresh runs daily' "$ris_timer" 'OnCalendar=*-*-* 04:30:00 UTC'
+expect 'a missed refresh runs at the next boot' "$ris_timer" 'Persistent=true'
+if [ ! -e "$ris_database" ]; then
+	check 'the fixture deployment downloads no RIS data' pass
+else
+	check 'the fixture deployment downloads no RIS data' fail
+fi
 expect 'the executor dials the configured control address' "$executor_toml" \
 	'addr = "dispatcher.fixture.invalid:19001"'
 expect 'the executor dials the configured yamux address' "$executor_toml" \
@@ -504,6 +556,18 @@ expect 'the dispatcher unit loads the CILogon credentials' \
 	"EnvironmentFile=$host/etc/debuglet/dispatcher/cilogon-oidc.env"
 expect 'the executor carries its UUID identity' "$executor_toml" \
 	'executor_id = "5fe02882-0410-416c-9935-235090bcba0d"'
+
+# Vantage-point metadata: the executor advertises its public address, and the
+# dispatcher labels it under its identity with exactly the inventory's values.
+expect 'the executor advertises its public address' "$executor_toml" 'public_host = "192.0.2.10"'
+expect 'the dispatcher labels the executor under its identity' "$dispatcher_toml" \
+	'[executors."5fe02882-0410-416c-9935-235090bcba0d"]'
+expect 'the dispatcher renders the executor display name' "$dispatcher_toml" 'display_name = "Fixture lab"'
+expect 'the dispatcher renders the executor city' "$dispatcher_toml" 'city = "Z\u00fcrich"'
+expect 'the dispatcher renders the executor country' "$dispatcher_toml" 'country = "CH"'
+expect 'the dispatcher renders the executor network' "$dispatcher_toml" 'network = "SWITCH (AS559)"'
+# A dispatcher reached by name has no literal to reflect against.
+refute 'no reflector is rendered for a named dispatcher' "$executor_toml" '[connectivity]'
 
 # Transport security: the dispatcher serves its own listeners and the executor
 # verifies them, so the rendered files name the material on both sides.
@@ -586,6 +650,29 @@ if run "$work/tls-render.log" "$work/tls-render.yml" \
 else
 	check 'the transport keys render when they are set' fail
 	tail -20 "$work/tls-render.log" >&2
+fi
+
+# A dispatcher reached at an IPv4 literal is the executor's IPv4 reflector,
+# on the gRPC port it already dials; nothing else is opened for it.
+mkdir -p "$work/reflector"
+if run "$work/reflector-render.log" "$work/tls-render.yml" --limit executors \
+	-e "tls_template_dir=$playbooks" -e "tls_render_dir=$work/reflector" \
+	-e dispatcher_addr=127.0.0.1; then
+	check 'the IPv4 reflector renders for a literal dispatcher address' pass
+	expect 'the reflector is the dialled gRPC endpoint' "$work/reflector/executor.toml" \
+		'ipv4_reflector = "127.0.0.1:19001"'
+	output=$(timeout 10 "$host/opt/debuglet/prod/bin/debuglet-executor" \
+		--config "$work/reflector/executor.toml" 2>&1 || true)
+	case $output in
+		*"$host/var/lib/debuglet/executor-prod/executor.db"*)
+			check 'the installed executor accepts the reflector and reaches its database' pass ;;
+		*)
+			check 'the installed executor accepts the reflector and reaches its database' fail
+			printf '%s\n' "$output" | head -5 >&2 ;;
+	esac
+else
+	check 'the IPv4 reflector renders for a literal dispatcher address' fail
+	tail -20 "$work/reflector-render.log" >&2
 fi
 
 # Opt-in certificate installation preserves the explicit client trust source,
@@ -727,6 +814,18 @@ fi
 # which it reads from the host's deployment record, and refuses a version that
 # names another release. The fixture's deploy_version names none, so the
 # accepted run passes the installed one explicitly, as an operator may.
+# The dispatcher refuses to start with a configured database that does not
+# exist, and only a deployment builds the first one.
+if run "$work/update-config-ris.log" update-config.yml -e "deploy_version=$release_version"; then
+	check 'a configuration update refuses to name a RIS database no deployment built' fail
+elif grep -qF 'Run deploy-dispatcher.yml (or site.yml) once' "$work/update-config-ris.log"; then
+	check 'a configuration update refuses to name a RIS database no deployment built' pass
+else
+	check 'a configuration update refuses to name a RIS database no deployment built' fail
+	tail -10 "$work/update-config-ris.log" >&2
+fi
+# A stand-in for the database a managed host's first build writes.
+printf 'fixture RIS ASN database\n' >"$ris_database"
 if run "$work/update-config.log" update-config.yml -e "deploy_version=$release_version"; then
 	check 'a configuration update applies against the fixture host' pass
 else
@@ -798,6 +897,23 @@ fi
 refute 'browser CLI approval is removed with its URLs' "$dispatcher_toml" '[authentication]'
 refute 'disabled CILogon is not loaded by systemd' \
 	"$host/etc/systemd/system/debuglet-dispatcher.service" 'cilogon-oidc.env'
+
+# Disabling the RIS refresh removes its units and the configuration entry, and
+# leaves the last database in place.
+if run "$work/ris-disable.log" deploy-dispatcher.yml --limit dispatcher \
+	-e "deploy_version=$release_version" -e dispatcher_ris_asn_enabled=false; then
+	check 'the RIS ASN refresh can be disabled' pass
+else
+	check 'the RIS ASN refresh can be disabled' fail
+	tail -20 "$work/ris-disable.log" >&2
+fi
+if [ ! -e "$ris_service" ] && [ ! -e "$ris_timer" ] && [ -f "$ris_database" ]; then
+	check 'disabling the RIS refresh removes its units only' pass
+else
+	check 'disabling the RIS refresh removes its units only' fail
+fi
+refute 'a disabled RIS refresh configures no ASN database' "$dispatcher_toml" 'asn_database'
+refute 'a disabled RIS refresh renders no metadata section' "$dispatcher_toml" '[metadata]'
 
 # -------------------------------------------------- shared executor host ---
 # Snapshot prod, including links, before applying dev to the same temporary
@@ -896,6 +1012,33 @@ for env in prod dev; do
 		tail -20 "$work/identities-$env.log" >&2
 	fi
 done
+
+# The unit's ambient set, where it is used, is the binary's capability set:
+# the eBPF tagger needs cap_perfmon to pass the verifier and the pure-Go
+# tagger cap_net_raw. Only a kernel that charges BPF maps to RLIMIT_MEMLOCK
+# gets the limit lifted, in place of cap_sys_resource.
+identities() {
+	local name=$1
+	shift
+	(cd "$playbooks" && ANSIBLE_CONFIG=ansible.cfg ansible-playbook \
+		-i "$work/inventory.yml" -e @vars/prod.yml \
+		-e "template_dir=$playbooks" -e "output_dir=$work/$name" "$@" \
+		"$work/identities.yml") >"$work/identities-$name.log" 2>&1
+}
+mkdir -p "$work/caps-old" "$work/caps-new"
+if identities caps-old -e executor_ambient_caps=true -e ansible_kernel=5.10.0-28-amd64 &&
+	identities caps-new -e executor_ambient_caps=true -e ansible_kernel=5.15.0-130-generic; then
+	expect 'the ambient set is the executor capability set' "$work/caps-new/prod.service" \
+		'AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_PERFMON CAP_BPF'
+	expect 'the bounding set is the executor capability set' "$work/caps-new/prod.service" \
+		'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_PERFMON CAP_BPF'
+	refute 'the executor is not granted cap_sys_resource' "$work/caps-new/prod.service" 'CAP_SYS_RESOURCE'
+	refute 'a memcg-accounting kernel keeps the memlock limit' "$work/caps-new/prod.service" 'LimitMEMLOCK'
+	expect 'an older kernel lifts the memlock limit' "$work/caps-old/prod.service" 'LimitMEMLOCK=infinity'
+else
+	check 'the executor capability set renders' fail
+	tail -20 "$work/identities-caps-old.log" "$work/identities-caps-new.log" >&2
+fi
 
 # A legacy unsuffixed unit may belong to the other environment. Even when
 # dev already has state, retiring that unit requires an explicit selection.

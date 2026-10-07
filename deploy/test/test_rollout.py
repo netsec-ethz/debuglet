@@ -183,11 +183,15 @@ class RolloutTests(unittest.TestCase):
         settings = self.work / 'settings.yml'
         value = yaml.safe_load(settings.read_text()); value['executor_enable_bpf'] = True
         settings.write_text(yaml.safe_dump(value))
-        for name, code in [('getcap', '#!/bin/sh\nexit 0\n'), ('setcap', '#!/bin/sh\nexit 1\n')]:
+        setcap_args = self.work / 'setcap-args'
+        for name, code in [('getcap', '#!/bin/sh\nexit 0\n'),
+                           ('setcap', '#!/bin/sh\nprintf "%%s\\n" "$1" >> %s\nexit 1\n' % setcap_args)]:
             path = self.work / name; path.write_text(code); path.chmod(0o755)
         p, trace = self.run_rollout()
         self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("Preserve the executor's required kernel capabilities", p.stdout)
+        self.assertIn("Grant the executor's required kernel capabilities", p.stdout)
+        # Exactly the set the eBPF tagger and the pure-Go tagger need.
+        self.assertEqual(setcap_args.read_text().splitlines(), ['cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf=ep'])
         self.assertEqual(trace, [])
         self.assertFalse((self.work / 'second/prefix').exists())
 

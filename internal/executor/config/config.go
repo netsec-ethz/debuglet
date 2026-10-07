@@ -18,6 +18,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // ExecutorConfig represents the structure of executor.toml
@@ -39,9 +40,17 @@ type ExecutorConfig struct {
 	Connectivity ConnectivityConfig
 }
 
-// MetadataConfig controls publication of automatically derived location.
+// MetadataConfig controls publication of automatically derived location and
+// of the addresses the dispatcher observes.
 type MetadataConfig struct {
 	LocationOptOut bool `toml:"location_opt_out"`
+	// AddressOptOut makes the executor private (is_public false): the public
+	// listing then withholds its observed addresses. Prefix, ASN and
+	// location stay public, as for a private RIPE Atlas probe.
+	AddressOptOut bool `toml:"address_opt_out"`
+	// HostTags describe the host from the fixed vocabulary wire.HostTags,
+	// such as home or datacentre and dsl or fibre. They are public.
+	HostTags []string `toml:"host_tags"`
 }
 
 // ClockConfig bounds the kernel's estimated clock error the executor accepts
@@ -327,6 +336,14 @@ func DecodeConfig(data []byte) (*ExecutorConfig, configcheck.Document, error) {
 	if cfg.Dispatcher.YamuxAddr == "" {
 		cfg.Dispatcher.YamuxAddr = cfg.Dispatcher.Addr
 	}
+	if !document.Set("connectivity", "observe_addresses") {
+		cfg.Connectivity.ObserveAddresses = true
+	}
+	tags, err := wire.CanonicalHostTags(cfg.Metadata.HostTags)
+	if err != nil {
+		return nil, document, fmt.Errorf("metadata.host_tags: %w", err)
+	}
+	cfg.Metadata.HostTags = tags
 
 	if err := cfg.Validate(); err != nil {
 		return nil, document, err

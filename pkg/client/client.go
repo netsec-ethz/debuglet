@@ -7,9 +7,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // defaultRequestTimeout bounds one request and its body read when
@@ -291,6 +294,38 @@ func isLiteralLoopback(host string) bool {
 // Nodes lists the dispatcher's registered executors.
 func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
 	data, err := c.do(ctx, http.MethodGet, routeExecutors, nil, nil, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	var nodes []Node
+	if err := c.decode(http.MethodGet, routeExecutors, data, &nodes); err != nil {
+		return nil, err
+	}
+	if nodes == nil {
+		nodes = []Node{}
+	}
+	return nodes, nil
+}
+
+// probeStatusAPIVersion is the first contract with the status filter of
+// GET /executors.
+const probeStatusAPIVersion = "1.17"
+
+// Probes lists the executors whose status is one of statuses (wire.ProbeConnected,
+// ProbeDisconnected, ProbeAbandoned or ProbeNeverConnected), like RIPE Atlas's
+// probe listing; no status lists the connected ones, as Nodes does. Only
+// connected executors can run work. It requires API 1.17: an older dispatcher
+// refuses the request instead of ignoring the filter.
+func (c *Client) Probes(ctx context.Context, statuses ...string) ([]Node, error) {
+	query := url.Values{}
+	for _, status := range statuses {
+		if !slices.Contains(wire.ProbeStatuses, status) {
+			return nil, fmt.Errorf("client: unknown executor status %q", status)
+		}
+		query.Add("status", status)
+	}
+	ctx = context.WithValue(ctx, requiredVersionKey{}, probeStatusAPIVersion)
+	data, err := c.do(ctx, http.MethodGet, routeExecutors, query, nil, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
