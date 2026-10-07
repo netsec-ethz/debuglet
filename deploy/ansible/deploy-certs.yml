@@ -33,6 +33,7 @@
         dest: "{{ config_dir }}/dispatcher/server.crt"
         owner: "{{ debuglet_user }}"
         mode: "0640"
+      register: dispatcher_cert_copy
 
     - name: Deploy dispatcher TLS key
       ansible.builtin.copy:
@@ -41,6 +42,7 @@
         owner: "{{ debuglet_user }}"
         mode: "0600"
       no_log: true
+      register: dispatcher_key_copy
 
     # Read only when dispatcher_require_client_cert is on, and installed
     # either way so that turning it on is a configuration change alone.
@@ -50,6 +52,7 @@
         dest: "{{ dispatcher_tls_ca_file }}"
         owner: "{{ debuglet_user }}"
         mode: "0644"
+      register: dispatcher_ca_copy
 
     - name: Deploy the dedicated executor enrollment issuer
       ansible.builtin.copy:
@@ -63,6 +66,7 @@
         - { src: "{{ dispatcher_executor_onboarding_ca_key }}", name: enrollment-ca.key }
       no_log: true
       when: dispatcher_executor_onboarding_enabled | bool
+      register: dispatcher_issuer_copy
 
     - name: Inspect the dispatcher unit
       ansible.builtin.stat:
@@ -76,11 +80,15 @@
         daemon_reload: true
       when: debuglet_manage_services | bool and dispatcher_unit.stat.exists
 
+    # Only new material needs a restart: the daemon reads it at startup.
     - name: Restart dispatcher
       ansible.builtin.systemd:
         name: debuglet-dispatcher
         state: restarted
-      when: debuglet_manage_services | bool and dispatcher_unit.stat.exists
+      when:
+        - debuglet_manage_services | bool and dispatcher_unit.stat.exists
+        - dispatcher_cert_copy is changed or dispatcher_key_copy is changed
+          or dispatcher_ca_copy is changed or dispatcher_issuer_copy is changed
 
 # Credentials land in the environment's own config dir, so a machine that is
 # an executor in both prod and dev holds one client cert per environment
@@ -107,6 +115,7 @@
         owner: "{{ executor_user }}"
         group: "{{ executor_group }}"
         mode: "0644"
+      register: executor_ca_copy
 
     - name: Deploy executor client certificate
       ansible.builtin.copy:
@@ -115,6 +124,7 @@
         owner: "{{ executor_user }}"
         group: "{{ executor_group }}"
         mode: "0640"
+      register: executor_cert_copy
 
     - name: Deploy executor client key
       ansible.builtin.copy:
@@ -124,6 +134,7 @@
         group: "{{ executor_group }}"
         mode: "0600"
       no_log: true
+      register: executor_key_copy
 
     - name: Inspect the executor unit
       ansible.builtin.stat:
@@ -135,8 +146,14 @@
         daemon_reload: true
       when: debuglet_manage_services | bool and executor_unit.stat.exists
 
+    # Only new material needs a restart. An executor restart starts a new
+    # TESLA chain, and the last disclosure delay's worth of keys of the old
+    # one is never disclosed, so the packets it sent then cannot be verified.
     - name: Restart executor
       ansible.builtin.systemd:
         name: "{{ executor_service }}"
         state: restarted
-      when: debuglet_manage_services | bool and executor_unit.stat.exists
+      when:
+        - debuglet_manage_services | bool and executor_unit.stat.exists
+        - executor_ca_copy is changed or executor_cert_copy is changed
+          or executor_key_copy is changed
