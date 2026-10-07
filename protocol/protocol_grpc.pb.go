@@ -435,6 +435,7 @@ const (
 	ExecutorService_Bandwidth_FullMethodName          = "/debuglet.protocol.ExecutorService/Bandwidth"
 	ExecutorService_ProbeSession_FullMethodName       = "/debuglet.protocol.ExecutorService/ProbeSession"
 	ExecutorService_InspectRetainedRun_FullMethodName = "/debuglet.protocol.ExecutorService/InspectRetainedRun"
+	ExecutorService_VerifyTags_FullMethodName         = "/debuglet.protocol.ExecutorService/VerifyTags"
 )
 
 // ExecutorServiceClient is the client API for ExecutorService service.
@@ -450,6 +451,7 @@ type ExecutorServiceClient interface {
 	// or deleting it. An executor without inspection answers UNIMPLEMENTED,
 	// which is never a missing-row answer.
 	InspectRetainedRun(ctx context.Context, in *InspectRetainedRunRequest, opts ...grpc.CallOption) (*InspectRetainedRunResponse, error)
+	VerifyTags(ctx context.Context, in *VerifyTagsRequest, opts ...grpc.CallOption) (*VerifyTagsResponse, error)
 }
 
 type executorServiceClient struct {
@@ -520,6 +522,16 @@ func (c *executorServiceClient) InspectRetainedRun(ctx context.Context, in *Insp
 	return out, nil
 }
 
+func (c *executorServiceClient) VerifyTags(ctx context.Context, in *VerifyTagsRequest, opts ...grpc.CallOption) (*VerifyTagsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifyTagsResponse)
+	err := c.cc.Invoke(ctx, ExecutorService_VerifyTags_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ExecutorServiceServer is the server API for ExecutorService service.
 // All implementations must embed UnimplementedExecutorServiceServer
 // for forward compatibility.
@@ -533,6 +545,7 @@ type ExecutorServiceServer interface {
 	// or deleting it. An executor without inspection answers UNIMPLEMENTED,
 	// which is never a missing-row answer.
 	InspectRetainedRun(context.Context, *InspectRetainedRunRequest) (*InspectRetainedRunResponse, error)
+	VerifyTags(context.Context, *VerifyTagsRequest) (*VerifyTagsResponse, error)
 	mustEmbedUnimplementedExecutorServiceServer()
 }
 
@@ -560,6 +573,9 @@ func (UnimplementedExecutorServiceServer) ProbeSession(context.Context, *ProbeSe
 }
 func (UnimplementedExecutorServiceServer) InspectRetainedRun(context.Context, *InspectRetainedRunRequest) (*InspectRetainedRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method InspectRetainedRun not implemented")
+}
+func (UnimplementedExecutorServiceServer) VerifyTags(context.Context, *VerifyTagsRequest) (*VerifyTagsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyTags not implemented")
 }
 func (UnimplementedExecutorServiceServer) mustEmbedUnimplementedExecutorServiceServer() {}
 func (UnimplementedExecutorServiceServer) testEmbeddedByValue()                         {}
@@ -690,6 +706,24 @@ func _ExecutorService_InspectRetainedRun_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ExecutorService_VerifyTags_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyTagsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutorServiceServer).VerifyTags(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutorService_VerifyTags_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServiceServer).VerifyTags(ctx, req.(*VerifyTagsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ExecutorService_ServiceDesc is the grpc.ServiceDesc for ExecutorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -720,6 +754,10 @@ var ExecutorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InspectRetainedRun",
 			Handler:    _ExecutorService_InspectRetainedRun_Handler,
+		},
+		{
+			MethodName: "VerifyTags",
+			Handler:    _ExecutorService_VerifyTags_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

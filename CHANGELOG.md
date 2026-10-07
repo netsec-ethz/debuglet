@@ -32,6 +32,29 @@ changes; the linked API and deployment documentation contains operational detail
     already signed with. See `docs/tag-spec.md` §10.
 
 ### Added
+- The executor answers pre-disclosure tag verification queries over the
+  control session (`VerifyTags`): for one group of captured packets of one
+  epoch it reports which candidate run, if any, reproduces every tag, without
+  returning tags or keys. It refuses disclosable epochs, unknown chains and
+  untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
+- Server-assisted probe verification (#341, API 1.18, dispatcher schema 25).
+  `POST /attribution/verify` checks up to 256 captured packets in at most 16
+  groups: a group whose key is disclosed is checked against the key store; a
+  group whose key is not yet disclosed is relayed to its executor over the
+  control session (`VerifyTags`), which answers yes or no for the whole group
+  and never returns tags or keys. Each relayed question charges one trial
+  per candidate run to a budget of 16 trials per executor, chain and epoch,
+  shared by every requester, charged durably before the relay and never
+  refunded. An answer that no single candidate reproduces every tag stays
+  pending (`unmatched`) for the offline check after disclosure. Every answer carries an
+  Ed25519 receipt over the dispatcher, API version, the dispatcher's query
+  time, the packet digest and the verdicts; `GET /attribution/receipt-keys`
+  lists the keys with their validity, and `[attribution] receipt_key_path`
+  names the key file, created when absent. `client.Verify` and `dbl verify`
+  send pending groups unless `--offline`, report `via server` with the
+  receipt key, and keep receipts and keys in the evidence bundle, which
+  `client.VerifyEvidence` checks again. The dispatcher's minimum supported
+  schema is 25.
 - An executor with a configured `[tesla] seed` discloses the tail of its
   previous chain after a restart: it re-derives that chain, which never signs
   again, and sends its due keys beside the current one in the heartbeat's new

@@ -17,10 +17,15 @@ import (
 // It groups the packets by source address and epoch, looks up the runs that
 // were active from each address at the time in the dispatcher's public
 // attribution history, and checks the tags against the disclosed keys
-// offline: packets never leave this process. Groups whose key is not
-// disclosed yet are pending. It needs no credential, and it fails only when
-// the capture or the dispatcher cannot be read; every group verdict,
-// including invalid ones, is part of the report.
+// offline. Groups whose key is not disclosed yet are then sent to the
+// dispatcher (the first 64 bytes of at most 256 packets per group), whose
+// executor answers before disclosure; each answer comes with a signed
+// receipt, which Verify checks and the evidence bundle keeps, and the group
+// records method server. A group the server could not answer, and every such
+// group with opts.Offline, is pending: then packets never leave this
+// process. It needs no credential, and it fails only when the capture or the
+// dispatcher cannot be read or a receipt does not verify; every group
+// verdict, including invalid ones, is part of the report.
 //
 // The lookups are paced to the dispatcher's per-client rate limit
 // (opts.RequestRate, opts.RequestBurst). A rate-limited request is retried
@@ -44,7 +49,14 @@ func (c *Client) Verify(ctx context.Context, packets []CapturedPacket, opts Veri
 		burst = DefaultVerifyRequestBurst
 	}
 	src := &clientSource{c: c, pace: newPacer(rate, burst, time.Now)}
-	return verifyOffline(ctx, src, packets, opts, time.Now())
+	rep, err := verifyOffline(ctx, src, packets, opts, time.Now())
+	if err != nil || opts.Offline {
+		return rep, err
+	}
+	if err := src.serverPass(ctx, &rep); err != nil {
+		return VerifyReport{}, err
+	}
+	return rep, nil
 }
 
 // ErrNoAttributionHistory reports a dispatcher without the public

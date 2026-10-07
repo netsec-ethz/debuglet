@@ -29,17 +29,24 @@ verified, invalid, pending, missing or unsupported; a group whose packets
 reproduce different runs (two measurements toward one recipient at once) is
 split into an entry per run. No account is needed:
 the runs and disclosed keys come from the dispatcher's public attribution
-history, and the tags are checked here (offline). Packets are never uploaded.
+history, and the tags are checked here (offline). A group whose key is not
+disclosed yet is sent to the dispatcher (the first 64 bytes of each packet),
+whose executor confirms or rejects the tags before disclosure (server); the
+dispatcher signs a receipt of the answer, which is checked here and kept in
+the evidence bundle. Each group line names the method, and a server verdict
+the receipt key ID.
 
 An offline verdict shows that a run sent the packets only if they were
 captured before its key was disclosed, which rests on the capture's own
-timestamps. It says nothing about whether the measurement was consented to or
-whether its conclusions are sound.
+timestamps. A server verdict rests on the dispatcher's receipt: it shows what
+was asked and answered when, not when the packets were captured. Neither says
+anything about whether the measurement was consented to or whether its
+conclusions are sound.
 
 Options:
   --at TIME         take TIME (RFC 3339) as the capture time of every packet
-  --offline         never upload packets (server-assisted checks are not
-                    available yet, so every check is offline today)
+  --offline         never upload packets: groups whose key is not disclosed
+                    yet stay pending
   --output FORMAT   text (default) or json
   --evidence FILE   write an evidence bundle that repeats the check without
                     the capture or the dispatcher
@@ -49,7 +56,9 @@ Options:
                     traffic: each other address costs a history lookup per
                     second of traffic, and one check makes at most 1024
 
-Passing an evidence bundle instead of a capture checks it again, offline.
+Passing an evidence bundle instead of a capture checks it again, offline,
+including the signature of every receipt under the key the bundle embeds;
+compare the key IDs with GET /attribution/receipt-keys of the dispatcher.
 
 Exit status: 0 every group verified; 1 usage, read or network error
 (including usage errors in the global options: 2 is never a usage error
@@ -338,8 +347,12 @@ func groupLine(g client.VerifyGroup) string {
 	}
 	switch g.Verdict {
 	case client.VerdictVerified:
-		return fmt.Sprintf("verified     run %s  executor %s  %s  %s  %s  via %s",
+		line := fmt.Sprintf("verified     run %s  executor %s  %s  %s  %s  via %s",
 			shortRun(g.RunID), g.ExecutorID, source, minuteUTC(g.Time), packets, g.Method)
+		if g.ReceiptKeyID != "" {
+			line += "  receipt key " + g.ReceiptKeyID
+		}
+		return line
 	case client.VerdictPending:
 		until := "later"
 		if g.PendingUntil != nil {
@@ -349,9 +362,17 @@ func groupLine(g client.VerifyGroup) string {
 	case client.VerdictMissing:
 		return fmt.Sprintf("missing      %s  %s  %s  no history retained for that time", source, minuteUTC(g.Time), packets)
 	case client.VerdictUnsupported:
-		return fmt.Sprintf("unsupported  %s  %s  %s", source, packets, reasonPhrase(g.Reason))
+		line := fmt.Sprintf("unsupported  %s  %s  %s", source, packets, reasonPhrase(g.Reason))
+		if g.Method == client.VerifyMethodServer {
+			line += "  via server"
+		}
+		return line
 	}
-	return fmt.Sprintf("%-12s %s  %s  %s  %s", g.Verdict, source, minuteUTC(g.Time), packets, g.Reason)
+	line := fmt.Sprintf("%-12s %s  %s  %s  %s", g.Verdict, source, minuteUTC(g.Time), packets, g.Reason)
+	if g.Method == client.VerifyMethodServer {
+		line += "  via server"
+	}
+	return line
 }
 
 // reasonPhrase is the short text of an unsupported reason.
@@ -424,8 +445,19 @@ func nextStep(g client.VerifyGroup) string {
 func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Evidence, evidencePath string, skipped int, sources []netip.Prefix) error {
 	var b strings.Builder
 	if bundle != nil {
-		fmt.Fprintf(&b, "Evidence bundle created %s by %s %s: the packet digest matches, every key hashes to its chain anchor, and the recorded verdicts recompute.\n\n",
+		fmt.Fprintf(&b, "Evidence bundle created %s by %s %s: the packet digest matches, every key hashes to its chain anchor, and the recorded verdicts recompute.\n",
 			bundle.CreatedAt.UTC().Format(time.RFC3339), orUnknown(bundle.Tool.Name), orUnknown(bundle.Tool.Version))
+		if len(bundle.Receipts) > 0 {
+			var ids []string
+			for _, r := range bundle.Receipts {
+				if !slices.Contains(ids, r.KeyID) {
+					ids = append(ids, r.KeyID)
+				}
+			}
+			fmt.Fprintf(&b, "%s checked: signed by receipt key %s, which the bundle embeds; compare it with GET /attribution/receipt-keys of the dispatcher.\n",
+				plural(len(bundle.Receipts), "receipt"), strings.Join(ids, ", "))
+		}
+		b.WriteByte('\n')
 	}
 	for _, g := range rep.Groups {
 		b.WriteString(groupLine(g))
@@ -445,6 +477,12 @@ func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Eviden
 	if rep.Dispatcher != "" {
 		source = "offline against the history of " + rep.Dispatcher
 	}
+	for _, g := range rep.Groups {
+		if g.Method == client.VerifyMethodServer {
+			source += ", with the executor's answers before disclosure"
+			break
+		}
+	}
 	fmt.Fprintf(&b, "\n%s: %s (%s, tag spec %s, checked %s).\n",
 		plural(len(rep.Groups), "group"), strings.Join(parts, ", "), plural(rep.Packets, "packet"), rep.TagSpec, source)
 	if skipped > 0 {
@@ -457,8 +495,17 @@ func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Eviden
 	runs := map[string]string{}
 	var order []string
 	var latestDisclosure time.Time
+	server := map[string]string{}
+	var serverOrder []string
 	for _, g := range rep.Groups {
 		if g.Verdict != client.VerdictVerified {
+			continue
+		}
+		if g.Method == client.VerifyMethodServer {
+			if _, ok := server[g.RunID]; !ok {
+				serverOrder = append(serverOrder, g.RunID)
+			}
+			server[g.RunID] = g.ExecutorID + " (receipt key " + g.ReceiptKeyID + ")"
 			continue
 		}
 		if _, ok := runs[g.RunID]; !ok {
@@ -475,6 +522,12 @@ func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Eviden
 	if len(order) > 0 {
 		fmt.Fprintf(&b, "  Offline verification proves this only if the packets were captured before their keys were disclosed (the latest at %s). It relies on this capture's timestamps, and says nothing about whether the measurement was consented to or is sound.\n",
 			latestDisclosure.UTC().Format(time.RFC3339))
+	}
+	for _, run := range serverOrder {
+		fmt.Fprintf(&b, "- verified (server): the executor confirmed before disclosure that the packets carry valid tags of run %s on executor %s.\n", run, server[run])
+	}
+	if len(serverOrder) > 0 {
+		b.WriteString("  A server verdict rests on the dispatcher's signed receipt: it shows what was asked and answered when, not when the packets were captured. Check the receipt key against GET /attribution/receipt-keys.\n")
 	}
 	seen := map[string]bool{}
 	var retry time.Time
