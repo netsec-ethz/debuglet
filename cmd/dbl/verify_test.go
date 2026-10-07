@@ -317,7 +317,7 @@ func TestVerifyCommandServerMethod(t *testing.T) {
 			}
 			group := wire.AttributionReceiptGroup{ChainID: "c0ffee", Epoch: v.epoch(req.Packets[0].CapturedAt), ExecutorID: "exec-zrh-1",
 				Method: "server", Packets: []int{0}, RunID: verifyRun, Source: "192.0.2.7", Verdict: "verified"}
-			payload, _ := wire.CanonicalReceiptPayload(wire.AttributionReceiptPayload{APIVersion: "1.16", Dispatcher: "http://dispatcher.test",
+			payload, _ := wire.CanonicalReceiptPayload(wire.AttributionReceiptPayload{APIVersion: "1.18", Dispatcher: "http://dispatcher.test",
 				Groups: []wire.AttributionReceiptGroup{group}, PacketsDigest: wire.PacketsDigest(req.Packets), QueryAt: time.Now().UTC().Format(time.RFC3339Nano)})
 			writeJSONResponse(w, http.StatusOK, client.AttributionVerifyResponse{
 				Groups: []client.AttributionVerifyGroup{{Source: group.Source, Epoch: group.Epoch, ChainID: group.ChainID, ExecutorID: group.ExecutorID,

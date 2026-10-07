@@ -60,7 +60,7 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
 		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
-	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
+	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, AddressOptOut: e.cfg.Metadata.AddressOptOut, HostTags: e.cfg.Metadata.HostTags, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	stateDir := ""
 	if e.cfg.Database.Path != "" {
 		stateDir = filepath.Dir(e.cfg.Database.Path)

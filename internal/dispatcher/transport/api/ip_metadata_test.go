@@ -46,8 +46,20 @@ func TestIPMetadataHTTPContractAndSDK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &nodes); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(rec.Body.String(), "8.8.8.8") || strings.Contains(rec.Body.String(), "8.8.4.4") {
-		t.Fatal("public metadata published lookup addresses")
+	// The observed control address is listed as address_v4 (here to the local
+	// operator; see TestPrivateExecutorWithholdsOnlyAddresses for the public
+	// view). The advertised public_host is a claim and is never listed.
+	if strings.Contains(rec.Body.String(), "8.8.4.4") || strings.Count(rec.Body.String(), "8.8.8.8") != 1 {
+		t.Fatalf("public listing published a claimed address: %s", rec.Body.String())
+	}
+	for _, n := range nodes {
+		if n.ID != id {
+			continue
+		}
+		if n.AddressV4 == nil || *n.AddressV4 != "8.8.8.8" || n.ASNV4 == nil || *n.ASNV4 != 64500 || n.PrefixV4 == nil ||
+			*n.PrefixV4 != n.IPMetadata.Observed.ASN.Value.Prefix || n.AddressObservations.V4.LookupSource == nil {
+			t.Fatalf("addressing: %+v", n.ProbeAddressing)
+		}
 	}
 	c := f.client(f.root.URL, false)
 	selected, err := c.SelectExecutor(f.ctx, id, client.ExecutorFilter{ASN: 64500, Country: "CH"})

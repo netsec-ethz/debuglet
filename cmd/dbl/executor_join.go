@@ -20,22 +20,26 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"golang.org/x/term"
 )
 
 const executorJoinUsage = `Usage:
   dbl executor join --dispatcher URL --executor ID --state-dir DIR
-      [--ca-file FILE] [--token-file FILE]
+      [--ca-file FILE] [--token-file FILE] [--host-tag TAG ...]
 
 Enroll this machine using the one-time token from Console > My nodes.
 The token is read without echo from the terminal, or from standard input or
---token-file. HTTPS verifies the dispatcher using the system trust store or
+--token-file. --host-tag (repeatable) describes the host in the public executor
+listing: home, office, datacentre, academic, cloud, dsl, cable, fibre, wifi,
+mobile, satellite or nat; it is written to [metadata] host_tags. HTTPS verifies the dispatcher using the system trust store or
 --ca-file; plain HTTP is accepted only on a literal loopback IP.
 
 DIR must not exist. The command creates private identity, configuration and
@@ -60,6 +64,11 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	state := fs.String("state-dir", "", "new directory for this executor's identity and storage")
 	caFile := fs.String("ca-file", "", "trusted dispatcher CA certificate")
 	tokenFile := fs.String("token-file", "", "file containing the enrollment token")
+	var hostTags []string
+	fs.Func("host-tag", "public host tag, such as home or fibre; repeatable", func(value string) error {
+		hostTags = append(hostTags, value)
+		return nil
+	})
 	if code, ok := parseCommandFlags(fs, args, executorJoinUsage, stdout, stderr); !ok {
 		return code
 	}
@@ -68,6 +77,10 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	}
 	if !uuidPattern.MatchString(*id) || strings.Trim(*id, "0-") == "" {
 		return usageError("dbl executor join", executorJoinUsage, stderr, "--executor must be a nonzero lowercase UUID")
+	}
+	hostTags, err := wire.CanonicalHostTags(hostTags)
+	if err != nil {
+		return usageError("dbl executor join", executorJoinUsage, stderr, "--host-tag: %v", err)
 	}
 	joinURL, err := executorEnrollmentURL(*endpoint)
 	if err != nil {
@@ -118,7 +131,7 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("enrollment redirects are not followed; use the dispatcher's HTTPS API URL")
 	}}
-	if err := joinExecutor(ctx, client, joinURL, *id, statePath, token); err != nil {
+	if err := joinExecutor(ctx, client, joinURL, *id, statePath, token, hostTags); err != nil {
 		return reportFailure(ctx, "dbl executor join", stderr, err)
 	}
 	config := filepath.Join(statePath, "service.toml")
@@ -248,7 +261,7 @@ func readEnrollmentInput(ctx context.Context, input *os.File, prompt io.Writer) 
 	}
 }
 
-func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state, token string) (err error) {
+func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state, token string, hostTags []string) (err error) {
 	if err := os.MkdirAll(filepath.Dir(state), 0700); err != nil {
 		return err
 	}
@@ -317,7 +330,7 @@ func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state,
 			}
 		}
 	}
-	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result)}} {
+	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result, hostTags)}} {
 		if err := writeJoinFile(filepath.Join(state, file.name), []byte(file.data)); err != nil {
 			return err
 		}
@@ -376,7 +389,11 @@ func writeJoinFile(path string, data []byte) error {
 	return os.Link(file.Name(), path)
 }
 
-func executorJoinConfig(id, state string, result executorJoinResponse) string {
+func executorJoinConfig(id, state string, result executorJoinResponse, hostTags []string) string {
+	quoted := make([]string, len(hostTags))
+	for i, tag := range hostTags {
+		quoted[i] = strconv.Quote(tag)
+	}
 	return fmt.Sprintf(`[identity]
 executor_id = %q
 version = %q
@@ -408,6 +425,9 @@ log_level = "info"
 [pricing]
 price_per_bw_s = 1
 currency = "TEST"
+[metadata]
+host_tags = [%s]
 `, id, buildinfo.Version, result.GRPCAddress, result.YamuxAddress,
-		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"))
+		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"),
+		strings.Join(quoted, ", "))
 }

@@ -140,7 +140,7 @@ every supported link type.
 
 The routes below follow the existing conventions. They have no path prefix;
 the version is negotiated with the `Debuglet-API-Version` header, and the
-routes are additions of API 1.11 (candidates and keys) and API 1.16
+routes are additions of API 1.11 (candidates and keys) and API 1.18
 (verify and receipt keys). They are public
 (`security: []`), rate-limited per client address (10 requests per second,
 burst 40, per TCP peer and per /64 for IPv6, or per `X-Forwarded-For` client
@@ -398,7 +398,7 @@ and groups and the receipt key, not the packets.
    a separate companion change.
 4. #341: `POST /attribution/verify`, the executor query over the control
    session, budget `R`, receipts and `/attribution/receipt-keys`. The command
-   selects the method automatically. *Landed* (dispatcher schema 24, API
-   1.16).
+   selects the method automatically. *Landed* (dispatcher schema 25, API
+   1.18).
 5. #71(b, c): operator-signed schedule parameters, carried in candidates and
    evidence; chain rollover with an overlap window.

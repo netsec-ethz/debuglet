@@ -17,3 +17,26 @@ func TestLocationOptOutConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestAddressPublicationConfiguration(t *testing.T) {
+	cfg, _, err := DecodeConfig([]byte(baseSections))
+	if err != nil || cfg.Metadata.AddressOptOut || !cfg.Connectivity.ObserveAddresses {
+		t.Fatalf("defaults are not public with address observation: %+v %v", cfg, err)
+	}
+	cfg, _, err = DecodeConfig([]byte(baseSections + "[metadata]\naddress_opt_out=true\n[connectivity]\nobserve_addresses=false\n"))
+	if err != nil || !cfg.Metadata.AddressOptOut || cfg.Metadata.LocationOptOut || cfg.Connectivity.ObserveAddresses {
+		t.Fatalf("explicit settings not kept: %+v %v", cfg, err)
+	}
+}
+
+func TestHostTagsConfiguration(t *testing.T) {
+	cfg, _, err := DecodeConfig([]byte(baseSections + "[metadata]\nhost_tags = [\"fibre\", \"home\"]\n"))
+	if err != nil || len(cfg.Metadata.HostTags) != 2 || cfg.Metadata.HostTags[0] != "home" || cfg.Metadata.HostTags[1] != "fibre" {
+		t.Fatalf("tags not canonical: %+v %v", cfg, err)
+	}
+	for _, tags := range []string{`["moon"]`, `["home", "home"]`, `["home", "office", "datacentre", "academic", "cloud", "dsl", "cable", "fibre", "wifi"]`} {
+		if _, _, err := DecodeConfig([]byte(baseSections + "[metadata]\nhost_tags = " + tags + "\n")); err == nil {
+			t.Fatalf("host_tags = %s accepted", tags)
+		}
+	}
+}

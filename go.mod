@@ -12,6 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/yamux v0.1.2
 	github.com/labstack/echo/v4 v4.15.4
+	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/netsec-ethz/scion-apps v0.6.0
 	github.com/oschwald/maxminddb-golang/v2 v2.6.0
 	github.com/pelletier/go-toml/v2 v2.2.4
@@ -90,6 +91,7 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/mock v0.4.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/exp v0.0.0-20260718201538-764159d718ef // indirect
 	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/net v0.58.0 // indirect

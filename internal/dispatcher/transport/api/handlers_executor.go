@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -18,16 +20,37 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 )
 
-// GET /executors
+// GET /executors[?status=connected,disconnected,abandoned,never_connected]
 func (h *Handler) GetExecutors(c echo.Context) error {
+	statuses, err := executorStatuses(c.QueryParams()["status"])
+	if err != nil {
+		return err
+	}
+	offline := len(statuses) > 1 || statuses[0] != wire.ProbeConnected
+	book, err := h.dispatcher.ProbeBook(c.Request().Context())
+	if err != nil {
+		if offline {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read executor status", err)
+		}
+		// The connected listing does not depend on the history: it then
+		// reports each executor as connected since its registration.
+		h.logger.Warn("Failed to read executor status history", zap.Error(err))
+		book = h.dispatcher.LiveProbeBook()
+	}
 	executors := h.dispatcher.ListExecutors()
 	// The maintenance switch is dispatcher-wide; read it once per listing.
 	paused := dispatcher.AdmissionPaused() != nil
 	caller := requestCaller(c)
 	var resp []ExecutorResponse
+	live := map[string]bool{}
 	for _, e := range executors {
+		live[e.ID] = true
+		if !slices.Contains(statuses, wire.ProbeConnected) {
+			continue
+		}
 		isdAS, listeners := e.Vantage()
 		resp = append(resp, ExecutorResponse{
 			Connectivity:           e.Connectivity(caller.Operator),
@@ -39,6 +62,8 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 			Listeners:              listeners,
 			Clock:                  e.Clock(),
 			IPMetadata:             e.IPMetadata(),
+			ProbeAddressing:        e.Addressing(caller.Operator),
+			ProbeStatus:            book.Live(&e),
 			ID:                     e.ID,
 			Capabilities:           e.Capabilities,
 			Ready:                  e.Ready,
@@ -51,7 +76,31 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 			Currency:               e.Currency,
 		})
 	}
+	if offline {
+		resp = append(resp, book.Offline(live, statuses, h.dispatcher.ConfiguredDisplay, caller.Operator)...)
+	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+// executorStatuses reads the status filter: comma-separated or repeated status
+// names. Without one the listing keeps its original meaning, the connected
+// executors only.
+func executorStatuses(values []string) ([]string, error) {
+	out := []string{}
+	for _, value := range values {
+		for _, name := range strings.Split(value, ",") {
+			if !slices.Contains(wire.ProbeStatuses, name) {
+				return nil, apiError(http.StatusBadRequest, CodeInvalidRequest, "status must be a comma-separated list of "+strings.Join(wire.ProbeStatuses, ", "))
+			}
+			if !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, wire.ProbeConnected)
+	}
+	return out, nil
 }
 
 // GET /executors/by-ip?ip=<ip>[&n=<count>]
