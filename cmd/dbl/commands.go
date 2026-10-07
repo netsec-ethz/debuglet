@@ -76,6 +76,8 @@ func dispatch(ctx context.Context, command string, args []string, options global
 		return logoutCommand(ctx, args, options, stdout, stderr)
 	case "whoami":
 		return whoamiCommand(ctx, args, options, stdout, stderr)
+	case "allowance":
+		return allowanceCommand(ctx, args, options, stdout, stderr)
 	case "config":
 		return configCommand(ctx, args, options, stdout, stderr)
 	case "doctor":

@@ -14,18 +14,23 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 type OwnedExecutorResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Ready    bool   `json:"ready"`
-	LastSeen int64  `json:"last_seen,omitempty"`
-	Version  string `json:"version,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Ready     bool   `json:"ready"`
+	Admission string `json:"admission"`
+	// DrainStatus is unknown: the control protocol does not report whether
+	// the executor's host service manager completed a joined shutdown.
+	DrainStatus string `json:"drain_status"`
+	LastSeen    int64  `json:"last_seen,omitempty"`
+	Version     string `json:"version,omitempty"`
 }
 
 type OwnedExecutorsResponse struct {
@@ -43,12 +48,13 @@ type ExecutorSetupResponse struct {
 
 func (h *Handler) onboardingEnabled() bool { return h.onboarding.Enabled && h.issuer != nil }
 
-func (h *Handler) ownedExecutor(id, name string, enrolled bool) OwnedExecutorResponse {
-	result := OwnedExecutorResponse{ID: id, Name: name, Status: "pending"}
+func (h *Handler) ownedExecutor(id, name string, enrolled, paused bool) OwnedExecutorResponse {
+	result := OwnedExecutorResponse{ID: id, Name: name, Status: "pending", Admission: wire.AdmissionOffline, DrainStatus: "unknown"}
 	if enrolled {
 		result.Status = "offline"
 		if node, ok := h.dispatcher.GetExecutor(id); ok {
 			result.Ready, result.Version = node.Ready, node.Version
+			result.Admission = node.Admission(paused)
 			if !node.LastSeen.IsZero() {
 				result.LastSeen = node.LastSeen.Unix()
 			}
@@ -73,8 +79,9 @@ func (h *Handler) GetOwnedExecutors(c echo.Context) error {
 	if response.Enabled {
 		response.DispatcherURL = h.onboarding.DispatcherURL
 	}
+	paused := dispatcher.AdmissionPaused() != nil
 	for _, row := range rows {
-		response.Executors = append(response.Executors, h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled))
+		response.Executors = append(response.Executors, h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, paused))
 	}
 	return c.JSON(http.StatusOK, response)
 }
@@ -111,7 +118,7 @@ func (h *Handler) PostOwnedExecutor(c echo.Context) error {
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.JSON(http.StatusCreated, ExecutorSetupResponse{
-		Executor: h.ownedExecutor(id, request.Name, false), Token: token,
+		Executor: h.ownedExecutor(id, request.Name, false, dispatcher.AdmissionPaused() != nil), Token: token,
 		ExpiresAt: expires.Unix(), DispatcherURL: h.onboarding.DispatcherURL,
 	})
 }
@@ -138,7 +145,7 @@ func (h *Handler) PostOwnedExecutorToken(c echo.Context) error {
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.JSON(http.StatusOK, ExecutorSetupResponse{
-		Executor: h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled), Token: token,
+		Executor: h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, dispatcher.AdmissionPaused() != nil), Token: token,
 		ExpiresAt: expires.Unix(), DispatcherURL: h.onboarding.DispatcherURL,
 	})
 }

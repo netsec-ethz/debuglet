@@ -6031,6 +6031,12 @@ components:
           description: "pending means no certificate is bound; offline means enrolled without a ready control session; online means ready. Clients must tolerate future values."
         ready:
           type: "boolean"
+        admission:
+          type: "string"
+          description: "ready, maintenance (dispatcher admission paused) or offline (no ready control session, including pending enrollment). A snapshot, not a capacity guarantee; absent on older dispatchers."
+        drain_status:
+          type: "string"
+          description: "unknown: the control protocol does not observe the executor host's joined service shutdown. Offline and dispatcher maintenance never prove a safe executor drain. Absent on older dispatchers; clients must treat absent or unrecognized values as unavailable."
         last_seen:
           type: "integer"
           format: "int64"

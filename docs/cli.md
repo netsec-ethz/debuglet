@@ -170,6 +170,22 @@ dbl --dispatcher research --output json whoami
 expired or revoked credential exits 1 with a `dbl login` hint. Credentials are
 never printed.
 
+### Inspect the account's usage allowance
+
+```sh
+dbl --dispatcher research allowance
+dbl --dispatcher research --output json allowance
+```
+
+`allowance` reads the account's granted, reserved, consumed and remaining TEST
+units through API 1.15 or newer. These are non-transferable usage credits, not
+money or USDC. Amounts remain exact integer strings in JSON; a negative remaining
+amount from earlier usage is reported as recorded. Reading creates no grant,
+reservation or run. Disabled allowances or a missing/revoked credential exit 1
+with the dispatcher's diagnostic; an authentication failure includes a login hint.
+Grants are issued by an operator and never renew automatically. See
+[usage allowances](api.md#usage-allowances-api-115) for the accounting rules.
+
 ### Inspect daemon configuration
 
 ```sh
@@ -271,7 +287,7 @@ See [probe verification](verification.md).
 | --- | --- |
 | Run local roles | `demo`, `up`, `dispatcher up`, `executor up` |
 | Manage connections | `connect`, `dispatcher list`, `dispatcher use`, `dispatcher remove` |
-| Manage credentials | `login`, `logout`, `whoami` |
+| Manage credentials and inspect usage | `login`, `logout`, `whoami`, `allowance` |
 | Submit work | `validate`, `run`, `retry`, `rendezvous`, `cancel` |
 | Read results | `nodes`, `status`, `logs`, `recovery` |
 | Verify received probes | `verify` |
