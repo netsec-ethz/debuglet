@@ -21,7 +21,7 @@ import (
 
 const verifyUsage = `Usage:
   dbl verify CAPTURE|EVIDENCE.json [--at TIME] [--offline] [--output text|json]
-             [--evidence FILE] [--source ADDRESS[/BITS],...]
+             [--evidence FILE] [--source ADDRESS[/BITS],...] [--trust FILE] [--clock FILE]
 
 Checks which Debuglet run, if any, sent the packets of a pcap or pcapng
 capture. Packets are grouped by source address and epoch; each group is
@@ -50,6 +50,10 @@ Options:
   --output FORMAT   text (default) or json
   --evidence FILE   write an evidence bundle that repeats the check without
                     the capture or the dispatcher
+  --clock FILE      capture-only receiver observation binding packet timestamps
+                    and schedule origins; must come from a trusted observer
+  --trust FILE      require every evidence lookup and receipt to be signed by
+                    keys in a separately obtained dispatcher trust file
   --source LIST     check only packets from these addresses or prefixes
                     (comma-separated, repeatable); other packets are skipped
                     before any lookup. Use it on captures with unrelated
@@ -79,7 +83,7 @@ const verifyCommandTimeout = 5 * time.Minute
 
 func verifyCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	const name = "dbl verify"
-	var at, output, evidencePath string
+	var at, output, evidencePath, trustPath, clockPath string
 	var offline bool
 	var sources []netip.Prefix
 	fs := newCommandFlagSet("verify")
@@ -97,6 +101,8 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 	fs.BoolVar(&offline, "offline", false, "")
 	fs.StringVar(&output, "output", "", "")
 	fs.StringVar(&evidencePath, "evidence", "", "")
+	fs.StringVar(&trustPath, "trust", "", "")
+	fs.StringVar(&clockPath, "clock", "", "")
 	positional, err := parseInterspersed(fs, args)
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(stdout, verifyUsage)
@@ -147,19 +153,45 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 	var bundle *client.Evidence
 	skipped := 0
 	if client.IsEvidence(data[:min(len(data), 64)]) {
-		if at != "" || evidencePath != "" || len(sources) > 0 {
-			return usage("--at, --evidence and --source apply to a capture, not to an evidence bundle")
+		if at != "" || evidencePath != "" || len(sources) > 0 || clockPath != "" {
+			return usage("--at, --evidence, --source and --clock apply to a capture, not to an evidence bundle")
 		}
 		ev, err := client.ReadEvidence(bytes.NewReader(data))
 		if err != nil {
 			return fail("%v", err)
 		}
 		bundle = &ev
-		rep, err = client.VerifyEvidence(ctx, ev)
+		if trustPath == "" {
+			rep, err = client.VerifyEvidence(ctx, ev)
+		} else {
+			data, readErr := readVerifyTrustFile(trustPath)
+			if readErr != nil {
+				return fail("read trust: %v", readErr)
+			}
+			trust, readErr := client.ReadEvidenceTrust(data)
+			if readErr != nil {
+				return fail("read trust: %v", readErr)
+			}
+			rep, err = client.VerifyEvidenceWithTrust(ctx, ev, trust)
+		}
 		if err != nil {
 			return fail("%v", err)
 		}
 	} else {
+		if trustPath != "" {
+			return usage("--trust applies to an evidence bundle")
+		}
+		if clockPath != "" {
+			data, err := readVerifyTrustFile(clockPath)
+			if err != nil {
+				return fail("read clock: %v", err)
+			}
+			clock, err := client.ReadCaptureClockTrust(data)
+			if err != nil {
+				return fail("read clock: %v", err)
+			}
+			opts.CaptureClock = &clock
+		}
 		pkts, err := client.ReadCapture(bytes.NewReader(data))
 		if err != nil {
 			return fail("%v", err)
@@ -285,6 +317,15 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 		positional = append(positional, args[0])
 		args = args[1:]
 	}
+}
+
+func readVerifyTrustFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, (128<<10)+1))
 }
 
 // readVerifyInput reads a capture or bundle of at most the bundle limit.
@@ -444,6 +485,17 @@ func nextStep(g client.VerifyGroup) string {
 
 func writeVerifyText(w io.Writer, rep client.VerifyReport, bundle *client.Evidence, evidencePath string, skipped int, sources []netip.Prefix) error {
 	var b strings.Builder
+	if rep.HistoryAuthenticated {
+		b.WriteString("History signature: authenticated dispatcher.\n")
+	}
+	if rep.SchedulesAuthenticated {
+		b.WriteString("Schedule signatures: independently pinned executor identities.\n")
+	}
+	if rep.CaptureTimeTrusted {
+		b.WriteString("Capture clock: independently supplied observation covers these packets and schedule origins.\n")
+	} else {
+		b.WriteString("Capture clock: no independently trusted observation; time-dependent verdicts remain conditional.\n")
+	}
 	if bundle != nil {
 		fmt.Fprintf(&b, "Evidence bundle created %s by %s %s: the packet digest matches, every key hashes to its chain anchor, and the recorded verdicts recompute.\n",
 			bundle.CreatedAt.UTC().Format(time.RFC3339), orUnknown(bundle.Tool.Name), orUnknown(bundle.Tool.Version))

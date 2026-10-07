@@ -64,13 +64,13 @@ WHERE uuid = ?;
 INSERT INTO debuglets (
     uuid, start_time, args, wasm, transaction_id, floor_bw, ceil_bw, timeout_ms,
     addresses, require_icmp, listen_udp, listen_tcp, listen_scion,
-    dispatcher_incarnation, session_id
+    dispatcher_incarnation, session_id, egress_grant
 )
 SELECT sqlc.arg(uuid), sqlc.narg(start_time), sqlc.narg(args), sqlc.arg(wasm),
        sqlc.arg(transaction_id), sqlc.arg(floor_bw), sqlc.arg(ceil_bw),
        sqlc.arg(timeout_ms), sqlc.narg(addresses), sqlc.arg(require_icmp),
        sqlc.arg(listen_udp), sqlc.arg(listen_tcp), sqlc.arg(listen_scion),
-       sqlc.arg(dispatcher_incarnation), sqlc.arg(session_id)
+       sqlc.arg(dispatcher_incarnation), sqlc.arg(session_id), sqlc.arg(egress_grant)
 WHERE EXISTS (SELECT 1 FROM debuglets WHERE uuid = sqlc.arg(uuid))
    OR ((SELECT COUNT(*) FROM debuglets
         WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid)) < CAST(sqlc.arg(max_queued_runs) AS INTEGER)
@@ -79,6 +79,6 @@ WHERE EXISTS (SELECT 1 FROM debuglets WHERE uuid = sqlc.arg(uuid))
            + COALESCE(length(CAST(addresses AS BLOB)), 0)
            + length(CAST(transaction_id AS BLOB))
            + length(CAST(dispatcher_incarnation AS BLOB))
-           + length(CAST(session_id AS BLOB)) + 512), 0) FROM debuglets
+           + length(CAST(session_id AS BLOB)) + length(egress_grant) + 512), 0) FROM debuglets
            WHERE NOT EXISTS (SELECT 1 FROM operator_dispositions WHERE run_id = debuglets.uuid))
            <= CAST(sqlc.arg(max_queued_bytes) AS INTEGER) - CAST(sqlc.arg(queue_bytes) AS INTEGER));

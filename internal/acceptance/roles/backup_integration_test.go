@@ -207,7 +207,18 @@ func seedRetained(t *testing.T, state string, binding controlsession.Binding, wa
 				t.Fatal(err)
 			}
 		}
-		row, err := q.GetDebugletByUUID(t.Context(), id)
+		// Read the released schema without upgrading it. Migration 9 adds an
+		// empty grant, which the full-row comparison checks after the upgrade.
+		var row executordb.Debuglet
+		err := db.QueryRowContext(t.Context(), `SELECT id, uuid, start_time, args, wasm,
+			transaction_id, floor_bw, ceil_bw, timeout_ms, addresses, require_icmp,
+			listen_udp, listen_tcp, listen_scion, started_at, dispatcher_incarnation,
+			session_id, X'' FROM debuglets WHERE uuid = ?`, id).Scan(
+			&row.ID, &row.Uuid, &row.StartTime, &row.Args, &row.Wasm,
+			&row.TransactionID, &row.FloorBw, &row.CeilBw, &row.TimeoutMs,
+			&row.Addresses, &row.RequireIcmp, &row.ListenUdp, &row.ListenTcp,
+			&row.ListenScion, &row.StartedAt, &row.DispatcherIncarnation,
+			&row.SessionID, &row.EgressGrant)
 		if err != nil {
 			t.Fatal(err)
 		}

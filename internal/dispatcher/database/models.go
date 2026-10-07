@@ -49,16 +49,17 @@ type AllowanceGrant struct {
 }
 
 type AttributionChain struct {
-	ExecutorID  string
-	ChainID     string
-	Anchor      []byte
-	T0Ns        int64
-	IntervalNs  int64
-	DelayEpochs int64
-	ChainLength int64
-	TagSpec     int64
-	FirstSeenNs int64
-	LastSeenNs  int64
+	ExecutorID    string
+	ChainID       string
+	Anchor        []byte
+	T0Ns          int64
+	IntervalNs    int64
+	DelayEpochs   int64
+	ChainLength   int64
+	TagSpec       int64
+	FirstSeenNs   int64
+	LastSeenNs    int64
+	ScheduleProof []byte
 }
 
 type AttributionKey struct {
@@ -220,6 +221,31 @@ type Earning struct {
 	TotalIncome      int64
 	CurrentBalance   int64
 	SuiWalletAddress string
+}
+
+type EgressClock struct {
+	ID         int64
+	ObservedAt int64
+}
+
+type EgressGrant struct {
+	RunUuid     string
+	PolicyHash  string
+	WindowStart int64
+	WindowEnd   int64
+	GrantJson   []byte
+}
+
+type EgressReservation struct {
+	RunUuid           string
+	Bucket            string
+	BitsPerSecond     int64
+	BurstBytes        int64
+	Bytes             int64
+	AttemptsPerSecond int64
+	AttemptBurst      int64
+	Attempts          int64
+	Targets           int64
 }
 
 type ExecutorEnrollment struct {

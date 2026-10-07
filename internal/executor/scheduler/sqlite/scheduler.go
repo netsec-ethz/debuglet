@@ -24,10 +24,12 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/database"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler/memory"
 	pb "github.com/netsec-ethz/debuglet/protocol"
+	"google.golang.org/protobuf/encoding/protojson"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -134,6 +136,16 @@ func (s *SqliteStorage) restore(ctx context.Context, emit func(scheduler.Spec) e
 				s.quarantined.Add(1)
 				continue
 			}
+			var grant *pb.EgressGrant
+			if len(deb.EgressGrant) != 0 {
+				grant = &pb.EgressGrant{}
+				if err := protojson.Unmarshal(deb.EgressGrant, grant); err != nil {
+					return fmt.Errorf("decode stored egress grant: %w", err)
+				}
+				if err := netpolicy.ValidateEgressGrant(grant); err != nil {
+					return err
+				}
+			}
 			spec := scheduler.Spec{
 				Binding:       binding,
 				DebugletID:    deb.Uuid,
@@ -150,6 +162,7 @@ func (s *SqliteStorage) restore(ctx context.Context, emit func(scheduler.Spec) e
 					ListenUDP:   deb.ListenUdp,
 					ListenTCP:   deb.ListenTcp,
 					ListenSCION: deb.ListenScion,
+					EgressGrant: grant,
 				},
 			}
 
@@ -178,7 +191,18 @@ func (s *SqliteStorage) persist(ctx context.Context, spec scheduler.Spec) (sched
 	if err != nil {
 		return scheduler.Spec{}, err
 	}
+	grant := []byte{}
+	if spec.Policy.EgressGrant != nil {
+		if err := netpolicy.ValidateEgressGrant(spec.Policy.EgressGrant); err != nil {
+			return scheduler.Spec{}, err
+		}
+		grant, err = protojson.Marshal(spec.Policy.EgressGrant)
+		if err != nil {
+			return scheduler.Spec{}, err
+		}
+	}
 	params := database.CreateBoundedDebugletParams{
+		EgressGrant:   grant,
 		MaxQueuedRuns: s.queueLimits.Runs, MaxQueuedBytes: s.queueLimits.Bytes, QueueBytes: charge,
 		Uuid:                  spec.DebugletID,
 		DispatcherIncarnation: spec.Binding.Incarnation,

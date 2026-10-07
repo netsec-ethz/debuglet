@@ -3,7 +3,10 @@
 
 package wire
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // AttributionSchedule is the public TESLA schedule of one executor chain. The
 // key of epoch t covers the packets sent from T0UnixNs + t*EpochSeconds to
@@ -31,6 +34,9 @@ type AttributionSchedule struct {
 	// executor that did not report debuglet-tag-v1. Verifiers of tag spec v1
 	// must treat a legacy chain as unsupported, not as a mismatch.
 	TagSpec int64 `json:"tag_spec"`
+	// OperatorProof is signed by the executor's enrolled TLS key. Offline
+	// trust requires a separately known certificate fingerprint.
+	OperatorProof *AttributionScheduleProof `json:"operator_proof,omitempty"`
 }
 
 // Tag specification versions of an AttributionSchedule.
@@ -77,6 +83,9 @@ type AttributionCandidates struct {
 	Candidates   []AttributionCandidate `json:"candidates"`
 	// Truncated is set when more runs matched than the answer lists.
 	Truncated bool `json:"truncated"`
+	// Statement authenticates this dated lookup under the dispatcher's receipt
+	// key. Its public key must be obtained through a separately trusted channel.
+	Statement *AttributionReceipt `json:"statement,omitempty"`
 }
 
 // AttributionKey is one disclosed key of a chain.
@@ -93,4 +102,23 @@ type AttributionKeys struct {
 	Keys       []AttributionKey `json:"keys"`
 	// NextEpoch is the from_epoch of the next page, nil on the last one.
 	NextEpoch *int64 `json:"next_epoch"`
+}
+
+// AttributionHistoryPayload binds a dated lookup, including its schedule,
+// run list and retention boundary, to a dispatcher and signing time.
+// Format separates history statements from packet verification receipts.
+type AttributionHistoryPayload struct {
+	Format     string                `json:"format"`
+	Dispatcher string                `json:"dispatcher"`
+	SignedAt   time.Time             `json:"signed_at"`
+	Lookup     AttributionCandidates `json:"lookup"`
+}
+
+const AttributionHistoryFormat = "debuglet-attribution-history-v1"
+
+// AttributionHistoryBytes returns the stable JSON signed by the dispatcher.
+// The statement itself is excluded to avoid recursive signatures.
+func AttributionHistoryBytes(p AttributionHistoryPayload) ([]byte, error) {
+	p.Lookup.Statement = nil
+	return json.Marshal(p)
 }

@@ -145,10 +145,11 @@ type executorEntry struct {
 	owner *rpc.SessionOwner
 	// Legacy peers require ordered sends; revised peers also fence application
 	// after a timed-out RPC. Pending work is retried by this session's heartbeat.
-	bandwidthTail     chan struct{}
-	bandwidthVersion  uint32
-	bandwidthRevision uint64
-	bandwidthPending  bool
+	bandwidthTail       chan struct{}
+	egressBudgetVersion uint32
+	bandwidthVersion    uint32
+	bandwidthRevision   uint64
+	bandwidthPending    bool
 }
 
 type registrationOperation struct{ cancel context.CancelFunc }
@@ -235,7 +236,13 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 	// recorded for attribution names a chain whose schedule can be read. It
 	// records the tag specification the hello reported with it.
 	// A canceled registration is classified below, like any other.
-	if err := d.recordChain(callCtx, record.ID, record.teslaChain(), record.LastSeen); err != nil && callCtx.Err() == nil {
+	// Optional-client-identity TLS retains unsigned history. An embedded
+	// certificate cannot establish an executor's identity without enrollment.
+	var scheduleProof []byte
+	if owner.CredentialFingerprint() != "" {
+		scheduleProof = hello.GetTeslaScheduleProof()
+	}
+	if err := d.recordChain(callCtx, record.ID, record.teslaChain(), scheduleProof, owner.CredentialFingerprint(), record.LastSeen); err != nil && callCtx.Err() == nil {
 		return fmt.Errorf("record the executor's TESLA chain: %w", err)
 	}
 	record.capabilityObserved = record.LastSeen
@@ -263,7 +270,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 			commitErr = err
 			return
 		}
-		d.executors[record.ID] = &executorEntry{RegisteredExecutor: record, owner: owner, bandwidthVersion: hello.GetBandwidthVersion()}
+		d.executors[record.ID] = &executorEntry{RegisteredExecutor: record, owner: owner, bandwidthVersion: hello.GetBandwidthVersion(), egressBudgetVersion: hello.GetEgressBudgetVersion()}
 		if d.expiryDone == nil {
 			d.expiryDone = make(chan struct{})
 			startExpiry = d.expiryDone

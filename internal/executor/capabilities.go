@@ -74,6 +74,7 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	if counter, ok := e.packetCount.(interface{ AttachmentState() string }); ok {
 		vantage.CounterAttachment = counter.AttachmentState()
 	}
+	vantage.PacketDrops = packetDropReport(e.packetCount, vantage.CounterAttachment)
 	if initial {
 		vantage.Connectivity = e.initialConnectivityReport()
 	}
@@ -134,6 +135,23 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 		}
 	}
 	return report, vantage
+}
+
+func packetDropReport(counter ratelimit.PacketCount, attachment string) *pb.PacketDropObservations {
+	if counter == nil || counter.Type() != "ebpf" || attachment != "present" {
+		return nil
+	}
+	observed, ok := counter.(interface {
+		DropTotals() ([2]uint64, [2]uint64, error)
+	})
+	if !ok {
+		return nil
+	}
+	verdicts, bytes, err := observed.DropTotals()
+	if err != nil {
+		return nil
+	}
+	return &pb.PacketDropObservations{IngressVerdicts: verdicts[0], IngressSkbBytes: bytes[0], EgressVerdicts: verdicts[1], EgressSkbBytes: bytes[1]}
 }
 
 func hostResources(host observability.HostSnapshot) *pb.HostResources {

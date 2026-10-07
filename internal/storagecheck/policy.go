@@ -31,9 +31,10 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 28: durable one-shot experiment readiness.
-	MinimumDispatcherVersion int64 = 28
-	MinimumExecutorVersion   int64 = 8
+	// Schema 29 records authenticated schedule history; schema 30 / executor 9
+	// add durable aggregate egress grants.
+	MinimumDispatcherVersion int64 = 30
+	MinimumExecutorVersion   int64 = 9
 )
 
 // Policy is the schema contract of one database for this build.
@@ -71,6 +72,9 @@ func PolicyFor(role Role) (Policy, error) {
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
+			"egress_clock":               {"id", "observed_at"},
+			"egress_grants":              {"run_uuid", "policy_hash", "window_start", "window_end", "grant_json"},
+			"egress_reservations":        {"run_uuid", "bucket", "bits_per_second", "burst_bytes", "bytes", "attempts_per_second", "attempt_burst", "attempts", "targets"},
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"experiment_barriers":        {"transaction_id", "deadline_ns", "start_time_ns"},
 			"experiment_readiness":       {"debuglet_id", "metadata", "ready_at_ns"},
@@ -86,7 +90,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"retry_requests":             {"caller_scope", "request_id", "parent_run_id", "transaction_id", "request_hash", "intent_metadata"},
 			"account_run_reservations":   {"debuglet_id", "account_id", "queued_bytes", "retired_at", "last_retirement_check"},
 			"payload_tombstones":         {"debuglet_id", "deleted_at", "reason", "workload_sha256", "certificate_sha256"},
-			"attribution_chains":         {"executor_id", "chain_id", "anchor", "t0_ns", "interval_ns", "delay_epochs", "chain_length", "tag_spec", "first_seen_ns", "last_seen_ns"},
+			"attribution_chains":         {"executor_id", "chain_id", "anchor", "t0_ns", "interval_ns", "delay_epochs", "chain_length", "tag_spec", "first_seen_ns", "last_seen_ns", "schedule_proof"},
 			"attribution_keys":           {"executor_id", "chain_id", "epoch", "key", "disclosed_at_ns"},
 			"attribution_runs":           {"debuglet_id", "chain_id", "source_ip", "source_ip_observed", "active_from_ns", "active_to_ns"},
 			"attribution_retention":      {"singleton", "retained_from_ns"},
@@ -126,7 +130,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglets": {"wasm"},
 		}, Tables: map[string][]string{
 			"operator_dispositions": {"run_id", "recorded_at_ns", "reason"},
-			"debuglets":             {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
+			"debuglets":             {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id", "egress_grant"},
 			"debuglet_logs":         {"debuglet_id", "output"},
 			"debuglet_exits":        {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
 			"tesla_chains":          {"generation", "anchor", "epoch_base", "delay_ns", "chain_length", "disclosure_delay"},

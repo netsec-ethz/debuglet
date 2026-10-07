@@ -30,6 +30,14 @@ func TestAttributionMigrationKeepsRunsAndStartsTheHistoryNow(t *testing.T) {
 	if err != nil || retained < before.Truncate(time.Second).UnixNano() || retained > time.Now().UnixNano() {
 		t.Fatalf("retained_from=%d, %v; want the migration time", retained, err)
 	}
+	var recorded int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM attribution_runs").Scan(&recorded); err != nil || recorded != 0 {
+		t.Fatalf("schema 14 invented attribution runs: %d, %v", recorded, err)
+	}
+	// Current lookup queries also read fields added after schema 14.
+	if _, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatal(err)
+	}
 	rows, err := q.ListAttributionCandidates(ctx, database.ListAttributionCandidatesParams{SourceIp: "127.0.0.1", AtNs: time.Now().UnixNano(), MaxRows: 33})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("migration invented attribution runs: %v, %v", rows, err)
@@ -37,7 +45,7 @@ func TestAttributionMigrationKeepsRunsAndStartsTheHistoryNow(t *testing.T) {
 }
 
 func TestAttributionHistoryRecordsChainsKeysAndRuns(t *testing.T) {
-	ctx, db := cbOpen(t, 14)
+	ctx, db := cbOpen(t, sqlitedb.Latest)
 	q := database.New(db)
 	const executor, chain = "binding-executor", "c1"
 	t0 := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
@@ -129,7 +137,7 @@ func TestAttributionHistoryRecordsChainsKeysAndRuns(t *testing.T) {
 }
 
 func TestAttributionPruneFollowsTheCutoff(t *testing.T) {
-	ctx, db := cbOpen(t, 14)
+	ctx, db := cbOpen(t, sqlitedb.Latest)
 	q := database.New(db)
 	const executor = "binding-executor"
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

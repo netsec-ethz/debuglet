@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	pb "github.com/netsec-ethz/debuglet/protocol"
 )
 
 // Completion records local resource cleanup after an owned callback joins its
@@ -61,6 +62,7 @@ type Scheduler interface {
 }
 
 type Policy struct {
+	EgressGrant *pb.EgressGrant
 	FloorBW     int64
 	CeilBW      int64
 	Timeout     time.Duration

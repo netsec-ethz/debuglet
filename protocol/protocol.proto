@@ -51,7 +51,23 @@ message HelloResponse {
   // TESLA chain length L: the chain serves epochs below it. Zero from an
   // executor that predates it; the schedule's length is then unknown.
   int64 tesla_chain_length = 21;
+  bytes tesla_schedule_proof = 23; // JSON AttributionScheduleProof signed by the enrolled TLS identity.
   uint32 bandwidth_version = 22; // 1 supports ordered full allocation snapshots; 2 also applies DestinationLimit.denied before acknowledging.
+  uint32 egress_budget_version = 24; // 1 enforces an immutable aggregate egress grant.
+}
+
+// Application payload and connection admissions, independently of packet accounting.
+message EgressGrant {
+  uint32 version = 1;
+  int64 bits_per_second = 2;
+  int64 burst_bytes = 3;
+  int64 bytes = 4;
+  int64 attempts_per_second = 5;
+  int64 attempt_burst = 6;
+  int64 attempts = 7;
+  repeated string addresses = 8; // Normalized address literals pinned by admission.
+  int64 not_before_unix = 9;
+  int64 expires_unix = 10;
 }
 
 message DebugletPolicy {
@@ -63,6 +79,7 @@ message DebugletPolicy {
   bool listen_udp = 6; // whether the debuglet should setup a UDP listening server
   bool listen_tcp = 7; // whether the debuglet should setup a TCP listening server
   bool listen_scion = 8; // whether the debuglet should setup a SCION listening server
+  EgressGrant egress_grant = 9;
 }
 
 message UploadRequest {
@@ -415,6 +432,17 @@ message VantagePointReport {
   repeated string host_tags = 14;
   AddressSelfCheck address_check = 15; // Optional; absent is unknown.
   NetworkDenials network_denials = 16; // Operator-only policy observations; absent is unknown.
+  PacketDropObservations packet_drops = 17; // Local TCX verdicts, not end-to-end enforcement; absent is unknown.
+}
+
+// Cumulative counts from the current counter instance, reset when it restarts.
+// Bytes are skb lengths at TCX_DROP, including headers; segmentation/coalescing
+// means verdicts and bytes are not on-wire packet/byte counts.
+message PacketDropObservations {
+  uint64 ingress_verdicts = 1;
+  uint64 ingress_skb_bytes = 2;
+  uint64 egress_verdicts = 3;
+  uint64 egress_skb_bytes = 4;
 }
 
 // Counts for this executor session, observed at network policy boundaries.

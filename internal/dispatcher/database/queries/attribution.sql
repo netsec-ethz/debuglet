@@ -40,7 +40,7 @@ WHERE debuglet_id = (SELECT id FROM debuglets WHERE uuid = sqlc.arg(uuid));
 
 -- name: ListAttributionCandidates :many
 SELECT d.uuid, d.executor_id, r.source_ip_observed, r.active_from_ns, r.active_to_ns,
-       c.chain_id, c.anchor, c.t0_ns, c.interval_ns, c.delay_epochs, c.chain_length, c.tag_spec,
+       c.chain_id, c.anchor, c.t0_ns, c.interval_ns, c.delay_epochs, c.chain_length, c.tag_spec, c.schedule_proof,
        CAST(COALESCE((SELECT MAX(k.epoch) FROM attribution_keys k
                       WHERE k.executor_id = c.executor_id AND k.chain_id = c.chain_id), 0) AS INTEGER) AS disclosed_through,
        CAST(COALESCE((SELECT k.disclosed_at_ns FROM attribution_keys k
@@ -88,3 +88,8 @@ WHERE last_seen_ns < sqlc.arg(cutoff_ns)
                   WHERE k.executor_id = attribution_chains.executor_id AND k.chain_id = attribution_chains.chain_id)
   AND NOT EXISTS (SELECT 1 FROM attribution_runs r JOIN debuglets d ON d.id = r.debuglet_id
                   WHERE d.executor_id = attribution_chains.executor_id AND r.chain_id = attribution_chains.chain_id);
+
+-- name: RecordAttributionScheduleProof :execrows
+UPDATE attribution_chains SET schedule_proof = sqlc.arg(schedule_proof)
+WHERE executor_id = sqlc.arg(executor_id) AND chain_id = sqlc.arg(chain_id)
+  AND (schedule_proof IS NULL OR schedule_proof = sqlc.arg(schedule_proof));

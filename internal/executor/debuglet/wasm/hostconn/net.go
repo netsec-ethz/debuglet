@@ -13,6 +13,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 
@@ -34,6 +35,7 @@ type HostConn struct {
 }
 
 type HostConnOpts struct {
+	Egress           *netpolicy.Egress
 	ConnAddr         string
 	MaximumBandwidth bitrate.Bitrate
 	SocketType       socket.SocketType
@@ -70,7 +72,7 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 	if err := pc.SetLimit(opts.ConnAddr, id, opts.MaximumBandwidth); err != nil {
 		return nil, fmt.Errorf("failed to set limit: %w", err)
 	}
-	return &HostConn{pc: pc, id: id, limit: opts.MaximumBandwidth, connCtx: ctx, socketType: opts.SocketType, conn: attached}, nil
+	return &HostConn{pc: pc, id: id, limit: opts.MaximumBandwidth, connCtx: ctx, socketType: opts.SocketType, conn: opts.Egress.Wrap(attached)}, nil
 }
 
 func (h *HostConn) Close() error {

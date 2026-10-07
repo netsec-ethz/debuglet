@@ -29,6 +29,7 @@ type vantageReport struct {
 	resources         *observability.HostSnapshot // Nil unknown; operator metrics only.
 	counterAttachment string                      // present, missing, or unknown; operator metrics only.
 	networkDenials    *pb.NetworkDenials          // Nil unknown; operator metrics only, never public discovery.
+	packetDrops       *pb.PacketDropObservations  // Nil unknown; local TCX verdicts, operator metrics only.
 	addressCheck      *addressCheck               // Nil unknown; only system tags read it.
 }
 
@@ -55,6 +56,11 @@ func vantageFromReport(report *pb.VantagePointReport) *vantageReport {
 	out.counterAttachment = "unknown"
 	if state := report.GetCounterAttachment(); state == "present" || state == "missing" {
 		out.counterAttachment = state
+	}
+	if drops := report.GetPacketDrops(); out.counterAttachment == "present" && drops != nil &&
+		drops.IngressVerdicts <= 1<<53 && drops.IngressSkbBytes <= 1<<53 && drops.EgressVerdicts <= 1<<53 && drops.EgressSkbBytes <= 1<<53 {
+		out.packetDrops = &pb.PacketDropObservations{IngressVerdicts: drops.IngressVerdicts, IngressSkbBytes: drops.IngressSkbBytes,
+			EgressVerdicts: drops.EgressVerdicts, EgressSkbBytes: drops.EgressSkbBytes}
 	}
 	return out
 }

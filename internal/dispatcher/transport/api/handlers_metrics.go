@@ -124,6 +124,27 @@ func formatMetrics(control dispatcher.ControlMetrics, host observability.HostSna
 				gauge(metric.name, metric.help, *metric.value.Value)
 			}
 		}
+		for _, metric := range []struct {
+			name, help string
+			values     [2]dispatcher.ExecutorResourceMetric
+		}{
+			{"executor_counter_drop_verdicts_max", "Maximum current-counter TCX drop verdict count; not on-wire packets or enforcement coverage.", h.DropVerdicts},
+			{"executor_counter_drop_skb_bytes_max", "Maximum current-counter sum of skb lengths at TCX drop verdicts; not on-wire byte counts.", h.DropSKBBytes},
+		} {
+			fmt.Fprintf(&out, "# HELP debuglet_%s %s\n# TYPE debuglet_%s gauge\n", metric.name, metric.help, metric.name)
+			for i, direction := range []string{"ingress", "egress"} {
+				value, reason := metric.values[i], ""
+				if control.Registered == 0 {
+					reason = "no_executors"
+				} else if value.Unknown > 0 || value.Value == nil {
+					reason = "incomplete"
+				}
+				gauge(metric.name+"_"+direction+"_unknown", "Registered executors without a usable current counter observation.", value.Unknown)
+				if available(metric.name+"_"+direction, reason) {
+					fmt.Fprintf(&out, "debuglet_%s{direction=%q} %g\n", metric.name, direction, *value.Value)
+				}
+			}
+		}
 		gauge("executors_schedule_unknown", "Registered executors without a usable current schedule observation.", h.ScheduleUnknown)
 		gauge("executors_schedule_expired", "Registered executors whose announced signing schedule expired on the dispatcher clock.", h.ScheduleExpired)
 		gauge("executors_disclosure_lag_unknown", "Registered executors whose disclosure delivery lag cannot be determined.", h.DisclosureLag.Unknown)

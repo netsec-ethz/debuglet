@@ -24,6 +24,12 @@ type countDebugletUuid struct {
 	Uuid [16]uint8
 }
 
+type countDropTotals struct {
+	_        structs.HostLayout
+	Verdicts uint64
+	Bytes    uint64
+}
+
 type countExecKey struct {
 	_    structs.HostLayout
 	Uuid [16]uint8
@@ -45,6 +51,7 @@ type countTbState struct {
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
 	countMapDebugletSkMap     = "debuglet_sk_map"
+	countMapDropStats         = "drop_stats"
 	countMapExecPacketSizeMap = "exec_packet_size_map"
 	countMapExecRatesMap      = "exec_rates_map"
 	countMapPacketSizeMap     = "packet_size_map"
@@ -104,6 +111,7 @@ type countProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type countMapSpecs struct {
 	DebugletSkMap     *ebpf.MapSpec `ebpf:"debuglet_sk_map"`
+	DropStats         *ebpf.MapSpec `ebpf:"drop_stats"`
 	ExecPacketSizeMap *ebpf.MapSpec `ebpf:"exec_packet_size_map"`
 	ExecRatesMap      *ebpf.MapSpec `ebpf:"exec_rates_map"`
 	PacketSizeMap     *ebpf.MapSpec `ebpf:"packet_size_map"`
@@ -137,6 +145,7 @@ func (o *countObjects) Close() error {
 // It can be passed to loadCountObjects or ebpf.CollectionSpec.LoadAndAssign.
 type countMaps struct {
 	DebugletSkMap     *ebpf.Map `ebpf:"debuglet_sk_map"`
+	DropStats         *ebpf.Map `ebpf:"drop_stats"`
 	ExecPacketSizeMap *ebpf.Map `ebpf:"exec_packet_size_map"`
 	ExecRatesMap      *ebpf.Map `ebpf:"exec_rates_map"`
 	PacketSizeMap     *ebpf.Map `ebpf:"packet_size_map"`
@@ -146,6 +155,7 @@ type countMaps struct {
 func (m *countMaps) Close() error {
 	return _CountClose(
 		m.DebugletSkMap,
+		m.DropStats,
 		m.ExecPacketSizeMap,
 		m.ExecRatesMap,
 		m.PacketSizeMap,

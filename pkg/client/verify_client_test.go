@@ -178,8 +178,9 @@ func TestVerifyRateLimitedUntilDeadline(t *testing.T) {
 
 func TestVerifyPacesRequests(t *testing.T) {
 	f := newFakeServer(t, "")
-	f.handle("GET /attribution/candidates", jsonHandler(http.StatusOK,
-		`{"ip":"192.0.2.7","at":"2026-09-29T10:00:00Z","retained_from":"2026-01-01T00:00:00Z","truncated":false,"candidates":[]}`))
+	f.handle("GET /attribution/candidates", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"ip": r.URL.Query().Get("ip"), "at": r.URL.Query().Get("at"), "retained_from": "2026-01-01T00:00:00Z", "truncated": false, "candidates": []any{}})
+	})
 	var pkts []CapturedPacket
 	for i := range 6 {
 		pkts = append(pkts, CapturedPacket{Data: probe(netip.AddrFrom4([4]byte{10, 0, 0, byte(i)}), 60, 0), CapturedAt: testT0})

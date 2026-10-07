@@ -15,9 +15,13 @@
 
 """verify_pcap.py — offline TESLA packet verification tool (IPv4).
 
-This is the reference implementation of Debuglet packet attribution. The
-browser-side verifier in debuglet-website (src/lib/verify.ts) mirrors it
-step for step; keep the two in sync.
+This is the reference for Debuglet's tag-spec-v1 packet algorithm and dated
+lookup behavior. It does not authenticate exported evidence bundles,
+dispatcher/executor signing identities or receiver clock records. Use
+`dbl verify` / `pkg/client` for authenticated offline evidence verification;
+see docs/verification.md. Companion browser implementations must preserve
+the shared tag vectors; authenticated evidence support requires a separately
+identified companion change.
 
 Workflow
 --------

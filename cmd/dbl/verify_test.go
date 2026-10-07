@@ -364,3 +364,35 @@ func TestVerifyCommandServerMethod(t *testing.T) {
 		t.Fatalf("tampered receipt: %s", errout)
 	}
 }
+
+func TestVerifyCommandUsesIndependentReceiverClock(t *testing.T) {
+	v := newVerifyFixture(t)
+	at := v.at(100)
+	packet := v.probe(probeSrc, 100, 1)
+	capture := writeCapture(t, verifyPacket{at, packet})
+	record := client.CaptureClockTrust{Source: "controlled reference observation", ObservedAt: at.Add(-time.Minute), ValidUntil: at.Add(time.Minute), MaxErrorNS: int64(2*time.Second) + 1,
+		PacketsDigest: client.PacketDigest([]client.EvidencePacket{{Data: packet[:64], CapturedAt: at}}), Schedules: []client.CaptureClockSchedule{{ExecutorID: "exec-zrh-1", ChainID: "c0ffee", OriginUnixNS: v.t0.UnixNano()}}}
+	raw, _ := json.Marshal(record)
+	path := writeFile(t, string(raw))
+	code, out, errout := runCLI(t.Context(), "--endpoint", v.endpoint(), "verify", capture, "--offline", "--clock", path, "--output", "json")
+	assertCode(t, code, verifyExitVerified, out, errout)
+	var report client.VerifyReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil || !report.CaptureTimeTrusted || report.ClockToleranceMS != 2001 {
+		t.Fatalf("clock report: %s, %v", out, err)
+	}
+	code, out, errout = runCLI(t.Context(), "--endpoint", v.endpoint(), "verify", capture, "--clock", path, "--at", at.Format(time.RFC3339Nano))
+	assertCode(t, code, verifyExitError, out, errout)
+	if !strings.Contains(errout, "timestamp override") {
+		t.Fatalf("override error: %s", errout)
+	}
+	oversized := writeFile(t, strings.Repeat(" ", 1<<20))
+	data, err := readVerifyTrustFile(oversized)
+	if err != nil || len(data) != (128<<10)+1 {
+		t.Fatalf("unbounded trust read: %d %v", len(data), err)
+	}
+	code, out, errout = runCLI(t.Context(), "--endpoint", v.endpoint(), "verify", capture, "--clock", oversized)
+	assertCode(t, code, verifyExitError, out, errout)
+	if !strings.Contains(errout, "128 KiB") {
+		t.Fatalf("oversized clock error: %s", errout)
+	}
+}

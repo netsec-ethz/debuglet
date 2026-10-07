@@ -72,6 +72,9 @@ type EvidenceTool struct {
 
 // EvidenceDispatcher names the dispatcher whose history a bundle records.
 type EvidenceDispatcher struct {
+	// Issuer is the signed identity; URL is the API retrieval address, which may
+	// differ behind a TLS terminator or a path-prefix proxy.
+	Issuer     string `json:"issuer,omitempty"`
 	URL        string `json:"url"`
 	APIVersion string `json:"api_version"`
 }
@@ -130,7 +133,8 @@ type EvidenceSchedule struct {
 	ChainLength int64 `json:"chain_length"`
 	// TagSpec is the executor-reported tag specification version; 0 is the
 	// unversioned pre-v1 tag, which is unsupported.
-	TagSpec int64 `json:"tag_spec"`
+	TagSpec       int64                          `json:"tag_spec"`
+	OperatorProof *wire.AttributionScheduleProof `json:"operator_proof,omitempty"`
 }
 
 // EvidenceKey is one disclosed chain key.
@@ -146,18 +150,21 @@ type EvidenceCandidate struct {
 	ActiveFrom time.Time `json:"active_from"`
 	ActiveTo   time.Time `json:"active_to"`
 	// IPSource is observed or advertised (see AttributionCandidate).
-	IPSource         string           `json:"ip_source,omitempty"`
-	Schedule         EvidenceSchedule `json:"schedule"`
-	DisclosedThrough int64            `json:"disclosed_through"`
+	IPSource             string           `json:"ip_source,omitempty"`
+	Schedule             EvidenceSchedule `json:"schedule"`
+	DisclosedThrough     int64            `json:"disclosed_through"`
+	DisclosedThroughAtNs int64            `json:"disclosed_through_at_ns,omitempty"`
+	NextDisclosureAtNs   int64            `json:"next_disclosure_at_ns,omitempty"`
 }
 
 // EvidenceLookup is the dispatcher's answer to one dated candidate lookup.
 type EvidenceLookup struct {
-	IP           string              `json:"ip"`
-	At           time.Time           `json:"at"`
-	RetainedFrom time.Time           `json:"retained_from"`
-	Truncated    bool                `json:"truncated,omitempty"`
-	Candidates   []EvidenceCandidate `json:"candidates"`
+	IP           string                   `json:"ip"`
+	At           time.Time                `json:"at"`
+	RetainedFrom time.Time                `json:"retained_from"`
+	Truncated    bool                     `json:"truncated,omitempty"`
+	Candidates   []EvidenceCandidate      `json:"candidates"`
+	Statement    *wire.AttributionReceipt `json:"statement,omitempty"`
 }
 
 // EvidenceChain is one chain with the keys a verification used.
@@ -210,7 +217,7 @@ func (r VerifyReport) Evidence() Evidence {
 	ev := Evidence{
 		Format: EvidenceFormat, FormatVersion: EvidenceFormatVersion, CreatedAt: r.CheckedAt,
 		Tool:    EvidenceTool{Name: "github.com/netsec-ethz/debuglet/pkg/client", Version: toolVersion()},
-		TagSpec: tagspec.Version, Dispatcher: EvidenceDispatcher{URL: r.Dispatcher, APIVersion: m.apiVersion},
+		TagSpec: tagspec.Version, Dispatcher: EvidenceDispatcher{URL: r.Dispatcher, APIVersion: m.apiVersion, Issuer: m.issuer},
 		At: r.At, ClockToleranceMS: r.ClockToleranceMS,
 		Groups: []EvidenceGroup{}, Lookups: m.lookups, Chains: []EvidenceChain{}, Receipts: []EvidenceReceipt{},
 		ReceiptKeys: m.receiptKeys,
@@ -351,11 +358,25 @@ var ErrEvidenceDigest = errors.New("client: evidence does not check out: the pac
 // packets, the recorded lookups, keys and receipts as of the bundle's
 // creation. It returns the recomputed report, with an *EvidenceReceiptError
 // for a receipt that does not verify and an *EvidenceMismatchError when a
-// recorded verdict differs. The lookups and schedules are the dispatcher's
-// claims; the bundle does not authenticate them (the operator signature of
-// #71(b) will). The embedded receipt keys are the dispatcher's claim too:
-// compare their IDs with GET /attribution/receipt-keys of the dispatcher.
+// recorded verdict differs. Included history statements must bind the exact
+// lookup and schedules. Embedded keys establish consistency, not issuer trust;
+// use VerifyEvidenceWithTrust with independently obtained keys for that.
 func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
+	return verifyEvidence(ctx, ev, nil)
+}
+
+// VerifyEvidenceWithTrust verifies every history statement and server receipt
+// with keys supplied independently of the bundle. It fails on unsigned history
+// or a statement for another dispatcher. Packet capture times still require
+// the receiver's own trusted clock evidence.
+func VerifyEvidenceWithTrust(ctx context.Context, ev Evidence, trust EvidenceTrust) (VerifyReport, error) {
+	if trust.Dispatcher == "" || len(trust.Keys) == 0 {
+		return VerifyReport{}, errors.New("client: evidence trust needs a dispatcher and trusted signing keys")
+	}
+	return verifyEvidence(ctx, ev, &trust)
+}
+
+func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (VerifyReport, error) {
 	if ev.Format != EvidenceFormat || ev.FormatVersion != EvidenceFormatVersion {
 		return VerifyReport{}, fmt.Errorf("client: evidence format %q version %d is not supported", ev.Format, ev.FormatVersion)
 	}
@@ -365,8 +386,13 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 	if ev.Packets.Count != len(ev.Packets.Items) || len(ev.Packets.Items) == 0 || len(ev.Packets.Items) > MaxCapturePackets {
 		return VerifyReport{}, errors.New("client: evidence does not check out: the packet count is wrong")
 	}
-	if len(ev.Lookups) > maxVerifyLookups || len(ev.Chains) > maxVerifyLookups*maxVerifyCandidates || ev.ClockToleranceMS < 0 {
+	if len(ev.Lookups) > maxVerifyLookups || len(ev.Chains) > maxVerifyLookups*maxVerifyCandidates || ev.ClockToleranceMS < 0 || ev.ClockToleranceMS > int64((1<<63-1)/time.Millisecond) {
 		return VerifyReport{}, errors.New("client: evidence exceeds the verification limits")
+	}
+	for i, lookup := range ev.Lookups {
+		if len(lookup.Candidates) > maxAttributionCandidates {
+			return VerifyReport{}, fmt.Errorf("client: evidence lookup %d exceeds the %d-candidate limit", i, maxAttributionCandidates)
+		}
 	}
 	for _, p := range ev.Packets.Items {
 		if len(p.Data) > tagspec.MaxInput {
@@ -375,6 +401,52 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 	}
 	if ev.Packets.Digest != PacketDigest(ev.Packets.Items) {
 		return VerifyReport{}, ErrEvidenceDigest
+	}
+	if trust != nil && trust.CaptureClock != nil {
+		if err := trust.CaptureClock.check(ev); err != nil {
+			return VerifyReport{}, err
+		}
+	}
+	keys := ev.ReceiptKeys
+	issuer := ev.Dispatcher.Issuer
+	if issuer == "" {
+		issuer = ev.Dispatcher.URL
+	}
+	if trust != nil {
+		if issuer != trust.Dispatcher {
+			return VerifyReport{}, errors.New("client: evidence names a different dispatcher")
+		}
+		keys = trust.Keys
+	}
+	for i, lookup := range ev.Lookups {
+		for _, candidate := range lookup.Candidates {
+			fingerprint := ""
+			if trust != nil && trust.ExecutorCertificates != nil {
+				if candidate.Schedule.OperatorProof == nil {
+					return VerifyReport{}, errors.New("client: executor schedule proof is missing")
+				}
+				fingerprint = wire.AttributionCertificateID(candidate.Schedule.OperatorProof.Certificate)
+				if !slices.Contains(trust.ExecutorCertificates[candidate.ExecutorID], fingerprint) {
+					return VerifyReport{}, fmt.Errorf("client: no trusted certificate for executor %s", candidate.ExecutorID)
+				}
+			} else if candidate.Schedule.OperatorProof != nil {
+				fingerprint = wire.AttributionCertificateID(candidate.Schedule.OperatorProof.Certificate)
+			}
+			if fingerprint != "" {
+				if err := wire.VerifyAttributionSchedule(candidate.ExecutorID, historySchedule(candidate.Schedule), fingerprint); err != nil {
+					return VerifyReport{}, fmt.Errorf("client: executor schedule: %w", err)
+				}
+			}
+		}
+		if lookup.Statement == nil {
+			if trust != nil {
+				return VerifyReport{}, fmt.Errorf("client: evidence lookup %d is unsigned", i)
+			}
+			continue
+		}
+		if err := checkHistory(lookup, issuer, keys); err != nil {
+			return VerifyReport{}, fmt.Errorf("client: evidence lookup %d: %w", i, err)
+		}
 	}
 	budget := int64(maxVerifyHashWalk)
 	for i, c := range ev.Chains {
@@ -392,9 +464,12 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 	}
 	payloads := make([]AttributionReceiptPayload, len(ev.Receipts))
 	for i, r := range ev.Receipts {
-		p, err := checkReceipt(r, ev.ReceiptKeys, ev.Packets.Items)
+		p, err := checkReceipt(r, keys, ev.Packets.Items)
 		if err != nil {
 			return VerifyReport{}, &EvidenceReceiptError{Receipt: i, Msg: err.Error()}
+		}
+		if trust != nil && p.Dispatcher != trust.Dispatcher {
+			return VerifyReport{}, errors.New("client: receipt names a different dispatcher")
 		}
 		payloads[i] = p
 	}
@@ -403,6 +478,11 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 		return VerifyReport{}, err
 	}
 	rep.At = ev.At
+	rep.material.receiptKeys = ev.ReceiptKeys
+	rep.material.issuer = ev.Dispatcher.Issuer
+	rep.HistoryAuthenticated = trust != nil
+	rep.CaptureTimeTrusted = trust != nil && trust.CaptureClock != nil
+	rep.SchedulesAuthenticated = trust != nil && trust.ExecutorCertificates != nil
 	if len(ev.Receipts) > 0 {
 		rep.material.receipts, rep.material.receiptKeys = ev.Receipts, ev.ReceiptKeys
 		rep.Groups = applyReceipts(rep.Groups, ev.Receipts, payloads, itemTimes(ev.Packets.Items))
