@@ -53,8 +53,18 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil || version != 8 {
+	if version, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), 3); err != nil || version != 3 {
 		t.Fatalf("version=%d err=%v", version, err)
+	}
+	for _, id := range ids {
+		var incarnation, session string
+		if err := db.QueryRowContext(ctx, "SELECT dispatcher_incarnation, session_id FROM debuglets WHERE uuid = ?", id).Scan(&incarnation, &session); err != nil || incarnation != "" || session != "" {
+			t.Fatalf("schema 3 assigned legacy ownership: incarnation=%q session=%q err=%v", incarnation, session, err)
+		}
+	}
+	// Keep the historical boundary above separate from current query coverage.
+	if _, err := sqlitedb.Migrate(ctx, db, database.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatal(err)
 	}
 	q := database.New(db)
 	rows, err := q.ListDebuglets(ctx, database.ListDebugletsParams{Limit: 10})
@@ -71,6 +81,9 @@ func TestControlBindingMigrationPreservesExecutorRows(t *testing.T) {
 		}
 		if (i == 0 && !row.StartedAt.IsZero()) || (i == 1 && !row.StartedAt.Equal(now.Time)) {
 			t.Fatalf("migration changed start marker: %+v", row)
+		}
+		if len(row.EgressGrant) != 0 {
+			t.Fatalf("migration granted legacy traffic authority: %x", row.EgressGrant)
 		}
 		if _, err := q.GetOwnedDebugletByUUID(ctx, database.GetOwnedDebugletByUUIDParams{Uuid: id}); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("legacy row acquired an empty owner: %v", err)

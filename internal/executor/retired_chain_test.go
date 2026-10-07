@@ -218,8 +218,15 @@ func TestChainRecordedBeforeTheDelayColumn(t *testing.T) {
 	if _, err := db.ExecContext(t.Context(), "INSERT INTO tesla_chains (generation, anchor, epoch_base, delay_ns, chain_length, created_at) VALUES (1, x'0102', ?, 1000000000, 6, ?)", time.Now().UTC(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := sqlitedb.Migrate(t.Context(), db, executordb.MigrationFS(), sqlitedb.Latest); err != nil || version != 8 {
-		t.Fatalf("migrate to latest: %d, %v", version, err)
+	if version, err := sqlitedb.Migrate(t.Context(), db, executordb.MigrationFS(), 8); err != nil || version != 8 {
+		t.Fatalf("migrate to 8: %d, %v", version, err)
+	}
+	var delay sql.NullInt64
+	if err := db.QueryRowContext(t.Context(), "SELECT disclosure_delay FROM tesla_chains WHERE generation = 1").Scan(&delay); err != nil || delay.Valid {
+		t.Fatalf("schema 8 assigned a legacy disclosure delay: %+v, %v", delay, err)
+	}
+	if _, err := sqlitedb.Migrate(t.Context(), db, executordb.MigrationFS(), sqlitedb.Latest); err != nil {
+		t.Fatal(err)
 	}
 	chain, err := executordb.New(db).GetTeslaChain(t.Context(), 1)
 	if err != nil || chain.DisclosureDelay.Valid {
