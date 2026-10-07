@@ -13,6 +13,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
+	"github.com/netsec-ethz/debuglet/internal/executor/outputstore"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"google.golang.org/grpc"
@@ -158,5 +159,46 @@ func TestDurableOutputCleanupTimeoutRetainsFinality(t *testing.T) {
 				t.Fatalf("retained output did not reconcile: %+v %v", retained, err)
 			}
 		})
+	}
+}
+
+func TestDurableOutputReceiptStorageBoundsConnectionWait(t *testing.T) {
+	db := newFixtureDatabase(t)
+	store, err := outputstore.New(db, fixtureConfig().Output.Limits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Executor{output: store}
+	conn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// The only database connection stays occupied. SQLite's busy timeout
+	// cannot bound callers that are still waiting in the Go connection pool.
+	id := operationSpec().DebugletID
+	calls := []func() error{
+		func() error {
+			return e.validateQuotaReceipt(t.Context(), id, &pb.DebugletStreamResponse{End: &pb.DebugletOutputEnd{
+				Status: pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_TRUNCATED, Reason: "storage_limit",
+			}})
+		},
+		func() error { return e.acknowledgeOutput(t.Context(), id, &pb.DebugletStreamResponse{}) },
+	}
+	results := make(chan error, len(calls))
+	for _, call := range calls {
+		go func() { results <- call() }()
+	}
+	deadline := time.NewTimer(outputCallTimeout + operationTestBound)
+	defer deadline.Stop()
+	for range calls {
+		select {
+		case err := <-results:
+			if !errors.Is(err, context.DeadlineExceeded) || t.Context().Err() != nil {
+				t.Fatalf("receipt storage did not use its own deadline: %v", err)
+			}
+		case <-deadline.C:
+			t.Fatal("receipt storage waited beyond its call budget")
+		}
 	}
 }

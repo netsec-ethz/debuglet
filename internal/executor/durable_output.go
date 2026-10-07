@@ -256,7 +256,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 				deliveryCancel()
 				return
 			}
-				if err := e.acknowledgeOutput(storageCtx, spec.DebugletID, receipt); err != nil {
+			if err := e.acknowledgeOutput(storageCtx, spec.DebugletID, receipt); err != nil {
 				fail(err)
 				deliveryCancel()
 			}
