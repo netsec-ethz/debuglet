@@ -414,6 +414,14 @@ message VantagePointReport {
   // (pkg/wire HostTags). Read at registration; a malformed list is dropped.
   repeated string host_tags = 14;
   AddressSelfCheck address_check = 15; // Optional; absent is unknown.
+  NetworkDenials network_denials = 16; // Operator-only policy observations; absent is unknown.
+}
+
+// Counts for this executor session, observed at network policy boundaries.
+// These do not count denied packets/bytes or prove end-to-end enforcement.
+message NetworkDenials {
+  uint64 refused_admissions = 1;
+  uint64 revoked_sockets = 2;
 }
 
 // What the executor learned from its last address observation round, reduced

@@ -66,6 +66,10 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 		stateDir = filepath.Dir(e.cfg.Database.Path)
 	}
 	vantage.Resources = hostResources(observability.CollectHost(stateDir))
+	if e.revoked != nil {
+		refused, closed := e.revoked.DenialObservations()
+		vantage.NetworkDenials = &pb.NetworkDenials{RefusedAdmissions: refused, RevokedSockets: closed}
+	}
 	vantage.CounterAttachment = "unknown"
 	if counter, ok := e.packetCount.(interface{ AttachmentState() string }); ok {
 		vantage.CounterAttachment = counter.AttachmentState()

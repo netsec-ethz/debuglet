@@ -9,6 +9,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 )
 
 const (
@@ -27,6 +28,7 @@ type ControlMetrics struct {
 	RegistryUnavailable        string
 	Health                     ExecutorHealthMetrics
 	Runs                       RetainedRunMetrics
+	Settlement                 payments.SettlementMetrics
 }
 
 type RetainedRunMetrics struct {
@@ -71,6 +73,7 @@ func (d *Dispatcher) CollectMetrics(ctx context.Context) ControlMetrics {
 		}
 	}
 	d.mu.RUnlock()
+	report.Settlement = d.Payment.CollectMetrics(ctx)
 	if report.RegistryUnavailable != "" {
 		report.Runs.Unavailable = "registry"
 		return report

@@ -13,9 +13,31 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/observability"
 	"go.uber.org/zap"
 )
+
+func TestSettlementMetricsUnavailableNeverBecomesZero(t *testing.T) {
+	c := dispatcher.ControlMetrics{Settlement: payments.SettlementMetrics{PendingCredit: 1, PendingRefund: 2, Reserved: 3, Sent: 4, Unknown: 5, Failed: 6}}
+	out := formatMetrics(c, observability.HostSnapshot{})
+	for _, want := range []string{
+		`debuglet_settlement_pending_orders{state="credit"} 1`,
+		`debuglet_settlement_pending_orders{state="refund"} 2`,
+		`debuglet_settlement_transfers{state="unknown"} 5`,
+		`debuglet_settlement_transfers{state="failed"} 6`,
+		`debuglet_observation_available{observation="settlement_backlog",reason=""} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	c.Settlement.Unavailable = "limit"
+	out = formatMetrics(c, observability.HostSnapshot{})
+	if strings.Contains(out, "\ndebuglet_settlement_") || !strings.Contains(out, `debuglet_observation_available{observation="settlement_backlog",reason="limit"} 0`) {
+		t.Fatal("incomplete settlement observation exported numeric counts")
+	}
+}
 
 func TestMetricsRequireOperator(t *testing.T) {
 	f := ccNewFixtureWith(t, MetricsStateDirectory(t.TempDir()))

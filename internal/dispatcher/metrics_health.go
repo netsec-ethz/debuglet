@@ -37,7 +37,8 @@ type ExecutorHealthMetrics struct {
 	ScheduleRemainingSeconds         *float64
 
 	// DisclosureLag is the maximum disclosure delivery lag in seconds.
-	DisclosureLag ExecutorResourceMetric
+	DisclosureLag                     ExecutorResourceMetric
+	RefusedAdmissions, RevokedSockets ExecutorResourceMetric
 }
 
 // A numeric aggregate is publishable only when all registered observations are
@@ -67,6 +68,13 @@ func (m *ExecutorHealthMetrics) observe(e *executorEntry, now time.Time, connect
 		resources = e.vantage.resources
 	}
 	m.observeResources(resources)
+	var refused, revoked *float64
+	if e.vantage != nil && fresh(e.vantageObserved) && e.vantage.networkDenials != nil {
+		r, c := float64(e.vantage.networkDenials.RefusedAdmissions), float64(e.vantage.networkDenials.RevokedSockets)
+		refused, revoked = &r, &c
+	}
+	m.RefusedAdmissions.observe(refused, false)
+	m.RevokedSockets.observe(revoked, false)
 	switch {
 	case e.Capabilities == nil || !fresh(e.capabilityObserved):
 		m.AttachmentUnknown++

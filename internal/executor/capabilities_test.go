@@ -79,6 +79,9 @@ func TestCapabilityReportsUseLocalRuntimeObservations(t *testing.T) {
 	if v := p.GetVantagePoint(); v.GetResources() == nil || v.GetCounterAttachment() != "unknown" {
 		t.Fatal("resource observation missing or fallback claimed an attached counter")
 	}
+	if v := p.GetVantagePoint().GetNetworkDenials(); v == nil || v.RefusedAdmissions != 0 || v.RevokedSockets != 0 {
+		t.Fatal("new executor session must report known zero denial observations")
+	}
 	calls := daemon.calls.Load()
 	for i := 0; i < 20; i++ {
 		if caps, vantage := scion.capabilityReport(t.Context(), false); caps != nil || vantage != nil {

@@ -256,7 +256,10 @@ type Match struct {
 // resolver, applies the operator's rules to the result, and returns the
 // address the caller must connect to. Nothing is sent to the target here: a
 // refusal happens before any socket is connected.
-func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target string) (Destination, error) {
+func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target string) (result Destination, err error) {
+	if p != nil {
+		defer func() { p.op.revoked.observeAdmission(err) }()
+	}
 	if err := p.Available(t); err != nil {
 		return Destination{}, err
 	}
@@ -339,7 +342,10 @@ func (p *Policy) AdmitDestination(ctx context.Context, t Transport, target strin
 // the sender of a datagram, or a SCION destination this executor parsed. The
 // source port of an inbound peer is whatever it happened to pick, so the
 // permitted destination ports are not applied to it.
-func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort) (Match, error) {
+func (p *Policy) AdmitAddr(ctx context.Context, t Transport, addr netip.AddrPort) (result Match, err error) {
+	if p != nil {
+		defer func() { p.op.revoked.observeAdmission(err) }()
+	}
 	if err := p.Available(t); err != nil {
 		return Match{}, err
 	}
