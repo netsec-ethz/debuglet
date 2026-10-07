@@ -77,11 +77,49 @@ func TestExperimentPreservesUncertainAdmission(t *testing.T) {
 func TestExperimentExportRejectsWrongExecutor(t *testing.T) {
 	f := newFakeServer(t, "")
 	doc := resultFixture(t)
-	body, _ := json.Marshal(doc)
-	f.handle("GET /debuglet/"+doc.RunID+"/result", jsonHandler(http.StatusOK, string(body)))
+	body, _ := json.Marshal(RunDetail{RunID: doc.RunID, ExecutorID: doc.ExecutorID, BatchID: fixtureTx})
+	f.handle("GET /debuglet/"+doc.RunID+"/detail", jsonHandler(http.StatusOK, string(body)))
 	receipt := ExperimentSubmission{ExperimentID: fixtureTx, Participants: []ExperimentRun{{RunID: doc.RunID, ExecutorID: "wrong-executor"}}}
 	result, err := f.client(t, Options{}).ExportExperiment(t.Context(), receipt)
 	if err == nil || len(result.Results) != 0 {
 		t.Fatal("mismatched result was grouped")
+	}
+}
+
+func TestExperimentActionsRejectWrongBatchBeforeReadingOrCancelling(t *testing.T) {
+	for _, action := range []string{"export", "cancel"} {
+		t.Run(action, func(t *testing.T) {
+			f := newFakeServer(t, "")
+			doc := resultFixture(t)
+			receipt := ExperimentSubmission{ExperimentID: fixtureTx, Participants: []ExperimentRun{
+				{RunID: doc.RunID, OrderID: 42, ExecutorID: doc.ExecutorID},
+				{RunID: "00000000-0000-4000-8000-000000000002", OrderID: 7, ExecutorID: doc.ExecutorID},
+			}}
+			// The first run matches. The later run belongs to another batch,
+			// so even cancellation of the first run must not begin.
+			for i, participant := range receipt.Participants {
+				batch := fixtureTx
+				if i == 1 {
+					batch = "another-transaction"
+				}
+				detail := RunDetail{RunID: participant.RunID, ExecutorID: participant.ExecutorID, BatchID: batch, OrderID: participant.OrderID}
+				body, _ := json.Marshal(detail)
+				f.handle("GET /debuglet/"+participant.RunID+"/detail", jsonHandler(http.StatusOK, string(body)))
+			}
+			c := f.client(t, Options{})
+			var err error
+			if action == "export" {
+				var group ExperimentResults
+				group, err = c.ExportExperiment(t.Context(), receipt)
+				if len(group.Results) != 0 {
+					t.Fatal("mismatched batch returned grouped results")
+				}
+			} else {
+				err = c.CancelExperiment(t.Context(), receipt)
+			}
+			if err == nil || len(f.requests()) != 2 {
+				t.Fatalf("action=%s error=%v requests=%d", action, err, len(f.requests()))
+			}
+		})
 	}
 }

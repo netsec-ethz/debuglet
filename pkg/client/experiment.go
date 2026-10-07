@@ -91,13 +91,13 @@ func (c *Client) SubmitExperimentTEST(ctx context.Context, def ExperimentDefinit
 // not wait for completion. On error it returns the successfully read prefix.
 func (c *Client) ExportExperiment(ctx context.Context, receipt ExperimentSubmission) (ExperimentResults, error) {
 	group := ExperimentResults{Submission: receipt, Results: []Result{}}
+	if err := c.checkExperimentReceipt(ctx, receipt); err != nil {
+		return group, err
+	}
 	for _, participant := range receipt.Participants {
 		result, err := c.Export(ctx, participant.RunID)
 		if err != nil {
 			return group, err
-		}
-		if result.ExecutorID != participant.ExecutorID || result.Provenance != nil && result.Provenance.WorkloadSHA256 != participant.SHA256 {
-			return group, errors.New("client: experiment result disagrees with submission receipt")
 		}
 		group.Results = append(group.Results, result)
 	}
@@ -107,6 +107,9 @@ func (c *Client) ExportExperiment(ctx context.Context, receipt ExperimentSubmiss
 // CancelExperiment requests cancellation for all known runs. An acknowledgement
 // is not proof that execution stopped; inspect their existing result endpoints.
 func (c *Client) CancelExperiment(ctx context.Context, receipt ExperimentSubmission) error {
+	if err := c.checkExperimentReceipt(ctx, receipt); err != nil {
+		return err
+	}
 	var failures []error
 	for _, participant := range receipt.Participants {
 		if participant.RunID == "" {
@@ -117,4 +120,22 @@ func (c *Client) CancelExperiment(ctx context.Context, receipt ExperimentSubmiss
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// Check every known run before returning grouped output or cancelling any run.
+// Missing IDs remain unknown after uncertain submission and cannot be acted on.
+func (c *Client) checkExperimentReceipt(ctx context.Context, receipt ExperimentSubmission) error {
+	for _, participant := range receipt.Participants {
+		if participant.RunID == "" {
+			continue
+		}
+		detail, err := c.RunDetail(ctx, participant.RunID)
+		if err != nil {
+			return err
+		}
+		if receipt.ExperimentID == "" || detail.BatchID != receipt.ExperimentID || detail.OrderID != participant.OrderID || detail.ExecutorID != participant.ExecutorID || detail.Provenance != nil && detail.Provenance.WorkloadSHA256 != participant.SHA256 {
+			return errors.New("client: experiment receipt disagrees with admitted membership")
+		}
+	}
+	return nil
 }
