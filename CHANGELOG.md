@@ -10,36 +10,7 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
-## [0.3.0-rc.1] - 2026-10-06
-
 ### Security
-- Releases are signed. The production release signer is
-  `releases@debuglet.netsec.ethz.ch` (Ed25519,
-  `SHA256:vETQG+wE6uwMv4MBFfx7dxo8IWpvR8z6/Sw7MT2WwQo`); its trust file is
-  `configs/release-allowed-signers`. See
-  [Signed releases](docs/operations/releases.md#production-signer).
-- The TESLA disclosure delay is configurable and at least two epochs.
-  Previously the key of epoch i was disclosed shortly after epoch i+1 began,
-  while verifiers accepted epochs t-1, t and t+1 for a packet of epoch t.
-  Anyone who had seen k_i could therefore forge tags that verify for packets
-  they timestamp in epoch i+1.
-  - The executor now discloses k_i at the start of epoch i+d.
-    `[tesla] disclosure_delay_epochs` sets d; 0 derives the smallest d
-    covering 15 minutes (90 epochs at the default 10-second epoch), and an
-    explicit value below 2, or with less than 10 s of margin
-    ((d − 1) × epoch length), is refused. The installed-key hold still applies.
-  - A restart starts a new chain, so without a configured `[tesla] seed` the
-    keys of the last d epochs before it are never disclosed and those packets cannot be verified; the chain
-    exhaustion log names `final_disclosure_at`, the time after which a
-    restart loses nothing.
-  - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
-    skew) and logs the executor once as misbehaving. An executor that does
-    not report d is treated as d = 1.
-  - `tools/verify_pcap.py` tries only epochs t and t-1. It refuses a
-    schedule with d < 2 or without d, and a key that could have been public
-    at capture time plus `--clock-tolerance`.
-  - The browser verifier in debuglet-website needs the same change.
-  - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
 - The executor stops tagging when its clock cannot place packets in the
   epochs a verifier derives from capture time. Epochs advance on the
   monotonic clock from the announced chain origin; previously a chain started
@@ -69,6 +40,39 @@ changes; the linked API and deployment documentation contains operational detail
   without a seed and starts on an unready clock still lose the tail. The
   dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
   against its recorded chain.
+
+## [0.3.0-rc.1] - 2026-10-06
+
+### Security
+- Releases are signed. The production release signer is
+  `releases@debuglet.netsec.ethz.ch` (Ed25519,
+  `SHA256:vETQG+wE6uwMv4MBFfx7dxo8IWpvR8z6/Sw7MT2WwQo`); its trust file is
+  `configs/release-allowed-signers`. See
+  [Signed releases](docs/operations/releases.md#production-signer).
+- The TESLA disclosure delay is configurable and at least two epochs.
+  Previously the key of epoch i was disclosed shortly after epoch i+1 began,
+  while verifiers accepted epochs t-1, t and t+1 for a packet of epoch t.
+  Anyone who had seen k_i could therefore forge tags that verify for packets
+  they timestamp in epoch i+1.
+  - The executor now discloses k_i at the start of epoch i+d.
+    `[tesla] disclosure_delay_epochs` sets d; 0 derives the smallest d
+    covering 15 minutes (90 epochs at the default 10-second epoch), and an
+    explicit value below 2, or with less than 10 s of margin
+    ((d − 1) × epoch length), is refused. The installed-key hold still applies.
+  - A restart starts a new chain, so the keys of the last d epochs before it
+    are never disclosed and those packets cannot be verified; the chain
+    exhaustion log names `final_disclosure_at`, the time after which a
+    restart loses nothing.
+  - The dispatcher rejects a disclosure before its epoch plus d (with 5 s of
+    skew) and logs the executor once as misbehaving. An executor that does
+    not report d is treated as d = 1.
+  - `tools/verify_pcap.py` tries only epochs t and t-1. It refuses a
+    schedule with d < 2 or without d, and a key that could have been public
+    at capture time plus `--clock-tolerance`.
+  - The browser verifier in debuglet-website needs the same change.
+  - See `docs/operations/configuration.md#executor-tesla-key-schedule`.
+
+### Added
 - API 1.17: RIPE Atlas-style status history and tags in `GET /executors`:
   `status` (`connected`, `disconnected`, `abandoned` after 30 days
   disconnected, `never_connected` for enrolled executors that never
