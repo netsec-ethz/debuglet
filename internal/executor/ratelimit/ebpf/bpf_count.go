@@ -124,12 +124,9 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	}
 
 	var fdErr error
-	var socketID uint32
-
 	err = rawConn.Control(func(fd uintptr) {
 		info := countDebugletUuid{Uuid: [16]byte(id)}
 		fdErr = bc.objs.DebugletSkMap.Update(uint32(fd), &info, ebpf.UpdateAny)
-		socketID = uint32(fd)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed call control: %w", err)
@@ -152,7 +149,16 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	defer bc.mu.Unlock()
 	bc.destinations.Add(addr, id, ipv6)
 
-	return &BpfConn{count: bc, conn: conn, socketID: socketID, domain: addr, id: id, resolvedIPv6: ipv6}, nil
+	return &BpfConn{
+		count: bc, conn: conn, raw: rawConn, deleteStorage: bc.deleteSocketStorage,
+		domain: addr, id: id, resolvedIPv6: ipv6,
+	}, nil
+}
+
+// deleteSocketStorage removes the debuglet_sk_map entry of the socket that the
+// open descriptor fd refers to.
+func (bc *BpfCount) deleteSocketStorage(fd uint32) error {
+	return bc.objs.DebugletSkMap.Delete(fd)
 }
 
 func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {

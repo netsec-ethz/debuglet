@@ -71,6 +71,7 @@ required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestDisclosureWaitsForEveryTagger"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger", "TestTaggedDatagramsReachTheWire"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestBPFCounterLinuxLoad"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestKernelCounterClosesCountedConns"),
     ("github.com/netsec-ethz/debuglet/internal/executor", "TestHeterogeneousExecutorCapabilitiesSelection"),
     ("github.com/netsec-ethz/debuglet/internal/executor", "TestRestartRetiresAStaleTaggerFilterBeforeTheTail"),
     ("github.com/netsec-ethz/debuglet/internal/executor", "TestRestartWithChangedNetworkWithholdsRetiredTail"),
@@ -82,7 +83,7 @@ for package, test in sorted(missing):
     print(f"Missing passing {package}/{test}; kernel checks did not run.", file=sys.stderr)
 if skips or missing:
     sys.exit(1)
-print("Tagger load, kernel/Go tag parity, debuglet-tag-v1 kernel vectors, legacy tc, receiver-verified TCP tagging, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter, heterogeneous capability-selection and IPv4-only tagged-run listener checks passed with zero skipped tests.")
+print("Tagger load, kernel/Go tag parity, debuglet-tag-v1 kernel vectors, legacy tc, receiver-verified TCP tagging, kernel-slot TESLA disclosure, user-space datagram tagging, packet-counter, counted-socket close, heterogeneous capability-selection and IPv4-only tagged-run listener checks passed with zero skipped tests.")
 PY
 
 # Regenerate only after loading the committed objects. The pinned tools image
