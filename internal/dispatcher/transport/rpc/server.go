@@ -88,3 +88,13 @@ func (s *server) DebugletStream(stream grpc.BidiStreamingServer[pb.DebugletStrea
 func (s *server) RenewLease(ctx context.Context, in *pb.RenewLeaseRequest) (*pb.RenewLeaseResponse, error) {
 	return s.bidi.renewLease(ctx, in)
 }
+
+// ExperimentReady records or polls once and always releases its mutation before
+// the guest waits. No participant can pin another session's replacement.
+func (s *server) ExperimentReady(ctx context.Context, in *pb.ExperimentReadyRequest) (*pb.ExperimentReadyResponse, error) {
+	ticket, err := s.bidi.admitted(ctx, in.GetExecutorId())
+	if err != nil { return nil, err }
+	defer ticket.Finish()
+	if in.GetExecutorId() == "" { return nil, controlrpc.Denied() }
+	return s.state.OnExperimentReady(ticket.Context(), ticket, in)
+}

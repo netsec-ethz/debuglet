@@ -52,6 +52,9 @@ func (d *Dispatcher) sweepEndedWindows(last time.Time) time.Time {
 	ctx, cancel := context.WithTimeout(context.Background(), windowSweepBound)
 	defer cancel()
 	queries := database.New(d.db)
+	if err := queries.PruneExperimentMetadata(ctx, now.UnixNano()); err != nil {
+		d.logger.Warn("Experiment metadata cleanup remains pending")
+	}
 	destinations := map[string]struct{}{}
 	release := func(run database.Debuglet) {
 		d.releaseTerminal(run)
