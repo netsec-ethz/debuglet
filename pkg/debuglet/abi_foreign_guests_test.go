@@ -29,15 +29,18 @@ import (
 
 // foreignGuestRecord is the record tracked beside a retained foreign guest.
 type foreignGuestRecord struct {
-	GuestABI  string            `json:"guest_abi"`
-	Language  string            `json:"language"`
-	Toolchain string            `json:"toolchain"`
-	Image     string            `json:"image"`
-	Target    string            `json:"target"`
-	Build     string            `json:"build"`
-	SHA256    string            `json:"sha256"`
-	Bytes     int64             `json:"bytes"`
-	Sources   map[string]string `json:"sources"`
+	GuestABI  string `json:"guest_abi"`
+	Language  string `json:"language"`
+	Toolchain string `json:"toolchain"`
+	Image     string `json:"image"`
+	Target    string `json:"target"`
+	Build     string `json:"build"`
+	SHA256    string `json:"sha256"`
+	Bytes     int64  `json:"bytes"`
+	Sources   []struct {
+		Path   string `json:"path"`
+		SHA256 string `json:"sha256"`
+	} `json:"sources"`
 }
 
 // foreignGuests are the retained guests, by language.
@@ -116,14 +119,14 @@ func retainedForeignGuest(t *testing.T, language, module, recordPath string) []b
 	if len(record.Sources) == 0 {
 		t.Fatal("retained foreign guest has no source digests")
 	}
-	for path, want := range record.Sources {
-		source, err := os.ReadFile(filepath.Join("../..", path))
+	for _, input := range record.Sources {
+		source, err := os.ReadFile(filepath.Join("../..", input.Path))
 		if err != nil {
 			t.Fatal(err)
 		}
 		sum := sha256.Sum256(source)
-		if hex.EncodeToString(sum[:]) != want {
-			t.Fatalf("%s changed since the retained guest was built; rebuild the guest and its record", path)
+		if hex.EncodeToString(sum[:]) != input.SHA256 {
+			t.Fatalf("%s changed since the retained guest was built; rebuild the guest and its record", input.Path)
 		}
 	}
 	if record.Bytes != int64(len(wasm)) {
