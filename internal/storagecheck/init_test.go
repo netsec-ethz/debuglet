@@ -81,7 +81,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

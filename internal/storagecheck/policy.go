@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 24: server verification persists its shared query budget.
-	MinimumDispatcherVersion int64 = 24
+	// Schema 25: server verification persists its shared query budget.
+	MinimumDispatcherVersion int64 = 25
 	MinimumExecutorVersion   int64 = 8
 )
 

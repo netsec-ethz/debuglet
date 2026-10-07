@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.16"
+  version: "1.18"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -3908,7 +3908,7 @@ paths:
     post:
       operationId: "verifyAttribution"
       summary: "Verify captured packets with the executor's help before disclosure."
-      description: "Added in API 1.16. Groups up to 256 packets by source address and epoch of each candidate chain, at most 16 groups, and gives each group a verdict. A group whose key is on record is checked against it (method offline) and spends nothing. Disclosed results split by run, ambiguous packets and unmatched packets; a response contains at most 16 such result subsets. Before disclosure the dispatcher asks the executor, which still holds the key, whether one candidate run reproduces every tag of the group (method server); the executor never returns tags or keys. Every such question charges one trial per candidate run to a budget of 16 trials per executor, chain and epoch, shared by all requesters; it is charged before the question is relayed and is not refunded when the answer is lost. A group with more candidates than trials remain, an unavailable executor, or an answer that no single candidate reproduces every tag (reason unmatched, decided offline after disclosure) leaves the group pending. The receipt is an Ed25519 signature over canonical JSON of the dispatcher, the API version, the dispatcher's query time, the packet digest and every group's verdict; it shows what was asked and answered when, not when a packet was captured. Public and rate-limited per client address."
+      description: "Added in API 1.18. Groups up to 256 packets by source address and epoch of each candidate chain, at most 16 groups, and gives each group a verdict. A group whose key is on record is checked against it (method offline) and spends nothing. Disclosed results split by run, ambiguous packets and unmatched packets; a response contains at most 16 such result subsets. Before disclosure the dispatcher asks the executor, which still holds the key, whether one candidate run reproduces every tag of the group (method server); the executor never returns tags or keys. Every such question charges one trial per candidate run to a budget of 16 trials per executor, chain and epoch, shared by all requesters; it is charged before the question is relayed and is not refunded when the answer is lost. A group with more candidates than trials remain, an unavailable executor, or an answer that no single candidate reproduces every tag (reason unmatched, decided offline after disclosure) leaves the group pending. The receipt is an Ed25519 signature over canonical JSON of the dispatcher, the API version, the dispatcher's query time, the packet digest and every group's verdict; it shows what was asked and answered when, not when a packet was captured. Public and rate-limited per client address."
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
@@ -3998,7 +3998,7 @@ paths:
     get:
       operationId: "getAttributionReceiptKeys"
       summary: "List the keys that verify verification receipts."
-      description: "Added in API 1.16. Every Ed25519 key this dispatcher has signed receipts with, with its validity: a receipt verifies under the key named by its key_id when its query_at lies within valid_from and valid_to. Public and rate-limited per client address."
+      description: "Added in API 1.18. Every Ed25519 key this dispatcher has signed receipts with, with its validity: a receipt verifies under the key named by its key_id when its query_at lies within valid_from and valid_to. Public and rate-limited per client address."
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"

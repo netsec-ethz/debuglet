@@ -59,7 +59,7 @@ changes; the linked API and deployment documentation contains operational detail
   epoch it reports which candidate run, if any, reproduces every tag, without
   returning tags or keys. It refuses disclosable epochs, unknown chains and
   untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
-- Server-assisted probe verification (#341, API 1.16, dispatcher schema 24).
+- Server-assisted probe verification (#341, API 1.18, dispatcher schema 25).
   `POST /attribution/verify` checks up to 256 captured packets in at most 16
   groups: a group whose key is disclosed is checked against the key store; a
   group whose key is not yet disclosed is relayed to its executor over the
@@ -76,7 +76,7 @@ changes; the linked API and deployment documentation contains operational detail
   send pending groups unless `--offline`, report `via server` with the
   receipt key, and keep receipts and keys in the evidence bundle, which
   `client.VerifyEvidence` checks again. The dispatcher's minimum supported
-  schema is 24.
+  schema is 25.
 - An executor with a configured `[tesla] seed` discloses the tail of its
   previous chain after a restart: it re-derives that chain, which never signs
   again, and sends its due keys beside the current one in the heartbeat's new
