@@ -66,6 +66,8 @@ type Debuglet struct {
 	closed       bool
 	initialized  bool
 	initializing bool
+	running      bool
+	runCancel    context.CancelCauseFunc
 	closeOnce    sync.Once
 	closeErr     error
 	lateCloseErr error
@@ -458,8 +460,9 @@ func (d *Debuglet) registerHostFunctions(hmb wazero.HostModuleBuilder) wazero.Ho
 }
 
 // Close terminates owned I/O and runtime resources exactly once. While
-// InitRuntime is still running, Close leaves the runtime and any compiled
-// module it published to InitRuntime, which releases them once on return.
+// InitRuntime or Run is still running, Close leaves the runtime and compiled
+// module to that operation, which releases them once on return. Active Run
+// cancellation and owned I/O closure interrupt execution before disposal.
 // It does not wait for Run or its caller's watcher: the executor joins those
 // separately.
 // The context reaches wazero; it cannot force an arbitrary socket Close to end.
@@ -468,11 +471,15 @@ func (d *Debuglet) Close(ctx context.Context) error {
 		d.mu.Lock()
 		d.closed = true
 		rt, compiled := d.runtime, d.compiled
-		if d.initializing {
-			// The initializer's finisher releases both once it returns.
+		cancel := d.runCancel
+		if d.initializing || d.running {
+			// The active operation's finisher releases both once it returns.
 			rt, compiled = nil, nil
 		}
 		d.mu.Unlock()
+		if cancel != nil {
+			cancel(net.ErrClosed)
+		}
 		if d.stopRevocations != nil {
 			d.stopRevocations()
 		}
@@ -537,22 +544,54 @@ func (w *chanWriter) Write(p []byte) (int, error) {
 // Run executes the debuglet's "_start" WASM export, streams stdout/stderr
 // back through outputCh, and returns any execution error.
 // The outputCh channel is closed when the debuglet finishes execution.
-func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) error {
+func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) (err error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	writer := &chanWriter{ctx: ctx, ch: outputCh}
 	defer close(outputCh)
 
 	d.mu.Lock()
-	rt, compiled, closed := d.runtime, d.compiled, d.closed
-	d.mu.Unlock()
 	if err := ctx.Err(); err != nil {
+		d.mu.Unlock()
 		return context.Cause(ctx)
 	}
-	if closed {
+	if d.closed {
+		d.mu.Unlock()
 		return net.ErrClosed
 	}
+	if d.initializing || d.running {
+		d.mu.Unlock()
+		return errors.New("runtime operation already in progress")
+	}
+	rt, compiled := d.runtime, d.compiled
 	if rt == nil || compiled == nil {
+		d.mu.Unlock()
 		return errors.New("runtime is not initialized")
 	}
+	d.running, d.runCancel = true, cancel
+	d.mu.Unlock()
+	// Runtime.Close disposes WASI resources that guest host calls still use.
+	// Keep ownership through both instantiation and module cleanup; Close
+	// interrupts the context and I/O, and this finisher disposes after unwinding.
+	defer func() {
+		d.mu.Lock()
+		d.running, d.runCancel = false, nil
+		closed := d.closed
+		d.mu.Unlock()
+		if !closed {
+			return
+		}
+		closeCtx := context.WithoutCancel(ctx)
+		closeErr := errors.Join(rt.Close(closeCtx), compiled.Close(closeCtx))
+		d.mu.Lock()
+		d.lateCloseErr = errors.Join(d.lateCloseErr, closeErr)
+		d.mu.Unlock()
+		cause := context.Cause(ctx)
+		if cause == nil {
+			cause = net.ErrClosed
+		}
+		err = errors.Join(err, cause, closeErr)
+	}()
 	config := wazero.NewModuleConfig().
 		WithStdout(writer).
 		WithStderr(writer).
