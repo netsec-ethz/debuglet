@@ -43,7 +43,7 @@ func TestInitializeDatabaseCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, "dispatcher.sqlite")
-	for _, extra := range [][]string{{"-version"}, {"-upgrade-database"}, {"-check-database"}, {"-accept-data-loss"}, {"-config", "unused"}, {"-ready-file", "unused"}, {"-grant-operator", "unused"}, {"-revoke-operator", "unused"}, {"-enroll-executor", "unused"}, {"-revoke-executor", "unused"}, {"unexpected"}} {
+	for _, extra := range [][]string{{"-version"}, {"-upgrade-database"}, {"-check-database"}, {"-accept-data-loss"}, {"-config", "unused"}, {"-ready-file", "unused"}, {"-grant-operator", "unused"}, {"-revoke-operator", "unused"}, {"-enroll-executor", "unused"}, {"-revoke-executor", "unused"}, {"-bind-executor", "unused", "-bind-certificate", "unused"}, {"unexpected"}} {
 		run(false, append([]string{"-init-database", path}, extra...)...)
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("refused arguments created database: %v", err)

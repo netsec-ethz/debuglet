@@ -84,6 +84,15 @@
         mode: "0644"
       register: dispatcher_unit
 
+    # The configuration may be the one that turns enforcement on, and a
+    # reissued certificate needs its binding replaced, so the inventory
+    # executors are bound before the dispatcher restarts with it.
+    - name: Bind the inventory executors to their client certificates
+      ansible.builtin.include_tasks: tasks/bind-executors.yml
+      when:
+        - dispatcher_require_client_cert | bool
+        - dispatcher_bind_inventory_executors | bool
+
     - name: Restart dispatcher if config changed
       ansible.builtin.systemd:
         name: debuglet-dispatcher

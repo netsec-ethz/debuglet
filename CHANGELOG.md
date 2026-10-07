@@ -89,6 +89,32 @@ changes; the linked API and deployment documentation contains operational detail
   listed as unconfirmed. Dispatcher
   databases require the explicit upgrade to schema 26. See
   `docs/operations/configuration.md#destination-limits-and-opt-outs`.
+- `debuglet-dispatcher -bind-executor EXECUTOR_ID -bind-certificate PATH`
+  binds an executor ID to a client certificate the administrator issued,
+  without an enrollment token (#415). It verifies the PEM certificate against
+  the configured `tls.ca_file` for client authentication, requires the
+  executor ID as its common name and refuses a file holding a private key. It
+  records the leaf's SHA-256 fingerprint, the value an enforcing dispatcher
+  admits the executor by; binding the same certificate again changes nothing,
+  and a different one replaces that executor ID's binding only.
+- Ansible: `executor_enrollment_token`, a per-host secret rendered as
+  `[credentials] enrollment_token` only when set, for an executor the
+  deployment does not bind from a certificate it holds (#415).
+
+### Fixed
+- Turning on `dispatcher_require_client_cert` no longer disconnects every
+  executor deployed with `generate-certs.sh` and `deploy-certs.yml` (#415).
+  Enforcement admits an executor only over the certificate bound to its ID,
+  and nothing bound those certificates. With
+  `dispatcher_bind_inventory_executors` (default on), `site.yml`,
+  `update-config.yml` and `deploy-certs.yml` now copy each inventory
+  executor's public `client.crt` to the dispatcher and bind it as the service
+  account before the dispatcher runs with the requirement, and
+  `deploy-certs.yml` re-binds a certificate `generate-certs.sh` reissued. The
+  preflight refuses to enable enforcement while an inventory executor has
+  neither a certificate to bind nor an enrollment token. `deploy/README.md`
+  and the operations guides no longer suggest that a certificate from the
+  deployment CA is enough.
 
 ## [0.3.0-rc.1] - 2026-10-06
 

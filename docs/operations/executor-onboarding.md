@@ -211,10 +211,18 @@ then start that same package and verify existing executors and measurements.
 Rolling back requires restoring the matching backup and package, not only the
 old binary. See the [deployment procedures](../../deploy/README.md).
 
-Before enabling client-certificate enforcement, confirm that every existing
-executor presents a certificate trusted by the retained client CA bundle.
-Replacing that trust bundle or enabling enforcement for uncertified executors
-will disconnect them. Keep enrollment disabled until this prerequisite and both
+Client-certificate enforcement binds each executor ID to the SHA-256
+fingerprint of one certificate, and refuses an executor without a binding even
+when its certificate is trusted. Before enabling it, confirm that every
+existing executor presents a certificate trusted by the retained client CA
+bundle and is bound to that certificate: an administrator-issued certificate
+with `debuglet-dispatcher -bind-executor EXECUTOR_UUID -bind-certificate
+client.crt`, or a token from `-enroll-executor`. The Ansible deployment binds
+its inventory executors automatically before it enables enforcement, and
+re-binds a certificate it reissues (see "Requiring client certificates" in
+the [deployment procedures](../../deploy/README.md)). Replacing the trust
+bundle, or enabling enforcement for uncertified or unbound executors, will
+disconnect them. Keep enrollment disabled until this prerequisite and both
 advertised native control endpoints have been verified. Publish a matching full
 package and installation guide before enabling the console setup flow.
 

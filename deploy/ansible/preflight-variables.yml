@@ -276,6 +276,55 @@
         quiet: true
       when: dispatcher_require_client_cert | bool
 
+    # With client certificates required, the dispatcher admits an executor
+    # only over the certificate bound to its ID in its database; a
+    # certificate the deployment CA issued is not enough on its own. Every
+    # inventory executor needs a way to be bound before enforcement is
+    # enabled: the certificate the deployment installs and binds
+    # (dispatcher_bind_inventory_executors), or its own enrollment token.
+    # Checked here for the whole inventory, so a run limited to the
+    # dispatcher cannot enable enforcement for an executor it would refuse.
+    - name: Inspect the client certificates the deployment binds
+      ansible.builtin.stat:
+        path: "{{ certs_dir }}/executors/{{ hostvars[item].executor_id | default('') }}/client.crt"
+      delegate_to: localhost
+      register: binding_certificates
+      loop: "{{ groups['executors'] | default([]) | sort }}"
+      when:
+        - dispatcher_require_client_cert | bool
+        - dispatcher_bind_inventory_executors | bool
+        - not (hostvars[item].executor_enrollment_token | default(''))
+
+    - name: Require a binding for every inventory executor
+      ansible.builtin.assert:
+        that:
+          - unbound | length == 0
+        fail_msg: >-
+          dispatcher_require_client_cert is on, and the dispatcher would then
+          refuse {{ unbound | join(', ') }}: an executor is admitted only over
+          the certificate bound to its executor_id.
+          {% if dispatcher_bind_inventory_executors | bool %}Issue its client
+          certificate with deploy/scripts/generate-certs.sh (`make
+          deploy-certs`) so that {{ certs_dir }}/executors/<executor_id>/client.crt
+          exists and the deployment binds it, or give it an
+          executor_enrollment_token.{% else %}dispatcher_bind_inventory_executors
+          is off, so the deployment binds none of them: turn it back on, or
+          give each of them an executor_enrollment_token from
+          `debuglet-dispatcher -enroll-executor <executor_id>`.{% endif %}
+        quiet: true
+      vars:
+        unbound: >-
+          {%- set out = [] -%}
+          {%- for result in binding_certificates.results | default([]) -%}
+          {%-   set h = hostvars[result.item] -%}
+          {%-   if not (h.executor_enrollment_token | default(''))
+                  and (not (dispatcher_bind_inventory_executors | bool) or not (result.stat.exists | default(false))) -%}
+          {%-     set _ = out.append(result.item ~ ' (' ~ (h.executor_id | default('no executor_id')) ~ ')') -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: dispatcher_require_client_cert | bool
+
     - name: Require explicit public executor enrollment settings
       ansible.builtin.assert:
         that:
@@ -584,6 +633,22 @@
           in the inventory for {{ inventory_hostname }}. See
           deploy/ansible/group_vars/executors.yml.
         quiet: true
+
+    # The token is a secret, so neither it nor the expression testing it is
+    # shown.
+    - name: Require a well-formed enrollment token
+      ansible.builtin.assert:
+        that:
+          - executor_enrollment_token is string
+          - executor_enrollment_token is match('^dbx_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$')
+          - executor_enrollment_token | length <= 128
+        fail_msg: >-
+          executor_enrollment_token of {{ inventory_hostname }} must be the
+          token `debuglet-dispatcher -enroll-executor` printed, dbx_ followed
+          by two base64url parts joined by a dot.
+        quiet: true
+      no_log: true
+      when: executor_enrollment_token | default('') | length > 0
 
     - name: Require usable executor resources
       ansible.builtin.assert:
