@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -28,14 +29,15 @@ import (
 
 // foreignGuestRecord is the record tracked beside a retained foreign guest.
 type foreignGuestRecord struct {
-	GuestABI  string `json:"guest_abi"`
-	Language  string `json:"language"`
-	Toolchain string `json:"toolchain"`
-	Image     string `json:"image"`
-	Target    string `json:"target"`
-	Build     string `json:"build"`
-	SHA256    string `json:"sha256"`
-	Bytes     int64  `json:"bytes"`
+	GuestABI  string            `json:"guest_abi"`
+	Language  string            `json:"language"`
+	Toolchain string            `json:"toolchain"`
+	Image     string            `json:"image"`
+	Target    string            `json:"target"`
+	Build     string            `json:"build"`
+	SHA256    string            `json:"sha256"`
+	Bytes     int64             `json:"bytes"`
+	Sources   map[string]string `json:"sources"`
 }
 
 // foreignGuests are the retained guests, by language.
@@ -68,6 +70,25 @@ func TestForeignGuestsOnCurrentHost(t *testing.T) {
 	}
 }
 
+// The source-build lane provides consumers made in empty directories from the
+// packaged crate and copied header. Ordinary tests still run the retained guests.
+func TestBuiltForeignConsumersOnCurrentHost(t *testing.T) {
+	dir := os.Getenv("DEBUGLET_FOREIGN_CONSUMER_DIR")
+	if dir == "" {
+		t.Skip("run scripts/ci-guest-languages.sh to build fresh consumers")
+	}
+	for _, language := range []string{"c", "rust"} {
+		t.Run(language, func(t *testing.T) {
+			wasm, err := os.ReadFile(filepath.Join(dir, "consumer_"+language+".wasm"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireABIV1Imports(t, wasm)
+			runForeignGuestCases(t, wasm)
+		})
+	}
+}
+
 // retainedForeignGuest reads a retained module and fails unless its record
 // still describes it.
 func retainedForeignGuest(t *testing.T, language, module, recordPath string) []byte {
@@ -91,6 +112,19 @@ func retainedForeignGuest(t *testing.T, language, module, recordPath string) []b
 	}
 	if record.Language != language {
 		t.Fatalf("%s records language %q, want %q", recordPath, record.Language, language)
+	}
+	if len(record.Sources) == 0 {
+		t.Fatal("retained foreign guest has no source digests")
+	}
+	for path, want := range record.Sources {
+		source, err := os.ReadFile(filepath.Join("../..", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(source)
+		if hex.EncodeToString(sum[:]) != want {
+			t.Fatalf("%s changed since the retained guest was built; rebuild the guest and its record", path)
+		}
 	}
 	if record.Bytes != int64(len(wasm)) {
 		t.Fatalf("retained guest is %d bytes, its record says %d", len(wasm), record.Bytes)
