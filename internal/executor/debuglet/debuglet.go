@@ -560,6 +560,7 @@ func (w *chanWriter) Write(p []byte) (int, error) {
 // back through outputCh, and returns any execution error.
 // The outputCh channel is closed when the debuglet finishes execution.
 func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []string) (err error) {
+	caller := ctx
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	writer := &chanWriter{ctx: ctx, ch: outputCh}
@@ -583,7 +584,15 @@ func (d *Debuglet) Run(ctx context.Context, outputCh chan<- []byte, args []strin
 		d.mu.Unlock()
 		return errors.New("runtime is not initialized")
 	}
-	d.running, d.runCancel = true, cancel
+	d.running = true
+	d.runCancel = func(cause error) {
+		// The caller's Done can wake a Close watcher before cancellation has
+		// propagated to this child. Preserve that already established cause.
+		if callerCause := context.Cause(caller); callerCause != nil {
+			cause = callerCause
+		}
+		cancel(cause)
+	}
 	d.mu.Unlock()
 	// Runtime.Close disposes WASI resources that guest host calls still use.
 	// Keep ownership through both instantiation and module cleanup; Close
