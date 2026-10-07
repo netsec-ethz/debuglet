@@ -126,7 +126,7 @@ func TestInstalledExperiment(t *testing.T) {
 			t.Fatal("participants received different start times")
 		}
 		sharedStart = result.StartTimeNS
-		t.Logf("run=%s group=%s start=%d sent=%d received=%d", id, result.ExperimentID, result.StartTimeNS, result.Sent, result.Received)
+		t.Logf("participant result: %s", output)
 	}
 	group, err := c.ExportExperiment(ctx, submission)
 	if err != nil || len(group.Results) != len(participants) {

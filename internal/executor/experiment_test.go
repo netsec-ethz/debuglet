@@ -5,6 +5,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -45,10 +46,36 @@ func TestExperimentRunBindingAndCancellation(t *testing.T) {
 	if req.DebugletId != id.String() || req.ExecutorId != e.cfg.Identity.ExecutorID || result.ID != "batch" || len(result.Participants) != 1 || result.Participants[0].ReadyAtNS != 123 || string(result.Participants[0].Metadata) != "opaque" {
 		t.Fatalf("incorrect request/result: %v %v", req, result)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := control.Ready(ctx, []byte("wait")); status.Code(err) != codes.DeadlineExceeded && ctx.Err() == nil {
-		t.Fatalf("cancellation ignored: %v", err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	finished := make(chan error, 1)
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		_, err := control.Ready(ctx, []byte("wait"))
+		finished <- err
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-joined:
+		case <-time.After(5 * time.Second):
+			t.Error("readiness call did not join after cancellation")
+		}
+	}()
+	select {
+	case <-calls:
+		cancel()
+	case err := <-finished:
+		t.Fatalf("readiness call ended before the handler started: %v", err)
+	case <-ctx.Done():
+		t.Fatalf("readiness handler did not start: %v", ctx.Err())
 	}
-	<-calls
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) && status.Code(err) != codes.Canceled {
+			t.Fatalf("cancellation ignored: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readiness call did not return after cancellation")
+	}
 }
