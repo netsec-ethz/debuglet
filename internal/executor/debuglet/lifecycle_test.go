@@ -197,21 +197,112 @@ func (m *closeErrorModule) Close(context.Context) error {
 
 type closeErrorRuntime struct {
 	wazero.Runtime
-	module api.Module
+	module      api.Module
+	instantiate func(context.Context) (api.Module, error)
+	calls       atomic.Int32
+	err         error
 }
 
-func (r *closeErrorRuntime) InstantiateModule(context.Context, wazero.CompiledModule, wazero.ModuleConfig) (api.Module, error) {
+func (r *closeErrorRuntime) InstantiateModule(ctx context.Context, _ wazero.CompiledModule, _ wazero.ModuleConfig) (api.Module, error) {
+	if r.instantiate != nil {
+		return r.instantiate(ctx)
+	}
 	return r.module, nil
 }
-func (*closeErrorRuntime) Close(context.Context) error { return nil }
+func (r *closeErrorRuntime) Close(context.Context) error {
+	r.calls.Add(1)
+	return r.err
+}
 
-type closeErrorCompiled struct{ wazero.CompiledModule }
+type closeErrorCompiled struct {
+	wazero.CompiledModule
+	calls atomic.Int32
+	err   error
+}
 
-func (*closeErrorCompiled) Close(context.Context) error { return nil }
+func (c *closeErrorCompiled) Close(context.Context) error {
+	c.calls.Add(1)
+	return c.err
+}
+
+func TestCloseDuringRunDefersRuntimeDisposal(t *testing.T) {
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var instantiations atomic.Int32
+	rt := &closeErrorRuntime{err: errors.New("runtime close failed")}
+	rt.instantiate = func(ctx context.Context) (api.Module, error) {
+		if instantiations.Add(1) != 1 {
+			return nil, errors.New("unexpected parallel instantiation")
+		}
+		close(entered)
+		<-ctx.Done()
+		close(canceled)
+		<-release
+		return nil, context.Cause(ctx)
+	}
+	compiled := &closeErrorCompiled{err: errors.New("compiled close failed")}
+	deb := &Debuglet{env: &wasm.WasmEnv{Logger: zap.NewNop().Sugar()}, runtime: rt, compiled: compiled}
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	ctx, cancel := context.WithCancelCause(context.Background())
+	done, closeDone := make(chan struct{}), make(chan struct{})
+	var runErr, closeErr error
+	go func() { defer close(done); runErr = deb.Run(ctx, make(chan []byte), nil) }()
+	t.Cleanup(func() {
+		cancel(errors.New("test teardown"))
+		unblock()
+		_ = deb.Close(context.Background())
+		joinRuntimeTest(t, done)
+	})
+	joinRuntimeTest(t, entered)
+	// A second caller cannot become an owner while the first is executing.
+	if err := deb.Run(context.Background(), make(chan []byte), nil); err == nil || instantiations.Load() != 1 {
+		t.Errorf("concurrent Run admission: err=%v instantiations=%d", err, instantiations.Load())
+	}
+	go func() { defer close(closeDone); closeErr = deb.Close(context.Background()) }()
+	t.Cleanup(func() { unblock(); joinRuntimeTest(t, closeDone) })
+	joinRuntimeTest(t, canceled)
+	joinRuntimeTest(t, closeDone)
+	if ctx.Err() != nil {
+		t.Fatalf("Close canceled the caller context: %v", context.Cause(ctx))
+	}
+	if closeErr != nil || rt.calls.Load() != 0 || compiled.calls.Load() != 0 {
+		t.Fatalf("early cleanup=%v runtime=%d compiled=%d", closeErr, rt.calls.Load(), compiled.calls.Load())
+	}
+	unblock()
+	joinRuntimeTest(t, done)
+	for _, want := range []error{net.ErrClosed, rt.err, compiled.err} {
+		if !errors.Is(runErr, want) {
+			t.Errorf("Run lost %v: %v", want, runErr)
+		}
+	}
+	if err := deb.Close(context.Background()); !errors.Is(err, rt.err) || !errors.Is(err, compiled.err) {
+		t.Fatalf("final Close lost cleanup errors: %v", err)
+	}
+	if rt.calls.Load() != 1 || compiled.calls.Load() != 1 {
+		t.Fatalf("runtime closes=%d compiled closes=%d", rt.calls.Load(), compiled.calls.Load())
+	}
+}
+
+func TestRunRefusesRuntimeStillInitializing(t *testing.T) {
+	rt := &closeErrorRuntime{instantiate: func(context.Context) (api.Module, error) {
+		t.Fatal("Run entered runtime before initialization returned")
+		return nil, nil
+	}}
+	deb := &Debuglet{runtime: rt, compiled: &closeErrorCompiled{}, initializing: true}
+	output := make(chan []byte)
+	if err := deb.Run(context.Background(), output, nil); err == nil {
+		t.Fatal("Run was admitted during initialization")
+	}
+	if _, ok := <-output; ok {
+		t.Fatal("refused Run left output open")
+	}
+}
 
 func TestRunModuleCloseErrorReachesFinalCleanup(t *testing.T) {
 	module := &closeErrorModule{entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("module resource close failed")}
-	deb := &Debuglet{env: &wasm.WasmEnv{Logger: zap.NewNop().Sugar()}, runtime: &closeErrorRuntime{module: module}, compiled: &closeErrorCompiled{}}
+	rt := &closeErrorRuntime{module: module, err: errors.New("runtime close failed")}
+	compiled := &closeErrorCompiled{err: errors.New("compiled close failed")}
+	deb := &Debuglet{env: &wasm.WasmEnv{Logger: zap.NewNop().Sugar()}, runtime: rt, compiled: compiled}
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(module.release) }) }
 	done := make(chan struct{})
@@ -222,15 +313,18 @@ func TestRunModuleCloseErrorReachesFinalCleanup(t *testing.T) {
 	if err := deb.Close(context.Background()); err != nil {
 		t.Fatalf("first Close=%v", err)
 	}
+	if rt.calls.Load() != 0 || compiled.calls.Load() != 0 {
+		t.Fatalf("disposed during module cleanup: runtime=%d compiled=%d", rt.calls.Load(), compiled.calls.Load())
+	}
 	unblock()
 	joinRuntimeTest(t, done)
-	if !errors.Is(runErr, module.err) {
+	if !errors.Is(runErr, module.err) || !errors.Is(runErr, rt.err) || !errors.Is(runErr, compiled.err) {
 		t.Fatalf("Run=%v", runErr)
 	}
-	if err := deb.Close(context.Background()); !errors.Is(err, module.err) {
+	if err := deb.Close(context.Background()); !errors.Is(err, module.err) || !errors.Is(err, rt.err) || !errors.Is(err, compiled.err) {
 		t.Fatalf("final Close lost module error: %v", err)
 	}
-	if module.calls.Load() != 1 {
-		t.Fatalf("module closes=%d", module.calls.Load())
+	if module.calls.Load() != 1 || rt.calls.Load() != 1 || compiled.calls.Load() != 1 {
+		t.Fatalf("module closes=%d runtime closes=%d compiled closes=%d", module.calls.Load(), rt.calls.Load(), compiled.calls.Load())
 	}
 }

@@ -118,14 +118,34 @@ func waitCanceledTest(t *testing.T, done <-chan struct{}, what string) {
 	}
 }
 
-// Cancellation must terminate real guest execution while the test-owned peer
-// remains open. Closing the peer is emergency teardown, never positive evidence.
+// Cancellation and direct Close must terminate real guest execution while the
+// test-owned peer remains open. Closing the peer is emergency teardown, never
+// positive evidence.
 func TestWASICancellationCPUReadAndOutput(t *testing.T) {
 	data := buildCancellationGuest(t)
-	for _, mode := range []string{"cpu", "read", "output"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		mode        string
+		directClose bool
+	}{
+		{"cpu", false},
+		{"read", false},
+		{"output", false},
+		{"cpu", true},
+		{"read", true},
+		{"output", true},
+	} {
+		mode, directClose := tc.mode, tc.directClose
+		name := mode
+		if directClose {
+			name += "_direct_close"
+		}
+		t.Run(name, func(t *testing.T) {
 			deb, readEntered := cancellationEngine(t, data)
 			cause := errors.New("operator cancellation")
+			var wantCause error = cause
+			if directClose {
+				wantCause = net.ErrClosed
+			}
 			ctx, cancel := context.WithCancelCause(context.Background())
 			output := make(chan []byte)
 			args := []string{"-mode", mode}
@@ -166,17 +186,24 @@ func TestWASICancellationCPUReadAndOutput(t *testing.T) {
 				}()
 			}
 			runDone, closeDone := make(chan struct{}), make(chan struct{})
+			closeRequested := make(chan struct{})
+			requestClose := sync.OnceFunc(func() { close(closeRequested) })
 			var runErr, closeErr error
 			go func() { defer close(runDone); runErr = deb.Run(ctx, output, args) }()
 			go func() {
 				defer close(closeDone)
-				<-ctx.Done()
+				if directClose {
+					<-closeRequested
+				} else {
+					<-ctx.Done()
+				}
 				closeCtx, finish := context.WithTimeout(context.Background(), scheduler.CleanupTimeout)
 				defer finish()
 				closeErr = deb.Close(closeCtx)
 			}()
 			t.Cleanup(func() {
 				cancel(cause)
+				requestClose()
 				if listener != nil {
 					_ = listener.Close()
 				}
@@ -204,7 +231,11 @@ func TestWASICancellationCPUReadAndOutput(t *testing.T) {
 				select {
 				case <-peerReady:
 				case <-peerDone:
-					t.Fatalf("peer failed: %v", peerErr)
+					if peerErr != nil {
+						t.Fatalf("peer failed: %v", peerErr)
+					}
+					// The observer may have finished after signalling readiness.
+					waitCanceledTest(t, peerReady, "peer marker")
 				case <-time.After(5 * time.Second):
 					t.Fatal("peer marker not observed")
 				}
@@ -226,11 +257,18 @@ func TestWASICancellationCPUReadAndOutput(t *testing.T) {
 				t.Fatalf("guest exited before cancellation: %v", runErr)
 			default:
 			}
-			cancel(cause)
+			if directClose {
+				requestClose()
+			} else {
+				cancel(cause)
+			}
 			waitCanceledTest(t, runDone, "canceled Run")
 			waitCanceledTest(t, closeDone, "close watcher")
-			if !errors.Is(runErr, cause) {
-				t.Errorf("lost cancellation cause: %v", runErr)
+			if !errors.Is(runErr, wantCause) {
+				t.Errorf("lost cancellation cause: %v, want %v", runErr, wantCause)
+			}
+			if directClose && ctx.Err() != nil {
+				t.Errorf("direct Close canceled the caller context: %v", context.Cause(ctx))
 			}
 			if closeErr != nil {
 				t.Errorf("resource closure: %v", closeErr)
