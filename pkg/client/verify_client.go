@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,6 +51,13 @@ func (c *Client) Verify(ctx context.Context, packets []CapturedPacket, opts Veri
 	}
 	src := &clientSource{c: c, pace: newPacer(rate, burst, time.Now)}
 	rep, err := verifyOffline(ctx, src, packets, opts, time.Now())
+	if err == nil {
+		rep.material.receiptKeys = src.receiptKeys
+		rep.HistoryAuthenticated = strings.HasPrefix(c.origin, "https://") && len(rep.material.lookups) > 0
+		for _, lookup := range rep.material.lookups {
+			rep.HistoryAuthenticated = rep.HistoryAuthenticated && lookup.Statement != nil
+		}
+	}
 	if err != nil || opts.Offline {
 		return rep, err
 	}
@@ -189,8 +197,9 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // clientSource answers lookups from the dispatcher's public routes.
 type clientSource struct {
-	c    *Client
-	pace *pacer
+	c           *Client
+	pace        *pacer
+	receiptKeys []EvidenceReceiptKey
 }
 
 // paced runs call at the pacer's rate, retrying after the Retry-After while
@@ -216,7 +225,7 @@ func paced[T any](ctx context.Context, p *pacer, call func() (T, error)) (T, err
 
 func (s *clientSource) candidates(ctx context.Context, ip netip.Addr, at time.Time) (EvidenceLookup, error) {
 	doc, err := paced(ctx, s.pace, func() (AttributionCandidates, error) {
-		return s.c.AttributionCandidates(ctx, ip.String(), at)
+		return s.c.attributionCandidates(ctx, ip.String(), at, true)
 	})
 	if err != nil {
 		var httpErr *HTTPError
@@ -225,17 +234,25 @@ func (s *clientSource) candidates(ctx context.Context, ip netip.Addr, at time.Ti
 		}
 		return EvidenceLookup{}, err
 	}
-	out := EvidenceLookup{RetainedFrom: doc.RetainedFrom.UTC(), Truncated: doc.Truncated, Candidates: make([]EvidenceCandidate, 0, len(doc.Candidates))}
+	out := EvidenceLookup{IP: doc.IP, At: doc.At, Statement: doc.Statement, RetainedFrom: doc.RetainedFrom.UTC(), Truncated: doc.Truncated, Candidates: make([]EvidenceCandidate, 0, len(doc.Candidates))}
 	for _, c := range doc.Candidates {
 		s := c.Schedule
 		out.Candidates = append(out.Candidates, EvidenceCandidate{
 			ExecutorID: c.ExecutorID, RunID: c.RunID, ActiveFrom: c.ActiveFrom.UTC(), ActiveTo: c.ActiveTo.UTC(),
-			IPSource: c.IPSource, DisclosedThrough: c.DisclosedThrough,
+			IPSource: c.IPSource, DisclosedThrough: c.DisclosedThrough, DisclosedThroughAtNs: c.DisclosedThroughAtNs, NextDisclosureAtNs: c.NextDisclosureAtNs,
 			Schedule: EvidenceSchedule{
 				ChainID: s.ChainID, K0: s.K0, T0UnixNs: s.T0UnixNs, EpochSeconds: s.EpochSeconds,
 				DisclosureDelayEpochs: s.DisclosureDelayEpochs, ChainLength: s.ChainLength, TagSpec: s.TagSpec,
 			},
 		})
+	}
+	if out.Statement != nil {
+		if err := s.historyKeys(ctx, out.Statement.KeyID); err != nil {
+			return EvidenceLookup{}, err
+		}
+		if err := checkHistory(out, s.c.origin+s.c.basePath, s.receiptKeys); err != nil {
+			return EvidenceLookup{}, err
+		}
 	}
 	return out, nil
 }

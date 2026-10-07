@@ -334,17 +334,38 @@ its first 256 packets; the rest stays a separate `pending` entry. The
 embedded receipt keys are the dispatcher's claim like the rest of the
 bundle: compare their IDs with `GET /attribution/receipt-keys` of the
 dispatcher you trust.
-The lookups and schedules remain the dispatcher's claims, and until #71(b)
-nothing in the bundle authenticates them: the chain walk ties every key to
-the recorded `k0`, but `k0` and the other schedule fields (`t0_unix_ns`,
-`epoch_seconds`, `disclosure_delay_epochs`, `chain_length`, `tag_spec`) and
-the lookups can be edited consistently. A larger `disclosure_delay_epochs`,
-for example, turns a `key_public` group into a `verified` one that still
-recomputes. A bundle therefore shows that its record is self-consistent,
-not that the dispatcher said it; check the schedule against the dispatcher
-(or, after #71(b), the operator signature) before relying on it. `api_version` is the API
-version the client requires. With `--at`, `at` records the override and the
-packets carry it as `captured_at`.
+`GET /attribution/candidates?signed=true` adds a `statement` under the existing
+receipt key. It signs the complete dated lookup: source address, capture query
+time, retention boundary, candidate run IDs and intervals, every schedule field,
+and disclosure observations. Its payload uses the stable JSON encoding of
+`wire.AttributionHistoryPayload`, with format `debuglet-attribution-history-v1`,
+issuer `dispatcher`, `signed_at`, and `lookup` (without its statement).
+`client.Verify` requests these statements and saves them with the signing keys.
+Old dispatchers may return unsigned history; it remains usable as an explicitly
+unauthenticated historical claim. A configured signer that cannot be read answers
+503 to a signed request, rather than substituting unsigned data.
+
+`VerifyEvidence` checks included history signatures and the exact metadata they
+bind, as well as packet receipts. An embedded key alone does not establish who
+signed the bundle. For authenticated offline use, save a trust file separately
+while the dispatcher's HTTPS identity is known:
+
+```json
+{"dispatcher":"https://dispatcher.example","keys":[{"key_id":"…","public_key":"<base64 Ed25519 key>","valid_from":"…","valid_to":null}]}
+```
+
+The keys and validity intervals come from `GET /attribution/receipt-keys`.
+Keep retired keys for older statements. Run `dbl verify evidence.json --trust
+trusted-dispatcher.json`, or call `VerifyEvidenceWithTrust`. These require every
+lookup and packet receipt to verify under a separately supplied key and the
+same dispatcher identity. Missing, replaced, or edited statements fail; replacing
+a public key inside the evidence cannot replace a pinned key. The report sets
+`history_authenticated` only when history has been verified against trusted keys.
+This authenticates what the dispatcher said; it does not authenticate capture
+timestamps or make packet attribution prove a measurement conclusion.
+
+`api_version` is the API version the client requires. With `--at`, `at` records
+the override and the packets carry it as `captured_at`.
 
 ## Limits
 

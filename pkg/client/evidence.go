@@ -146,18 +146,21 @@ type EvidenceCandidate struct {
 	ActiveFrom time.Time `json:"active_from"`
 	ActiveTo   time.Time `json:"active_to"`
 	// IPSource is observed or advertised (see AttributionCandidate).
-	IPSource         string           `json:"ip_source,omitempty"`
-	Schedule         EvidenceSchedule `json:"schedule"`
-	DisclosedThrough int64            `json:"disclosed_through"`
+	IPSource             string           `json:"ip_source,omitempty"`
+	Schedule             EvidenceSchedule `json:"schedule"`
+	DisclosedThrough     int64            `json:"disclosed_through"`
+	DisclosedThroughAtNs int64            `json:"disclosed_through_at_ns,omitempty"`
+	NextDisclosureAtNs   int64            `json:"next_disclosure_at_ns,omitempty"`
 }
 
 // EvidenceLookup is the dispatcher's answer to one dated candidate lookup.
 type EvidenceLookup struct {
-	IP           string              `json:"ip"`
-	At           time.Time           `json:"at"`
-	RetainedFrom time.Time           `json:"retained_from"`
-	Truncated    bool                `json:"truncated,omitempty"`
-	Candidates   []EvidenceCandidate `json:"candidates"`
+	IP           string                   `json:"ip"`
+	At           time.Time                `json:"at"`
+	RetainedFrom time.Time                `json:"retained_from"`
+	Truncated    bool                     `json:"truncated,omitempty"`
+	Candidates   []EvidenceCandidate      `json:"candidates"`
+	Statement    *wire.AttributionReceipt `json:"statement,omitempty"`
 }
 
 // EvidenceChain is one chain with the keys a verification used.
@@ -351,11 +354,25 @@ var ErrEvidenceDigest = errors.New("client: evidence does not check out: the pac
 // packets, the recorded lookups, keys and receipts as of the bundle's
 // creation. It returns the recomputed report, with an *EvidenceReceiptError
 // for a receipt that does not verify and an *EvidenceMismatchError when a
-// recorded verdict differs. The lookups and schedules are the dispatcher's
-// claims; the bundle does not authenticate them (the operator signature of
-// #71(b) will). The embedded receipt keys are the dispatcher's claim too:
-// compare their IDs with GET /attribution/receipt-keys of the dispatcher.
+// recorded verdict differs. Included history statements must bind the exact
+// lookup and schedules. Embedded keys establish consistency, not issuer trust;
+// use VerifyEvidenceWithTrust with independently obtained keys for that.
 func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
+	return verifyEvidence(ctx, ev, nil)
+}
+
+// VerifyEvidenceWithTrust verifies every history statement and server receipt
+// with keys supplied independently of the bundle. It fails on unsigned history
+// or a statement for another dispatcher. Packet capture times still require
+// the receiver's own trusted clock evidence.
+func VerifyEvidenceWithTrust(ctx context.Context, ev Evidence, trust EvidenceTrust) (VerifyReport, error) {
+	if trust.Dispatcher == "" || len(trust.Keys) == 0 {
+		return VerifyReport{}, errors.New("client: evidence trust needs a dispatcher and trusted signing keys")
+	}
+	return verifyEvidence(ctx, ev, &trust)
+}
+
+func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (VerifyReport, error) {
 	if ev.Format != EvidenceFormat || ev.FormatVersion != EvidenceFormatVersion {
 		return VerifyReport{}, fmt.Errorf("client: evidence format %q version %d is not supported", ev.Format, ev.FormatVersion)
 	}
@@ -376,6 +393,24 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 	if ev.Packets.Digest != PacketDigest(ev.Packets.Items) {
 		return VerifyReport{}, ErrEvidenceDigest
 	}
+	keys := ev.ReceiptKeys
+	if trust != nil {
+		if ev.Dispatcher.URL != trust.Dispatcher {
+			return VerifyReport{}, errors.New("client: evidence names a different dispatcher")
+		}
+		keys = trust.Keys
+	}
+	for i, lookup := range ev.Lookups {
+		if lookup.Statement == nil {
+			if trust != nil {
+				return VerifyReport{}, fmt.Errorf("client: evidence lookup %d is unsigned", i)
+			}
+			continue
+		}
+		if err := checkHistory(lookup, ev.Dispatcher.URL, keys); err != nil {
+			return VerifyReport{}, fmt.Errorf("client: evidence lookup %d: %w", i, err)
+		}
+	}
 	budget := int64(maxVerifyHashWalk)
 	for i, c := range ev.Chains {
 		if err := checkChainKeys(c, &budget); err != nil {
@@ -392,9 +427,12 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 	}
 	payloads := make([]AttributionReceiptPayload, len(ev.Receipts))
 	for i, r := range ev.Receipts {
-		p, err := checkReceipt(r, ev.ReceiptKeys, ev.Packets.Items)
+		p, err := checkReceipt(r, keys, ev.Packets.Items)
 		if err != nil {
 			return VerifyReport{}, &EvidenceReceiptError{Receipt: i, Msg: err.Error()}
+		}
+		if trust != nil && p.Dispatcher != trust.Dispatcher {
+			return VerifyReport{}, errors.New("client: receipt names a different dispatcher")
 		}
 		payloads[i] = p
 	}
@@ -403,6 +441,8 @@ func VerifyEvidence(ctx context.Context, ev Evidence) (VerifyReport, error) {
 		return VerifyReport{}, err
 	}
 	rep.At = ev.At
+	rep.material.receiptKeys = ev.ReceiptKeys
+	rep.HistoryAuthenticated = trust != nil
 	if len(ev.Receipts) > 0 {
 		rep.material.receipts, rep.material.receiptKeys = ev.Receipts, ev.ReceiptKeys
 		rep.Groups = applyReceipts(rep.Groups, ev.Receipts, payloads, itemTimes(ev.Packets.Items))

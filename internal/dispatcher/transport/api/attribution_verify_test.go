@@ -759,3 +759,36 @@ func TestAttributionVerifyChargesCandidateTrials(t *testing.T) {
 		t.Fatalf("a restart changed the count to %d", used())
 	}
 }
+
+func TestAttributionSignedHistorySurvivesOfflineExport(t *testing.T) {
+	f, _, chain := vtFixture(t)
+	run := vtRun(t, f)
+	at := time.Now()
+	epoch := chain.epochOf(at)
+	if err := f.queries.InsertAttributionKey(t.Context(), database.InsertAttributionKeyParams{ExecutorID: ccExecutorID, ChainID: tag.ChainID(chain.anchor()), Epoch: epoch, Key: chain.key(epoch), DisclosedAtNs: 1}); err != nil {
+		t.Fatal(err)
+	}
+	c := f.client(f.root.URL, false)
+	packet := client.CapturedPacket{Data: vtPacket(chain, "127.0.0.1", epoch, run, 1), CapturedAt: at}
+	report, err := c.Verify(t.Context(), []client.CapturedPacket{packet}, client.VerifyOptions{Offline: true})
+	if err != nil || report.Counts.Verified != 1 {
+		t.Fatalf("live history: %+v, %v", report, err)
+	}
+	ev := report.Evidence()
+	if len(ev.Lookups) != 1 || ev.Lookups[0].Statement == nil || len(ev.ReceiptKeys) == 0 {
+		t.Fatalf("unsigned export: %+v", ev.Lookups)
+	}
+	keys, err := c.AttributionReceiptKeys(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := client.EvidenceTrust{Dispatcher: f.root.URL}
+	for _, k := range keys.Keys {
+		trust.Keys = append(trust.Keys, client.EvidenceReceiptKey{KeyID: k.KeyID, PublicKey: k.PublicKey, ValidFrom: k.ValidFrom, ValidTo: k.ValidTo})
+	}
+	// There are no network reads when verifying this exported history.
+	f.root.Close()
+	if got, err := client.VerifyEvidenceWithTrust(t.Context(), ev, trust); err != nil || !got.HistoryAuthenticated || got.Counts.Verified != 1 {
+		t.Fatalf("offline export: %+v, %v", got, err)
+	}
+}

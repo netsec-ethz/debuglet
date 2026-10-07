@@ -234,6 +234,10 @@ type VerifyReport struct {
 	Dispatcher string `json:"dispatcher,omitempty"`
 	// ClockTolerance is the capture clock lag bound applied.
 	ClockToleranceMS int64 `json:"clock_tolerance_ms"`
+	// HistoryAuthenticated means every used lookup was signed by a dispatcher
+	// key obtained through this client's trusted connection or supplied by the
+	// caller, not merely by a public key embedded in an evidence bundle.
+	HistoryAuthenticated bool `json:"history_authenticated"`
 	// Packets counts the packets checked.
 	Packets int           `json:"packets"`
 	Counts  VerifyCounts  `json:"counts"`

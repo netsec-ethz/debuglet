@@ -116,6 +116,19 @@ func (h *Handler) GetAttributionCandidates(c echo.Context) error {
 			NextDisclosureAtNs:   nextDisclosureAtNs(row.T0Ns, row.IntervalNs, row.DelayEpochs, row.DisclosedThrough),
 		})
 	}
+	if c.QueryParam("signed") == "true" {
+		signer, err := h.receiptSigner(ctx)
+		if err != nil {
+			return apiErrorFrom(http.StatusServiceUnavailable, CodeUnavailable, "attribution signing is unavailable", err)
+		}
+		payload, err := wire.AttributionHistoryBytes(wire.AttributionHistoryPayload{
+			Format: wire.AttributionHistoryFormat, Dispatcher: h.receiptDispatcher(c), SignedAt: time.Now().UTC(), Lookup: resp,
+		})
+		if err != nil {
+			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to sign attribution history", err)
+		}
+		resp.Statement = &wire.AttributionReceipt{KeyID: signer.KeyID(), Payload: payload, Signature: signer.Sign(payload)}
+	}
 	return c.JSON(http.StatusOK, resp)
 }
 

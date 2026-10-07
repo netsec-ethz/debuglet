@@ -21,7 +21,7 @@ import (
 
 const verifyUsage = `Usage:
   dbl verify CAPTURE|EVIDENCE.json [--at TIME] [--offline] [--output text|json]
-             [--evidence FILE] [--source ADDRESS[/BITS],...]
+             [--evidence FILE] [--source ADDRESS[/BITS],...] [--trust FILE]
 
 Checks which Debuglet run, if any, sent the packets of a pcap or pcapng
 capture. Packets are grouped by source address and epoch; each group is
@@ -50,6 +50,8 @@ Options:
   --output FORMAT   text (default) or json
   --evidence FILE   write an evidence bundle that repeats the check without
                     the capture or the dispatcher
+  --trust FILE      require every evidence lookup and receipt to be signed by
+                    keys in a separately obtained dispatcher trust file
   --source LIST     check only packets from these addresses or prefixes
                     (comma-separated, repeatable); other packets are skipped
                     before any lookup. Use it on captures with unrelated
@@ -79,7 +81,7 @@ const verifyCommandTimeout = 5 * time.Minute
 
 func verifyCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	const name = "dbl verify"
-	var at, output, evidencePath string
+	var at, output, evidencePath, trustPath string
 	var offline bool
 	var sources []netip.Prefix
 	fs := newCommandFlagSet("verify")
@@ -97,6 +99,7 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 	fs.BoolVar(&offline, "offline", false, "")
 	fs.StringVar(&output, "output", "", "")
 	fs.StringVar(&evidencePath, "evidence", "", "")
+	fs.StringVar(&trustPath, "trust", "", "")
 	positional, err := parseInterspersed(fs, args)
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(stdout, verifyUsage)
@@ -155,11 +158,26 @@ func verifyCommand(ctx context.Context, args []string, options globalOptions, st
 			return fail("%v", err)
 		}
 		bundle = &ev
-		rep, err = client.VerifyEvidence(ctx, ev)
+		if trustPath == "" {
+			rep, err = client.VerifyEvidence(ctx, ev)
+		} else {
+			data, readErr := os.ReadFile(trustPath)
+			if readErr != nil {
+				return fail("read trust: %v", readErr)
+			}
+			trust, readErr := client.ReadEvidenceTrust(data)
+			if readErr != nil {
+				return fail("read trust: %v", readErr)
+			}
+			rep, err = client.VerifyEvidenceWithTrust(ctx, ev, trust)
+		}
 		if err != nil {
 			return fail("%v", err)
 		}
 	} else {
+		if trustPath != "" {
+			return usage("--trust applies to an evidence bundle")
+		}
 		pkts, err := client.ReadCapture(bytes.NewReader(data))
 		if err != nil {
 			return fail("%v", err)

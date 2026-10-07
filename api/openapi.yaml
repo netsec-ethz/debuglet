@@ -3730,6 +3730,12 @@ paths:
       summary: "List the runs active from a source address at a time."
       description: "Added in API 1.11. Dated attribution lookup for probe verification (docs/verification.md). Public and rate-limited per client address. A candidate names the run and its executor, never the account that submitted it. It replaces GET /executors/by-ip."
       parameters:
+        - name: "signed"
+          in: "query"
+          required: false
+          description: "Set true to include a dispatcher-signed dated history statement. Signature keys are published at /attribution/receipt-keys; offline use requires separately trusted keys."
+          schema:
+            type: boolean
         - name: "ip"
           in: "query"
           required: true
@@ -7918,6 +7924,8 @@ components:
         - candidates
         - truncated
       properties:
+        statement:
+          $ref: "#/components/schemas/AttributionReceipt"
         ip:
           type: string
           description: "The queried address in canonical form."
