@@ -123,6 +123,7 @@ func newWithBPFTagger(logger *zap.Logger, debugletID uuid.UUID, transactionID st
 		DebugletID: debugletID,
 		Policy:     policy,
 		Net: netpolicy.New(operator, netpolicy.Run{
+			Egress:      netpolicy.NewEgress(policy.EgressGrant),
 			Addresses:   policy.Addresses,
 			RequireICMP: policy.RequireICMP,
 			ListenTCP:   policy.ListenTCP,

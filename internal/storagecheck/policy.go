@@ -31,9 +31,10 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 29: authenticated executor schedule history.
-	MinimumDispatcherVersion int64 = 29
-	MinimumExecutorVersion   int64 = 8
+	// Schema 29 records authenticated schedule history; schema 30 / executor 9
+	// add durable aggregate egress grants.
+	MinimumDispatcherVersion int64 = 30
+	MinimumExecutorVersion   int64 = 9
 )
 
 // Policy is the schema contract of one database for this build.
@@ -71,6 +72,9 @@ func PolicyFor(role Role) (Policy, error) {
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
+			"egress_clock":               {"id", "observed_at"},
+			"egress_grants":              {"run_uuid", "policy_hash", "window_start", "window_end", "grant_json"},
+			"egress_reservations":        {"run_uuid", "bucket", "bits_per_second", "burst_bytes", "bytes", "attempts_per_second", "attempt_burst", "attempts", "targets"},
 			"account_recovery_audit":     {"selector", "user_id", "case_reference", "issued_by_uid", "issued_at", "expires_at", "consumed_at", "revoked_at", "revoked_by_uid", "revocation_reference"},
 			"experiment_barriers":        {"transaction_id", "deadline_ns", "start_time_ns"},
 			"experiment_readiness":       {"debuglet_id", "metadata", "ready_at_ns"},
@@ -126,7 +130,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"debuglets": {"wasm"},
 		}, Tables: map[string][]string{
 			"operator_dispositions": {"run_id", "recorded_at_ns", "reason"},
-			"debuglets":             {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id"},
+			"debuglets":             {"uuid", "wasm", "transaction_id", "dispatcher_incarnation", "session_id", "egress_grant"},
 			"debuglet_logs":         {"debuglet_id", "output"},
 			"debuglet_exits":        {"debuglet_id", "dispatcher_incarnation", "session_id", "exit_code", "attempts", "rejected"},
 			"tesla_chains":          {"generation", "anchor", "epoch_base", "delay_ns", "chain_length", "disclosure_delay"},

@@ -40,6 +40,9 @@ func TestBootstrapFresh(t *testing.T) {
 			db := openSchemaDB(t, path)
 			if role == Dispatcher {
 				assertSchema(t, db, map[string]string{
+					"egress_clock":               "id observed_at",
+					"egress_grants":              "run_uuid policy_hash window_start window_end grant_json",
+					"egress_reservations":        "run_uuid bucket bits_per_second burst_bytes bytes attempts_per_second attempt_burst attempts targets",
 					"account_recovery_audit":     "selector user_id case_reference issued_by_uid issued_at expires_at consumed_at revoked_at revoked_by_uid revocation_reference",
 					"attribution_chains":         "executor_id chain_id anchor t0_ns interval_ns delay_epochs chain_length tag_spec first_seen_ns last_seen_ns",
 					"attribution_keys":           "executor_id chain_id epoch key disclosed_at_ns",
@@ -86,11 +89,11 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{
-					"debuglets":             "id uuid start_time args wasm transaction_id floor_bw ceil_bw timeout_ms addresses require_icmp listen_udp listen_tcp listen_scion started_at dispatcher_incarnation session_id",
+					"debuglets":             "id uuid start_time args wasm transaction_id floor_bw ceil_bw timeout_ms addresses require_icmp listen_udp listen_tcp listen_scion started_at dispatcher_incarnation session_id egress_grant",
 					"debuglet_logs":         "id debuglet_id timestamp output",
 					"debuglet_exits":        "debuglet_id dispatcher_incarnation session_id exit_code error_message recorded_at attempts last_attempt_at last_error rejected",
 					"tesla_chains":          "generation anchor epoch_base delay_ns chain_length created_at disclosure_delay",
@@ -98,7 +101,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"output_frames":         "run_id sequence timestamp_ns output",
 					"output_usage":          "singleton charged_bytes",
 					"operator_dispositions": "run_id recorded_at_ns reason",
-				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8})
+				}, []string{"debuglet_exits_binding_idx", "debuglets_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 				executorSchemaRoundTrip(t, db)
 			}
 			if err := db.Close(); err != nil {

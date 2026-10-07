@@ -28,6 +28,7 @@ type DebugletSpec struct {
 }
 
 type DebugletPolicy struct {
+	EgressGrant *pb.EgressGrant
 	FloorBW     bitrate.Bitrate
 	CeilBW      bitrate.Bitrate
 	Timeout     time.Duration

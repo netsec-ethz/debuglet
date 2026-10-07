@@ -61,6 +61,7 @@ type Dispatcher struct {
 	mu           sync.RWMutex
 	db           *sql.DB
 	outputLimits config.OutputConfig
+	egress       config.EgressConfig
 	admission    *accountAdmission
 	retention    config.RetentionConfig
 	attribution  config.AttributionConfig

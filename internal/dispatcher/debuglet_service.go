@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -72,6 +73,42 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 		return nil, err
 	}
 
+	grants := make([]egressReservation, len(specs))
+	if d.egress.Enabled {
+		// Resolve names without holding registry ownership. The immutable policy and
+		// admission state are checked again after reacquiring the transaction lock.
+		cfg := d.egress
+		d.mu.Unlock()
+		resolveCtx, cancelResolve := context.WithTimeout(ctx, 3*time.Second)
+		for i := range specs {
+			grants[i], err = prepareEgress(resolveCtx, cfg, specs[i], userID)
+			if err != nil {
+				break
+			}
+		}
+		cancelResolve()
+		d.mu.Lock()
+		if len(specs) > 0 {
+			recorded, retryErr := d.admittedRuns(ctx, specs)
+			if retryErr != nil || recorded != nil {
+				d.mu.Unlock()
+				return recorded, retryErr
+			}
+		}
+		if err == nil && d.closed {
+			err = ErrDispatcherClosed
+		}
+		if err == nil {
+			err = AdmissionPaused()
+		}
+		if err == nil && egressPolicyHash(cfg) != egressPolicyHash(d.egress) {
+			err = fmt.Errorf("%w: configuration changed during destination resolution; retry", ErrEgressBudget)
+		}
+		if err != nil {
+			d.mu.Unlock()
+			return nil, err
+		}
+	}
 	var sreqs []schedule.Request
 	rollbackReservations := func() {
 		for i := len(sreqs) - 1; i >= 0; i-- {
@@ -90,6 +127,20 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			failLocked()
 			return nil, fmt.Errorf("invalid debuglet spec (i=%d): %w", i, err)
 		} else {
+			grantErr := d.completeEgress(specs[i], *r, &grants[i])
+			if grantErr != nil {
+				failLocked()
+				return nil, grantErr
+			}
+			specs[i].Policy.EgressGrant = grants[i].grant
+			if grants[i].grant != nil {
+				encoded, err := protojson.Marshal(grants[i].grant)
+				if err != nil {
+					failLocked()
+					return nil, err
+				}
+				admissionBytes += int64(len(encoded) + 256*len(grants[i].buckets))
+			}
 			entry := d.executors[specs[i].ExecutorID]
 			mutation, admitErr := entry.owner.AdmitMutation(ctx)
 			if admitErr != nil {
@@ -118,6 +169,10 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 	qtx := database.New(d.db).WithTx(tx)
 	for i := range sreqs {
+		if err := d.reserveEgress(ctx, tx, debugletIDS[i], grants[i]); err != nil {
+			failLocked()
+			return nil, err
+		}
 		row, err := qtx.CreateDebuglet(ctx, database.CreateDebugletParams{
 			Uuid:                  debugletIDS[i],
 			StartTime:             models.NewUTCTime(sreqs[i].From),
@@ -467,6 +522,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 				ListenUdp:   spec.Policy.ListenUDP,
 				ListenTcp:   spec.Policy.ListenTCP,
 				ListenScion: spec.Policy.ListenSCION,
+				EgressGrant: spec.Policy.EgressGrant,
 			},
 		}
 		if _, err := client.Upload(ctx, req); err != nil {

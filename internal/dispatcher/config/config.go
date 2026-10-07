@@ -23,6 +23,7 @@ type DispatcherConfig struct {
 	CILogonOIDC        CILogonConfig            `toml:"cilogon_oidc"`
 	Authentication     AuthenticationConfig     `toml:"authentication"`
 	Output             OutputConfig             `toml:"output"`
+	Egress             EgressConfig             `toml:"egress"`
 	Admission          AdmissionConfig          `toml:"admission"`
 	Retention          RetentionConfig          `toml:"retention"`
 	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
@@ -178,6 +179,9 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 // keys are applied by LoadConfig before this runs, so every value seen here is
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
+	if err := cfg.Egress.Validate(); err != nil {
+		return err
+	}
 	if err := cfg.Admission.Validate(); err != nil {
 		return err
 	}
