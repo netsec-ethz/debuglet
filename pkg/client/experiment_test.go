@@ -13,6 +13,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 func experimentDefinition(t *testing.T) ExperimentDefinition {
@@ -121,5 +123,15 @@ func TestExperimentActionsRejectWrongBatchBeforeReadingOrCancelling(t *testing.T
 				t.Fatalf("action=%s error=%v requests=%d", action, err, len(f.requests()))
 			}
 		})
+	}
+}
+
+func TestExperimentRejectsOversizedMembershipBeforeReadingFiles(t *testing.T) {
+	f := newFakeServer(t, "")
+	definition := ExperimentDefinition{Participants: make([]ExperimentRun, wire.MaxExperimentParticipants+1)}
+	// Every path is empty: a file read would fail with a different error.
+	_, err := f.client(t, Options{}).SubmitExperimentTEST(t.Context(), definition)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 128 participants") || len(f.requests()) != 0 {
+		t.Fatalf("error=%v requests=%d", err, len(f.requests()))
 	}
 }

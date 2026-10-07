@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // ExperimentDefinition is a reproducible batch. WASM paths are local to the
@@ -46,6 +48,9 @@ type ExperimentResults struct {
 // the returned receipt preserves known identities; the error's outcome-unknown
 // classification still applies. Never retry an uncertain submission blindly.
 func (c *Client) SubmitExperimentTEST(ctx context.Context, def ExperimentDefinition) (ExperimentSubmission, error) {
+	if len(def.Participants) > wire.MaxExperimentParticipants {
+		return ExperimentSubmission{}, fmt.Errorf("client: experiment exceeds %d participants", wire.MaxExperimentParticipants)
+	}
 	receipt := ExperimentSubmission{Participants: append([]ExperimentRun(nil), def.Participants...)}
 	requests := make([]Request, len(receipt.Participants))
 	for i := range receipt.Participants {
