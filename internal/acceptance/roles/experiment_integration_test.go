@@ -26,10 +26,7 @@ import (
 // executor processes and checks the retained output of every admitted run.
 func TestInstalledExperiment(t *testing.T) {
 	ctx, assets, work, launch := installedRendezvous(t)
-	wasm, err := os.ReadFile(os.Getenv("DEBUGLET_EXPERIMENT_WASM"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	wasmPath := os.Getenv("DEBUGLET_EXPERIMENT_WASM")
 	d := launch("dispatcher", assets.Dispatcher, storagecheck.Dispatcher, dispatcherconfig.DispatcherConfig{
 		Admission: dispatcherconfig.DefaultAdmissionConfig(), Attribution: dispatcherconfig.DefaultAttributionConfig(),
 		Server: dispatcherconfig.ServerConfig{BindHost: "127.0.0.1", LocalDevelopment: true, Version: assets.Manifest.Version},
@@ -38,8 +35,8 @@ func TestInstalledExperiment(t *testing.T) {
 		Database: dispatcherconfig.DatabaseConfig{Path: filepath.Join(work, "dispatcher", "state.sqlite")}, Logging: dispatcherconfig.LoggingConfig{LogLevel: "info", JSONLogs: true},
 	})
 	c := sdk(t, "http://"+d.HTTPAddr)
-	requests := make([]client.Request, 5)
-	for i := range requests {
+	participants := make([]client.ExperimentRun, 5)
+	for i := range participants {
 		id, name := uuid.NewString(), fmt.Sprintf("executor-%d", i)
 		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 		if err != nil {
@@ -55,7 +52,7 @@ func TestInstalledExperiment(t *testing.T) {
 			Network:  executorconfig.NetworkConfig{PublicHost: "127.0.0.1", PublicPorts: strconv.Itoa(port), PacketCounter: "fallback", DisableSCIONEnvironment: true, Policy: executorconfig.PolicyConfig{LocalTargets: &local}},
 			Database: executorconfig.DatabaseConfig{Path: filepath.Join(work, name, "state.sqlite")}, Logging: executorconfig.LoggingConfig{LogLevel: "info", JSONLogs: true}, Pricing: executorconfig.PricingConfig{Currency: "TEST", PricePerBwS: 1},
 		})
-		requests[i] = client.Request{OrderID: int64(i), ExecutorID: id, Wasm: wasm, Args: []string{strconv.Itoa(i)}, Policy: client.Policy{FloorBW: 100_000, CeilBW: 200_000, TimeoutMS: 30_000, Addresses: []string{"127.0.0.1"}, ListenUDP: true}}
+		participants[i] = client.ExperimentRun{OrderID: int64(i), ExecutorID: id, WASMPath: wasmPath, Args: []string{strconv.Itoa(i)}, Policy: client.Policy{FloorBW: 100_000, CeilBW: 200_000, TimeoutMS: 30_000, Addresses: []string{"127.0.0.1"}, ListenUDP: true}}
 	}
 	for {
 		nodes, err := c.Nodes(ctx)
@@ -68,7 +65,7 @@ func TestInstalledExperiment(t *testing.T) {
 				ready++
 			}
 		}
-		if ready == len(requests) {
+		if ready == len(participants) {
 			break
 		}
 		select {
@@ -77,16 +74,13 @@ func TestInstalledExperiment(t *testing.T) {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	batch, err := client.Prepare(requests)
-	if err != nil {
-		t.Fatal(err)
-	}
-	submission, err := c.SubmitTEST(ctx, batch)
+	submission, err := c.SubmitExperimentTEST(ctx, client.ExperimentDefinition{Participants: participants})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sharedStart int64
-	for _, id := range submission.IDs {
+	for _, participant := range submission.Participants {
+		id := participant.RunID
 		var output []byte
 		var after int64
 		for {
@@ -125,7 +119,7 @@ func TestInstalledExperiment(t *testing.T) {
 		if err := json.Unmarshal(output, &result); err != nil {
 			t.Fatalf("participant %s output=%s: %v", id, output, err)
 		}
-		if result.ExperimentID != submission.TransactionID || result.StartTimeNS == 0 || result.Sent != 4 || result.Received != 4 {
+		if result.ExperimentID != submission.ExperimentID || result.StartTimeNS == 0 || result.Sent != 4 || result.Received != 4 {
 			t.Fatalf("participant %s: %+v", id, result)
 		}
 		if sharedStart != 0 && sharedStart != result.StartTimeNS {
@@ -133,5 +127,9 @@ func TestInstalledExperiment(t *testing.T) {
 		}
 		sharedStart = result.StartTimeNS
 		t.Logf("run=%s group=%s start=%d sent=%d received=%d", id, result.ExperimentID, result.StartTimeNS, result.Sent, result.Received)
+	}
+	group, err := c.ExportExperiment(ctx, submission)
+	if err != nil || len(group.Results) != len(participants) {
+		t.Fatalf("grouped export: %d results, %v", len(group.Results), err)
 	}
 }
