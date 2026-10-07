@@ -47,7 +47,7 @@ func (c *counterCleanup) Close() error {
 }
 
 // Do not use generated countObjects.Close: it stops after the first failure.
-// Keep this explicit list aligned with the generated two programs and five maps.
+// Keep this explicit list aligned with the generated two programs and six maps.
 // Nil checks happen before conversion to io.Closer, avoiding typed-nil handles.
 func counterObjectResources(objects *countObjects) []counterResource {
 	var owned counterCleanup
@@ -71,6 +71,9 @@ func counterObjectResources(objects *countObjects) []counterResource {
 	}
 	if objects.RatesMap != nil {
 		owned.add("rates_map", objects.RatesMap)
+	}
+	if objects.DropStats != nil {
+		owned.add("drop_stats", objects.DropStats)
 	}
 	return owned.resources
 }

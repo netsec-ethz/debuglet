@@ -5,6 +5,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"net"
 	"slices"
 	"sync/atomic"
@@ -12,11 +13,48 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/scionproto/scion/pkg/addr"
 	sdpb "github.com/scionproto/scion/pkg/proto/daemon"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 )
+
+type observedPacketCounter struct {
+	ratelimit.PacketCount
+	mode  string
+	err   error
+	calls int
+}
+
+func (c *observedPacketCounter) Type() string { return c.mode }
+func (c *observedPacketCounter) DropTotals() ([2]uint64, [2]uint64, error) {
+	c.calls++
+	return [2]uint64{2, 3}, [2]uint64{40, 60}, c.err
+}
+func TestPacketDropReportRequiresCurrentAuthoritativeObservation(t *testing.T) {
+	counter := &observedPacketCounter{mode: "ebpf"}
+	if got := packetDropReport(counter, "present"); got == nil || got.IngressVerdicts != 2 || got.EgressSkbBytes != 60 {
+		t.Fatalf("fresh drop observation: %v", got)
+	}
+	for _, state := range []string{"unknown", "missing"} {
+		if packetDropReport(counter, state) != nil {
+			t.Fatal("missing attachment became numeric")
+		}
+	}
+	if counter.calls != 1 {
+		t.Fatal("unattached counter map was read")
+	}
+	counter.err = errors.New("read failed")
+	if packetDropReport(counter, "present") != nil {
+		t.Fatal("read failure became known zero")
+	}
+	counter.mode = "fallback"
+	counter.err = nil
+	if packetDropReport(counter, "present") != nil || packetDropReport(nil, "present") != nil {
+		t.Fatal("unsupported counter claimed TCX observations")
+	}
+}
 
 type capabilityDaemon struct {
 	sdpb.UnimplementedDaemonServiceServer
