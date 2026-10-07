@@ -30,6 +30,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/tag"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
+	"github.com/netsec-ethz/debuglet/internal/testtls"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/netsec-ethz/debuglet/pkg/tagspec"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
@@ -765,6 +766,23 @@ func TestAttributionVerifyChargesCandidateTrials(t *testing.T) {
 func TestAttributionSignedHistorySurvivesOfflineExport(t *testing.T) {
 	f, _, chain := vtFixture(t)
 	run := vtRun(t, f)
+	ca, err := testtls.NewAuthority(t.TempDir(), "retained-schedule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := ca.Issue("executor", testtls.Options{Client: true, NotBefore: chain.t0.Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule := wire.AttributionSchedule{ChainID: tag.ChainID(chain.anchor()), K0: chain.anchor(), T0UnixNs: chain.t0.UnixNano(), EpochSeconds: 60, DisclosureDelayEpochs: chain.delay, ChainLength: chain.length, TagSpec: 1}
+	proof, err := wire.SignAttributionSchedule(ccExecutorID, schedule, identity.Certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(proof)
+	if _, err := f.queries.RecordAttributionScheduleProof(t.Context(), database.RecordAttributionScheduleProofParams{ExecutorID: ccExecutorID, ChainID: schedule.ChainID, ScheduleProof: raw}); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Now()
 	epoch := chain.epochOf(at)
 	if err := f.queries.InsertAttributionKey(t.Context(), database.InsertAttributionKeyParams{ExecutorID: ccExecutorID, ChainID: tag.ChainID(chain.anchor()), Epoch: epoch, Key: chain.key(epoch), DisclosedAtNs: 1}); err != nil {
@@ -801,13 +819,13 @@ func TestAttributionSignedHistorySurvivesOfflineExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	trust := client.EvidenceTrust{Dispatcher: f.root.URL}
+	trust := client.EvidenceTrust{Dispatcher: f.root.URL, ExecutorCertificates: map[string][]string{ccExecutorID: {wire.AttributionCertificateID(proof.Certificate)}}}
 	for _, k := range keys.Keys {
 		trust.Keys = append(trust.Keys, client.EvidenceReceiptKey{KeyID: k.KeyID, PublicKey: k.PublicKey, ValidFrom: k.ValidFrom, ValidTo: k.ValidTo})
 	}
 	// There are no network reads when verifying this exported history.
 	f.root.Close()
-	if got, err := client.VerifyEvidenceWithTrust(t.Context(), ev, trust); err != nil || !got.HistoryAuthenticated || got.Counts.Verified != 1 {
+	if got, err := client.VerifyEvidenceWithTrust(t.Context(), ev, trust); err != nil || !got.HistoryAuthenticated || !got.SchedulesAuthenticated || got.Counts.Verified != 1 {
 		t.Fatalf("offline export: %+v, %v", got, err)
 	}
 }

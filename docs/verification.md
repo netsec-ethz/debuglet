@@ -384,8 +384,9 @@ specification. This is executor-origin evidence, not a separate account-key
 signature or a certificate of clock quality.
 
 For independent executor-origin verification, add `executor_certificates` to
-the trust file: an object mapping each executor ID to its lowercase SHA-256
-certificate fingerprint (DER bytes). Obtain those pins from the operator through
+the trust file: an object mapping each executor ID to an array of lowercase
+SHA-256 certificate fingerprints (DER bytes), for example
+`{"executor_certificates":{"node-1":["<old fingerprint>","<current fingerprint>"]}}`. Obtain those pins from the operator through
 an authenticated channel, separately from the bundle. Every candidate must have
 a valid proof under its pin; the report then sets `schedules_authenticated`.
 Certificate validity is checked at the signed chain origin, so a retained proof
@@ -455,7 +456,11 @@ verified.json` (on one command line). The SDK equivalent is
 milliseconds and uses at least the existing tolerance, plus the protocol's
 five-second early-disclosure allowance. A key is usable only while
 `captured_at + applied_bound < scheduled_disclosure - 5 seconds`.
-`--at` overrides cannot carry receiver clock trust.
+`--at` overrides cannot carry receiver clock trust. Tag-spec v1 still checks the
+capture epoch and its predecessor; the observation does not expand that matching
+window or its false-match bound. A deployment requiring a wider clock/delay
+window needs a separately versioned matching policy, not a larger claimed error
+bound alone.
 
 For later offline checks, place that independently obtained record in the
 `capture_clock` field of the existing trust file and run

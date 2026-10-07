@@ -417,8 +417,11 @@ func verifyEvidence(ctx context.Context, ev Evidence, trust *EvidenceTrust) (Ver
 		for _, candidate := range lookup.Candidates {
 			fingerprint := ""
 			if trust != nil && trust.ExecutorCertificates != nil {
-				fingerprint = trust.ExecutorCertificates[candidate.ExecutorID]
-				if fingerprint == "" {
+				if candidate.Schedule.OperatorProof == nil {
+					return VerifyReport{}, errors.New("client: executor schedule proof is missing")
+				}
+				fingerprint = wire.AttributionCertificateID(candidate.Schedule.OperatorProof.Certificate)
+				if !slices.Contains(trust.ExecutorCertificates[candidate.ExecutorID], fingerprint) {
 					return VerifyReport{}, fmt.Errorf("client: no trusted certificate for executor %s", candidate.ExecutorID)
 				}
 			} else if candidate.Schedule.OperatorProof != nil {

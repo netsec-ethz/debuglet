@@ -24,7 +24,7 @@ type EvidenceTrust struct {
 	CaptureClock         *CaptureClockTrust   `json:"capture_clock,omitempty"`
 	Dispatcher           string               `json:"dispatcher"`
 	Keys                 []EvidenceReceiptKey `json:"keys"`
-	ExecutorCertificates map[string]string    `json:"executor_certificates,omitempty"`
+	ExecutorCertificates map[string][]string  `json:"executor_certificates,omitempty"`
 }
 
 func (s *clientSource) historyKeys(ctx context.Context, id string) error {
@@ -106,10 +106,17 @@ func ReadEvidenceTrust(data []byte) (EvidenceTrust, error) {
 	if len(trust.ExecutorCertificates) > 128 {
 		return trust, errors.New("client: too many trusted executor certificates")
 	}
-	for executor, fingerprint := range trust.ExecutorCertificates {
-		decoded, err := hex.DecodeString(fingerprint)
-		if executor == "" || len(executor) > 128 || err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != fingerprint {
-			return trust, errors.New("client: invalid executor certificate pin")
+	pins := 0
+	for executor, fingerprints := range trust.ExecutorCertificates {
+		pins += len(fingerprints)
+		if executor == "" || len(executor) > 128 || len(fingerprints) == 0 || pins > 128 {
+			return trust, errors.New("client: executor trust requires 1 to 128 certificate pins")
+		}
+		for _, fingerprint := range fingerprints {
+			decoded, err := hex.DecodeString(fingerprint)
+			if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != fingerprint {
+				return trust, errors.New("client: invalid executor certificate pin")
+			}
 		}
 	}
 	if trust.CaptureClock != nil {

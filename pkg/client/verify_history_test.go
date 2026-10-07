@@ -45,10 +45,27 @@ func TestEvidenceAuthenticatesDatedHistory(t *testing.T) {
 		}
 		ev.Lookups[i].Statement = &wire.AttributionReceipt{KeyID: key.KeyID, Payload: p, Signature: ed25519.Sign(private, p)}
 	}
-	trust := EvidenceTrust{Dispatcher: ev.Dispatcher.URL, Keys: ev.ReceiptKeys, ExecutorCertificates: map[string]string{"exec": wire.AttributionCertificateID(identity.Certificate.Certificate[0])}}
+	trust := EvidenceTrust{Dispatcher: ev.Dispatcher.URL, Keys: ev.ReceiptKeys, ExecutorCertificates: map[string][]string{"exec": {wire.AttributionCertificateID(identity.Certificate.Certificate[0])}}}
 	if got, err := VerifyEvidenceWithTrust(t.Context(), ev, trust); err != nil || !got.HistoryAuthenticated || !got.SchedulesAuthenticated || got.Counts.Verified != 1 {
 		t.Fatalf("verified evidence: %+v, %v", got, err)
 	}
+	// A bundle from an older enrolled certificate remains verifiable after
+	// rotation when the receiver kept both independent pins.
+	rotated, err := ca.Issue("executor-renewed", testtls.Options{Client: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPin := trust.ExecutorCertificates["exec"][0]
+	newPin := wire.AttributionCertificateID(rotated.Certificate.Certificate[0])
+	trust.ExecutorCertificates["exec"] = []string{newPin, oldPin}
+	if _, err := VerifyEvidenceWithTrust(t.Context(), ev, trust); err != nil {
+		t.Fatal(err)
+	}
+	trust.ExecutorCertificates["exec"] = []string{newPin}
+	if _, err := VerifyEvidenceWithTrust(t.Context(), ev, trust); err == nil {
+		t.Fatal("replacement certificate accepted for older signed schedule")
+	}
+	trust.ExecutorCertificates["exec"] = []string{newPin, oldPin}
 	if got, err := VerifyEvidence(t.Context(), ev); err != nil || got.HistoryAuthenticated {
 		t.Fatalf("embedded keys must not establish trust: %+v, %v", got, err)
 	}
