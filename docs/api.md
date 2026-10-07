@@ -145,7 +145,7 @@ API 1.10 adds authenticated `GET` and `POST /operator/executors`, plus
 operations scoped to the caller's machines; they do not grant dispatcher-wide
 operator privileges. Inventory includes pending and offline machines.
 
-Each inventory entry separately reports `admission`: `ready` (subject to normal
+API 1.20 adds `admission` to each inventory entry: `ready` (subject to normal
 admission checks), `maintenance` (the dispatcher has paused new submissions), or
 `offline` (no ready control session, including pending enrollment). `ready` and
 `status` continue to describe the control connection even during dispatcher

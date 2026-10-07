@@ -111,3 +111,9 @@ API 1.17 adds RIPE Atlas-style `status`, `status_since`, `first_connected`, `las
 Dispatcher schema 24 stores the executor status history in `probe_status` and `probe_addresses`, filling `probe_status` from the recorded TESLA chains. The executor listing reads it, so this build requires schema 24; upgrade explicitly (`make deploy-upgrade-db`, or `-upgrade-database`) before starting it.
 
 API 1.19 adds recorded destination policies: `PATCH /destination` accepts `denied`, `reason` and `expires_at`, and `GET /destinations` lists the current policy of each destination. Dispatcher schema 26 stores their append-only history; upgrade explicitly before starting this build. The control protocol gains the optional `DestinationLimit.denied` field without a version change; an executor that does not know it still applies the zero limit sent with it, and an executor that knows it closes the active sockets to the destination.
+
+API 1.20 adds `admission` and `drain_status` to account-owned executor inventory.
+Admission reports the current control readiness and dispatcher maintenance.
+Drain status is explicitly unknown because the existing control protocol does
+not observe joined host service shutdown. No schema or control-protocol change
+is required. Older servers omit these observations; clients show them as unavailable.
