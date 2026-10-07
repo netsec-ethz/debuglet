@@ -104,7 +104,10 @@ func TestInstalledExperiment(t *testing.T) {
 			if len(output) > 64<<10 {
 				t.Fatal("excessive guest output")
 			}
-			if page.State == client.StateExited && !page.HasMore {
+			if page.Output.State == "truncated" {
+				t.Fatalf("participant %s output truncated: %+v", id, page.Output)
+			}
+			if page.State == client.StateExited && !page.HasMore && page.Output.State == "complete" {
 				break
 			}
 			select {
