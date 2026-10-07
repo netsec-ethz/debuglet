@@ -7,298 +7,349 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"os"
 	"slices"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
-)
-
-// testdata/sim-trace-congestion-seed7.json is the trace the Debuglet simulator
-// (commit e918b0c1) writes for `go run . -scenario congestion -seed 7 -trace
-// FILE`. Its scenario events are replayed here into the dispatcher's
-// destination accounting, and core's admission decisions are compared with
-// the simulator's. Only the JSON fields the replay needs are decoded.
-const (
-	simTraceDigest = "b2f51d7e28deb45f6dfc22f34e15b0fbcc655125164e9b673c7e36ba93a86b2b"
-	// simTraceSHA256 pins the whole fixture file.
-	simTraceSHA256 = "67c26fa00727c98a5d7996a0c7e68fde24daeee875ac071c4fb6eae915696294"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
+	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/app"
+	"go.uber.org/zap"
 )
 
 type simJob struct {
 	ID           string          `json:"id"`
 	Executor     string          `json:"executor"`
+	Source       string          `json:"source"`
 	Floor        bitrate.Bitrate `json:"floor"`
 	Ceil         bitrate.Bitrate `json:"ceil"`
 	Destinations []string        `json:"destinations"`
 }
-
 type simCapacity struct {
 	Target   string          `json:"target"`
 	Capacity bitrate.Bitrate `json:"capacity"`
 }
-
 type simEvent struct {
 	Submit            *simJob      `json:"submit"`
 	Remove            string       `json:"remove"`
 	UpdateExecutor    *simCapacity `json:"update_executor"`
 	UpdateDestination *simCapacity `json:"update_destination"`
 }
-
+type simScenario struct {
+	Name    string `json:"name"`
+	Seed    int64  `json:"seed"`
+	Filter  int    `json:"filter"`
+	Options struct {
+		ExecutorCapacity    bitrate.Bitrate `json:"executor_capacity"`
+		DestinationCapacity bitrate.Bitrate `json:"destination_capacity"`
+		SourceCapacity      bitrate.Bitrate `json:"source_capacity"`
+	} `json:"options"`
+	Events []json.RawMessage `json:"events"`
+}
 type simTrace struct {
-	Scenario struct {
-		Name    string `json:"name"`
-		Seed    int64  `json:"seed"`
-		Options struct {
-			ExecutorCapacity    bitrate.Bitrate `json:"executor_capacity"`
-			DestinationCapacity bitrate.Bitrate `json:"destination_capacity"`
-		} `json:"options"`
-		Events []json.RawMessage `json:"events"`
-	} `json:"scenario"`
-	Steps []struct {
-		Index    int  `json:"index"`
-		Rejected bool `json:"rejected"`
-		Skipped  bool `json:"skipped"`
+	Scenario simScenario `json:"scenario"`
+	Steps    []struct {
+		Index    int             `json:"index"`
+		Rejected bool            `json:"rejected"`
+		Skipped  bool            `json:"skipped"`
+		Assigned bitrate.Bitrate `json:"assigned"`
+		Updates  []struct {
+			ID  string          `json:"id"`
+			CBW bitrate.Bitrate `json:"cbw"`
+		} `json:"updates"`
 	} `json:"steps"`
 	Allocations map[string]bitrate.Bitrate `json:"allocations"`
+	Violation   json.RawMessage            `json:"violation"`
 	Digest      string                     `json:"digest"`
 }
 
-// The classes of admission decisions in which core and the simulator may
-// differ. The dispatcher's destination accounting holds no executor capacity,
-// so where the simulator refuses a job because its executor is full core
-// admits it; and the simulator's multi v1 filter does not bound jobs by
-// destination capacity, so where a destination is full core refuses a job the
-// simulator admits. Any other difference fails the replay.
-const (
-	divergenceExecutorFull    = "simulator refuses by executor capacity, core admits"
-	divergenceDestinationFull = "core refuses by destination capacity, simulator admits"
-)
-
-func TestReplaySimulatorTraceAgainstDestinationAccounting(t *testing.T) {
-	raw, err := os.ReadFile("testdata/sim-trace-congestion-seed7.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != simTraceSHA256 {
-		t.Fatalf("fixture SHA-256 is %x, want %s", sum, simTraceSHA256)
-	}
-	var trace simTrace
-	if err := json.Unmarshal(raw, &trace); err != nil {
-		t.Fatal(err)
-	}
-	if trace.Digest != simTraceDigest || len(trace.Steps) != len(trace.Scenario.Events) {
-		t.Fatalf("unexpected fixture: digest %s, %d steps for %d events", trace.Digest, len(trace.Steps), len(trace.Scenario.Events))
-	}
-	for i, step := range trace.Steps {
-		if step.Index != i {
-			t.Fatalf("step %d carries index %d", i, step.Index)
-		}
-	}
-	events := make([]simEvent, len(trace.Scenario.Events))
-	for i, rawEvent := range trace.Scenario.Events {
-		if err := json.Unmarshal(rawEvent, &events[i]); err != nil {
-			t.Fatalf("event %d: %v", i, err)
-		}
-	}
-
-	// Units: the simulator writes bit/s, the unit of internal/bitrate.
-	gigabit, err := bitrate.Parse("1gbit")
-	if err != nil || gigabit != bitrate.Gigabit {
-		t.Fatalf("1gbit parses to %d (%v)", int64(gigabit), err)
-	}
-	options := trace.Scenario.Options
-	if options.DestinationCapacity != gigabit || options.ExecutorCapacity != gigabit {
-		t.Fatalf("scenario capacities %d and %d bit/s, want 1 Gbit/s", int64(options.ExecutorCapacity), int64(options.DestinationCapacity))
-	}
-	for i, event := range events {
-		if job := event.Submit; job != nil && (job.Floor%bitrate.Megabit != 0 || job.Ceil%bitrate.Megabit != 0 ||
-			!bitrate.InPolicyRange(int64(job.Floor)) || !bitrate.InPolicyRange(int64(job.Ceil))) {
-			t.Fatalf("event %d: floor %d and ceiling %d bit/s are not whole Mbit/s policy values", i, int64(job.Floor), int64(job.Ceil))
-		}
-	}
-
-	usage := resource.NewDestinations(options.DestinationCapacity)
-	executorCapacity := map[string]bitrate.Bitrate{}
-	for _, event := range events {
-		if event.Submit != nil {
-			executorCapacity[event.Submit.Executor] = options.ExecutorCapacity
-		}
-	}
-	active := map[string]*simJob{}   // the jobs admitted by both sides
-	touched := map[string]bool{}     // every destination core has charged so far
-	coreRefused := map[string]bool{} // the jobs only the simulator admitted
-	runID := func(job string) uuid.UUID { return uuid.NewSHA1(uuid.NameSpaceOID, []byte(job)) }
-
-	// violation fails the replay with the shortest prefix of the scenario
-	// that reproduces it.
-	violation := func(i int, format string, args ...any) {
-		t.Helper()
-		prefix, _ := json.MarshalIndent(trace.Scenario.Events[:i+1], "", "  ")
-		t.Fatalf("event %d: %s\nreproducing events:\n%s", i, fmt.Sprintf(format, args...), prefix)
-	}
-	// check states core's invariants on every destination charged so far. A
-	// destination without active jobs charges nothing and shares nothing.
-	check := func(i int) {
-		t.Helper()
-		floors := map[string]bitrate.Bitrate{}
-		totals := map[[2]string][2]bitrate.Bitrate{}
-		for _, job := range active {
-			for _, destination := range distinct(job.Destinations) {
-				floors[destination] += job.Floor
-				key := [2]string{job.Executor, destination}
-				totals[key] = [2]bitrate.Bitrate{totals[key][0] + job.Floor, totals[key][1] + job.Ceil}
+// Generated by the companion simulator's deterministic scenario commands.
+// Pin complete files as well as logical digests; provenance and commands are
+// in testdata/sim-traces.md. These tests exercise owners, not packet traffic.
+func TestReplaySimulatorTracesAgainstRuntime(t *testing.T) {
+	for _, fixture := range []struct {
+		name, sha, digest string
+		seed              int
+	}{
+		{"congestion", "67c26fa00727c98a5d7996a0c7e68fde24daeee875ac071c4fb6eae915696294", "b2f51d7e28deb45f6dfc22f34e15b0fbcc655125164e9b673c7e36ba93a86b2b", 7},
+		{"churn", "e996c87309af1eb7bdd4f7ac02e98de807fc58e88b6c5ec0cbac6e6b8500be4e", "f0219bac3675d1f083296d637226cfea42bf546ff6661db18d7271f5a817d5f8", 7},
+		{"hierarchical", "cab81bb5e8fcf30584d7d67a2bd6f8635cb79ec6ccea4ca1ea206a48ac9f548b", "5ffae027a441ecb30d79cc85129592b4a0a6e983be7d4e83052977208719c860", 7},
+		{"shared", "5eccf799e9ff72619411c2ac692e6b26e4e788d4dff4017ba0030f954fe4376a", "78aa6e4d8d47dd3bfd89c253723382ad96a8adc5b53de5f7acfc7bc98183adec", 0},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			raw, err := os.ReadFile(fmt.Sprintf("testdata/sim-trace-%s-seed%d.json", fixture.name, fixture.seed))
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		for destination := range touched {
-			floor := floors[destination]
-			expected := map[string]bool{}
-			for key := range totals {
-				if key[1] == destination {
-					expected[key[0]] = true
-				}
+			sum := sha256.Sum256(raw)
+			if hex.EncodeToString(sum[:]) != fixture.sha {
+				t.Fatalf("fixture hash %x, want %s", sum, fixture.sha)
 			}
-			if used := usage.Used(destination); used != floor {
-				violation(i, "%s charges %d, the active floors sum to %d", destination, int64(used), int64(floor))
+			var trace simTrace
+			if err := json.Unmarshal(raw, &trace); err != nil {
+				t.Fatal(err)
 			}
-			var sum bitrate.Bitrate
-			seen := map[string]bool{}
-			for executor, share := range usage.Fairshare(destination) {
-				if seen[executor] || !expected[executor] {
-					violation(i, "%s on %s is given a share again or without an active job", executor, destination)
-				}
-				seen[executor] = true
-				want := totals[[2]string{executor, destination}]
-				if share < want[0] || share > want[1] {
-					violation(i, "%s on %s is given %d, outside [%d, %d]", executor, destination, int64(share), int64(want[0]), int64(want[1]))
-				}
-				sum += share
+			if trace.Digest != fixture.digest || len(trace.Violation) != 0 || len(trace.Steps) != len(trace.Scenario.Events) {
+				t.Fatal("fixture is not a complete successful trace")
 			}
-			for executor := range expected {
-				if !seen[executor] {
-					violation(i, "%s holds active jobs on %s but is given no share", executor, destination)
-				}
-			}
-			if capacity := usage.Cap(destination); sum > capacity {
-				violation(i, "shares on %s sum to %d, above the capacity %d", destination, int64(sum), int64(capacity))
-			}
-		}
-		for key, want := range totals {
-			if floor, ceil, ok := usage.Totals(key[0], key[1]); !ok || floor != want[0] || ceil != want[1] {
-				violation(i, "%s on %s holds [%d, %d], the active jobs [%d, %d]", key[0], key[1], int64(floor), int64(ceil), int64(want[0]), int64(want[1]))
-			}
-		}
-	}
-
-	var table []string
-	agree := map[string]int{}
-	differ := map[string]int{}
-	for i, event := range events {
-		step := trace.Steps[i]
-		switch {
-		case event.Submit != nil:
-			job := event.Submit
-			before := usage.Snapshot()
-			admitted := usage.Allocate(runID(job.ID), job.Executor, job.Destinations, job.Floor, job.Ceil) == nil
-			if admitted {
-				for _, destination := range job.Destinations {
-					touched[destination] = true
-				}
-			}
-			if admitted == !step.Rejected {
-				agree[map[bool]string{true: "admitted", false: "refused"}[admitted]]++
-				if admitted {
-					active[job.ID] = job
-				}
-				break
-			}
-			var class string
-			if admitted {
-				// Keep core on the simulator's admitted set: release the
-				// allocation again, which must restore the accounting exactly.
-				for _, destination := range distinct(job.Destinations) {
-					usage.Remove(runID(job.ID), destination)
-				}
-				if after := usage.Snapshot(); after != before {
-					violation(i, "releasing %s does not restore the accounting:\nbefore\n%s\nafter\n%s", job.ID, before, after)
-				}
-				var executorFloors bitrate.Bitrate
-				for _, other := range active {
-					if other.Executor == job.Executor {
-						executorFloors += other.Floor
-					}
-				}
-				if executorFloors+job.Floor > executorCapacity[job.Executor] {
-					class = divergenceExecutorFull
-				}
-			} else {
-				coreRefused[job.ID] = true
-				for _, destination := range distinct(job.Destinations) {
-					if usage.CheckCapacity(destination, job.Floor) != nil {
-						class = divergenceDestinationFull
-					}
-				}
-			}
-			differ[class]++
-			table = append(table, fmt.Sprintf("%3d %s %-7s core admitted=%-5t simulator rejected=%-5t class=%q", i, job.ID, job.Executor, admitted, step.Rejected, class))
-		case event.Remove != "":
-			job, held := active[event.Remove]
-			if coreRefused[event.Remove] {
-				delete(coreRefused, event.Remove)
-				held = true // the simulator holds it, core never did
-				job = nil
-			}
-			if held == step.Skipped {
-				violation(i, "core holds %s: %t, the simulator skipped its removal: %t", event.Remove, held, step.Skipped)
-			}
-			if job == nil {
-				break
-			}
-			allocations := usage.ActiveAllocations()
-			for _, destination := range distinct(job.Destinations) {
-				usage.Remove(runID(job.ID), destination)
-			}
-			delete(active, job.ID)
-			if released := allocations - usage.ActiveAllocations(); released != len(distinct(job.Destinations)) {
-				violation(i, "removing %s released %d allocations for %d destinations", job.ID, released, len(distinct(job.Destinations)))
-			}
-		case event.UpdateExecutor != nil:
-			executorCapacity[event.UpdateExecutor.Target] = event.UpdateExecutor.Capacity
-		case event.UpdateDestination != nil:
-			if strings.Contains(event.UpdateDestination.Target, "/") {
-				t.Fatalf("event %d: destination prefix %s is not replayed", i, event.UpdateDestination.Target)
-			}
-			if err := usage.SetLimit(event.UpdateDestination.Target, event.UpdateDestination.Capacity); err != nil {
-				violation(i, "core refuses the destination limit: %v", err)
-			}
-		default:
-			t.Fatalf("event %d: unknown event %s", i, trace.Scenario.Events[i])
-		}
-		check(i)
-	}
-
-	held := slices.Sorted(maps.Keys(active))
-	for id := range coreRefused {
-		held = append(held, id)
-	}
-	slices.Sort(held)
-	if allocated := slices.Sorted(maps.Keys(trace.Allocations)); !slices.Equal(held, allocated) {
-		t.Fatalf("the replay ends holding %v, the simulator %v", held, allocated)
-	}
-	t.Logf("agreed: %v; differed: %v\n%s", agree, differ, strings.Join(table, "\n"))
-	if differ[""] > 0 {
-		t.Fatalf("admission decisions differ outside the known classes:\n%s", strings.Join(table, "\n"))
+			replaySimulator(t, trace)
+		})
 	}
 }
 
-func distinct(destinations []string) []string {
-	out := slices.Clone(destinations)
+func replaySimulator(t *testing.T, trace simTrace) {
+	t.Helper()
+	options := trace.Scenario.Options
+	// Each fixture source belongs to one executor with the same default
+	// capacity. Core has no independent source allocator to compare here.
+	if options.ExecutorCapacity != bitrate.Gigabit || options.DestinationCapacity != bitrate.Gigabit || options.SourceCapacity != bitrate.Gigabit {
+		t.Fatal("fixture units/defaults changed")
+	}
+	usage := resource.NewDestinations(options.DestinationCapacity)
+	scheduler := schedule.New(time.Nanosecond)
+	from, to := time.Unix(1, 0), time.Unix(2, 0)
+	capacity := map[string]bitrate.Bitrate{}
+	limiters := map[string]*app.Limiter{}
+	sources := map[string]string{}
+	active := map[string]*simJob{}
+	simRates := map[string]bitrate.Bitrate{}
+	touched := map[string]bool{}
+	runID := func(id string) uuid.UUID { return uuid.NewSHA1(uuid.NameSpaceOID, []byte(id)) }
+	request := func(j *simJob) schedule.Request {
+		return schedule.Request{Executor: j.Executor, Destination: j.Destinations, From: from, To: to, Use: j.Floor}
+	}
+	violation := func(i int, format string, args ...any) {
+		t.Helper()
+		prefix := trace.Scenario
+		prefix.Events = prefix.Events[:i+1]
+		data, _ := json.MarshalIndent(prefix, "", "  ")
+		t.Fatalf("event %d: %s\nSave this scenario as failure.json, then run the simulator with -replay failure.json -trace replay.json:\n%s", i, fmt.Sprintf(format, args...), data)
+	}
+	executor := func(id string) *app.Limiter {
+		if limiters[id] == nil {
+			capacity[id] = options.ExecutorCapacity
+			limiters[id] = app.NewLimiter(zap.NewNop())
+			limiters[id].SetExecutorCapacity(capacity[id])
+		}
+		return limiters[id]
+	}
+	check := func(i int) {
+		t.Helper()
+		floors := map[string]bitrate.Bitrate{}
+		execFloors := map[string]bitrate.Bitrate{}
+		totals := map[[2]string][2]bitrate.Bitrate{}
+		for _, j := range active {
+			execFloors[j.Executor] += j.Floor
+			for _, dest := range j.Destinations {
+				floors[dest] += j.Floor
+				key := [2]string{j.Executor, dest}
+				totals[key] = [2]bitrate.Bitrate{totals[key][0] + j.Floor, totals[key][1] + j.Ceil}
+			}
+		}
+		budgets := map[[2]string]bitrate.Bitrate{}
+		for dest := range touched {
+			if usage.Used(dest) != floors[dest] || scheduler.QueryMaxDest(dest, from, to) != floors[dest] {
+				violation(i, "destination %s reservation differs from active floors", dest)
+			}
+			var sum bitrate.Bitrate
+			for exec, share := range usage.Fairshare(dest) {
+				key := [2]string{exec, dest}
+				want, ok := totals[key]
+				if !ok || share < want[0] || share > want[1] {
+					violation(i, "unexpected destination share %s/%s: %d", exec, dest, share)
+				}
+				budgets[key] = share
+				executor(exec).SetAddrCapacity(dest, share)
+				sum += share
+			}
+			if sum > usage.Cap(dest) {
+				violation(i, "destination %s shares exceed capacity", dest)
+			}
+		}
+		for key, want := range totals {
+			floor, ceil, ok := usage.Totals(key[0], key[1])
+			if !ok || floor != want[0] || ceil != want[1] || budgets[key] < want[0] {
+				violation(i, "lost destination ownership %v", key)
+			}
+		}
+		execSums := map[string]bitrate.Bitrate{}
+		simExecSums := map[string]bitrate.Bitrate{}
+		simDestSums := map[string]bitrate.Bitrate{}
+		addrSums := map[[2]string]bitrate.Bitrate{}
+		for _, j := range active {
+			rate, ok := simRates[j.ID]
+			if !ok || rate < j.Floor || rate > j.Ceil {
+				violation(i, "simulator share %s=%d violates policy", j.ID, rate)
+			}
+			simExecSums[j.Executor] += rate
+			for _, dest := range j.Destinations {
+				simDestSums[dest] += rate
+			}
+			limit, _, err := executor(j.Executor).GetExecLimit(runID(j.ID))
+			if err != nil || limit < j.Floor || limit > j.Ceil {
+				violation(i, "runtime executor share %s=%d: %v", j.ID, limit, err)
+			}
+			execSums[j.Executor] += limit
+			for _, dest := range j.Destinations {
+				limit, _, err := executor(j.Executor).GetAddrLimit(runID(j.ID), dest)
+				if err != nil || limit < j.Floor || limit > j.Ceil {
+					violation(i, "runtime destination share %s/%s=%d: %v", j.ID, dest, limit, err)
+				}
+				addrSums[[2]string{j.Executor, dest}] += limit
+			}
+		}
+		for exec, cap := range capacity {
+			if scheduler.QueryMaxExec(exec, from, to) != execFloors[exec] || execSums[exec] > cap || simExecSums[exec] > cap {
+				violation(i, "executor %s reservation or runtime capacity violated", exec)
+			}
+		}
+		for dest, sum := range simDestSums {
+			if sum > usage.Cap(dest) {
+				violation(i, "simulator shares on %s exceed capacity", dest)
+			}
+		}
+		for key, sum := range addrSums {
+			if sum > budgets[key] {
+				violation(i, "runtime spends %d above dispatcher budget %d on %v", sum, budgets[key], key)
+			}
+		}
+	}
+	remove := func(i int, j *simJob) {
+		scheduler.Remove(request(j))
+		for _, dest := range j.Destinations {
+			usage.Remove(runID(j.ID), dest)
+		}
+		executor(j.Executor).RemoveDebuglet(runID(j.ID))
+		executor(j.Executor).RemoveDebuglet(runID(j.ID))
+		if _, _, err := executor(j.Executor).GetExecLimit(runID(j.ID)); !errors.Is(err, app.ErrNotRegistered) {
+			violation(i, "removed runtime job %s retained", j.ID)
+		}
+		delete(active, j.ID)
+		delete(simRates, j.ID)
+	}
+	for i, raw := range trace.Scenario.Events {
+		var event simEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatal(err)
+		}
+		step := trace.Steps[i]
+		if step.Index != i {
+			t.Fatal("trace steps out of order")
+		}
+		switch {
+		case event.Submit != nil:
+			j := event.Submit
+			j.Destinations = expandSimDestinations(t, j.Destinations)
+			limiter := executor(j.Executor)
+			if old, ok := sources[j.Source]; ok && old != j.Executor {
+				violation(i, "fixture source %s spans executors", j.Source)
+			}
+			sources[j.Source] = j.Executor
+			if j.Floor < 0 || j.Ceil < j.Floor || j.Ceil > bitrate.Gigabit {
+				violation(i, "invalid fixture policy")
+			}
+			before := usage.Snapshot()
+			admitted := scheduler.QueryMaxExec(j.Executor, from, to)+j.Floor <= capacity[j.Executor]
+			if admitted {
+				admitted = usage.Allocate(runID(j.ID), j.Executor, j.Destinations, j.Floor, j.Ceil) == nil
+			}
+			if admitted == step.Rejected {
+				violation(i, "admission differs for %s: core=%t simulator=%t", j.ID, admitted, !step.Rejected)
+			}
+			if !admitted {
+				if usage.Snapshot() != before {
+					violation(i, "refusal changed destination accounting")
+				}
+				break
+			}
+			scheduler.Submit(request(j))
+			if err := limiter.InsertDebuglet(runID(j.ID), j.Floor, j.Ceil, j.Destinations); err != nil {
+				violation(i, "runtime admission: %v", err)
+			}
+			active[j.ID] = j
+			simRates[j.ID] = step.Assigned
+			for _, dest := range j.Destinations {
+				touched[dest] = true
+			}
+		case event.Remove != "":
+			j, held := active[event.Remove]
+			if held == step.Skipped {
+				violation(i, "removal differs for %s", event.Remove)
+			}
+			if held {
+				remove(i, j)
+			}
+		case event.UpdateExecutor != nil:
+			c := event.UpdateExecutor
+			limiter := executor(c.Target)
+			if scheduler.QueryMaxExec(c.Target, from, to) > c.Capacity {
+				violation(i, "fixture reduces executor below reserved floors")
+			}
+			capacity[c.Target] = c.Capacity
+			limiter.SetExecutorCapacity(c.Capacity)
+		case event.UpdateDestination != nil:
+			c := event.UpdateDestination
+			for _, dest := range expandSimDestinations(t, []string{c.Target}) {
+				if err := usage.SetLimit(dest, c.Capacity); err != nil {
+					violation(i, "destination capacity update: %v", err)
+				}
+			}
+		default:
+			violation(i, "unknown event")
+		}
+		for _, update := range step.Updates {
+			if active[update.ID] == nil {
+				violation(i, "simulator updated inactive job %s", update.ID)
+			}
+			simRates[update.ID] = update.CBW
+		}
+		check(i)
+	}
+	if !maps.Equal(simRates, trace.Allocations) {
+		t.Fatal("final simulator rates differ from replayed updates")
+	}
+	if !slices.Equal(slices.Sorted(maps.Keys(active)), slices.Sorted(maps.Keys(trace.Allocations))) {
+		t.Fatal("final active membership differs")
+	}
+	for id, rate := range trace.Allocations {
+		if rate < active[id].Floor || rate > active[id].Ceil {
+			t.Fatal("simulator allocation violates policy")
+		}
+	}
+	// Explicitly release the remaining jobs and verify both owners are empty.
+	last := len(trace.Steps) - 1
+	for _, id := range slices.Sorted(maps.Keys(active)) {
+		remove(last, active[id])
+		check(last)
+	}
+	if usage.ActiveAllocations() != 0 {
+		t.Fatal("destination ownership leaked")
+	}
+}
+
+// Scenario prefixes mean per-address capacity, not an aggregate CIDR budget.
+func expandSimDestinations(t *testing.T, values []string) []string {
+	t.Helper()
+	var out []string
+	for _, value := range values {
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			if prefix.Addr().BitLen()-prefix.Bits() > 8 {
+				t.Fatal("unbounded fixture prefix")
+			}
+			for addr := prefix.Masked().Addr(); prefix.Contains(addr); addr = addr.Next() {
+				out = append(out, addr.String())
+			}
+		} else {
+			out = append(out, netip.MustParseAddr(value).String())
+		}
+	}
 	slices.Sort(out)
 	return slices.Compact(out)
 }

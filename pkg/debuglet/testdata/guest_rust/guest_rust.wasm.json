@@ -7,12 +7,30 @@
   "build": "RUSTFLAGS=--remap-path-prefix=<checkout>/= cargo build --release --locked --target wasm32-wasip1 (opt-level = \"s\", strip = true)",
   "sha256": "fa81d338109e9cb398902105a3b0ecad0bb2f8dc39163a0974cdc98fc31f4d96",
   "bytes": 66914,
-  "sources": {
-    "examples/debuglets/rust/debuglet/Cargo.toml": "ac3e6be1bda3a5300987503c95240922fd8fb312c5557fdaaf06acf98b07daf6",
-    "examples/debuglets/rust/debuglet/src/lib.rs": "85eb88c5fee3593a0330dae065d5118730dc5c5743bbcd2153458d9e50947cb2",
-    "pkg/debuglet/testdata/guest_rust/Cargo.toml": "5630b5362026c40331169ed77dd01381d85e65ec8590aeaee3c1202c7c4d8111",
-    "pkg/debuglet/testdata/guest_rust/Cargo.lock": "87df50f3798c3dece1e84d61704c4ee0055644c69393d0142e45f515a7be5930",
-    "pkg/debuglet/testdata/guest_rust/src/main.rs": "a91921ba080d11909ccda25df29d8305cf080a87852301352d11a22c57b8ac8b",
-    "examples/debuglets/rust/debuglet/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-  }
+  "sources": [
+    {
+      "path": "examples/debuglets/rust/debuglet/Cargo.toml",
+      "sha256": "ac3e6be1bda3a5300987503c95240922fd8fb312c5557fdaaf06acf98b07daf6"
+    },
+    {
+      "path": "examples/debuglets/rust/debuglet/src/lib.rs",
+      "sha256": "85eb88c5fee3593a0330dae065d5118730dc5c5743bbcd2153458d9e50947cb2"
+    },
+    {
+      "path": "pkg/debuglet/testdata/guest_rust/Cargo.toml",
+      "sha256": "5630b5362026c40331169ed77dd01381d85e65ec8590aeaee3c1202c7c4d8111"
+    },
+    {
+      "path": "pkg/debuglet/testdata/guest_rust/Cargo.lock",
+      "sha256": "87df50f3798c3dece1e84d61704c4ee0055644c69393d0142e45f515a7be5930"
+    },
+    {
+      "path": "pkg/debuglet/testdata/guest_rust/src/main.rs",
+      "sha256": "a91921ba080d11909ccda25df29d8305cf080a87852301352d11a22c57b8ac8b"
+    },
+    {
+      "path": "examples/debuglets/rust/debuglet/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ]
 }

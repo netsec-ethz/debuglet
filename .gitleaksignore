@@ -19,3 +19,5 @@ internal/dispatcher/transport/api/auth_test.go:generic-api-key:28
 # and lack of runtime authority are recorded in 209765cb7c74d04e70ef68ac289d7c1c4b764421.
 11cfc7430a18964e308e5cd2426badc5630de19f:local-config/dispatcher/key:private-key:1
 11cfc7430a18964e308e5cd2426badc5630de19f:local-config/executor/key:private-key:1
+# Historical C fixture source-content checksum; explicit fields replace this layout.
+b7d37f1fbd428ff2ce7f484c8f1793e90e4ea885:pkg/debuglet/testdata/guest_c/guest_c.wasm.json:generic-api-key:11
