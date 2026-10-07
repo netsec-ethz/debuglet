@@ -41,6 +41,41 @@ func TestCancellationRequestMustCommitBeforeEffects(t *testing.T) {
 	}
 }
 
+func TestCancellationTerminalAndObligationCommitTogether(t *testing.T) {
+	for name, trigger := range map[string]string{
+		"refused marker": `CREATE TRIGGER refuse_terminal BEFORE UPDATE OF terminal_recorded_at ON debuglet_cancellations
+BEGIN SELECT RAISE(ABORT, 'terminal marker refused'); END`,
+		"missing request": `CREATE TRIGGER refuse_terminal BEFORE UPDATE OF state ON debuglets
+BEGIN DELETE FROM debuglet_cancellations WHERE debuglet_id=NEW.id; END`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newTGFixture(t, nil)
+			run := f.seedDirect(t, tgFloorA)
+			ssClaim(t, f, run)
+			registryRegister(t, f.d, tgExecutorID)
+			cleanupExec(t, f, trigger)
+			if err := f.abort(t, run.id, "cancelled via API"); err == nil {
+				t.Fatal("accepted cancellation without its durable decision")
+			}
+			tgAssertRow(t, f.row(t, run.id), models.RunStateUploaded, tgNull)
+			tgAssertOrder(t, f, run, models.Outstanding)
+			record, err := f.q.GetCancellation(f.ctx, run.row.ID)
+			if err != nil || record.TerminalRecordedAt.Valid {
+				t.Fatalf("failed terminal decision: %+v, %v", record, err)
+			}
+			cleanupExec(t, f, "DROP TRIGGER refuse_terminal")
+			if err := f.abort(t, run.id, "cancelled via API"); err != nil {
+				t.Fatal(err)
+			}
+			record, err = f.q.GetCancellation(f.ctx, run.row.ID)
+			if err != nil || !record.TerminalRecordedAt.Valid || record.AcknowledgedAt.Valid {
+				t.Fatalf("local terminal decision: %+v, %v", record, err)
+			}
+			tgAssertOrder(t, f, run, models.Refunded)
+		})
+	}
+}
+
 func TestCancellationAcknowledgementSurvivesLocalFailureAndRetry(t *testing.T) {
 	peer := &tgPeer{}
 	f := newTGFixture(t, peer)

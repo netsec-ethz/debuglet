@@ -16,3 +16,7 @@ WHERE debuglet_id = ?;
 -- name: FailCancellation :exec
 UPDATE debuglet_cancellations SET failure = ?
 WHERE debuglet_id = ? AND acknowledged_at IS NULL;
+
+-- name: RecordCancellationTerminal :execrows
+UPDATE debuglet_cancellations SET terminal_recorded_at = COALESCE(terminal_recorded_at, ?)
+WHERE debuglet_id = ?;

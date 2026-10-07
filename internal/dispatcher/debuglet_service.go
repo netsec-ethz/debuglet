@@ -609,16 +609,8 @@ func (d *Dispatcher) cancelUnbound(ctx context.Context, identity database.GetDeb
 // recordCancellationResult uses only the run's original binding. Terminal
 // selection and cleanup are shared with exits; payment runs only for the winner.
 func (d *Dispatcher) recordCancellationResult(ctx context.Context, identity database.GetDebugletIdentityByUUIDRow, id uuid.UUID, reason string) error {
-	msg := reason
 	queries := database.New(d.db)
-	deb, err := queries.CompleteDebuglet(ctx, database.CompleteDebugletParams{
-		ExitedState:           models.RunStateExited,
-		Error:                 terminalError(-1, &msg),
-		Uuid:                  id,
-		ExecutorID:            identity.ExecutorID,
-		DispatcherIncarnation: identity.DispatcherIncarnation,
-		SessionID:             identity.SessionID,
-	})
+	deb, err := d.recordCancellationTerminal(ctx, identity, id, reason)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return status.Errorf(codes.Internal, "failed to record cancellation: %v", err)

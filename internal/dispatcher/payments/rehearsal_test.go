@@ -446,7 +446,7 @@ func dumpAll(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	var b strings.Builder
 	for _, table := range []string{"transactions", "debuglet_order", "order_settlements", "earnings", "chain_transfers",
-		"payment_receipts", "debuglets", "measurement_execution", "transaction_states"} {
+		"payment_receipts", "debuglets", "measurement_execution", "debuglet_cancellations", "transaction_states"} {
 		rows, err := db.QueryContext(t.Context(), "SELECT * FROM "+table+" ORDER BY rowid")
 		if err != nil {
 			t.Fatalf("dump %s: %v", table, err)

@@ -133,13 +133,14 @@ type Debuglet struct {
 }
 
 type DebugletCancellation struct {
-	DebugletID     int64
-	RequestID      string
-	Reason         string
-	RequestedAt    int64
-	AttemptedAt    sql.NullInt64
-	AcknowledgedAt sql.NullInt64
-	Failure        string
+	DebugletID         int64
+	RequestID          string
+	Reason             string
+	RequestedAt        int64
+	AttemptedAt        sql.NullInt64
+	AcknowledgedAt     sql.NullInt64
+	Failure            string
+	TerminalRecordedAt sql.NullInt64
 }
 
 type DebugletLog struct {
