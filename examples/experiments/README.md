@@ -35,7 +35,7 @@ The WASM paths in the definition are relative to your working directory. Set
 leave it empty to record the submitted digest. The runner uses the same saved
 connection and credentials as `dbl`; `-config` and `-dispatcher` select another
 profile. `-endpoint http://127.0.0.1:9000` explicitly selects a local development
-dispatcher; saved credentials are only used for that exact endpoint. Remote TEST use also needs
+dispatcher without loading a saved credential. Remote TEST use also needs
 `-allow-remote-test` and server authorization. No payment activation is performed.
 
 The receipt file must not already exist. It is written even when submission
