@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"math"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -61,7 +62,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	capabilities, vantage := e.capabilityReport(ctx, true)
 	resp := &pb.HelloResponse{
 		ExecutorId:       e.cfg.Identity.ExecutorID,
-		BandwidthVersion: 1,
+		BandwidthVersion: 2,
 		Version:          e.cfg.Identity.Version,
 		Capabilities:     capabilities,
 		VantagePoint:     vantage,
@@ -232,16 +233,39 @@ func (e *Executor) applyBandwidth(binding controlsession.Binding, req *pb.Bandwi
 	}
 	e.bandwidthRevision = req.GetRevision()
 	destinations := make([]string, 0, len(req.GetLimits()))
+	var denied []string
 	for _, up := range req.GetLimits() {
 		e.limiter.SetAddrCapacity(up.GetAddress(), bitrate.Bitrate(up.GetBitsLimit()))
 		destinations = append(destinations, up.GetAddress())
+		if up.GetDenied() {
+			denied = append(denied, up.GetAddress())
+		}
 	}
+	e.applyDenialsLocked(req.GetRevision(), denied)
 	if err := e.publishLimitsLocked(destinations); err != nil {
 		return nil, status.Error(codes.Unavailable, "destination allocation could not be applied")
 	}
 	e.bandwidthApplied = req.GetRevision()
 
 	return &pb.BandwidthResponse{Revision: e.bandwidthApplied}, nil
+}
+
+// applyDenialsLocked updates the destinations the dispatcher denied and closes
+// the active sockets of every run to them before the revision is
+// acknowledged. A revisioned request is a full snapshot, so a destination it
+// no longer denies is allowed again; a request without a revision, such as an
+// Allocate reply, only adds denials. A dispatcher that never sets the field
+// changes nothing.
+func (e *Executor) applyDenialsLocked(revision uint64, denied []string) {
+	if revision == 0 && len(denied) == 0 {
+		return
+	}
+	for _, revoked := range e.revoked.Update(denied, revision != 0) {
+		e.logger.Info("Destination revoked: active sockets closed", zap.String("debugletID", revoked.Run),
+			zap.Int("sockets", revoked.Sockets), zap.Int("deniedDestinations", len(denied)))
+		e.logger.Debug("Private destination revocation diagnostic", zap.String("debugletID", revoked.Run),
+			zap.String("destinations", daemonlog.Diagnostic(errors.New(strings.Join(denied, ",")))))
+	}
 }
 
 // publishLimits applies every limit a capacity or membership change can move to

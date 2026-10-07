@@ -250,6 +250,7 @@ func newRestoredDispatcher(t *testing.T, restored []restoredRow) (*dispatcher.Di
 			"", "",                          // historical rows remain reserved in the dispatcher
 		)
 	}
+	mock.ExpectQuery("FROM destination_policy_events").WillReturnRows(sqlmock.NewRows([]string{"id", "destination", "kind", "limit_bps", "reason", "actor", "requested_at_ns", "expires_at_ns", "revision"}))
 	mock.ExpectQuery(listDebugletsEndAfterQuery).WillReturnRows(rows)
 
 	if err := d.RestoreScheduler(ctx); err != nil {

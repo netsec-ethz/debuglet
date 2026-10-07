@@ -31,6 +31,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Transport identifies one guest transport. Every enforcement point names the
@@ -76,6 +77,11 @@ var (
 	// run expects.
 	ErrUntagged = errors.New("not tagged on this executor")
 )
+
+// ErrDestinationDenied is a destination the dispatcher reported as opted out
+// while the executor runs. It is an operator denial as well, so a guest and a
+// run outcome see it the way they see one from the configuration.
+var ErrDestinationDenied = fmt.Errorf("%w: the destination opted out", ErrDenied)
 
 // Spec is the operator policy as the configuration file writes it. It is
 // plain data: the configuration package resolves omitted keys to their
@@ -128,6 +134,7 @@ type Operator struct {
 	denied       []netip.Prefix
 	deniedHosts  []string
 	ports        []portRange
+	revoked      *Revocations
 }
 
 type portRange struct{ lo, hi int }
@@ -271,6 +278,13 @@ func (o Operator) Enabled(t Transport) bool {
 	return int(t) < len(o.enabled) && o.enabled[t]
 }
 
+// WithRevocations returns the operator policy with the destinations r denies
+// added to it. Every run of one executor session shares the same r.
+func (o Operator) WithRevocations(r *Revocations) Operator {
+	o.revoked = r
+	return o
+}
+
 // CheckAddr applies the operator's destination rules to one address. It is the
 // rule that holds whatever a job declared: a destination the operator denies
 // is never reached, on any transport.
@@ -280,6 +294,9 @@ func (o Operator) CheckAddr(addr netip.Addr) error {
 	}
 	for _, alias := range aliases(addr) {
 		if err := o.checkOne(alias, addr); err != nil {
+			return err
+		}
+		if err := o.revoked.checkDeclared(alias.String()); err != nil {
 			return err
 		}
 	}
@@ -315,7 +332,7 @@ func (o Operator) CheckHost(name string) error {
 			return fmt.Errorf("%w: %s is an opted-out destination", ErrDenied, name)
 		}
 	}
-	return nil
+	return o.revoked.checkDeclared(name)
 }
 
 // DeniedHosts are the names the operator denied, which admission resolves so
@@ -387,4 +404,123 @@ func embeddedV4(addr netip.Addr) (netip.Addr, bool) {
 	default:
 		return netip.Addr{}, false
 	}
+}
+
+// Revocations are the destinations the dispatcher denied while the executor
+// runs, as it names them: names and addresses. One set belongs to one executor
+// session and every run's operator policy refers to it, so a change applies to
+// the admission of all of them at once. A run also registers the close of its
+// own sockets here, so the update that denies a destination closes the active
+// connections to it before it returns.
+type Revocations struct {
+	mu       sync.Mutex
+	denied   map[string]struct{} // DestinationKey of each denied destination
+	watchers map[*revocationWatch]struct{}
+}
+
+type revocationWatch struct {
+	run   string
+	close func() int
+}
+
+// Revoked is one run whose sockets an update closed.
+type Revoked struct {
+	Run     string
+	Sockets int
+}
+
+// NewRevocations returns an empty set.
+func NewRevocations() *Revocations {
+	return &Revocations{denied: make(map[string]struct{}), watchers: make(map[*revocationWatch]struct{})}
+}
+
+// Update denies destinations. With replace the list is the complete set and
+// every destination missing from it is allowed again; otherwise it is added.
+// The set changes before any socket is closed, so a connection the guest opens
+// meanwhile is refused, and every registered run then closes the sockets the
+// set now denies. Update returns the runs that closed at least one socket.
+func (r *Revocations) Update(destinations []string, replace bool) []Revoked {
+	r.mu.Lock()
+	if replace {
+		clear(r.denied)
+	}
+	for _, destination := range destinations {
+		if key := DestinationKey(destination); key != "" {
+			r.denied[key] = struct{}{}
+		}
+	}
+	watchers := make([]*revocationWatch, 0, len(r.watchers))
+	if len(r.denied) > 0 {
+		for watch := range r.watchers {
+			watchers = append(watchers, watch)
+		}
+	}
+	r.mu.Unlock()
+	var revoked []Revoked
+	for _, watch := range watchers {
+		if closed := watch.close(); closed > 0 {
+			revoked = append(revoked, Revoked{Run: watch.run, Sockets: closed})
+		}
+	}
+	return revoked
+}
+
+// watch registers close for run until the returned stop is called.
+func (r *Revocations) watch(run string, close func() int) (stop func()) {
+	if r == nil {
+		return func() {}
+	}
+	watch := &revocationWatch{run: run, close: close}
+	r.mu.Lock()
+	r.watchers[watch] = struct{}{}
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		delete(r.watchers, watch)
+		r.mu.Unlock()
+	}
+}
+
+// checkDeclared refuses a destination the set denies, written as a name, an
+// address or a declared destination.
+func (r *Revocations) checkDeclared(destination string) error {
+	key := DestinationKey(destination)
+	if r == nil || key == "" {
+		return nil
+	}
+	r.mu.Lock()
+	_, denied := r.denied[key]
+	r.mu.Unlock()
+	if denied {
+		return fmt.Errorf("%w: %s", ErrDestinationDenied, key)
+	}
+	return nil
+}
+
+// hosts are the denied names, which admission resolves so that their
+// addresses are denied too.
+func (r *Revocations) hosts() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var hosts []string
+	for key := range r.denied {
+		if _, err := netip.ParseAddr(key); err != nil {
+			hosts = append(hosts, key)
+		}
+	}
+	return hosts
+}
+
+// DestinationKey is the one spelling of a destination the set compares: the
+// normalized address, or the lower-case name without a trailing dot. A SCION
+// address or a port is reduced to its host, as for a declared destination.
+func DestinationKey(destination string) string {
+	host := declaredHost(destination)
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return Normalize(addr).String()
+	}
+	return strings.ToLower(strings.TrimSuffix(host, "."))
 }

@@ -52,6 +52,19 @@ The `[sui]` section configures chain payments. Every shipped configuration sets 
 
 A failed check stops the daemon before any listener is bound, with `configure payments: blockchain payments:` and the field's error. Validation opens no network connection. The listener's stored checkpoint is checked when it starts; see [startup validation](payments.md#startup-validation).
 
+### Destination limits and opt-outs
+
+An operator account sets the policy of one destination with `PATCH /destination` and lists the current policies with `GET /destinations` ([API](../api.md#destination-policies)). Policies, reservations and executor limiters use the same destination key: the host without a port, lower-case DNS names without a final dot, and canonical IP literals without an IPv4 mapping or zone. Thus `192.0.2.1`, `[::ffff:192.0.2.1]:443` and their declared-address forms share a policy and capacity; DNS names are not merged with other names merely because they resolve to the same address. The submitted spelling remains in the run record.
+
+To honour an opt-out request, deny the destination with a reason, for example `{"destination":"192.0.2.1","denied":true,"reason":"opt-out request from the address owner"}`, optionally with `expires_at` (RFC 3339). Then:
+
+- A submission naming the destination is refused with `409 capacity_exhausted`, and every new allocation on it is refused, whatever its floor, including a zero floor.
+- The deny is appended to the dispatcher database before it applies, with the operator account as actor, the reason, the time and a revision. Events are never changed or deleted. The dispatcher applies the latest event of every destination again at startup, before any executor connects, so a restart no longer loses it.
+- The deny is sent at once to every executor holding an allocation on the destination as a zero limit with the denied flag. `GET /destinations` reports `delivery: confirmed` when every such executor acknowledged it, and `unconfirmed` with the number that did not (refused, unreachable, or a legacy executor that cannot confirm ordered application). The count describes the application in the current dispatcher lifetime; a policy restored at startup has no recipients, because no allocation survives a restart.
+- At `expires_at` the expiry loop returns the destination to the default capacity and records an `allow` event with actor `system` and reason `expired`.
+
+Active traffic: an executor of this release advertises bandwidth version 2; it refuses new connections to the destination and closes the active sockets of every run to it, waiting for closes already in progress, before it acknowledges the revision that carries the deny ([socket limits](socket-limits.md#destinations-denied-at-runtime)). Only such an acknowledgement confirms a deny, so `delivery: confirmed` means that has happened on every executor that held an allocation there. An executor that predates this release (bandwidth version 1 or 0) cannot confirm revocation, even if it acknowledges the zero limit; `PATCH /destination` answers 500 asking for its upgrade. Any session whose deny remains unconfirmed is retired after delivery finishes, within the five-second delivery deadline. Successful health probes cannot renew that retired session. An unreachable executor stops its work when its existing negotiated control lease expires: allow the delivery deadline plus that lease duration for remote cleanup. Retirement does not turn an unconfirmed delivery into an acknowledgement; verify the receiver before reporting that traffic has stopped. The retired session cannot be substituted for a successor, and the durable deny still rejects new submissions after reconnect.
+
 ## Executor
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
@@ -176,7 +189,7 @@ binaries are installed; it does not change the state's contents or retention.
 | Role configuration and enrollment directory | Executor identity, configured inline secrets and paths to external TLS credentials. The current TESLA private chain is generated in memory on startup; persisted chain descriptors contain public anchors/schedules, not a recoverable history of private keys. |
 | Foreground state directory | Generated configuration, role/package identity, SQLite databases, readiness/shutdown records and rotated daemon logs. Use the same package/source revision; editing recorded metadata is not an upgrade. |
 | CLI configuration | Connection profiles and saved credentials in the configured CLI directory. These are separate from daemon state and are excluded from foreground state backups. |
-| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, dispatcher destination limits and undisclosed executor TESLA keys. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
+| Dispatcher/executor memory | Live control credentials, leases and current scheduling authority, undisclosed executor TESLA keys. Destination policies are kept in the dispatcher database; the delivery state reported for them is memory only. These do not become durable merely because a database backup exists. Verified disclosed keys also have the dispatcher database record described above. |
 
 See [output limits](#executor-output-limits) for the configured byte, frame and
 record budgets, [daemon log retention](services.md#foreground-daemon-logs) for
@@ -190,7 +203,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 25 and executor schema 8 are the current schema boundaries.
+Dispatcher schema 26 and executor schema 8 are the current schema boundaries.
 Recognized older databases require the explicit upgrade below. Dispatcher
 schemas below 3 and executor schemas below 2 lose recorded `debuglets` and
 `debuglet_logs` on upgrade and require explicit acceptance. Preserved paid rows

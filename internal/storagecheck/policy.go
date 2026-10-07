@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 25: server verification persists its shared query budget.
-	MinimumDispatcherVersion int64 = 25
+	// Schema 26: destination policy events retain operator opt-outs.
+	MinimumDispatcherVersion int64 = 26
 	MinimumExecutorVersion   int64 = 8
 )
 
@@ -99,6 +99,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"output_account_usage":       {"account_id", "charged_bytes", "frame_count"},
 			"output_node_usage":          {"singleton", "charged_bytes", "frame_count"},
 			"debuglet_order":             {"transaction_id", "state", "refund_address", "debuglet_id"},
+			"destination_policy_events":  {"destination", "kind", "limit_bps", "reason", "actor", "requested_at_ns", "expires_at_ns", "revision"},
 			"debuglet_users":             {"debuglet_id", "user_id"},
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
 			"executor_enrollments":       {"executor_id", "fingerprint"},

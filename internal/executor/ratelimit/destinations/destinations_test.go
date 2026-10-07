@@ -68,3 +68,16 @@ func TestResolvedCountsAttachmentsPerNameAndDebuglet(t *testing.T) {
 		t.Fatalf("another debuglet's attachments changed: %v", got)
 	}
 }
+
+func TestResolvedMatchesThePolicyDestinationKey(t *testing.T) {
+	var r Resolved
+	id := uuid.New()
+	address := ip("192.0.2.7")
+	r.Add("TARGET.Example.:443", id, address)
+	if got := targets(&r, "target.example", id); !slices.Equal(got, []string{"::ffff:192.0.2.7"}) {
+		t.Fatalf("normalized target: %v", got)
+	}
+	if left, ok := r.Remove("target.example.", id, address); !ok || left != 0 || len(r.byAddr) != 0 {
+		t.Fatalf("normalized detach: %d %v %+v", left, ok, r.byAddr)
+	}
+}

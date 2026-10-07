@@ -18,6 +18,10 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 )
 
+// ErrRevoked is what a socket closed because its destination was denied
+// reports. It is a closed socket to the guest, as a lost connection is.
+var ErrRevoked = fmt.Errorf("destination revoked: %w", net.ErrClosed)
+
 type ISocketRegistry interface {
 	Add(s Socket) (int32, error)
 	Close(handle int32) error
@@ -41,7 +45,8 @@ type SocketRegistry struct {
 // Detached handles cannot be retrieved, but another closer can still join them.
 type socketEntry struct {
 	socket      Socket
-	detached    bool // protected by the registry mutex
+	detached    bool  // protected by the registry mutex
+	reason      error // why a detached handle is closed, protected by the registry mutex
 	once        sync.Once
 	err         error
 	reservation *Reservation
@@ -151,7 +156,11 @@ func (r *SocketRegistry) Get(handle int32) (Socket, error) {
 	}
 	entry := r.sockets[handle]
 	if entry.detached {
-		return nil, fmt.Errorf("socket handle %d has been closed: %w", handle, net.ErrClosed)
+		reason := entry.reason
+		if reason == nil {
+			reason = net.ErrClosed
+		}
+		return nil, fmt.Errorf("socket handle %d has been closed: %w", handle, reason)
 	}
 	return entry.socket, nil
 }
@@ -166,6 +175,42 @@ func (r *SocketRegistry) Close(handle int32) error {
 	entry.detached = true
 	r.mu.Unlock()
 	return entry.close()
+}
+
+// CloseRemote closes every open socket whose RemoteAddr matches and returns
+// how many it closed. A blocked read or write on one of them returns, and the
+// handle then reports ErrRevoked. The registry stays open for other sockets.
+// A matching socket another closer already detached is joined, not counted:
+// CloseRemote returns only once every matching socket's close has completed.
+func (r *SocketRegistry) CloseRemote(match func(remote string) bool) int {
+	r.mu.Lock()
+	entries := append([]*socketEntry(nil), r.sockets...)
+	r.mu.Unlock()
+	var matched []*socketEntry
+	for _, entry := range entries {
+		if match(entry.socket.RemoteAddr()) {
+			matched = append(matched, entry)
+		}
+	}
+	revoked := make(map[*socketEntry]bool, len(matched))
+	r.mu.Lock()
+	for _, entry := range matched {
+		if !entry.detached {
+			entry.detached, entry.reason = true, ErrRevoked
+			revoked[entry] = true
+		}
+	}
+	r.mu.Unlock()
+	for _, entry := range matched {
+		// close runs once; for an entry another closer holds, this waits
+		// for that close, and for one closed earlier it returns at once.
+		if err := entry.close(); err != nil && revoked[entry] {
+			r.mu.Lock()
+			r.lateCloseErr = errors.Join(r.lateCloseErr, err)
+			r.mu.Unlock()
+		}
+	}
+	return len(revoked)
 }
 
 // CloseAll permanently stops admission before invoking any external Close.

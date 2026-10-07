@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/avl"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"sync"
 
 	"github.com/google/uuid"
@@ -132,6 +133,7 @@ func (l *Limiter) ExecutorCapacity() bitrate.Bitrate {
 	return l.execCapacity
 }
 func (l *Limiter) SetAddrCapacity(addr string, c bitrate.Bitrate) {
+	addr = netpolicy.DestinationKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if previous, ok := l.addrCapacity[addr]; ok && previous == c {
@@ -168,6 +170,7 @@ func (l *Limiter) InsertDebuglet(ID uuid.UUID, minimum, maximum bitrate.Bitrate,
 	}
 	l.invalidateLocked(executorDimension)
 	for _, a := range addrs {
+		a = netpolicy.DestinationKey(a)
 		if _, duplicate := addrLimit[a]; duplicate {
 			continue // A repeated policy address is one membership, not two.
 		}
@@ -241,6 +244,7 @@ func (l *Limiter) GetExecLimit(ID uuid.UUID) (bitrate.Bitrate, bool, error) {
 }
 
 func (l *Limiter) GetAddrLimit(ID uuid.UUID, addr string) (bitrate.Bitrate, bool, error) {
+	addr = netpolicy.DestinationKey(addr)
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
@@ -297,6 +301,7 @@ func (l *Limiter) GetLimit(ID uuid.UUID, addr string) (Limit, error) {
 }
 
 func (l *Limiter) Wait(ctx context.Context, direction TransferDirection, ID uuid.UUID, addr string, size bitrate.Bitrate) error {
+	addr = netpolicy.DestinationKey(addr)
 	l.mu.RLock()
 	store, ok := l.stores[ID]
 	if !ok {

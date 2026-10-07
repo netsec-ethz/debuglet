@@ -186,6 +186,18 @@ type DebugletUser struct {
 	UserID     int64
 }
 
+type DestinationPolicyEvent struct {
+	ID            int64
+	Destination   string
+	Kind          string
+	LimitBps      sql.NullInt64
+	Reason        string
+	Actor         string
+	RequestedAtNs int64
+	ExpiresAtNs   sql.NullInt64
+	Revision      int64
+}
+
 type DeviceLogin struct {
 	Selector        string
 	VerifierHash    []byte
