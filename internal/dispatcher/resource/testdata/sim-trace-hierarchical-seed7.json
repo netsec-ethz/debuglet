@@ -1,0 +1,525 @@
+{
+  "scenario": {
+    "name": "hierarchical",
+    "seed": 7,
+    "filter": 3,
+    "options": {
+      "executor_capacity": 1000000000,
+      "destination_capacity": 1000000000,
+      "source_capacity": 1000000000
+    },
+    "events": [
+      {
+        "update_destination": {
+          "target": "10.100.0.0/30",
+          "capacity": 200000000
+        }
+      },
+      {
+        "update_destination": {
+          "target": "10.101.0.0/30",
+          "capacity": 200000000
+        }
+      },
+      {
+        "submit": {
+          "id": "job-003",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 739000000,
+          "destinations": [
+            "10.1.0.2"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-004",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 655000000,
+          "destinations": [
+            "10.2.0.2"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-005",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 815000000,
+          "destinations": [
+            "10.2.0.1",
+            "10.100.0.0/30"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-006",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 515000000,
+          "destinations": [
+            "10.1.0.1",
+            "10.101.0.1"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-007",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 259000000,
+          "destinations": [
+            "10.1.0.2",
+            "10.101.0.0/30"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-008",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 376000000,
+          "destinations": [
+            "10.2.0.1"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-009",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 711000000,
+          "destinations": [
+            "10.2.0.1"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-010",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 950000000,
+          "destinations": [
+            "10.2.0.3"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-011",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 821000000,
+          "destinations": [
+            "10.2.0.1",
+            "10.101.0.2"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-012",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 234000000,
+          "destinations": [
+            "10.2.0.3",
+            "10.101.0.1"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-013",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 899000000,
+          "destinations": [
+            "10.1.0.3",
+            "10.100.0.3"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-014",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 126000000,
+          "destinations": [
+            "10.2.0.2",
+            "10.101.0.3"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-015",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 784000000,
+          "destinations": [
+            "10.2.0.3"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-016",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 104000000,
+          "destinations": [
+            "10.1.0.1",
+            "10.101.0.0/30"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-017",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 771000000,
+          "destinations": [
+            "10.2.0.2",
+            "10.100.0.0/30"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-018",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 492000000,
+          "destinations": [
+            "10.1.0.1",
+            "10.101.0.0/30"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-019",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 969000000,
+          "destinations": [
+            "10.2.0.3",
+            "10.101.0.1"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-020",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 306000000,
+          "destinations": [
+            "10.2.0.2"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-021",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 710000000,
+          "destinations": [
+            "10.2.0.3",
+            "10.101.0.0/30"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "job-022",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 560000000,
+          "destinations": [
+            "10.2.0.2",
+            "10.101.0.2"
+          ]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "index": 0
+    },
+    {
+      "index": 1
+    },
+    {
+      "index": 2,
+      "assigned": 739000000
+    },
+    {
+      "index": 3,
+      "assigned": 655000000
+    },
+    {
+      "index": 4,
+      "assigned": 200000000,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 500000000
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "assigned": 200000000,
+      "updates": [
+        {
+          "id": "job-003",
+          "cbw": 500000000
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "assigned": 100000000,
+      "updates": [
+        {
+          "id": "job-003",
+          "cbw": 370500000
+        },
+        {
+          "id": "job-006",
+          "cbw": 100000000
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "assigned": 333333333,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 333333333
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "assigned": 250000000,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 250000000
+        },
+        {
+          "id": "job-008",
+          "cbw": 250000000
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "assigned": 200000000,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 200000000
+        },
+        {
+          "id": "job-008",
+          "cbw": 200000000
+        },
+        {
+          "id": "job-009",
+          "cbw": 200000000
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "assigned": 100000000,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 166666666
+        },
+        {
+          "id": "job-005",
+          "cbw": 166666666
+        },
+        {
+          "id": "job-008",
+          "cbw": 166666666
+        },
+        {
+          "id": "job-009",
+          "cbw": 166666666
+        },
+        {
+          "id": "job-010",
+          "cbw": 166666666
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "rejected": true
+    },
+    {
+      "index": 12,
+      "assigned": 100000000,
+      "updates": [
+        {
+          "id": "job-003",
+          "cbw": 250000000
+        },
+        {
+          "id": "job-005",
+          "cbw": 100000000
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "assigned": 100000000,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 145666666
+        },
+        {
+          "id": "job-008",
+          "cbw": 145666666
+        },
+        {
+          "id": "job-009",
+          "cbw": 145666666
+        },
+        {
+          "id": "job-010",
+          "cbw": 145666666
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "assigned": 125000000,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 125000000
+        },
+        {
+          "id": "job-008",
+          "cbw": 125000000
+        },
+        {
+          "id": "job-009",
+          "cbw": 125000000
+        },
+        {
+          "id": "job-010",
+          "cbw": 125000000
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "rejected": true
+    },
+    {
+      "index": 16,
+      "rejected": true
+    },
+    {
+      "index": 17,
+      "rejected": true
+    },
+    {
+      "index": 18,
+      "rejected": true
+    },
+    {
+      "index": 19,
+      "assigned": 111111111,
+      "updates": [
+        {
+          "id": "job-004",
+          "cbw": 111111111
+        },
+        {
+          "id": "job-008",
+          "cbw": 111111111
+        },
+        {
+          "id": "job-009",
+          "cbw": 111111111
+        },
+        {
+          "id": "job-010",
+          "cbw": 111111111
+        },
+        {
+          "id": "job-015",
+          "cbw": 111111111
+        }
+      ]
+    },
+    {
+      "index": 20,
+      "rejected": true
+    },
+    {
+      "index": 21,
+      "rejected": true
+    }
+  ],
+  "allocations": {
+    "job-003": 250000000,
+    "job-004": 111111111,
+    "job-005": 100000000,
+    "job-006": 100000000,
+    "job-007": 100000000,
+    "job-008": 111111111,
+    "job-009": 111111111,
+    "job-010": 111111111,
+    "job-011": 100000000,
+    "job-013": 100000000,
+    "job-014": 100000000,
+    "job-015": 111111111,
+    "job-020": 111111111
+  },
+  "digest": "5ffae027a441ecb30d79cc85129592b4a0a6e983be7d4e83052977208719c860"
+}

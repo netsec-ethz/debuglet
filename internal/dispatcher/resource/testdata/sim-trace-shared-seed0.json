@@ -1,0 +1,68 @@
+{
+  "scenario": {
+    "name": "shared-destination",
+    "seed": 0,
+    "filter": 3,
+    "options": {
+      "executor_capacity": 1000000000,
+      "destination_capacity": 1000000000,
+      "source_capacity": 1000000000
+    },
+    "events": [
+      {
+        "update_destination": {
+          "target": "203.0.113.0/30",
+          "capacity": 400000000
+        }
+      },
+      {
+        "submit": {
+          "id": "shared-1",
+          "executor": "exec-1",
+          "source": "10.0.0.1",
+          "floor": 100000000,
+          "ceil": 250000000,
+          "destinations": [
+            "203.0.113.1"
+          ]
+        }
+      },
+      {
+        "submit": {
+          "id": "shared-2",
+          "executor": "exec-2",
+          "source": "10.0.0.2",
+          "floor": 100000000,
+          "ceil": 250000000,
+          "destinations": [
+            "203.0.113.1"
+          ]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "index": 0
+    },
+    {
+      "index": 1,
+      "assigned": 250000000
+    },
+    {
+      "index": 2,
+      "assigned": 200000000,
+      "updates": [
+        {
+          "id": "shared-1",
+          "cbw": 200000000
+        }
+      ]
+    }
+  ],
+  "allocations": {
+    "shared-1": 200000000,
+    "shared-2": 200000000
+  },
+  "digest": "78aa6e4d8d47dd3bfd89c253723382ad96a8adc5b53de5f7acfc7bc98183adec"
+}
