@@ -18,10 +18,12 @@ import (
 func experimentDefinition(t *testing.T) ExperimentDefinition {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "peer.wasm")
-	if err := os.WriteFile(path, []byte("test-wasm"), 0600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, []byte("test-wasm"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	return ExperimentDefinition{Participants: []ExperimentRun{
-		{OrderID:42, ExecutorID:"node-a", WASMPath:path, Args:[]string{"a"}, Policy:Policy{TimeoutMS:1000}},
-		{OrderID:7, ExecutorID:"node-b", WASMPath:path, Args:[]string{"b"}, Policy:Policy{TimeoutMS:2000}},
+		{OrderID: 42, ExecutorID: "node-a", WASMPath: path, Args: []string{"a"}, Policy: Policy{TimeoutMS: 1000}},
+		{OrderID: 7, ExecutorID: "node-b", WASMPath: path, Args: []string{"b"}, Policy: Policy{TimeoutMS: 2000}},
 	}}
 }
 
@@ -33,12 +35,20 @@ func TestExperimentRetainsManifestOrderAndHashes(t *testing.T) {
 	f.handle("PUT /debuglet", jsonHandler(http.StatusOK, string(body)))
 	definition := experimentDefinition(t)
 	receipt, err := f.client(t, Options{}).SubmitExperimentTEST(t.Context(), definition)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	digest := sha256.Sum256([]byte("test-wasm"))
-	if receipt.ExperimentID != fixtureTx || receipt.Participants[0].OrderID != 42 || receipt.Participants[1].OrderID != 7 || receipt.Participants[0].RunID != ids[0] || receipt.Participants[1].RunID != ids[1] || receipt.Participants[0].SHA256 != hex.EncodeToString(digest[:]) { t.Fatalf("receipt %+v", receipt) }
+	if receipt.ExperimentID != fixtureTx || receipt.Participants[0].OrderID != 42 || receipt.Participants[1].OrderID != 7 || receipt.Participants[0].RunID != ids[0] || receipt.Participants[1].RunID != ids[1] || receipt.Participants[0].SHA256 != hex.EncodeToString(digest[:]) {
+		t.Fatalf("receipt %+v", receipt)
+	}
 	definition.Participants[0].Args[0] = "changed"
-	if receipt.Participants[0].Args[0] != "a" || definition.Participants[0].SHA256 != "" { t.Fatal("receipt aliases or mutates caller input") }
-	if len(f.requests()) != 2 { t.Fatal("submission made unexpected requests") }
+	if receipt.Participants[0].Args[0] != "a" || definition.Participants[0].SHA256 != "" {
+		t.Fatal("receipt aliases or mutates caller input")
+	}
+	if len(f.requests()) != 2 {
+		t.Fatal("submission made unexpected requests")
+	}
 }
 
 func TestExperimentRejectsChangedWASMBeforeSubmission(t *testing.T) {
@@ -46,18 +56,22 @@ func TestExperimentRejectsChangedWASMBeforeSubmission(t *testing.T) {
 	definition := experimentDefinition(t)
 	definition.Participants[1].SHA256 = strings.Repeat("0", 64)
 	_, err := f.client(t, Options{}).SubmitExperimentTEST(t.Context(), definition)
-	if err == nil || len(f.requests()) != 0 { t.Fatal("changed artifact reached dispatcher") }
+	if err == nil || len(f.requests()) != 0 {
+		t.Fatal("changed artifact reached dispatcher")
+	}
 }
 
 func TestExperimentPreservesUncertainAdmission(t *testing.T) {
 	f := newFakeServer(t, "")
 	f.handle("PUT /payment/intent", intentHandler(fixtureTx, ""))
 	ids := []string{fixtureID, "00000000-0000-4000-8000-000000000002"}
-	body, _ := json.Marshal(map[string]any{"code":CodeInternal, "message":"failed", "admitted_ids":ids})
+	body, _ := json.Marshal(map[string]any{"code": CodeInternal, "message": "failed", "admitted_ids": ids})
 	f.handle("PUT /debuglet", jsonHandler(http.StatusInternalServerError, string(body)))
 	receipt, err := f.client(t, Options{}).SubmitExperimentTEST(t.Context(), experimentDefinition(t))
 	se := asSubmissionError(t, err)
-	if !se.OutcomeUnknown || receipt.ExperimentID != fixtureTx || !reflect.DeepEqual([]string{receipt.Participants[0].RunID, receipt.Participants[1].RunID}, ids) { t.Fatalf("receipt %+v error %v", receipt, err) }
+	if !se.OutcomeUnknown || receipt.ExperimentID != fixtureTx || !reflect.DeepEqual([]string{receipt.Participants[0].RunID, receipt.Participants[1].RunID}, ids) {
+		t.Fatalf("receipt %+v error %v", receipt, err)
+	}
 }
 
 func TestExperimentExportRejectsWrongExecutor(t *testing.T) {
@@ -65,7 +79,9 @@ func TestExperimentExportRejectsWrongExecutor(t *testing.T) {
 	doc := resultFixture(t)
 	body, _ := json.Marshal(doc)
 	f.handle("GET /debuglet/"+doc.RunID+"/result", jsonHandler(http.StatusOK, string(body)))
-	receipt := ExperimentSubmission{ExperimentID:fixtureTx, Participants:[]ExperimentRun{{RunID:doc.RunID, ExecutorID:"wrong-executor"}}}
+	receipt := ExperimentSubmission{ExperimentID: fixtureTx, Participants: []ExperimentRun{{RunID: doc.RunID, ExecutorID: "wrong-executor"}}}
 	result, err := f.client(t, Options{}).ExportExperiment(t.Context(), receipt)
-	if err == nil || len(result.Results) != 0 { t.Fatal("mismatched result was grouped") }
+	if err == nil || len(result.Results) != 0 {
+		t.Fatal("mismatched result was grouped")
+	}
 }

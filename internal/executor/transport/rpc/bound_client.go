@@ -52,11 +52,17 @@ func (c *boundDispatcherClient) DebugletExit(ctx context.Context, in *pb.Debugle
 	return out, c.credentials.RedactError(err)
 }
 func (c *boundDispatcherClient) ExperimentReady(ctx context.Context, in *pb.ExperimentReadyRequest, opts ...grpc.CallOption) (*pb.ExperimentReadyResponse, error) {
- if err := c.owner.CheckLease(c.credentials.Binding); err != nil { return nil, err }
- out, err := c.client.ExperimentReady(c.credentials.Outgoing(ctx), in, opts...)
- if err != nil { return nil, c.credentials.RedactError(err) }
- if err := c.owner.CheckLease(c.credentials.Binding); err != nil { return nil, err }
- return out, nil
+	if err := c.owner.CheckLease(c.credentials.Binding); err != nil {
+		return nil, err
+	}
+	out, err := c.client.ExperimentReady(c.credentials.Outgoing(ctx), in, opts...)
+	if err != nil {
+		return nil, c.credentials.RedactError(err)
+	}
+	if err := c.owner.CheckLease(c.credentials.Binding); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 func (c *boundDispatcherClient) BindSession(ctx context.Context, in *pb.BindSessionRequest, opts ...grpc.CallOption) (*pb.BindSessionResponse, error) {
 	return nil, controlrpc.Unavailable()

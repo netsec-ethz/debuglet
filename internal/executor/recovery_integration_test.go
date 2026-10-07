@@ -55,6 +55,9 @@ func (p *recoveryPeer) OnDebugletState(ctx context.Context, _ *drpc.Mutation, re
 func (p *recoveryPeer) OnDebugletExit(ctx context.Context, _ *drpc.Mutation, req *pb.DebugletExitRequest) (*pb.DebugletExitResponse, error) {
 	return p.DebugletExit(ctx, req)
 }
+func (*recoveryPeer) OnExperimentReady(context.Context, *drpc.Mutation, *pb.ExperimentReadyRequest) (*pb.ExperimentReadyResponse, error) {
+	return nil, errors.New("experiment readiness is not supported by the recovery fixture")
+}
 func (p *recoveryPeer) OnDebugletStream(_ *drpc.SessionOwner, stream grpc.BidiStreamingServer[pb.DebugletStreamRequest, pb.DebugletStreamResponse]) error {
 	// The real Hello negotiates output receipts. These tests script acceptance;
 	// durable dispatcher storage is exercised by the output integration tests.

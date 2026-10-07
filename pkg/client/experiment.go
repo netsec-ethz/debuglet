@@ -21,23 +21,23 @@ type ExperimentDefinition struct {
 // ExperimentRun binds a manifest entry to its admitted run. A definition omits
 // RunID; a submission receipt retains the input, digest and assigned run ID.
 type ExperimentRun struct {
-	OrderID int64 `json:"order_id"`
-	ExecutorID string `json:"executor_id"`
-	WASMPath string `json:"wasm_path"`
-	SHA256 string `json:"sha256"`
-	Args []string `json:"args"`
-	Policy Policy `json:"policy"`
-	RunID string `json:"run_id,omitempty"`
+	OrderID    int64    `json:"order_id"`
+	ExecutorID string   `json:"executor_id"`
+	WASMPath   string   `json:"wasm_path"`
+	SHA256     string   `json:"sha256"`
+	Args       []string `json:"args"`
+	Policy     Policy   `json:"policy"`
+	RunID      string   `json:"run_id,omitempty"`
 }
 
 type ExperimentSubmission struct {
-	ExperimentID string `json:"experiment_id"`
+	ExperimentID string          `json:"experiment_id"`
 	Participants []ExperimentRun `json:"participants"`
 }
 
 type ExperimentResults struct {
 	Submission ExperimentSubmission `json:"submission"`
-	Results []Result `json:"results"`
+	Results    []Result             `json:"results"`
 }
 
 // SubmitExperimentTEST submits one existing TEST batch. Its transaction is the
@@ -50,27 +50,39 @@ func (c *Client) SubmitExperimentTEST(ctx context.Context, def ExperimentDefinit
 	requests := make([]Request, len(receipt.Participants))
 	for i := range receipt.Participants {
 		p := &receipt.Participants[i]
-		if p.RunID != "" { return receipt, errors.New("client: definition already contains a run id") }
+		if p.RunID != "" {
+			return receipt, errors.New("client: definition already contains a run id")
+		}
 		wasm, err := os.ReadFile(p.WASMPath)
-		if err != nil { return receipt, fmt.Errorf("participant %d: %w", p.OrderID, err) }
+		if err != nil {
+			return receipt, fmt.Errorf("participant %d: %w", p.OrderID, err)
+		}
 		digest := sha256.Sum256(wasm)
 		hash := hex.EncodeToString(digest[:])
-		if p.SHA256 != "" && p.SHA256 != hash { return receipt, fmt.Errorf("participant %d: WASM SHA256 mismatch", p.OrderID) }
+		if p.SHA256 != "" && p.SHA256 != hash {
+			return receipt, fmt.Errorf("participant %d: WASM SHA256 mismatch", p.OrderID)
+		}
 		p.SHA256 = hash
 		p.Args = append([]string{}, p.Args...)
 		p.Policy.Addresses = append([]string{}, p.Policy.Addresses...)
 		requests[i] = Request{OrderID: p.OrderID, ExecutorID: p.ExecutorID, Wasm: wasm, Args: p.Args, Policy: p.Policy}
 	}
 	batch, err := Prepare(requests)
-	if err != nil { return receipt, err }
+	if err != nil {
+		return receipt, err
+	}
 	submission, err := c.SubmitTEST(ctx, batch)
 	if err != nil {
 		var se *SubmissionError
-		if errors.As(err, &se) { submission = Submission{TransactionID: se.TransactionID, IDs: se.AdmittedIDs} }
+		if errors.As(err, &se) {
+			submission = Submission{TransactionID: se.TransactionID, IDs: se.AdmittedIDs}
+		}
 	}
 	receipt.ExperimentID = submission.TransactionID
 	if len(submission.IDs) == len(receipt.Participants) {
-		for i, id := range submission.IDs { receipt.Participants[i].RunID = id }
+		for i, id := range submission.IDs {
+			receipt.Participants[i].RunID = id
+		}
 	}
 	return receipt, err
 }
@@ -81,7 +93,9 @@ func (c *Client) ExportExperiment(ctx context.Context, receipt ExperimentSubmiss
 	group := ExperimentResults{Submission: receipt, Results: []Result{}}
 	for _, participant := range receipt.Participants {
 		result, err := c.Export(ctx, participant.RunID)
-		if err != nil { return group, err }
+		if err != nil {
+			return group, err
+		}
 		if result.ExecutorID != participant.ExecutorID || result.Provenance != nil && result.Provenance.WorkloadSHA256 != participant.SHA256 {
 			return group, errors.New("client: experiment result disagrees with submission receipt")
 		}
@@ -95,7 +109,9 @@ func (c *Client) ExportExperiment(ctx context.Context, receipt ExperimentSubmiss
 func (c *Client) CancelExperiment(ctx context.Context, receipt ExperimentSubmission) error {
 	var failures []error
 	for _, participant := range receipt.Participants {
-		if participant.RunID == "" { continue }
+		if participant.RunID == "" {
+			continue
+		}
 		if err := c.Cancel(ctx, participant.RunID, participant.ExecutorID); err != nil {
 			failures = append(failures, fmt.Errorf("participant %d: %w", participant.OrderID, err))
 		}
