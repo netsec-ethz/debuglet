@@ -46,10 +46,12 @@ func capabilityCheck(counter string) doctorCheck {
 			return check
 		}
 		has := func(capability uint) bool { return bits&(uint64(1)<<capability) != 0 }
-		check.Detail = fmt.Sprintf("current process: CAP_NET_RAW=%t CAP_NET_ADMIN=%t CAP_BPF=%t CAP_SYS_ADMIN=%t", has(13), has(12), has(39), has(21))
+		check.Detail = fmt.Sprintf("current process: CAP_NET_RAW=%t CAP_NET_ADMIN=%t CAP_BPF=%t CAP_PERFMON=%t CAP_SYS_ADMIN=%t", has(13), has(12), has(39), has(38), has(21))
 		check.Status, check.Next = "pass", "service capabilities and kernel policy may differ; no packet counter or tagger was attached"
-		if !has(13) || (counter != "fallback" && (!has(12) || (!has(39) && !has(21)))) {
-			check.Status, check.Next = "not_checked", "automatic counter selection may use fallback without eBPF privileges; IPv4 fallback tagging needs CAP_NET_RAW. Check service capabilities; no attachment or readiness was verified"
+		// The verifier refuses the tagger's pointer comparisons without
+		// CAP_PERFMON, so CAP_BPF alone does not load it.
+		if !has(13) || (counter != "fallback" && (!has(12) || (!(has(39) && has(38)) && !has(21)))) {
+			check.Status, check.Next = "not_checked", "automatic counter selection may use fallback without eBPF privileges (CAP_BPF, CAP_PERFMON and CAP_NET_ADMIN); IPv4 fallback tagging needs CAP_NET_RAW. Check service capabilities; no attachment or readiness was verified"
 		}
 		return check
 	}

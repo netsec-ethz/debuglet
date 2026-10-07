@@ -387,6 +387,26 @@ message VantagePointReport {
   ProbeState scion_paths = 10; // Daemon path availability, not data-plane reachability.
   HostResources resources = 11; // Process and state-filesystem observations; operator metrics only.
   string counter_attachment = 12; // present, missing or unknown: owned TCX links, not proof of packet policing.
+  // Hide the dispatcher-observed addresses from the public executor listing
+  // (is_public false); prefix, ASN and location stay public. Read at
+  // registration; false for older peers, which are public.
+  bool address_opt_out = 13;
+  // Host tags from the executor's configuration, from a fixed vocabulary
+  // (pkg/wire HostTags). Read at registration; a malformed list is dropped.
+  repeated string host_tags = 14;
+  AddressSelfCheck address_check = 15; // Optional; absent is unknown.
+}
+
+// What the executor learned from its last address observation round, reduced
+// to booleans so that no local address leaves the host.
+message AddressSelfCheck {
+  // The executor's local IPv4 source toward the dispatcher is a private
+  // (RFC 1918) address; absent when unknown.
+  optional bool ipv4_local_private = 1;
+  // The executor's resolver answered the dispatcher's name with an A (AAAA)
+  // record whose address then passed the dispatcher's TLS identity check.
+  bool resolves_a = 2;
+  bool resolves_aaaa = 3;
 }
 
 message HostResourceValue {

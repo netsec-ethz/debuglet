@@ -63,11 +63,14 @@
       ansible.builtin.include_role:
         name: payload
 
-    - name: Preserve the executor's required kernel capabilities
-      community.general.capabilities:
-        path: "{{ payload_prefix }}/lib/debuglet/{{ deploy_version }}/bin/debuglet-executor"
-        capability: cap_net_admin,cap_bpf+ep
-        state: present
+    # Exactly executor_capabilities (group_vars/executors.yml); setcap
+    # replaces whatever the staged file carried.
+    - name: Grant the executor's required kernel capabilities
+      ansible.builtin.command:
+        argv:
+          - setcap
+          - "{{ executor_capabilities | join(',') }}=ep"
+          - "{{ payload_prefix }}/lib/debuglet/{{ deploy_version }}/bin/debuglet-executor"
       when: executor_enable_bpf | default(true) | bool and not (executor_ambient_caps | default(false) | bool)
 
     - name: Refuse a release incompatible with the current schema

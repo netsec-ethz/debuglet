@@ -80,6 +80,9 @@ type Dispatcher struct {
 	// settlementAfter is the run id the next settlement sweep continues
 	// after. Only the maintenance goroutine reads or writes it.
 	settlementAfter int64
+	// probeFlushedAt and probePrunedAt pace the probe status maintenance.
+	// Only the maintenance goroutine reads or writes them.
+	probeFlushedAt, probePrunedAt time.Time
 
 	destinations *resource.DestinationsUsage
 	policies     destinationPolicies

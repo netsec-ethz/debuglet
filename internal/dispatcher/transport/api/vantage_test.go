@@ -46,6 +46,12 @@ func TestVantageMetadataCrossesControlHTTPAndSDK(t *testing.T) {
 	if d := node.Display; *d.DisplayName.Value != "ETH lab" || *d.Country.Value != "CH" || *d.City.Source != wire.SourceOperator || d.Network != (wire.LabelledString{}) {
 		t.Fatalf("display: %+v", d)
 	}
+	// The control connection's peer is the observed address of its family;
+	// no other family has been observed.
+	if node.IsPublic == nil || !*node.IsPublic || node.AddressV4 == nil || *node.AddressV4 != "127.0.0.1" || node.AddressV6 != nil ||
+		node.AddressObservations == nil || node.AddressObservations.V4 == nil || node.AddressObservations.V4.Via != wire.AddressViaControl || node.AddressObservations.V6 != nil {
+		t.Fatalf("addressing: %+v", node.ProbeAddressing)
+	}
 	// Before its first heartbeat the executor is listed but offline.
 	if node.SCIONISDAS != (wire.ObservedString{}) || node.Listeners.Value != nil || node.Admission != wire.AdmissionOffline {
 		t.Fatalf("legacy peer invented vantage facts: %+v", node)
@@ -83,6 +89,9 @@ func TestVantageMetadataCrossesControlHTTPAndSDK(t *testing.T) {
 	v := doc.Provenance.VantagePoint
 	if ia := v.SCIONISDAS; ia.Value == nil || *ia.Value != "1-ff00:0:110" || *ia.Source != wire.SourceExecutorReported || ia.Stale == nil || *ia.Stale {
 		t.Fatalf("admitted isd-as: %+v", ia)
+	}
+	if a := v.Addressing; a == nil || a.AddressV4 == nil || *a.AddressV4 != "127.0.0.1" || a.IsPublic == nil || !*a.IsPublic {
+		t.Fatalf("admitted addressing: %+v", a)
 	}
 	if *v.Display.DisplayName.Value != "ETH lab" || *v.Display.DisplayName.Source != wire.SourceOperator {
 		t.Fatalf("admitted display: %+v", v.Display)

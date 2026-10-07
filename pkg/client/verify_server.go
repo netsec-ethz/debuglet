@@ -40,13 +40,13 @@ const (
 	routeAttributionVerify = "attribution/verify"
 	routeReceiptKeys       = "attribution/receipt-keys"
 	// verifyAPIVersion is the first API version with the server method.
-	verifyAPIVersion = "1.16"
+	verifyAPIVersion = "1.18"
 	// Limits of one POST /attribution/verify (docs/verification.md#limits).
 	maxServerPackets = 256
 	maxServerGroups  = 16
 )
 
-// AttributionVerify sends packets to POST /attribution/verify (API 1.16).
+// AttributionVerify sends packets to POST /attribution/verify (API 1.18).
 // The answer is checked for shape only; VerifyReceipt checks its receipt.
 func (c *Client) AttributionVerify(ctx context.Context, packets []AttributionVerifyPacket) (AttributionVerifyResponse, error) {
 	if len(packets) == 0 || len(packets) > maxServerPackets {
@@ -71,7 +71,7 @@ func (c *Client) AttributionVerify(ctx context.Context, packets []AttributionVer
 	return doc, nil
 }
 
-// AttributionReceiptKeys reads GET /attribution/receipt-keys (API 1.16).
+// AttributionReceiptKeys reads GET /attribution/receipt-keys (API 1.18).
 func (c *Client) AttributionReceiptKeys(ctx context.Context) (AttributionReceiptKeys, error) {
 	ctx = context.WithValue(ctx, requiredVersionKey{}, verifyAPIVersion)
 	data, err := c.do(ctx, http.MethodGet, routeReceiptKeys, nil, nil, http.StatusOK)
@@ -303,7 +303,7 @@ func serverVerdict(g VerifyGroup, sent []int, answers map[int][]serverAnswer) (V
 }
 
 // serverPass sends the pending groups of rep to the dispatcher and applies
-// the receipts. A dispatcher without the server method (API before 1.16)
+// the receipts. A dispatcher without the server method (API before 1.18)
 // leaves them pending.
 func (s *clientSource) serverPass(ctx context.Context, rep *VerifyReport) error {
 	items := rep.Evidence().Packets.Items
