@@ -19,3 +19,6 @@ dispatcher_base_url: dev.debuglet.netsec.ethz.ch
 
 # Executor ASN and prefix from RIPE RIS; see group_vars/dispatcher.yml.
 dispatcher_ris_asn_enabled: true
+# Browser-approved CLI credentials (dbl login, docs/operations/authentication.md).
+dispatcher_authentication_public_url: "https://{{ dispatcher_base_url }}/api"
+dispatcher_authentication_device_verification_url: "https://{{ dispatcher_base_url }}/console/device"
