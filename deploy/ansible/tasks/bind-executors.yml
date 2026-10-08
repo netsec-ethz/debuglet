@@ -1,0 +1,81 @@
+---
+# Bind every inventory executor ID to the client certificate the deployment
+# issued it, so a dispatcher that requires client certificates admits it.
+#
+# With dispatcher_require_client_cert on, the dispatcher admits an executor
+# only over the certificate recorded for its ID: the SHA-256 fingerprint of the
+# leaf, kept in its database. A certificate from deploy/scripts/generate-certs.sh
+# is trusted by the CA but has no such record until this binds it. An executor
+# given executor_enrollment_token binds itself with that token instead and is
+# skipped here.
+#
+# It copies each executor's public client.crt, never a key, to the dispatcher
+# and runs the installed dispatcher's -bind-executor command as the service
+# account against the configured database. The command verifies the
+# certificate against the configured tls.ca_file, requires client
+# authentication and the executor ID as common name, and changes nothing for a
+# certificate already bound, so it is safe to run on every deployment. A
+# reissued certificate replaces that executor's binding.
+#
+# deploy-certs.yml, the dispatcher role and update-config.yml include it when
+# dispatcher_require_client_cert and dispatcher_bind_inventory_executors are on,
+# after the configuration naming tls.ca_file is in place and before the
+# dispatcher is restarted with it.
+
+- name: List the executors bound from their deployed certificates
+  ansible.builtin.set_fact:
+    dispatcher_bound_executors: >-
+      {%- set out = [] -%}
+      {%- for name in groups['executors'] | default([]) | sort -%}
+      {%-   set h = hostvars[name] -%}
+      {%-   if h.executor_id is defined and not (h.executor_enrollment_token | default(''))
+              and h.executor_id not in out -%}
+      {%-     set _ = out.append(h.executor_id) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Create the directory for executor client certificates
+  ansible.builtin.file:
+    path: "{{ dispatcher_executor_certs_dir }}"
+    state: directory
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0700"
+
+# Public material only: the certificate the executor presents, which the
+# dispatcher sees in every handshake anyway.
+- name: Install the executors' public client certificates
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/executors/{{ item }}/client.crt"
+    dest: "{{ dispatcher_executor_certs_dir }}/{{ item }}.crt"
+    owner: "{{ debuglet_user }}"
+    group: "{{ debuglet_group }}"
+    mode: "0644"
+  loop: "{{ dispatcher_bound_executors }}"
+
+# The command writes the database, which has to keep its owner. A play that
+# already runs as the service account, as the offline fixture does, runs it
+# directly; one running as root drops to that account through runuser.
+- name: Read the account the deployment runs commands as
+  ansible.builtin.command:
+    argv: [id, -un]
+  register: dispatcher_bind_account
+  changed_when: false
+  check_mode: false
+
+- name: Bind each executor ID to its client certificate
+  ansible.builtin.command:
+    argv: >-
+      {{ ([] if dispatcher_bind_account.stdout == debuglet_user else ['runuser', '-u', debuglet_user, '--'])
+         + [payload_prefix ~ '/bin/debuglet-dispatcher',
+            '-config', config_dir ~ '/dispatcher/dispatcher.toml',
+            '-bind-executor', item,
+            '-bind-certificate', dispatcher_executor_certs_dir ~ '/' ~ item ~ '.crt'] }}
+  loop: "{{ dispatcher_bound_executors }}"
+  register: dispatcher_bind_result
+  changed_when: "'already bound' not in dispatcher_bind_result.stdout"
+
+- name: Report the executor bindings
+  ansible.builtin.debug:
+    msg: "{{ dispatcher_bind_result.results | default([]) | map(attribute='stdout', default='') | select | list }}"

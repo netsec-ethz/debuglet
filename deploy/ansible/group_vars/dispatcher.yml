@@ -58,11 +58,27 @@ dispatcher_authentication_public_url: ""
 dispatcher_authentication_device_verification_url: ""
 
 # Whether the dispatcher requires a client certificate on its own listeners.
-# Only meaningful when dispatcher_disable_tls is false, and off by default:
-# turning it on refuses every executor that does not yet present a client
-# certificate from the deployment CA, so run deploy-certs.yml on every
-# executor first. It is rendered only when it is on.
+# Only meaningful when dispatcher_disable_tls is false, and off by default.
+# Turning it on also enforces enrollment: the dispatcher then admits an
+# executor only over the one certificate bound to its ID in its database (the
+# SHA-256 fingerprint of the leaf), and a certificate from the deployment CA
+# alone is not enough. Run deploy-certs.yml on every executor first; the
+# deployment then binds each inventory executor to the certificate it installed
+# (dispatcher_bind_inventory_executors below) before it restarts the
+# dispatcher with the requirement. It is rendered only when it is on.
 dispatcher_require_client_cert: false
+
+# With dispatcher_require_client_cert on, bind every inventory executor ID to
+# certs_dir/executors/<executor_id>/client.crt on the dispatcher: site.yml,
+# deploy-certs.yml and update-config.yml all do it, and deploy-certs.yml does it
+# again whenever generate-certs.sh has reissued a certificate. Only public
+# certificates are copied. An executor with executor_enrollment_token enrols
+# with its token instead and is not bound here. Turn this off only when every
+# executor is enrolled some other way: the preflight then requires a token for
+# each inventory executor.
+dispatcher_bind_inventory_executors: true
+# Where the dispatcher keeps the public executor certificates it was bound to.
+dispatcher_executor_certs_dir: "{{ config_dir }}/dispatcher/executors"
 
 # The authority the dispatcher checks client certificates against. It is read
 # only when client certificates are required, and deploy-certs.yml installs it

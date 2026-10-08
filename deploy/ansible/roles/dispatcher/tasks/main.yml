@@ -135,6 +135,16 @@
   when: dispatcher_cilogon_oidc_enabled | bool
   notify: Restart dispatcher
 
+# With client certificates required, the dispatcher admits only executors
+# whose ID is bound to the certificate they present. Bind the inventory's
+# executors with the configuration and database just installed, before the
+# dispatcher is started or restarted with them.
+- name: Bind the inventory executors to their client certificates
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/bind-executors.yml"
+  when:
+    - dispatcher_require_client_cert | bool
+    - dispatcher_bind_inventory_executors | bool
+
 - name: Install dispatcher systemd unit
   ansible.builtin.template:
     src: dispatcher.service.j2

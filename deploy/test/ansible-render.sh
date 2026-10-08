@@ -33,6 +33,11 @@
 #      disabling it removes the units and the configuration entry.
 #  11. executor labels, the advertised address, the IPv4 reflector and the
 #      executor's capability set render where the daemons read them.
+#  12. with client certificates required, the deployment binds every inventory
+#      executor to the certificate it installs before the dispatcher runs with
+#      the requirement, re-binds a reissued certificate and refuses one from
+#      another authority; the preflight refuses enforcement for an executor
+#      with neither a certificate to bind nor an enrollment token.
 #
 # It needs a built release package in deploy/dist (./deploy/scripts/build-linux.sh)
 # and the pinned provisioner, so run it through deploy/test/provisioner-check.sh.
@@ -1087,6 +1092,149 @@ else
 fi
 expect 'legacy dispatcher database is preserved' \
 	"$host/etc/debuglet/dispatcher/dispatcher.db" 'legacy dispatcher accounts and runs'
+
+# ------------------------------------------------------- executor binding ---
+# With client certificates required, the dispatcher admits an executor only
+# over the certificate bound to its ID in its database. The deployment binds
+# every inventory executor from the certificate it installs, before the
+# dispatcher runs with the requirement, and again when a certificate is
+# reissued. This runs on a host tree of its own with a real dispatcher
+# database, which the installed dispatcher creates.
+mkdir -p "$work/no-client-certs"
+cp -R "$certs/ca.crt" "$certs/dispatcher" "$work/no-client-certs/"
+refuses 'enforcement is refused for an executor without a certificate to bind' \
+	'the dispatcher would then' -e dispatcher_require_client_cert=true \
+	-e "certs_dir=$work/no-client-certs" --limit dispatcher
+refuses 'enforcement without inventory binding is refused for an executor without a token' \
+	'dispatcher_bind_inventory_executors' -e dispatcher_require_client_cert=true \
+	-e dispatcher_bind_inventory_executors=false
+if run "$work/token-preflight.log" preflight-variables.yml -e dispatcher_require_client_cert=true \
+	-e dispatcher_bind_inventory_executors=false -e executor_enrollment_token=dbx_fixtureselector.fixtureverifier; then
+	check 'enforcement without inventory binding is accepted for an executor with a token' pass
+else
+	check 'enforcement without inventory binding is accepted for an executor with a token' fail
+	tail -20 "$work/token-preflight.log" >&2
+fi
+refuses 'a malformed enrollment token is refused' 'Require a well-formed enrollment token' \
+	-e executor_enrollment_token=not-a-token-secretvalue
+refute 'a refused enrollment token is not shown' "$work/refuse.log" 'secretvalue'
+mkdir -p "$work/token"
+if run "$work/token-render.log" "$work/tls-render.yml" --limit executors \
+	-e "tls_template_dir=$playbooks" -e "tls_render_dir=$work/token" \
+	-e executor_enrollment_token=dbx_fixtureselector.fixtureverifier; then
+	expect 'an enrollment token renders into the executor credentials' "$work/token/executor.toml" \
+		'enrollment_token = "dbx_fixtureselector.fixtureverifier"'
+	output=$(timeout 10 "$host/opt/debuglet/prod/bin/debuglet-executor" \
+		--config "$work/token/executor.toml" 2>&1 || true)
+	case $output in
+		*"$host/var/lib/debuglet/executor-prod/executor.db"*)
+			check 'the installed executor accepts an enrollment token' pass ;;
+		*)
+			check 'the installed executor accepts an enrollment token' fail
+			printf '%s\n' "$output" | head -5 >&2 ;;
+	esac
+else
+	check 'an enrollment token renders into the executor credentials' fail
+	tail -20 "$work/token-render.log" >&2
+fi
+refute 'no enrollment token is rendered by default' "$executor_toml" 'enrollment_token'
+
+bind_host=$work/bind-host
+bind_certs=$work/bind-certs
+bind_dist=$work/bind-dist
+mkdir -p "$bind_host/etc/systemd/system" "$bind_dist" "$work/bind-seed"
+chmod 0700 "$work/bind-seed"
+cp -R "$certs" "$bind_certs"
+cp "$dist"/* "$bind_dist/"
+rm -f "$bind_dist/dispatcher-seed.db"
+"$host/opt/debuglet/prod/bin/debuglet-dispatcher" -init-database "$work/bind-seed/dispatcher.db" \
+	>"$work/bind-seed.log" 2>&1 && cp "$work/bind-seed/dispatcher.db" "$bind_dist/dispatcher-seed.db"
+cat >"$work/bind.yml" <<EOF
+payload_prefix: "$bind_host/opt/debuglet/{{ debuglet_env }}"
+payload_staging_dir: "$bind_host/var/tmp/debuglet-payload-{{ debuglet_env }}"
+config_dir: $bind_host/etc/debuglet
+state_dir: $bind_host/var/lib/debuglet
+log_dir: $bind_host/var/log/debuglet
+systemd_unit_dir: $bind_host/etc/systemd/system
+dist_dir: $bind_dist
+certs_dir: $bind_certs
+dispatcher_ris_asn_enabled: false
+dispatcher_require_client_cert: true
+EOF
+bind_run() {
+	local log=$1
+	shift
+	run "$log" "$@" --limit dispatcher -e "@$work/bind.yml"
+}
+fingerprint() {
+	openssl x509 -in "$1" -outform DER | sha256sum | cut -d' ' -f1
+}
+bound_cert=$bind_certs/executors/$fixture_executor/client.crt
+first_fingerprint=$(fingerprint "$bound_cert")
+if bind_run "$work/bind-certs.log" deploy-certs.yml; then
+	check 'certificates install before any dispatcher exists to bind them' pass
+	expect 'binding waits for the deployment while no dispatcher is installed' \
+		"$work/bind-certs.log" 'no executor was bound now'
+else
+	check 'certificates install before any dispatcher exists to bind them' fail
+	tail -30 "$work/bind-certs.log" >&2
+fi
+if bind_run "$work/bind-apply.log" deploy-dispatcher.yml; then
+	check 'a deployment that requires client certificates applies' pass
+else
+	check 'a deployment that requires client certificates applies' fail
+	tail -30 "$work/bind-apply.log" >&2
+fi
+expect 'the deployment binds the inventory executor to its certificate' "$work/bind-apply.log" \
+	"executor $fixture_executor is now bound to certificate sha256:$first_fingerprint"
+if cmp -s "$bound_cert" "$bind_host/etc/debuglet/dispatcher/executors/$fixture_executor.crt"; then
+	check 'the dispatcher holds the public executor certificate it bound' pass
+else
+	check 'the dispatcher holds the public executor certificate it bound' fail
+fi
+if find "$bind_host/etc/debuglet/dispatcher" -name 'client.key' | grep -q .; then
+	check 'no executor key reaches the dispatcher' fail
+else
+	check 'no executor key reaches the dispatcher' pass
+fi
+if bind_run "$work/bind-update.log" update-config.yml -e "deploy_version=$release_version"; then
+	check 'a configuration update with client certificates required applies' pass
+	expect 'a repeated binding changes nothing' "$work/bind-update.log" \
+		"executor $fixture_executor is already bound to certificate sha256:$first_fingerprint"
+else
+	check 'a configuration update with client certificates required applies' fail
+	tail -30 "$work/bind-update.log" >&2
+fi
+# Reissuing a certificate with the generator re-binds it on the next
+# certificate installation, before the executor presents it.
+rm -rf "${bind_certs:?}/executors/$fixture_executor"
+CERTS_DIR=$bind_certs DISPATCHER_SANS=$fixture_sans \
+	"$root/deploy/scripts/generate-certs.sh" "$fixture_executor" >"$work/bind-reissue.log" 2>&1
+second_fingerprint=$(fingerprint "$bound_cert")
+if [ "$second_fingerprint" != "$first_fingerprint" ] &&
+	bind_run "$work/bind-rebind.log" deploy-certs.yml; then
+	check 'a reissued certificate installs' pass
+	expect 'a reissued certificate replaces the binding' "$work/bind-rebind.log" \
+		"executor $fixture_executor is now bound to certificate sha256:$second_fingerprint, replacing sha256:$first_fingerprint"
+else
+	check 'a reissued certificate installs' fail
+	tail -30 "$work/bind-rebind.log" >&2
+fi
+# A certificate the configured authority did not issue is refused rather than
+# bound, and the deployment stops before the dispatcher restarts.
+cp "$bound_cert" "$work/bind-good.crt"
+CERTS_DIR=$work/foreign-ca DISPATCHER_SANS='DNS:other.fixture.invalid' \
+	"$root/deploy/scripts/generate-certs.sh" "$fixture_executor" >/dev/null 2>&1
+cp "$work/foreign-ca/executors/$fixture_executor/client.crt" "$bound_cert"
+if bind_run "$work/bind-foreign.log" update-config.yml -e "deploy_version=$release_version"; then
+	check 'a certificate from another authority is not bound' fail
+elif grep -qF 'not a client certificate of the configured authority' "$work/bind-foreign.log"; then
+	check 'a certificate from another authority is not bound' pass
+else
+	check 'a certificate from another authority is not bound' fail
+	tail -20 "$work/bind-foreign.log" >&2
+fi
+cp "$work/bind-good.crt" "$bound_cert"
 
 if [ "$failures" -ne 0 ]; then
 	printf '%s check(s) failed\n' "$failures" >&2

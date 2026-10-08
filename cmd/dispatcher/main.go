@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -41,6 +42,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/readiness"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
+	"github.com/netsec-ethz/debuglet/internal/tlsfiles"
 
 	"github.com/google/uuid"
 
@@ -55,6 +57,8 @@ func main() {
 	revoke := flag.String("revoke-operator", "", "Return the account with this UUID to the ordinary role in the configured database, then exit")
 	enroll := flag.String("enroll-executor", "", "Create a single-use enrollment token for this executor ID in the configured database, print it once, then exit")
 	unenroll := flag.String("revoke-executor", "", "Delete the node credential enrolled for this executor ID in the configured database, then exit")
+	bind := flag.String("bind-executor", "", "Bind this executor ID to the client certificate named by -bind-certificate in the configured database, then exit")
+	bindCertificate := flag.String("bind-certificate", "", "With -bind-executor, the PEM client certificate issued for that executor by the authority in tls.ca_file")
 	initDatabase := flag.String("init-database", "", "Create a new database at this path, then exit; its parent must be a private directory owned by this user")
 	upgrade := flag.Bool("upgrade-database", false, "Apply the packaged migrations to the configured database, then exit. Stop the daemon and back the file up first")
 	checkDatabase := flag.Bool("check-database", false, "Report whether the configured database is supported by this build, then exit; exit status 3 means it needs the upgrade, 4 that the upgrade drops recorded data")
@@ -120,8 +124,12 @@ func main() {
 		return
 	}
 
-	if *checkDatabase && (*upgrade || *acceptDataLoss || *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "") {
+	if *checkDatabase && (*upgrade || *acceptDataLoss || *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "" || *bind != "") {
 		fmt.Fprintln(os.Stderr, "dispatcher: -check-database cannot be combined with another administration flag")
+		os.Exit(1)
+	}
+	if (*bind == "") != (*bindCertificate == "") {
+		fmt.Fprintln(os.Stderr, "dispatcher: -bind-executor and -bind-certificate must be given together")
 		os.Exit(1)
 	}
 	if *acceptDataLoss && !*upgrade {
@@ -164,7 +172,7 @@ func main() {
 	// A database is upgraded only when its operator asks for it, never at
 	// start: a normal start refuses an outdated schema instead.
 	if *upgrade {
-		if *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "" {
+		if *grant != "" || *revoke != "" || *enroll != "" || *unenroll != "" || *bind != "" {
 			fmt.Fprintln(os.Stderr, "dispatcher: -upgrade-database cannot be combined with another administration flag")
 			os.Exit(1)
 		}
@@ -195,6 +203,10 @@ func main() {
 	// Role administration is deliberately not an HTTP operation: the operator
 	// role is granted on the dispatcher host, by whoever already controls the
 	// database, and never by anything reachable over the network.
+	if *bind != "" && (*grant != "" || *revoke != "" || *enroll != "" || *unenroll != "") {
+		fmt.Fprintln(os.Stderr, "dispatcher: -bind-executor cannot be combined with another administration flag")
+		os.Exit(1)
+	}
 	if *grant != "" || *revoke != "" {
 		if err := administerRole(context.Background(), cfg, *grant, *revoke); err != nil {
 			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
@@ -207,6 +219,15 @@ func main() {
 	// already controls the database, never over the network.
 	if *enroll != "" || *unenroll != "" {
 		if err := administerEnrollment(context.Background(), cfg, *enroll, *unenroll); err != nil {
+			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	// A certificate the administrator issued is bound the same way: the
+	// deployment records the executors whose client certificates it issued.
+	if *bind != "" {
+		if err := administerBinding(context.Background(), cfg, *bind, *bindCertificate, os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "dispatcher: %v\n", err)
 			os.Exit(1)
 		}
@@ -686,6 +707,75 @@ func administerEnrollment(ctx context.Context, cfg *config.DispatcherConfig, enr
 		return fmt.Errorf("print enrollment token: %w", err)
 	}
 	return nil
+}
+
+// administerBinding binds executorID to the client certificate in certPath,
+// which the administrator issued from the authority in tls.ca_file, and
+// returns. It is how executors deployed with administrator-issued
+// certificates are admitted once tls.require_client_cert is on: no token is
+// involved, because whoever controls this database already vouches for them.
+// The certificate is verified as the transport would verify it, so a binding
+// that could never admit its executor is refused rather than recorded.
+// Binding the certificate already bound changes nothing; a different one
+// replaces that executor ID's binding and no other.
+func administerBinding(ctx context.Context, cfg *config.DispatcherConfig, executorID, certPath string, out io.Writer) error {
+	if cfg.TLS.CAFile == "" {
+		return errors.New("tls.ca_file is not set, so there is no authority to verify the certificate against; configure the authority executor certificates are checked with first")
+	}
+	now := time.Now()
+	roots, err := tlsfiles.TrustRoots("tls.ca_file", cfg.TLS.CAFile, now)
+	if err != nil {
+		return err
+	}
+	certPEM, err := readBounded(certPath, enrollment.MaxCertificateBytes)
+	if err != nil {
+		return fmt.Errorf("-bind-certificate: %w", err)
+	}
+	fingerprint, err := enrollment.CertificateFingerprint(executorID, certPEM, roots, now)
+	if err != nil {
+		return fmt.Errorf("-bind-certificate %s: %w", certPath, err)
+	}
+	if err := storagecheck.Check(ctx, storagecheck.Dispatcher, cfg.Database.Path); err != nil {
+		return err
+	}
+	db, err := sqlitedb.Open(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+	binding, err := enrollment.NewStore(db).Bind(ctx, executorID, fingerprint)
+	if err != nil {
+		return err
+	}
+	if !cfg.TLS.RequireClientCert {
+		fmt.Fprintln(os.Stderr, "dispatcher: tls.require_client_cert is not set, so this dispatcher does not check this binding until it is")
+	}
+	switch {
+	case !binding.Changed:
+		_, err = fmt.Fprintf(out, "executor %s is already bound to certificate sha256:%s\n", executorID, fingerprint)
+	case binding.Previous == "":
+		_, err = fmt.Fprintf(out, "executor %s is now bound to certificate sha256:%s\n", executorID, fingerprint)
+	default:
+		_, err = fmt.Fprintf(out, "executor %s is now bound to certificate sha256:%s, replacing sha256:%s\n", executorID, fingerprint, binding.Previous)
+	}
+	return err
+}
+
+// readBounded reads a file of at most limit bytes.
+func readBounded(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, limit)
+	}
+	return data, nil
 }
 
 // localDevelopmentProfile reports whether the HTTP API serves its local

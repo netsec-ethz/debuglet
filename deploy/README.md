@@ -644,10 +644,10 @@ Two variables cover the cases where the default is not enough:
   address dialled, for instance `dispatcher_addr` holding an IP while the
   certificate names the host. Rendered only when set.
 - `dispatcher_require_client_cert` — makes the dispatcher require a client
-  certificate from the deployment CA on its own listeners. Off by default,
-  because turning it on refuses every executor that has not been given one
-  yet. Rendered only when on, together with the `ca_file` it is checked
-  against.
+  certificate on its own listeners and enforce executor enrollment. Off by
+  default. Rendered only when on, together with the `ca_file` it is checked
+  against. See [Requiring client certificates](#requiring-client-certificates):
+  a certificate from the deployment CA is necessary but not sufficient.
 
 The daemons accept both keys. The templates emit them only when they are
 set, so a deployment that needs neither renders neither.
@@ -658,13 +658,83 @@ TEST rig does. The preflight refuses `executor_disable_tls` for any other
 `dispatcher_addr`, and refuses an executor that verifies TLS while the
 dispatcher serves none.
 
+### Requiring client certificates
+
+With `dispatcher_require_client_cert: true` the dispatcher enforces executor
+enrollment. It admits an executor ID only over the one client certificate
+bound to that ID in its database: the lowercase hex SHA-256 fingerprint of the
+leaf certificate's DER bytes. A certificate the deployment CA issued is
+verified, but without a binding the executor is refused ("executor ID is not
+enrolled") and its control session is rejected. Executors installed by
+`generate-certs.sh` and `deploy-certs.yml` have no binding of their own, so the
+deployment records one for them:
+
+- With `dispatcher_bind_inventory_executors: true`, the default, the
+  deployment binds every executor in the inventory to
+  `certs_dir/executors/<executor_id>/client.crt`. It copies only that public
+  certificate to the dispatcher (`dispatcher_executor_certs_dir`) and runs the
+  installed dispatcher as the service account:
+
+  ```sh
+  debuglet-dispatcher -config /etc/debuglet/dispatcher/dispatcher.toml \
+    -bind-executor EXECUTOR_UUID -bind-certificate /path/to/client.crt
+  ```
+
+  The command verifies the certificate against `tls.ca_file` for client
+  authentication and requires the executor UUID as its common name. Binding
+  the certificate already bound changes nothing; a different certificate
+  replaces that executor's binding and no other.
+- `site.yml` (the dispatcher role) binds after it renders the configuration
+  and before it starts or restarts the dispatcher; `update-config.yml` binds
+  before it restarts the dispatcher with a configuration that turns the
+  requirement on. Both run on every deployment, so a binding is never left
+  stale.
+- `deploy-certs.yml` binds again on a dispatcher that already enforces the
+  requirement, before the executors install their certificates. A
+  certificate `generate-certs.sh` reissued (delete
+  `certs/executors/<executor_id>/` and run it again) is therefore re-bound by
+  the same `make deploy-certs` that installs it. The old certificate is
+  refused from that moment, so the executor reconnects once its new
+  certificate is installed and it restarts, later in the same run. On a host
+  where the dispatcher is not installed yet, or does not require client
+  certificates yet, it binds nothing and says so: `site.yml` or
+  `update-config.yml` binds before enabling the requirement.
+- An executor whose certificate the controller does not hold enrols with a
+  token instead: set its `executor_enrollment_token` (a secret; keep it in a
+  vault or a private `host_vars` file) to the output of
+  `debuglet-dispatcher -enroll-executor EXECUTOR_UUID`. It is rendered as
+  `[credentials] enrollment_token`, and the executor's first connection
+  spends it. The deployment does not bind such an executor itself.
+
+The preflight refuses to turn the requirement on while any inventory executor
+has neither a certificate to bind nor a token, including on a run limited to
+the dispatcher. Turn `dispatcher_bind_inventory_executors` off only when every
+executor is enrolled some other way; the preflight then requires a token for
+each one. Removing an executor from the inventory does not remove its
+binding: `debuglet-dispatcher -revoke-executor EXECUTOR_UUID` does.
+
+To enable the requirement on a running fleet:
+
+1. Deploy a release that has `-bind-executor` with `site.yml`, still without
+   the requirement.
+2. Make sure every executor has its certificate (`make deploy-certs`).
+3. Set `dispatcher_require_client_cert: true` and run `update-config.yml`
+   (or `site.yml`). It binds every inventory executor and only then restarts
+   the dispatcher with the requirement. Check its "Report the executor
+   bindings" output and the dispatcher log for `Refused an executor identity`.
+
 ### Self-service executor enrollment
 
 Enrollment through the console is disabled by default. It requires a release
 with API 1.10, an explicitly upgraded dispatcher database, native TLS on both
-control endpoints, and certificates for every existing executor before enabling
-`dispatcher_require_client_cert`. The browser API may have its own HTTPS proxy;
-that proxy does not replace the native control listeners.
+control endpoints, and `dispatcher_require_client_cert`. That requirement is
+not satisfied by giving existing executors certificates alone: the dispatcher
+then admits each executor only over the certificate bound to its ID, so every
+existing executor needs a binding too. The deployment binds the inventory's
+executors from their deployed certificates before it enables the requirement;
+see [Requiring client certificates](#requiring-client-certificates). The
+browser API may have its own HTTPS proxy; that proxy does not replace the
+native control listeners.
 
 Preprovision a dedicated intermediate issuer certificate chain and matching
 private key on the deployment controller. Keep the key owner-only (`chmod 600`)
@@ -725,7 +795,11 @@ both are leaves the deployment CA signed, and the generator refuses to issue
 anything without a name list. `ansible/deploy-certs.yml` then installs them
 into the fixture tree, and the rendered configurations are checked for the
 material on both sides — including that `tls.require_client_cert` and
-`tls.server_name` appear only when their variables are set. No inventory, no
+`tls.server_name` appear only when their variables are set. With client
+certificates required, it deploys a dispatcher with a real database and checks
+that the inventory executor is bound to its deployed certificate, that a
+second run changes nothing, that a reissued certificate is re-bound and that a
+certificate from another authority is refused. No inventory, no
 host key and no managed machine is involved, and nothing is deployed anywhere.
 
 ```sh

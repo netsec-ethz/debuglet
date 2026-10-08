@@ -4,6 +4,11 @@
 # dispatcher with plus that host's own client certificate. The dispatcher gets
 # the CA too, so requiring client certificates later needs no second run.
 #
+# With dispatcher_require_client_cert on and a dispatcher already enforcing it,
+# it also binds every inventory executor ID to its client certificate on the
+# dispatcher before the executors install it, so a reissued certificate is
+# admitted rather than refused (tasks/bind-executors.yml).
+#
 #   DISPATCHER_SANS="DNS:dispatcher.example.com" ./deploy/scripts/generate-certs.sh <uuid> ...
 #   cd deploy/ansible && ../scripts/provisioner.sh ansible-playbook -i hosts.yml -e @vars/prod.yml deploy-certs.yml
 #
@@ -67,6 +72,55 @@
       no_log: true
       when: dispatcher_executor_onboarding_enabled | bool
       register: dispatcher_issuer_copy
+
+    # A dispatcher that requires client certificates admits an executor only
+    # over the certificate bound to its ID, so a certificate generate-certs.sh
+    # issued or reissued is bound here, before the executors below install
+    # it. On a host where the dispatcher is not installed yet, or whose
+    # installed configuration does not require client certificates yet,
+    # site.yml or update-config.yml binds them before enabling the requirement.
+    - name: Inspect the installed dispatcher for executor binding
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ payload_prefix }}/bin/debuglet-dispatcher"
+        - "{{ config_dir }}/dispatcher/dispatcher.toml"
+        - "{{ state_dir }}/dispatcher/dispatcher.db"
+      register: dispatcher_bind_installed
+      when:
+        - dispatcher_require_client_cert | bool
+        - dispatcher_bind_inventory_executors | bool
+
+    - name: Read whether the installed configuration requires client certificates
+      ansible.builtin.command:
+        argv: [grep, -qxF, "require_client_cert = true", "{{ config_dir }}/dispatcher/dispatcher.toml"]
+      register: dispatcher_bind_enforced
+      changed_when: false
+      check_mode: false
+      failed_when: dispatcher_bind_enforced.rc not in [0, 1]
+      when:
+        - dispatcher_require_client_cert | bool
+        - dispatcher_bind_inventory_executors | bool
+        - dispatcher_bind_installed.results | map(attribute='stat.exists') | min
+
+    - name: Bind the inventory executors to their client certificates
+      ansible.builtin.include_tasks: tasks/bind-executors.yml
+      when:
+        - dispatcher_require_client_cert | bool
+        - dispatcher_bind_inventory_executors | bool
+        - dispatcher_bind_enforced.rc | default(1) == 0
+
+    - name: Report executor binding left to the deployment
+      ansible.builtin.debug:
+        msg: >-
+          The dispatcher here is not installed or does not require client
+          certificates yet, so no executor was bound now. site.yml or
+          update-config.yml binds the inventory executors before it enables
+          the requirement.
+      when:
+        - dispatcher_require_client_cert | bool
+        - dispatcher_bind_inventory_executors | bool
+        - dispatcher_bind_enforced.rc | default(1) != 0
 
     - name: Inspect the dispatcher unit
       ansible.builtin.stat:

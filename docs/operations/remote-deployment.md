@@ -77,16 +77,38 @@ The gRPC and reverse-control addresses must name their respective listeners.
 The first successful registration consumes the token and stores the certificate
 fingerprint bound to that UUID. Remove `credentials.enrollment_token` afterward.
 Restart with the same UUID, keypair and database; no new token is needed. A
-replacement certificate needs a new token for the same UUID. The corresponding
+replacement certificate needs a new token for the same UUID, or a binding as
+described below. The corresponding
 `-revoke-executor EXECUTOR_UUID` command removes the binding and prevents new
 registration and lease renewal. An existing session retains its current lease
 until expiry or an earlier disconnect.
 
-The current Ansible executor template renders the certificate paths but has no
-enrollment-token input. It does not perform this initial binding automatically.
-An on-host configuration edit is overwritten by the next Ansible deployment;
-coordinate initial enrollment and configuration ownership with the operator.
-Do not disable client-certificate verification to bypass missing enrollment.
+When the administrator issued the executor's certificate, as
+`deploy/scripts/generate-certs.sh` does, no token is needed: bind the UUID to
+that certificate directly, as the database owner:
+
+```sh
+debuglet-dispatcher -config /etc/debuglet/dispatcher/dispatcher.toml \
+  -bind-executor EXECUTOR_UUID -bind-certificate /path/to/client.crt
+```
+
+Only the public certificate is needed. The command verifies it against
+`tls.ca_file` for client authentication, requires the UUID as its common name
+and records its SHA-256 fingerprint. Running it again for the same certificate
+changes nothing; a reissued certificate replaces the binding, and the old one
+is refused from then on.
+
+With `require_client_cert = true` the dispatcher enforces these bindings: a
+certificate from the trusted CA without a binding for its executor's UUID is
+refused. Enable the requirement only after every executor is bound or holds a
+token. The Ansible deployment does this for its inventory: it binds every
+executor from its deployed `client.crt` before it starts the dispatcher with
+the requirement, re-binds a reissued certificate, renders
+`executor_enrollment_token` into `[credentials]` for an executor it does not
+bind, and its preflight refuses the requirement while an executor has neither;
+see "Requiring client certificates" in `deploy/README.md`. An on-host
+configuration edit is overwritten by the next Ansible deployment. Do not
+disable client-certificate verification to bypass missing enrollment.
 
 ## Client trust and account access
 

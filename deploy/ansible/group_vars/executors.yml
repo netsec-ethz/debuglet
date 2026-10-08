@@ -193,6 +193,15 @@ executor_disable_tls: false
 # when set.
 executor_tls_server_name: ""
 
+# A single-use enrollment token from `debuglet-dispatcher -enroll-executor
+# <executor_id>`, for an executor the deployment does not bind from a
+# certificate it holds (see dispatcher_bind_inventory_executors). Rendered as
+# credentials.enrollment_token only when set; the first connection spends it
+# and binds the certificate the executor presents. It is a secret: keep it in
+# a vault or a private host_vars file, never in a committed inventory. A spent
+# token buys nothing, so it may stay until the next configuration change.
+executor_enrollment_token: ""
+
 # Payments. The deployment runs without a wallet: the executor prices work in
 # TEST units and names no chain account. Fill in a currency and wallet only
 # together with the dispatcher's payment configuration.

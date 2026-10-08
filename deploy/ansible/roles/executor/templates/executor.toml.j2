@@ -30,6 +30,11 @@ server_name = "{{ executor_tls_server_name }}"
 ca_cert = "{{ executor_config_dir }}/ca.crt"
 client_cert = "{{ executor_config_dir }}/client.crt"
 client_key = "{{ executor_config_dir }}/client.key"
+{% if executor_enrollment_token | default('') | length > 0 %}
+# Spent by the first connection, which binds the certificate above to this
+# executor ID (executor_enrollment_token).
+enrollment_token = "{{ executor_enrollment_token }}"
+{% endif %}
 
 [resources]
 capacity = {{ executor_capacity }}
