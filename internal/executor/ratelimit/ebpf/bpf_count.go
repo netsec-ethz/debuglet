@@ -124,6 +124,8 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	}
 
 	var fdErr error
+	// The entry lives as long as the socket; the kernel frees it when the
+	// socket is destroyed, so BpfConn.Close does not delete it.
 	err = rawConn.Control(func(fd uintptr) {
 		info := countDebugletUuid{Uuid: [16]byte(id)}
 		fdErr = bc.objs.DebugletSkMap.Update(uint32(fd), &info, ebpf.UpdateAny)
@@ -149,16 +151,7 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	defer bc.mu.Unlock()
 	bc.destinations.Add(addr, id, ipv6)
 
-	return &BpfConn{
-		count: bc, conn: conn, raw: rawConn, deleteStorage: bc.deleteSocketStorage,
-		domain: addr, id: id, resolvedIPv6: ipv6,
-	}, nil
-}
-
-// deleteSocketStorage removes the debuglet_sk_map entry of the socket that the
-// open descriptor fd refers to.
-func (bc *BpfCount) deleteSocketStorage(fd uint32) error {
-	return bc.objs.DebugletSkMap.Delete(fd)
+	return &BpfConn{count: bc, conn: conn, domain: addr, id: id, resolvedIPv6: ipv6}, nil
 }
 
 func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {

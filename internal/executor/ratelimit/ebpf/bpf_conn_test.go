@@ -7,27 +7,29 @@ package ebpf
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
+	"net/netip"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/google/uuid"
-	"golang.org/x/sys/unix"
+	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 )
 
-// closeRecorder notes when the wrapped connection is closed.
+// closeRecorder counts closes of the wrapped connection.
 type closeRecorder struct {
 	net.Conn
-	events *[]string
+	closes int
 	err    error
 }
 
 func (c *closeRecorder) Close() error {
-	*c.events = append(*c.events, "close")
+	c.closes++
 	if err := c.Conn.Close(); err != nil {
 		return err
 	}
@@ -67,105 +69,68 @@ func loopbackConn(t *testing.T, network string) net.Conn {
 	return nil
 }
 
-// testBpfConn wraps conn the way Attach does, with deleter in place of the
-// kernel map and a recorder on the connection's Close.
-func testBpfConn(t *testing.T, conn net.Conn, events *[]string, closeErr error, deleter func(fd uint32) error) *BpfConn {
-	t.Helper()
-	raw, err := conn.(syscall.Conn).SyscallConn()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &BpfConn{
-		count: new(BpfCount), conn: &closeRecorder{Conn: conn, events: events, err: closeErr}, raw: raw,
-		deleteStorage: func(fd uint32) error {
-			*events = append(*events, "delete")
-			return deleter(fd)
-		},
-		domain: "127.0.0.1", id: uuid.New(),
-	}
-}
-
-// Regression for #412: the SK_STORAGE entry is keyed by the descriptor, so it
-// must be deleted while the descriptor is open and still names this socket.
-func TestBpfConnDeletesSocketStorageBeforeClosing(t *testing.T) {
+// Regression for #412. Close must not touch debuglet_sk_map: deleting by the
+// closed descriptor fails (EBADF) and deleting before close lets the socket's
+// remaining data leave unattributed. The counter here has no maps, so any map
+// access panics; the destination is registered twice so that a single Detach
+// leaves no rate-map delete either.
+func TestBpfConnCloseLeavesSocketStorageToTheKernel(t *testing.T) {
+	ip := netutil.ToIPv6(netip.MustParseAddr("127.0.0.1"))
 	for _, network := range []string{"tcp", "udp"} {
 		t.Run(network, func(t *testing.T) {
 			conn := loopbackConn(t, network)
-			local := conn.LocalAddr().String()
-			var events []string
-			var deletedFDs []uint32
-			bc := testBpfConn(t, conn, &events, nil, func(fd uint32) error {
-				deletedFDs = append(deletedFDs, fd)
-				if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
-					return fmt.Errorf("descriptor %d not open at delete: %w", fd, err)
-				}
-				name, err := unix.Getsockname(int(fd))
-				if err != nil {
-					return fmt.Errorf("descriptor %d: %w", fd, err)
-				}
-				in4, ok := name.(*unix.SockaddrInet4)
-				if !ok || fmt.Sprintf("%s:%d", net.IP(in4.Addr[:]), in4.Port) != local {
-					return fmt.Errorf("descriptor %d names %v, not this socket %s", fd, name, local)
-				}
-				return nil
-			})
-			if err := bc.Close(); err != nil {
+			recorder := &closeRecorder{Conn: conn}
+			counter := new(BpfCount)
+			id := uuid.New()
+			counter.destinations.Add("127.0.0.1", id, ip)
+			counter.destinations.Add("127.0.0.1", id, ip)
+			bc := &BpfConn{count: counter, conn: recorder, domain: "127.0.0.1", id: id, resolvedIPv6: ip}
+			closeOnce := func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("Close touched a counter map: %v", r)
+					}
+				}()
+				return bc.Close()
+			}
+			if err := closeOnce(); err != nil {
 				t.Fatalf("Close: %v", err)
 			}
-			if fmt.Sprint(events) != "[delete close]" {
-				t.Fatalf("order = %v, want [delete close]", events)
-			}
-			// A second Close neither deletes by a descriptor number that may
-			// already name another socket nor closes again.
-			if err := bc.Close(); err != nil {
+			if err := closeOnce(); err != nil {
 				t.Fatalf("second Close: %v", err)
 			}
-			if fmt.Sprint(events) != "[delete close]" || len(deletedFDs) != 1 {
-				t.Fatalf("second Close acted again: events %v, deletes %v", events, deletedFDs)
+			if recorder.closes != 1 {
+				t.Fatalf("socket closed %d times, want 1", recorder.closes)
 			}
 			if _, err := conn.Write([]byte{1}); !errors.Is(err, net.ErrClosed) {
 				t.Fatalf("socket still open after Close: %v", err)
 			}
+			// Exactly one of the two attachments was detached: one is left.
+			if remaining, ok := counter.destinations.Remove("127.0.0.1", id, ip); !ok || remaining != 0 {
+				t.Fatalf("attachments left after Close = %d (ok %v), want one detached", remaining, ok)
+			}
 		})
 	}
 }
 
-func TestBpfConnCloseErrors(t *testing.T) {
-	deleteFailed := errors.New("map delete failed")
+func TestBpfConnClosePrefersCloseError(t *testing.T) {
 	closeFailed := errors.New("close failed")
-	for _, tc := range []struct {
-		name               string
-		deleteErr, connErr error
-		want               error
-	}{
-		{name: "entry already gone", deleteErr: fmt.Errorf("lookup: %w", ebpf.ErrKeyNotExist)},
-		{name: "delete fails", deleteErr: deleteFailed, want: deleteFailed},
-		{name: "close error preferred", deleteErr: deleteFailed, connErr: closeFailed, want: closeFailed},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			conn := loopbackConn(t, "tcp")
-			var events []string
-			bc := testBpfConn(t, conn, &events, tc.connErr, func(uint32) error { return tc.deleteErr })
-			err := bc.Close()
-			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
-				t.Fatalf("Close = %v, want %v", err, tc.want)
-			}
-			if fmt.Sprint(events) != "[delete close]" {
-				t.Fatalf("order = %v, want [delete close]", events)
-			}
-			if _, werr := conn.Write([]byte{1}); !errors.Is(werr, net.ErrClosed) {
-				t.Fatalf("socket left open after failed delete: %v", werr)
-			}
-			if again := bc.Close(); again != err {
-				t.Fatalf("second Close = %v, want first result %v", again, err)
-			}
-		})
+	conn := loopbackConn(t, "tcp")
+	recorder := &closeRecorder{Conn: conn, err: closeFailed}
+	bc := &BpfConn{count: new(BpfCount), conn: recorder, domain: "127.0.0.1", id: uuid.New()}
+	if err := bc.Close(); !errors.Is(err, closeFailed) {
+		t.Fatalf("Close = %v, want %v", err, closeFailed)
+	}
+	if err := bc.Close(); !errors.Is(err, closeFailed) || recorder.closes != 1 {
+		t.Fatalf("second Close = %v after %d closes, want the first result once", err, recorder.closes)
 	}
 }
 
 // TestKernelCounterClosesCountedConns attaches the counter to loopback and
-// closes counted TCP (both the dialed and the accepted end) and UDP sockets:
-// each Close must succeed and remove only its own socket's entry.
+// closes counted TCP (both the dialed and the accepted end) and UDP sockets.
+// Each Close must succeed and detach its rate limit, its descriptor number
+// must carry no entry once reused, and data a TCP socket still holds when it
+// is closed must stay attributed to its run instead of leaving unthrottled.
 func TestKernelCounterClosesCountedConns(t *testing.T) {
 	iface, err := net.InterfaceByName("lo")
 	if err != nil {
@@ -186,7 +151,7 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 		}
 	})
 	const addr = "127.0.0.1"
-	attach := func(t *testing.T, conn net.Conn) (net.Conn, uuid.UUID) {
+	attach := func(t *testing.T, conn net.Conn, limit bitrate.Bitrate) (net.Conn, uuid.UUID) {
 		t.Helper()
 		id := uuid.New()
 		attached, err := counter.Attach(conn, id, addr)
@@ -194,7 +159,7 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 			conn.Close()
 			t.Fatal(err)
 		}
-		if err := counter.SetLimit(addr, id, 1<<30); err != nil {
+		if err := counter.SetLimit(addr, id, limit); err != nil {
 			t.Fatal(err)
 		}
 		if err := counter.SetExecLimit(id, 1<<30); err != nil {
@@ -202,6 +167,18 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = counter.DeleteExecLimit(id) })
 		return attached, id
+	}
+	fdOf := func(t *testing.T, conn net.Conn) uint32 {
+		t.Helper()
+		raw, err := conn.(*BpfConn).conn.(syscall.Conn).SyscallConn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var socketFD uint32
+		if err := raw.Control(func(fd uintptr) { socketFD = uint32(fd) }); err != nil {
+			t.Fatal(err)
+		}
+		return socketFD
 	}
 	stored := func(t *testing.T, conn net.Conn) (uuid.UUID, error) {
 		t.Helper()
@@ -232,8 +209,32 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 			t.Fatalf("counted traffic not delivered: %v", err)
 		}
 	}
+	// reusedFDHasNoEntry opens sockets until one gets the closed descriptor's
+	// number and checks that the number does not carry the old entry.
+	reusedFDHasNoEntry := func(t *testing.T, fd uint32) {
+		t.Helper()
+		for range 64 {
+			fresh, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM|syscall.SOCK_CLOEXEC, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { syscall.Close(fresh) })
+			if uint32(fresh) > fd {
+				break
+			}
+			if uint32(fresh) == fd {
+				var value countDebugletUuid
+				if err := counter.objs.DebugletSkMap.Lookup(fd, &value); !errors.Is(err, ebpf.ErrKeyNotExist) {
+					t.Fatalf("socket reusing descriptor %d has entry %v: %v", fd, uuid.UUID(value.Uuid), err)
+				}
+				return
+			}
+		}
+		t.Fatalf("descriptor %d was not reused", fd)
+	}
 	closeCounted := func(t *testing.T, conn net.Conn, id uuid.UUID) {
 		t.Helper()
+		fd := fdOf(t, conn)
 		if err := conn.Close(); err != nil {
 			t.Fatalf("Close of counted %s conn: %v", conn.LocalAddr().Network(), err)
 		}
@@ -245,6 +246,7 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 		if err := counter.objs.RatesMap.Lookup(&key, &rate); !errors.Is(err, ebpf.ErrKeyNotExist) {
 			t.Fatalf("rate limit left after Close: %v", err)
 		}
+		reusedFDHasNoEntry(t, fd)
 	}
 
 	t.Run("tcp", func(t *testing.T) {
@@ -262,8 +264,8 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 			dialed.Close()
 			t.Fatal(err)
 		}
-		client, clientID := attach(t, dialed)
-		server, serverID := attach(t, accepted)
+		client, clientID := attach(t, dialed, 1<<30)
+		server, serverID := attach(t, accepted, 1<<30)
 		for conn, id := range map[net.Conn]uuid.UUID{client: clientID, server: serverID} {
 			if got, err := stored(t, conn); err != nil || got != id {
 				t.Fatalf("socket storage = %v, %v; want %v", got, err, id)
@@ -272,7 +274,6 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 		exchange(t, client, server)
 		exchange(t, server, client)
 		closeCounted(t, client, clientID)
-		// Closing one socket must not remove another socket's entry.
 		if got, err := stored(t, server); err != nil || got != serverID {
 			t.Fatalf("other socket's storage after Close = %v, %v; want %v", got, err, serverID)
 		}
@@ -289,11 +290,83 @@ func TestKernelCounterClosesCountedConns(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sender, id := attach(t, dialed)
+		sender, id := attach(t, dialed, 1<<30)
 		if got, err := stored(t, sender); err != nil || got != id {
 			t.Fatalf("socket storage = %v, %v; want %v", got, err, id)
 		}
 		exchange(t, sender, receiver)
 		closeCounted(t, sender, id)
+	})
+
+	// A guest that fills its send buffer under a low limit and closes must not
+	// get the buffered remainder delivered: it keeps the run's UUID and is
+	// dropped once the rate entry is gone, instead of leaving unattributed.
+	t.Run("write-then-close tail", func(t *testing.T) {
+		listener, err := net.Listen("tcp4", addr+":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		dialed, err := net.Dial("tcp4", listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		accepted, err := listener.Accept()
+		if err != nil {
+			dialed.Close()
+			t.Fatal(err)
+		}
+		defer accepted.Close()
+		if err := dialed.(*net.TCPConn).SetWriteBuffer(4 << 20); err != nil {
+			t.Fatal(err)
+		}
+		const limit = 16 * 1024 * 8 * bitrate.Bit // 16 KiB/s
+		client, _ := attach(t, dialed, limit)
+
+		var received atomic.Int64
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			buffer := make([]byte, 64<<10)
+			for {
+				n, err := accepted.Read(buffer)
+				received.Add(int64(n))
+				if err != nil {
+					return
+				}
+			}
+		}()
+		if err := client.SetWriteDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+		written, _ := client.Write(make([]byte, 8<<20))
+		atClose := received.Load()
+		dropsBefore, _, err := counter.DropTotals()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		time.Sleep(time.Second)
+		tail := received.Load() - atClose
+		dropsAfter, _, err := counter.DropTotals()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = accepted.SetReadDeadline(time.Now())
+		<-done
+		t.Logf("written %d, delivered %d before Close, %d after; egress drops %d -> %d",
+			written, atClose, tail, dropsBefore[1], dropsAfter[1])
+		if unsent := int64(written) - atClose; unsent < 128<<10 {
+			t.Fatalf("fixture buffered only %d unsent bytes at Close; the check needs at least 128 KiB", unsent)
+		}
+		// At most one burst may follow Close; the buffered remainder may not.
+		if tail > 64<<10 {
+			t.Fatalf("%d bytes left the closed socket after Close, past its rate limit", tail)
+		}
+		if dropsAfter[1] <= dropsBefore[1] {
+			t.Fatalf("no egress drop after Close (%d -> %d): the tail left unattributed", dropsBefore[1], dropsAfter[1])
+		}
 	})
 }

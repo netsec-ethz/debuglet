@@ -93,13 +93,14 @@ changes; the linked API and deployment documentation contains operational detail
 ### Fixed
 - An executor counting packets with eBPF (`enforcement_mode: ebpf`) no longer
   fails every run that closes a socket (#412). Closing a counted TCP or UDP
-  connection, dialed or accepted, removed its socket-storage entry after
-  closing the descriptor, so the guest's close failed with `close_tcp: delete:
-  bad file descriptor` and the run ended "debuglet failed" although its output
-  was delivered. The entry is now removed while the descriptor is open, before
-  the socket is closed; an entry already gone is not an error, and the socket
-  is closed even when the removal fails. A descriptor number reused by another
-  socket in between can no longer lose that socket's entry.
+  connection, dialed or accepted, deleted its socket-storage entry by the
+  descriptor it had just closed, so the guest's close failed with `close_tcp:
+  delete: bad file descriptor` and the run ended "debuglet failed" although
+  its output was delivered. Close no longer deletes the entry: it belongs to
+  the socket, and the kernel frees it when the socket is destroyed. Deleting
+  it before the close instead would let the data a socket still holds after
+  close leave unattributed and past its rate limit; that data keeps the run's
+  UUID and is dropped once the run's rate entry is removed.
 
 ## [0.3.0-rc.1] - 2026-10-06
 
