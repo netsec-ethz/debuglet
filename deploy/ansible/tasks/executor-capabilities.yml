@@ -1,0 +1,70 @@
+---
+# Give one installed executor binary exactly executor_capabilities
+# (group_vars/executors.yml says what each one is for). This is the only place
+# the capabilities are granted: the executor role, rollout-executors.yml and
+# upgrade-database.yml all import it, so an executor started by any of them
+# runs with the same set. Without it the eBPF tagger and packet counter cannot
+# load and probes leave untagged.
+#
+# setcap replaces whatever the file carried before. It runs only when getcap
+# reports a different set, so a repeat run changes nothing, and in check mode
+# getcap still runs while setcap does not. Nothing is granted when
+# executor_enable_bpf is false. The unit's ambient set
+# (executor_ambient_caps) does not replace the file capabilities: it is the
+# same list, and verify.yml requires them on the binary either way.
+#
+# Inputs:
+#   executor_capabilities_binary    the installed executable itself, not the
+#                                   link to it: file capabilities live on the
+#                                   executable
+#   executor_capabilities_required  true: a refused setcap fails the host, for
+#                                   playbooks that are about to start that
+#                                   binary in place of a running executor.
+#                                   false (default): it is reported as a
+#                                   warning, for hosts (restricted containers,
+#                                   noexec/nosuid or non-xattr filesystems)
+#                                   that reject file capabilities outright
+#
+# Registers executor_setcap, which is changed when the capabilities were
+# replaced: a running executor keeps the capabilities it started with, so the
+# caller restarts it.
+
+- name: Read the executor binary's file capabilities
+  ansible.builtin.command:
+    argv: [getcap, "{{ executor_capabilities_binary }}"]
+  register: executor_getcap
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: executor_enable_bpf | default(true) | bool
+
+# getcap prints "PATH cap_a,cap_b=ep" for a file that carries them.
+- name: Grant exactly the executor's capabilities
+  ansible.builtin.command:
+    argv:
+      - setcap
+      - "{{ executor_capabilities | join(',') }}=ep"
+      - "{{ executor_capabilities_binary }}"
+  register: executor_setcap
+  failed_when: >-
+    executor_setcap.rc | default(0) != 0
+    and executor_capabilities_required | default(false) | bool
+  changed_when: executor_setcap.rc | default(1) == 0
+  when:
+    - executor_enable_bpf | default(true) | bool
+    - >-
+      ((executor_getcap.stdout | default('') | regex_search('\\s(\\S+)=ep\\s*$', '\\1') or ['']) | first).split(',') | sort
+      != executor_capabilities | sort
+
+- name: Warn when the capabilities could not be set
+  ansible.builtin.debug:
+    msg: >-
+      Could not set {{ executor_capabilities | join(',') }} on
+      {{ executor_capabilities_binary }}
+      ({{ executor_setcap.stderr | default('') | trim | default('setcap failed', true) }}).
+      This node will run without the eBPF egress tagger, so its probes
+      will carry no attribution tag and cannot be verified, and without
+      cap_net_raw it offers no ICMP.
+  when:
+    - executor_enable_bpf | default(true) | bool
+    - executor_setcap.rc | default(0) != 0

@@ -63,15 +63,14 @@
       ansible.builtin.include_role:
         name: payload
 
-    # Exactly executor_capabilities (group_vars/executors.yml); setcap
-    # replaces whatever the staged file carried.
+    # Exactly executor_capabilities (group_vars/executors.yml), shared with
+    # the executor role and upgrade-database.yml. A refusal stops the rollout
+    # here, before the running executor is drained.
     - name: Grant the executor's required kernel capabilities
-      ansible.builtin.command:
-        argv:
-          - setcap
-          - "{{ executor_capabilities | join(',') }}=ep"
-          - "{{ payload_prefix }}/lib/debuglet/{{ deploy_version }}/bin/debuglet-executor"
-      when: executor_enable_bpf | default(true) | bool and not (executor_ambient_caps | default(false) | bool)
+      ansible.builtin.import_tasks: tasks/executor-capabilities.yml
+      vars:
+        executor_capabilities_binary: "{{ payload_prefix }}/lib/debuglet/{{ deploy_version }}/bin/debuglet-executor"
+        executor_capabilities_required: true
 
     - name: Refuse a release incompatible with the current schema
       ansible.builtin.command:

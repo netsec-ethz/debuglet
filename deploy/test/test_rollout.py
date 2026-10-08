@@ -56,10 +56,20 @@ printf '%s\n' "$prefix" >> "$ROLLOUT_FIXTURE/installers"
 [ ! -f "$prefix/lib/debuglet/$version/bad-tree" ] || exit 18
 mkdir -p "$prefix/lib/debuglet/$version/bin" "$prefix/lib/debuglet/$version/share/debuglet" "$prefix/bin"
 printf '{}\n' > "$prefix/lib/debuglet/$version/share/debuglet/manifest.json"
-printf '#!/bin/sh\n[ ! -f "%s/incompatible" ]\n' "$ROLLOUT_FIXTURE" > "$prefix/lib/debuglet/$version/bin/debuglet-executor"
+cp "$ROLLOUT_FIXTURE/executor-fixture" "$prefix/lib/debuglet/$version/bin/debuglet-executor"
 chmod 755 "$prefix/lib/debuglet/$version/bin/debuglet-executor"
 cp "$prefix/lib/debuglet/$version/bin/debuglet-executor" "$prefix/lib/debuglet/$version/bin/debuglet-dispatcher"
 '''
+# The packaged daemon: -check-database answers 3 (an upgrade is needed) while
+# the fixture marks the schema outdated, and -upgrade-database is traced.
+EXECUTOR = r'''#!/bin/sh
+[ ! -f "$ROLLOUT_FIXTURE/incompatible" ] || exit 1
+case " $* " in
+  *" -check-database "*) [ ! -f "$ROLLOUT_FIXTURE/outdated" ] || { echo 'fixture schema outdated' >&2; exit 3; }; echo 'fixture schema current';;
+  *" -upgrade-database "*) echo upgrade >> "$ROLLOUT_FIXTURE/trace"; echo 'fixture schema upgraded';;
+esac
+'''
+CAPABILITIES = 'cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf'
 CLIENT = r'''#!PYTHON
 import json, os, sys
 from pathlib import Path
@@ -93,6 +103,7 @@ class RolloutTests(unittest.TestCase):
         for name, code in [('systemctl', SYSTEMCTL), ('client', CLIENT)]:
             p = self.work / name
             p.write_text(code.replace('PYTHON', sys.executable, 1)); p.chmod(0o755)
+        (self.work / 'executor-fixture').write_text(EXECUTOR)
         Path('/run/systemd/system').mkdir(parents=True, exist_ok=True)
         (self.fixture.directory / 'install.sh').write_text(INSTALLER)
         sums = self.fixture.directory / 'SHA256SUMS'
@@ -137,6 +148,26 @@ class RolloutTests(unittest.TestCase):
                            cwd=self.playbooks, env=self.env, text=True, capture_output=True, timeout=180)
         return p, (self.work / 'trace').read_text().splitlines() if (self.work / 'trace').exists() else []
 
+    def run_upgrade(self):
+        p = subprocess.run(['ansible-playbook', '-i', str(self.work / 'inventory.yml'),
+                            '-e', '@' + str(self.work / 'settings.yml'), 'upgrade-database.yml'],
+                           cwd=self.playbooks, env=self.env, text=True, capture_output=True, timeout=180)
+        return p, (self.work / 'trace').read_text().splitlines() if (self.work / 'trace').exists() else []
+
+    def enable_bpf(self, getcap='', setcap_rc=0):
+        """Turn the BPF path on with fixture getcap/setcap. getcap reports
+        getcap (empty: no capabilities); setcap traces its arguments."""
+        settings = self.work / 'settings.yml'
+        value = yaml.safe_load(settings.read_text()); value['executor_enable_bpf'] = True
+        settings.write_text(yaml.safe_dump(value))
+        report = '#!/bin/sh\n' + ('printf "%%s %s\\n" "$1"\n' % getcap if getcap else '') + 'exit 0\n'
+        trace = '#!/bin/sh\nprintf "setcap %%s %%s\\n" "$1" "$2" >> %s\nexit %d\n' % (self.work / 'trace', setcap_rc)
+        for name, code in [('getcap', report), ('setcap', trace)]:
+            path = self.work / name; path.write_text(code); path.chmod(0o755)
+
+    def candidate(self, host):
+        return str(self.work / host / 'prefix/lib/debuglet' / VERSION / 'bin/debuglet-executor')
+
     def test_serial_success_records_verified_backups_and_measurements(self):
         p, trace = self.run_rollout()
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -180,20 +211,65 @@ class RolloutTests(unittest.TestCase):
         self.assertFalse((self.work / 'second/prefix').exists())
 
     def test_missing_required_capabilities_stop_before_drain(self):
-        settings = self.work / 'settings.yml'
-        value = yaml.safe_load(settings.read_text()); value['executor_enable_bpf'] = True
-        settings.write_text(yaml.safe_dump(value))
-        setcap_args = self.work / 'setcap-args'
-        for name, code in [('getcap', '#!/bin/sh\nexit 0\n'),
-                           ('setcap', '#!/bin/sh\nprintf "%%s\\n" "$1" >> %s\nexit 1\n' % setcap_args)]:
-            path = self.work / name; path.write_text(code); path.chmod(0o755)
+        self.enable_bpf(setcap_rc=1)
         p, trace = self.run_rollout()
         self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("Grant the executor's required kernel capabilities", p.stdout)
-        # Exactly the set the eBPF tagger and the pure-Go tagger need.
-        self.assertEqual(setcap_args.read_text().splitlines(), ['cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf=ep'])
-        self.assertEqual(trace, [])
+        self.assertIn("Grant exactly the executor's capabilities", p.stdout)
+        # Exactly the set the eBPF tagger and the pure-Go tagger need, and
+        # nothing stopped.
+        self.assertEqual(trace, ['setcap %s=ep %s' % (CAPABILITIES, self.candidate('canary'))])
         self.assertFalse((self.work / 'second/prefix').exists())
+
+    def test_rollout_grants_capabilities_before_starting_each_host(self):
+        self.enable_bpf()
+        p, trace = self.run_rollout()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual([t for t in trace if not t.startswith('measure')],
+                         ['setcap %s=ep %s' % (CAPABILITIES, self.candidate('canary')),
+                          'stop fixture-canary', 'start fixture-canary',
+                          'setcap %s=ep %s' % (CAPABILITIES, self.candidate('second')),
+                          'stop fixture-second', 'start fixture-second'])
+
+    # upgrade-database.yml starts the candidate executor itself (#414): it must
+    # carry the role's capabilities before it is started.
+    def test_upgrade_database_grants_capabilities_before_starting_candidate(self):
+        (self.work / 'outdated').touch()
+        self.enable_bpf()
+        p, trace = self.run_upgrade()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(trace, [
+            'setcap %s=ep %s' % (CAPABILITIES, self.candidate('canary')),
+            'stop fixture-canary', 'upgrade', 'start fixture-canary',
+            'setcap %s=ep %s' % (CAPABILITIES, self.candidate('second')),
+            'stop fixture-second', 'upgrade', 'start fixture-second'])
+        for host in ('canary', 'second'):
+            self.assertEqual(os.readlink(self.work / host / 'prefix/bin/debuglet-executor'), self.candidate(host))
+
+    def test_upgrade_database_keeps_capabilities_already_granted(self):
+        (self.work / 'outdated').touch()
+        # getcap lists them in another order; the set is what counts.
+        self.enable_bpf(getcap='cap_bpf,cap_perfmon,cap_net_raw,cap_net_admin=ep')
+        p, trace = self.run_upgrade()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(trace, ['stop fixture-canary', 'upgrade', 'start fixture-canary',
+                                 'stop fixture-second', 'upgrade', 'start fixture-second'])
+
+    def test_upgrade_database_refused_capabilities_leave_service_and_database(self):
+        (self.work / 'outdated').touch()
+        self.enable_bpf(setcap_rc=1)
+        p, trace = self.run_upgrade()
+        self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("Grant exactly the executor's capabilities", p.stdout)
+        self.assertEqual(trace, ['setcap %s=ep %s' % (CAPABILITIES, self.candidate('canary'))])
+        self.assertEqual((self.work / 'canary/state/executor-dev/executor.db').read_text(), 'unchanged fixture state')
+        self.assertFalse((self.work / 'second/prefix').exists())
+
+    def test_upgrade_database_without_bpf_grants_nothing(self):
+        (self.work / 'outdated').touch()
+        p, trace = self.run_upgrade()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(trace, ['stop fixture-canary', 'upgrade', 'start fixture-canary',
+                                 'stop fixture-second', 'upgrade', 'start fixture-second'])
 
 
 if __name__ == '__main__':
