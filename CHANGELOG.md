@@ -128,6 +128,27 @@ changes; the linked API and deployment documentation contains operational detail
   close leave unattributed and past its rate limit; that data keeps the run's
   UUID and is dropped once the run's rate entry is removed.
 
+### Fixed
+- `deploy/ansible/upgrade-database.yml` gives the candidate executor binary
+  exactly `executor_capabilities` before it activates and starts it (#414).
+  It used to start the executor without CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN
+  and CAP_NET_RAW until a full deployment followed. A host that refuses the
+  capabilities now stops the upgrade before the service or database is
+  touched. The executor role, `rollout-executors.yml` and
+  `upgrade-database.yml` now grant them through one task file
+  (`deploy/ansible/tasks/executor-capabilities.yml`). `rollout-executors.yml`
+  now also grants them when `executor_ambient_caps` is set, as the role and
+  `verify.yml` already expected, and skips `setcap` when the binary already
+  carries the set.
+- With `packet_counter = "auto"`, an executor whose eBPF load fails falls
+  back to the userspace counter instead of exiting with `packet counter
+  cleanup unconfirmed` and being restarted in a loop (#414). A load attaches
+  nothing, so any load failure is a clean rollback. A failed attach whose
+  release cannot be confirmed still stops the executor. When the process
+  lacks CAP_BPF or CAP_NET_ADMIN, the logged error names the missing
+  capability rather than cilium/ebpf's "MEMLOCK may be too low" or "prealloc
+  maps not supported" hint, and the fallback reason is `not_permitted`.
+
 ## [0.3.0-rc.1] - 2026-10-06
 
 ### Security

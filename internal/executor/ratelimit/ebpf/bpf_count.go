@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
-	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit/destinations"
 	"io"
@@ -53,15 +52,18 @@ func NewBPFCount(iface *net.Interface) (*BpfCount, error) {
 			}
 			return attached, err
 		},
+		missingCapabilities: missingCapabilities,
 	})
 }
 
 // Construction-fixed test seams model ownership transfer, not kernel behavior.
 // load transfers its resources only on success. attach transfers any returned
 // nonnil handle, including a handle returned alongside an error.
+// missingCapabilities, when set, explains a failed load.
 type counterDependencies struct {
-	load   func() (countObjects, []counterResource, error)
-	attach func(link.TCXOptions) (io.Closer, error)
+	load                func() (countObjects, []counterResource, error)
+	attach              func(link.TCXOptions) (io.Closer, error)
+	missingCapabilities func() ([]string, error)
 }
 
 func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, error) {
@@ -70,17 +72,17 @@ func newBPFCount(iface *net.Interface, deps counterDependencies) (*BpfCount, err
 	}
 	objs, resources, err := deps.load()
 	if err != nil {
-		err = fmt.Errorf("failed to load eBPF objects: %w", err)
-		// EPERM, EACCES and EINVAL are what an unprivileged process sees,
-		// depending on the kernel and the failing step, and what a kernel
-		// that does not accept a program or map returns; the caller falls
-		// back on them. Any other errno is not such a refusal and stays fatal
-		// for the operator to look at. In every case cilium/ebpf closes the
-		// objects a failed load created.
-		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EINVAL) {
-			return nil, err
-		}
-		return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, err)
+		// A failed load attached nothing, so it is a clean rollback for the
+		// caller's fallback decision whatever its cause: attach is reached
+		// only after a successful load, and loading creates no TCX link and,
+		// without pin options, nothing that outlives this process. What
+		// cilium/ebpf may not have released are map and program descriptors,
+		// which count no packet without an attachment and close with the
+		// process. Only a failed attach can leave a hook in place, and that
+		// rollback is observed below. The caller falls back and reports the
+		// cause; when the process lacks a required capability (#414) the
+		// error names it and reads as a permission failure.
+		return nil, explainLoadFailure(fmt.Errorf("failed to load eBPF objects: %w", err), deps.missingCapabilities)
 	}
 	bc := &BpfCount{objs: objs, cleanup: counterCleanup{resources: resources}, interfaceIndex: uint32(iface.Index)}
 

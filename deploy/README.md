@@ -433,9 +433,11 @@ executor's identity.
 
 ### Executor capabilities and vantage-point metadata
 
-The executor role gives the installed executor binary exactly the file
-capabilities in `executor_capabilities`
-([`group_vars/executors.yml`](ansible/group_vars/executors.yml)):
+The executor role, `rollout-executors.yml` and `upgrade-database.yml` give
+the installed executor binary exactly the file capabilities in
+`executor_capabilities`
+([`group_vars/executors.yml`](ansible/group_vars/executors.yml)), all through
+[`ansible/tasks/executor-capabilities.yml`](ansible/tasks/executor-capabilities.yml):
 
 | Capability | Needed for |
 | --- | --- |
@@ -449,7 +451,9 @@ Without the first three an executor reports `enforcement_mode: fallback`,
 without `cap_net_raw` also `tagging.ipv4: none` and no ICMP. `cap_sys_resource`
 is not granted: from Linux 5.11 BPF memory is charged to the memory cgroup,
 and on an older kernel the unit sets `LimitMEMLOCK=infinity` instead. A host
-that refuses file capabilities keeps deploying with a warning;
+that refuses file capabilities keeps deploying with a warning (a rollout or
+database upgrade, which starts that binary in place of a running executor,
+stops instead);
 [`ansible/verify.yml`](ansible/verify.yml) fails on any executor whose binary
 lacks the set. Set `executor_enable_bpf: false` for such a host.
 

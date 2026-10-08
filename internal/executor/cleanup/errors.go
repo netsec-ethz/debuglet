@@ -21,6 +21,10 @@ import "errors"
 // The returned error also retains each underlying release error for errors.Is.
 var ErrCleanupFailed = errors.New("packet counter cleanup failed")
 
-// ErrCleanupUnconfirmed means the BPF loader failed and did not expose the result
-// of its internally owned rollback. It does not assert that cleanup failed.
+// ErrCleanupUnconfirmed means a constructor failed after acquiring a resource
+// that could outlive its failure, such as an attachment, and could not observe
+// whether its rollback released it. It does not assert that cleanup failed.
+// A failed eBPF object load does not carry it: loading attaches nothing, so
+// whatever the loader left unreleased cannot outlive the process or count a
+// packet, and the factory falls back.
 var ErrCleanupUnconfirmed = errors.New("packet counter cleanup unconfirmed")

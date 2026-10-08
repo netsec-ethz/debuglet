@@ -19,7 +19,10 @@
 #      upgrade_accept_data_loss=true, naming the data concerned;
 #   6. requires twice the size of the database and its -wal and -shm companions
 #      to be free on the database's filesystem (one copy for the backup, one for
-#      the migration's own journal);
+#      the migration's own journal); on an executor it also gives the candidate
+#      binary exactly executor_capabilities (tasks/executor-capabilities.yml,
+#      the same task file the executor role uses), so the executor it starts in
+#      step 11 can load its eBPF programs;
 #   7. stops the service; 8. copies the database and its companions into a new
 #      backup-TIMESTAMP directory next to it; 9. runs the candidate daemon's
 #      -upgrade-database mode as the service user through runuser, so the
@@ -312,6 +315,16 @@
               companions. Free space and run the playbook again. The database
               and the service were not touched.
             quiet: true
+
+        # The candidate is started below in place of the running executor,
+        # so it needs exactly the capabilities the executor role grants;
+        # without them its eBPF packet counter and tagger cannot load. A
+        # refusal stops here, before the service or the database is touched.
+        - name: Grant the candidate executor its kernel capabilities
+          ansible.builtin.import_tasks: tasks/executor-capabilities.yml
+          vars:
+            executor_capabilities_binary: "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
+            executor_capabilities_required: true
 
         - name: Name the backup directory
           ansible.builtin.set_fact:
