@@ -54,42 +54,53 @@ func TestPacketCounterFallbackDecision(t *testing.T) {
 	}
 }
 
-func TestPacketCounterLoadRefusalFallsBack(t *testing.T) {
+func TestPacketCounterLoadFailureFallsBack(t *testing.T) {
 	// The factory errors have the shape the eBPF constructor returns for a
-	// failed load: a refused load is a plain error, any other load failure
-	// carries ErrCleanupUnconfirmed.
+	// failed load: whatever the cause, a load attaches nothing and carries no
+	// cleanup marker, so auto mode falls back instead of exiting (#414).
 	for _, tc := range []struct {
-		name  string
-		cause error
-		fatal bool
+		name   string
+		cause  error
+		reason string
 	}{
-		{"eperm", syscall.EPERM, false},
-		{"eacces", syscall.EACCES, false},
-		{"einval", syscall.EINVAL, false},
-		{"other_load_error", syscall.ENOMEM, true},
+		{"eperm", syscall.EPERM, FallbackNotPermitted},
+		{"eacces", syscall.EACCES, FallbackNotPermitted},
+		{"einval", syscall.EINVAL, FallbackAttachFailed},
+		{"other_load_error", syscall.ENOMEM, FallbackAttachFailed},
+		{"unsupported_feature", fmt.Errorf("prealloc maps not supported (requires >= v4.6): %w", errors.ErrUnsupported), FallbackUnsupported},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			core, logs := observer.New(zapcore.DebugLevel)
 			count, err := newPacketCount(&net.Interface{Index: 8}, zap.New(core), func(*net.Interface) (PacketCount, error) {
-				loadErr := fmt.Errorf("failed to load eBPF objects: map create: %w", tc.cause)
-				if tc.fatal {
-					return nil, errors.Join(cleanup.ErrCleanupUnconfirmed, loadErr)
-				}
-				return nil, loadErr
+				return nil, fmt.Errorf("failed to load eBPF objects: map create: %w", tc.cause)
 			})
-			if tc.fatal {
-				if count != nil || !errors.Is(err, tc.cause) || logs.Len() != 0 {
-					t.Fatalf("unrefused load fell back or lost cause: %v/%v, logs=%d", count, err, logs.Len())
-				}
-				return
-			}
 			if err != nil || count == nil || count.Type() != "fallback" {
-				t.Fatalf("refused load fallback=%v/%v", count, err)
+				t.Fatalf("load failure fallback=%v/%v", count, err)
 			}
 			t.Cleanup(func() { _ = count.Close() })
+			if got := FallbackReason(count); got != tc.reason {
+				t.Errorf("fallback reason=%q want %q", got, tc.reason)
+			}
 			warnings := logs.FilterLevelExact(zapcore.WarnLevel).All()
 			if logs.Len() != 1 || len(warnings) != 1 || !strings.Contains(fmt.Sprint(warnings[0].ContextMap()["error"]), tc.cause.Error()) {
 				t.Fatalf("fallback logs=%v", logs.All())
+			}
+		})
+	}
+}
+
+// A failure that may have left an attachment in place never falls back, even
+// when it also reports a load-like cause.
+func TestPacketCounterUnconfirmedAttachmentStaysFatal(t *testing.T) {
+	for _, marker := range []error{cleanup.ErrCleanupFailed, cleanup.ErrCleanupUnconfirmed} {
+		t.Run(marker.Error(), func(t *testing.T) {
+			core, logs := observer.New(zapcore.DebugLevel)
+			cause := fmt.Errorf("failed to attach egress TCX: %w", syscall.EPERM)
+			count, err := newPacketCount(&net.Interface{Index: 8}, zap.New(core), func(*net.Interface) (PacketCount, error) {
+				return nil, errors.Join(cause, marker)
+			})
+			if count != nil || !errors.Is(err, marker) || !errors.Is(err, syscall.EPERM) || logs.Len() != 0 {
+				t.Fatalf("possible attachment fell back: %v/%v, logs=%d", count, err, logs.Len())
 			}
 		})
 	}

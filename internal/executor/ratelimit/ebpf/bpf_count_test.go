@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -17,6 +19,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/executor/cleanup"
+	"golang.org/x/sys/unix"
 )
 
 func TestCounterObjectOwnershipList(t *testing.T) {
@@ -262,25 +265,29 @@ func TestCounterLoadFailureDoesNotRepeatLibraryCleanup(t *testing.T) {
 		},
 		attach: func(link.TCXOptions) (io.Closer, error) { attached = true; return nil, nil },
 	})
-	if count != nil || !errors.Is(err, loadErr) || !errors.Is(err, cleanup.ErrCleanupUnconfirmed) {
+	if count != nil || !errors.Is(err, loadErr) {
 		t.Fatalf("load failure=%v/%v", count, err)
 	}
-	if errors.Is(err, cleanup.ErrCleanupFailed) || partial.calls.Load() != 1 || attached {
+	if errors.Is(err, cleanup.ErrCleanupFailed) || errors.Is(err, cleanup.ErrCleanupUnconfirmed) || partial.calls.Load() != 1 || attached {
 		t.Fatal("library rollback was repeated or its unobserved result invented")
 	}
 }
 
-func TestCounterLoadRefusalIsPlainError(t *testing.T) {
+// A load attaches nothing, so every load failure is a clean rollback the
+// factory falls back from, including the ones that are not a refusal errno:
+// on a kernel 7.0 host without CAP_BPF the map create surfaced as cilium's
+// "prealloc maps not supported" feature-probe error (#414).
+func TestCounterLoadFailureIsCleanRollback(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		cause   error
-		refused bool
+		name  string
+		cause error
 	}{
-		{"eperm", syscall.EPERM, true},
-		{"eacces", syscall.EACCES, true},
-		{"einval", syscall.EINVAL, true},
-		{"other_errno", syscall.ENOMEM, false},
-		{"no_errno", errors.New("malformed object"), false},
+		{"eperm", syscall.EPERM},
+		{"eacces", syscall.EACCES},
+		{"einval", syscall.EINVAL},
+		{"other_errno", syscall.ENOMEM},
+		{"unsupported_feature", fmt.Errorf("prealloc maps not supported (requires >= v4.6): %w", ebpf.ErrNotSupported)},
+		{"no_errno", errors.New("malformed object")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var attached bool
@@ -293,10 +300,101 @@ func TestCounterLoadRefusalIsPlainError(t *testing.T) {
 			if count != nil || !errors.Is(err, tc.cause) || attached {
 				t.Fatalf("load failure=%v/%v attached=%t", count, err, attached)
 			}
-			if errors.Is(err, cleanup.ErrCleanupFailed) || errors.Is(err, cleanup.ErrCleanupUnconfirmed) == tc.refused {
-				t.Fatalf("refused=%t classified as %v", tc.refused, err)
+			if errors.Is(err, cleanup.ErrCleanupFailed) || errors.Is(err, cleanup.ErrCleanupUnconfirmed) {
+				t.Fatalf("attachment-free load failure classified as %v", err)
 			}
 		})
+	}
+}
+
+// An attach that returned a handle whose release then failed may leave the
+// hook in place, so it stays a refusal to fall back, unlike a load failure.
+func TestCounterAttachRollbackFailureStaysFatal(t *testing.T) {
+	resources, _ := counterTestObjects()
+	attachErr, linkErr := errors.New("attach"), errors.New("link close")
+	egress := &counterProbe{err: linkErr}
+	count, err := newBPFCount(&net.Interface{Index: 1}, counterDependencies{
+		load:   func() (countObjects, []counterResource, error) { return countObjects{}, resources, nil },
+		attach: func(link.TCXOptions) (io.Closer, error) { return egress, attachErr },
+		missingCapabilities: func() ([]string, error) {
+			t.Error("attach failure explained as a load failure")
+			return nil, nil
+		},
+	})
+	if count != nil || !errors.Is(err, attachErr) || !errors.Is(err, linkErr) || !errors.Is(err, cleanup.ErrCleanupFailed) {
+		t.Fatalf("attach rollback failure=%v/%v", count, err)
+	}
+}
+
+func TestCounterLoadFailureNamesMissingCapabilities(t *testing.T) {
+	// cilium/ebpf's own text for an unprivileged map create.
+	loadErr := fmt.Errorf("map create: %w (MEMLOCK may be too low, consider rlimit.RemoveMemlock)", syscall.EPERM)
+	misleading := fmt.Errorf("map create: prealloc maps not supported (requires >= v4.6): %w", ebpf.ErrNotSupported)
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		missing []string
+		capErr  error
+		want    string
+	}{
+		{"eperm_without_caps", loadErr, []string{"CAP_BPF", "CAP_NET_ADMIN"}, nil, "executor lacks CAP_BPF, CAP_NET_ADMIN"},
+		{"feature_probe_without_caps", misleading, []string{"CAP_BPF"}, nil, "executor lacks CAP_BPF"},
+		{"with_caps", misleading, nil, nil, ""},
+		{"caps_unreadable", misleading, nil, syscall.ENOSYS, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := newBPFCount(&net.Interface{Index: 1}, counterDependencies{
+				load: func() (countObjects, []counterResource, error) { return countObjects{}, nil, tc.cause },
+				missingCapabilities: func() ([]string, error) {
+					return tc.missing, tc.capErr
+				},
+			})
+			if !errors.Is(err, tc.cause) || errors.Is(err, cleanup.ErrCleanupUnconfirmed) {
+				t.Fatalf("lost cause or refused fallback: %v", err)
+			}
+			if tc.want == "" {
+				if strings.Contains(err.Error(), "executor lacks") || (errors.Is(err, os.ErrPermission) && !errors.Is(tc.cause, syscall.EPERM)) {
+					t.Fatalf("capabilities blamed without being missing: %v", err)
+				}
+				return
+			}
+			if !strings.HasPrefix(err.Error(), tc.want+" (") || !strings.Contains(err.Error(), "setcap") {
+				t.Fatalf("error does not name the missing capabilities: %v", err)
+			}
+			// It reads as not_permitted to the fallback reason.
+			if !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("missing capability is not a permission failure: %v", err)
+			}
+		})
+	}
+}
+
+func TestMissingLoadCapabilities(t *testing.T) {
+	bit := func(caps ...uint) (set uint64) {
+		for _, c := range caps {
+			set |= 1 << c
+		}
+		return set
+	}
+	for _, tc := range []struct {
+		name      string
+		effective uint64
+		want      string
+	}{
+		{"none", 0, "CAP_BPF,CAP_NET_ADMIN"},
+		{"bpf_only", bit(unix.CAP_BPF), "CAP_NET_ADMIN"},
+		{"perfmon_is_not_needed", bit(unix.CAP_BPF, unix.CAP_NET_ADMIN), ""},
+		{"executor_capabilities", bit(unix.CAP_BPF, unix.CAP_NET_ADMIN, unix.CAP_PERFMON, unix.CAP_NET_RAW), ""},
+		{"sys_admin", bit(unix.CAP_SYS_ADMIN), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Join(missingFrom(tc.effective), ","); got != tc.want {
+				t.Fatalf("missing=%q want %q", got, tc.want)
+			}
+		})
+	}
+	if _, err := missingCapabilities(); err != nil {
+		t.Fatalf("read own capabilities: %v", err)
 	}
 }
 
