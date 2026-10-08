@@ -124,12 +124,11 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	}
 
 	var fdErr error
-	var socketID uint32
-
+	// The entry lives as long as the socket; the kernel frees it when the
+	// socket is destroyed, so BpfConn.Close does not delete it.
 	err = rawConn.Control(func(fd uintptr) {
 		info := countDebugletUuid{Uuid: [16]byte(id)}
 		fdErr = bc.objs.DebugletSkMap.Update(uint32(fd), &info, ebpf.UpdateAny)
-		socketID = uint32(fd)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed call control: %w", err)
@@ -152,7 +151,7 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	defer bc.mu.Unlock()
 	bc.destinations.Add(addr, id, ipv6)
 
-	return &BpfConn{count: bc, conn: conn, socketID: socketID, domain: addr, id: id, resolvedIPv6: ipv6}, nil
+	return &BpfConn{count: bc, conn: conn, domain: addr, id: id, resolvedIPv6: ipv6}, nil
 }
 
 func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {

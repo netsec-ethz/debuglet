@@ -90,6 +90,18 @@ changes; the linked API and deployment documentation contains operational detail
   databases require the explicit upgrade to schema 26. See
   `docs/operations/configuration.md#destination-limits-and-opt-outs`.
 
+### Fixed
+- An executor counting packets with eBPF (`enforcement_mode: ebpf`) no longer
+  fails every run that closes a socket (#412). Closing a counted TCP or UDP
+  connection, dialed or accepted, deleted its socket-storage entry by the
+  descriptor it had just closed, so the guest's close failed with `close_tcp:
+  delete: bad file descriptor` and the run ended "debuglet failed" although
+  its output was delivered. Close no longer deletes the entry: it belongs to
+  the socket, and the kernel frees it when the socket is destroyed. Deleting
+  it before the close instead would let the data a socket still holds after
+  close leave unattributed and past its rate limit; that data keeps the run's
+  UUID and is dropped once the run's rate entry is removed.
+
 ## [0.3.0-rc.1] - 2026-10-06
 
 ### Security
