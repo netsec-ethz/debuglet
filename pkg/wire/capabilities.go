@@ -17,7 +17,7 @@ type ExecutorCapabilities struct {
 	SchemaVersion         uint32            `json:"schema_version"`
 	ObservedAt            int64             `json:"observed_at"`             // Dispatcher receipt time, Unix seconds.
 	Protocols             []string          `json:"protocols"`               // Positive tcp, tls, udp, icmp (IPv4), scion support.
-	EnforcementMode       string            `json:"enforcement_mode"`        // Actual ebpf/fallback packet counter; empty unknown.
+	EnforcementMode       string            `json:"enforcement_mode"`        // Selected ebpf/fallback backend; empty unknown. Not proof of packet coverage.
 	AdvertisedCapacityBPS *int64            `json:"advertised_capacity_bps"` // Total reported bandwidth, not free capacity; null unknown.
 	Attribution           *AttributionState `json:"attribution"`             // Null unknown, including executors that predate it.
 	Tagging               *TaggingMode      `json:"tagging"`                 // Null unknown, including executors that predate it.

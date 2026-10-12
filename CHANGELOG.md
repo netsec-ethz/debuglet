@@ -11,6 +11,24 @@ changes; the linked API and deployment documentation contains operational detail
 ## [Unreleased]
 
 ### Security
+- UDP and ICMP datagrams that the pure-Go tagger sends are charged by the
+  eBPF packet counter (#67). The pure-Go tagger sends each tagged datagram
+  through a raw socket of its own, which the counter never registered, so
+  those datagrams left uncharged against the run's destination and executor
+  bitrate limits.
+  - Affected: v0.2.0-rc.3, v0.2.0 and v0.3.0-rc.1, on executors whose
+    packet counter is `ebpf` when a run's eBPF tagger fails to load and the
+    run falls back to the pure-Go tagger (logged as `Failed to initialize BPF tagger, falling
+    back to pure-Go`). Only UDP and ICMP to IPv4 destinations were affected;
+    TCP and TLS, the `fallback` counter and runs that got the eBPF tagger
+    were not. v0.2.0-rc.2 and earlier have no user-space datagram tagging.
+  - The counter now registers the raw socket under the same run, so those
+    datagrams are charged exactly like datagrams sent on the run's own
+    socket. Datagrams sent before the upgrade are not charged
+    retroactively.
+  - Until the upgrade, `packet_counter = "fallback"` charges these
+    datagrams in user space.
+  - See `docs/operations/executor-discovery.md`.
 - The executor stops tagging when its clock cannot place packets in the
   epochs a verifier derives from capture time. Epochs advance on the
   monotonic clock from the announced chain origin; previously a chain started

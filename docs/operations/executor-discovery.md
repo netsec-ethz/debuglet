@@ -12,7 +12,8 @@ dbl run --wasm latency.wasm --protocol icmp --allow 192.0.2.1
 
 Repeat `--protocol` to require several transports: `tcp`, `tls`, `udp`, `icmp`
 (ICMPv4), or `scion`. `--enforcement` selects the actual `ebpf` or `fallback`
-packet counter chosen by the executor. It is not an assertion that every
+packet counter chosen by the executor. This selects a backend, not a complete
+packet-level enforcement guarantee. It also does not assert that every
 transport carries attribution tags or that a destination is reachable.
 The eBPF counter currently attaches through TCX, requiring Linux 6.6 or later
 with the required kernel support and process capabilities. On older kernels
@@ -48,6 +49,27 @@ Executors refresh at most once per 30 seconds on the existing heartbeat; an
 omitted heartbeat report does not refresh the previous observation. Replacing
 a binding clears its old capabilities and capacity. Expired control sessions
 are excluded independently of heartbeat telemetry.
+
+### Packet-counter limits
+
+The eBPF counter charges associated socket buffers on its configured interface.
+It does not cover traffic sent before a connection is attached, including the
+connection handshake, unassociated sockets, or incoming ICMP packets. An active
+route change can move traffic to another interface while the original counter
+remains attached. An attachment observation therefore does not prove coverage.
+
+Each destination bucket and the run's combined bucket starts with 65,536 bytes.
+Zero refill rate retains that initial burst. Refill uses conservative integer
+bytes; fractional credit may be discarded, so the configured rate is an upper
+bound rather than a promised throughput. A socket buffer larger than the burst
+cannot pass even after refill, which can stall TCP on large-MTU or offloaded
+paths. Kernel offloads can combine packets into buffers, so socket-buffer bytes
+and drop verdicts must not be interpreted as wire packet counts.
+
+The fallback counter measures application I/O instead. Neither backend is
+advertised as independently verified packet enforcement. The API and CLI do not
+accept a request for a stronger packet guarantee; unsupported request fields
+and backend names are rejected before submission.
 
 ## Attribution state
 
@@ -135,6 +157,13 @@ report of it, which means unknown. It is an executor claim, not a verification
 of tags at a receiver, and it is not a discovery filter. The admission snapshot
 in a [result](../results.md) keeps the capability reported at admission: what
 the run was set up to get, not a measurement of its packets.
+
+Under the `ebpf` packet counter, datagrams the pure-Go tagger sends through its
+raw socket are charged to the run like those on the run's own socket. In
+v0.2.0-rc.3, v0.2.0 and v0.3.0-rc.1 they were not: a run that fell back to
+the pure-Go tagger on such an executor sent tagged UDP and ICMP datagrams to IPv4
+destinations outside its destination and executor bitrate limits. The
+`fallback` counter charges every datagram in user space and was not affected.
 
 `tag_spec` names the [packet-tag specification](../tag-spec.md) the tagged
 families follow, `debuglet-tag-v1` from this release on. It is absent for

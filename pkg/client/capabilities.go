@@ -21,7 +21,7 @@ type ExecutorFilter struct {
 	AddressFamilies    []string // ipv4 or ipv6 with a fresh successful controlled observation.
 	ReachableListeners []string // tcp, udp or scion; declared support alone is not a match.
 	Protocols          []string
-	EnforcementMode    string
+	EnforcementMode    string // Selects a backend; does not establish packet coverage.
 	MinCapacityBPS     *int64
 	// ISDAS requires the executor-reported SCION ISD-AS, such as 1-ff00:0:110.
 	// Equivalent spellings match; an unknown ISD-AS does not.

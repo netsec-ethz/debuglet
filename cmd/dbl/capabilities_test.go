@@ -11,6 +11,15 @@ import (
 	"testing"
 )
 
+func TestUnsupportedPacketGuaranteeNeverContactsDispatcher(t *testing.T) {
+	fx := newFixture(t, http.NewServeMux())
+	code, stdout, stderr := runCLI(context.Background(), "--endpoint", fx.endpoint(), "run", "--wasm", wasmFile(t), "--enforcement", "packet_guarantee")
+	assertCode(t, code, exitUsage, stdout, stderr)
+	if fx.total() != 0 || !strings.Contains(stderr, "enforcement") {
+		t.Fatalf("unsupported guarantee contacted dispatcher or lacked explanation: requests=%d stderr=%s", fx.total(), stderr)
+	}
+}
+
 func TestCapabilitySelectionFailureNeverSubmits(t *testing.T) {
 	wasm := wasmFile(t)
 	for _, tc := range []struct {

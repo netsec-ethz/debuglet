@@ -315,15 +315,18 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
   }
 
   bpf_spin_lock(&state->lock);
-  __u64 delta_ns = now - state->t_last;
+  __u64 delta_ns = now > state->t_last ? now - state->t_last : 0;
   __u64 new_tokens = (*rate) * delta_ns / NS_PER_SEC;
   state->tokens += new_tokens;
+  // A refusal still consumes the elapsed refill interval. Keep sub-byte time
+  // until a whole byte accrues, so frequent attempts cannot prevent refill.
+  if (new_tokens)
+    state->t_last = now;
   if (state->tokens > MAX_BURST_BYTES)
     state->tokens = MAX_BURST_BYTES;
 
   if (state->tokens >= skb->len) {
     state->tokens -= skb->len;
-    state->t_last = now;
   } else {
     action = TCX_DROP;
   }
@@ -360,8 +363,11 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
   }
 
   bpf_spin_lock(&exec_state->lock);
-  __u64 exec_new_tokens = (*exec_rate) * delta_ns / NS_PER_SEC;
+  __u64 exec_delta_ns = now > exec_state->t_last ? now - exec_state->t_last : 0;
+  __u64 exec_new_tokens = (*exec_rate) * exec_delta_ns / NS_PER_SEC;
   exec_state->tokens += exec_new_tokens;
+  if (exec_new_tokens)
+    exec_state->t_last = now;
   if (exec_state->tokens > MAX_BURST_BYTES)
     exec_state->tokens = MAX_BURST_BYTES;
   if (exec_state->tokens < skb->len) {
@@ -370,7 +376,6 @@ int limit_packets(struct __sk_buff *skb, int is_ingress) {
     goto release;
   }
   exec_state->tokens -= skb->len;
-  exec_state->t_last = now;
   bpf_spin_unlock(&exec_state->lock);
 
 release:

@@ -16,6 +16,8 @@ func TestMeasurementRequestsRejectUnsupportedFieldsBeforeEffects(t *testing.T) {
 	for _, route := range []string{"/payment/intent", "/debuglet"} {
 		for _, body := range []string{
 			`{"debuglets":[{"order_id":0,"policy":{"listen_icmp":true}}]}`,
+			`{"debuglets":[{"order_id":0,"policy":{"packet_guarantee":"all"}}]}`,
+			`{"debuglets":[{"order_id":0,"policy":{"enforcement_verified":true}}]}`,
 			`{"debuglets":[],"unexpected":"private-value"}`,
 			`{"debuglets":[]} {"auth_key":"private-value"}`,
 		} {

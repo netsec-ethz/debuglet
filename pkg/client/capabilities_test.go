@@ -46,6 +46,9 @@ func TestDiscoveryRequiresPositiveFreshServerObservations(t *testing.T) {
 	if _, err := c.DiscoverExecutors(t.Context(), ExecutorFilter{Protocols: []string{"typo"}}); err == nil || len(f.requests()) != before {
 		t.Fatal("invalid filter reached the server")
 	}
+	if _, err := c.DiscoverExecutors(t.Context(), ExecutorFilter{EnforcementMode: "packet_guarantee"}); err == nil || len(f.requests()) != before {
+		t.Fatal("unsupported packet guarantee reached the server")
+	}
 }
 
 func TestDiscoveryFiltersByReportedISDAS(t *testing.T) {
