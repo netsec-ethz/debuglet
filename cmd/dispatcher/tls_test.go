@@ -195,6 +195,30 @@ func TestCombinedListenerRequiresControlIdentity(t *testing.T) {
 	}
 }
 
+// Owner metadata updates arrive as PATCH on the same TLS listener as executor
+// control streams. An ordinary HTTP client must reach the API without holding
+// an executor certificate, while the control stream still requires one.
+func TestCombinedListenerRoutesPatchWithoutControlIdentity(t *testing.T) {
+	f := newCombinedFixture(t, true)
+	client := &http.Client{Timeout: combinedTestWait, Transport: &http.Transport{TLSClientConfig: f.ca.ClientConfig(nil, "")}}
+	defer client.CloseIdleConnections()
+	request, err := http.NewRequest(http.MethodPatch, "https://"+f.addr+"/absent", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("PATCH did not reach the HTTP API: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("PATCH status=%d, want HTTP 404", response.StatusCode)
+	}
+	if err := f.controlPing(t, f.ca.ClientConfig(nil, "")); err == nil {
+		t.Fatal("control stream admitted a peer without a certificate")
+	}
+}
+
 // TestCombinedListenerStopsWhenCancelled keeps a requested stop apart from a
 // failure however late the cancellation reaches the accept loops. A context
 // derived from the caller's can learn of the cancellation after the caller's
