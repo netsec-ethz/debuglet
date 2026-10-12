@@ -6,6 +6,7 @@
 package ebpf
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
@@ -116,7 +117,11 @@ func (bc *BpfCount) Close() error {
 }
 
 func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, error) {
-	c, ok := conn.(syscall.Conn)
+	socket := conn
+	if encrypted, ok := conn.(*tls.Conn); ok {
+		socket = encrypted.NetConn()
+	}
+	c, ok := socket.(syscall.Conn)
 	if !ok {
 		return nil, errors.New("failed to extract syscall Conn")
 	}
@@ -125,18 +130,21 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 		return nil, fmt.Errorf("failed to get conn: %w", err)
 	}
 
-	var fdErr error
-	// The entry lives as long as the socket; the kernel frees it when the
-	// socket is destroyed, so BpfConn.Close does not delete it.
-	err = rawConn.Control(func(fd uintptr) {
-		info := countDebugletUuid{Uuid: [16]byte(id)}
-		fdErr = bc.objs.DebugletSkMap.Update(uint32(fd), &info, ebpf.UpdateAny)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed call control: %w", err)
+	if err := bc.register(rawConn, id); err != nil {
+		return nil, err
 	}
-	if fdErr != nil {
-		return nil, fmt.Errorf("failed to update socket map: %w", fdErr)
+	if sc, ok := conn.(sendingConn); ok {
+		sending, err := sc.SendingSyscallConn()
+		if err == nil {
+			err = bc.register(sending, id)
+		}
+		if err != nil {
+			var deleteErr error
+			controlErr := rawConn.Control(func(fd uintptr) {
+				deleteErr = bc.objs.DebugletSkMap.Delete(uint32(fd))
+			})
+			return nil, errors.Join(fmt.Errorf("register sending socket: %w", err), controlErr, deleteErr)
+		}
 	}
 
 	host, err := netutil.HostFromAddr(conn.RemoteAddr().String())
@@ -154,6 +162,30 @@ func (bc *BpfCount) Attach(conn net.Conn, id uuid.UUID, addr string) (net.Conn, 
 	bc.destinations.Add(addr, id, ipv6)
 
 	return &BpfConn{count: bc, conn: conn, domain: addr, id: id, resolvedIPv6: ipv6}, nil
+}
+
+// sendingConn is a connection whose datagrams leave through a socket other
+// than the one SyscallConn returns, such as the user-space tagger's raw
+// socket. That socket is charged to the same run.
+type sendingConn interface {
+	SendingSyscallConn() (syscall.RawConn, error)
+}
+
+// register records rawConn's socket as the run id's in the socket map.
+// The entry lives as long as the socket.
+func (bc *BpfCount) register(rawConn syscall.RawConn, id uuid.UUID) error {
+	var fdErr error
+	err := rawConn.Control(func(fd uintptr) {
+		info := countDebugletUuid{Uuid: [16]byte(id)}
+		fdErr = bc.objs.DebugletSkMap.Update(uint32(fd), &info, ebpf.UpdateAny)
+	})
+	if err != nil {
+		return fmt.Errorf("failed call control: %w", err)
+	}
+	if fdErr != nil {
+		return fmt.Errorf("failed to update socket map: %w", fdErr)
+	}
+	return nil
 }
 
 func (bc *BpfCount) SetLimit(addr string, id uuid.UUID, limit bitrate.Bitrate) error {

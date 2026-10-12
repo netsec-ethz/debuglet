@@ -20,7 +20,7 @@ func capabilityFlags(fs *flag.FlagSet, filter *client.ExecutorFilter) {
 		filter.Protocols = append(filter.Protocols, value)
 		return nil
 	})
-	fs.StringVar(&filter.EnforcementMode, "enforcement", "", "actual packet counter: ebpf or fallback")
+	fs.StringVar(&filter.EnforcementMode, "enforcement", "", "counter backend: ebpf or fallback; no packet guarantee")
 	fs.StringVar(&filter.ISDAS, "isd-as", "", "executor-reported SCION ISD-AS, e.g. 1-ff00:0:110")
 	fs.StringVar(&filter.Country, "country", "", "display country code, e.g. CH")
 	fs.Func("asn", "offline database origin ASN, e.g. 559", func(value string) error {

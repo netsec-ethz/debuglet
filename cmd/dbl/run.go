@@ -37,7 +37,7 @@ Options:
   --sample hello         use the hello guest bundled with the full installation
   --executor ID|auto     executor ID (default: auto selects the sole ready executor)
   --protocol NAME        required tcp/tls/udp/icmp/scion support; repeatable
-  --enforcement MODE     actual packet counter: ebpf or fallback
+  --enforcement MODE     counter backend: ebpf or fallback; no packet guarantee
   --min-capacity-bps N    minimum advertised total bandwidth (not a reservation)
   --allow ADDRESS        allowed destination address; repeatable
   --duration 10s         server-side run budget, whole milliseconds, >= 1ms

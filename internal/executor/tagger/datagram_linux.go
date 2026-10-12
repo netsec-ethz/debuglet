@@ -123,6 +123,14 @@ func (c *taggedDatagramConn) SyscallConn() (syscall.RawConn, error) {
 	return sc.SyscallConn()
 }
 
+// SendingSyscallConn exposes the raw socket every tagged Write leaves
+// through. A packet counter that charges a socket's egress registers it next
+// to the wrapped socket, which SyscallConn keeps exposing because replies,
+// and messages too large for one raw packet, go through that one.
+func (c *taggedDatagramConn) SendingSyscallConn() (syscall.RawConn, error) {
+	return c.raw.SyscallConn()
+}
+
 func (c *taggedDatagramConn) Close() error {
 	c.closeOnce.Do(func() {
 		c.closeErr = errors.Join(c.Conn.Close(), c.raw.Close())
