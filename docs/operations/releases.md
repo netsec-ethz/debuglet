@@ -5,7 +5,9 @@ Checksums detect changed bytes but do not identify a trusted publisher. The
 signature also binds the complete release inventory, provenance, build inputs,
 gate results and notices to one version and source revision.
 
-This workflow requires administrator setup before its first release. Existing
+This workflow requires administrator setup and an approved signing run before
+its first signed release. A version tag and successful tag CI are not a published
+release: confirm the downloadable assets on the release page. Existing
 v0.2.0 assets are unsigned; the existing installation command continues to check hashes and
 prints an unsigned-installation warning. Signature verification is enabled when
 trust settings or `DEBUGLET_REQUIRE_SIGNATURE=1` are supplied. It never falls
@@ -14,7 +16,7 @@ provide durable retention.
 
 ## Production signer
 
-Debuglet releases after v0.2.0 are signed by this key:
+The configured key for signing releases after v0.2.0 is:
 
 | Field | Value |
 | --- | --- |
@@ -106,6 +108,35 @@ configured trust settings or a signature requirement rather than ignoring them.
 Set `DEBUGLET_REQUIRE_SIGNATURE=1` in managed installation environments to refuse
 installation when trust has not yet been provisioned.
 
+## Check an installed candidate
+
+Use a clean Linux amd64 checkout with the pinned toolchain. Build once, then
+run the installed acceptance checks against those package bytes:
+
+```sh
+make ci-build ci-package
+make ci-demo ci-compatibility ci-local
+```
+
+The ordinary CI workflow also runs the compiler-free, network-disabled demo,
+kernel, vulnerability and remaining required lanes. A local reproduction does
+not replace that exact-source CI run. The installed checks establish:
+
+| Check | Evidence |
+| --- | --- |
+| Full and component installation, identical rerun, installed version/source | `package-install.log`, `package-install.json`, `package-install-{cli,executor,dispatcher}.json` |
+| Account-owned enrollment through the installed `dbl executor join`, TLS registration, completed hello, both daemon restarts, retained identity/session/output and fresh work | `role-tests.json`: `TestInstalledEnrollment` |
+| Published v0.2.0 executor compatibility and a populated v0.2.0 upgrade, old-binary downgrade refusal and restoration of the saved old state | `role-tests.json`: `TestInstalledReleasedCompatibility`, `TestInstalledReleasedUpgrade` |
+| Explicit backup/restore, graceful and terminated interrupted-work recovery, retained output without automatic replay | `role-tests.json`: `TestInstalledBackupRestore`, `TestInstalledRecovery`, `TestInstalledOutput` |
+
+These are owned Linux fixtures. The enrolled-node check runs foreground daemons;
+it does not establish a real systemd deployment, external provider login, ETH
+connectivity or an independently operated node. Rehearse the
+[managed-service procedure](services.md) on the intended authorized host before
+claiming that service profile. The previous-release upgrade check uses the
+published unsigned v0.2.0 bytes pinned by checksum; it is not a signed rollback
+release in the private archive.
+
 ## Prepare a release
 
 An administrator must protect the intended semantic-version tags and create the
@@ -114,6 +145,11 @@ An administrator must protect the intended semantic-version tags and create the
 secret, never as a repository or organization fallback secret. Provision the
 matching public trust material to operators separately. Ordinary CI and kernel
 jobs must not receive that secret.
+
+Select the final reviewed source and a new version only after integration is
+complete. A previously validated tag at a different commit cannot cover later
+fixes. Keep development archives under their generated development versions;
+renaming one to a release version does not establish the protected-tag build.
 
 Run the ordinary CI workflow for the protected version tag. Every required lane
 must succeed for that exact source, version and run attempt, including the
@@ -149,6 +185,43 @@ use the audit for the complete bundle. The SBOM records native Go module build
 information and same-source offline WASI dependency graphs. Runtime base-image
 pins are not a complete operating-system package inventory, and recorded BPF
 regeneration tools do not prove how inherited BPF objects were originally built.
+
+## Publish installation assets
+
+Publication is a separate operator action after the complete signed bundle has
+passed the audit above. Attach the original files from that bundle to the
+release for the same protected tag, with release notes describing supported
+platforms, compatibility, migration/restore instructions and remaining limits.
+Do not rebuild, rename, replace or re-sign the prepared files during publication.
+
+The installation asset set is:
+
+- Full bundle: `debuglet-VERSION-linux-amd64.tar.gz`, `install.sh`, `SHA256SUMS`.
+- Each of `cli`, `executor` and `dispatcher`:
+  `debuglet-COMPONENT-VERSION-linux-amd64.tar.gz`, `install-COMPONENT.sh`,
+  `SHA256SUMS-COMPONENT`.
+- `compatibility.json`, `SHA256SUMS-compatibility`, `release.json` and
+  `release.json.sig`.
+
+That is sixteen files, with `VERSION` and `COMPONENT` replaced by their exact
+values. The complete signed bundle additionally contains inventory, provenance,
+notices and acceptance evidence; retain it in the approved private archive
+below. Publishing the installation subset does not satisfy complete retention.
+
+Download each component's files again from the published release and use the
+trusted bootstrap with `DEBUGLET_REQUIRE_SIGNATURE=1` and independently
+provisioned trust. Verify the version/source and each component's documented
+smoke command; run `dbl demo` with the full bundle on a clean supported host
+without a compiler or source checkout. Keep the downloaded digests, signer,
+source and results. A successful local install before publication does not
+establish that the published download works.
+
+Before an external pilot, separately agree the reporting contact and incident
+evidence-access policy in [abuse response](abuse-response.md), and obtain the
+named release, host, operator, destinations and restore authorization in
+[external pilot](external-pilot.md). Local registration/restart success does not
+confirm resolution of a previously affected remote registration incident; the
+affected operator must record that topology's registration and recovery result.
 
 
 ## Retain a complete release

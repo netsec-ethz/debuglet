@@ -118,6 +118,7 @@ jobs:
           name: evidence-package-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             .cache/ci/package-install.*
+            .cache/ci/package-install-*.json
             .cache/ci/ci-image-evidence/
           include-hidden-files: true
           if-no-files-found: error

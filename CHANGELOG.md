@@ -152,7 +152,9 @@ changes; the linked API and deployment documentation contains operational detail
 ## [0.3.0-rc.1] - 2026-10-06
 
 ### Security
-- Releases are signed. The production release signer is
+- Release-signing support and its production trust key are configured. A
+  protected tag still requires an approved signing run and asset publication;
+  the tag alone does not establish a signed downloadable release. The signer is
   `releases@debuglet.netsec.ethz.ch` (Ed25519,
   `SHA256:vETQG+wE6uwMv4MBFfx7dxo8IWpvR8z6/Sw7MT2WwQo`); its trust file is
   `configs/release-allowed-signers`. See

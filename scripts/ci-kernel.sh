@@ -71,6 +71,7 @@ required = {
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger/ebpf", "TestDisclosureWaitsForEveryTagger"),
     ("github.com/netsec-ethz/debuglet/internal/executor/tagger", "TestTaggedDatagramsReachTheWire"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestBPFCounterLinuxLoad"),
+    ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestCounterVerifierWithoutSysAdmin"),
     ("github.com/netsec-ethz/debuglet/internal/executor/ratelimit/ebpf", "TestKernelCounterClosesCountedConns"),
     ("github.com/netsec-ethz/debuglet/internal/executor", "TestHeterogeneousExecutorCapabilitiesSelection"),
     ("github.com/netsec-ethz/debuglet/internal/executor", "TestRestartRetiresAStaleTaggerFilterBeforeTheTail"),
