@@ -39,6 +39,9 @@ func TestInstalledEnrollment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	work := t.TempDir() // Keys, setup tokens and sessions never enter uploaded evidence.
+	if err := os.Chmod(work, 0700); err != nil {
+		t.Fatal(err)
+	}
 	ca, err := testtls.NewAuthority(work, "ca")
 	if err != nil {
 		t.Fatal(err)
@@ -48,8 +51,8 @@ func TestInstalledEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	database := filepath.Join(work, "dispatcher.sqlite")
-	if _, _, err := runCommand(ctx, assets.Dispatcher, work, isolatedEnvironment(work), "-init-database", database); err != nil {
-		t.Fatal("initialize installed dispatcher:", err)
+	if _, diagnostic, err := runCommand(ctx, assets.Dispatcher, work, isolatedEnvironment(work), "-init-database", database); err != nil {
+		t.Fatalf("initialize installed dispatcher: %v; %q", err, diagnostic)
 	}
 	configuration := map[string]any{
 		"server":    map[string]any{"bind_host": "127.0.0.1", "http_port": 0, "grpc_port": 0},
