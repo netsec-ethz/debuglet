@@ -399,7 +399,7 @@ chmod 0600 "$work/cilogon_oidc.env"
 refuses 'CILogon refuses an unrelated issuer' 'approved CILogon' \
 	-e "@$work/cilogon.yml" -e dispatcher_cilogon_oidc_issuer=https://other.fixture.invalid
 refuses 'browser credential URLs must be configured together' 'Set both dispatcher_authentication' \
-	-e dispatcher_authentication_public_url=https://api.fixture.invalid/api
+	-e dispatcher_authentication_public_url=https://api.fixture.invalid/api -e dispatcher_authentication_device_verification_url=
 
 refuses 'onboarding requires client certificates' 'dispatcher_require_client_cert=true' \
 	-e "@$work/onboarding.yml" -e dispatcher_require_client_cert=false
@@ -529,7 +529,8 @@ if [ "$(cilogon_enabled)" = 'enabled = true' ]; then
 else
 	check 'the production profile renders CILogon enabled' fail
 fi
-refute 'browser CLI approval is absent by default' "$dispatcher_toml" '[authentication]'
+expect 'the production profile configures the browser CLI audience' "$dispatcher_toml" 'public_url = "https://api.fixture.invalid/api"'
+expect 'the production profile configures the browser CLI console' "$dispatcher_toml" 'device_verification_url = "https://api.fixture.invalid/console/device"'
 # The production profile looks executor ASNs up in the RIS database, which the
 # refresh unit writes to exactly the path the configuration names. The fixture
 # drives no systemd, so no build runs and nothing is downloaded.
@@ -897,7 +898,8 @@ else
 fi
 refute 'rotation keeps the new secret out of deployment logs' "$work/cilogon-rotate.log" 'cilogon-fixture-rotated'
 if run "$work/cilogon-disable.log" update-config.yml --limit dispatcher \
-	-e "deploy_version=$release_version" -e dispatcher_cilogon_oidc_enabled=false; then
+	-e "deploy_version=$release_version" -e dispatcher_cilogon_oidc_enabled=false \
+	-e dispatcher_authentication_public_url= -e dispatcher_authentication_device_verification_url=; then
 	check 'CILogon can be disabled through a configuration update' pass
 else
 	check 'CILogon can be disabled through a configuration update' fail
