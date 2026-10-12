@@ -234,6 +234,7 @@ const DefaultConfigPath = "/etc/debuglet/executor/executor.toml"
 
 // Documented defaults for keys the configuration file may omit.
 const (
+	DefaultCapacity     = int64(1_000_000_000) // Bits per second when omitted.
 	DefaultLogLevel     = "info"
 	DefaultMaxDebuglets = 100
 	// DefaultClockMaxErrorMS matches hostprobe.DefaultClockErrorBound.
@@ -324,6 +325,9 @@ func DecodeConfig(data []byte) (*ExecutorConfig, configcheck.Document, error) {
 	}
 
 	// defaults
+	if !document.Set("resources", "capacity") {
+		cfg.Resources.Capacity = DefaultCapacity
+	}
 	if !document.Set("logging", "log_level") {
 		cfg.Logging.LogLevel = DefaultLogLevel
 	}
@@ -402,7 +406,7 @@ func (cfg *ExecutorConfig) Validate() error {
 
 func (cfg *ExecutorConfig) validateResources() error {
 	if cfg.Resources.Capacity <= 0 {
-		return fmt.Errorf("resources.capacity is required and must be positive, got %d", cfg.Resources.Capacity)
+		return fmt.Errorf("resources.capacity must be positive, got %d", cfg.Resources.Capacity)
 	}
 	if cfg.Resources.MaxDebuglets <= 0 {
 		return fmt.Errorf("resources.max_debuglets must be positive, got %d", cfg.Resources.MaxDebuglets)

@@ -100,7 +100,8 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 	return resp, nil
 }
 
-func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding, req *pb.UploadRequest) (*pb.UploadResponse, error) {
+func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding, req *pb.UploadRequest) (_ *pb.UploadResponse, uploadErr error) {
+	started := time.Now()
 	if err := e.checkControlBinding(ctx, binding); err != nil {
 		return nil, err
 	}
@@ -112,6 +113,14 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "invalid debuglet ID")
 	}
+
+	stage := "validation"
+	defer func() {
+		if uploadErr != nil {
+			fields := daemonlog.RunFields(ctx, id, e.cfg.Identity.ExecutorID, binding)
+			e.logger.Warn("Run admission failed", append(fields, daemonlog.UploadFailureFields(ctx, stage, uploadErr, time.Since(started))...)...)
+		}
+	}()
 
 	policy := req.GetPolicy()
 	if err := validatePolicyNumbers(policy); err != nil {
@@ -164,6 +173,7 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	if e.outputFailed != nil && e.outputFailed.Load() {
 		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")
 	}
+	stage = "scheduler_admission"
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
 		if errors.Is(err, scheduler.ErrUploadLimit) {
 			return nil, status.Error(codes.ResourceExhausted, "executor upload size limit reached")

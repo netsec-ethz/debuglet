@@ -125,10 +125,12 @@ func TestVerifyInstallation(t *testing.T) {
 
 func TestVerifyPriorToolchainInstallation(t *testing.T) {
 	root, manifest := installedFixture(t)
-	manifest.GoVersion = "go1.25.11"
-	writeManifest(t, root, manifest)
-	if _, err := Verify(root); err != nil {
-		t.Fatalf("verify prior installation: %v", err)
+	for _, compiler := range []string{"go1.26.8", "go1.25.11"} {
+		manifest.GoVersion = compiler
+		writeManifest(t, root, manifest)
+		if _, err := Verify(root); err != nil {
+			t.Fatalf("verify prior %s installation: %v", compiler, err)
+		}
 	}
 	manifest.GoVersion = "go1.24.0"
 	writeManifest(t, root, manifest)

@@ -228,9 +228,11 @@ func logoutCommand(ctx context.Context, args []string, options globalOptions, st
 		return reportFailure(ctx, "dbl logout", stderr,
 			fmt.Errorf("credential could not be read for remote revocation; revoke it from the console Credentials page: %w", errors.Join(err, cleanupErr)))
 	}
-	c, err := newClient(profile.Endpoint, client.Options{RequestTimeout: options.Timeout, Credential: credential.Token})
+	c, err := profileClient(profile, client.Options{RequestTimeout: options.Timeout, Credential: credential.Token})
 	if err != nil {
-		return usageError("dbl logout", loginUsage, stderr, "%v", err)
+		cleanupErr := connections.RemoveCredential(options.ConfigPath, profile.Name)
+		return reportFailure(ctx, "dbl logout", stderr,
+			fmt.Errorf("could not prepare remote credential revocation; revoke it from the console Credentials page: %w", errors.Join(err, cleanupErr)))
 	}
 	// The local credential is forgotten whatever the dispatcher answers: a
 	// session that cannot be revoked remotely must not stay on this machine.

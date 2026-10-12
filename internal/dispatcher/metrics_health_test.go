@@ -181,6 +181,7 @@ func TestMetricsAttributionBucketsPartitionExecutors(t *testing.T) {
 		{State: "unavailable", Reason: "disclosure_held", Epoch: 2, DisclosureHeldMs: &held},
 		{State: "unavailable", Reason: "clock_unready", Epoch: 2},
 		{State: "unavailable", Reason: "clock_drift", Epoch: 2},
+		{State: "unavailable", Reason: "untagged", Epoch: 2},
 	}
 	var total ExecutorHealthMetrics
 	for _, report := range reports {
@@ -196,13 +197,13 @@ func TestMetricsAttributionBucketsPartitionExecutors(t *testing.T) {
 			t.Errorf("report %v counted %d times: %+v", report, n, one)
 		}
 	}
-	if total.ClockUnready != 1 || total.ClockDrift != 1 || attributionBuckets(total) != len(reports) {
+	if total.ClockUnready != 1 || total.ClockDrift != 1 || total.Untagged != 1 || attributionBuckets(total) != len(reports) {
 		t.Fatalf("aggregate: %+v", total)
 	}
 }
 
 func attributionBuckets(h ExecutorHealthMetrics) int {
-	return h.AttributionAvailable + h.EpochZero + h.ChainExhausted + h.RefreshFailing + h.DisclosureHeld + h.ClockUnready + h.ClockDrift + h.AttributionUnknown
+	return h.AttributionAvailable + h.EpochZero + h.ChainExhausted + h.RefreshFailing + h.DisclosureHeld + h.ClockUnready + h.ClockDrift + h.Untagged + h.AttributionUnknown
 }
 
 // TestMetricsDisclosureLagFollowsVerifiedKeys drives a real key store with a

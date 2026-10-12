@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -14,9 +18,10 @@ import (
 )
 
 const connectUsage = `Usage:
-  dbl [--config FILE] connect URL [--name NAME]
+  dbl [--config FILE] connect URL [--name NAME] [--ca-file FILE]
 
 Validate, save and select an HTTP dispatcher connection. The default name is local.
+Private CA trust is saved with --ca-file; SSL_CERT_FILE is also honored.
 Older HTTP servers can be saved without local executor connection metadata.
 `
 
@@ -42,6 +47,7 @@ list queries executors registered with the selected dispatcher (alias: dbl nodes
 func connectCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	fs := newCommandFlagSet("connect")
 	name := fs.String("name", "local", "saved connection name")
+	caFile := fs.String("ca-file", "", "additional trusted dispatcher CA certificate file")
 	// Accept the documented URL-before-options spelling as well as ordinary
 	// flag-before-positional syntax, without changing other command parsers.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -57,14 +63,21 @@ func connectCommand(ctx context.Context, args []string, options globalOptions, s
 		return usageError("dbl connect", connectUsage, stderr, "%v", err)
 	}
 	endpoint := fs.Arg(0)
-	c, err := newClient(endpoint, client.Options{RequestTimeout: options.Timeout})
+	profile := connections.Profile{Name: *name, Endpoint: endpoint}
+	if *caFile != "" {
+		absolute, err := filepath.Abs(*caFile)
+		if err != nil {
+			return reportFailure(ctx, "dbl connect: CA file", stderr, err)
+		}
+		profile.CAFile = absolute
+	}
+	c, err := profileClient(profile, client.Options{RequestTimeout: options.Timeout})
 	if err != nil {
 		return usageError("dbl connect", connectUsage, stderr, "%v", err)
 	}
 	if _, err := c.Version(ctx); err != nil {
 		return reportFailure(ctx, "dbl connect: server version", stderr, err)
 	}
-	profile := connections.Profile{Name: *name, Endpoint: endpoint}
 	info, err := c.Connection(ctx)
 	if err != nil {
 		var httpErr *client.HTTPError
@@ -153,4 +166,30 @@ func executorCommand(ctx context.Context, args []string, options globalOptions, 
 		}
 	}
 	return usageError("dbl executor", executorUsage, stderr, "expected up, join or list")
+}
+
+// profileClient preserves saved trust for every CLI operation, including login.
+// Explicit trust augments system roots; SSL_CERT_FILE works on macOS as well.
+func profileClient(profile connections.Profile, options client.Options) (*client.Client, error) {
+	caFile := profile.CAFile
+	if caFile == "" {
+		caFile = os.Getenv("SSL_CERT_FILE")
+	}
+	if caFile != "" {
+		data, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read dispatcher CA file %q: %w", caFile, err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("dispatcher CA file %q contains no certificates", caFile)
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+		options.HTTPClient = &http.Client{Transport: transport}
+	}
+	return newClient(profile.Endpoint, options)
 }

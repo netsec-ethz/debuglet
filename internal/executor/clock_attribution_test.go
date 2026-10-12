@@ -110,8 +110,12 @@ func TestCapabilityReportsClockReasons(t *testing.T) {
 		e := newFixtureExecutor(t, fixtureConfig(), nil, newFixtureMemoryStorage(t))
 		e.teslaSchedule = tc.ks
 		report, _ := e.capabilityReport(t.Context(), true)
-		if a := report.GetAttribution(); a.GetState() != "unavailable" || a.GetReason() != tc.reason || a.GetEpoch() < 59 {
-			t.Errorf("attribution %v, want unavailable with %s", a, tc.reason)
+		wantReason := tc.reason
+		if e.tagging() == tagger.Untagged {
+			wantReason = "untagged"
+		}
+		if a := report.GetAttribution(); a.GetState() != "unavailable" || a.GetReason() != wantReason || a.GetEpoch() < 59 {
+			t.Errorf("attribution %v, want unavailable with %s", a, wantReason)
 		}
 	}
 }

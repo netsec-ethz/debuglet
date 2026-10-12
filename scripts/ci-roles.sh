@@ -29,8 +29,9 @@ sh "$previous/install.sh" --archive "$previous/debuglet-v0.2.0-linux-amd64.tar.g
   > .cache/ci/role-previous-install.log
 export DEBUGLET_PREVIOUS_INSTALL_ROOT="$previous/installed/lib/debuglet/v0.2.0"
 "${GO:-go}" test -mod=readonly -json -tags=roles_integration -count=1 -timeout=5m \
-  ./internal/acceptance/roles -run '^TestInstalled(Roles|BackupRestore|Recovery|Output|ReleasedCompatibility|ReleasedUpgrade|Rendezvous|Experiment)$' | tee .cache/ci/role-tests.json
+  ./internal/acceptance/roles -run '^TestInstalled(Roles|Enrollment|BackupRestore|Recovery|Output|ReleasedCompatibility|ReleasedUpgrade|Rendezvous|Experiment)$' | tee .cache/ci/role-tests.json
 python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalledRoles \
+  --test ./internal/acceptance/roles:TestInstalledEnrollment \
   --test ./internal/acceptance/roles:TestInstalledBackupRestore \
   --test ./internal/acceptance/roles:TestInstalledRecovery \
   --test ./internal/acceptance/roles:TestInstalledOutput \

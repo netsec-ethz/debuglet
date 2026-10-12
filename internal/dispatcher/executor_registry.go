@@ -57,6 +57,7 @@ type RegisteredExecutor struct {
 	vantage               *vantageReport
 	vantageObserved       time.Time
 	display               config.ExecutorDisplay
+	ownerDisplay          config.ExecutorDisplay
 	ipMetadata            *wire.IPMetadata
 	connectivity          *wire.Connectivity
 	connectivityObserved  time.Time
@@ -259,6 +260,7 @@ func (d *Dispatcher) RegisterExecutor(ctx context.Context, owner *rpc.SessionOwn
 		d.mu.Unlock()
 		return ErrDispatcherClosed
 	}
+	record.ownerDisplay = d.ownerDisplay[record.ID]
 	old := d.executors[record.ID]
 	if old != nil {
 		record.history = cloneHistory(old.history)

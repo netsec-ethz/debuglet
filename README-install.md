@@ -45,7 +45,7 @@ not establish support for Docker Desktop or emulation there.
 
 ## Build from source
 
-On Linux amd64 with Go 1.26.8, Git, Make, Bash, GNU tar, and coreutils:
+On Linux amd64 with Go 1.26.9, Git, Make, Bash, GNU tar, and coreutils:
 
 ```sh
 git clone https://github.com/netsec-ethz/debuglet.git

@@ -44,7 +44,7 @@ func (h *Handler) GetExecutors(c echo.Context) error {
 	// The maintenance switch is dispatcher-wide; read it once per listing.
 	paused := dispatcher.AdmissionPaused() != nil
 	caller := requestCaller(c)
-	var resp []ExecutorResponse
+	resp := []ExecutorResponse{}
 	live := map[string]bool{}
 	for _, e := range executors {
 		live[e.ID] = true

@@ -42,7 +42,7 @@ func whoamiCommand(ctx context.Context, args []string, options globalOptions, st
 	if credential.ExpiresAt > 0 && credential.ExpiresAt <= time.Now().Unix() {
 		return reportFailure(ctx, "dbl whoami", stderr, errors.New("saved session has expired; run dbl login"))
 	}
-	c, err := newClient(profile.Endpoint, client.Options{RequestTimeout: options.Timeout, Credential: credential.Token})
+	c, err := profileClient(profile, client.Options{RequestTimeout: options.Timeout, Credential: credential.Token})
 	if err != nil {
 		return reportFailure(ctx, "dbl whoami", stderr, err)
 	}

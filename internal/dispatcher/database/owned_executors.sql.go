@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/models"
@@ -40,7 +41,7 @@ func (q *Queries) CreateOwnedExecutor(ctx context.Context, arg CreateOwnedExecut
 }
 
 const getOwnedExecutor = `-- name: GetOwnedExecutor :one
-SELECT owned_executors.executor_id, owned_executors.name,
+SELECT owned_executors.executor_id, owned_executors.name, owned_executors.display_name, owned_executors.city, owned_executors.country, owned_executors.network,
     EXISTS(SELECT 1 FROM executor_enrollments WHERE executor_id = owned_executors.executor_id) AS enrolled
 FROM owned_executors JOIN users ON users.id = owned_executors.user_id
 WHERE users.uuid = ?1 AND owned_executors.executor_id = ?2
@@ -52,29 +53,45 @@ type GetOwnedExecutorParams struct {
 }
 
 type GetOwnedExecutorRow struct {
-	ExecutorID string
-	Name       string
-	Enrolled   bool
+	ExecutorID  string
+	Name        string
+	DisplayName string
+	City        string
+	Country     string
+	Network     string
+	Enrolled    bool
 }
 
 func (q *Queries) GetOwnedExecutor(ctx context.Context, arg GetOwnedExecutorParams) (GetOwnedExecutorRow, error) {
 	row := q.db.QueryRowContext(ctx, getOwnedExecutor, arg.Uuid, arg.ExecutorID)
 	var i GetOwnedExecutorRow
-	err := row.Scan(&i.ExecutorID, &i.Name, &i.Enrolled)
+	err := row.Scan(
+		&i.ExecutorID,
+		&i.Name,
+		&i.DisplayName,
+		&i.City,
+		&i.Country,
+		&i.Network,
+		&i.Enrolled,
+	)
 	return i, err
 }
 
 const listOwnedExecutors = `-- name: ListOwnedExecutors :many
-SELECT owned_executors.executor_id, owned_executors.name,
+SELECT owned_executors.executor_id, owned_executors.name, owned_executors.display_name, owned_executors.city, owned_executors.country, owned_executors.network,
     EXISTS(SELECT 1 FROM executor_enrollments WHERE executor_id = owned_executors.executor_id) AS enrolled
 FROM owned_executors JOIN users ON users.id = owned_executors.user_id
 WHERE users.uuid = ? ORDER BY owned_executors.created_at, owned_executors.executor_id
 `
 
 type ListOwnedExecutorsRow struct {
-	ExecutorID string
-	Name       string
-	Enrolled   bool
+	ExecutorID  string
+	Name        string
+	DisplayName string
+	City        string
+	Country     string
+	Network     string
+	Enrolled    bool
 }
 
 func (q *Queries) ListOwnedExecutors(ctx context.Context, argUuid uuid.UUID) ([]ListOwnedExecutorsRow, error) {
@@ -86,7 +103,15 @@ func (q *Queries) ListOwnedExecutors(ctx context.Context, argUuid uuid.UUID) ([]
 	var items []ListOwnedExecutorsRow
 	for rows.Next() {
 		var i ListOwnedExecutorsRow
-		if err := rows.Scan(&i.ExecutorID, &i.Name, &i.Enrolled); err != nil {
+		if err := rows.Scan(
+			&i.ExecutorID,
+			&i.Name,
+			&i.DisplayName,
+			&i.City,
+			&i.Country,
+			&i.Network,
+			&i.Enrolled,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -98,4 +123,93 @@ func (q *Queries) ListOwnedExecutors(ctx context.Context, argUuid uuid.UUID) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const listOwnerDisplays = `-- name: ListOwnerDisplays :many
+SELECT executor_id, display_name, city, country, network FROM owned_executors
+`
+
+type ListOwnerDisplaysRow struct {
+	ExecutorID  string
+	DisplayName string
+	City        string
+	Country     string
+	Network     string
+}
+
+func (q *Queries) ListOwnerDisplays(ctx context.Context) ([]ListOwnerDisplaysRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOwnerDisplays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOwnerDisplaysRow
+	for rows.Next() {
+		var i ListOwnerDisplaysRow
+		if err := rows.Scan(
+			&i.ExecutorID,
+			&i.DisplayName,
+			&i.City,
+			&i.Country,
+			&i.Network,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateOwnedExecutorDisplay = `-- name: UpdateOwnedExecutorDisplay :one
+UPDATE owned_executors SET
+    display_name = COALESCE(?1, display_name),
+    city = COALESCE(?2, city),
+    country = COALESCE(?3, country),
+    network = COALESCE(?4, network)
+WHERE executor_id = ?5
+AND user_id = (SELECT id FROM users WHERE uuid = ?6)
+RETURNING executor_id, display_name, city, country, network
+`
+
+type UpdateOwnedExecutorDisplayParams struct {
+	DisplayName sql.NullString
+	City        sql.NullString
+	Country     sql.NullString
+	Network     sql.NullString
+	ExecutorID  string
+	Uuid        uuid.UUID
+}
+
+type UpdateOwnedExecutorDisplayRow struct {
+	ExecutorID  string
+	DisplayName string
+	City        string
+	Country     string
+	Network     string
+}
+
+func (q *Queries) UpdateOwnedExecutorDisplay(ctx context.Context, arg UpdateOwnedExecutorDisplayParams) (UpdateOwnedExecutorDisplayRow, error) {
+	row := q.db.QueryRowContext(ctx, updateOwnedExecutorDisplay,
+		arg.DisplayName,
+		arg.City,
+		arg.Country,
+		arg.Network,
+		arg.ExecutorID,
+		arg.Uuid,
+	)
+	var i UpdateOwnedExecutorDisplayRow
+	err := row.Scan(
+		&i.ExecutorID,
+		&i.DisplayName,
+		&i.City,
+		&i.Country,
+		&i.Network,
+	)
+	return i, err
 }

@@ -240,9 +240,8 @@ func TestServedContractIsTheEmbeddedDocument(t *testing.T) {
 	}
 }
 
-// TestExecutorListDocumentsItsNullBody pins the nullability the contract
-// claims: an empty registry answers with a JSON null, not an empty array.
-func TestExecutorListDocumentsItsNullBody(t *testing.T) {
+// TestExecutorListDocumentsItsEmptyArray keeps an empty registry iterable.
+func TestExecutorListDocumentsItsEmptyArray(t *testing.T) {
 	c := oaContract(t)
 	f := modeNewFixture(t)
 
@@ -250,8 +249,8 @@ func TestExecutorListDocumentsItsNullBody(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if got := strings.TrimSpace(rec.Body.String()); got != "null" {
-		t.Fatalf("empty registry body = %s, want null", got)
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("empty registry body = %s, want []", got)
 	}
 	oaCheckResponse(t, c, http.MethodGet, "/executors", rec.Code, rec.Body.Bytes())
 }
@@ -446,6 +445,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/executors/no-such-executor/tesla", nil)
 			oaRaw(t, raw, http.MethodGet, deployment.url+"/operator/executors", nil)
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/executors", []byte(`{"name":"contract node"}`))
+			oaRaw(t, raw, http.MethodPatch, deployment.url+"/operator/executors/00000000-0000-0000-0000-00000000dead", []byte(`{"city":"Bern"}`))
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/executors/00000000-0000-0000-0000-00000000dead/enrollment-token", nil)
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/operator/accounts/00000000-0000-0000-0000-00000000dead/allowance", []byte(`{"reason":"trial","idempotency_key":"contract"}`))
 			oaRaw(t, raw, http.MethodPost, deployment.url+"/executor-enrollment", []byte(`{"executor_id":"00000000-0000-0000-0000-00000000dead","token":"unused","csr":"unused"}`))

@@ -64,9 +64,8 @@ func DatabaseSource(source string) bool {
 	return err == nil && epoch > 0 && strconv.FormatUint(epoch, 10) == version
 }
 
-// Location returns the display location for a client. Existing Display fields
-// remain operator-only on the wire and in result files, so older readers retain
-// their original source vocabulary. New clients can use this optional fallback.
+// Location prefers explicit dispatcher-operator or owner-reported labels.
+// Automatic location is used only when neither city nor country is set.
 func (e Executor) Location() (city, country LabelledString) {
 	city, country = e.Display.City, e.Display.Country
 	if city.Value != nil || country.Value != nil || e.IPMetadata == nil || e.IPMetadata.LocationOptOut {

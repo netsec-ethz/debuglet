@@ -62,8 +62,8 @@ func TestRejectsUnsupportedOrMalformedFields(t *testing.T) {
 		{"dispatcher address without a port", identitySection + "[dispatcher]\naddr='127.0.0.1'\n" + resourcesSection + databaseSection + tlsSection, "dispatcher.addr must be a host:port address"},
 		{"dispatcher port zero", identitySection + "[dispatcher]\naddr='127.0.0.1:0'\n" + resourcesSection + databaseSection + tlsSection, "dispatcher.addr must use a port between 1 and 65535"},
 		{"malformed yamux address", identitySection + "[dispatcher]\naddr='127.0.0.1:1'\nyamux_addr='127.0.0.1:70000'\n" + resourcesSection + databaseSection + tlsSection, "dispatcher.yamux_addr"},
-		{"missing capacity", identitySection + dispatcherSection + databaseSection + tlsSection, "resources.capacity is required and must be positive"},
-		{"negative capacity", identitySection + dispatcherSection + "[resources]\ncapacity=-1\n" + databaseSection + tlsSection, "resources.capacity is required and must be positive"},
+		{"explicit zero capacity", identitySection + dispatcherSection + "[resources]\ncapacity=0\n" + databaseSection + tlsSection, "resources.capacity must be positive"},
+		{"negative capacity", identitySection + dispatcherSection + "[resources]\ncapacity=-1\n" + databaseSection + tlsSection, "resources.capacity must be positive"},
 		{"explicit zero debuglets", identitySection + dispatcherSection + "[resources]\ncapacity=1000\nmax_debuglets=0\n" + databaseSection + tlsSection, "resources.max_debuglets must be positive"},
 		{"negative debuglets", identitySection + dispatcherSection + "[resources]\ncapacity=1000\nmax_debuglets=-4\n" + databaseSection + tlsSection, "resources.max_debuglets must be positive"},
 		{"missing database path", identitySection + dispatcherSection + resourcesSection + tlsSection, "database.path is required"},
@@ -236,5 +236,15 @@ func assertAllConfigurationsCovered(t *testing.T, root, name string, covered []s
 	}
 	for path := range expected {
 		t.Errorf("listed configuration %s does not exist", path)
+	}
+}
+
+func TestOmittedCapacityKeepsDefault(t *testing.T) {
+	cfg, _, err := load(t, identitySection+dispatcherSection+databaseSection+tlsSection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resources.Capacity != DefaultCapacity {
+		t.Fatalf("capacity = %d, want %d", cfg.Resources.Capacity, DefaultCapacity)
 	}
 }

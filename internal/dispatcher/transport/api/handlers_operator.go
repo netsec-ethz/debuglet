@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/enrollment"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
@@ -28,9 +29,11 @@ type OwnedExecutorResponse struct {
 	Admission string `json:"admission"`
 	// DrainStatus is unknown: the control protocol does not report whether
 	// the executor's host service manager completed a joined shutdown.
-	DrainStatus string `json:"drain_status"`
-	LastSeen    int64  `json:"last_seen,omitempty"`
-	Version     string `json:"version,omitempty"`
+	DrainStatus  string                 `json:"drain_status"`
+	LastSeen     int64                  `json:"last_seen,omitempty"`
+	Version      string                 `json:"version,omitempty"`
+	OwnerDisplay config.ExecutorDisplay `json:"owner_display"`
+	Display      wire.ExecutorDisplay   `json:"display"`
 }
 
 type OwnedExecutorsResponse struct {
@@ -48,8 +51,8 @@ type ExecutorSetupResponse struct {
 
 func (h *Handler) onboardingEnabled() bool { return h.onboarding.Enabled && h.issuer != nil }
 
-func (h *Handler) ownedExecutor(id, name string, enrolled, paused bool) OwnedExecutorResponse {
-	result := OwnedExecutorResponse{ID: id, Name: name, Status: "pending", Admission: wire.AdmissionOffline, DrainStatus: "unknown"}
+func (h *Handler) ownedExecutor(id, name string, enrolled, paused bool, ownerDisplay config.ExecutorDisplay) OwnedExecutorResponse {
+	result := OwnedExecutorResponse{ID: id, Name: name, Status: "pending", Admission: wire.AdmissionOffline, DrainStatus: "unknown", OwnerDisplay: ownerDisplay, Display: h.dispatcher.ConfiguredDisplay(id)}
 	if enrolled {
 		result.Status = "offline"
 		if node, ok := h.dispatcher.GetExecutor(id); ok {
@@ -81,7 +84,7 @@ func (h *Handler) GetOwnedExecutors(c echo.Context) error {
 	}
 	paused := dispatcher.AdmissionPaused() != nil
 	for _, row := range rows {
-		response.Executors = append(response.Executors, h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, paused))
+		response.Executors = append(response.Executors, h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, paused, config.ExecutorDisplay{DisplayName: row.DisplayName, City: row.City, Country: row.Country, Network: row.Network}))
 	}
 	return c.JSON(http.StatusOK, response)
 }
@@ -118,9 +121,53 @@ func (h *Handler) PostOwnedExecutor(c echo.Context) error {
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.JSON(http.StatusCreated, ExecutorSetupResponse{
-		Executor: h.ownedExecutor(id, request.Name, false, dispatcher.AdmissionPaused() != nil), Token: token,
+		Executor: h.ownedExecutor(id, request.Name, false, dispatcher.AdmissionPaused() != nil, config.ExecutorDisplay{}), Token: token,
 		ExpiresAt: expires.Unix(), DispatcherURL: h.onboarding.DispatcherURL,
 	})
+}
+
+// PatchOwnedExecutor changes only the caller's public presentation labels.
+// Ownership is checked in the UPDATE, and omitted fields are preserved there.
+func (h *Handler) PatchOwnedExecutor(c echo.Context) error {
+	account, err := requireAccount(c)
+	if err != nil {
+		return err
+	}
+	var request struct {
+		DisplayName *string `json:"display_name"`
+		City        *string `json:"city"`
+		Country     *string `json:"country"`
+		Network     *string `json:"network"`
+	}
+	if err := c.Bind(&request); err != nil {
+		return bindError(err)
+	}
+	value := func(v *string) string {
+		if v == nil {
+			return ""
+		}
+		return *v
+	}
+	if err := (config.ExecutorDisplay{DisplayName: value(request.DisplayName), City: value(request.City), Country: value(request.Country), Network: value(request.Network)}).Validate(); err != nil {
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, err.Error())
+	}
+	nullable := func(v *string) sql.NullString { return sql.NullString{String: value(v), Valid: v != nil} }
+	ctx := c.Request().Context()
+	q := database.New(h.db)
+	err = h.dispatcher.UpdateOwnerDisplay(ctx, database.UpdateOwnedExecutorDisplayParams{
+		Uuid: account.UserUUID, ExecutorID: c.Param("id"), DisplayName: nullable(request.DisplayName), City: nullable(request.City), Country: nullable(request.Country), Network: nullable(request.Network),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return apiError(http.StatusNotFound, CodeNotFound, "executor not found")
+	}
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to update executor labels", err)
+	}
+	row, err := q.GetOwnedExecutor(ctx, database.GetOwnedExecutorParams{Uuid: account.UserUUID, ExecutorID: c.Param("id")})
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read executor", err)
+	}
+	return c.JSON(http.StatusOK, h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, dispatcher.AdmissionPaused() != nil, config.ExecutorDisplay{DisplayName: row.DisplayName, City: row.City, Country: row.Country, Network: row.Network}))
 }
 
 func (h *Handler) PostOwnedExecutorToken(c echo.Context) error {
@@ -145,7 +192,7 @@ func (h *Handler) PostOwnedExecutorToken(c echo.Context) error {
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.JSON(http.StatusOK, ExecutorSetupResponse{
-		Executor: h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, dispatcher.AdmissionPaused() != nil), Token: token,
+		Executor: h.ownedExecutor(row.ExecutorID, row.Name, row.Enrolled, dispatcher.AdmissionPaused() != nil, config.ExecutorDisplay{DisplayName: row.DisplayName, City: row.City, Country: row.Country, Network: row.Network}), Token: token,
 		ExpiresAt: expires.Unix(), DispatcherURL: h.onboarding.DispatcherURL,
 	})
 }

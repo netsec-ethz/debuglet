@@ -306,9 +306,10 @@ deploy-update-addr: require-deploy-env
 # Re-render dispatcher + executor configs and restart changed services (no
 # binary redeploy). Each daemon keeps reporting the release installed on its
 # host, which the playbook reads from the host's deployment record.
-# Example: make deploy-update-config DEPLOY_ENV=dev
+# Example: make deploy-update-config DEPLOY_ENV=dev LIMIT=executor.example.com
 deploy-update-config: require-deploy-env
-	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml
+	cd deploy/ansible && $(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" $(ENV_VARS) update-config.yml \
+		$(if $(LIMIT),--limit "$(LIMIT)",)
 
 # Build and install the candidate payload, then back up and upgrade the deployed
 # databases with its migrations, stopping each service meanwhile (or pass

@@ -102,7 +102,7 @@ A candidate names the run and its executor, never the account; a run ID grants n
 Optional `ip_metadata` on `GET /executors` contains offline ASN and approximate
 country/city lookups for observed and advertised addresses. Each lookup records
 its database source/build epoch, registration observation time and an explicit
-unknown reason. Existing `display` fields stay operator-only; new clients may
+unknown reason. Existing `display` fields use explicit presentation labels; new clients may
 derive an automatic fallback from `ip_metadata`. Operator location takes
 precedence; executor opt-out suppresses
 automatic location. The same object is captured immutably as
@@ -278,3 +278,14 @@ contract; delivery remains unconfirmed. Reconnecting does not remove the
 durable policy. A failure to record the change answers 500 "destination policy could not be
 recorded"; nothing was applied and the previous policy stays in force. See
 [destination limits and opt-outs](operations/configuration.md#destination-limits-and-opt-outs).
+
+API 1.22 adds `PATCH /operator/executors/{id}` for the owning account
+(`executors:write` scope). Send any of `display_name`, `city`, `country`, `network`;
+omitted fields are preserved and empty strings clear owner values. Other text is
+printable UTF-8 with no surrounding whitespace, up to 64 characters. Country is
+an assigned uppercase ISO alpha-2 code or empty. Another account's node returns
+404. Cookie sessions require CSRF proof. The response is the updated owned node.
+Owned nodes expose optional `owner_display` (editable plain strings) and `display`
+(effective labelled values); older servers omit them. Operator configuration wins
+per field, otherwise a stored owner value carries source `owner`. Labels persist
+across restarts and appear in new discovery and result snapshots.

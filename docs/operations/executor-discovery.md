@@ -14,6 +14,10 @@ Repeat `--protocol` to require several transports: `tcp`, `tls`, `udp`, `icmp`
 (ICMPv4), or `scion`. `--enforcement` selects the actual `ebpf` or `fallback`
 packet counter chosen by the executor. It is not an assertion that every
 transport carries attribution tags or that a destination is reachable.
+The eBPF counter currently attaches through TCX, requiring Linux 6.6 or later
+with the required kernel support and process capabilities. On older kernels
+(such as Linux 5.15), a verifier-load success alone does not establish counter
+attachment; inspect the reported fallback and tagging modes.
 `--min-capacity-bps` compares advertised **total** bandwidth; reservations,
 destination limits and the requested time window still decide admission.
 `--isd-as` matches the executor-reported SCION ISD-AS; equivalent spellings such
@@ -57,6 +61,7 @@ It is an executor claim, not a verification, and it is not a discovery filter.
 
 | `reason` | Meaning |
 | --- | --- |
+| `untagged` | Neither IPv4 nor IPv6 traffic is tagged on this executor. A ready key schedule alone cannot make its packets attributable. |
 | `epoch_zero` | The chain anchor k_0 is public and never signs, so nothing sent during epoch 0 (the first `tesla.epoch_seconds` after startup) is attributable. |
 | `chain_exhausted` | The key chain has ended; nothing is tagged until the executor restarts. |
 | `refresh_failing` | A kernel tagger's latest key refresh failed. Its slot is empty or may still hold the previous epoch's key; `refresh_error` gives a short error of at most 128 bytes. |
@@ -322,12 +327,12 @@ is retained for negative lookups; it is null when no lookup happened. Loopback,
 private, CGNAT, ULA, documentation and other special-purpose addresses stay
 unknown even if a database contains a record. Hostnames stay unknown.
 
-The existing `display` response stays operator-only for compatibility. New SDK
-and CLI clients derive a display location from `ip_metadata`: an operator city
-or country overrides the entire automatic display location;
-otherwise the observed address is preferred, then the advertised address.
+The `display` response contains dispatcher-operator labels or owner-reported
+labels, with the source recorded per field. SDK and CLI clients derive a display
+location from `ip_metadata` only when neither explicit city nor country is set.
+For automatic location, the observed address is preferred, then the advertised address.
 Automatic results remain visible alongside an override. `disagreements` flags
-conflicting observed/advertised ASNs or locations, or a conflicting operator
+conflicting observed/advertised ASNs or locations, or a conflicting explicit
 location. A missing value is not treated as a disagreement.
 
 Executors can suppress all automatic location publication:
@@ -375,26 +380,31 @@ live metadata table or database-update service is required.
 ### Probe addresses
 
 API 1.16 adds the addressing of a [RIPE Atlas](https://atlas.ripe.net/) probe
-record to each `GET /executors` entry:
+record to each `GET /executors` entry. An executor observed only through
+non-global addresses has no published address:
 
 ```json
 "is_public": true,
-"address_v4": "192.0.2.10",
-"address_v6": "2001:db8:10::7",
-"prefix_v4": "192.0.2.0/24",
-"prefix_v6": "2001:db8::/32",
-"asn_v4": 64500,
-"asn_v6": 64500,
+"address_v4": null,
+"address_v6": null,
+"prefix_v4": null,
+"prefix_v6": null,
+"asn_v4": null,
+"asn_v6": null,
 "address_observations": {
   "v4": {"source": "dispatcher-observed", "via": "control", "observed_at": 1791250000,
-         "lookup_source": "database:GeoLite2-ASN@1790000000", "lookup_reason": ""},
+         "lookup_source": null, "lookup_reason": "non_global"},
   "v6": {"source": "dispatcher-observed", "via": "reflection", "observed_at": 1791249700,
-         "lookup_source": "database:GeoLite2-ASN@1790000000", "lookup_reason": ""}
+         "lookup_source": null, "lookup_reason": "non_global"}
 }
 ```
 
 `address_v4` and `address_v6` are the last addresses of each family that the
 dispatcher itself observed for the executor in its current control session.
+Only globally routable addresses appear in the public listing. Private,
+loopback, link-local, shared and other reserved observations are withheld,
+with `address_observations.v4/v6.lookup_reason: "non_global"`; operators can
+still inspect the observed address.
 An executor's claim is never used: `public_host` and the hello's source IP are
 not observations. Two connections are observed, both authenticated with the
 executor's certificate and current control-session credentials, so another
@@ -672,3 +682,12 @@ for expired reports. `admission_limits` exposes scheduling support, the existing
 numeric timeout/bandwidth domain and `currency_per_bps_second` pricing units.
 These bounds describe valid policy inputs, not free capacity or a guarantee that
 a complete scheduled reservation fits.
+
+### Advertised bandwidth capacity
+
+`[resources] capacity` is the executor's total bandwidth in bits per second.
+It controls both its local bandwidth allocation and the capacity announced to
+the dispatcher. An omitted value defaults to 1,000,000,000 bit/s; an explicit
+value must be positive. Set it below the bandwidth available to measurements,
+especially on a shared home or wireless connection. It is configured capacity,
+not a speed test or a promise of physical link throughput.

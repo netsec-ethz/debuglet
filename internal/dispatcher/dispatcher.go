@@ -53,20 +53,22 @@ type Dispatcher struct {
 	version     string
 	incarnation string
 
-	executors    map[string]*executorEntry
-	leaseTiming  controlsession.LeaseTiming
-	keystore     *tag.KeyStore
-	logger       *zap.Logger
-	Bidi         *rpc.BidiServer
-	mu           sync.RWMutex
-	db           *sql.DB
-	outputLimits config.OutputConfig
-	egress       config.EgressConfig
-	admission    *accountAdmission
-	retention    config.RetentionConfig
-	attribution  config.AttributionConfig
-	display      map[string]config.ExecutorDisplay
-	ipMetadata   *ipmetadata.Databases
+	executors      map[string]*executorEntry
+	leaseTiming    controlsession.LeaseTiming
+	keystore       *tag.KeyStore
+	logger         *zap.Logger
+	Bidi           *rpc.BidiServer
+	mu             sync.RWMutex
+	db             *sql.DB
+	outputLimits   config.OutputConfig
+	egress         config.EgressConfig
+	admission      *accountAdmission
+	retention      config.RetentionConfig
+	attribution    config.AttributionConfig
+	display        map[string]config.ExecutorDisplay
+	ownerDisplay   map[string]config.ExecutorDisplay
+	ownerDisplayMu sync.Mutex
+	ipMetadata     *ipmetadata.Databases
 
 	closed             bool
 	restored           bool // set under mu once a RestoreScheduler call has succeeded

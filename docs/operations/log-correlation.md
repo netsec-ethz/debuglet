@@ -14,6 +14,29 @@ protocol: the executor's `request_id` is `unknown`. Join these records by the
 run and binding, rather than inventing a shared request or execution attempt.
 `attempt` is always `unknown`; no durable attempt identifier exists today.
 
+A failed upload emits `Run upload failed` at warning level before its error
+cancels other uploads in the batch. Join it to `Run admitted` by request, run
+and binding. `upload_stage` identifies `session_lookup`, `executor_upload` or
+`record_uploaded`; `grpc_code` and `elapsed_ms` describe that failure.
+`context_code` is the local upload context's status, and
+`request_context_code` is the original HTTP context's status. A sibling can
+therefore show `Canceled` while the originating request remains `OK`. These
+fields identify where failure was observed; a remote `DeadlineExceeded` with
+an `OK` local context does not by itself prove a database timeout.
+
+The executor emits `Run admission failed` with the same run and binding after
+validating their identity. Its stage is `validation` or `scheduler_admission`,
+with its own status, elapsed time and inbound `context_code`. In particular, an
+admission failure can leave no `Run accepted` event. The warning never includes
+raw error text, SQL, arguments or credentials. Use existing restricted Debug
+diagnostics for further details. An absent acceptance event alone does not
+prove a run was never stored or executed.
+
+Failed batches retain their admitted run IDs. Inspect each run's terminal
+state and complete output; an uncertain admission is not a successful result
+or permission to replay it. A later successful submission does not explain or
+resolve an earlier partial failure.
+
 `Cancellation requested` records a request, not completion. An executor's
 `Run cancellation joined` means local cleanup and canonical row removal
 completed. The dispatcher's `Cancellation recorded` means the terminal state

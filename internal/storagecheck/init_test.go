@@ -84,12 +84,12 @@ func TestBootstrapFresh(t *testing.T) {
 					"transaction_users":          "transaction_id user_id",
 					"executor_enrollments":       "executor_id fingerprint enrolled_at",
 					"executor_enrollment_tokens": "selector executor_id secret_hash created_at expires_at",
-					"owned_executors":            "executor_id user_id name created_at",
+					"owned_executors":            "executor_id user_id name created_at display_name city country network",
 					"oauth_identities":           "provider issuer subject user_id login created_at updated_at",
 					"oauth_login_attempts":       "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":     "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":              "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

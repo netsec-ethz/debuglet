@@ -168,6 +168,19 @@ printf new > target/wasm32-wasip1/release/debuglet.wasm''')
                                   f'known_hosts_file={{{{ playbook_dir }}}}/{known_hosts}',
                                   'upgrade-database.yml'])
 
+    def test_config_update_preserves_the_requested_host_limit(self):
+        for limit in ('executor.example.com', 'executors:!dispatcher', ''):
+            with self.subTest(limit=limit):
+                result = self.make('deploy-update-config', DEPLOY_ENV='dev', LIMIT=limit,
+                                   ANSIBLE_PLAYBOOK=self.playbook)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                arguments = (self.root / 'playbook-called').read_text().splitlines()
+                if limit:
+                    self.assertEqual(arguments[-3:], ['update-config.yml', '--limit', limit])
+                else:
+                    self.assertEqual(arguments[-1], 'update-config.yml')
+                    self.assertNotIn('--limit', arguments)
+
     def test_database_upgrade_requires_an_environment(self):
         result = self.make('deploy-upgrade-db', ANSIBLE_PLAYBOOK=self.playbook)
         self.assertNotEqual(result.returncode, 0)

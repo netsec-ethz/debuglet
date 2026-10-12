@@ -125,8 +125,9 @@ rm "$setup_dir/session.json" "$setup_dir/auth.header"
 The CLI's separately saved session remains available. If the service requires
 browser OAuth, use its console on another computer and the SSH flow above;
 these commands do not implement headless OAuth. For a privately certified API,
-install its CA in the machine's system trust store or obtain service-specific
-CLI trust instructions. The `curl --cacert` and `join --ca-file` options must
+pass its public CA file to `dbl connect --ca-file /path/to/api-ca.crt`; this
+trust is saved for subsequent CLI commands. The `curl --cacert` and
+`join --ca-file` options must
 trust that API certificate. No account session or recovery file is needed by
 the running executor; retain its generated identity and database for later starts.
 
@@ -256,3 +257,23 @@ their names and inventory are scoped to that account. Existing executors enrolle
 through host administration are not automatically claimed by console accounts.
 This flow does not enable payments, payouts or earnings reporting. The service's
 supported workload and containment limits still apply to machines that join it.
+
+## Public name and location
+
+In **My nodes**, edit a node's public display name, city, country and network.
+These labels are owner assertions, not verified host observations. Country is an
+uppercase ISO 3166-1 alpha-2 code (for example `CH`); other fields accept up to 64
+printable characters. Clear a field to remove your value. The private registration
+name remains unchanged. Dispatcher-configured values override your corresponding
+fields and carry source `operator`; your remaining values carry source `owner`.
+Edits survive dispatcher and executor restarts and affect new result snapshots.
+
+Deployment operators can label nodes outside the inventory with
+`dispatcher_executor_labels`, keyed by executor ID, in their deployment variables.
+These entries merge with inventory labels, with explicit dictionary fields taking
+precedence. Configuration updates preserve them through normal template rendering.
+
+The join command offers `--capacity BITS_PER_SECOND` (default `10000000`). Choose
+a sustainable host and uplink limit. Join-generated configurations explicitly use
+the fallback packet counter. Check the node's reported capabilities after starting it. Fallback userspace tagging covers IPv4 UDP/ICMP;
+TCP/TLS remain untagged.

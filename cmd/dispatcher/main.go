@@ -423,7 +423,7 @@ func serveCombinedWithMetadata(parent context.Context, lis net.Listener, d *disp
 		muxed = tls.NewListener(owned, security.Combined)
 	}
 	m := cmux.New(muxed)
-	httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast())
+	httpL := m.Match(cmux.HTTP2(), cmux.HTTP1Fast(http.MethodPatch))
 	var yamuxL net.Listener = &memberListener{Listener: m.Match(cmux.Any()), stop: stop}
 	if security != nil && security.RequireClientIdentity {
 		yamuxL = rpc.VerifiedClientListener(yamuxL, logger)

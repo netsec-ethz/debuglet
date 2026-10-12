@@ -28,6 +28,7 @@ type ExecutorHealthMetrics struct {
 	DisclosureHeld        int
 	ClockUnready          int
 	ClockDrift            int
+	Untagged              int
 	AttributionUnknown    int
 	DisclosureHeldSeconds float64
 
@@ -150,6 +151,8 @@ func (m *ExecutorHealthMetrics) observe(e *executorEntry, now time.Time, connect
 				m.ClockUnready++
 			case "clock_drift":
 				m.ClockDrift++
+			case "untagged":
+				m.Untagged++
 			}
 			if a.DisclosureHeldSince != nil {
 				m.DisclosureHeldSeconds = max(m.DisclosureHeldSeconds, now.Sub(time.Unix(*a.DisclosureHeldSince, 0)).Seconds())

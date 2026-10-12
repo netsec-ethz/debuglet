@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"net"
 	"sync"
@@ -184,5 +185,32 @@ func TestFallbackPacketCounter(t *testing.T) {
 	cfg.Network.PacketCounter = "auto"
 	if _, err := NewNode(cfg, zap.NewNop(), db); err == nil {
 		t.Fatal("auto ignored supplied invalid interface")
+	}
+}
+
+func TestAnnouncedCapacityMatchesConfiguration(t *testing.T) {
+	for _, configured := range []int64{0, 10_000_000, 123_456_789} {
+		t.Run(fmt.Sprint(configured), func(t *testing.T) {
+			cfg := fixtureConfig()
+			cfg.Resources.Capacity = configured
+			e := newFixtureExecutor(t, cfg, nil, newFixtureMemoryStorage(t))
+			want := configured
+			if want == 0 {
+				want = config.DefaultCapacity
+			}
+			var announced int64
+			e.clientFor = func(context.Context, controlsession.Binding) (pb.DispatcherServiceClient, error) {
+				return resourcesClient{resources: func(_ context.Context, in *pb.ResourcesRequest) (*pb.ResourcesResponse, error) {
+					announced = in.BandwidthCapacity
+					return &pb.ResourcesResponse{}, nil
+				}}, nil
+			}
+			if err := e.announceResources(t.Context(), operationBinding()); err != nil {
+				t.Fatal(err)
+			}
+			if announced != want || int64(e.limiter.ExecutorCapacity()) != want {
+				t.Fatalf("announced=%d local=%d, want=%d", announced, e.limiter.ExecutorCapacity(), want)
+			}
+		})
 	}
 }

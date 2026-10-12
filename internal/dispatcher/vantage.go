@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"net/netip"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/observability"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -220,6 +222,9 @@ func (d *Dispatcher) ConfigureExecutorDisplay(executors map[string]config.Execut
 		return errors.New("executor display metadata must be configured before dispatcher startup")
 	}
 	d.display = maps.Clone(executors)
+	if d.db != nil {
+		return d.loadOwnerDisplays(context.Background())
+	}
 	return nil
 }
 
@@ -228,15 +233,22 @@ func (d *Dispatcher) ConfigureExecutorDisplay(executors map[string]config.Execut
 func (d *Dispatcher) ConfiguredDisplay(id string) wire.ExecutorDisplay {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return (&RegisteredExecutor{display: d.display[id]}).Display()
+	return (&RegisteredExecutor{display: d.display[id], ownerDisplay: d.ownerDisplay[id]}).Display()
 }
 
-// Display is the operator's metadata, labelled operator where configured.
+// Display labels each field with its source. Dispatcher operator labels take
+// precedence over owner labels. Neither source is verified against the host.
 func (e *RegisteredExecutor) Display() wire.ExecutorDisplay {
-	c := e.display
+	c, owner := e.display, e.ownerDisplay
+	field := func(operator, owner string) wire.LabelledString {
+		if operator != "" {
+			return labelled(operator, wire.SourceOperator)
+		}
+		return labelled(owner, wire.SourceOwner)
+	}
 	return wire.ExecutorDisplay{
-		DisplayName: labelled(c.DisplayName, wire.SourceOperator), City: labelled(c.City, wire.SourceOperator),
-		Country: labelled(c.Country, wire.SourceOperator), Network: labelled(c.Network, wire.SourceOperator),
+		DisplayName: field(c.DisplayName, owner.DisplayName), City: field(c.City, owner.City),
+		Country: field(c.Country, owner.Country), Network: field(c.Network, owner.Network),
 	}
 }
 
@@ -319,4 +331,40 @@ func admissionPlatform(entry *executorEntry, now time.Time) wire.LabelledReport[
 		return wire.LabelledReport[wire.HostPlatform]{}
 	}
 	return admissionReport(entry, entry.vantage.platform, now)
+}
+
+func (d *Dispatcher) loadOwnerDisplays(ctx context.Context) error {
+	rows, err := database.New(d.db).ListOwnerDisplays(ctx)
+	if err != nil {
+		return err
+	}
+	d.ownerDisplay = make(map[string]config.ExecutorDisplay, len(rows))
+	for _, row := range rows {
+		d.ownerDisplay[row.ExecutorID] = config.ExecutorDisplay{DisplayName: row.DisplayName, City: row.City, Country: row.Country, Network: row.Network}
+	}
+	return nil
+}
+
+// UpdateOwnerDisplay serializes edits without holding the registry lock during
+// storage I/O. The update returns its committed fields, so cancellation after
+// storage returns cannot prevent publishing them to discovery. Existing result
+// snapshots stay fixed.
+func (d *Dispatcher) UpdateOwnerDisplay(ctx context.Context, params database.UpdateOwnedExecutorDisplayParams) error {
+	d.ownerDisplayMu.Lock()
+	defer d.ownerDisplayMu.Unlock()
+	row, err := database.New(d.db).UpdateOwnedExecutorDisplay(ctx, params)
+	if err != nil {
+		return err
+	}
+	display := config.ExecutorDisplay{DisplayName: row.DisplayName, City: row.City, Country: row.Country, Network: row.Network}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.ownerDisplay == nil {
+		d.ownerDisplay = make(map[string]config.ExecutorDisplay)
+	}
+	d.ownerDisplay[row.ExecutorID] = display
+	if entry := d.executors[row.ExecutorID]; entry != nil {
+		entry.ownerDisplay = display
+	}
+	return nil
 }

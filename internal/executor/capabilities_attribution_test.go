@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
 )
 
@@ -52,6 +53,17 @@ func TestCapabilityReportsAttributionFromEpochOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.teslaSchedule = schedule
+	if e.tagging() == tagger.Untagged {
+		report, _ := e.capabilityReport(t.Context(), true)
+		if a := report.GetAttribution(); a.GetState() != "unavailable" || a.GetReason() != "untagged" {
+			t.Fatalf("untagged epoch 0: %v", a)
+		}
+		time.Sleep(time.Until(schedule.Config().Epoch.Add(delay + delay/4)))
+		if report, _ := e.capabilityReport(t.Context(), false); report != nil {
+			t.Fatal("key readiness alone changed untagged attribution")
+		}
+		return
+	}
 	report, _ := e.capabilityReport(t.Context(), true)
 	a := report.GetAttribution()
 	if a.GetState() != "unavailable" || a.GetReason() != tesla.UnattributableEpochZero || a.GetEpoch() != 0 ||
@@ -77,14 +89,12 @@ func TestCapabilityReportsAttributionFromEpochOne(t *testing.T) {
 // A failing kernel refresh is unavailable with a bounded, valid UTF-8 error,
 // and a key that has held disclosure back beyond one epoch is reported with
 // its age once the failure is gone.
-func TestCapabilityReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
-	e := newFixtureExecutor(t, fixtureConfig(), nil, newFixtureMemoryStorage(t))
+func TestAttributionReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
 	const delay = time.Second
 	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("attribution refresh"), ChainLength: 1 << 16, EpochLength: delay, Epoch: time.Now().Add(-time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.teslaSchedule = schedule
 	holder := &attributionHolder{}
 	schedule.RegisterInstalled(holder)
 	defer schedule.UnregisterInstalled(holder)
@@ -93,8 +103,7 @@ func TestCapabilityReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
 	long := errors.New("map update: " + strings.Repeat("é", 200))
 	holder.set(current-5, now.Add(-5*delay), long)
 
-	report, _ := e.capabilityReport(t.Context(), true)
-	a := report.GetAttribution()
+	a := attributionReport(schedule, time.Now())
 	if a.GetState() != "unavailable" || a.GetReason() != tesla.UnattributableRefreshFailing || a.GetInstalledEpoch() != current-5 {
 		t.Fatalf("refresh failure: %v", a)
 	}
@@ -109,9 +118,34 @@ func TestCapabilityReportsRefreshFailureAndHeldDisclosure(t *testing.T) {
 	}
 
 	holder.set(current-5, now.Add(-5*delay), nil)
-	report, _ = e.capabilityReport(t.Context(), false)
-	a = report.GetAttribution()
+	a = attributionReport(schedule, time.Now())
 	if a.GetReason() != tesla.UnattributableDisclosureHeld || a.GetRefreshError() != "" || a.DisclosureHeldMs == nil {
 		t.Fatalf("held disclosure: %v", a)
+	}
+}
+
+func TestAttributionRequiresTagging(t *testing.T) {
+	schedule, err := tesla.NewKeySchedule(tesla.Config{Seed: []byte("tagging readiness"), ChainLength: 64, EpochLength: time.Second, Epoch: time.Now().Add(-2 * time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name          string
+		mode          tagger.Mode
+		state, reason string
+	}{
+		{"none", tagger.Untagged, "unavailable", "untagged"},
+		{"userspace", tagger.Mode{IPv4: tagger.ModeUserspace, IPv6: tagger.ModeNone}, "available", ""},
+		{"ebpf", tagger.Mode{IPv4: tagger.ModeEBPF, IPv6: tagger.ModeNone}, "available", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := attributionForTagging(schedule, time.Now(), tc.mode)
+			if a.GetState() != tc.state || a.GetReason() != tc.reason || a.GetEpoch() < 1 {
+				t.Fatalf("attribution: %v", a)
+			}
+		})
+	}
+	if a := attributionForTagging(nil, time.Now(), tagger.Untagged); a.GetState() != "unavailable" || a.GetReason() != "untagged" {
+		t.Fatalf("untagged without schedule: %v", a)
 	}
 }
