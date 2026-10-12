@@ -79,6 +79,9 @@ type Profile struct {
 	ExecutorID string `json:"executor_id,omitempty"`
 	// Enrolled preserves the configuration and identity created by executor join.
 	Enrolled bool `json:"enrolled,omitempty"`
+	// PacketCapabilities records the capability set installed for an enrolled
+	// executor. Missing in older records means the original capability-free unit.
+	PacketCapabilities bool `json:"packet_capabilities,omitempty"`
 	// HTTPPort and GRPCPort are the dispatcher's loopback listeners.
 	HTTPPort int `json:"http_port,omitempty"`
 	GRPCPort int `json:"grpc_port,omitempty"`

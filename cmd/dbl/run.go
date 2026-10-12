@@ -14,6 +14,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/demo"
 	"github.com/netsec-ethz/debuglet/internal/ids"
 	"github.com/netsec-ethz/debuglet/pkg/client"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
 // maxWasmBytes bounds the raw guest file read by `run`. The SDK applies its
@@ -282,6 +283,7 @@ func executeSubmission(ctx context.Context, o runOptions, options globalOptions,
 	if !ok {
 		return code
 	}
+	attributionNotice := "packet attribution was not checked for this executor; see dbl nodes for its report."
 	if o.executor == "auto" || !o.filter.Empty() {
 		id := o.executor
 		if id == "auto" {
@@ -295,6 +297,7 @@ func executeSubmission(ctx context.Context, o runOptions, options globalOptions,
 			return reportFailure(ctx, command+": discover executor", stderr, err)
 		}
 		o.executor = node.ID
+		attributionNotice = runAttributionNotice(node.Capabilities)
 	}
 	batch, err := client.Prepare([]client.Request{{
 		OrderID:    0,
@@ -312,6 +315,7 @@ func executeSubmission(ctx context.Context, o runOptions, options globalOptions,
 	if err != nil {
 		return usageError(command, usage, stderr, "invalid request: %v", err)
 	}
+	fmt.Fprintln(stderr, command+": notice: "+attributionNotice)
 	var submission client.Submission
 	if o.retry == nil {
 		submission, err = c.SubmitTEST(ctx, batch)
@@ -367,6 +371,26 @@ func executeSubmission(ctx context.Context, o runOptions, options globalOptions,
 		fmt.Fprintf(stderr, command+": debuglet %s failed: %s\n", r.ID, r.Error)
 	}
 	return code
+}
+
+// Use only the discovery report already needed for selection. Attribution and
+// tagging are separate observations; neither proves coverage for this run.
+func runAttributionNotice(report *wire.ExecutorCapabilities) string {
+	attribution, tagging := "unknown", "packet tagging is unknown"
+	if report != nil && report.SchemaVersion == 1 {
+		attribution = attributionColumn(report.Attribution)
+		if t := report.Tagging; t != nil {
+			switch {
+			case t.IPv4 == wire.TaggingNone && t.IPv6 == wire.TaggingNone:
+				tagging = "IPv4 and IPv6 packets are untagged"
+			case t.IPv4 == wire.TaggingUserspace:
+				tagging = "IPv4 userspace tagging covers UDP/ICMP only; IPv4 TCP/TLS are untagged"
+			case t.IPv4 == wire.TaggingEBPF && t.IPv6 == wire.TaggingNone:
+				tagging = "IPv4 tagging is reported; IPv6 packets are untagged"
+			}
+		}
+	}
+	return "executor reports attribution " + attribution + "; " + tagging + ". Reports do not prove packet attribution for this run; see dbl nodes."
 }
 
 // reportSubmissionFailure emits a receipt only when a transaction is already

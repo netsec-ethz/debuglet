@@ -481,3 +481,62 @@ func TestExecutorJoinWritesValidatedHostTags(t *testing.T) {
 		t.Fatalf("state written for a refused tag: %v", err)
 	}
 }
+
+func TestEnrolledServiceCounterCapabilities(t *testing.T) {
+	for _, mode := range []string{"auto", "fallback", ""} {
+		t.Run("counter_"+mode, func(t *testing.T) {
+			fixture := newJoinFixture(t, nil)
+			root := t.TempDir()
+			state := service.StateDirectory(root, storagecheck.Executor, "worker")
+			code, out, errout := runCLI(t.Context(), fixture.args(state)...)
+			assertCode(t, code, exitOK, out, errout)
+			config := filepath.Join(state, "service.toml")
+			data, err := os.ReadFile(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = bytes.Replace(data, []byte(`packet_counter = "fallback"`), []byte(`packet_counter = "`+mode+`"`), 1)
+			if err := os.WriteFile(config, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			manager := newRecordingManager()
+			deps := serviceTestDependencies(t, manager, root)
+			deps.lookup = func(string, string) (service.Account, error) { return service.Account{UID: 4242, GID: 4343}, nil }
+			wantCaps := mode == "auto"
+			for attempt := 0; attempt < 2; attempt++ {
+				var stdout, stderr bytes.Buffer
+				code = serviceCommandWith(t.Context(), []string{"install", "--role", "executor", "--enrolled-state", state, "--start=false"}, globalOptions{Output: outputJSON}, &stdout, &stderr, deps)
+				assertCode(t, code, exitOK, stdout.String(), stderr.String())
+				var report service.Report
+				if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+					t.Fatal(err)
+				}
+				if attempt > 0 && len(report.Changed) != 0 {
+					t.Fatalf("reinstall changed unit: %+v", report)
+				}
+			}
+			record, err := service.ReadRecord(root, storagecheck.Executor, "worker")
+			if err != nil || record.PacketCapabilities != wantCaps {
+				t.Fatalf("capability record: %+v, %v", record, err)
+			}
+			unit, err := os.ReadFile(record.UnitPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			capabilities := ""
+			if wantCaps {
+				capabilities = "CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_NET_RAW"
+			}
+			for _, line := range []string{"CapabilityBoundingSet=" + capabilities + "\n", "AmbientCapabilities=" + capabilities + "\n", "NoNewPrivileges=yes\n"} {
+				if !strings.Contains(string(unit), line) {
+					t.Fatalf("unit lacks exact %q: %s", line, unit)
+				}
+			}
+			got, err := os.ReadFile(config)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("adoption rewrote configuration: %v", err)
+			}
+
+		})
+	}
+}

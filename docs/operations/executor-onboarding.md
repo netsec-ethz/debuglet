@@ -155,17 +155,40 @@ sudo journalctl -u debuglet-executor-worker.service -n 50 --no-pager
 ```
 
 Administrator privileges are needed for these setup commands. The executor
-itself runs as `debuglet`, with no capabilities and no new privileges. The parent
-directories must remain traversable by that account. Installation enables the
+itself runs as `debuglet` with `NoNewPrivileges=yes`. New Linux enrollments at
+this managed path select `packet_counter = "auto"`. For an enrolled configuration
+that explicitly selects `auto`, the unit grants only `CAP_BPF`,
+`CAP_PERFMON`, `CAP_NET_ADMIN` and `CAP_NET_RAW`. Separate isolated worker
+processes drop those capabilities before executing code; the default trusted
+in-process execution shares the daemon process. The parent directories must remain
+traversable by that account. Installation enables the
 existing managed unit at boot and starts it; readiness is confirmed from the
 daemon's own record. The service manager restarts it after an unexpected exit.
+
+`auto` attempts the eBPF counter and falls back only after a clean rollback.
+Inspect the node's reported enforcement and tagging modes after startup; starting
+a service does not prove eBPF attached or that each run's packets are tagged.
+The counter's TCX attachment requires Linux 6.6 or later with the required kernel
+support. Older or restricted kernels may use fallback. The documented
+[packet-counter limits](executor-discovery.md#packet-counter-limits) still apply.
+
+Some restricted service hosts refuse ambient capabilities before the executor
+starts, so `auto` cannot recover from that service-launch error. On such a host,
+set `[network] packet_counter = "fallback"` in the saved `service.toml` and repeat
+the same service-install command. An enrolled fallback service receives no
+capabilities; it may report tagging `none` if raw sockets are unavailable.
+No `CAP_SYS_ADMIN` or `CAP_SYS_RESOURCE` is granted.
 
 The installer adopts only the exact directory for the selected name:
 `/var/lib/debuglet/executors/NAME`. It keeps `service.toml`, `executor.sqlite`,
 the private key and both certificate files in place. It validates the existing
 TLS identity and database without regenerating them or disabling TLS. Reinstall
 the same package with the same `--enrolled-state` option; omitting that option
-cannot replace an enrolled configuration with a local profile.
+cannot replace an enrolled configuration with a local profile. Existing enrollment
+configurations are never changed to `auto` automatically. To opt an existing
+fallback enrollment into eBPF, stop it cleanly, set `packet_counter = "auto"` in
+its saved configuration, and reinstall the same package with `--enrolled-state`.
+This updates that unit's capability set while preserving the identity and data.
 
 Stop any foreground executor before adoption and keep it stopped throughout
 installation. The installer refuses an observed executor using the same
@@ -274,6 +297,8 @@ These entries merge with inventory labels, with explicit dictionary fields takin
 precedence. Configuration updates preserve them through normal template rendering.
 
 The join command offers `--capacity BITS_PER_SECOND` (default `10000000`). Choose
-a sustainable host and uplink limit. Join-generated configurations explicitly use
-the fallback packet counter. Check the node's reported capabilities after starting it. Fallback userspace tagging covers IPv4 UDP/ICMP;
-TCP/TLS remain untagged.
+a sustainable host and uplink limit. New Linux enrollments at the canonical managed
+service path use `auto`; other state paths use `fallback`.
+Check the node's reported capabilities after starting it. Fallback userspace
+tagging covers IPv4 UDP/ICMP only when raw sockets are permitted; TCP/TLS remain
+untagged.

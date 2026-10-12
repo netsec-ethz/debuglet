@@ -15,8 +15,9 @@ import (
 //
 //   - It starts one verified payload by absolute path. No search path, no
 //     working-directory lookup and no shell are involved.
-//   - It runs as an existing unprivileged account with no capabilities and no
-//     new privileges, and the only writable location is the role's own
+//   - It runs as an existing unprivileged account with no new privileges. Only
+//     enrolled automatic-counter executors receive the four packet capabilities.
+//     The only writable location is the role's own
 //     persistent state directory plus its runtime directory.
 //   - Stopping it sends SIGTERM to the daemon alone and gives it the whole
 //     stop budget to revoke admission and join its owned local work. Only
@@ -79,8 +80,12 @@ func Unit(p Profile) (string, error) {
 	fmt.Fprintf(&b, "KillMode=mixed\n")
 	fmt.Fprintf(&b, "TimeoutStopSec=%d\n", p.StopBudgetSeconds)
 	fmt.Fprintf(&b, "NoNewPrivileges=yes\n")
-	fmt.Fprintf(&b, "CapabilityBoundingSet=\n")
-	fmt.Fprintf(&b, "AmbientCapabilities=\n")
+	capabilities := ""
+	if p.Role == storagecheck.Executor && p.Enrolled && p.PacketCapabilities {
+		capabilities = "CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_NET_RAW"
+	}
+	fmt.Fprintf(&b, "CapabilityBoundingSet=%s\n", capabilities)
+	fmt.Fprintf(&b, "AmbientCapabilities=%s\n", capabilities)
 	fmt.Fprintf(&b, "PrivateTmp=yes\n")
 	fmt.Fprintf(&b, "ProtectSystem=strict\n")
 	fmt.Fprintf(&b, "ProtectHome=yes\n")
