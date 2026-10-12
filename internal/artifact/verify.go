@@ -15,7 +15,7 @@ import (
 )
 
 const GuestABI = "debuglet-go-wasi-imports-v1"
-const Toolchain = "go1.26.8"
+const Toolchain = "go1.26.9"
 const ManifestPath = "share/debuglet/manifest.json"
 
 var versionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)
@@ -128,7 +128,7 @@ func DecodeManifestMetadata(data []byte) (Manifest, error) {
 	_, hasComponent := fields["component"]
 	validSchema := m.SchemaVersion == 1 && !hasComponent || m.SchemaVersion == 2 && hasComponent && m.Component != "" && PayloadModesFor(m.Component) != nil
 	// Retain inspection of older installations; new package builds require Toolchain.
-	supportedCompiler := m.GoVersion == Toolchain || m.GoVersion == "go1.25.11"
+	supportedCompiler := m.GoVersion == Toolchain || m.GoVersion == "go1.26.8" || m.GoVersion == "go1.25.11"
 	if !validSchema || !ValidVersion(m.Version) || !ValidSourceSHA(m.SourceSHA) || m.Dirty || !supportedCompiler || m.GOOS != "linux" || m.GOARCH != "amd64" || m.GuestABI != GuestABI {
 		return m, errors.New("unsupported or incomplete installation identity")
 	}
