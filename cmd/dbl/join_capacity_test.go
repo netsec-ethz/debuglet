@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,9 +15,14 @@ import (
 )
 
 func TestJoinCapacityAndCounterSelection(t *testing.T) {
+	managedCounter := "fallback"
+	if runtime.GOOS == "linux" {
+		managedCounter = "auto"
+	}
 	for _, tc := range []struct{ state, counter string }{
 		{"/home/fixture/node", "fallback"},
-		{"/var/lib/debuglet/executors/worker", "fallback"},
+		{"/var/lib/debuglet/executors/worker", managedCounter},
+		{"/var/lib/debuglet/executors/worker/nested", "fallback"},
 	} {
 		counter := tc.counter
 		config, _, err := executorconfig.DecodeConfig([]byte(executorJoinConfig(joinExecutorID, tc.state, executorJoinResponse{GRPCAddress: "127.0.0.1:9001", YamuxAddress: "127.0.0.1:9000"}, nil, 2_000_000)))

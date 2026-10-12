@@ -27,7 +27,18 @@ are refused. The state must already be at the selected instance's canonical
 managed path. An existing foreground daemon must be stopped before adoption;
 do not launch one concurrently with installation. Use the managed unit to start
 and stop it afterward. The daemon runs under the same unprivileged service
-account and unit restrictions as the local managed profile.
+account with `NoNewPrivileges=yes`. An enrolled configuration explicitly selecting
+`packet_counter = "auto"` receives only `CAP_BPF`, `CAP_PERFMON`,
+`CAP_NET_ADMIN` and `CAP_NET_RAW` in its bounding and ambient sets. An enrolled
+fallback configuration, a local executor and a dispatcher receive no capabilities.
+Workers drop the daemon's capabilities before running guest code.
+
+The installed record retains the unit's capability choice so older services
+remain stoppable and removable. Reinstalling preserves the enrollment files;
+changing the saved counter mode and reinstalling the same package updates the
+unit. A running daemon needs a clean stop and start to apply the new unit.
+Restricted hosts that cannot launch a service with ambient capabilities must use
+the capability-free fallback configuration; see [executor setup](executor-onboarding.md#run-persistently-on-linux).
 
 Reference unit files live in [`deploy/systemd`](../../deploy/systemd).
 

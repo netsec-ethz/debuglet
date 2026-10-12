@@ -97,3 +97,61 @@ func TestEnrolledProcessGuard(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordedEnrolledUnitCapabilities(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			f := newFixture(t)
+			state := StateDirectory(f.root, storagecheck.Executor, "worker")
+			p, err := Resolve(Request{Role: storagecheck.Executor, Name: "worker", Root: f.root, EnrolledState: state}, f.assets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.PacketCapabilities = enabled
+			if err := os.MkdirAll(p.StateDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeRecord(p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.installer.writeUnit(p); err != nil {
+				t.Fatal(err)
+			}
+			if !enabled {
+				data, err := os.ReadFile(RecordPath(f.root, p.Role, p.Name))
+				if err != nil || strings.Contains(string(data), "packet_capabilities") {
+					t.Fatalf("legacy record has capability field: %s, %v", data, err)
+				}
+			}
+			loaded, _, err := f.installer.load(t.Context(), "stop", p.Role, p.Name)
+			if err != nil || loaded.PacketCapabilities != enabled {
+				t.Fatalf("record capability changed: %+v, %v", loaded, err)
+			}
+			if err := f.installer.verifyRemoval(t.Context(), loaded); err != nil {
+				t.Fatalf("recorded unit cannot be stopped/removed: %v", err)
+			}
+		})
+	}
+}
+
+func TestPacketCapabilitiesExcludeOtherManagedProfiles(t *testing.T) {
+	f := newFixture(t)
+	for _, role := range []storagecheck.Role{storagecheck.Executor, storagecheck.Dispatcher} {
+		p, err := Resolve(Request{Role: role, Name: "local", Root: f.root}, f.assets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Even a stray record field must not expand a local or dispatcher unit.
+		p.PacketCapabilities = true
+		if role == storagecheck.Dispatcher {
+			p.Enrolled = true
+		}
+		unit, err := Unit(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(unit, "CapabilityBoundingSet=\nAmbientCapabilities=\n") {
+			t.Fatalf("%s unit grants capabilities: %s", role, unit)
+		}
+	}
+}

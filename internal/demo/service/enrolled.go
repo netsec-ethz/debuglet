@@ -94,6 +94,9 @@ func (i *Installer) prepareEnrolledState(ctx context.Context, p *Profile, accoun
 	if err := i.own(p.StateDir, account); err != nil {
 		return err
 	}
+	// Validate any running unit against its recorded capability set before
+	// adopting the requested counter mode. Keep the saved configuration intact.
+	p.PacketCapabilities = cfg.Network.PacketCounter == "auto"
 	p.ExecutorID = cfg.Identity.ExecutorID
 	p.DispatcherGRPC, p.DispatcherHTTP = cfg.Dispatcher.Addr, cfg.Dispatcher.YamuxAddr
 	return writeRecord(*p)

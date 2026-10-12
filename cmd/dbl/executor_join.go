@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -146,10 +147,14 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	if name := filepath.Base(statePath); statePath == service.StateDirectory("/", storagecheck.Executor, name) {
 		managed = "sudo " + roleShellWord(executable) + " service install --role executor --name " + roleShellWord(name) + " --enrolled-state " + roleShellWord(statePath)
 	}
+	note := "Check actual capabilities after start. Fallback userspace tagging covers IPv4 UDP/ICMP only when raw sockets are permitted; TCP/TLS remain untagged."
+	if executorJoinPacketCounter(statePath) == "auto" {
+		note = "The managed service will try eBPF counting and IPv4 tagging. Check actual capabilities after start; fallback may leave TCP/TLS untagged, and reported tagging is not proof for each run."
+	}
 	return emitReported(ctx, "dbl executor join", options.Output, stdout, stderr, map[string]string{
-		"executor_id": *id, "config": config, "start_command": command, "service_command": managed, "capability_note": "Check actual capabilities after start. Fallback userspace tagging covers IPv4 UDP/ICMP only; TCP/TLS remain untagged.",
+		"executor_id": *id, "config": config, "start_command": command, "service_command": managed, "capability_note": note,
 	}, func(w io.Writer) error {
-		if _, err := fmt.Fprintln(w, "Check actual capabilities after start. Fallback userspace tagging covers IPv4 UDP/ICMP only; TCP/TLS remain untagged."); err != nil {
+		if _, err := fmt.Fprintln(w, note); err != nil {
 			return err
 		}
 		if managed != "" {
@@ -398,6 +403,13 @@ func writeJoinFile(path string, data []byte) error {
 	return os.Link(file.Name(), path)
 }
 
+func executorJoinPacketCounter(state string) string {
+	if runtime.GOOS == "linux" && state == service.StateDirectory("/", storagecheck.Executor, filepath.Base(state)) {
+		return "auto"
+	}
+	return "fallback"
+}
+
 func executorJoinConfig(id, state string, result executorJoinResponse, hostTags []string, capacity int64) string {
 	quoted := make([]string, len(hostTags))
 	for i, tag := range hostTags {
@@ -423,7 +435,7 @@ max_debuglets = 4
 [tesla]
 epoch_seconds = 30
 [network]
-packet_counter = "fallback"
+packet_counter = %q
 disable_scion_environment = true
 [network.policy]
 local_targets = false
@@ -437,6 +449,6 @@ currency = "TEST"
 [metadata]
 host_tags = [%s]
 `, id, buildinfo.Version, result.GRPCAddress, result.YamuxAddress,
-		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"), capacity,
+		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"), capacity, executorJoinPacketCounter(state),
 		strings.Join(quoted, ", "))
 }

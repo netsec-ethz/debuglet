@@ -156,6 +156,7 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 			return report, errors.New("installation mode differs from retained state; reinstall enrolled executors with --enrolled-state and never replace their configuration")
 		}
 		p.ExecutorID = existing.ExecutorID
+		p.PacketCapabilities = existing.PacketCapabilities
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return report, err
 	} else {
@@ -736,6 +737,7 @@ func (i *Installer) load(ctx context.Context, operation string, role storagechec
 	p.Version, p.SourceSHA, p.PayloadRoot, p.Executable = record.Version, record.SourceSHA, record.PayloadRoot, record.Executable
 	p.ExecutorID = record.ExecutorID
 	p.Enrolled = record.Enrolled
+	p.PacketCapabilities = record.PacketCapabilities
 	p.HTTPPort, p.GRPCPort = record.HTTPPort, record.GRPCPort
 	p.DispatcherGRPC, p.DispatcherHTTP = record.DispatcherGRPC, record.DispatcherHTTP
 	report.Version, report.ExecutorID = p.Version, p.ExecutorID
