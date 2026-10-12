@@ -23,6 +23,7 @@ type Profile struct {
 	Endpoint     string `json:"endpoint"`
 	GRPCAddress  string `json:"grpc_address"`
 	YamuxAddress string `json:"yamux_address"`
+	CAFile       string `json:"ca_file,omitempty"`
 }
 
 type Config struct {

@@ -27,6 +27,13 @@ dbl run --sample hello --wait
 dbl logs ID
 ```
 
+For a private API certificate authority, save its public CA file with the
+connection: `dbl connect https://dispatcher.example --name research --ca-file
+/path/to/api-ca.crt`. The absolute path is saved and used by later commands,
+including login. Keep the file available. `SSL_CERT_FILE` is also honored on
+macOS and other platforms when the saved connection has no explicit CA file.
+TLS hostname and certificate verification remain enabled.
+
 ### Use an account-key connection
 
 These CLI login commands apply to local or legacy account-key deployments.

@@ -54,6 +54,7 @@ type ResultProvenance struct {
 // executor claim stays executor-reported however plausible it looks.
 const (
 	SourceOperator           = "operator"
+	SourceOwner              = "owner"
 	SourceExecutorReported   = "executor-reported"
 	SourceDispatcherObserved = "dispatcher-observed"
 )

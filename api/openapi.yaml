@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.21"
+  version: "1.22"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -175,6 +175,107 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: "Self-service executor enrollment is unavailable on this dispatcher."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /operator/executors/{id}:
+    patch:
+      operationId: "updateOwnedExecutorDisplay"
+      summary: "Edit public presentation labels of your executor."
+      description: "Added in API 1.22. Requires ownership and executors:write for scoped credentials. Omitted fields are preserved; empty strings clear owner values. Dispatcher-configured labels take precedence per field. Cookie sessions require the CSRF header."
+      parameters:
+        - name: "Debuglet-API-Version"
+          in: "header"
+          required: false
+          schema:
+            type: "string"
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerExecutorDisplay"
+      responses:
+        "200":
+          description: "Updated executor."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnedExecutor"
+        "400":
+          description: "Invalid labels or unsupported API version."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "A valid session is required."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: "CSRF proof or credential scope is missing."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "Executor not found or not owned by this account."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "The request body exceeds the allowed limit."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: "The request could not be completed."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -6032,6 +6133,10 @@ components:
         name:
           type: "string"
           pattern: "^.{1,80}$"
+        owner_display:
+          $ref: "#/components/schemas/OwnerExecutorDisplay"
+        display:
+          $ref: "#/components/schemas/ExecutorDisplay"
         status:
           type: "string"
           description: "pending means no certificate is bound; offline means enrolled without a ready control session; online means ready. Clients must tolerate future values."
@@ -6049,6 +6154,22 @@ components:
           description: "Unix seconds of the last available executor observation. Omitted when unknown."
         version:
           type: "string"
+    OwnerExecutorDisplay:
+      type: "object"
+      properties:
+        display_name:
+          type: "string"
+          pattern: "^.{0,64}$"
+        city:
+          type: "string"
+          pattern: "^.{0,64}$"
+        country:
+          type: "string"
+          pattern: "^([A-Z]{2})?$"
+        network:
+          type: "string"
+          pattern: "^.{0,64}$"
+      description: "Owner-supplied public labels. Text must be printable UTF-8 without surrounding whitespace. Country must be an assigned uppercase ISO 3166-1 alpha-2 code or empty. Empty strings clear values; omitted PATCH fields are preserved."
     OwnedExecutorList:
       type: "object"
       required:
@@ -7227,7 +7348,8 @@ components:
             - disclosure_held
             - clock_unready
             - clock_drift
-          description: "Empty when available. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch. clock_unready: the host clock was not ready when the key chain started, so its announced origin is not trusted until the executor restarts. clock_drift: the executor's wall clock has moved away from the monotonic clock its epochs advance on by more than min(epoch length / 2, 1 s) since the chain started."
+            - untagged
+          description: "Empty when available. untagged: neither IPv4 nor IPv6 traffic is tagged. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch. clock_unready: the host clock was not ready when the key chain started, so its announced origin is not trusted until the executor restarts. clock_drift: the executor's wall clock has moved away from the monotonic clock its epochs advance on by more than min(epoch length / 2, 1 s) since the chain started."
         epoch:
           type: integer
           format: int64
@@ -7436,7 +7558,7 @@ components:
           $ref: "#/components/schemas/ResultLabelledString"
         network:
           $ref: "#/components/schemas/ResultLabelledString"
-      description: "Added in API 1.9. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Country is an ISO 3166-1 alpha-2 code; location is never finer than city and is never inferred in these fields. Unconfigured values are null. Clients may derive an approximate fallback separately from ip_metadata. Not verified against the executor."
+      description: "Added in API 1.9. Optional presentation metadata from the dispatcher configuration ([executors.\"<id>\"]), labelled operator. Since API 1.22 owner-supplied labels fill unconfigured fields and are labelled owner. Dispatcher operator values take precedence per field. Country is an ISO 3166-1 alpha-2 code; location is never finer than city and is never inferred in these fields. Unconfigured values are null. Clients may derive an approximate fallback separately from ip_metadata. Not verified against the executor."
     IPMetadata:
       type: object
       additionalProperties: false
@@ -7753,8 +7875,7 @@ components:
       description: "The listing's RIPE Atlas-style addressing fields (see ExecutorResponse) as known at admission. The addresses are recorded for a private executor too, since a result is visible only to the run's owner and operators."
     ExecutorList:
       type: array
-      nullable: true
-      description: "Null when no executor is registered."
+      description: "An empty array when no executor is registered."
       items:
         $ref: "#/components/schemas/ExecutorResponse"
     ExecutorByIPResponse:
@@ -8960,6 +9081,7 @@ components:
       type: "string"
       enum:
         - "operator"
+        - "owner"
         - "executor-reported"
         - "dispatcher-observed"
       description: "Who asserted the value. Database lookup sources are recorded separately in ip_metadata. Null exactly when the value is null."

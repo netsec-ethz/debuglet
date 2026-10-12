@@ -30,6 +30,7 @@ var credentialRouteScopes = map[string]string{
 	"GET /executors/:id/tesla":                      "executors:read",
 	"GET /operator/executors":                       "executors:read",
 	"GET /operator/executors/:id/earnings":          "executors:read",
+	"PATCH /operator/executors/:id":                 "executors:write",
 	"POST /operator/executors":                      "executors:write",
 	"POST /operator/executors/:id/enrollment-token": "executors:write",
 	"GET /list-debuglets":                           "measurements:read",

@@ -345,10 +345,14 @@ type OutputNodeUsage struct {
 }
 
 type OwnedExecutor struct {
-	ExecutorID string
-	UserID     int64
-	Name       string
-	CreatedAt  models.UTCTime
+	ExecutorID  string
+	UserID      int64
+	Name        string
+	CreatedAt   models.UTCTime
+	DisplayName string
+	City        string
+	Country     string
+	Network     string
 }
 
 type PayloadTombstone struct {

@@ -276,7 +276,7 @@ func connectProfile(ctx context.Context, name string, options globalOptions, all
 	if err != nil {
 		return nil, profile, reportFailure(ctx, name, stderr, err), false
 	}
-	c, err := newClient(profile.Endpoint, client.Options{
+	c, err := profileClient(profile, client.Options{
 		RequestTimeout:  options.Timeout,
 		AllowRemoteTEST: allowRemoteTEST,
 		Credential:      credential.Token,
@@ -297,7 +297,7 @@ func connectProfileWithoutCredential(name string, options globalOptions, stderr 
 		fmt.Fprintf(stderr, "%s: %v\n", name, err)
 		return nil, profile, exitFailure, false
 	}
-	c, err := newClient(profile.Endpoint, client.Options{RequestTimeout: options.Timeout})
+	c, err := profileClient(profile, client.Options{RequestTimeout: options.Timeout})
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: --endpoint: %v\n", name, err)
 		return nil, profile, exitUsage, false

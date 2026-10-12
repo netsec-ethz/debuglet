@@ -19,14 +19,14 @@ import (
 // published in the executor listing and in result provenance with source
 // operator; nothing here is verified against the executor.
 type ExecutorDisplay struct {
-	DisplayName string `toml:"display_name"`
-	City        string `toml:"city"`
-	Country     string `toml:"country"` // ISO 3166-1 alpha-2, upper case.
-	Network     string `toml:"network"`
+	DisplayName string `toml:"display_name" json:"display_name"`
+	City        string `toml:"city" json:"city"`
+	Country     string `toml:"country" json:"country"` // ISO 3166-1 alpha-2, upper case.
+	Network     string `toml:"network" json:"network"`
 	// Only this locally approved literal host and pool may receive connect-back
 	// challenges for this executor. Neither hello nor a measurement selects it.
-	ConnectivityHost  string `toml:"connectivity_host"`
-	ConnectivityPorts string `toml:"connectivity_ports"`
+	ConnectivityHost  string `toml:"connectivity_host" json:"-"`
+	ConnectivityPorts string `toml:"connectivity_ports" json:"-"`
 }
 
 // Bounds on operator display metadata, in characters.
@@ -48,14 +48,22 @@ func validateExecutors(executors map[string]ExecutorDisplay) error {
 		if err := configcheck.Label(fmt.Sprintf("executors key %q", id), id, maxExecutorIDLength); err != nil {
 			return err
 		}
-		for _, field := range [][2]string{{"display_name", display.DisplayName}, {"city", display.City}, {"network", display.Network}} {
-			if err := displayText(fmt.Sprintf("executors.%q.%s", id, field[0]), field[1]); err != nil {
-				return err
-			}
+		if err := display.Validate(); err != nil {
+			return fmt.Errorf("executors.%q.%w", id, err)
 		}
-		if display.Country != "" && !isoCountry(display.Country) {
-			return fmt.Errorf("executors.%q.country must be an assigned upper-case ISO 3166-1 alpha-2 code, got %q", id, display.Country)
+	}
+	return nil
+}
+
+// Validate checks presentation labels independently of connectivity configuration.
+func (display ExecutorDisplay) Validate() error {
+	for _, field := range [][2]string{{"display_name", display.DisplayName}, {"city", display.City}, {"network", display.Network}} {
+		if err := displayText(field[0], field[1]); err != nil {
+			return err
 		}
+	}
+	if display.Country != "" && !isoCountry(display.Country) {
+		return fmt.Errorf("country must be an assigned upper-case ISO 3166-1 alpha-2 code, got %q", display.Country)
 	}
 	return nil
 }

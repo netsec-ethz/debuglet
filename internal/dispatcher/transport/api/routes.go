@@ -175,6 +175,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/executors/:id/tesla", h.GetExecutorTesla)
 	e.GET("/operator/executors", h.GetOwnedExecutors)
 	e.POST("/operator/executors", h.PostOwnedExecutor)
+	e.PATCH("/operator/executors/:id", h.PatchOwnedExecutor)
 	e.POST("/operator/executors/:id/enrollment-token", h.PostOwnedExecutorToken)
 	e.GET("/operator/executors/:id/earnings", h.GetExecutorEarnings)
 	e.POST("/operator/accounts/:id/allowance", h.PostAccountAllowance)

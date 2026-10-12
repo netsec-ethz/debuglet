@@ -125,3 +125,13 @@ dispatcher_sui_address: ""
 dispatcher_sui_payment_registry_id: ""
 dispatcher_sui_payment_kit_package: ""
 dispatcher_sui_keystore_path: ""
+
+# Public operator labels for enrolled executors outside the inventory. These
+# override matching inventory fields and owner-supplied labels, per field.
+# dispatcher_executor_labels:
+#   "00000000-0000-4000-8000-000000000001":
+#     display_name: "Research node"
+#     city: "Zurich"
+#     country: "CH"
+#     network: "Academic network"
+dispatcher_executor_labels: {}

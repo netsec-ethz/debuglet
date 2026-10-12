@@ -31,9 +31,10 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
+	// Schema 31 stores owner-managed executor presentation labels.
 	// Schema 29 records authenticated schedule history; schema 30 / executor 9
 	// add durable aggregate egress grants.
-	MinimumDispatcherVersion int64 = 30
+	MinimumDispatcherVersion int64 = 31
 	MinimumExecutorVersion   int64 = 9
 )
 
@@ -110,7 +111,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"earnings":                   {"executor_id", "currency", "sui_wallet_address"},
 			"executor_enrollments":       {"executor_id", "fingerprint"},
 			"executor_enrollment_tokens": {"selector", "executor_id", "secret_hash", "expires_at"},
-			"owned_executors":            {"executor_id", "user_id", "name", "created_at"},
+			"owned_executors":            {"executor_id", "user_id", "name", "created_at", "display_name", "city", "country", "network"},
 			"oauth_identities":           {"provider", "issuer", "subject", "user_id", "login", "created_at", "updated_at"},
 			"oauth_login_attempts":       {"state_hash", "provider", "verifier", "nonce", "purpose", "session_selector", "expires_at"},
 			"pending_identity_links":     {"user_id", "provider", "issuer", "subject", "login", "session_selector", "expires_at"},

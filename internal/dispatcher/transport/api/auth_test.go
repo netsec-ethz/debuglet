@@ -764,6 +764,7 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"POST /attribution/verify":                      {anonymous: http.StatusBadRequest, target: "/attribution/verify", body: []byte(`{"packets":[]}`), public: true},
 	"GET /attribution/receipt-keys":                 {anonymous: http.StatusServiceUnavailable, target: "/attribution/receipt-keys", public: true},
 	"GET /operator/executors":                       {anonymous: http.StatusUnauthorized, target: "/operator/executors"},
+	"PATCH /operator/executors/:id":                 {anonymous: http.StatusUnauthorized, target: "/operator/executors/" + authSampleID, body: []byte(`{"city":"Zurich"}`)},
 	"POST /operator/executors":                      {anonymous: http.StatusUnauthorized, target: "/operator/executors", body: []byte(`{"name":"node"}`)},
 	"POST /operator/executors/:id/enrollment-token": {anonymous: http.StatusUnauthorized, target: "/operator/executors/" + authSampleID + "/enrollment-token"},
 	"GET /operator/executors/:id/earnings":          {anonymous: http.StatusUnauthorized, target: "/operator/executors/" + authSampleID + "/earnings"},

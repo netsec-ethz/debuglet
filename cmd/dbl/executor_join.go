@@ -33,7 +33,7 @@ import (
 
 const executorJoinUsage = `Usage:
   dbl executor join --dispatcher URL --executor ID --state-dir DIR
-      [--ca-file FILE] [--token-file FILE] [--host-tag TAG ...]
+      [--ca-file FILE] [--token-file FILE] [--capacity BITS_PER_SECOND] [--host-tag TAG ...]
 
 Enroll this machine using the one-time token from Console > My nodes.
 The token is read without echo from the terminal, or from standard input or
@@ -45,6 +45,8 @@ mobile, satellite or nat; it is written to [metadata] host_tags. HTTPS verifies 
 DIR must not exist. The command creates private identity, configuration and
 storage files, then prints the command to start the executor. It does not
 start a service or configure payments. Keep DIR for subsequent restarts.
+--capacity sets the bandwidth offered to the dispatcher (default 10000000 bit/s).
+Choose a sustainable limit for this host and its uplink.
 For a persistent Linux system service, follow docs/operations/executor-onboarding.md
 and enroll directly into /var/lib/debuglet/executors/NAME before service install.
 `
@@ -64,6 +66,7 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	state := fs.String("state-dir", "", "new directory for this executor's identity and storage")
 	caFile := fs.String("ca-file", "", "trusted dispatcher CA certificate")
 	tokenFile := fs.String("token-file", "", "file containing the enrollment token")
+	capacity := fs.Int64("capacity", 10_000_000, "bandwidth offered to the dispatcher in bits per second")
 	var hostTags []string
 	fs.Func("host-tag", "public host tag, such as home or fibre; repeatable", func(value string) error {
 		hostTags = append(hostTags, value)
@@ -74,6 +77,9 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	}
 	if fs.NArg() != 0 || options.EndpointSet || options.Dispatcher != "" || strings.TrimSpace(*state) == "" {
 		return usageError("dbl executor join", executorJoinUsage, stderr, "supply --dispatcher, --executor and a new --state-dir after executor join")
+	}
+	if *capacity <= 0 {
+		return usageError("dbl executor join", executorJoinUsage, stderr, "--capacity must be positive bits per second")
 	}
 	if !uuidPattern.MatchString(*id) || strings.Trim(*id, "0-") == "" {
 		return usageError("dbl executor join", executorJoinUsage, stderr, "--executor must be a nonzero lowercase UUID")
@@ -131,7 +137,7 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("enrollment redirects are not followed; use the dispatcher's HTTPS API URL")
 	}}
-	if err := joinExecutor(ctx, client, joinURL, *id, statePath, token, hostTags); err != nil {
+	if err := joinExecutor(ctx, client, joinURL, *id, statePath, token, hostTags, *capacity); err != nil {
 		return reportFailure(ctx, "dbl executor join", stderr, err)
 	}
 	config := filepath.Join(statePath, "service.toml")
@@ -141,8 +147,11 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 		managed = "sudo " + roleShellWord(executable) + " service install --role executor --name " + roleShellWord(name) + " --enrolled-state " + roleShellWord(statePath)
 	}
 	return emitReported(ctx, "dbl executor join", options.Output, stdout, stderr, map[string]string{
-		"executor_id": *id, "config": config, "start_command": command, "service_command": managed,
+		"executor_id": *id, "config": config, "start_command": command, "service_command": managed, "capability_note": "Check actual capabilities after start. Fallback userspace tagging covers IPv4 UDP/ICMP only; TCP/TLS remain untagged.",
 	}, func(w io.Writer) error {
+		if _, err := fmt.Fprintln(w, "Check actual capabilities after start. Fallback userspace tagging covers IPv4 UDP/ICMP only; TCP/TLS remain untagged."); err != nil {
+			return err
+		}
 		if managed != "" {
 			_, err := fmt.Fprintf(w, "Executor %s enrolled. Identity and storage saved in %s.\n\nInstall and start the system service (requires an existing debuglet service account):\n  %s\n\nThe console shows Connected after the executor connects. Keep this state and do not enroll again.\n", *id, statePath, managed)
 			return err
@@ -261,7 +270,7 @@ func readEnrollmentInput(ctx context.Context, input *os.File, prompt io.Writer) 
 	}
 }
 
-func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state, token string, hostTags []string) (err error) {
+func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state, token string, hostTags []string, capacity int64) (err error) {
 	if err := os.MkdirAll(filepath.Dir(state), 0700); err != nil {
 		return err
 	}
@@ -330,7 +339,7 @@ func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state,
 			}
 		}
 	}
-	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result, hostTags)}} {
+	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result, hostTags, capacity)}} {
 		if err := writeJoinFile(filepath.Join(state, file.name), []byte(file.data)); err != nil {
 			return err
 		}
@@ -389,7 +398,7 @@ func writeJoinFile(path string, data []byte) error {
 	return os.Link(file.Name(), path)
 }
 
-func executorJoinConfig(id, state string, result executorJoinResponse, hostTags []string) string {
+func executorJoinConfig(id, state string, result executorJoinResponse, hostTags []string, capacity int64) string {
 	quoted := make([]string, len(hostTags))
 	for i, tag := range hostTags {
 		quoted[i] = strconv.Quote(tag)
@@ -409,7 +418,7 @@ client_key = %q
 [database]
 path = %q
 [resources]
-capacity = 10485760
+capacity = %d
 max_debuglets = 4
 [tesla]
 epoch_seconds = 30
@@ -428,6 +437,6 @@ currency = "TEST"
 [metadata]
 host_tags = [%s]
 `, id, buildinfo.Version, result.GRPCAddress, result.YamuxAddress,
-		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"),
+		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"), capacity,
 		strings.Join(quoted, ", "))
 }

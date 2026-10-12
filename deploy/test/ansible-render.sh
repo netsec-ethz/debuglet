@@ -169,7 +169,14 @@ all:
   children:
     dispatcher:
       hosts:
-        dispatcher.fixture.invalid: {}
+        dispatcher.fixture.invalid:
+          dispatcher_executor_labels:
+            "5fe02882-0410-416c-9935-235090bcba0d":
+              network: Explicit network
+            "bc9bdf55-195e-45f6-923b-31322294d40e":
+              display_name: Enrolled node
+              city: Bern
+              country: CH
     executors:
       hosts:
         executor.fixture.invalid:
@@ -570,7 +577,9 @@ expect 'the dispatcher labels the executor under its identity' "$dispatcher_toml
 expect 'the dispatcher renders the executor display name' "$dispatcher_toml" 'display_name = "Fixture lab"'
 expect 'the dispatcher renders the executor city' "$dispatcher_toml" 'city = "Z\u00fcrich"'
 expect 'the dispatcher renders the executor country' "$dispatcher_toml" 'country = "CH"'
-expect 'the dispatcher renders the executor network' "$dispatcher_toml" 'network = "SWITCH (AS559)"'
+expect 'the dispatcher renders the executor network' "$dispatcher_toml" 'network = "Explicit network"'
+expect 'explicit labels include an out-of-inventory executor' "$dispatcher_toml" '[executors."bc9bdf55-195e-45f6-923b-31322294d40e"]'
+expect 'explicit labels render the enrolled node name' "$dispatcher_toml" 'display_name = "Enrolled node"'
 # A dispatcher reached by name has no literal to reflect against.
 refute 'no reflector is rendered for a named dispatcher' "$executor_toml" '[connectivity]'
 
