@@ -172,8 +172,8 @@ func TestMetricsConcurrentCollectionRefusesWithoutWaiting(t *testing.T) {
 // The attribution state series name the clock reasons with fixed labels and
 // sum to the registered executors.
 func TestMetricsAttributionStatesSumToRegistered(t *testing.T) {
-	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 4, Health: dispatcher.ExecutorHealthMetrics{
-		AttributionAvailable: 1, ClockUnready: 1, ClockDrift: 1, AttributionUnknown: 1}}
+	c := dispatcher.ControlMetrics{ObservedAt: time.Now(), Registered: 5, Health: dispatcher.ExecutorHealthMetrics{
+		AttributionAvailable: 1, ClockUnready: 1, ClockDrift: 1, Untagged: 1, AttributionUnknown: 1}}
 	out := formatMetrics(c, observability.HostSnapshot{})
 	sum := 0
 	for _, line := range strings.Split(out, "\n") {
@@ -190,7 +190,7 @@ func TestMetricsAttributionStatesSumToRegistered(t *testing.T) {
 	if sum != c.Registered {
 		t.Fatalf("attribution states sum to %d, want %d:\n%s", sum, c.Registered, out)
 	}
-	for _, want := range []string{`debuglet_executors_attribution_state{state="clock_unready"} 1`, `debuglet_executors_attribution_state{state="clock_drift"} 1`} {
+	for _, want := range []string{`debuglet_executors_attribution_state{state="clock_unready"} 1`, `debuglet_executors_attribution_state{state="clock_drift"} 1`, `debuglet_executors_attribution_state{state="untagged"} 1`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %s", want)
 		}

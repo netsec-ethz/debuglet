@@ -72,3 +72,14 @@ func TestCapabilityAttributionValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestUntaggedReportCannotClaimAttribution(t *testing.T) {
+	for _, a := range []*pb.AttributionState{nil, {State: "available", Epoch: 4}, {State: "unavailable", Reason: "untagged", Epoch: 4}} {
+		report := &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}, Attribution: a,
+			Tagging: &pb.TaggingMode{Ipv4: "none", Ipv6: "none", Scion: "none"}}
+		got := capabilitiesFromReport(report, time.Now())
+		if got.Attribution == nil || got.Attribution.State != "unavailable" || got.Attribution.Reason != "untagged" {
+			t.Fatalf("untagged report: %+v", got)
+		}
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/ipmetadata"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
@@ -71,8 +72,8 @@ func (e *RegisteredExecutor) sightings() [2]addressSighting {
 }
 
 // Addressing is the executor's RIPE Atlas-style addressing for the listing.
-// The addresses are withheld unless the executor is public or the caller may
-// see private detail (an established operator); prefix and ASN are not.
+// Public callers see only globally routable addresses of public executors.
+// Established operators also see non-global and opted-out observations.
 func (e *RegisteredExecutor) Addressing(private bool) wire.ProbeAddressing {
 	return addressing(e.sightings(), !e.probe.optOut, private)
 }
@@ -87,16 +88,21 @@ func addressing(sightings [2]addressSighting, public, private bool) wire.ProbeAd
 		if sighting.address == "" {
 			continue
 		}
-		if public || private {
+		ip, err := netip.ParseAddr(sighting.address)
+		global := err == nil && ipmetadata.Global(ip)
+		if public && global || private {
 			address := sighting.address
 			*addresses[i] = &address
 		}
 		observation := &wire.AddressObservation{Source: wire.SourceDispatcherObserved, Via: sighting.via, ObservedAt: sighting.at.Unix(), LookupReason: sighting.asn.Reason}
-		if sighting.asn.Source != nil {
+		if !global {
+			observation.LookupReason = "non_global"
+		}
+		if global && sighting.asn.Source != nil {
 			source := *sighting.asn.Source
 			observation.LookupSource = &source
 		}
-		if value := sighting.asn.Value; value != nil {
+		if value := sighting.asn.Value; global && value != nil {
 			number, prefix := value.Number, value.Prefix
 			*asns[i], *prefixes[i] = &number, &prefix
 		}

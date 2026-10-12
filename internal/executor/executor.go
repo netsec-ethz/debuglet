@@ -141,7 +141,11 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 		return nil, errors.New("scheduler is required")
 	}
 	limiter := app.NewLimiter(node.logger)
-	limiter.SetExecutorCapacity(bitrate.Gigabit)
+	capacity := node.cfg.Resources.Capacity
+	if capacity == 0 {
+		capacity = config.DefaultCapacity
+	}
+	limiter.SetExecutorCapacity(bitrate.Bitrate(capacity))
 	ports, err := socket.NewPortManager(node.cfg.Network.PublicHost, node.cfg.Network.PublicPorts)
 	if err != nil {
 		return nil, err

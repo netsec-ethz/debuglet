@@ -38,15 +38,14 @@ import (
 func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
 	now := time.Now()
 	e.disclosureDelivery.checkClock(e.teslaSchedule, now)
-	attribution := attributionReport(e.teslaSchedule, now)
 	tagging := e.tagging()
+	attribution := attributionForTagging(e.teslaSchedule, now, tagging)
 	e.capabilityMu.Lock()
 	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason && tagging == e.capabilityTagging {
 		e.capabilityMu.Unlock()
 		return nil, nil
 	}
 	e.capabilityNext = now.Add(30 * time.Second)
-	e.capabilityReason = attribution.GetReason()
 	e.capabilityMu.Unlock()
 
 	policy := e.cfg.Network.Policy.Spec()
@@ -55,7 +54,9 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	// read again after the probe refreshed that answer; otherwise one report
 	// could carry a fresh ICMP state beside a tagging mode from the last one.
 	tagging = e.tagging()
+	attribution = attributionForTagging(e.teslaSchedule, now, tagging)
 	e.capabilityMu.Lock()
+	e.capabilityReason = attribution.GetReason()
 	e.capabilityTagging = tagging
 	e.capabilityMu.Unlock()
 
@@ -254,6 +255,19 @@ func clockRefusal(reason string, mode func() tagger.Mode) string {
 		return ""
 	}
 	return reason
+}
+
+// attributionForTagging combines key readiness with actual tagging capability.
+// A healthy key schedule cannot make untagged packets attributable.
+func attributionForTagging(schedule *tesla.KeySchedule, now time.Time, mode tagger.Mode) *pb.AttributionState {
+	report := attributionReport(schedule, now)
+	if mode.IPv4 == tagger.ModeNone && mode.IPv6 == tagger.ModeNone {
+		if report == nil {
+			report = &pb.AttributionState{}
+		}
+		report.State, report.Reason = "unavailable", "untagged"
+	}
+	return report
 }
 
 // maxRefreshError bounds the refresh error text a report carries; the

@@ -212,7 +212,7 @@ int debuglet_tag(struct __sk_buff *skb) {
     // Write the tag into the IP ID and set DF: bytes 4-7 of the IP header
     // change together, with one incremental checksum update.
     __u32 word_off = off + offsetof(struct iphdr, id);
-    __u8 old_word[4];
+    __u8 old_word[4] = {};
     if (bpf_skb_load_bytes(skb, word_off, old_word, 4) < 0)
         return TCX_NEXT;
     __u8 new_word[4] = {

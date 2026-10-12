@@ -43,7 +43,7 @@ type countTbState struct {
 		_   structs.HostLayout
 		Val uint32
 	}
-	_ [4]byte
+	Reserved uint32
 }
 
 // Names of all BPF objects in the ELF.

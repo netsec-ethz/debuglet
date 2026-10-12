@@ -50,8 +50,8 @@ func TestPrivateExecutorWithholdsOnlyAddresses(t *testing.T) {
 		return out
 	}
 	nodes := list()
-	if n := nodes[ccExecutorID]; n.IsPublic == nil || !*n.IsPublic || n.AddressV4 == nil || *n.AddressV4 != "127.0.0.1" {
-		t.Fatalf("public executor's observed address not listed: %+v", n.ProbeAddressing)
+	if n := nodes[ccExecutorID]; n.IsPublic == nil || !*n.IsPublic || n.AddressV4 != nil || n.AddressObservations.V4.LookupReason != "non_global" {
+		t.Fatalf("non-global observation was published or lacked a reason: %+v", n.ProbeAddressing)
 	}
 	n := nodes["private-probe"]
 	if n.IsPublic == nil || *n.IsPublic || n.AddressV4 != nil || n.AddressV6 != nil {

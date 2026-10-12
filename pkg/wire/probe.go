@@ -55,7 +55,9 @@ type AddressObservations struct {
 //
 // AddressV4 and AddressV6 are the last addresses the dispatcher itself
 // observed for each family. They are null when none was observed, and in the
-// public listing also when IsPublic is false; an operator always sees them.
+// public listing also when IsPublic is false or the observed address is not
+// globally routable; an operator always sees them. Non-global observations
+// carry lookup_reason "non_global" and no prefix or ASN.
 // Prefixes and ASNs are looked up from those addresses in the offline ASN
 // database and stay public for a private executor, as RIPE Atlas does.
 type ProbeAddressing struct {

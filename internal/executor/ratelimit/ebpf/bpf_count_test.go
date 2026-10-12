@@ -381,9 +381,9 @@ func TestMissingLoadCapabilities(t *testing.T) {
 		effective uint64
 		want      string
 	}{
-		{"none", 0, "CAP_BPF,CAP_NET_ADMIN"},
-		{"bpf_only", bit(unix.CAP_BPF), "CAP_NET_ADMIN"},
-		{"perfmon_is_not_needed", bit(unix.CAP_BPF, unix.CAP_NET_ADMIN), ""},
+		{"none", 0, "CAP_BPF,CAP_NET_ADMIN,CAP_PERFMON"},
+		{"bpf_only", bit(unix.CAP_BPF), "CAP_NET_ADMIN,CAP_PERFMON"},
+		{"missing_perfmon", bit(unix.CAP_BPF, unix.CAP_NET_ADMIN), "CAP_PERFMON"},
 		{"executor_capabilities", bit(unix.CAP_BPF, unix.CAP_NET_ADMIN, unix.CAP_PERFMON, unix.CAP_NET_RAW), ""},
 		{"sys_admin", bit(unix.CAP_SYS_ADMIN), ""},
 	} {

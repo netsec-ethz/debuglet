@@ -17,14 +17,15 @@ import (
 // maps and programs are loaded: CAP_BPF for map create and program load, and
 // CAP_NET_ADMIN for a traffic-control program. CAP_SYS_ADMIN stands in for
 // both, and is the only way to hold them before Linux 5.8 added CAP_BPF.
-// CAP_PERFMON is left out: the tagger's verifier needs it, not this load, so
-// naming it here could blame a load failure on it wrongly.
+// CAP_PERFMON permits the pointer operations the counter verifier requires.
+// It is needed by the counter as well as the tagger.
 var loadCapabilities = []struct {
 	name string
 	bit  uint
 }{
 	{"CAP_BPF", unix.CAP_BPF},
 	{"CAP_NET_ADMIN", unix.CAP_NET_ADMIN},
+	{"CAP_PERFMON", unix.CAP_PERFMON},
 }
 
 // missingCapabilities names the load capabilities absent from this

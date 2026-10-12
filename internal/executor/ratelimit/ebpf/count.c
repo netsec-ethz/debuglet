@@ -55,6 +55,9 @@ struct tb_state {
   __u64 tokens;
   __u64 t_last;
   struct bpf_spin_lock lock;
+  // Make the trailing alignment bytes a real initialized field: map helpers
+  // read the entire value, including padding, on older verifiers.
+  __u32 reserved;
 };
 
 struct debuglet_key {
