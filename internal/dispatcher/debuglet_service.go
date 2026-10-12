@@ -255,7 +255,7 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 			fields = append(fields, zap.String("user_id", userID.String()))
 		}
 		d.logger.Info("Run admitted", fields...)
-		g.Go(d.uploadToExecutor(subCtx, selected[i], i, debugletIDS[i], specs[i]))
+		g.Go(d.uploadToExecutor(ctx, subCtx, selected[i], i, debugletIDS[i], specs[i]))
 	}
 
 	if err := g.Wait(); err != nil {
@@ -491,11 +491,24 @@ type submissionOwner struct {
 	uploadErr error
 }
 
-func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionOwner, i int, debugletID uuid.UUID, spec models.DebugletSpec) func() error {
-	return func() error {
-		ctx, finish := mutationCallContext(ctx, selected.mutation)
+func (d *Dispatcher) uploadToExecutor(requestCtx, batchCtx context.Context, selected *submissionOwner, i int, debugletID uuid.UUID, spec models.DebugletSpec) func() error {
+	return func() (uploadErr error) {
+		ctx, finish := mutationCallContext(batchCtx, selected.mutation)
 		defer finish()
+		started := time.Now()
+		stage := "session_lookup"
 		fields := daemonlog.RunFields(ctx, debugletID, spec.ExecutorID, selected.owner.Binding())
+		defer func() {
+			if uploadErr == nil {
+				return
+			}
+			// Emit before returning to errgroup, which cancels sibling uploads.
+			// Status and context state identify the failing boundary without
+			// copying remote error text, payloads or credentials into normal logs.
+			failure := append(fields, daemonlog.UploadFailureFields(ctx, stage, uploadErr, time.Since(started))...)
+			failure = append(failure, zap.String("request_context_code", status.FromContextError(requestCtx.Err()).Code().String()))
+			d.logger.Warn("Run upload failed", failure...)
+		}()
 		d.logger.Debug("Uploading to executor", fields...)
 		client, ok := d.Bidi.GetClientFor(selected.owner)
 		if !ok {
@@ -525,6 +538,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 				EgressGrant: spec.Policy.EgressGrant,
 			},
 		}
+		stage = "executor_upload"
 		if _, err := client.Upload(ctx, req); err != nil {
 			selected.uploadErr = err
 			return fmt.Errorf("failed to upload debuglet i=%d: %w", i, err)
@@ -535,6 +549,7 @@ func (d *Dispatcher) uploadToExecutor(ctx context.Context, selected *submissionO
 		// acknowledging the upload, and that terminal result must not be
 		// overwritten. A terminal row keeps the upload a success; a missing
 		// row or a database failure remains a failure.
+		stage = "record_uploaded"
 		queries := database.New(d.db)
 		if _, err := queries.UpdateDebugletState(ctx, database.UpdateDebugletStateParams{
 			State:                 models.RunStateUploaded,
