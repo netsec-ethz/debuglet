@@ -298,7 +298,7 @@ precedence. Configuration updates preserve them through normal template renderin
 
 The join command offers `--capacity BITS_PER_SECOND` (default `10000000`). Choose
 a sustainable host and uplink limit. New Linux enrollments at the canonical managed
-service path use `auto`; terminal and container enrollments use `fallback`.
+service path use `auto`; other state paths use `fallback`.
 Check the node's reported capabilities after starting it. Fallback userspace
 tagging covers IPv4 UDP/ICMP only when raw sockets are permitted; TCP/TLS remain
 untagged.
