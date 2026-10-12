@@ -158,8 +158,9 @@ Administrator privileges are needed for these setup commands. The executor
 itself runs as `debuglet` with `NoNewPrivileges=yes`. New Linux enrollments at
 this managed path select `packet_counter = "auto"`. For an enrolled configuration
 that explicitly selects `auto`, the unit grants only `CAP_BPF`,
-`CAP_PERFMON`, `CAP_NET_ADMIN` and `CAP_NET_RAW`; guest workers drop those
-capabilities before executing code. The parent directories must remain
+`CAP_PERFMON`, `CAP_NET_ADMIN` and `CAP_NET_RAW`. Separate isolated worker
+processes drop those capabilities before executing code; the default trusted
+in-process execution shares the daemon process. The parent directories must remain
 traversable by that account. Installation enables the
 existing managed unit at boot and starts it; readiness is confirmed from the
 daemon's own record. The service manager restarts it after an unexpected exit.

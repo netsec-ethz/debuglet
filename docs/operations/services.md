@@ -31,7 +31,8 @@ account with `NoNewPrivileges=yes`. An enrolled configuration explicitly selecti
 `packet_counter = "auto"` receives only `CAP_BPF`, `CAP_PERFMON`,
 `CAP_NET_ADMIN` and `CAP_NET_RAW` in its bounding and ambient sets. An enrolled
 fallback configuration, a local executor and a dispatcher receive no capabilities.
-Workers drop the daemon's capabilities before running guest code.
+Separate isolated worker processes drop the daemon's capabilities before running
+guest code. The default trusted in-process execution shares the daemon process.
 
 The installed record retains the unit's capability choice so older services
 remain stoppable and removable. Reinstalling preserves the enrollment files;
