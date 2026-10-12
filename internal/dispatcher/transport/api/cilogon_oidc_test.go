@@ -24,6 +24,7 @@ type cilogonStub struct {
 	mu                     sync.Mutex
 	key, signingKey        *rsa.PrivateKey
 	kid, nonce, challenge  string
+	callbackURL            string
 	failPath               string
 	claims                 map[string]any
 	exchanges, keyRequests int
@@ -31,7 +32,7 @@ type cilogonStub struct {
 
 func newCILogonStub(t *testing.T, key *rsa.PrivateKey) *cilogonStub {
 	t.Helper()
-	p := &cilogonStub{key: key, signingKey: key, kid: "first"}
+	p := &cilogonStub{key: key, signingKey: key, kid: "first", callbackURL: "https://example.test/auth/cilogon/callback"}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
@@ -60,7 +61,7 @@ func newCILogonStub(t *testing.T, key *rsa.PrivateKey) *cilogonStub {
 			}
 			client, secret, ok := r.BasicAuth()
 			challenge := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
-			if !ok || client != "test-id" || secret != "test-secret" || r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "one-time" || r.Form.Get("redirect_uri") != "https://example.test/auth/cilogon/callback" || base64.RawURLEncoding.EncodeToString(challenge[:]) != p.challenge {
+			if !ok || client != "test-id" || secret != "test-secret" || r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "one-time" || r.Form.Get("redirect_uri") != p.callbackURL || base64.RawURLEncoding.EncodeToString(challenge[:]) != p.challenge {
 				t.Error("token exchange did not preserve client credentials, callback, or PKCE")
 				http.Error(w, "invalid request", 400)
 				return
