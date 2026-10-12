@@ -67,8 +67,14 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	}
 	transactionId := req.TransactionId
 	tx, err := h.dispatcher.Payment.GetTransaction(c.Request().Context(), transactionId)
-	if err != nil || tx.AuthKey != req.AuthKey {
+	if errors.Is(err, sql.ErrNoRows) {
 		return apiErrorFrom(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key", err)
+	}
+	if err != nil {
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read transaction", err)
+	}
+	if tx.AuthKey != req.AuthKey {
+		return apiError(http.StatusUnauthorized, CodeUnauthorized, "unknown transaction or wrong auth key")
 	}
 	// Another account's transaction, and one recorded before orders had an
 	// owner, are refused exactly like an unknown one.
