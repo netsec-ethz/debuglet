@@ -329,8 +329,8 @@ unknown even if a database contains a record. Hostnames stay unknown.
 
 The `display` response contains dispatcher-operator labels or owner-reported
 labels, with the source recorded per field. SDK and CLI clients derive a display
-location from `ip_metadata` only when neither explicit city nor country is set;
-otherwise the observed address is preferred, then the advertised address.
+location from `ip_metadata` only when neither explicit city nor country is set.
+For automatic location, the observed address is preferred, then the advertised address.
 Automatic results remain visible alongside an override. `disagreements` flags
 conflicting observed/advertised ASNs or locations, or a conflicting explicit
 location. A missing value is not treated as a disagreement.
