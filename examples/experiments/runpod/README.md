@@ -65,6 +65,21 @@ name against the account inventory. Never delete the state or manually repeat
 an uncertain create request. Once an uncertain role is found, `up` can continue
 the remaining roles without recreating existing ones.
 
+If sudo is unavailable, the controller's always-on Docker daemon can run the
+same guard. Supply an **existing local** image ID or repository digest containing
+`/usr/bin/python3` (3.11+) and trusted CA certificates. Run as the state directory
+owner; no image is pulled and an existing container with the same name is refused:
+
+```sh
+python3 demo.py --state "$DEMO_STATE" arm --docker-image sha256:EXISTING_LOCAL_IMAGE_ID
+```
+
+The guard container restarts unless explicitly stopped, drops all capabilities,
+has a read-only root and a writable temporary directory, and mounts only this
+private state directory. It does not receive the Docker socket. Keep the daemon
+running until cleanup completes; afterwards remove the named guard container.
+Use either guard installation method for a plan, not both.
+
 `bootstrap` verifies and installs the selected artifacts through SSH with host
 keys obtained from authenticated Runpod logs. It creates a temporary TLS CA,
 ordinary account, and five enrolled identities. Daemons run as an unprivileged

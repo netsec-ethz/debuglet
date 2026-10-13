@@ -544,19 +544,35 @@ def remote_join(value):
     node = value["enrollment"]["executor"]["id"]
     require(re.fullmatch(r"[0-9a-f-]{36}", node), "invalid enrolled executor ID")
     state = BASE / "state" / ("executor-" + node)
-    token_file = BASE / "config/setup-token"
-    save(token_file, value["enrollment"]["token"] + "\n")
-    run(["chown", "debuglet:debuglet", str(token_file)])
-    try:
-        output = run(["runuser", "-u", "debuglet", "--", "/usr/local/bin/dbl", "--output", "json",
-                      "executor", "join", "--dispatcher", value["api_url"], "--executor", node,
-                      "--state-dir", str(state), "--token-file", str(token_file)], timeout=90)
-    finally:
-        token_file.unlink(missing_ok=True)
-    joined = json.loads(output)
-    config = Path(joined["config"])
+    checkpoint_path = BASE / "join-checkpoint.json"
+    if not checkpoint_path.exists():
+        require(not state.exists(), "Executor state exists without an enrollment checkpoint. Preserve " +
+                str(state) + "; inspect its service.toml and certificate before manual recovery. "
+                "If recovery is impossible, stop the old executor and obtain a fresh setup token "
+                "for a new state directory. This bootstrap will not reuse the old token.")
+        token_file = BASE / "config/setup-token"
+        save(token_file, value["enrollment"]["token"] + "\n")
+        run(["chown", "debuglet:debuglet", str(token_file)])
+        try:
+            output = run(["runuser", "-u", "debuglet", "--", "/usr/local/bin/dbl", "--output", "json",
+                          "executor", "join", "--dispatcher", value["api_url"], "--executor", node,
+                          "--state-dir", str(state), "--token-file", str(token_file)], timeout=90)
+        finally:
+            token_file.unlink(missing_ok=True)
+        config = Path(json.loads(output)["config"])
+        require(config in (state / "executor.toml", state / "service.toml"), "unexpected join config path")
+        # Publish before any configuration or supervisor changes. Retain the
+        # original configuration so retries never duplicate edited TOML keys.
+        save(checkpoint_path, {"executor_id": node, "config": str(config),
+                               "original_config": config.read_text(),
+                               "certificate_sha256": digest(state / "executor.crt")})
+    checkpoint = json.loads(checkpoint_path.read_text())
+    require(checkpoint["executor_id"] == node, "enrollment checkpoint belongs to another executor")
+    config = Path(checkpoint["config"])
     require(config in (state / "executor.toml", state / "service.toml"), "unexpected join config path")
-    save(config, executor_config(config.read_text(), value["pod"], value["peers"]))
+    require(digest(state / "executor.crt") == checkpoint["certificate_sha256"],
+            "enrolled certificate changed; preserve state and inspect before recovery")
+    save(config, executor_config(checkpoint["original_config"], value["pod"], value["peers"]))
     run(["chown", "debuglet:debuglet", str(config)])
     binary = f'/usr/local/lib/debuglet/{value["version"]}/bin/debuglet-executor'
     program("executor", shlex.join([binary, "-config", str(config)]))

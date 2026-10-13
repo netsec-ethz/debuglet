@@ -207,16 +207,28 @@ def unit_name(inventory):
     return "debuglet-demo-" + run_id + ".service"
 
 
-def arm(state, key):
-    """Install a system service independent of the calling terminal and user login."""
-    if sys.platform != "linux" or os.geteuid() != 0:
-        raise Failure("Arm the expiry guard with sudo on the always-on Linux controller")
+def arm(state, key, docker_image=None):
+    """Install an independent system service or a persistent Docker container."""
+    if sys.platform != "linux" or (not docker_image and os.geteuid() != 0):
+        raise Failure("Arm on an always-on Linux controller using sudo or --docker-image")
     if not re.fullmatch(r"/[A-Za-z0-9_./-]+", str(state)):
         raise Failure("Guard state path must be absolute without spaces or shell characters")
     inventory = read(state)
     if time.time() >= inventory["expires_at"]:
         raise Failure("Plan already expired; do not extend it")
     owner = pwd.getpwuid(state.stat().st_uid)
+    unit = unit_name(inventory)
+    container = unit.removesuffix(".service")
+    if docker_image:
+        if not re.fullmatch(r"(?:sha256:|[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:)[0-9a-f]{64}", docker_image):
+            raise Failure("Docker guard requires an immutable local image ID or repository@sha256 digest")
+        if owner.pw_uid != os.getuid():
+            raise Failure("Run Docker arming as the owner of the private state directory")
+        subprocess.run(["docker", "image", "inspect", docker_image], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if subprocess.run(["docker", "container", "inspect", container],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            raise Failure("A container with this guard name already exists; inspect it instead of replacing it")
     snapshot = state / "guard-demo.py"
     shutil.copyfile(__file__, snapshot)
     keyfile = state / ".runpod-api-key"
@@ -229,7 +241,16 @@ def arm(state, key):
         raise Failure("The armed deadline cannot be extended")
     save(frozen, {"run_id": inventory["run_id"], "expires_at": inventory["expires_at"]})
     os.chown(frozen, owner.pw_uid, owner.pw_gid)
-    unit = unit_name(inventory)
+    if docker_image:
+        subprocess.run(["docker", "run", "--detach", "--pull", "never", "--name", container,
+            "--restart", "unless-stopped", "--user", f"{os.getuid()}:{os.getgid()}",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--log-opt", "max-size=1m",
+            "--log-opt", "max-file=2", "--mount", f"type=bind,src={state},dst={state}",
+            "--entrypoint", "/usr/bin/python3", docker_image, str(snapshot), "--state", str(state), "guard"],
+            check=True, stdout=subprocess.DEVNULL)
+        print(f"Armed container {container}; wait for a healthy guard heartbeat before up")
+        return
     content = f"""[Unit]
 Description=Debuglet demonstration expiry cleanup
 After=network-online.target
@@ -341,18 +362,25 @@ def guard_once(state, api, frozen=None):
     frozen = frozen or {"run_id": inventory["run_id"], "expires_at": inventory["expires_at"]}
     if inventory["run_id"] != frozen["run_id"]:
         raise Failure("Armed guard identity differs from inventory")
-    pods = owned(inventory, api.pods())
-    def observe(inv):
-        adopt(inv, pods)
-        for pod in pods:
-            role = next(a["role"] for a in inv["attempts"] if a["name"] == pod["name"])
-            cost = float(pod.get("cost", 0))
-            if (not math.isfinite(cost) or cost > inv["quote"]["reserved_hourly"][role]
-                    or pod.get("gpu") or any((pod.get("mounts") or {}).values())):
-                inv["terminate"] = True
-        if time.time() >= frozen["expires_at"]:
-            inv["terminate"] = True
-    update(state, observe)
+    # Expiry and requested cleanup must not depend on optional billing fields.
+    if time.time() >= frozen["expires_at"]:
+        update(state, lambda inv: inv.update(terminate=True))
+    if not read(state)["terminate"]:
+        pods = owned(inventory, api.pods())
+        def observe(inv):
+            adopt(inv, pods)
+            for pod in pods:
+                role = next(a["role"] for a in inv["attempts"] if a["name"] == pod["name"])
+                try:
+                    cost = float(pod.get("cost"))
+                except (TypeError, ValueError, OverflowError):
+                    inv["terminate"] = True
+                    continue
+                mounts = pod.get("mounts") or {}
+                if (not math.isfinite(cost) or cost < 0 or cost > inv["quote"]["reserved_hourly"][role]
+                        or pod.get("gpu") or not isinstance(mounts, dict) or any(mounts.values())):
+                    inv["terminate"] = True
+        update(state, observe)
     inventory = read(state)
     save(state / "guard.json", {"run_id": inventory["run_id"], "expires_at": frozen["expires_at"],
         "checked_at": time.time(), "healthy": True, "terminating": inventory["terminate"]})
@@ -546,7 +574,9 @@ def main():
     p.add_argument("--image", default="ubuntu:24.04")
     p.add_argument("--hours", type=float, default=4)
     p.add_argument("--budget", type=float, default=10)
-    for name in ("arm", "up", "status", "bootstrap", "down", "guard"):
+    p = commands.add_parser("arm")
+    p.add_argument("--docker-image", help="Use an existing immutable local Python/CA image instead of systemd")
+    for name in ("up", "status", "bootstrap", "down", "guard"):
         commands.add_parser(name)
     p = commands.add_parser("fault")
     p.add_argument("--from-role", type=int, default=-1)
@@ -564,7 +594,7 @@ def main():
     if args.command == "plan":
         plan(args, api)
     elif args.command == "arm":
-        arm(args.state, key)
+        arm(args.state, key, args.docker_image)
     elif args.command == "up":
         up(args.state, api)
     elif args.command == "status":

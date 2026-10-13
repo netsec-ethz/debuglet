@@ -178,6 +178,79 @@ class BootstrapTests(unittest.TestCase):
         with patch.object(BOOT.subprocess, "run", side_effect=results), patch.object(BOOT.time, "sleep"):
             BOOT.wait_program("executor")
 
+    def test_join_resumes_after_supervisor_failure_without_reenrollment(self):
+        for failed_step in ("reload_programs", "wait_program"):
+            with self.subTest(failed_step=failed_step):
+                remote = self.state / failed_step
+                (remote / "config").mkdir(parents=True)
+                node = "12345678-1234-1234-1234-123456789abc"
+                enrolled = remote / "state" / ("executor-" + node)
+                value = {"enrollment": {"executor": {"id": node}, "token": "fixture-setup-secret"},
+                         "pod": self.peers[0], "peers": self.peers, "version": "v1.2.3",
+                         "api_url": "https://podid0-8080.proxy.runpod.net/api"}
+                joins = []
+
+                def fake_run(arguments, **kwargs):
+                    if "join" not in arguments:
+                        return b""
+                    joins.append(arguments)
+                    enrolled.mkdir(parents=True)
+                    (enrolled / "executor.crt").write_bytes(b"same enrolled certificate")
+                    (enrolled / "executor.key").write_bytes(b"same private key")
+                    (enrolled / "executor.sqlite").write_bytes(b"same database")
+                    config = enrolled / "service.toml"
+                    config.write_text('[identity]\nexecutor_id = "' + node + '"\n'
+                                      '[network]\npacket_counter = "fallback"\n'
+                                      '[network.policy]\nlocal_targets = false\ninbound = false\n')
+                    return json.dumps({"config": str(config)}).encode()
+
+                with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run", side_effect=fake_run), \
+                        patch.object(BOOT, "program"), patch.object(BOOT, "reload_programs") as reload, \
+                        patch.object(BOOT, "wait_program") as wait:
+                    (reload if failed_step == "reload_programs" else wait).side_effect = [RuntimeError("startup failed"), None]
+                    with self.assertRaises(RuntimeError):
+                        BOOT.remote_join(value)
+                    self.assertTrue((remote / "join-checkpoint.json").exists())
+                    self.assertFalse((remote / "join-result.json").exists())
+                    value["enrollment"].pop("token")  # Recovery must not even read it.
+                    result = BOOT.remote_join(value)
+                self.assertEqual(len(joins), 1)
+                self.assertEqual(result["executor_id"], node)
+                self.assertEqual(result["certificate_sha256"], BOOT.digest(enrolled / "executor.crt"))
+                self.assertEqual((enrolled / "executor.key").read_bytes(), b"same private key")
+                self.assertEqual((enrolled / "executor.sqlite").read_bytes(), b"same database")
+                config = tomllib.loads((enrolled / "service.toml").read_text())
+                self.assertEqual(config["identity"]["executor_id"], node)
+                self.assertEqual(config["network"]["public_ports"], "30001")
+                self.assertFalse((remote / "config/setup-token").exists())
+
+    def test_uncertain_join_with_existing_state_never_reuses_token(self):
+        remote = self.state / "uncertain"
+        (remote / "config").mkdir(parents=True)
+        node = "12345678-1234-1234-1234-123456789abc"
+        enrolled = remote / "state" / ("executor-" + node)
+        value = {"enrollment": {"executor": {"id": node}, "token": "fixture-setup-secret"},
+                 "pod": self.peers[0], "peers": self.peers, "version": "v1.2.3",
+                 "api_url": "https://podid0-8080.proxy.runpod.net/api"}
+        joins = []
+
+        def uncertain_run(arguments, **kwargs):
+            if "join" in arguments:
+                joins.append(arguments)
+                enrolled.mkdir(parents=True)
+                (enrolled / "executor.crt").write_bytes(b"preserve this identity")
+                raise RuntimeError("join response unavailable")
+            return b""
+
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run", side_effect=uncertain_run):
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_join(value)
+            self.assertFalse((remote / "join-checkpoint.json").exists())
+            with self.assertRaisesRegex(ValueError, "Preserve .*manual recovery"):
+                BOOT.remote_join(value)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual((enrolled / "executor.crt").read_bytes(), b"preserve this identity")
+
     def exercise_bootstrap(self, private_source=False):
         calls = []
         peers = self.peers

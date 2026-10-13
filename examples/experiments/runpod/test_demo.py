@@ -3,7 +3,9 @@
 
 import copy
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import time
 import unittest
@@ -159,6 +161,30 @@ class LauncherTests(unittest.TestCase):
         with self.assertRaises(demo.Failure):
             demo.guard_ready(self.state, demo.read(self.state))
 
+    def test_malformed_price_cannot_prevent_cleanup_before_or_after_expiry(self):
+        pod = self.attempted(pod_id="owned")
+        for expired in (False, True):
+            for price in (None, "not-a-price", {}, float("nan")):
+                with self.subTest(expired=expired, price=price):
+                    self.inventory["terminate"] = False
+                    self.persist()
+                    frozen = {"run_id": self.inventory["run_id"],
+                              "expires_at": time.time() + (-1 if expired else 3600)}
+                    api = FakeAPI([{**pod, "cost": price}])
+                    self.assertTrue(demo.guard_once(self.state, api, frozen))
+                    self.assertTrue(demo.read(self.state)["terminate"])
+                    self.assertEqual(api.current, {})
+                    self.assertTrue(json.loads((self.state / "cleanup.json").read_text())["complete"])
+
+    def test_expiry_is_persisted_even_when_provider_listing_fails(self):
+        self.attempted(pod_id="owned")
+        frozen = {"run_id": self.inventory["run_id"], "expires_at": time.time() - 1}
+        api = FakeAPI()
+        api.pods = mock.Mock(side_effect=demo.Failure("provider unavailable"))
+        with self.assertRaises(demo.Failure):
+            demo.guard_once(self.state, api, frozen)
+        self.assertTrue(demo.read(self.state)["terminate"])
+
     def test_six_cpu_only_requests_and_symmetric_peer_ports(self):
         for planned in self.inventory["planned"]:
             body = demo.create_body(self.inventory, planned, "ssh-ed25519 PUBLIC", "nonce")
@@ -177,6 +203,41 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(setting["label"], "Simulated connection failure")
         with self.assertRaises(demo.Failure):
             demo.fault(self.state, 2, 2)
+
+    def test_docker_guard_uses_local_immutable_image_and_restricted_persistent_container(self):
+        image = "sha256:" + "a" * 64
+        def command(arguments, **kwargs):
+            return subprocess.CompletedProcess(arguments, 1 if arguments[1:3] == ["container", "inspect"] else 0)
+        with mock.patch.object(demo.sys, "platform", "linux"), mock.patch.object(demo.subprocess, "run", side_effect=command) as run, mock.patch("builtins.print"):
+            demo.arm(self.state, "private-api-key", image)
+        arguments = run.call_args.args[0]
+        self.assertEqual(arguments[:4], ["docker", "run", "--detach", "--pull"])
+        for key, value in (("--pull", "never"), ("--restart", "unless-stopped"),
+                           ("--user", f"{os.getuid()}:{os.getgid()}"), ("--cap-drop", "ALL"),
+                           ("--security-opt", "no-new-privileges"), ("--entrypoint", "/usr/bin/python3")):
+            self.assertEqual(arguments[arguments.index(key) + 1], value)
+        self.assertIn("--read-only", arguments)
+        self.assertEqual(arguments[arguments.index("--mount") + 1], f"type=bind,src={self.state},dst={self.state}")
+        self.assertNotIn("docker.sock", " ".join(arguments))
+        self.assertNotIn("private-api-key", " ".join(arguments))
+        self.assertNotIn("--privileged", arguments)
+        self.assertEqual((self.state / ".runpod-api-key").stat().st_mode & 0o777, 0o600)
+        frozen = json.loads((self.state / "guard-plan.json").read_text())
+        self.assertEqual(frozen["expires_at"], self.inventory["expires_at"])
+
+    def test_docker_guard_refuses_moving_images_missing_images_and_name_collisions(self):
+        with mock.patch.object(demo.sys, "platform", "linux"), mock.patch.object(demo.subprocess, "run") as run:
+            with self.assertRaisesRegex(demo.Failure, "immutable"):
+                demo.arm(self.state, "key", "python:latest")
+            run.assert_not_called()
+            run.side_effect = subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
+            with self.assertRaises(subprocess.CalledProcessError):
+                demo.arm(self.state, "key", "sha256:" + "a" * 64)
+            run.side_effect = None
+            run.return_value = subprocess.CompletedProcess([], 0)
+            with self.assertRaisesRegex(demo.Failure, "already exists"):
+                demo.arm(self.state, "key", "sha256:" + "a" * 64)
+            self.assertFalse(any(call.args[0][1] == "run" for call in run.call_args_list))
 
 
 class CatalogTests(unittest.TestCase):
