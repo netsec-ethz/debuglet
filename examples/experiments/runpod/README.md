@@ -93,6 +93,11 @@ user under a supervisor; the public console proxies the native TLS API on the
 same origin. Account keys, recovery credentials, SSH keys, and enrollment state
 remain in private files, not the console archive or command output.
 
+After enrollment, bootstrap configures the dispatcher to check only those five
+known listener endpoints and waits for fresh successful TCP observations before
+reporting readiness. Node names include their provider region; these are
+operator-set labels, not independently verified geolocation.
+
 ## Open the console
 
 After bootstrap, read `runtime.json` in the state directory. Open its
