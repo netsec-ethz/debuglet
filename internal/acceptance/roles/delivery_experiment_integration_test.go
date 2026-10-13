@@ -214,16 +214,17 @@ func TestInstalledDeliveryExperiment(t *testing.T) {
 					t.Fatalf("role %d incomplete output or mismatched traffic totals: %+v", role, summary)
 				}
 				partial := scenario.name == "direct_partial" && (role == 0 || role == 4)
-				wantOutcome, wantExit := "complete", int32(0)
+				wantOutcome, wantExit, wantError := "complete", int32(0), ""
 				if partial {
-					wantOutcome, wantExit = "deadline", 1
+					wantOutcome, wantExit, wantError = "deadline", -1, "debuglet exited with code 1"
 				}
 				if summary.Outcome != wantOutcome || summary.Verified != !(scenario.name == "direct_partial" && role == 4) || summary.FinishedMS < 5000 {
 					t.Fatalf("role %d outcome: %+v", role, summary)
 				}
 				detail, err := c.RunDetail(ctx, participant.RunID)
-				if err != nil || detail.Execution == nil || detail.Execution.ReportedExitCode == nil || *detail.Execution.ReportedExitCode != wantExit || detail.Outcome.State != client.StateExited {
-					t.Fatalf("role %d terminal report: %+v %v", role, detail.Execution, err)
+				if err != nil || detail.Execution == nil || detail.Execution.ReportedExitCode == nil || *detail.Execution.ReportedExitCode != wantExit || detail.Outcome.State != client.StateExited || detail.Outcome.Error != wantError {
+					terminal, _ := json.Marshal(detail)
+					t.Fatalf("role %d terminal report: %s, error=%v; want state=%s reported_exit_code=%d outcome.error=%q", role, terminal, err, client.StateExited, wantExit, wantError)
 				}
 				t.Logf("%s role=%d run=%s outcome=%s verified=%t sent=%d received=%d simulated=%d", scenario.name, role, participant.RunID, summary.Outcome, summary.Verified, sent, received, simulated)
 			}
