@@ -12,7 +12,7 @@ mkdir -p -m 0700 "$evidence"
 export DEBUGLET_ROLE_EVIDENCE_DIR="$evidence"
 GOOS=wasip1 GOARCH=wasm "${GO:-go}" build -mod=readonly -trimpath -o "$evidence/experiment-peer.wasm" ./examples/experiments/peer
 export DEBUGLET_EXPERIMENT_WASM="$evidence/experiment-peer.wasm"
-GOOS=wasip1 GOARCH=wasm "${GO:-go}" build -mod=readonly -trimpath -o "$evidence/delivery.wasm" ./examples/experiments/delivery
+GOOS=wasip1 GOARCH=wasm "${GO:-go}" build -mod=readonly -trimpath -ldflags="-s -w" -buildvcs=false -o "$evidence/delivery.wasm" ./examples/experiments/delivery
 export DEBUGLET_DELIVERY_WASM="$evidence/delivery.wasm"
 export DEBUGLET_DELIVERY_SOURCE_SHA="$DEBUGLET_LOCAL_SOURCE_SHA"
 # Exercise the actual previous release, not a rebuild with a similar version.
