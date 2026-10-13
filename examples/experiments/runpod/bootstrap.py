@@ -218,6 +218,83 @@ enabled = false
 '''
 
 
+def listener_config(pod, peers, executors):
+    require(len(peers) == len(executors) == 5 and
+            {p["role"] for p in peers} == {e["role"] for e in executors} == set(ROLES[1:]),
+            "listener configuration requires exactly five known executor roles")
+    by_role = {item["role"]: item for item in executors}
+    require(len({item["executor_id"] for item in executors}) == 5, "duplicate enrolled executor ID")
+    contents = dispatcher_config(pod)
+    for peer in sorted(peers, key=lambda item: item["role"]):
+        enrolled = by_role[peer["role"]]
+        node = enrolled["executor_id"]
+        require(re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", node),
+                "invalid enrolled executor ID")
+        address, number = public_ipv4(peer["public_ip"]), port(peer["peer_port"])
+        require((enrolled["peer_ip"], enrolled["peer_port"]) == (address, number),
+                "enrolled endpoint differs from the selected inventory")
+        region = peer["region"]
+        label = f'{peer["role"]} ({region} provider region)'
+        require(re.fullmatch(r"[A-Z0-9-]+", region) and len(label) <= 64, "invalid provider region label")
+        contents += (f'\n[executors."{node}"]\nconnectivity_host = {json.dumps(address)}\n'
+                     f'connectivity_ports = "{number}"\ndisplay_name = {json.dumps(label)}\n')
+        country = "NL" if region.startswith("EU-NL") else "US" if region.startswith("US-") else None
+        if country:
+            contents += f'country = "{country}"\n'
+    return contents
+
+
+def remote_configure_listeners(value):
+    pod, package = value["pod"], value["package"]
+    require(pod["role"] == "dispatcher", "listener configuration belongs on the dispatcher")
+    identity = {"run_id": value["run_id"], "sha256": package["sha256"], "pod_id": pod["id"],
+                "console_sha256": package["console_sha256"]}
+    for name in ("setup.json", "installed.json"):
+        require(json.loads((BASE / name).read_text()) == identity, "dispatcher setup ownership differs")
+    contents = listener_config(pod, value["peers"], value["executors"])
+    expected = hashlib.sha256(contents.encode()).hexdigest()
+    config, candidate = BASE / "config/dispatcher.toml", BASE / "config/dispatcher.candidate.toml"
+    marker = BASE / "listeners-applied.json"
+    require(config.is_file() and not config.is_symlink() and
+            config.read_text() in (dispatcher_config(pod), contents),
+            "dispatcher configuration differs; preserve it and inspect before recovery")
+    if config.read_text() != contents or not marker.exists() or json.loads(marker.read_text()) != {"sha256": expected}:
+        save(candidate, contents)
+        try:
+            run(["chown", "debuglet:debuglet", str(candidate)])
+            binary = f'/usr/local/lib/debuglet/{package["version"]}/bin/debuglet-dispatcher'
+            run(["runuser", "-u", "debuglet", "--", binary, "-config", str(candidate), "-check-database"])
+            candidate.replace(config)
+            supervisor("restart", "dispatcher")
+            wait_program("dispatcher")
+            save(marker, {"sha256": expected})
+        finally:
+            candidate.unlink(missing_ok=True)
+    else:
+        wait_program("dispatcher")
+    return {"sha256": expected}
+
+
+def fresh_listener_checks(listing, expected, now):
+    if not isinstance(listing, list):
+        return None
+    selected = [item for item in listing if item.get("id") in expected]
+    if len(selected) != 5 or {item["id"] for item in selected} != expected:
+        return None
+    checks = []
+    for item in selected:
+        connectivity = item.get("connectivity") or {}
+        listener = connectivity.get("tcp_listener") or {}
+        observed, expires = listener.get("observed_at"), listener.get("expires_at")
+        if not (item.get("ready") is True and connectivity.get("schema_version") == 1 and
+                listener.get("state") == "reachable" and listener.get("source") == "dispatcher-observed" and
+                listener.get("stale") is False and type(observed) is int and type(expires) is int and
+                observed <= int(now) < expires):
+            return None
+        checks.append({"executor_id": item["id"], **listener})
+    return checks
+
+
 LOGIN_PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in to the delivery demo</title>
@@ -677,9 +754,10 @@ def bootstrap(state):
     if previous.exists():
         existing = json.loads(previous.read_text())
         require(existing["run_id"] == runtime["run_id"], "runtime belongs to another run")
-        if existing.get("phase") == "ready":
-            return existing
         runtime.update(existing)
+    completed = runtime.get("preflight_passed") and len(runtime["executors"]) == 5
+    runtime["phase"] = "checking-listeners" if completed else "installing"
+    runtime["listener_checks_passed"] = False
     save(previous, runtime)
 
     def install(host):
@@ -691,8 +769,11 @@ def bootstrap(state):
         return host.remote("setup", {"pod": host.pod, "package": inventory["package"],
                                       "run_id": inventory["run_id"]}, timeout=720)
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        list(pool.map(install, hosts.values()))
+    if completed:
+        hosts["dispatcher"].copy(Path(__file__).resolve(), BASE / "bootstrap.py")
+    else:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            list(pool.map(install, hosts.values()))
     api = API(runtime["api_url"])
     for attempt in range(30):
         try:
@@ -752,22 +833,42 @@ def bootstrap(state):
                 save(enrollment_path, enrollment)
                 pending.unlink()
             enrollment = json.loads(enrollment_path.read_text())
-            result = hosts[pod["role"]].remote("join", {"enrollment": enrollment, "pod": pod,
-                                                        "peers": peers, "api_url": runtime["api_url"],
-                                                        "version": inventory["package"]["version"]})
+            if completed:
+                result = next(item for item in runtime["executors"] if item["role"] == pod["role"])
+            else:
+                result = hosts[pod["role"]].remote("join", {"enrollment": enrollment, "pod": pod,
+                                                            "peers": peers, "api_url": runtime["api_url"],
+                                                            "version": inventory["package"]["version"]})
+            require(result["executor_id"] == enrollment["executor"]["id"], "returned enrollment identity differs")
             results.append(result)
-            runtime["executors"] = results
-            save(previous, runtime)
+            if not completed:
+                runtime["executors"] = results
+                save(previous, runtime)
+        listener_config(dispatcher, peers, results)
+        applied = hosts["dispatcher"].remote("configure-listeners", {
+            "pod": dispatcher, "package": inventory["package"], "run_id": inventory["run_id"],
+            "peers": peers, "executors": results})
+        runtime["listener_config_sha256"] = applied["sha256"]
+        runtime["phase"] = "checking-listeners"
+        save(previous, runtime)
         expected = {item["executor_id"] for item in results}
         for attempt in range(45):
-            owned = api.call("GET", "/operator/executors")["executors"]
-            ready = {item["id"] for item in owned if item.get("ready") and item.get("status") == "online"}
-            if expected <= ready:
+            checks = None
+            try:
+                owned = api.call("GET", "/operator/executors")["executors"]
+                ready = {item["id"] for item in owned if item.get("ready") and item.get("status") == "online"}
+                if expected <= ready:
+                    checks = fresh_listener_checks(api.call("GET", "/executors"), expected, time.time())
+            except (OSError, ValueError, RuntimeError):
+                pass  # The dispatcher and its control connections reconnect after restart.
+            if checks:
                 break
             if attempt == 44:
-                raise RuntimeError("not all five executors became ready")
+                raise RuntimeError("not all five owned executors have fresh dispatcher-observed TCP listener reachability")
             time.sleep(2)
         runtime["executor_ids"] = [item["executor_id"] for item in results]
+        runtime["listener_checks"] = checks
+        runtime["listener_checks_passed"] = True
         runtime["phase"] = "ready"
         runtime["ready_at"] = datetime.now(timezone.utc).isoformat()
         save(previous, runtime)
@@ -781,7 +882,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--state", type=Path)
-    group.add_argument("--remote", choices=("setup", "probe-start", "probe-client", "probe-stop", "join"), help=argparse.SUPPRESS)
+    group.add_argument("--remote", choices=("setup", "probe-start", "probe-client", "probe-stop", "join", "configure-listeners"), help=argparse.SUPPRESS)
     group.add_argument("--probe-server", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args()
     try:

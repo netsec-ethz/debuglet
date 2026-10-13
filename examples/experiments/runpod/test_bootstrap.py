@@ -32,7 +32,8 @@ def inventory(directory):
     pods = []
     for index, role in enumerate(BOOT.ROLES):
         pod = {"role": role, "id": f"podid{index}", "name": f"owned-{role}",
-               "public_ip": f"93.184.216.{index + 10}", "ssh_port": 22000 + index}
+               "public_ip": f"93.184.216.{index + 10}", "ssh_port": 22000 + index,
+               "region": "EU-NL-1" if index < 3 else "US-CA-2"}
         if index:
             pod["peer_port"] = 30000 + index
         else:
@@ -53,6 +54,20 @@ def observations(peers):
     return [{"source_role": source["role"], "source_ip": source["public_ip"], "source_port": 45000,
              "role": target["role"], "target_ip": target["public_ip"], "target_port": target["peer_port"]}
             for source in peers for target in peers if source != target]
+
+
+def enrolled(peers):
+    return [{"executor_id": f"12345678-1234-1234-1234-{index:012d}", "role": peer["role"],
+             "peer_ip": peer["public_ip"], "peer_port": peer["peer_port"]}
+            for index, peer in enumerate(peers, 1)]
+
+
+def reachable_listing(executors):
+    now = int(time.time())
+    return [{"id": item["executor_id"], "ready": True, "connectivity": {"schema_version": 1,
+             "tcp_listener": {"state": "reachable", "source": "dispatcher-observed", "stale": False,
+                              "observed_at": now - 1, "expires_at": now + 60}}}
+            for item in executors]
 
 
 class BootstrapTests(unittest.TestCase):
@@ -139,6 +154,79 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("proxy_ssl_verify on;", BOOT.nginx_config())
         self.assertIn("proxy_ssl_name localhost;", BOOT.nginx_config())
         self.assertNotIn("account-key", BOOT.nginx_config())
+
+    def test_listener_targets_and_labels_come_only_from_verified_inventory(self):
+        results = enrolled(self.peers)
+        contents = BOOT.listener_config(self.inventory["pods"][0], self.peers, results)
+        entries = tomllib.loads(contents)["executors"]
+        self.assertEqual(len(entries), 5)
+        for peer, result in zip(self.peers, results):
+            entry = entries[result["executor_id"]]
+            self.assertEqual(entry["connectivity_host"], peer["public_ip"])
+            self.assertEqual(entry["connectivity_ports"], str(peer["peer_port"]))
+            self.assertEqual(entry["display_name"], f'{peer["role"]} ({peer["region"]} provider region)')
+            self.assertEqual(entry["country"], "NL" if peer["region"].startswith("EU-NL") else "US")
+            self.assertNotIn("city", entry)
+            self.assertNotIn("network", entry)
+        for changed in (results[:-1], results[:-1] + [results[0]],
+                        [dict(results[0], executor_id="not-a-uuid")] + results[1:],
+                        [dict(results[0], executor_id=results[1]["executor_id"])] + results[1:],
+                        [dict(results[0], peer_ip="8.8.8.8")] + results[1:],
+                        [dict(results[0], peer_port=1234)] + results[1:]):
+            with self.assertRaises(ValueError):
+                BOOT.listener_config(self.inventory["pods"][0], self.peers, changed)
+        for change in ({"public_ip": "10.0.0.1"}, {"peer_port": 70000}):
+            peers = [dict(self.peers[0], **change)] + self.peers[1:]
+            with self.assertRaises(ValueError):
+                BOOT.listener_config(self.inventory["pods"][0], peers, results)
+
+    def test_listener_publish_retries_restart_until_completion_without_touching_identity(self):
+        remote = self.state / "workspace" / "debuglet-demo"
+        (remote / "config").mkdir(parents=True)
+        pod, package = self.inventory["pods"][0], self.inventory["package"]
+        identity = {"run_id": self.inventory["run_id"], "sha256": package["sha256"], "pod_id": pod["id"],
+                    "console_sha256": package["console_sha256"]}
+        value = {"pod": pod, "package": package, "run_id": self.inventory["run_id"],
+                 "peers": self.peers, "executors": enrolled(self.peers)}
+        for name in ("setup.json", "installed.json"):
+            BOOT.save(remote / name, identity)
+        (remote / "config/server.key").write_bytes(b"unchanged-private-identity")
+        (remote / "state").mkdir()
+        (remote / "state/dispatcher.sqlite").write_bytes(b"unchanged-database")
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run") as commands, \
+                patch.object(BOOT, "supervisor") as supervisor, patch.object(BOOT, "wait_program") as wait:
+            BOOT.save(remote / "config/dispatcher.toml", BOOT.dispatcher_config(pod))
+            wait.side_effect = [RuntimeError("restart wait failed"), None, None]
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_configure_listeners(value)
+            self.assertFalse((remote / "listeners-applied.json").exists())
+            applied = (remote / "config/dispatcher.toml").read_bytes()
+            first = BOOT.remote_configure_listeners(value)
+            self.assertEqual(first, BOOT.remote_configure_listeners(value))
+            self.assertEqual(supervisor.call_args_list, [unittest.mock.call("restart", "dispatcher")] * 2)
+            validations = [call.args[0] for call in commands.call_args_list if "-check-database" in call.args[0]]
+            self.assertEqual(len(validations), 2)
+            self.assertTrue(all("-init-database" not in call.args[0] for call in commands.call_args_list))
+            self.assertEqual(applied, (remote / "config/dispatcher.toml").read_bytes())
+            self.assertEqual(stat.S_IMODE((remote / "config/dispatcher.toml").stat().st_mode), 0o600)
+            BOOT.remote_setup(value)  # Completed setup accepts the intended final configuration.
+        self.assertEqual((remote / "config/server.key").read_bytes(), b"unchanged-private-identity")
+        self.assertEqual((remote / "state/dispatcher.sqlite").read_bytes(), b"unchanged-database")
+
+    def test_listener_readiness_requires_fresh_dispatcher_observations_for_every_executor(self):
+        results = enrolled(self.peers)
+        expected = {item["executor_id"] for item in results}
+        listing = reachable_listing(results)
+        self.assertEqual(len(BOOT.fresh_listener_checks(listing, expected, time.time())), 5)
+        self.assertIsNone(BOOT.fresh_listener_checks(listing[:-1], expected, time.time()))
+        for update in ({"source": "executor-reported"}, {"source": "dispatcher_observed"}, {"stale": True},
+                       {"state": "unreachable"}, {"observed_at": None}, {"observed_at": int(time.time()) + 5},
+                       {"expires_at": int(time.time())}, {"expires_at": None}):
+            changed = copy.deepcopy(listing)
+            changed[0]["connectivity"]["tcp_listener"].update(update)
+            self.assertIsNone(BOOT.fresh_listener_checks(changed, expected, time.time()))
+        listing[0]["ready"] = False
+        self.assertIsNone(BOOT.fresh_listener_checks(listing, expected, time.time()))
 
     def test_login_page_uses_existing_cookie_login_without_embedded_credentials(self):
         self.assertIn("fetch('/api/auth/login'", BOOT.LOGIN_PAGE)
@@ -343,10 +431,11 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(len(joins), 1)
         self.assertEqual((enrolled / "executor.crt").read_bytes(), b"preserve this identity")
 
-    def exercise_bootstrap(self, private_source=False):
+    def exercise_bootstrap(self, private_source=False, resume=False, unreachable=False):
         calls = []
         peers = self.peers
-        owned = []
+        results = enrolled(peers)
+        owned = [{"id": item["executor_id"], "ready": True, "status": "online"} for item in results] if resume else []
 
         class FakeHost:
             def __init__(self, state, pod):
@@ -368,6 +457,8 @@ class BootstrapTests(unittest.TestCase):
                 if action == "join":
                     return {"executor_id": value["enrollment"]["executor"]["id"], "role": self.pod["role"],
                             "peer_ip": self.pod["public_ip"], "peer_port": self.pod["peer_port"]}
+                if action == "configure-listeners":
+                    return {"sha256": "a" * 64}
                 return {}
 
         class FakeAPI:
@@ -385,21 +476,31 @@ class BootstrapTests(unittest.TestCase):
                     return {"token": "fixture-session-secret"}
                 if path == "/operator/executors":
                     if method == "POST":
-                        item = {"id": "node-" + body["name"], "ready": True, "status": "online"}
+                        node = next(item["executor_id"] for item in results if item["role"] == body["name"])
+                        item = {"id": node, "ready": True, "status": "online"}
                         owned.append(item)
                         return {"executor": item, "token": "fixture-setup-secret"}
                     return {"executors": owned}
+                if path == "/executors":
+                    listing = reachable_listing(results)
+                    if unreachable:
+                        listing[0]["connectivity"]["tcp_listener"]["state"] = "untested"
+                    return listing
                 return {}
 
-        with patch.object(BOOT, "Host", FakeHost), patch.object(BOOT, "API", FakeAPI):
+        with patch.object(BOOT, "Host", FakeHost), patch.object(BOOT, "API", FakeAPI), patch.object(BOOT.time, "sleep"):
             if private_source:
                 with self.assertRaises(ValueError):
+                    BOOT.bootstrap(self.state)
+            elif unreachable:
+                with self.assertRaisesRegex(RuntimeError, "fresh dispatcher-observed"):
                     BOOT.bootstrap(self.state)
             else:
                 result = BOOT.bootstrap(self.state)
                 self.assertEqual(result["phase"], "ready")
                 self.assertEqual(len(result["executor_ids"]), 5)
                 self.assertTrue(result["login_url"].endswith("/demo-login"))
+                self.assertTrue(result["listener_checks_passed"])
         return calls
 
     def test_bootstrap_stops_every_probe_before_enrollment_and_keeps_keys_private(self):
@@ -419,6 +520,20 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(runtime["preflight"][0]["source_ip"], "10.0.0.1")
         self.assertEqual(sum(action == "probe-stop" for action, _ in calls), 5)
 
+    def test_old_ready_runtime_reuses_enrollment_and_cannot_bypass_fresh_listener_gate(self):
+        self.exercise_bootstrap()
+        runtime_path = self.state / "runtime.json"
+        runtime = json.loads(runtime_path.read_text())
+        runtime.pop("listener_checks_passed")
+        BOOT.save(runtime_path, runtime)
+        calls = self.exercise_bootstrap(resume=True, unreachable=True)
+        self.assertFalse(any(action in ("setup", "join", "probe-start", "PUT") for action, _ in calls))
+        self.assertEqual(calls.count(("configure-listeners", "dispatcher")), 1)
+        self.assertEqual(json.loads(runtime_path.read_text())["phase"], "checking-listeners")
+        self.assertFalse(json.loads(runtime_path.read_text())["listener_checks_passed"])
+        calls = self.exercise_bootstrap(resume=True)
+        self.assertEqual(calls.count(("configure-listeners", "dispatcher")), 1)
+        self.assertFalse(any(action in ("setup", "join") for action, _ in calls))
 
 if __name__ == "__main__":
     unittest.main()
