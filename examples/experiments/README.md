@@ -1,5 +1,11 @@
 # Five-executor experiment
 
+For a ready-made TCP experiment with console results, see
+[coordinated update delivery](delivery/README.md). It compares direct delivery
+with peer-assisted repair using the same group APIs. The optional
+[Runpod launcher](runpod/README.md) installs a temporary dispatcher and five
+executors with automatic expiry cleanup.
+
 This example submits five ordinary TEST runs as one batch. The batch transaction
 is the experiment ID; the saved receipt records each order ID, run ID, executor,
 WASM path and SHA256, arguments and requested policy. Each participant may use a

@@ -18,7 +18,10 @@ import (
 )
 
 const TokenSize = 32
-const ProbeTimeout = 400 * time.Millisecond
+
+// Allow a WAN TCP handshake and authenticated reply while leaving room within
+// the executor's two-second heartbeat call for the report and response.
+const ProbeTimeout = time.Second
 
 // ServeTCP owns the already-bound sample until stop is called. It handles one
 // fixed-size challenge at a time and joins before returning from stop.

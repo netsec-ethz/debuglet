@@ -77,6 +77,45 @@ func hostIODial(env *WasmEnv) func(context.Context, Memory, uint32, uint32, uint
 	}
 }
 
+// HostIOAcceptTCP bounds one accept without applying its timeout to the
+// returned connection. Refused peers share the same deadline.
+func HostIOAcceptTCP(env *WasmEnv) func(context.Context, int64) uint64 {
+	return func(ctx context.Context, timeout int64) uint64 {
+		acceptCtx := ctx
+		if timeout != 0 {
+			var cancel context.CancelFunc
+			acceptCtx, cancel = context.WithTimeout(ctx, time.Duration(timeout))
+			defer cancel()
+		}
+		listener := env.TcpServer
+		if listener == nil {
+			return ioResult(0, net.ErrClosed)
+		}
+		deadline, _ := acceptCtx.Deadline()
+		if err := listener.SetDeadline(deadline); err != nil {
+			return ioResult(0, err)
+		}
+		// Cancellation without a deadline must also wake a blocked accept.
+		// Join a running callback before clearing the deadline for the next call.
+		canceled := make(chan struct{})
+		stop := context.AfterFunc(acceptCtx, func() {
+			_ = listener.SetDeadline(time.Now())
+			close(canceled)
+		})
+		defer func() {
+			if !stop() {
+				<-canceled
+			}
+			_ = listener.SetDeadline(time.Time{})
+		}()
+		handle, err := acceptTCPSocket(ctx, acceptCtx, env)
+		if err != nil && acceptCtx.Err() != nil {
+			err = context.Cause(acceptCtx)
+		}
+		return ioResult(int(handle), err)
+	}
+}
+
 func hostIORead(env *WasmEnv) func(context.Context, Memory, int32, uint32, uint32) uint64 {
 	return func(_ context.Context, mod Memory, handle int32, ptr, length uint32) uint64 {
 		buf, err := extractMem[byte](mod, ptr, length)

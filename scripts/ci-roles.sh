@@ -12,6 +12,9 @@ mkdir -p -m 0700 "$evidence"
 export DEBUGLET_ROLE_EVIDENCE_DIR="$evidence"
 GOOS=wasip1 GOARCH=wasm "${GO:-go}" build -mod=readonly -trimpath -o "$evidence/experiment-peer.wasm" ./examples/experiments/peer
 export DEBUGLET_EXPERIMENT_WASM="$evidence/experiment-peer.wasm"
+GOOS=wasip1 GOARCH=wasm "${GO:-go}" build -mod=readonly -trimpath -ldflags="-s -w" -buildvcs=false -o "$evidence/delivery.wasm" ./examples/experiments/delivery
+export DEBUGLET_DELIVERY_WASM="$evidence/delivery.wasm"
+export DEBUGLET_DELIVERY_SOURCE_SHA="$DEBUGLET_LOCAL_SOURCE_SHA"
 # Exercise the actual previous release, not a rebuild with a similar version.
 previous="$(realpath .cache/ci)/previous-release"
 mkdir -p "$previous"
@@ -29,7 +32,7 @@ sh "$previous/install.sh" --archive "$previous/debuglet-v0.2.0-linux-amd64.tar.g
   > .cache/ci/role-previous-install.log
 export DEBUGLET_PREVIOUS_INSTALL_ROOT="$previous/installed/lib/debuglet/v0.2.0"
 "${GO:-go}" test -mod=readonly -json -tags=roles_integration -count=1 -timeout=5m \
-  ./internal/acceptance/roles -run '^TestInstalled(Roles|Enrollment|BackupRestore|Recovery|Output|ReleasedCompatibility|ReleasedUpgrade|Rendezvous|Experiment)$' | tee .cache/ci/role-tests.json
+  ./internal/acceptance/roles -run '^TestInstalled(Roles|Enrollment|BackupRestore|Recovery|Output|ReleasedCompatibility|ReleasedUpgrade|Rendezvous|Experiment|DeliveryExperiment)$' | tee .cache/ci/role-tests.json
 python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalledRoles \
   --test ./internal/acceptance/roles:TestInstalledEnrollment \
   --test ./internal/acceptance/roles:TestInstalledBackupRestore \
@@ -39,6 +42,7 @@ python3 tools/check-evidence.py --test ./internal/acceptance/roles:TestInstalled
   --test ./internal/acceptance/roles:TestInstalledReleasedUpgrade \
   --test ./internal/acceptance/roles:TestInstalledRendezvous \
   --test ./internal/acceptance/roles:TestInstalledExperiment \
+  --test ./internal/acceptance/roles:TestInstalledDeliveryExperiment \
   --test ./internal/acceptance/roles:TestInstalledRecovery/graceful \
   --test ./internal/acceptance/roles:TestInstalledRecovery/terminated \
   --evidence .cache/ci/role-tests.json

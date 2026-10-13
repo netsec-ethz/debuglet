@@ -396,66 +396,84 @@ func hostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod Memory, sockI
 // WASM key: "accept_tcp"
 func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 	return func(ctx context.Context) int32 {
-		if err := env.Net.AvailableListener(netpolicy.TCP); err != nil {
-			env.warnPrivate("hostAcceptTCP: inbound refused", err)
+		handle, err := acceptTCPSocket(ctx, ctx, env)
+		if err != nil {
 			panic(fmt.Errorf("accept_tcp: %w", err))
 		}
-		if env.TcpServer == nil {
-			panic(fmt.Errorf("accept_tcp: %w", net.ErrClosed))
+		return handle
+	}
+}
+
+// acceptCtx bounds admission; ctx owns the accepted connection's lifetime.
+func acceptTCPSocket(ctx, acceptCtx context.Context, env *WasmEnv) (int32, error) {
+	if err := env.Net.AvailableListener(netpolicy.TCP); err != nil {
+		env.warnPrivate("hostAcceptTCP: inbound refused", err)
+		return -1, err
+	}
+	if env.TcpServer == nil {
+		return -1, net.ErrClosed
+	}
+	for {
+		if err := acceptCtx.Err(); err != nil {
+			return -1, context.Cause(acceptCtx)
 		}
-		for {
-			if err := ctx.Err(); err != nil {
-				panic(fmt.Errorf("accept_tcp: %w", context.Cause(ctx)))
-			}
-			reservation, err := env.Registry.Reserve(1)
-			if err != nil {
-				panic(fmt.Errorf("accept_tcp: %w", err))
-			}
-			conn, err := env.TcpServer.AcceptTCP()
-			if err != nil {
-				reservation.Release()
+		reservation, err := env.Registry.Reserve(1)
+		if err != nil {
+			return -1, err
+		}
+		conn, err := env.TcpServer.AcceptTCP()
+		if err != nil {
+			reservation.Release()
+			var timeout net.Error
+			if !errors.As(err, &timeout) || !timeout.Timeout() {
 				env.warnPrivate("hostAcceptTCP: failed to accept", err)
-				panic(fmt.Errorf("accept_tcp: %w", err))
 			}
-
-			peer, ok := addrPortOf(conn.RemoteAddr())
-			if !ok {
-				env.warnPrivate("hostAcceptTCP: peer has no readable address", fmt.Errorf("peer %v", conn.RemoteAddr()))
-				env.RecordCleanupError(conn.Close())
-				reservation.Release()
-				continue
-			}
-			match, err := env.Net.AdmitAddr(ctx, netpolicy.Inbound, peer)
-			if err == nil {
-				err = env.Net.Egress().Connect(peer.Addr())
-			}
-			if err != nil {
-				env.warnPrivate("hostAcceptTCP: peer refused", fmt.Errorf("peer %s: %w", peer, err))
-				env.RecordCleanupError(conn.Close())
-				reservation.Release()
-				continue
-			}
-
-			// Linux copies the listener's mark to the connections it accepts;
-			// marking again does not rely on that.
-			if err := markSocket(env, conn); err != nil {
-				env.warnPrivate("hostAcceptTCP: failed to mark connection", fmt.Errorf("peer %s: %w", peer, err))
-				env.RecordCleanupError(conn.Close())
-				reservation.Release()
-				panic(fmt.Errorf("accept_tcp: %w", err))
-			}
-			handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP, reservation)
-			if errors.Is(err, socket.ErrRevoked) {
-				env.warnPrivate("hostAcceptTCP: peer revoked", fmt.Errorf("peer %s: %w", peer, err))
-				continue
-			}
-			if err != nil {
-				reservation.Release()
-				env.warnPrivate("hostAcceptTCP: failed to admit connection", fmt.Errorf("peer %s: %w", peer, err))
-				panic(fmt.Errorf("accept_tcp: %w", err))
-			}
-			return handle
+			return -1, err
 		}
+
+		peer, ok := addrPortOf(conn.RemoteAddr())
+		if !ok {
+			env.warnPrivate("hostAcceptTCP: peer has no readable address", fmt.Errorf("peer %v", conn.RemoteAddr()))
+			env.RecordCleanupError(conn.Close())
+			reservation.Release()
+			continue
+		}
+		match, err := env.Net.AdmitAddr(acceptCtx, netpolicy.Inbound, peer)
+		if err == nil {
+			err = env.Net.Egress().Connect(peer.Addr())
+		}
+		if err != nil {
+			env.warnPrivate("hostAcceptTCP: peer refused", fmt.Errorf("peer %s: %w", peer, err))
+			env.RecordCleanupError(conn.Close())
+			reservation.Release()
+			continue
+		}
+
+		if acceptCtx.Err() != nil {
+			env.RecordCleanupError(conn.Close())
+			reservation.Release()
+			return -1, context.Cause(acceptCtx)
+		}
+
+		// Linux copies the listener's mark to the connections it accepts;
+		// marking again does not rely on that.
+		if err := markSocket(env, conn); err != nil {
+			env.warnPrivate("hostAcceptTCP: failed to mark connection", fmt.Errorf("peer %s: %w", peer, err))
+			env.RecordCleanupError(conn.Close())
+			reservation.Release()
+			return -1, err
+		}
+		handle, err := attachSocket(ctx, env, conn, match.Key, socket.SocketTypeTCP, reservation)
+		if errors.Is(err, socket.ErrRevoked) {
+			env.warnPrivate("hostAcceptTCP: peer revoked", fmt.Errorf("peer %s: %w", peer, err))
+			continue
+		}
+		if err != nil {
+			reservation.Release()
+			env.warnPrivate("hostAcceptTCP: failed to admit connection", fmt.Errorf("peer %s: %w", peer, err))
+			return -1, err
+		}
+		return handle, nil
 	}
 }
 

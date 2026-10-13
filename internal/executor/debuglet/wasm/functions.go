@@ -118,6 +118,7 @@ func Functions(env *WasmEnv) []Function {
 		function("env", "scion_get_interface_details", hostSCIONGetInterfaceDetails(env)),
 		function("env", "scion_select_path", hostSCIONSelectPath(env)),
 		function(guestio.Module, "dial", hostIODial(env)),
+		function(guestio.Module, "accept_tcp", HostIOAcceptTCP(env)),
 		function(guestio.Module, "read", hostIORead(env)),
 		function(guestio.Module, "write", hostIOWrite(env)),
 		function(guestio.Module, "close", HostIOClose(env)),

@@ -1,0 +1,539 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 ETH Zurich
+"""Offline bootstrap tests: all host and HTTP operations are replaced by fixtures."""
+import copy
+import importlib.util
+import io
+import ipaddress
+import json
+from pathlib import Path
+import stat
+import subprocess
+import tarfile
+import tempfile
+import time
+import tomllib
+import unittest
+from unittest.mock import patch
+
+SPEC = importlib.util.spec_from_file_location("delivery_bootstrap", Path(__file__).with_name("bootstrap.py"))
+BOOT = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(BOOT)
+
+
+def inventory(directory):
+    package = directory / "package"
+    package.mkdir()
+    names = {"debuglet-v1.2.3-linux-amd64.tar.gz": b"archive", "install.sh": b"installer",
+             "SHA256SUMS": b"checksums", "console.tar.gz": b"console"}
+    for name, data in names.items():
+        (package / name).write_bytes(data)
+    pods = []
+    for index, role in enumerate(BOOT.ROLES):
+        pod = {"role": role, "id": f"podid{index}", "name": f"owned-{role}",
+               "public_ip": f"93.184.216.{index + 10}", "ssh_port": 22000 + index,
+               "region": "EU-NL-1" if index < 3 else "US-CA-2"}
+        if index:
+            pod["peer_port"] = 30000 + index
+        else:
+            pod.update(api_port=29000, control_port=29001,
+                       console_url="https://podid0-8080.proxy.runpod.net")
+        pods.append(pod)
+    return {"run_id": "0123456789abcdef", "expires_at": time.time() + 14400, "pods": pods,
+            "package": {"directory": str(package), "version": "v1.2.3",
+                        "archive": str(package / "debuglet-v1.2.3-linux-amd64.tar.gz"),
+                        "sha256": BOOT.digest(package / "debuglet-v1.2.3-linux-amd64.tar.gz"),
+                        "installer_sha256": BOOT.digest(package / "install.sh"),
+                        "checksums_sha256": BOOT.digest(package / "SHA256SUMS"),
+                        "console_archive": str(package / "console.tar.gz"),
+                        "console_sha256": BOOT.digest(package / "console.tar.gz")}}
+
+
+def observations(peers):
+    return [{"source_role": source["role"], "source_ip": source["public_ip"], "source_port": 45000,
+             "role": target["role"], "target_ip": target["public_ip"], "target_port": target["peer_port"]}
+            for source in peers for target in peers if source != target]
+
+
+def enrolled(peers):
+    return [{"executor_id": f"12345678-1234-1234-1234-{index:012d}", "role": peer["role"],
+             "peer_ip": peer["public_ip"], "peer_port": peer["peer_port"]}
+            for index, peer in enumerate(peers, 1)]
+
+
+def reachable_listing(executors):
+    now = int(time.time())
+    return [{"id": item["executor_id"], "ready": True, "connectivity": {"schema_version": 1,
+             "tcp_listener": {"state": "reachable", "source": "dispatcher-observed", "stale": False,
+                              "observed_at": now - 1, "expires_at": now + 60}}}
+            for item in executors]
+
+
+class BootstrapTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = Path(self.temporary.name)
+        self.inventory = inventory(self.state)
+        self.peers = self.inventory["pods"][1:]
+        BOOT.save(self.state / "inventory.json", self.inventory)
+
+    def test_inventory_requires_actual_ports_and_six_roles(self):
+        BOOT.validate_inventory(self.inventory)
+        for change in (
+            lambda value: value["pods"].pop(),
+            lambda value: value["pods"][1].update(peer_port=70000),
+            lambda value: value["pods"][1].update(public_ip="10.1.2.3"),
+            lambda value: value["pods"][0].update(console_url="https://wrong.example"),
+            lambda value: value.update(expires_at=float("nan")),
+            lambda value: value.update(expires_at="2026-10-13T12:00:00Z"),
+        ):
+            value = copy.deepcopy(self.inventory)
+            change(value)
+            with self.assertRaises(ValueError):
+                BOOT.validate_inventory(value)
+
+    def test_all_selected_artifacts_are_checked_before_remote_use(self):
+        BOOT.package_files(self.inventory["package"])
+        for filename in ("install.sh", "SHA256SUMS", "console.tar.gz", "debuglet-v1.2.3-linux-amd64.tar.gz"):
+            with self.subTest(filename=filename):
+                path = self.state / "package" / filename
+                original = path.read_bytes()
+                path.write_bytes(b"changed")
+                with self.assertRaises(ValueError):
+                    BOOT.package_files(self.inventory["package"])
+                path.write_bytes(original)
+
+    def test_ssh_pins_exact_pod_alias_and_host_key_file(self):
+        host = BOOT.Host(self.state, self.peers[0])
+        self.assertIn("HostKeyAlias=podid1", host.options)
+        self.assertIn("UserKnownHostsFile=" + str(self.state / "known_hosts"), host.options)
+        self.assertIn("StrictHostKeyChecking=yes", host.options)
+        self.assertIn("BatchMode=yes", host.options)
+
+    def test_peer_policy_excludes_every_address_outside_selected_peers(self):
+        blocks = [ipaddress.ip_network(value) for value in BOOT.denied_networks(
+            peer["public_ip"] for peer in self.peers).split(",")]
+        for peer in self.peers:
+            self.assertFalse(any(ipaddress.ip_address(peer["public_ip"]) in block for block in blocks))
+        for address in ("93.184.216.10", "93.184.216.16", "8.8.8.8", "127.0.0.1", "10.0.0.1", "::1"):
+            self.assertTrue(any(ipaddress.ip_address(address) in block for block in blocks))
+
+    def test_join_config_keeps_tls_identity_and_fallback(self):
+        source = ('[tls]\ndisable = false\n[credentials]\nclient_key = "/private/key"\n'
+                  '[network]\npacket_counter = "fallback"\n[network.policy]\n'
+                  'local_targets = false\nscion = false\ninbound = false\n[logging]\nlog_level = "info"\n')
+        result = tomllib.loads(BOOT.executor_config(source, self.peers[0], self.peers))
+        self.assertFalse(result["tls"]["disable"])
+        self.assertEqual(result["credentials"]["client_key"], "/private/key")
+        self.assertEqual(result["network"]["packet_counter"], "fallback")
+        self.assertEqual(result["network"]["public_ports"], "30001")
+        self.assertTrue(result["network"]["policy"]["inbound"])
+        self.assertFalse(result["network"]["policy"]["local_targets"])
+        self.assertEqual(result["network"]["policy"]["permitted_ports"], "30001,30002,30003,30004,30005")
+        self.assertTrue(result["connectivity"]["listeners"])
+
+    def test_preflight_requires_every_directed_pair_and_global_expected_sources(self):
+        values = observations(self.peers)
+        BOOT.validate_preflight(self.peers, values)
+        for changed in (values[:-1], values[:-1] + [values[0]],
+                        [dict(values[0], source_ip="10.0.0.2")] + values[1:],
+                        [dict(values[0], source_ip="8.8.8.8")] + values[1:],
+                        [dict(values[0], target_port=1)] + values[1:]):
+            with self.assertRaises(ValueError):
+                BOOT.validate_preflight(self.peers, changed)
+
+    def test_dispatcher_requires_enrolled_tls_and_nginx_verifies_upstream(self):
+        config = tomllib.loads(BOOT.dispatcher_config(self.inventory["pods"][0]))
+        self.assertFalse(config["server"]["local_development"])
+        self.assertFalse(config["tls"]["disable"])
+        self.assertTrue(config["tls"]["require_client_cert"])
+        self.assertTrue(config["sui"]["disabled"])
+        self.assertEqual(config["executor_onboarding"]["grpc_address"], "93.184.216.10:29001")
+        self.assertIn("proxy_ssl_verify on;", BOOT.nginx_config())
+        self.assertIn("proxy_ssl_name localhost;", BOOT.nginx_config())
+        self.assertNotIn("account-key", BOOT.nginx_config())
+
+    def test_listener_targets_and_labels_come_only_from_verified_inventory(self):
+        results = enrolled(self.peers)
+        contents = BOOT.listener_config(self.inventory["pods"][0], self.peers, results)
+        entries = tomllib.loads(contents)["executors"]
+        self.assertEqual(len(entries), 5)
+        for peer, result in zip(self.peers, results):
+            entry = entries[result["executor_id"]]
+            self.assertEqual(entry["connectivity_host"], peer["public_ip"])
+            self.assertEqual(entry["connectivity_ports"], str(peer["peer_port"]))
+            self.assertEqual(entry["display_name"], f'{peer["role"]} ({peer["region"]} provider region)')
+            self.assertEqual(entry["country"], "NL" if peer["region"].startswith("EU-NL") else "US")
+            self.assertNotIn("city", entry)
+            self.assertNotIn("network", entry)
+        for changed in (results[:-1], results[:-1] + [results[0]],
+                        [dict(results[0], executor_id="not-a-uuid")] + results[1:],
+                        [dict(results[0], executor_id=results[1]["executor_id"])] + results[1:],
+                        [dict(results[0], peer_ip="8.8.8.8")] + results[1:],
+                        [dict(results[0], peer_port=1234)] + results[1:]):
+            with self.assertRaises(ValueError):
+                BOOT.listener_config(self.inventory["pods"][0], self.peers, changed)
+        for change in ({"public_ip": "10.0.0.1"}, {"peer_port": 70000}):
+            peers = [dict(self.peers[0], **change)] + self.peers[1:]
+            with self.assertRaises(ValueError):
+                BOOT.listener_config(self.inventory["pods"][0], peers, results)
+
+    def test_listener_publish_retries_restart_until_completion_without_touching_identity(self):
+        remote = self.state / "workspace" / "debuglet-demo"
+        (remote / "config").mkdir(parents=True)
+        pod, package = self.inventory["pods"][0], self.inventory["package"]
+        identity = {"run_id": self.inventory["run_id"], "sha256": package["sha256"], "pod_id": pod["id"],
+                    "console_sha256": package["console_sha256"]}
+        value = {"pod": pod, "package": package, "run_id": self.inventory["run_id"],
+                 "peers": self.peers, "executors": enrolled(self.peers)}
+        for name in ("setup.json", "installed.json"):
+            BOOT.save(remote / name, identity)
+        (remote / "config/server.key").write_bytes(b"unchanged-private-identity")
+        (remote / "state").mkdir()
+        (remote / "state/dispatcher.sqlite").write_bytes(b"unchanged-database")
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run") as commands, \
+                patch.object(BOOT, "supervisor") as supervisor, patch.object(BOOT, "wait_program") as wait:
+            BOOT.save(remote / "config/dispatcher.toml", BOOT.dispatcher_config(pod))
+            wait.side_effect = [RuntimeError("restart wait failed"), None, None]
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_configure_listeners(value)
+            self.assertFalse((remote / "listeners-applied.json").exists())
+            applied = (remote / "config/dispatcher.toml").read_bytes()
+            first = BOOT.remote_configure_listeners(value)
+            self.assertEqual(first, BOOT.remote_configure_listeners(value))
+            self.assertEqual(supervisor.call_args_list, [unittest.mock.call("restart", "dispatcher")] * 2)
+            validations = [call.args[0] for call in commands.call_args_list if "-check-database" in call.args[0]]
+            self.assertEqual(len(validations), 2)
+            self.assertTrue(all("-init-database" not in call.args[0] for call in commands.call_args_list))
+            self.assertEqual(applied, (remote / "config/dispatcher.toml").read_bytes())
+            self.assertEqual(stat.S_IMODE((remote / "config/dispatcher.toml").stat().st_mode), 0o600)
+            BOOT.remote_setup(value)  # Completed setup accepts the intended final configuration.
+        self.assertEqual((remote / "config/server.key").read_bytes(), b"unchanged-private-identity")
+        self.assertEqual((remote / "state/dispatcher.sqlite").read_bytes(), b"unchanged-database")
+
+    def test_listener_readiness_requires_fresh_dispatcher_observations_for_every_executor(self):
+        results = enrolled(self.peers)
+        expected = {item["executor_id"] for item in results}
+        listing = reachable_listing(results)
+        self.assertEqual(len(BOOT.fresh_listener_checks(listing, expected, time.time())), 5)
+        self.assertIsNone(BOOT.fresh_listener_checks(listing[:-1], expected, time.time()))
+        for update in ({"source": "executor-reported"}, {"source": "dispatcher_observed"}, {"stale": True},
+                       {"state": "unreachable"}, {"observed_at": None}, {"observed_at": int(time.time()) + 5},
+                       {"expires_at": int(time.time())}, {"expires_at": None}):
+            changed = copy.deepcopy(listing)
+            changed[0]["connectivity"]["tcp_listener"].update(update)
+            self.assertIsNone(BOOT.fresh_listener_checks(changed, expected, time.time()))
+        listing[0]["ready"] = False
+        self.assertIsNone(BOOT.fresh_listener_checks(listing, expected, time.time()))
+
+    def test_login_page_uses_existing_cookie_login_without_embedded_credentials(self):
+        self.assertIn("fetch('/api/auth/login'", BOOT.LOGIN_PAGE)
+        self.assertIn("credentials: 'same-origin'", BOOT.LOGIN_PAGE)
+        self.assertIn("account_key: key.value.trim()", BOOT.LOGIN_PAGE)
+        self.assertIn("window.location.assign('/console/')", BOOT.LOGIN_PAGE)
+        self.assertNotIn("localStorage", BOOT.LOGIN_PAGE)
+        self.assertNotIn("sessionStorage", BOOT.LOGIN_PAGE)
+        self.assertNotIn("Authorization:", BOOT.LOGIN_PAGE)
+
+    def test_api_identifies_demo_client_to_public_proxy(self):
+        api = BOOT.API("https://podid0-8080.proxy.runpod.net/api")
+        with patch.object(api.opener, "open", return_value=io.BytesIO(b'{"status":"ok"}')) as opened:
+            self.assertEqual(api.call("GET", "/readyz"), {"status": "ok"})
+        request = opened.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"), "DebugletDemo/1.0")
+        self.assertEqual(request.get_header("Debuglet-api-version"), "1.22")
+
+    def test_console_extraction_accepts_both_layouts_and_refuses_links(self):
+        for name in ("console/index.html", "index.html", "../outside", "/absolute", "link"):
+            with self.subTest(name=name):
+                remote = self.state / ("remote-" + str(len(name)))
+                remote.mkdir(exist_ok=True)
+                archive = remote / "console.tar.gz"
+                with tarfile.open(archive, "w:gz") as bundle:
+                    member = tarfile.TarInfo(name)
+                    member.size = 5
+                    if name == "link":
+                        member.type = tarfile.SYMTYPE
+                        member.linkname = "/outside"
+                        member.size = 0
+                    bundle.addfile(member, io.BytesIO(b"hello"))
+                with patch.object(BOOT, "BASE", remote):
+                    if name in ("console/index.html", "index.html"):
+                        BOOT.extract_console(archive)
+                        self.assertEqual((remote / "www/console/index.html").read_text(), "hello")
+                        self.assertIn("account_key", (remote / "www/demo-login.html").read_text())
+                    else:
+                        with self.assertRaises(ValueError):
+                            BOOT.extract_console(archive)
+
+    def test_supervisor_starting_exit_three_is_polled(self):
+        results = [subprocess.CompletedProcess([], 3, b"executor STARTING", b""),
+                   subprocess.CompletedProcess([], 0, b"executor RUNNING", b"")]
+        with patch.object(BOOT.subprocess, "run", side_effect=results), patch.object(BOOT.time, "sleep"):
+            BOOT.wait_program("executor")
+
+    def test_setup_resumes_pki_supervisor_and_database_after_partial_failures(self):
+        workspace = self.state / "workspace"
+        remote = workspace / "debuglet-demo"
+        (remote / "package").mkdir(parents=True)
+        workspace.chmod(0o700)
+        (remote / "bootstrap.py").write_text("fixture")
+        for source in (self.state / "package").iterdir():
+            (remote / "package" / source.name).write_bytes(source.read_bytes())
+        value = {"pod": self.inventory["pods"][0], "package": self.inventory["package"],
+                 "run_id": self.inventory["run_id"]}
+        calls = []
+        running = False
+        fail_init, fail_nginx = True, True
+
+        def fake_run(arguments, **kwargs):
+            nonlocal running, fail_init, fail_nginx
+            calls.append(arguments)
+            if arguments[0] == "install":
+                for path in arguments[8:]:
+                    Path(path).mkdir(exist_ok=True)
+                    Path(path).chmod(0o700)
+            elif arguments[0] == "supervisord":
+                self.assertFalse(running, "attempted to start a second supervisor")
+                running = True
+            elif arguments[0] == "supervisorctl":
+                if not running:
+                    raise RuntimeError("not running")
+                return b"123\n" if arguments[-1] == "pid" else b""
+            elif arguments[0] == "openssl":
+                for flag in ("-keyout", "-out"):
+                    if flag in arguments:
+                        path = Path(arguments[arguments.index(flag) + 1])
+                        self.assertFalse(path.exists(), "TLS identity was overwritten")
+                        path.write_bytes(("saved-" + path.name).encode())
+                if "-pubkey" in arguments or "-pubout" in arguments:
+                    return Path(arguments[arguments.index("-in") + 1]).stem.encode()
+            elif "-init-database" in arguments:
+                if fail_init:
+                    fail_init = False
+                    raise RuntimeError("initialization failed before file creation")
+                path = Path(arguments[-1])
+                self.assertFalse(path.exists())
+                path.write_bytes(b"retained complete database")
+            elif "-check-database" in arguments:
+                self.assertEqual((remote / "state/dispatcher.sqlite").read_bytes(), b"retained complete database")
+            elif "nginx" in arguments and "-t" in arguments and fail_nginx:
+                fail_nginx = False
+                raise RuntimeError("nginx validation failed after database initialization")
+            return b""
+
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run", side_effect=fake_run), \
+                patch.object(BOOT.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(BOOT, "extract_console"):
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_setup(value)
+            keys = {name: (remote / "config" / name).read_bytes()
+                    for name in ("ca.crt", "server.key", "server.crt", "issuer.key", "issuer.crt")}
+            self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE((remote / "state").stat().st_mode), 0o700)
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_setup(value)
+            self.assertTrue((remote / "state/dispatcher.sqlite").exists())
+            self.assertEqual(BOOT.remote_setup(value), {"installed": True})
+        self.assertEqual(sum(command[0] == "supervisord" for command in calls), 1)
+        self.assertEqual(sum("-init-database" in command for command in calls), 2)
+        self.assertEqual(sum("-check-database" in command for command in calls), 1)
+        for name, original in keys.items():
+            self.assertEqual((remote / "config" / name).read_bytes(), original)
+        self.assertEqual((remote / "state/dispatcher.sqlite").read_bytes(), b"retained complete database")
+
+    def test_incomplete_tls_and_unowned_runtime_are_preserved(self):
+        remote = self.state / "workspace/debuglet-demo"
+        (remote / "config").mkdir(parents=True)
+        (remote / "config/server.key").write_bytes(b"preserve partial identity")
+        value = {"pod": self.inventory["pods"][0], "package": self.inventory["package"],
+                 "run_id": self.inventory["run_id"]}
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run") as run:
+            with self.assertRaisesRegex(ValueError, "Incomplete TLS identity"):
+                BOOT.prepare_pki(value["pod"]["public_ip"])
+            with self.assertRaisesRegex(ValueError, "no setup ownership record"):
+                BOOT.remote_setup(value)
+            run.assert_not_called()
+        self.assertEqual((remote / "config/server.key").read_bytes(), b"preserve partial identity")
+
+    def test_join_resumes_after_supervisor_failure_without_reenrollment(self):
+        for failed_step in ("reload_programs", "wait_program"):
+            with self.subTest(failed_step=failed_step):
+                remote = self.state / failed_step
+                (remote / "config").mkdir(parents=True)
+                node = "12345678-1234-1234-1234-123456789abc"
+                enrolled = remote / "state" / ("executor-" + node)
+                value = {"enrollment": {"executor": {"id": node}, "token": "fixture-setup-secret"},
+                         "pod": self.peers[0], "peers": self.peers, "version": "v1.2.3",
+                         "api_url": "https://podid0-8080.proxy.runpod.net/api"}
+                joins = []
+
+                def fake_run(arguments, **kwargs):
+                    if "join" not in arguments:
+                        return b""
+                    joins.append(arguments)
+                    enrolled.mkdir(parents=True)
+                    (enrolled / "executor.crt").write_bytes(b"same enrolled certificate")
+                    (enrolled / "executor.key").write_bytes(b"same private key")
+                    (enrolled / "executor.sqlite").write_bytes(b"same database")
+                    config = enrolled / "service.toml"
+                    config.write_text('[identity]\nexecutor_id = "' + node + '"\n'
+                                      '[network]\npacket_counter = "fallback"\n'
+                                      '[network.policy]\nlocal_targets = false\ninbound = false\n')
+                    return json.dumps({"config": str(config)}).encode()
+
+                with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run", side_effect=fake_run), \
+                        patch.object(BOOT, "program"), patch.object(BOOT, "reload_programs") as reload, \
+                        patch.object(BOOT, "wait_program") as wait:
+                    (reload if failed_step == "reload_programs" else wait).side_effect = [RuntimeError("startup failed"), None]
+                    with self.assertRaises(RuntimeError):
+                        BOOT.remote_join(value)
+                    self.assertTrue((remote / "join-checkpoint.json").exists())
+                    self.assertFalse((remote / "join-result.json").exists())
+                    value["enrollment"].pop("token")  # Recovery must not even read it.
+                    result = BOOT.remote_join(value)
+                self.assertEqual(len(joins), 1)
+                self.assertEqual(result["executor_id"], node)
+                self.assertEqual(result["certificate_sha256"], BOOT.digest(enrolled / "executor.crt"))
+                self.assertEqual((enrolled / "executor.key").read_bytes(), b"same private key")
+                self.assertEqual((enrolled / "executor.sqlite").read_bytes(), b"same database")
+                config = tomllib.loads((enrolled / "service.toml").read_text())
+                self.assertEqual(config["identity"]["executor_id"], node)
+                self.assertEqual(config["network"]["public_ports"], "30001")
+                self.assertFalse((remote / "config/setup-token").exists())
+
+    def test_uncertain_join_with_existing_state_never_reuses_token(self):
+        remote = self.state / "uncertain"
+        (remote / "config").mkdir(parents=True)
+        node = "12345678-1234-1234-1234-123456789abc"
+        enrolled = remote / "state" / ("executor-" + node)
+        value = {"enrollment": {"executor": {"id": node}, "token": "fixture-setup-secret"},
+                 "pod": self.peers[0], "peers": self.peers, "version": "v1.2.3",
+                 "api_url": "https://podid0-8080.proxy.runpod.net/api"}
+        joins = []
+
+        def uncertain_run(arguments, **kwargs):
+            if "join" in arguments:
+                joins.append(arguments)
+                enrolled.mkdir(parents=True)
+                (enrolled / "executor.crt").write_bytes(b"preserve this identity")
+                raise RuntimeError("join response unavailable")
+            return b""
+
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run", side_effect=uncertain_run):
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_join(value)
+            self.assertFalse((remote / "join-checkpoint.json").exists())
+            with self.assertRaisesRegex(ValueError, "Preserve .*manual recovery"):
+                BOOT.remote_join(value)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual((enrolled / "executor.crt").read_bytes(), b"preserve this identity")
+
+    def exercise_bootstrap(self, private_source=False, resume=False, unreachable=False):
+        calls = []
+        peers = self.peers
+        results = enrolled(peers)
+        owned = [{"id": item["executor_id"], "ready": True, "status": "online"} for item in results] if resume else []
+
+        class FakeHost:
+            def __init__(self, state, pod):
+                self.pod = pod
+
+            def command(self, *args, **kwargs):
+                return b""
+
+            def copy(self, *args):
+                pass
+
+            def remote(self, action, value, **kwargs):
+                calls.append((action, self.pod["role"]))
+                if action == "probe-client":
+                    result = [item for item in observations(peers) if item["source_role"] == self.pod["role"]]
+                    if private_source:
+                        result[0]["source_ip"] = "10.0.0.1"
+                    return result
+                if action == "join":
+                    return {"executor_id": value["enrollment"]["executor"]["id"], "role": self.pod["role"],
+                            "peer_ip": self.pod["public_ip"], "peer_port": self.pod["peer_port"]}
+                if action == "configure-listeners":
+                    return {"sha256": "a" * 64}
+                return {}
+
+        class FakeAPI:
+            token = None
+
+            def __init__(self, origin):
+                pass
+
+            def call(self, method, path, body=None):
+                calls.append((method, path))
+                if path == "/user":
+                    return {"id": "account", "role": "user", "account_key": "fixture-account-secret",
+                            "recovery_code": "fixture-recovery-secret"}
+                if path == "/auth/login":
+                    return {"token": "fixture-session-secret"}
+                if path == "/operator/executors":
+                    if method == "POST":
+                        node = next(item["executor_id"] for item in results if item["role"] == body["name"])
+                        item = {"id": node, "ready": True, "status": "online"}
+                        owned.append(item)
+                        return {"executor": item, "token": "fixture-setup-secret"}
+                    return {"executors": owned}
+                if path == "/executors":
+                    listing = reachable_listing(results)
+                    if unreachable:
+                        listing[0]["connectivity"]["tcp_listener"]["state"] = "untested"
+                    return listing
+                return {}
+
+        with patch.object(BOOT, "Host", FakeHost), patch.object(BOOT, "API", FakeAPI), patch.object(BOOT.time, "sleep"):
+            if private_source:
+                with self.assertRaises(ValueError):
+                    BOOT.bootstrap(self.state)
+            elif unreachable:
+                with self.assertRaisesRegex(RuntimeError, "fresh dispatcher-observed"):
+                    BOOT.bootstrap(self.state)
+            else:
+                result = BOOT.bootstrap(self.state)
+                self.assertEqual(result["phase"], "ready")
+                self.assertEqual(len(result["executor_ids"]), 5)
+                self.assertTrue(result["login_url"].endswith("/demo-login"))
+                self.assertTrue(result["listener_checks_passed"])
+        return calls
+
+    def test_bootstrap_stops_every_probe_before_enrollment_and_keeps_keys_private(self):
+        calls = self.exercise_bootstrap()
+        last_stop = max(index for index, item in enumerate(calls) if item[0] == "probe-stop")
+        first_join = next(index for index, item in enumerate(calls) if item[0] == "join")
+        self.assertLess(last_stop, first_join)
+        self.assertEqual(calls.count(("PUT", "/user")), 1)
+        self.assertEqual(calls[-1], ("POST", "/auth/logout"))
+        self.assertEqual(stat.S_IMODE((self.state / "account-key").stat().st_mode), 0o600)
+        self.assertNotIn("fixture-", (self.state / "runtime.json").read_text())
+
+    def test_private_preflight_source_is_recorded_and_prevents_account_or_guest_setup(self):
+        calls = self.exercise_bootstrap(private_source=True)
+        self.assertFalse(any(method in ("PUT", "POST", "join") for method, _ in calls))
+        runtime = json.loads((self.state / "runtime.json").read_text())
+        self.assertEqual(runtime["preflight"][0]["source_ip"], "10.0.0.1")
+        self.assertEqual(sum(action == "probe-stop" for action, _ in calls), 5)
+
+    def test_old_ready_runtime_reuses_enrollment_and_cannot_bypass_fresh_listener_gate(self):
+        self.exercise_bootstrap()
+        runtime_path = self.state / "runtime.json"
+        runtime = json.loads(runtime_path.read_text())
+        runtime.pop("listener_checks_passed")
+        BOOT.save(runtime_path, runtime)
+        calls = self.exercise_bootstrap(resume=True, unreachable=True)
+        self.assertFalse(any(action in ("setup", "join", "probe-start", "PUT") for action, _ in calls))
+        self.assertEqual(calls.count(("configure-listeners", "dispatcher")), 1)
+        self.assertEqual(json.loads(runtime_path.read_text())["phase"], "checking-listeners")
+        self.assertFalse(json.loads(runtime_path.read_text())["listener_checks_passed"])
+        calls = self.exercise_bootstrap(resume=True)
+        self.assertEqual(calls.count(("configure-listeners", "dispatcher")), 1)
+        self.assertFalse(any(action in ("setup", "join") for action, _ in calls))
+
+if __name__ == "__main__":
+    unittest.main()

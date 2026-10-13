@@ -36,7 +36,7 @@ func TestConnectivityListenerReservationsReturnAfterHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &Executor{portManager: pool, cfg: config.ExecutorConfig{Connectivity: config.ConnectivityConfig{Listeners: true, IPv4Reflector: "127.0.0.1:1"}}}
+	e := &Executor{portManager: pool, listenerSetup: make(chan struct{}, 1), cfg: config.ExecutorConfig{Connectivity: config.ConnectivityConfig{Listeners: true, IPv4Reflector: "127.0.0.1:1"}}}
 	initial := e.initialConnectivityReport()
 	if initial.Ipv4.Reason != "pending" || initial.Ipv6.Reason != "not_configured" || !initial.ListenersEnabled {
 		t.Fatalf("initial report: %+v", initial)

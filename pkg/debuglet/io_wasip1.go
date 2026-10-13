@@ -14,6 +14,9 @@ import (
 //go:wasmimport debuglet_io_v1 dial
 func socketDial(transport, ptr, length uint32, timeout int64) uint64
 
+//go:wasmimport debuglet_io_v1 accept_tcp
+func socketAccept(timeout int64) uint64
+
 //go:wasmimport debuglet_io_v1 read
 func socketRead(handle int32, ptr, length uint32) uint64
 
@@ -35,6 +38,17 @@ func dialSocket(transport uint32, address string, timeout time.Duration) (*Socke
 		return nil, fmt.Errorf("debuglet: invalid socket handle")
 	}
 	return &Socket{handle: int32(handle), stream: transport < 2}, nil
+}
+
+func acceptSocket(timeout time.Duration) (*Socket, error) {
+	handle, err := ioOutcome(socketAccept(int64(timeout)))
+	if err != nil {
+		return nil, err
+	}
+	if handle < 0 || handle > 1<<31-1 {
+		return nil, fmt.Errorf("debuglet: invalid socket handle")
+	}
+	return &Socket{handle: int32(handle), stream: true}, nil
 }
 
 // Read returns any received bytes together with their error, including EOF.

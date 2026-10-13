@@ -2,8 +2,8 @@
 
 `debuglet_io_v1` is an optional host module alongside the unchanged `env`
 imports of `debuglet-go-wasi-imports-v1`. The Go guest SDK's `Dial`,
-`DialTimeout` and `Socket` use this module. The legacy `Conn` API and compiled
-guests retain their original signatures and failure behavior. An older host
+`DialTimeout`, `AcceptTCPTimeout` and `Socket` use this module. The legacy `Conn`
+API and compiled guests retain their original signatures and failure behavior. An older host
 cannot link a guest that imports this module.
 
 Every result is an `i64`: the low 32 bits hold a byte count or handle and the
@@ -13,6 +13,7 @@ Pointers and buffer lengths are unsigned `i32`; handles are nonnegative `i32`.
 | Import | Parameters | Low result |
 | --- | --- | --- |
 | `dial` | transport, address pointer, address bytes: `i32`; timeout nanoseconds: `i64` | handle on success; ignored on error |
+| `accept_tcp` | timeout nanoseconds: `i64` | handle on success; ignored on error |
 | `read` | handle, buffer pointer, buffer bytes: `i32` | bytes read |
 | `write` | handle, buffer pointer, buffer bytes: `i32` | bytes written |
 | `close` | handle: `i32` | zero |
@@ -22,6 +23,21 @@ Transports are TCP=0, TLS=1, ICMPv4=2 and UDP=3. Zero dial timeout uses the run'
 remaining lifetime; negative means expired. Deadline direction is read=0 or
 write=1, with timestamp zero clearing that deadline. The host retains ownership
 of each handle through its existing socket registry; closing does not reuse it.
+
+`AcceptTCPTimeout` uses the run's existing TCP listener and inbound policy.
+Its timeout includes rejected peers, returns `ErrTimeout` without closing the
+listener, and does not become the accepted socket's read/write deadline. Zero
+uses the remaining run lifetime; negative means expired. An accepted `Socket`
+uses the same deadlines, recoverable errors and `Close` as a dialed socket.
+Hosts predating this additional export cannot link guests that import it;
+existing compiled guests and legacy `AcceptTCP` remain compatible.
+
+For peer event loops, keep accept, read, write and dial calls bounded. Guest
+goroutines cannot advance timers while the host is blocked on socket I/O.
+Handle `errors.Is(err, debuglet.ErrTimeout)` to retry, repair or finish rather
+than relying on a separate guest goroutine to interrupt the call.
+Timed-out accepts release live socket capacity but count toward the existing
+per-run socket-attempt limit, just like other unsuccessful connection attempts.
 
 Statuses are success=0, EOF=1, timeout=2, reset/broken-pipe=3, closed=4,
 connection-refused=5, policy-denied=6, other-I/O=7, no-progress=8,

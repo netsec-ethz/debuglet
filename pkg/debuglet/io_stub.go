@@ -8,6 +8,7 @@ package debuglet
 import "time"
 
 func dialSocket(uint32, string, time.Duration) (*Socket, error) { panic(offTarget) }
+func acceptSocket(time.Duration) (*Socket, error)               { panic(offTarget) }
 func (*Socket) Read([]byte) (int, error)                        { panic(offTarget) }
 func (*Socket) Write([]byte) (int, error)                       { panic(offTarget) }
 func (*Socket) Close() error                                    { panic(offTarget) }

@@ -6,6 +6,8 @@ package connectivity
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -47,6 +49,81 @@ func TestOwnedDualStackListenerChallenges(t *testing.T) {
 	}
 }
 
+func TestTCPChallengeDelayedAuthenticatedReply(t *testing.T) {
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	token := bytes.Repeat([]byte{7}, TokenSize)
+	done := make(chan error, 1)
+	go func() { done <- Check(t.Context(), "tcp", listener.Addr().String(), token) }()
+	peer, err := listener.AcceptTCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	_ = peer.SetDeadline(time.Now().Add(2 * time.Second))
+	challenge := make([]byte, TokenSize)
+	if _, err := io.ReadFull(peer, challenge); err != nil {
+		t.Fatal(err)
+	}
+	// A valid reply delayed beyond the former 400ms budget remains reachable.
+	time.Sleep(550 * time.Millisecond)
+	if _, err := peer.Write(answer(token, challenge)); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("delayed authenticated reply refused: %v", err)
+	}
+}
+
+func TestTCPChallengeSilentPeerBounded(t *testing.T) {
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Check(ctx, "tcp", listener.Addr().String(), make([]byte, TokenSize)) }()
+	peer, err := listener.AcceptTCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	select {
+	case err := <-done:
+		if err == nil || ctx.Err() != nil {
+			t.Fatalf("silent peer did not fail within the challenge budget: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("silent peer outlasted the heartbeat call budget")
+	}
+}
+
+func TestTCPResponderSilentPeerBounded(t *testing.T) {
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := bytes.Repeat([]byte{7}, TokenSize)
+	t.Cleanup(ServeTCP(listener, token))
+	peer, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := peer.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("responder did not close its silent peer within the heartbeat budget: %v", err)
+	}
+	if err := Check(t.Context(), "tcp", listener.Addr().String(), token); err != nil {
+		t.Fatalf("silent peer blocked the next authenticated challenge: %v", err)
+	}
+}
+
 func TestChallengeCancellationJoins(t *testing.T) {
 	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -61,6 +138,10 @@ func TestChallengeCancellationJoins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer peer.Close()
+	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := io.ReadFull(peer, make([]byte, TokenSize)); err != nil {
+		t.Fatal(err)
+	}
 	cancel()
 	select {
 	case err := <-done:
