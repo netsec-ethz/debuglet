@@ -431,7 +431,7 @@ exec /usr/sbin/sshd -D -e -o PasswordAuthentication=no -o KbdInteractiveAuthenti
 """
     return {"name": planned["name"], "image": inventory["image"], "cloud": "SECURE",
         "cpu": {"id": inventory["quote"]["cpu_flavor"], "vcpuCount": 2}, "disk": DISK_GB[planned["role"]],
-        "dataCenterIds": [planned["region"]], "globalNetworking": False,
+        "dataCenterIds": [planned["region"]],
         "ports": ["22/tcp"] + (["9000/tcp", "9001/tcp", "8080/http"] if planned["role"] == "dispatcher" else ["70000/tcp"]),
         "env": {"PUBLIC_KEY": public_key}, "entrypoint": ["/bin/bash", "-lc"], "cmd": [startup]}
 

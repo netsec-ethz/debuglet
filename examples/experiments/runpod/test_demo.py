@@ -232,7 +232,8 @@ class LauncherTests(unittest.TestCase):
             body = demo.create_body(self.inventory, planned, "ssh-ed25519 PUBLIC", "nonce")
             self.assertEqual(body["cpu"], {"id": "cpu3c", "vcpuCount": 2})
             self.assertNotIn("gpu", body)
-            self.assertFalse(body["globalNetworking"])
+            # The provider rejects this GPU-only field on CPU pods even when false.
+            self.assertNotIn("globalNetworking", body)
             self.assertEqual(body["dataCenterIds"], [planned["region"]])
             self.assertIn("70000/tcp" if planned["role"] != "dispatcher" else "8080/http", body["ports"])
         self.assertEqual(len(self.inventory["planned"]), 6)
