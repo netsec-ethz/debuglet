@@ -178,6 +178,90 @@ class BootstrapTests(unittest.TestCase):
         with patch.object(BOOT.subprocess, "run", side_effect=results), patch.object(BOOT.time, "sleep"):
             BOOT.wait_program("executor")
 
+    def test_setup_resumes_pki_supervisor_and_database_after_partial_failures(self):
+        workspace = self.state / "workspace"
+        remote = workspace / "debuglet-demo"
+        (remote / "package").mkdir(parents=True)
+        workspace.chmod(0o700)
+        (remote / "bootstrap.py").write_text("fixture")
+        for source in (self.state / "package").iterdir():
+            (remote / "package" / source.name).write_bytes(source.read_bytes())
+        value = {"pod": self.inventory["pods"][0], "package": self.inventory["package"],
+                 "run_id": self.inventory["run_id"]}
+        calls = []
+        running = False
+        fail_init, fail_nginx = True, True
+
+        def fake_run(arguments, **kwargs):
+            nonlocal running, fail_init, fail_nginx
+            calls.append(arguments)
+            if arguments[0] == "install":
+                for path in arguments[8:]:
+                    Path(path).mkdir(exist_ok=True)
+                    Path(path).chmod(0o700)
+            elif arguments[0] == "supervisord":
+                self.assertFalse(running, "attempted to start a second supervisor")
+                running = True
+            elif arguments[0] == "supervisorctl":
+                if not running:
+                    raise RuntimeError("not running")
+                return b"123\n" if arguments[-1] == "pid" else b""
+            elif arguments[0] == "openssl":
+                for flag in ("-keyout", "-out"):
+                    if flag in arguments:
+                        path = Path(arguments[arguments.index(flag) + 1])
+                        self.assertFalse(path.exists(), "TLS identity was overwritten")
+                        path.write_bytes(("saved-" + path.name).encode())
+                if "-pubkey" in arguments or "-pubout" in arguments:
+                    return Path(arguments[arguments.index("-in") + 1]).stem.encode()
+            elif "-init-database" in arguments:
+                if fail_init:
+                    fail_init = False
+                    raise RuntimeError("initialization failed before file creation")
+                path = Path(arguments[-1])
+                self.assertFalse(path.exists())
+                path.write_bytes(b"retained complete database")
+            elif "-check-database" in arguments:
+                self.assertEqual((remote / "state/dispatcher.sqlite").read_bytes(), b"retained complete database")
+            elif "nginx" in arguments and "-t" in arguments and fail_nginx:
+                fail_nginx = False
+                raise RuntimeError("nginx validation failed after database initialization")
+            return b""
+
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run", side_effect=fake_run), \
+                patch.object(BOOT.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(BOOT, "extract_console"):
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_setup(value)
+            keys = {name: (remote / "config" / name).read_bytes()
+                    for name in ("ca.crt", "server.key", "server.crt", "issuer.key", "issuer.crt")}
+            self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE((remote / "state").stat().st_mode), 0o700)
+            with self.assertRaises(RuntimeError):
+                BOOT.remote_setup(value)
+            self.assertTrue((remote / "state/dispatcher.sqlite").exists())
+            self.assertEqual(BOOT.remote_setup(value), {"installed": True})
+        self.assertEqual(sum(command[0] == "supervisord" for command in calls), 1)
+        self.assertEqual(sum("-init-database" in command for command in calls), 2)
+        self.assertEqual(sum("-check-database" in command for command in calls), 1)
+        for name, original in keys.items():
+            self.assertEqual((remote / "config" / name).read_bytes(), original)
+        self.assertEqual((remote / "state/dispatcher.sqlite").read_bytes(), b"retained complete database")
+
+    def test_incomplete_tls_and_unowned_runtime_are_preserved(self):
+        remote = self.state / "workspace/debuglet-demo"
+        (remote / "config").mkdir(parents=True)
+        (remote / "config/server.key").write_bytes(b"preserve partial identity")
+        value = {"pod": self.inventory["pods"][0], "package": self.inventory["package"],
+                 "run_id": self.inventory["run_id"]}
+        with patch.object(BOOT, "BASE", remote), patch.object(BOOT, "run") as run:
+            with self.assertRaisesRegex(ValueError, "Incomplete TLS identity"):
+                BOOT.prepare_pki(value["pod"]["public_ip"])
+            with self.assertRaisesRegex(ValueError, "no setup ownership record"):
+                BOOT.remote_setup(value)
+            run.assert_not_called()
+        self.assertEqual((remote / "config/server.key").read_bytes(), b"preserve partial identity")
+
     def test_join_resumes_after_supervisor_failure_without_reenrollment(self):
         for failed_step in ("reload_programs", "wait_program"):
             with self.subTest(failed_step=failed_step):

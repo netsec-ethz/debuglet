@@ -348,9 +348,30 @@ def reload_programs():
     supervisor("update")
 
 
+def verify_pki(address):
+    directory = BASE / "config"
+    run(["openssl", "verify", "-CAfile", str(directory / "ca.crt"), "-purpose", "sslserver",
+         "-verify_ip", address, str(directory / "server.crt")])
+    run(["openssl", "verify", "-CAfile", str(directory / "ca.crt"), "-purpose", "sslserver",
+         "-verify_hostname", "localhost", str(directory / "server.crt")])
+    run(["openssl", "verify", "-CAfile", str(directory / "ca.crt"), str(directory / "issuer.crt")])
+    for name in ("server", "issuer"):
+        certificate_key = run(["openssl", "x509", "-in", str(directory / (name + ".crt")), "-pubkey", "-noout"])
+        private_key = run(["openssl", "pkey", "-in", str(directory / (name + ".key")), "-pubout"])
+        require(certificate_key == private_key, "TLS certificate/key mismatch; preserve files and inspect")
+
+
 def prepare_pki(address):
     directory = BASE / "config"
-    require(not (directory / "server.key").exists(), "refusing to replace existing TLS identity")
+    identity = ("ca.crt", "server.key", "server.crt", "issuer.key", "issuer.crt")
+    temporary = ("root.key", "ca.srl", "server.csr", "server.ext", "issuer.csr", "issuer.ext")
+    if any((directory / name).exists() for name in identity + temporary):
+        require(all((directory / name).is_file() and not (directory / name).is_symlink() for name in identity),
+                "Incomplete TLS identity; preserve config and inspect before recovery. Keys will not be replaced.")
+        verify_pki(address)
+        for name in temporary:
+            (directory / name).unlink(missing_ok=True)
+        return
 
     def openssl(*arguments):
         run(["openssl", *arguments])
@@ -372,9 +393,8 @@ def prepare_pki(address):
         openssl("x509", "-req", "-in", str(directory / (name + ".csr")), "-CA", str(directory / "ca.crt"),
                 "-CAkey", str(directory / "root.key"), "-CAcreateserial", "-out", str(directory / (name + ".crt")),
                 "-days", "1", "-sha256", "-extfile", str(directory / (name + ".ext")))
-    openssl("verify", "-CAfile", str(directory / "ca.crt"), "-purpose", "sslserver", str(directory / "server.crt"))
-    openssl("verify", "-CAfile", str(directory / "ca.crt"), str(directory / "issuer.crt"))
-    for name in ("root.key", "ca.srl", "server.csr", "server.ext", "issuer.csr", "issuer.ext"):
+    verify_pki(address)
+    for name in temporary:
         (directory / name).unlink(missing_ok=True)
 
 
@@ -405,10 +425,31 @@ def extract_console(archive):
     (BASE / "www").chmod(0o755)
 
 
+def preserve_config(path, contents):
+    if path.exists():
+        require(path.is_file() and not path.is_symlink() and path.read_text() == contents,
+                "Existing configuration differs; preserve it and inspect before recovery")
+    else:
+        save(path, contents)
+
+
 def remote_setup(value):
     pod, package = value["pod"], value["package"]
     marker = BASE / "installed.json"
-    identity = {"run_id": value["run_id"], "sha256": package["sha256"]}
+    identity = {"run_id": value["run_id"], "sha256": package["sha256"], "pod_id": pod["id"],
+                "console_sha256": package["console_sha256"]}
+    ownership = BASE / "setup.json"
+    if ownership.exists():
+        require(json.loads(ownership.read_text()) == identity, "existing setup belongs to another run/package/pod")
+    else:
+        require(not any((BASE / name).exists() for name in ("config", "state", "supervisord.conf", "installed.json")),
+                "Existing runtime has no setup ownership record; preserve it and inspect before recovery")
+        save(ownership, identity)
+    # The SSH upload creates /workspace under umask 077 on some pod images.
+    # Add traversal only to that controlled parent; do not change / or state.
+    require(BASE.parent.name == "workspace" and BASE.parent.is_dir() and not BASE.parent.is_symlink(),
+            "runtime parent must be the real workspace directory")
+    BASE.parent.chmod((BASE.parent.stat().st_mode & 0o7777) | 0o011)
     if marker.exists():
         require(json.loads(marker.read_text()) == identity, "existing installation belongs to another run/package")
         return {"installed": True}
@@ -431,18 +472,25 @@ def remote_setup(value):
     run(["install", "-d", "-m", "700", "-o", "debuglet", "-g", "debuglet",
          *[str(BASE / name) for name in ("state", "logs", "nginx-tmp", "config")]])
     (BASE / "programs").mkdir(mode=0o700, exist_ok=True)
-    save(BASE / "supervisord.conf", supervisor_config())
-    run(["supervisord", "-c", str(BASE / "supervisord.conf")])
+    preserve_config(BASE / "supervisord.conf", supervisor_config())
+    try:
+        require(int(supervisor("pid").strip()) > 0, "invalid supervisor identity")
+    except RuntimeError:
+        run(["supervisord", "-c", str(BASE / "supervisord.conf")])
     if pod["role"] == "dispatcher":
         require(digest(BASE / "package/console.tar.gz") == package["console_sha256"], "console digest mismatch")
         extract_console(BASE / "package/console.tar.gz")
         prepare_pki(pod["public_ip"])
-        save(BASE / "config/dispatcher.toml", dispatcher_config(pod))
+        preserve_config(BASE / "config/dispatcher.toml", dispatcher_config(pod))
         run(["chown", "-R", "debuglet:debuglet", str(BASE / "config")])
-        save(BASE / "nginx.conf", nginx_config())
+        preserve_config(BASE / "nginx.conf", nginx_config())
         (BASE / "nginx.conf").chmod(0o644)
         binary = f'/usr/local/lib/debuglet/{package["version"]}/bin/debuglet-dispatcher'
-        run(["runuser", "-u", "debuglet", "--", binary, "-init-database", str(BASE / "state/dispatcher.sqlite")])
+        database = BASE / "state/dispatcher.sqlite"
+        if database.exists():
+            run(["runuser", "-u", "debuglet", "--", binary, "-config", str(BASE / "config/dispatcher.toml"), "-check-database"])
+        else:
+            run(["runuser", "-u", "debuglet", "--", binary, "-init-database", str(database)])
         run(["runuser", "-u", "debuglet", "--", "nginx", "-t", "-c", str(BASE / "nginx.conf")])
         program("dispatcher", shlex.join([binary, "-config", str(BASE / "config/dispatcher.toml")]))
         program("nginx", shlex.join(["nginx", "-c", str(BASE / "nginx.conf"), "-g", "daemon off;"]))
