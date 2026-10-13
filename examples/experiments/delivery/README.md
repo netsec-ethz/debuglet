@@ -26,6 +26,9 @@ below, changing only `-role` from 0 through 4:
 -blocked-from=-1 -blocked-to=-1
 ```
 
+Arguments are the complete WASI argument vector: Debuglet does not insert a
+program name before `-algorithm`. Do not add an executable-name argument.
+
 Enable `listen_tcp`, allow the participants' reachable listener addresses in
 both operator and submitted destination policies, and reserve the same limits
 for each algorithm. A 60-second host run limit leaves room for group readiness

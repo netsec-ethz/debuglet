@@ -119,7 +119,9 @@ func parseOptions(args []string) (options, error) {
 }
 
 func main() {
-	o, err := parseOptions(os.Args[1:])
+	// Debuglet passes the submitted WASI argv verbatim, without an argv[0]
+	// program name. The first element is already an application argument.
+	o, err := parseOptions(os.Args)
 	r := &reporter{options: o, writer: os.Stdout}
 	var d *delivery
 	if err == nil {
