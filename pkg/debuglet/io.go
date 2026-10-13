@@ -80,6 +80,20 @@ func Dial(network, address string) (*Socket, error) {
 	return DialTimeout(network, address, 0)
 }
 
+// AcceptTCPTimeout accepts an admitted connection on the run's TCP listener.
+// The timeout bounds the whole accept, including refused peers. Zero uses the
+// run's remaining lifetime; a negative timeout expires immediately. ErrTimeout
+// leaves the listener usable for another call. The returned Socket has its own
+// read/write deadlines and remains open until Close or the run ends.
+//
+// This requires the accept_tcp export in debuglet_io_v1 and a run with TCP
+// listening enabled. Older hosts without that export fail to link the guest.
+// Use short timeouts in event loops: guest goroutines cannot make progress
+// while the host is blocked accepting a connection.
+func AcceptTCPTimeout(timeout time.Duration) (*Socket, error) {
+	return acceptSocket(timeout)
+}
+
 // DialTimeout also bounds resolution, connection and TLS handshake. Zero uses
 // the run's remaining lifetime; a negative timeout expires immediately.
 func DialTimeout(network, address string, timeout time.Duration) (*Socket, error) {
