@@ -102,8 +102,11 @@ type Executor struct {
 	outputKick        chan struct{}
 	iface             *net.Interface
 	portManager       *socket.PortManager
-	socketBudget      *socket.DescriptorBudget
-	supervisor        *isolation.Supervisor
+	// listenerSetup excludes temporary proof listeners from run listener setup.
+	// A probe never waits; a run waits only within its initialization context.
+	listenerSetup chan struct{}
+	socketBudget  *socket.DescriptorBudget
+	supervisor    *isolation.Supervisor
 	// Tests can hold individual resource boundaries; nil uses the real runtime.
 	newRuntime func(scheduler.Spec) runtimeDebuglet
 	// clientFor is a construction-fixed seam for scripted direct gRPC peers, which
@@ -153,7 +156,8 @@ func newExecutor(node *Node, storage scheduler.Scheduler) (*Executor, error) {
 	e := &Executor{cfg: node.cfg, logger: node.logger, teslaSchedule: node.schedule, scheduleProof: node.scheduleProof, chainReport: &node.chainReport, disclosureDelivery: &node.disclosureDelivery, retired: &node.retired,
 		scheduler: storage, running: make(map[uuid.UUID]RunningDebuglet), limiter: limiter, revoked: netpolicy.NewRevocations(),
 		packetCount: node.packetCount, iface: node.iface, portManager: ports, socketBudget: node.socketBudget, supervisor: node.supervisor,
-		output: node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
+		listenerSetup: make(chan struct{}, 1),
+		output:        node.output, outputFailed: &node.outputFailed, outputKick: make(chan struct{}, 1),
 		delivering: make(map[uuid.UUID]struct{}), outputDelivering: make(map[uuid.UUID]struct{}),
 		reconcileKick: make(chan struct{}, 1),
 		resourcesDone: make(chan struct{})}
@@ -385,12 +389,12 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			e.logger.Debug("Sending heartbeat", zap.Time("timestamp", now), zap.Int64("epoch", epoch))
 			e.disclosureDelivery.checkClock(e.teslaSchedule, now)
 			var response *protocol.HeartbeatResponse
-			client, err := e.dispatcherClient(ctx, binding)
+			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			client, err := e.dispatcherClient(callCtx, binding)
 			if err == nil {
-				callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 				response, err = client.Heartbeat(callCtx, req)
-				cancel()
 			}
+			cancel()
 			ack := time.Now()
 			if err == nil && e.Bidi != nil {
 				err = e.Bidi.CheckLease(binding)

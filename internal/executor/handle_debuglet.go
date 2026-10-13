@@ -228,6 +228,17 @@ func (e *Executor) initializeDebuglet(ctx context.Context, spec scheduler.Spec, 
 		UDP:   spec.Policy.ListenUDP,
 		SCION: spec.Policy.ListenSCION,
 	}
+	if req.TCP || req.UDP {
+		select {
+		case e.listenerSetup <- struct{}{}:
+			defer func() { <-e.listenerSetup }()
+		case <-subCtx.Done():
+			return context.Cause(subCtx)
+		}
+		if subCtx.Err() != nil {
+			return context.Cause(subCtx)
+		}
+	}
 	if err := deb.StartServers(subCtx, req); err != nil {
 		if spec.Policy.ListenTCP || spec.Policy.ListenUDP {
 			return fmt.Errorf("failed to start listener: %w", err)

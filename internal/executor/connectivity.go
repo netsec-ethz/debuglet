@@ -37,14 +37,24 @@ func (e *Executor) probeConnectivity(ctx context.Context, binding controlsession
 	}
 	vantage.AddressCheck = e.addressSelfCheck()
 	now := time.Now()
+	cfg := e.cfg.Connectivity
 	e.capabilityMu.Lock()
 	if now.Before(e.connectivityNext) {
 		e.capabilityMu.Unlock()
 		return func() {}
 	}
+	if cfg.Listeners {
+		select {
+		case e.listenerSetup <- struct{}{}:
+		default:
+			// A run is setting up its listeners. Keep the prior observation;
+			// skipping this sample must not publish a new successful proof.
+			e.capabilityMu.Unlock()
+			return func() {}
+		}
+	}
 	e.connectivityNext = now.Add(30 * time.Second)
 	e.capabilityMu.Unlock()
-	cfg := e.cfg.Connectivity
 	report := &pb.ConnectivityReport{ListenersEnabled: cfg.Listeners}
 	vantage.Connectivity = report
 	var wg sync.WaitGroup
@@ -118,9 +128,15 @@ func (e *Executor) probeConnectivity(ctx context.Context, binding controlsession
 			stops = append(stops, func() { stop(); e.portManager.Release(port) })
 		}
 	}
+	var once sync.Once
 	return func() {
-		for _, stop := range stops {
-			stop()
-		}
+		once.Do(func() {
+			for _, stop := range stops {
+				stop()
+			}
+			if cfg.Listeners {
+				<-e.listenerSetup
+			}
+		})
 	}
 }
