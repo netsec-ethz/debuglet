@@ -37,8 +37,9 @@ class Failure(RuntimeError):
 
 
 class APIError(Failure):
-    def __init__(self, status):
+    def __init__(self, status, diagnostic=None):
         self.status = status
+        self.diagnostic = diagnostic or {"status": status}
         super().__init__(f"Runpod HTTP {status}; response body suppressed")
 
 
@@ -61,7 +62,19 @@ class API:
         try:
             return self.opener.open(req, timeout=30)
         except urllib.error.HTTPError as exc:
-            raise APIError(exc.code) from None
+            diagnostic = {"status": exc.code}
+            try:
+                with exc:
+                    data = exc.read(4097)
+                body = json.loads(data) if len(data) <= 4096 else {}
+                for field in ("title", "detail"):
+                    value = body.get(field) if isinstance(body, dict) else None
+                    if isinstance(value, str):
+                        value = value.replace(self.key, "[REDACTED]")
+                        diagnostic[field] = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", value)[:600]
+            except (OSError, ValueError):
+                pass  # Preserve the HTTP status even when diagnostics are unreadable.
+            raise APIError(exc.code, diagnostic) from None
         except (OSError, urllib.error.URLError):
             raise Failure("Runpod transport failed; a create may have succeeded; do not repeat it") from None
 
@@ -451,7 +464,17 @@ def up(state, api):
                 x["attempts"].append(attempt)
             update(state, begin)
             # Deliberately one POST, with its intent durably recorded first.
-            created = api.call("POST", "/pods", create_body(current, planned, (state / "ssh_key.pub").read_text(), attempt["hostkey_nonce"]))
+            try:
+                created = api.call("POST", "/pods", create_body(current, planned, (state / "ssh_key.pub").read_text(), attempt["hostkey_nonce"]))
+            except APIError as exc:
+                if exc.status in (400, 422):
+                    def reject(x):
+                        recorded = next(a for a in x["attempts"] if a["name"] == planned["name"])
+                        recorded.update(outcome=f"rejected_http_{exc.status}", rejection=exc.diagnostic)
+                    update(state, reject)
+                    raise Failure(f"Runpod rejected this create (HTTP {exc.status}); inspect the private inventory diagnostic, "
+                                  "then replan the region/specification. Do not blindly retry this request.") from None
+                raise
             pod_id = created.get("id") if isinstance(created, dict) else None
             if not isinstance(pod_id, str) or not pod_id:
                 raise Failure("Create response has no ID; reconcile the exact name before continuing")

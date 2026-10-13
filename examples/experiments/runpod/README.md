@@ -65,6 +65,12 @@ name against the account inventory. Never delete the state or manually repeat
 an uncertain create request. Once an uncertain role is found, `up` can continue
 the remaining roles without recreating existing ones.
 
+Documented HTTP 400/422 create rejections are recorded separately from uncertain
+transport/server failures. A bounded, redacted title/detail is saved only in the
+private inventory. Inspect it, clean up the plan, then replan the region or
+specification; the launcher never repeats that role's rejected request. The
+guard still checks its exact name in case a resource unexpectedly appears.
+
 If sudo is unavailable, the controller's always-on Docker daemon can run the
 same guard. Supply an **existing local** image ID or repository digest containing
 `/usr/bin/python3` (3.11+) and trusted CA certificates. Run as the state directory

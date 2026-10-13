@@ -2,6 +2,7 @@
 # Copyright 2026 ETH Zurich
 
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import tempfile
 import time
 import unittest
 from unittest import mock
+import urllib.error
 
 import demo
 
@@ -104,6 +106,46 @@ class LauncherTests(unittest.TestCase):
                     with self.assertRaises(demo.Failure):
                         demo.up(self.state, api)
                 self.assertFalse(any(method == "POST" for method, _ in api.calls))
+
+    def test_documented_rejections_are_recorded_without_repeating_create(self):
+        for status in (400, 422):
+            with self.subTest(status=status):
+                self.inventory["attempts"] = []
+                self.persist()
+                api = FakeAPI()
+                api.call = mock.Mock(side_effect=demo.APIError(status, {"status": status, "detail": "Unavailable"}))
+                with mock.patch.object(demo, "package_metadata", return_value=self.inventory["package"]), mock.patch.object(demo, "quote", return_value=self.inventory["quote"]):
+                    with self.assertRaisesRegex(demo.Failure, "replan the region/specification"):
+                        demo.up(self.state, api)
+                    recorded = demo.read(self.state)["attempts"][0]
+                    self.assertEqual(recorded["outcome"], f"rejected_http_{status}")
+                    self.assertEqual(recorded["rejection"]["detail"], "Unavailable")
+                    with self.assertRaisesRegex(demo.Failure, "already had a creation attempt"):
+                        demo.up(self.state, api)
+                self.assertEqual(api.call.call_count, 1)
+                api.call = FakeAPI().call
+                self.assertTrue(demo.cleanup_once(self.state, api))
+
+    def test_uncertain_http_errors_remain_unknown(self):
+        for status in (408, 500, 503):
+            with self.subTest(status=status):
+                self.inventory["attempts"] = []
+                self.persist()
+                api = FakeAPI()
+                api.call = mock.Mock(side_effect=demo.APIError(status))
+                with mock.patch.object(demo, "package_metadata", return_value=self.inventory["package"]), mock.patch.object(demo, "quote", return_value=self.inventory["quote"]):
+                    with self.assertRaises(demo.APIError):
+                        demo.up(self.state, api)
+                self.assertEqual(demo.read(self.state)["attempts"][0]["outcome"], "unknown")
+                self.assertEqual(api.call.call_count, 1)
+
+    def test_rejected_name_is_still_reconciled_if_it_later_appears(self):
+        pod = self.attempted(pod_id=None, outcome="rejected_http_400")
+        pod["id"] = "unexpected-owned"
+        api = FakeAPI([pod])
+        self.assertTrue(demo.cleanup_once(self.state, api))
+        self.assertEqual(api.current, {})
+        self.assertEqual(demo.read(self.state)["attempts"][0]["outcome"], "found")
 
     def test_cleanup_uses_exact_id_name_and_never_baseline_or_prefix(self):
         target = self.attempted(pod_id="owned")
@@ -241,6 +283,24 @@ class LauncherTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_http_diagnostic_is_bounded_redacted_private_and_has_no_headers_or_raw_body(self):
+        secret = "test-private-api-key"
+        api = demo.API(secret)
+        body = {"title": "Rejected\n\u001b[31m", "detail": secret + "\r\t" + "x" * 1000,
+                "other": "not retained"}
+        error = urllib.error.HTTPError("https://api.runpod.io/v2/pods", 400, "unused", {"Authorization": secret},
+                                       io.BytesIO(json.dumps(body).encode()))
+        api.opener.open = mock.Mock(side_effect=error)
+        with self.assertRaises(demo.APIError) as caught:
+            api.call("POST", "/pods", {})
+        diagnostic = caught.exception.diagnostic
+        self.assertEqual(set(diagnostic), {"status", "title", "detail"})
+        self.assertNotIn(secret, json.dumps(diagnostic))
+        self.assertNotRegex(diagnostic["title"] + diagnostic["detail"], r"[\x00-\x1f\x7f-\x9f]")
+        self.assertLessEqual(len(diagnostic["detail"]), 600)
+        self.assertNotIn("REDAC", str(caught.exception))
+        self.assertNotIn(secret, str(caught.exception))
+
     def test_quote_includes_all_six_disks_and_refuses_limits_or_unavailable_regions(self):
         api = mock.Mock()
         api.call.return_value = {"cpus": [{"id": "cpu3c", "vcpu": {"min": 2, "max": 16},
