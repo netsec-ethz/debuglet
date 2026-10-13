@@ -643,7 +643,7 @@ class API:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def call(self, method, path, body=None):
-        headers = {"Accept": "application/json", "Debuglet-API-Version": "1.22"}
+        headers = {"Accept": "application/json", "Debuglet-API-Version": "1.22", "User-Agent": "DebugletDemo/1.0"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
         if body is not None:

@@ -149,6 +149,14 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn("sessionStorage", BOOT.LOGIN_PAGE)
         self.assertNotIn("Authorization:", BOOT.LOGIN_PAGE)
 
+    def test_api_identifies_demo_client_to_public_proxy(self):
+        api = BOOT.API("https://podid0-8080.proxy.runpod.net/api")
+        with patch.object(api.opener, "open", return_value=io.BytesIO(b'{"status":"ok"}')) as opened:
+            self.assertEqual(api.call("GET", "/readyz"), {"status": "ok"})
+        request = opened.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"), "DebugletDemo/1.0")
+        self.assertEqual(request.get_header("Debuglet-api-version"), "1.22")
+
     def test_console_extraction_accepts_both_layouts_and_refuses_links(self):
         for name in ("console/index.html", "index.html", "../outside", "/absolute", "link"):
             with self.subTest(name=name):
