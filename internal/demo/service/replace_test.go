@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -304,5 +305,87 @@ func TestEnrolledInstallRetriesRecordBeforeUnit(t *testing.T) {
 	}
 	if err := f.installer.verifyRemoval(t.Context(), p); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnrolledInstallRetriesCapabilityOnlyInterruption(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		t.Run(fmt.Sprintf("auto-%t", automatic), func(t *testing.T) {
+			f, p, request := enrolledReplacementFixture(t)
+			request.User, request.Group = p.User, p.Group
+			// Begin with the opposite complete same-package installation.
+			p.PacketCapabilities = !automatic
+			if err := writeRecord(p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.installer.writeUnit(p); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(p.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !automatic {
+				data = regexp.MustCompile(`(?m)^[ \t]*packet_counter[ \t]*=.*$`).ReplaceAll(data, []byte(`packet_counter = "fallback"`))
+			}
+			if err := os.WriteFile(p.ConfigPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			// Exercise the actual ordinary reinstall stage, then interrupt it
+			// before writeUnit: new capability record, previous capability unit.
+			if err := f.installer.prepareEnrolledState(t.Context(), &p, Account{UID: 4242, GID: 4343}); err != nil {
+				t.Fatal(err)
+			}
+			if p.PacketCapabilities != automatic {
+				t.Fatal("counter change was not recorded")
+			}
+			if _, err := f.installer.Start(t.Context(), p.Role, p.Name); err == nil {
+				t.Fatal("Start accepted capability mismatch")
+			}
+			if _, err := f.installer.Resume(t.Context(), p.Role, p.Name); err == nil {
+				t.Fatal("Resume accepted capability mismatch")
+			}
+			if _, err := f.installer.Install(t.Context(), request, f.assets, false, false); err != nil {
+				t.Fatalf("same-package retry failed: %v", err)
+			}
+			if err := f.installer.verifyRemoval(t.Context(), p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.installer.Start(t.Context(), p.Role, p.Name); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEnrolledInstallRefusesPackageAndAccountChanges(t *testing.T) {
+	for _, changed := range []string{"package path", "account", "group"} {
+		t.Run(changed, func(t *testing.T) {
+			f, p, request := enrolledReplacementFixture(t)
+			request.User, request.Group = p.User, p.Group
+			target := f.assets
+			guidance := p.User + ":" + p.Group
+			switch changed {
+			case "package path":
+				target = replacementTarget(t, f, p, "second-prefix", "exit 0")
+				target.Manifest = f.assets.Manifest
+				guidance = "--replace-package"
+			case "account":
+				request.User = "debuglet"
+			case "group":
+				request.Group = "debuglet"
+			}
+			before := replacementSnapshot(t, p, true)
+			_, err := f.installer.Install(t.Context(), request, target, false, false)
+			if err == nil || !strings.Contains(err.Error(), guidance) {
+				t.Fatalf("changed %s lacks retention guidance: %v", changed, err)
+			}
+			if changed == "package path" && !strings.Contains(err.Error(), p.PayloadRoot) {
+				t.Fatalf("original package path missing: %v", err)
+			}
+			if !reflect.DeepEqual(before, replacementSnapshot(t, p, true)) || len(f.chowned) != 0 {
+				t.Fatal("refused change modified state or ownership")
+			}
+		})
 	}
 }
