@@ -25,8 +25,12 @@ package versions.
 
 Reinstalling a managed role requires the same package version and source revision
 as its retained installation record, including after normal uninstall.
-Changing the package of an existing generated managed role is not supported by
-`dbl service install`. The
+Enrolled executors also retain their original installed package directory and
+service account/group. Repeat any non-default account options when reinstalling.
+An already enrolled executor can use the explicit
+[package replacement procedure](#replace-an-enrolled-executors-package) below.
+Changing the package of a local generated executor or dispatcher remains
+unsupported by `dbl service install`. The
 [Ansible database-upgrade procedure](../../deploy/README.md#upgrading-a-database)
 for host-administered daemons does not upgrade this managed installation record.
 Keep its package and private
@@ -58,6 +62,77 @@ Restricted hosts that cannot launch a service with ambient capabilities must use
 the capability-free fallback configuration; see [executor setup](executor-onboarding.md#run-persistently-on-linux).
 
 Reference unit files live in [`deploy/systemd`](../../deploy/systemd).
+
+## Replace an enrolled executor's package
+
+This procedure changes only the package used by an existing enrolled managed
+executor. It preserves its service account, canonical state path, TLS identity,
+configuration, database, retained output and recorded capability profile. It
+does not enroll another executor, change the counter mode, migrate a database,
+start the service or enable it at boot. Keep other administrators, automation
+and foreground executors from starting or changing this instance throughout
+maintenance; the command does not serialize concurrent administrator actions.
+
+Obtain the operator-approved full package and verify its release trust as
+described in [signed releases](releases.md). Retain the previous full package.
+Stage the candidate without changing command links, then use its CLI explicitly:
+
+```sh
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR
+sudo sh ./install.sh --archive "./debuglet-${DEBUGLET_VERSION}-linux-amd64.tar.gz" \
+  --checksums ./SHA256SUMS --version "$DEBUGLET_VERSION" --prefix /usr/local --stage-only
+candidate="/usr/local/lib/debuglet/$DEBUGLET_VERSION"
+replacement_cli="$candidate/bin/dbl"
+sudo "$replacement_cli" --output json drain --role executor --name worker
+```
+
+Continue only after the drain reports `joined: true` and `enabled: false`.
+An incomplete or failed shutdown is not permission to replace the package.
+While stopped, make a private offline backup of the entire
+`/var/lib/debuglet/executors/worker` directory, the installation record at
+`/etc/debuglet/services/executor-worker.json`, and the unit at
+`/etc/systemd/system/debuglet-executor-worker.service`. Keep the old package's
+exact path and version with that backup. These files include private credentials.
+
+```sh
+sudo "$replacement_cli" service install --role executor --name worker \
+  --enrolled-state /var/lib/debuglet/executors/worker \
+  --replace-package "$candidate" --start=false --enable=false
+```
+
+`--replace-package` takes an absolute installed full-package directory, not an
+archive or executable. The existing package verifier checks its manifest and
+files. Omit `--user` and `--group` to retain the recorded identity; supplied
+values must match it. The target executor must accept the current database
+through its offline `-check-database` check. An incompatible database or an older
+target without that check is refused. Plan any required schema migration
+separately using the [offline database procedure](../../deploy/README.md#upgrading-a-database);
+do not purge state or edit the installation record to bypass a refusal.
+
+A successful replacement leaves the unit stopped and disabled; default command
+links such as `/usr/local/bin/dbl` are unchanged. Keep using the selected CLI
+path below. Explicitly resume it, inspect readiness and the connected node's
+version, then run one permitted TEST measurement and inspect its complete output:
+
+```sh
+sudo "$replacement_cli" drain --role executor --name worker --resume
+sudo "$replacement_cli" service status --role executor --name worker
+```
+
+After an interrupted replacement, keep the service stopped and repeat the exact
+replacement command with the same verified target. Only the matching interrupted
+operation can be completed; an unexplained unit/record mismatch is refused.
+Do not manually repair the record or start a mismatched unit.
+
+For a deliberate rollback, drain and back up again, then use this **new CLI**
+with `--replace-package /absolute/path/to/the/retained/previous/full-package`
+and the same explicit false flags. The old package's CLI need not support this
+option. Rollback selects older executable bytes; it keeps the current identity
+and state, requires the old target's schema check to pass, and does not replay
+work. Do not restore an old database or cryptographic state over work accepted
+since that backup. An incompatible schema needs a separate recovery plan, not
+an automatic downgrade. Verify readiness and a fresh permitted TEST result
+before returning the node to use.
 
 ## Tested managed profile
 

@@ -145,6 +145,13 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 	// build never upgrades state in place, so the operator is told which
 	// version owns the directory instead of silently adopting it.
 	if existing, err := ReadRecord(i.root, p.Role, p.Name); err == nil {
+		if existing.Enrolled && (existing.Version != p.Version || existing.SourceSHA != p.SourceSHA ||
+			existing.PayloadRoot != p.PayloadRoot || existing.Executable != p.Executable) {
+			return report, fmt.Errorf("enrolled executor %s retains package %s (%s, %s); use --replace-package to select another verified payload after draining", existing.Name, existing.PayloadRoot, existing.Version, existing.SourceSHA)
+		}
+		if existing.Enrolled && (existing.User != p.User || existing.Group != p.Group) {
+			return report, fmt.Errorf("enrolled executor %s retains service account %s:%s; reinstall with that account and group", existing.Name, existing.User, existing.Group)
+		}
 		if existing.Version != p.Version || existing.SourceSHA != p.SourceSHA {
 			return report, fmt.Errorf("%s %s is installed from version %s (%s); reinstall that version, or install this one under a different --name",
 				existing.Role, existing.Name, existing.Version, existing.SourceSHA)
@@ -154,6 +161,19 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 		}
 		if existing.Enrolled != p.Enrolled {
 			return report, errors.New("installation mode differs from retained state; reinstall enrolled executors with --enrolled-state and never replace their configuration")
+		}
+		if existing.Enrolled {
+			if err := i.verifyRemoval(ctx, existing); err != nil {
+				// A same-package counter-mode reinstall records its capability
+				// choice before writing the unit. Only that one-field
+				// intermediate may be repaired here; package/path changes
+				// still require the explicit replacement operation.
+				previous := existing
+				previous.PacketCapabilities = !previous.PacketCapabilities
+				if err := i.verifyRemoval(ctx, previous); err != nil {
+					return report, err
+				}
+			}
 		}
 		p.ExecutorID = existing.ExecutorID
 		p.PacketCapabilities = existing.PacketCapabilities
@@ -498,6 +518,9 @@ func (i *Installer) own(dir string, account Account) error {
 func (i *Installer) Start(ctx context.Context, role storagecheck.Role, name string) (Report, error) {
 	p, report, err := i.load(ctx, "start", role, name)
 	if err != nil {
+		return report, err
+	}
+	if err := i.prepareStart(ctx, p); err != nil {
 		return report, err
 	}
 	if err := os.Remove(filepath.Join(p.StateDir, demo.OfflineStateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {

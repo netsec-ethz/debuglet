@@ -204,6 +204,13 @@ for stopping, removal and package handling. Back up an enrolled executor by
 stopping it cleanly and preserving its entire private state directory; the
 foreground TEST backup command does not include enrolled credentials.
 
+To change the package of this enrolled managed executor, follow
+[controlled package replacement](services.md#replace-an-enrolled-executors-package).
+It requires a clean joined shutdown, a disabled unit, an offline private backup
+and explicit `--replace-package PATH --start=false --enable=false` using a CLI
+that supports replacement. It preserves the existing enrollment and service
+account; do not obtain another setup token or purge the state to upgrade.
+
 ## Restart and recovery
 
 Keep the generated state directory. Restarting with the same configuration,

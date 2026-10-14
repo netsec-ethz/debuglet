@@ -308,6 +308,17 @@ See [measurement workflows](measurements.md) for a deliberate linked retry and
 the installed two-executor echo command. Both preserve run identities when a
 submission or cleanup response is uncertain.
 
+For an already enrolled managed executor, `service install --replace-package PATH`
+selects an explicitly verified installed full-package directory. It requires
+`--enrolled-state`, a cleanly stopped and disabled unit, and explicit
+`--start=false --enable=false`. It preserves the recorded service account and
+state without migration or startup. Use a CLI that supports this option even
+when selecting an older target package for rollback; see the
+[controlled replacement procedure](operations/services.md#replace-an-enrolled-executors-package).
+Ordinary enrolled reinstalls retain the recorded package directory and service
+account; use replacement for package changes. Counter-mode changes still use
+the same package and account.
+
 ## Common options
 
 Global options precede the command; command options precede positional arguments.
