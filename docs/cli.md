@@ -315,7 +315,9 @@ selects an explicitly verified installed full-package directory. It requires
 state without migration or startup. Use a CLI that supports this option even
 when selecting an older target package for rollback; see the
 [controlled replacement procedure](operations/services.md#replace-an-enrolled-executors-package).
-Ordinary installation and reinstall behavior are unchanged.
+Ordinary enrolled reinstalls retain the recorded package directory and service
+account; use replacement for package changes. Counter-mode changes still use
+the same package and account.
 
 ## Common options
 
