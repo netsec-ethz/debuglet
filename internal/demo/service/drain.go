@@ -184,6 +184,9 @@ func (i *Installer) Resume(ctx context.Context, role storagecheck.Role, name str
 		report.Active, report.Enabled = state.Active, state.Enabled
 		return report, nil
 	}
+	if err := i.prepareStart(ctx, p); err != nil {
+		return report, err
+	}
 	state, err := i.manager.State(ctx, p.Unit)
 	if err != nil {
 		return report, err

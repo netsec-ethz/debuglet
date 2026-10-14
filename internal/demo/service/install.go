@@ -155,6 +155,11 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 		if existing.Enrolled != p.Enrolled {
 			return report, errors.New("installation mode differs from retained state; reinstall enrolled executors with --enrolled-state and never replace their configuration")
 		}
+		if existing.Enrolled {
+			if err := i.verifyRemoval(ctx, existing); err != nil {
+				return report, err
+			}
+		}
 		p.ExecutorID = existing.ExecutorID
 		p.PacketCapabilities = existing.PacketCapabilities
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -498,6 +503,9 @@ func (i *Installer) own(dir string, account Account) error {
 func (i *Installer) Start(ctx context.Context, role storagecheck.Role, name string) (Report, error) {
 	p, report, err := i.load(ctx, "start", role, name)
 	if err != nil {
+		return report, err
+	}
+	if err := i.prepareStart(ctx, p); err != nil {
 		return report, err
 	}
 	if err := os.Remove(filepath.Join(p.StateDir, demo.OfflineStateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
