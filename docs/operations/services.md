@@ -25,6 +25,7 @@ package versions.
 
 Reinstalling a managed role requires the same package version and source revision
 as its retained installation record, including after normal uninstall.
+Enrolled executors also retain their original installed package directory.
 An already enrolled executor can use the explicit
 [package replacement procedure](#replace-an-enrolled-executors-package) below.
 Changing the package of a local generated executor or dispatcher remains
