@@ -21,8 +21,9 @@ import (
 // live manager. Readiness itself is covered where it is implemented, in
 // internal/demo/service.
 type recordingManager struct {
-	calls   []string
-	enabled map[string]bool
+	calls         []string
+	enabled       map[string]bool
+	unitDirectory string
 	// mainPID, when nonzero, is the process every unit reports running.
 	mainPID int
 }
@@ -60,14 +61,19 @@ func (m *recordingManager) Stop(_ context.Context, unit string) error {
 
 func (m *recordingManager) State(_ context.Context, unit string) (service.UnitState, error) {
 	m.calls = append(m.calls, "state "+unit)
+	fragment := filepath.Join(m.unitDirectory, unit)
 	if m.mainPID != 0 {
-		return service.UnitState{Loaded: true, Active: "active", Sub: "running", Enabled: m.enabled[unit], MainPID: m.mainPID}, nil
+		return service.UnitState{Loaded: true, FragmentPath: fragment, Active: "active", Sub: "running", Enabled: m.enabled[unit], MainPID: m.mainPID}, nil
 	}
-	return service.UnitState{Loaded: true, Active: "inactive", Sub: "dead", Enabled: m.enabled[unit]}, nil
+	return service.UnitState{Loaded: true, FragmentPath: fragment, Active: "inactive", Sub: "dead", Enabled: m.enabled[unit]}, nil
 }
 
 func serviceTestDependencies(t *testing.T, manager service.Manager, root string) serviceDependencies {
 	t.Helper()
+	if recorder, ok := manager.(*recordingManager); ok {
+		// A loaded unit identifies the exact definition the manager read.
+		recorder.unitDirectory = service.UnitDirectory(root)
+	}
 	payload := filepath.Join(t.TempDir(), "lib", "debuglet", "9.9.9")
 	return serviceDependencies{
 		root:       root,
