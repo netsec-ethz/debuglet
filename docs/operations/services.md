@@ -19,7 +19,18 @@ sudo dbl service status --role executor
 
 Use `dbl drain --role executor` before planned maintenance and `dbl drain --role executor --resume` when it is ready again. Service commands need administrator privileges.
 
-The service owns its role-specific SQLite state and retains it across restart. A database is not automatically migrated or safe to reuse across arbitrary package versions. Back up state and follow the [database upgrade procedure](../../deploy/README.md#upgrading-a-database) before upgrading.
+The service owns its role-specific SQLite state and retains it across restart.
+A database is not automatically migrated or safe to reuse across arbitrary
+package versions.
+
+Reinstalling a managed role requires the same package version and source revision
+as its retained installation record, including after normal uninstall.
+Changing the package of an existing generated managed role is not supported by
+`dbl service install`. The
+[Ansible database-upgrade procedure](../../deploy/README.md#upgrading-a-database)
+for host-administered daemons does not upgrade this managed installation record.
+Keep its package and private
+state for recovery; do not purge retained state to bypass a version refusal.
 
 For an enrolled executor, supply `--enrolled-state` on every install or reinstall.
 Its configuration supplies the dispatcher addresses, so endpoint override flags
@@ -33,6 +44,11 @@ account with `NoNewPrivileges=yes`. An enrolled configuration explicitly selecti
 fallback configuration, a local executor and a dispatcher receive no capabilities.
 Separate isolated worker processes drop the daemon's capabilities before running
 guest code. The default trusted in-process execution shares the daemon process.
+
+The generated managed units do not delegate writable cgroups. They support the
+trusted execution profile; selecting `isolation.profile = "shared"` also requires
+a separately configured delegated service with the
+[shared-profile host setup](guest-isolation.md#required-host-setup).
 
 The installed record retains the unit's capability choice so older services
 remain stoppable and removable. Reinstalling preserves the enrollment files;

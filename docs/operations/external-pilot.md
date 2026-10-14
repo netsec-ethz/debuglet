@@ -68,8 +68,10 @@ commands, the output or error text, and any deviation from the documents.
    Approve the printed code in a browser, adding `--no-browser` on a shell-only
    machine ([CLI access](authentication.md#approve-a-cli-or-headless-host)), or
    use the [account-key login](../cli.md#use-an-account-key-connection) if the
-   project names it. For a private CA, set `SSL_CERT_FILE` to its certificate
-   first; `connect` has no certificate option
+   project names it. If the API uses a private CA, add
+   `--ca-file /path/to/api-ca.crt` to `dbl connect`; the saved connection retains
+   that absolute path, so keep the file available. A publicly trusted HTTPS API
+   uses system trust, even when native executor control uses a private CA
    ([client trust](remote-deployment.md#client-trust-and-account-access)). Run
    `dbl --dispatcher NAME version --server` and
    `dbl --dispatcher NAME --output json nodes`, and record the server version

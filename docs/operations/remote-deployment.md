@@ -3,8 +3,13 @@
 A networked deployment has one dispatcher and one or more executors on Linux amd64 hosts. Every role runs the same Debuglet release. Use TLS, authenticate users, and keep the local-development profile disabled. Running a second dispatcher, against the same database or a separate one, is unsupported, and the dispatcher does not detect one at startup. To recover from a dispatcher outage, restart the dispatcher as described in [dispatcher outage](dispatcher-outage.md); [backup and restore](backup-restore.md) covers generated local TEST state.
 
 Use the full release bundle for the bundled samples. The native daemons accept
-operator-supplied configuration; `dbl up`, `dbl executor up`, and `dbl service
-install` generate local loopback profiles and do not provision this deployment.
+operator-supplied configuration. `dbl up`, `dbl executor up`, and the default
+`dbl service install` generate local loopback profiles. For an account-owned
+executor, `dbl executor join` followed by `dbl service install --enrolled-state`
+preserves its native TLS enrollment; follow the
+[persistent executor setup](executor-onboarding.md#run-persistently-on-linux).
+Use the [deployment guide](../../deploy/README.md) to provision the dispatcher
+and other host-administered roles.
 
 ## Required topology
 
@@ -112,15 +117,17 @@ disable client-certificate verification to bypass missing enrollment.
 
 ## Client trust and account access
 
-The published v0.2.0 CLI uses account-key login. For this profile with a private
-CA on Linux, set `SSL_CERT_FILE` to its public certificate before using `dbl`.
+Current packages save private API trust with `dbl connect --ca-file`; keep that
+public CA file available at its saved absolute path. For a publicly trusted API,
+omit this option, even if native executor control uses a private CA. The published
+v0.2.0 CLI instead uses `SSL_CERT_FILE=/path/to/api-ca.crt` for private trust.
+The following example uses current commands on an account-key deployment.
 Each participant registers an independent account once and retains the private
 account key, recovery code and saved session. This flow does not perform browser
 GitHub login; managed deployments may use a different account policy.
 
 ```sh
-export SSL_CERT_FILE=/path/to/ca.crt
-dbl connect https://dispatcher.example:9000 --name research
+dbl connect https://dispatcher.example:9000 --name research --ca-file /path/to/api-ca.crt
 dbl --dispatcher research login --register alice
 dbl --dispatcher research nodes
 dbl --dispatcher research run --sample hello --executor OTHER_EXECUTOR_UUID --wait --allow-remote-test
