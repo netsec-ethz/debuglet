@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/netsec-ethz/debuglet/internal/demo"
@@ -18,6 +19,7 @@ const serviceUsage = `Usage:
       [--port 9000] [--grpc-port 9001] [--dispatcher 127.0.0.1:9001]
       [--dispatcher-http 127.0.0.1:9000] [--start=false] [--enable=false] [--root DIR]
       [--enrolled-state /var/lib/debuglet/executors/NAME]
+      [--replace-package /absolute/path/to/installed/full-package]
   dbl service start|stop|status (--role ROLE) [--name NAME]
   dbl service uninstall (--role ROLE) [--name NAME] [--purge]
   dbl service prune --prefix DIR --version VERSION [--component full|cli|dispatcher|executor] [--dry-run]
@@ -43,6 +45,11 @@ retention is configured by the host.
 database already at the named instance's managed directory. Stop its foreground
 daemon first and do not launch it concurrently with installation. See
 docs/operations/executor-onboarding.md for the system-account setup sequence.
+--replace-package selects a verified full package for an already installed,
+enrolled executor. Stop and disable its unit first. Both --start=false and
+--enable=false are required; replacement never starts, enrolls or migrates it.
+The installed service account and state paths are preserved. Use the new CLI
+with an older target directory for rollback, subject to database compatibility.
 `
 
 // serviceDependencies is private so the command exposes no fault-injection
@@ -84,6 +91,7 @@ func productionServiceManager(root string) (service.Manager, error) {
 // serviceOptions are the flags every service subcommand shares.
 type serviceOptions struct {
 	Role, Name, Root, User, Group string
+	ReplacePackage                string
 	Purge                         bool
 	Request                       service.Request
 	Start, Enable                 bool
@@ -130,6 +138,9 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 	if code, ok := checkStagingRoot(name, serviceUsage, local, fs, subcommand, stderr); !ok {
 		return code
 	}
+	if code, ok := checkPackageReplacement(name, &local, fs, stderr); !ok {
+		return code
+	}
 	installer, code, ok := newInstaller(name, local, deps, stderr)
 	if !ok {
 		return code
@@ -139,12 +150,18 @@ func serviceCommandWith(ctx context.Context, args []string, options globalOption
 	switch subcommand {
 	case "install":
 		var assets demo.Assets
+		local.Request.Role, local.Request.Name = role, local.Name
+		local.Request.User, local.Request.Group = local.User, local.Group
+		if local.ReplacePackage != "" {
+			if assets, err = resolveReplacementAssets(local.ReplacePackage, deps); err == nil {
+				report, err = installer.ReplacePackage(ctx, local.Request, assets)
+			}
+			break
+		}
 		if local.Root != "" {
 			local.Start, local.Enable = false, false
 		}
 		if assets, err = resolveServiceAssets(deps); err == nil {
-			local.Request.Role, local.Request.Name = role, local.Name
-			local.Request.User, local.Request.Group = local.User, local.Group
 			report, err = installer.Install(ctx, local.Request, assets, local.Start, local.Enable)
 		}
 	case "start":
@@ -187,6 +204,7 @@ func serviceFlags(fs *flag.FlagSet, local *serviceOptions, subcommand string) {
 		fs.StringVar(&local.Request.DispatcherGRPC, "dispatcher", "", "executor: dispatcher control address as host:port")
 		fs.StringVar(&local.Request.DispatcherHTTP, "dispatcher-http", "", "executor: dispatcher HTTP address as host:port")
 		fs.StringVar(&local.Request.EnrolledState, "enrolled-state", "", "executor: preserve enrolled state at this instance's canonical managed path")
+		fs.StringVar(&local.ReplacePackage, "replace-package", "", "enrolled executor: select an installed full-package directory while stopped and disabled")
 		fs.BoolVar(&local.Start, "start", true, "start the unit and observe its readiness record")
 		fs.BoolVar(&local.Enable, "enable", true, "let the service manager start the unit at boot")
 	case "uninstall":
@@ -215,7 +233,7 @@ func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options g
 	blank := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "name", "root", "user", "group", "dispatcher", "dispatcher-http", "enrolled-state":
+		case "name", "root", "user", "group", "dispatcher", "dispatcher-http", "enrolled-state", "replace-package":
 			if strings.TrimSpace(f.Value.String()) == "" {
 				blank = true
 			}
@@ -236,6 +254,40 @@ func defaultInstanceName(role storagecheck.Role) string {
 		return "local"
 	}
 	return "worker"
+}
+
+func checkPackageReplacement(name string, local *serviceOptions, fs *flag.FlagSet, stderr io.Writer) (int, bool) {
+	if local.ReplacePackage == "" {
+		return exitOK, true
+	}
+	if local.Role != string(storagecheck.Executor) || local.Request.EnrolledState == "" || local.Root != "" {
+		return usageError(name, serviceUsage, stderr, "--replace-package requires an enrolled executor with --enrolled-state and cannot use --root"), false
+	}
+	var startSet, enableSet, userSet, groupSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "start":
+			startSet = true
+		case "enable":
+			enableSet = true
+		case "user":
+			userSet = true
+		case "group":
+			groupSet = true
+		}
+	})
+	if !startSet || !enableSet || local.Start || local.Enable {
+		return usageError(name, serviceUsage, stderr, "--replace-package requires explicit --start=false --enable=false"), false
+	}
+	// Replacement preserves the recorded service identity when omitted; the
+	// install command's default account must not overwrite that identity.
+	if !userSet {
+		local.User = ""
+	}
+	if !groupSet {
+		local.Group = ""
+	}
+	return exitOK, true
 }
 
 // checkStagingRoot keeps a staged tree from reaching the host's one service
@@ -291,6 +343,24 @@ func resolveServiceAssets(deps serviceDependencies) (demo.Assets, error) {
 		return demo.Assets{}, err
 	}
 	return deps.resolve(exe)
+}
+
+func resolveReplacementAssets(target string, deps serviceDependencies) (demo.Assets, error) {
+	if !filepath.IsAbs(target) {
+		return demo.Assets{}, fmt.Errorf("--replace-package must name an absolute installed full-package directory")
+	}
+	root, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return demo.Assets{}, err
+	}
+	assets, err := deps.resolve(filepath.Join(root, "bin", "dbl"))
+	if err != nil {
+		return demo.Assets{}, err
+	}
+	if assets.Root != root {
+		return demo.Assets{}, fmt.Errorf("--replace-package selects %s, but bin/dbl resolves to another package at %s", root, assets.Root)
+	}
+	return assets, nil
 }
 
 // writeServiceReport renders the observation for a reader. The caller emits it

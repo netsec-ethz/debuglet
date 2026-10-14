@@ -229,6 +229,173 @@ func TestServiceInstallRefusalPrintsOnlyTheError(t *testing.T) {
 	}
 }
 
+func TestServicePackageReplacementRequiresExplicitOfflineEnrollment(t *testing.T) {
+	base := []string{"install", "--replace-package", "/opt/debuglet/lib/debuglet/2.0.0"}
+	enrolled := []string{"--role", "executor", "--enrolled-state", "/var/lib/debuglet/executors/worker"}
+	for name, flags := range map[string][]string{
+		"dispatcher":                {"--role", "dispatcher", "--enrolled-state", "/var/lib/debuglet/dispatchers/local", "--start=false", "--enable=false"},
+		"not enrolled":              {"--role", "executor", "--start=false", "--enable=false"},
+		"defaults start and enable": enrolled,
+		"missing enable":            append(append([]string{}, enrolled...), "--start=false"),
+		"missing start":             append(append([]string{}, enrolled...), "--enable=false"),
+		"starts":                    append(append([]string{}, enrolled...), "--start=true", "--enable=false"),
+		"enables":                   append(append([]string{}, enrolled...), "--start=false", "--enable=true"),
+		"staging":                   append(append([]string{}, enrolled...), "--start=false", "--enable=false", "--root", t.TempDir()),
+		"blank target":              append(append([]string{}, enrolled...), "--start=false", "--enable=false", "--replace-package", " "),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			deps := serviceDependencies{
+				resolve: func(string) (demo.Assets, error) {
+					t.Fatal("invalid replacement resolved a package")
+					return demo.Assets{}, nil
+				},
+				manager: func(string) (service.Manager, error) {
+					t.Fatal("invalid replacement reached the manager")
+					return nil, nil
+				},
+			}
+			if code := serviceCommandWith(t.Context(), append(append([]string{}, base...), flags...),
+				globalOptions{Output: outputHuman}, &stdout, &stderr, deps); code != exitUsage {
+				t.Fatalf("exit %d, want usage refusal: %s", code, stderr.String())
+			}
+		})
+	}
+}
+
+func TestServicePackageReplacementVerifiesSelectedTarget(t *testing.T) {
+	for _, version := range []string{"previous", "candidate"} {
+		t.Run(version, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "lib", "debuglet", version)
+			if err := os.MkdirAll(target, 0755); err != nil {
+				t.Fatal(err)
+			}
+			manager := newRecordingManager()
+			deps := serviceTestDependencies(t, manager, t.TempDir())
+			deps.executable = func() (string, error) { t.Fatal("replacement selected the CLI's own package"); return "", nil }
+			called := false
+			deps.resolve = func(path string) (demo.Assets, error) {
+				called = true
+				if path != filepath.Join(target, "bin", "dbl") {
+					t.Fatalf("resolved %q instead of selected target %q", path, target)
+				}
+				return demo.Assets{}, errors.New("selected package verification failed")
+			}
+			var stdout, stderr bytes.Buffer
+			code := serviceCommandWith(t.Context(), []string{"install", "--role", "executor",
+				"--enrolled-state", "/var/lib/debuglet/executors/worker", "--replace-package", target,
+				"--start=false", "--enable=false"}, globalOptions{Output: outputHuman}, &stdout, &stderr, deps)
+			if code != exitFailure || !called || !strings.Contains(stderr.String(), "selected package verification failed") {
+				t.Fatalf("verification refusal: exit %d, called %v: %s", code, called, stderr.String())
+			}
+			if len(manager.calls) != 0 || stdout.Len() != 0 {
+				t.Fatalf("unverified target reached service actions: %v, output %s", manager.calls, stdout.String())
+			}
+		})
+	}
+}
+
+func TestServicePackageReplacementPreservesOmittedAccountOptions(t *testing.T) {
+	for name, test := range map[string]struct {
+		flags       []string
+		user, group string
+	}{
+		"recorded identity": {},
+		"explicit user":     {flags: []string{"--user", "workeruser"}, user: "workeruser"},
+		"explicit group":    {flags: []string{"--group", "workergroup"}, group: "workergroup"},
+		"explicit identity": {flags: []string{"--user", "workeruser", "--group", "workergroup"}, user: "workeruser", group: "workergroup"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs := newCommandFlagSet("service install")
+			var local serviceOptions
+			serviceFlags(fs, &local, "install")
+			args := []string{"--role", "executor", "--enrolled-state", "/var/lib/debuglet/executors/worker",
+				"--replace-package", "/opt/debuglet/lib/debuglet/candidate", "--start=false", "--enable=false"}
+			if err := fs.Parse(append(args, test.flags...)); err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			if _, ok := checkPackageReplacement("dbl service install", &local, fs, &stderr); !ok {
+				t.Fatal(stderr.String())
+			}
+			if local.User != test.user || local.Group != test.group {
+				t.Fatalf("account selection %q:%q, want %q:%q", local.User, local.Group, test.user, test.group)
+			}
+		})
+	}
+}
+
+func TestServicePackageReplacementDoesNotInstallAMissingInstance(t *testing.T) {
+	root := t.TempDir()
+	manager := newRecordingManager()
+	deps := serviceTestDependencies(t, manager, root)
+	assets, err := deps.resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(assets.Root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := serviceCommandWith(t.Context(), []string{"install", "--role", "executor", "--name", "retained",
+		"--enrolled-state", filepath.Join(root, "var", "lib", "debuglet", "executors", "retained"),
+		"--replace-package", assets.Root, "--start=false", "--enable=false"},
+		globalOptions{Output: outputJSON}, &stdout, &stderr, deps)
+	var report service.Report
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if code != exitFailure || report.Operation != "replace-package" || report.Name != "retained" {
+		t.Fatalf("replacement route: exit %d, report %+v, error %s", code, report, stderr.String())
+	}
+	if _, err := os.Stat(service.RecordPath(root, storagecheck.Executor, "retained")); !os.IsNotExist(err) {
+		t.Fatalf("replacement created an installation record: %v", err)
+	}
+	if len(manager.calls) != 0 {
+		t.Fatalf("missing instance reached the manager: %v", manager.calls)
+	}
+}
+
+func TestServicePackageReplacementRejectsRedirectedExecutable(t *testing.T) {
+	manager := newRecordingManager()
+	deps := serviceTestDependencies(t, manager, t.TempDir())
+	assets, err := deps.resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(assets.CLI), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assets.CLI, []byte("fixture CLI"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	requested := t.TempDir()
+	if err := os.Mkdir(filepath.Join(requested, "bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(assets.CLI, filepath.Join(requested, "bin", "dbl")); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := serviceCommandWith(t.Context(), []string{"install", "--role", "executor",
+		"--enrolled-state", "/var/lib/debuglet/executors/worker", "--replace-package", requested,
+		"--start=false", "--enable=false"}, globalOptions{Output: outputHuman}, &stdout, &stderr, deps)
+	if code != exitFailure || !strings.Contains(stderr.String(), "resolves to another package") {
+		t.Fatalf("redirected target: exit %d, error %s", code, stderr.String())
+	}
+	if stdout.Len() != 0 || len(manager.calls) != 0 {
+		t.Fatalf("redirected target reached service actions: %s, %v", stdout.String(), manager.calls)
+	}
+	alias := filepath.Join(t.TempDir(), "package")
+	if err := os.Symlink(assets.Root, alias); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := resolveReplacementAssets(alias, deps)
+	if err != nil || selected.Root != assets.Root {
+		t.Fatalf("valid directory alias refused: %+v, %v", selected, err)
+	}
+}
+
 func TestServiceStatusOfAnUninstalledInstanceFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := serviceCommandWith(context.Background(),
