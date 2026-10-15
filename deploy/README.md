@@ -224,11 +224,11 @@ lets the candidate's own installer place the payload under
 its own activation links, so updating dev cannot switch prod's executable.
 Redeploying the same release installs nothing again.
 
-`make deploy-seed-db` writes the schema-only SQLite databases the roles
-install alongside them. It runs the already-built payload's daemon commands
-with `-init-database PATH`, after checking its installed manifest matches the
-release in `deploy/dist`. Run `make deploy-build` first; an image from another
-release is refused. Neither `deploy/dist/` nor `deploy/certs/` is committed.
+For a new host, each role initializes its database with the installed release's
+`-init-database PATH` command as the service account. No seed files need to be
+added to a signed release bundle. Neither `deploy/dist/` nor `deploy/certs/`
+is committed. `make deploy-seed-db` remains available for tools that need
+separate schema-only files; the Ansible roles do not use them.
 
 ## The provisioner
 
@@ -415,11 +415,10 @@ Executors on a shared host use separate `debuglet-prod`/`debuglet-dev` users,
 `debuglet-executor-<env>.service` units. Package staging and deployment records
 are also separate. Prod and dev dispatchers remain on separate hosts.
 
-A daemon never creates its database. When a host has none yet, the roles
-install the schema-only seed that `make deploy-seed-db` wrote, which is the
-step a daemon's absent-database refusal names.
-The roles never overwrite a nonempty database with a seed, and they never
-upgrade one. A zero-byte executor database can be replaced with the seed. If a
+Normal daemon startup never creates its database. When a host has none yet,
+the roles explicitly initialize it using the installed daemon's embedded
+migrations. They never overwrite or upgrade a nonempty database. A zero-byte
+executor database can be reinitialized. If a
 previous installation has nonempty state and the selected environment has no
 database yet, deployment stops and preserves that state and its legacy unit.
 Back the database up, place it in the selected state directory, deploy again

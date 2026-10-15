@@ -56,7 +56,7 @@
     - executor_legacy_unit.stat.exists
 
 # An interrupted initial start can leave a zero-byte database. It contains no
-# state; unlike a nonempty database it must not block installation of the seed.
+# state; unlike a nonempty database it must not block initialization.
 - name: Discard an empty executor database
   ansible.builtin.file:
     path: "{{ executor_state_dir }}/executor.db"
@@ -65,14 +65,15 @@
     - executor_db.stat.exists
     - executor_db.stat.size == 0
 
-- name: Provision executor database (schema only, preserved on redeploy)
-  ansible.builtin.copy:
-    src: "{{ dist_dir }}/executor-seed.db" # built by `make deploy-seed-db`, not committed
-    dest: "{{ executor_state_dir }}/executor.db"
-    owner: "{{ executor_user }}"
-    group: "{{ executor_group }}"
-    mode: "0600"
-    force: false # never overwrite an existing database: it holds recorded runs
+- name: Initialize a missing executor database with the installed release
+  become: true
+  become_user: "{{ executor_user }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-executor"
+      - -init-database
+      - "{{ executor_state_dir }}/executor.db"
+    creates: "{{ executor_state_dir }}/executor.db"
   notify: Restart executor
 
 # The rendered configuration carries the TESLA seed, so its content stays out

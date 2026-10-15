@@ -92,7 +92,7 @@ if [ "$action" = certs ]; then
 	exit
 fi
 
-make -C "$root" deploy-build deploy-seed-db
+make -C "$root" deploy-build
 deploy_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
 	"$root/deploy/dist/release.json")
 extra+=(-e "deploy_version=$deploy_version")

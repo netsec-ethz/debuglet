@@ -36,14 +36,15 @@
       upgrade-database.yml.
     quiet: true
 
-- name: Provision dispatcher database (schema only, preserved on redeploy)
-  ansible.builtin.copy:
-    src: "{{ dist_dir }}/dispatcher-seed.db" # built by `make deploy-seed-db`, not committed
-    dest: "{{ state_dir }}/dispatcher/dispatcher.db"
-    owner: "{{ debuglet_user }}"
-    group: "{{ debuglet_group }}"
-    mode: "0600"
-    force: false # never overwrite an existing database: it holds recorded runs
+- name: Initialize a missing dispatcher database with the installed release
+  become: true
+  become_user: "{{ debuglet_user }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ payload_prefix }}/lib/debuglet/{{ debuglet_release.version }}/bin/debuglet-dispatcher"
+      - -init-database
+      - "{{ state_dir }}/dispatcher/dispatcher.db"
+    creates: "{{ state_dir }}/dispatcher/dispatcher.db"
   notify: Restart dispatcher
 
 # The RIS ASN database refresh. The dispatcher refuses to start with a

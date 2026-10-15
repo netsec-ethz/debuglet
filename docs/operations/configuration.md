@@ -268,7 +268,7 @@ debuglet-dispatcher -init-database /path/to/new-state/dispatcher.db
 
 The parent must be a real mode-0700 directory owned by that account. Initialization creates a mode-0600 database exclusively and refuses an existing database or SQLite companion file without changing it. It takes an explicit path, reads no runtime configuration, and cannot be combined with other flags. Set the daemon configuration's `database.path` to that file afterward.
 
-Local `dbl` services and the Docker seed service use the same implementation. For Ansible, run `make deploy-build deploy-seed-db`; seed generation uses the daemons from that verified payload, and the roles install a seed only when the host has no database yet. See [deploy/README.md](../../deploy/README.md).
+Local `dbl` services, the Docker seed service and Ansible use the same implementation. Ansible initializes a missing database with the installed release's daemon, as the service account; no separate seed files are needed. Existing nonempty databases are preserved and never upgraded implicitly. See [deploy/README.md](../../deploy/README.md).
 
 The former goose CLI `make upgrade` and `make downgrade` targets are removed. Use the daemon commands below for explicit upgrades. Rollback means stopping the service and restoring the pre-upgrade database and its matching executable/configuration; it is not an automatic down migration. Never run an older binary against a newer database unless its schema policy explicitly accepts it.
 
