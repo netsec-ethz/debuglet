@@ -1,34 +1,21 @@
 # Install Debuglet
 
-Use Linux amd64 and the exact package version recommended by your dispatcher
-operator. For executor enrollment, managed services, and the local demo, choose
-the **full bundle**. The CLI-only and daemon-only packages do not provide that
-complete setup flow.
-
-The current executor setup flow requires a newer package than the published,
-unsigned v0.2.0 release. Until a compatible signed release is published, your
-operator must supply a private development candidate. A development candidate
-is not a public release and has no GitHub release download URL.
+Use Linux amd64, a POSIX shell, GNU tar, and coreutils. Choose the operator's
+exact **full bundle** for executor enrollment, managed services, or the local
+demo. No source checkout or compiler is needed. The published unsigned v0.2.0
+package predates `dbl executor join`; the current enrollment flow requires an
+operator-supplied candidate until a compatible signed release is published.
 
 ## Install a private development candidate
 
-No source checkout or compiler is required. Obtain these files, the exact
-candidate version, and its full source revision through your operator's trusted
-channel:
-
-- A trusted standalone copy of `bootstrap.sh` from the candidate source.
-- `debuglet-VERSION-linux-amd64.tar.gz`, `install.sh`, and `SHA256SUMS`, kept
-  together in one local directory with their original filenames.
-
-The bootstrap verifies the archive and installer checksums **before executing
-the installer**. The installer then verifies the package contents and installed
-files. These checks detect changed bytes; an unsigned candidate does not
-authenticate its publisher. Trust in both the bootstrap and the candidate comes
-from the channel through which your operator supplies them.
-
-Set the exact values supplied by your operator. `VERSION_PROVIDED_BY_OPERATOR`
-below is a placeholder for a version such as `v0.0.0-dev.0123456789ab`; do not
-rename an archive or infer its version from an unrelated checkout.
+Obtain a trusted standalone `bootstrap.sh`, the exact version and source
+revision, and the matching `debuglet-VERSION-linux-amd64.tar.gz`, `install.sh`,
+and `SHA256SUMS` through your operator's trusted channel. Keep those three
+package files together with their original names. Replace the version
+placeholder below with the supplied `v0.0.0-dev.<source-prefix>` and use your
+actual local paths. Candidates require a local directory and explicit unsigned
+opt-in; they are not public releases. Checksums are verified before the installer
+runs, but do not authenticate an unsigned publisher.
 
 ```sh
 DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
@@ -41,30 +28,22 @@ dbl --output json version
 dbl demo
 ```
 
-Use your actual local paths. Leave `DEBUGLET_COMPONENT` unset for the full
-bundle. The command refuses development candidates without a local package
-directory and explicit unsigned opt-in. Signature requirements or configured
-release trust cannot be overridden by unsigned mode.
-
-Confirm that `dbl version` reports the supplied version and source revision.
-The demo needs no service, account, wallet, or root access. Installing the
-package does not enroll an executor or create a service account; continue with
-[executor setup](docs/operations/executor-onboarding.md), or use
-[managed services](docs/operations/services.md) for a system-wide installation.
-
-The installer requires a POSIX shell, GNU tar, and coreutils. Its versioned
-files are under `PREFIX/lib/debuglet/VERSION`, and `PREFIX/bin/dbl` selects the
-installed bundle. Installing another version does not restart an existing
-service; follow the managed-service update procedure.
+Leave component and signature/trust settings unset for this unsigned full
+bundle; unsigned mode cannot override configured signature requirements.
+Confirm the reported version and source revision. The demo needs no service,
+account, wallet, or root access. Installation does not enroll a node, create a
+service account, or restart an existing service; follow [executor
+setup](docs/operations/executor-onboarding.md) or [managed
+services](docs/operations/services.md) next.
 
 ## Install a signed release
 
-Use this route only after your operator identifies an exact published version
-with downloadable signed assets. Obtain the standalone bootstrap and provision
-the release signer's trust file independently, as described in
-[Signed releases and offline verification](docs/operations/releases.md).
-This needs curl, Python 3.11 or later, and OpenSSH with `ssh-keygen -Y` support
-in addition to the installer prerequisites.
+Once your operator identifies an exact published version with signed assets,
+obtain the trusted standalone bootstrap and provision the signer's trust file
+independently using [Signed releases and offline
+verification](docs/operations/releases.md). Replace the version placeholder
+below and leave unsigned, component and local-directory settings unset. This
+route also requires curl, Python 3.11 or later, and OpenSSH with `ssh-keygen -Y`.
 
 ```sh
 DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
@@ -75,16 +54,13 @@ DEBUGLET_PREFIX="$HOME/.local" \
 sh /path/to/trusted/bootstrap.sh
 ```
 
-Leave `DEBUGLET_RELEASE_DIR` unset for public release downloads. For a signed
-offline install, set it to the directory containing the selected package files,
-`release.json`, and `release.json.sig`. The bootstrap verifies the signature
-before executing the installer and never falls back to unsigned mode.
+Signature verification precedes installer execution and never falls back to
+unsigned mode. For offline use, set `DEBUGLET_RELEASE_DIR` to the package
+directory including `release.json` and `release.json.sig`.
 
-For the older public demo only, a trusted bootstrap can download the existing
-unsigned package with `DEBUGLET_VERSION=v0.2.0 DEBUGLET_ALLOW_UNSIGNED=1 sh
-/path/to/trusted/bootstrap.sh`. Leave the component, local-directory and
-signature settings unset for that separate legacy invocation. v0.2.0 does not
-provide `dbl executor join`.
+For the older public v0.2.0 demo only, use `DEBUGLET_VERSION=v0.2.0
+DEBUGLET_ALLOW_UNSIGNED=1 sh /path/to/trusted/bootstrap.sh` with component,
+local-directory and signature/trust settings unset.
 
 ## Supported platforms
 
@@ -147,27 +123,14 @@ Component packages are available from current source builds and are intended for
 | Executor operators | `executor` | `.cache/ci/packages/executor/` | `debuglet-executor` |
 | Dispatcher operators | `dispatcher` | `.cache/ci/packages/dispatcher/` | `debuglet-dispatcher` |
 
-Obtain the selected component's three files and the trusted bootstrap from
-your operator, or use the source build directory above. Select the same exact
-version as the full bundle:
-
-```sh
-DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
-DEBUGLET_COMPONENT=cli \
-DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate/cli" \
-DEBUGLET_ALLOW_UNSIGNED=1 \
-DEBUGLET_PREFIX="$HOME/.local" \
-sh "$HOME/Downloads/bootstrap.sh"
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Replace `cli` with `executor` or `dispatcher` and use its matching directory
-when needed. Each directory contains its archive, `install-COMPONENT.sh`, and
-`SHA256SUMS-COMPONENT`. These filenames are also unique release asset names.
-For signed components, use the signed-release command with
-`DEBUGLET_COMPONENT` instead of unsigned mode. Role installations share a prefix
-safely: upgrading one changes only its own command link. The daemon packages
-include their SQLite support and embedded migrations; they do not require
+Use either bootstrap invocation above with `DEBUGLET_COMPONENT=cli`,
+`executor`, or `dispatcher`. For local packages, point `DEBUGLET_RELEASE_DIR`
+to that component's directory containing its archive, `install-COMPONENT.sh`,
+and `SHA256SUMS-COMPONENT`. Select the same exact version as the full bundle.
+Check the installed command with `--help`; the component packages omit the
+bundled demo. Role installations share a prefix safely: upgrading one changes
+only its own command link. The daemon packages include their SQLite support
+and embedded migrations; they do not require
 `goose` or `sqlc` at runtime. Daemons still need configuration and a prepared
 database; see the operator guide below.
 
