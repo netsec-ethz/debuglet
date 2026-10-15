@@ -53,9 +53,9 @@ func (i *Installer) prepareEnrolledState(ctx context.Context, p *Profile, accoun
 	return writeRecord(*p)
 }
 
-// validateEnrolledState reads the saved identity and trust without changing
+// readEnrolledConfig reads the saved identity paths without changing
 // ownership, configuration, schema or the administrator's installed record.
-func validateEnrolledState(p Profile) (*executorconfig.ExecutorConfig, error) {
+func readEnrolledConfig(p Profile) (*executorconfig.ExecutorConfig, error) {
 	for path := p.StateDir; path != p.Root && path != filepath.Dir(path); path = filepath.Dir(path) {
 		info, err := os.Lstat(path)
 		if err != nil || !info.IsDir() {
@@ -87,29 +87,41 @@ func validateEnrolledState(p Profile) (*executorconfig.ExecutorConfig, error) {
 		cfg.Credentials.ClientKey != filepath.Join(p.StateDir, "executor.key") || cfg.Credentials.EnrollmentToken != "" {
 		return nil, errors.New("enrolled configuration must retain TLS and its original credentials and database inside the managed directory")
 	}
-	pair, err := tlsfiles.KeyPair("credentials.client_cert", cfg.Credentials.ClientCert, "credentials.client_key", cfg.Credentials.ClientKey, time.Now())
+	return cfg, nil
+}
+
+func validateEnrolledState(p Profile) (*executorconfig.ExecutorConfig, error) {
+	cfg, err := readEnrolledConfig(p)
 	if err != nil {
 		return nil, err
 	}
+	return cfg, validateEnrolledCertificate(cfg, cfg.Credentials.ClientCert)
+}
+
+func validateEnrolledCertificate(cfg *executorconfig.ExecutorConfig, certificatePath string) error {
+	pair, err := tlsfiles.KeyPair("credentials.client_cert", certificatePath, "credentials.client_key", cfg.Credentials.ClientKey, time.Now())
+	if err != nil {
+		return err
+	}
 	if pair.Leaf.IsCA || pair.Leaf.Subject.CommonName != cfg.Identity.ExecutorID {
-		return nil, errors.New("enrolled certificate does not identify this executor")
+		return errors.New("enrolled certificate does not identify this executor")
 	}
 	roots, err := tlsfiles.TrustRoots("credentials.ca_cert", cfg.Credentials.CACert, time.Now())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	intermediates := x509.NewCertPool()
 	for _, der := range pair.Certificate[1:] {
 		certificate, err := x509.ParseCertificate(der)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		intermediates.AddCert(certificate)
 	}
 	if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		return nil, fmt.Errorf("verify enrolled certificate: %w", err)
+		return fmt.Errorf("verify enrolled certificate: %w", err)
 	}
-	return cfg, nil
+	return nil
 }
 
 // This observes already-running daemons; administrators must keep foreground

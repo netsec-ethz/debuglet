@@ -63,6 +63,21 @@ the capability-free fallback configuration; see [executor setup](executor-onboar
 
 Reference unit files live in [`deploy/systemd`](../../deploy/systemd).
 
+## Restart or renew an enrolled executor
+
+For a planned restart, run `sudo dbl --output json drain --role executor --name
+worker`, confirm `joined: true` and `enabled: false`, then run `sudo dbl drain
+--role executor --name worker --resume`. Inspect `sudo dbl service status --role
+executor --name worker` and the node's Ready state in the console. Reuse its
+existing configuration and credentials; restart and package replacement do not
+need a new setup token.
+
+Certificate renewal is a separate, manual operation using a fresh Set up again
+token and `dbl executor join --renew`. It preserves the key and all stored work
+while replacing the certificate of a stopped, disabled managed executor. Follow
+the [renewal procedure](executor-onboarding.md#renew-a-managed-executors-certificate)
+before the current certificate expires.
+
 ## Replace an enrolled executor's package
 
 This procedure changes only the package used by an existing enrolled managed
