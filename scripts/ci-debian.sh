@@ -27,7 +27,12 @@ docker run --rm --name "$name-prepare" --network none --cpus=2 --memory=1g --pid
     --mount "type=bind,src=$PWD,dst=/source,readonly" \
     --mount "type=bind,src=$packages,dst=/packages,readonly" \
     --mount "type=bind,src=$work,dst=/work" \
-    --entrypoint python3 "$image" /source/deploy/ci/debian-prepare.py \
+    --entrypoint sh "$image" -ec '
+      command -v apt-ftparchive dpkg-deb gpg gpgv >/dev/null
+      python3 -m unittest discover -s /source/deploy/debian -p test_package.py -v >&2
+      python3 -m unittest discover -s /source/tools -p test_apt_repository.py -v >&2
+      exec python3 /source/deploy/ci/debian-prepare.py
+    ' \
     > .cache/ci/debian-prepare.jsonl
 docker run --rm --name "$name-check" --network none --cpus=2 --memory=1g --pids-limit=128 \
     --cap-add=SYS_PTRACE --security-opt=no-new-privileges --env DEBUGLET_DEBIAN_FIXTURE=1 \
