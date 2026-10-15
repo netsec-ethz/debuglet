@@ -1,0 +1,174 @@
+name: Publish signed apt repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: First publication only (requires no prior Pages deployments)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: apt-pages-publication
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'netsec-ethz/debuglet' && github.ref_type == 'tag' && github.ref_protected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      pages: read
+      deployments: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check exact approved release inputs and publication settings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APT_PUBLIC_KEY: ${{ vars.APT_PUBLIC_KEY }}
+          APT_KEY_FINGERPRINT: ${{ vars.APT_KEY_FINGERPRINT }}
+          APT_REPOSITORY_URL: ${{ vars.APT_REPOSITORY_URL }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$APT_PUBLIC_KEY" && -n "$APT_KEY_FINGERPRINT" && -n "$APT_REPOSITORY_URL" ]]
+          mkdir .apt-input
+          printf '%s\n' "$APT_PUBLIC_KEY" > .apt-input/key.asc
+          gh api "repos/$GITHUB_REPOSITORY/environments/release-signing" > .apt-input/environment.json
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, 'tools')
+          from release import check_environment
+          check_environment(json.load(open('.apt-input/environment.json')))
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/pages" > .apt-input/pages.json
+          python3 - <<'PY'
+          import json, os
+          pages = json.load(open('.apt-input/pages.json'))
+          assert pages.get('build_type') == 'workflow', 'Pages must use GitHub Actions'
+          assert pages.get('https_enforced') is True, 'Pages must enforce HTTPS'
+          assert pages.get('html_url', '').rstrip('/') == os.environ['APT_REPOSITORY_URL'].rstrip('/'), 'configured repository URL differs from Pages'
+          PY
+          if [[ "$BOOTSTRAP" == true ]]; then
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/deployments?environment=github-pages&per_page=100" \
+              --jq '[.[][]]' > .apt-input/deployments.json
+            python3 -c 'import json; assert json.load(open(".apt-input/deployments.json")) == [], "bootstrap refused: prior Pages deployments exist"'
+          fi
+      - name: Download the published complete signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/apt_repository.py download-release --version "$GITHUB_REF_NAME" --out .apt-input/release
+      - name: Verify signed release and retain every previously published package
+        env:
+          APT_KEY_FINGERPRINT: ${{ vars.APT_KEY_FINGERPRINT }}
+          APT_REPOSITORY_URL: ${{ vars.APT_REPOSITORY_URL }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y apt-utils gnupg
+          fetch_options=()
+          previous_options=()
+          if [[ "$BOOTSTRAP" == true ]]; then
+            fetch_options+=(--bootstrap)
+          else
+            previous_options+=(--previous "$PWD/.apt-input/previous")
+          fi
+          python3 tools/apt_repository.py fetch --url "$APT_REPOSITORY_URL" --out .apt-input/previous \
+            --key .apt-input/key.asc --fingerprint "$APT_KEY_FINGERPRINT" "${fetch_options[@]}"
+          python3 tools/apt_repository.py prepare --release-directory .apt-input/release \
+            --version "$GITHUB_REF_NAME" --source "$GITHUB_SHA" \
+            --trust configs/release-allowed-signers --signer releases@debuglet.netsec.ethz.ch \
+            --key .apt-input/key.asc --fingerprint "$APT_KEY_FINGERPRINT" \
+            --out .apt-site "${previous_options[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prepared-apt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .apt-site/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: prepare
+    if: github.repository == 'netsec-ethz/debuglet' && github.ref_type == 'tag' && github.ref_protected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release-signing
+    permissions:
+      actions: read
+    steps:
+      # No checkout, package extraction, installer, or artifact-supplied code runs here.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: prepared-apt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: site
+      - name: Sign apt Release with independently provisioned OpenPGP trust
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          APT_PUBLIC_KEY: ${{ vars.APT_PUBLIC_KEY }}
+          APT_KEY_FINGERPRINT: ${{ vars.APT_KEY_FINGERPRINT }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          [[ "$APT_KEY_FINGERPRINT" =~ ^[0-9A-F]{40}$|^[0-9A-F]{64}$ ]]
+          [[ -n "$APT_SIGNING_KEY" && -n "$APT_PUBLIC_KEY" ]]
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp -d "$RUNNER_TEMP/apt-key.XXXXXXXX")
+          trap 'gpgconf --kill gpg-agent || true; rm -rf -- "$GNUPGHOME"' EXIT
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          unset APT_SIGNING_KEY
+          printf '%s\n' "$APT_PUBLIC_KEY" > "$GNUPGHOME/public.asc"
+          gpg --batch --dearmor --output "$GNUPGHOME/trusted.gpg" "$GNUPGHOME/public.asc"
+          primary=$(gpg --batch --with-colons --show-keys --fingerprint "$GNUPGHOME/public.asc" | awk -F: '$1=="pub" {want=1; next} $1=="fpr" && want {print $10; want=0}')
+          [[ "$primary" == "$APT_KEY_FINGERPRINT" ]]
+          cmp "$GNUPGHOME/public.asc" site/debuglet-archive-keyring.asc
+          gpg --batch --yes --local-user "$APT_KEY_FINGERPRINT" --digest-algo SHA256 \
+            --clearsign --output site/dists/stable/InRelease site/dists/stable/Release
+          gpg --batch --yes --local-user "$APT_KEY_FINGERPRINT" --digest-algo SHA256 --armor \
+            --detach-sign --output site/dists/stable/Release.gpg site/dists/stable/Release
+          gpgv --keyring "$GNUPGHOME/trusted.gpg" --output "$GNUPGHOME/verified-release" site/dists/stable/InRelease
+          cmp "$GNUPGHOME/verified-release" site/dists/stable/Release
+          gpgv --keyring "$GNUPGHOME/trusted.gpg" site/dists/stable/Release.gpg site/dists/stable/Release
+          gpgconf --kill gpg-agent || true
+          rm -rf -- "$GNUPGHOME"
+          trap - EXIT
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: site
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-apt-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: site/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        id: deployment

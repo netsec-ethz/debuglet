@@ -1,0 +1,199 @@
+# Signed apt repository
+
+The apt channel serves Ubuntu 24.04 amd64. Installing `debuglet` stages the CLI
+and its exact full payload; enrollment, service activation and migration remain
+explicit operations. See [Debian installation](debian.md) for package and service
+lifecycle behavior. The existing [tar installation](releases.md) remains supported.
+
+The publishing workflow requires administrator setup and an approved protected
+release before the channel can be used. This document does not establish a live
+repository URL or production OpenPGP fingerprint. Configure website onboarding
+only after the actual HTTPS download and apt installation have been verified.
+
+## Trust and layout
+
+APT authenticates `dists/stable/InRelease`, which contains the signed `Release`
+metadata. Its SHA256 entries bind `main/binary-amd64/Packages` and `Packages.gz`;
+each package entry binds the exact `.deb` bytes and size. A detached
+`Release.gpg` is also published. `apt-ftparchive` generates the indexes and Release;
+GnuPG signs them. Packages are never executed during repository preparation or
+signing.
+
+The repository has suite `stable`, component `main`, architecture `amd64`, and
+publishes its ASCII public key at `debuglet-archive-keyring.asc`. The key must be
+confirmed against a fingerprint obtained through an independent authenticated
+channel. Downloading a key beside a package does not authenticate the publisher.
+The existing OpenSSH release key authenticates the input release bundle; apt
+uses a separate OpenPGP key and does not understand that OpenSSH signature.
+
+Every publication retains all previously indexed selector and payload packages
+under `pool/main/d/debuglet/`. Apt pool filenames are derived from Debian control
+fields; their bytes remain identical to the signed release subjects. Existing
+package bytes cannot be replaced, and a selector older than any retained selector
+cannot be published. Apt can download retained exact versions for a deliberate
+rollback; this does not establish state downgrade compatibility. Follow the
+backup, drain and restore procedures before switching a service's release.
+
+Content-addressed indexes support `Acquire-By-Hash`, including the immediately
+previous generation to cover clients updating during an atomic deployment.
+Signed metadata expires after 90 days. Before expiry, rerun publication of the
+current approved release to refresh its Date and Valid-Until while retaining all
+packages. Do not disable apt expiry or signature checks. Repository preparation
+may verify an expired previous snapshot solely to retain its packages for a new
+signed publication; this is not permission for clients to install from expired
+metadata.
+
+## Administrator setup
+
+1. Review and merge the complete package and publication changes. Protect the
+   intended semantic-version tags and have an authorized tag creator create the
+   chosen release tag at the exact reviewed source. A branch build is not a
+   release input. Run the full required CI for that tag, then **Prepare signed
+   release** with that completed CI run ID. The existing independent
+   `release-signing` reviewer must approve its signing job. Audit and publish the
+   complete signed bundle as assets on the GitHub release for that same tag;
+   publication of only the installation subset is insufficient for apt.
+2. Provision a dedicated OpenPGP signing key through the team's key-management
+   process. Retain a protected backup and revocation material. Put its exported
+   private signing key in the `APT_SIGNING_KEY` secret of `release-signing` only;
+   do not use a repository or organization secret as a fallback. The unattended
+   GnuPG invocation expects an export usable without an interactive passphrase.
+   Keep the existing `RELEASE_SIGNING_KEY` unchanged: it is an OpenSSH key for a
+   different format.
+3. Keep `release-signing` protected by required independent reviewers with
+   prevent-self-review enabled, and restrict it to the approved version tags.
+   Create or review the `github-pages` environment with an independent reviewer
+   and deployment rules allowing only those release tags. Do not broaden tag
+   creation or environment rules to make a maintainer's blocked run pass.
+4. Enable GitHub Pages for this repository with **GitHub Actions** as the source,
+   configure the desired domain if applicable, and enforce HTTPS. This workflow
+   owns the entire Pages site; do not share that destination with another Pages
+   publisher. Record its actual `html_url`, including any repository path.
+5. Set repository variables `APT_REPOSITORY_URL` to that exact HTTPS Pages URL,
+   `APT_PUBLIC_KEY` to the single ASCII-armored public key, and
+   `APT_KEY_FINGERPRINT` to its full uppercase primary-key fingerprint without
+   spaces. The workflow checks the URL against Pages and checks the key against
+   the fingerprint. Distribute the fingerprint independently to operators and
+   the website configuration reviewer. No production key is generated by CI.
+
+The workflow also checks that `release-signing` still has independent review
+before preparing any repository. GitHub enforces the environment approvals and
+tag/deployment rules. Its signing job checks out no source, has no Contents write
+permission, and runs only GnuPG against prepared metadata. Signing-key material
+is removed before uploading the signed site. The deploy job gets Pages write
+and OIDC permissions, and receives no signing key.
+
+## Publish and verify
+
+Dispatch **Publish signed apt repository** on the same protected version tag.
+The publisher downloads the complete assets from that tag's published, non-draft
+GitHub release, then audits every SSH-signed subject and CI gate using
+`tools/release.py`, pinning the expected source to the workflow's protected tag.
+The input must contain both signed Debian packages and their assembly inventory;
+legacy tar-only releases cannot enter the apt channel. No branch build or
+expiring Actions artifact is accepted as a substitute for the published release.
+Keep that complete release available so metadata refresh remains possible after
+Actions artifacts expire.
+
+For the first publication only, set `bootstrap=true`. This requires no prior
+`github-pages` deployment records and an HTTP 404 for the repository's InRelease.
+A timeout, bad signature or failed download never becomes an empty repository.
+A failed first deployment requires operator inspection before any bootstrap
+retry; do not delete a successful deployment record to bypass retention.
+
+For subsequent publications leave bootstrap false. The workflow downloads the
+existing InRelease and verifies it against the configured OpenPGP key, then
+verifies the hashes of both indexes and every retained package. Missing, changed
+or untrusted content stops publication. It then indexes the old and new packages,
+requests the signing approval, and deploys the signed site after the Pages
+environment's approval. Publication runs are serialized.
+
+The workflow saves a signed site artifact for 90 days, but Actions retention is
+not a durable archive. Keep an independent backup of each approved signed site
+and the complete signed release bundles. GitHub Pages capacity is finite; move
+the channel to suitable static hosting before retention exceeds its capacity.
+Do not silently prune payloads still needed by installed services or overwrite
+old package versions to save space.
+
+After deployment, fetch and verify the real published bytes from a trusted
+checkout with independently supplied key material:
+
+```sh
+python3 tools/apt_repository.py fetch \
+  --url "$DEBUGLET_APT_URL" --out /tmp/debuglet-apt-downloaded \
+  --key /path/to/independently-provisioned-key.asc \
+  --fingerprint "$DEBUGLET_APT_FINGERPRINT"
+```
+
+Use a fresh output directory. This verifies the actual remote metadata and all
+packages without executing them. Complete a fresh Ubuntu 24.04 installation,
+explicit enrollment, and a retained-service upgrade using those downloaded
+bytes before recording the channel as tested. A local test repository or a
+successful upload step does not establish public-channel success.
+
+## Configure a client
+
+Obtain the real URL, complete uppercase fingerprint and published Debian version
+from the approved release information. The following variables are placeholders,
+not production trust. Run these commands as the intended host's administrator:
+
+```sh
+export DEBUGLET_APT_URL=https://YOUR-APPROVED-HOST/YOUR-REPOSITORY-PATH
+export DEBUGLET_APT_FINGERPRINT=YOUR_INDEPENDENTLY_CONFIRMED_FULL_FINGERPRINT
+export DEBUGLET_DEBIAN_VERSION=1.2.3-1
+
+curl --fail --silent --show-error --proto '=https' --proto-redir '=https' \
+  --location "$DEBUGLET_APT_URL/debuglet-archive-keyring.asc" -o /tmp/debuglet-key.asc
+actual=$(gpg --batch --show-keys --with-colons --fingerprint /tmp/debuglet-key.asc |
+  awk -F: '$1=="pub" {want=1; next} $1=="fpr" && want {print $10; want=0}')
+test "$actual" = "$DEBUGLET_APT_FINGERPRINT" || exit 1
+gpg --batch --yes --dearmor --output /tmp/debuglet-key.gpg /tmp/debuglet-key.asc
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo install -m 0644 /tmp/debuglet-key.gpg /etc/apt/keyrings/debuglet.gpg
+printf 'Types: deb\nURIs: %s\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/debuglet.gpg\n' \
+  "$DEBUGLET_APT_URL" | sudo tee /etc/apt/sources.list.d/debuglet.sources >/dev/null
+sudo apt-get update
+sudo apt-get install "debuglet=$DEBUGLET_DEBIAN_VERSION"
+```
+
+`Signed-By` limits this trust to the Debuglet source. Do not use `apt-key`,
+`trusted=yes`, `--allow-unauthenticated`, or an insecure fallback after a failed
+verification. The example upstream version `v1.2.3` maps to Debian `1.2.3-1`;
+`v1.2.3-rc.1` maps to `1.2.3~rc.1-1`.
+
+A later `apt-get update` followed by `apt-get install debuglet=EXACT_VERSION`
+stages the selected release. It does not itself drain, back up, migrate, enroll
+or restart a managed Debuglet service. Refer to the package lifecycle procedure
+before activating that release.
+
+## Local rehearsal and key rotation
+
+The unsigned builder is available for isolated tests:
+
+```sh
+python3 tools/apt_repository.py build --packages /path/to/debian-artifacts \
+  --out /tmp/apt-test-site
+```
+
+Sign `dists/stable/Release` using a disposable test key to create `InRelease`
+and `Release.gpg`, then run `verify --directory /tmp/apt-test-site --key TEST.asc
+--fingerprint TEST_FINGERPRINT`. `build --previous VERIFIED_DIRECTORY` retains
+all packages from a previously verified snapshot. This local builder performs
+no release authentication; production must use `prepare`, as the workflow does.
+HTTP is refused except with explicit `--allow-local-http` for loopback fixtures.
+Never provision a rehearsal key as production trust.
+
+Changing the configured public key immediately prevents the current workflow
+from trusting an old snapshot signed solely by the previous key. Plan rotation
+as a reviewed publication change: independently distribute the new key, verify
+and retain the entire old repository with its old trust, and authorize a new
+signature over those retained bytes with the new key. Update client keyrings
+before ending the overlap. The single-key workflow intentionally does not guess
+rotation trust or bypass a signature failure. In a compromise, revoke the old
+key and use an independently authenticated retained snapshot; do not accept a
+snapshot solely because the compromised key signed it.
+
+APT's [repository authentication](https://manpages.debian.org/stable/apt/apt-secure.8.en.html)
+and [apt-ftparchive](https://manpages.debian.org/stable/apt-utils/apt-ftparchive.1.en.html)
+document the formats. GitHub documents the required
+[Pages workflow permissions and environments](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
