@@ -5,6 +5,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -116,20 +117,25 @@ func TestExportSupportsFullRunAndKeepsOrdinaryResponseBound(t *testing.T) {
 	}
 	f := newFakeServer(t, "")
 	f.handle("GET /debuglet/{id}/result", jsonHandler(http.StatusOK, string(data)))
-	c := f.client(t, Options{})
-	got, err := c.Export(testContext(t), fixtureID)
+	// This large fixture checks response size, not transfer latency. Keep it
+	// bounded without depending on the production request timeout; transport
+	// tests exercise request deadlines and cancellation separately.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	c := f.client(t, Options{RequestTimeout: time.Minute})
+	got, err := c.Export(ctx, fixtureID)
 	if err != nil || !bytes.Equal(got.Output.Entries[0].Output, doc.Output.Entries[0].Output) {
 		t.Fatalf("8 MiB output export: %v", err)
 	}
 	f.handle("GET /version", jsonHandler(http.StatusOK, string(data)))
-	if _, err := c.Version(testContext(t)); err == nil || !strings.Contains(err.Error(), "4 MiB") {
+	if _, err := c.Version(ctx); err == nil || !strings.Contains(err.Error(), "4 MiB") {
 		t.Fatalf("ordinary route bound: %v", err)
 	}
 	doc.RunID = "9a8ddf26-205a-48a4-8c93-42e384f1e611"
 	data, _ = json.Marshal(doc)
 	f.handle("GET /debuglet/{id}/result", jsonHandler(http.StatusOK, string(data)))
-	if _, err := c.Export(testContext(t), fixtureID); err == nil {
-		t.Fatal("accepted another run's export")
+	if _, err := c.Export(ctx, fixtureID); err == nil || !strings.Contains(err.Error(), "result belongs to another run") {
+		t.Fatalf("another run's export: %v", err)
 	}
 }
 
