@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 )
@@ -61,5 +62,21 @@ func TestHelloAdvertisesICMPFromTheNetworkPolicy(t *testing.T) {
 				t.Errorf("advertised icmp_enabled=%v, want %v", resp.GetIcmpEnabled(), tc.want)
 			}
 		})
+	}
+}
+
+func TestHelloReportsRunningVersionAfterPackageReplacement(t *testing.T) {
+	cfg := fixtureConfig()
+	cfg.Identity.Version = "v0.0.0-dev.previous"
+	e := newFixtureExecutor(t, cfg, nil, newFixtureMemoryStorage(t))
+	resp, err := e.OnHello(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.GetVersion() != buildinfo.Version {
+		t.Fatalf("reported version=%q, want running build %q", resp.GetVersion(), buildinfo.Version)
+	}
+	if cfg.Identity.Version != "v0.0.0-dev.previous" {
+		t.Fatalf("stored version changed to %q", cfg.Identity.Version)
 	}
 }
