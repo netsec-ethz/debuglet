@@ -95,8 +95,9 @@ record and payload when recovery is still needed.
 
 Same-version `apt-get --reinstall install <payload-package>=<debian-version>`
 restores the exact signed package bytes and does not restart services or alter
-state. It also supports retry after interrupted unpack, followed by
-`dpkg --configure -a`. A directory replaced by a symlink is refused; investigate
+state. After interrupted unpack, run `sudo dpkg --configure -a` first, then
+`sudo apt-get --fix-broken --reinstall install <payload-package> debuglet` to
+finish configuration and restore missing files. A directory replaced by a symlink is refused; investigate
 and restore the real directory before retrying. Different payload content uses
 a different package name and directory; never republish changed content under
 an existing package identity/version. A forced dpkg removal that skips guards,

@@ -114,7 +114,10 @@ def assemble(archive, checksums, output):
             write(documentation / "debian.md", (REPO / "docs/operations/debian.md").read_text())
             # Stable timestamps/root ownership keep builds independent of the
             # invoking user. gzip is supported by Ubuntu's dpkg without extras.
+            tree.chmod(0o755)
             for path in tree.rglob("*"):
+                if path.is_dir() and not path.is_symlink():
+                    path.chmod(0o755)
                 os.utime(path, (0, 0), follow_symlinks=False)
             filename = "debuglet" if name == "debuglet" else "debuglet-payload"
             package_file = output / f"{filename}-{upstream}-linux-amd64.deb"

@@ -129,8 +129,18 @@ class Assembly(unittest.TestCase):
             checksums = root / "SHA256SUMS"
             checksums.write_text("".join(f"{package.digest(path)}  {path.name}\n" for path in (archive, root / "install.sh")))
             output = root / "debs"
-            result = package.assemble(archive, checksums, output)
+            old_umask = os.umask(0o077)
+            try:
+                result = package.assemble(archive, checksums, output)
+            finally:
+                os.umask(old_umask)
             payload = output / f"debuglet-payload-{upstream}-linux-amd64.deb"
+            with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
+                    ["dpkg-deb", "--fsys-tarfile", str(payload)]))) as package_tar:
+                for member in package_tar:
+                    self.assertEqual((member.uid, member.gid), (0, 0))
+                    if member.isdir():
+                        self.assertEqual(member.mode, 0o755, member.name)
             extracted = root / "extracted"
             subprocess.run(["dpkg-deb", "--extract", str(payload), str(extracted)], check=True)
             installed = extracted / result["payload_root"].lstrip("/")
@@ -141,6 +151,12 @@ class Assembly(unittest.TestCase):
             # A Debian hash root has no such valid version path component.
             self.assertIsNone(package.VERSION.fullmatch(installed.name))
             selector = output / f"debuglet-{upstream}-linux-amd64.deb"
+            with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
+                    ["dpkg-deb", "--fsys-tarfile", str(selector)]))) as package_tar:
+                for member in package_tar:
+                    self.assertEqual((member.uid, member.gid), (0, 0))
+                    if member.isdir():
+                        self.assertEqual(member.mode, 0o755, member.name)
             subprocess.run(["dpkg-deb", "--extract", str(selector), str(root / "selector")], check=True)
             self.assertEqual(os.readlink(root / "selector/usr/bin/dbl"),
                              "../lib/debuglet/debian/" + installed.name + "/bin/dbl")
