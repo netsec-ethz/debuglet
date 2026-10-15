@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+case "$1" in
+    install|upgrade)
+        if [ "$1" = upgrade ] && [ "${2-}" != '@DEBIAN_VERSION@' ]; then
+            echo 'debuglet: different payload versions must use separately named packages; upgrade the debuglet selector instead' >&2
+            exit 1
+        fi
+        # dpkg may retry an interrupted unpack or reinstall these exact bytes.
+        # Do not follow a replaced directory into another tree during repair.
+        for path in /usr /usr/lib /usr/lib/debuglet /usr/lib/debuglet/debian \
+            '@PAYLOAD_ROOT@' '@PAYLOAD_ROOT@/bin' '@PAYLOAD_ROOT@/share' '@PAYLOAD_ROOT@/share/debuglet'; do
+            if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
+                echo "debuglet: refusing payload installation through $path" >&2
+                exit 1
+            fi
+        done
+        ;;
+esac
