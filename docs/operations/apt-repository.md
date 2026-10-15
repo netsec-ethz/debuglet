@@ -62,9 +62,11 @@ metadata.
    different format.
 3. Keep `release-signing` protected by required independent reviewers with
    prevent-self-review enabled, and restrict it to the approved version tags.
-   Create or review the `github-pages` environment with an independent reviewer
-   and deployment rules allowing only those release tags. Do not broaden tag
-   creation or environment rules to make a maintainer's blocked run pass.
+   Create or review the `github-pages` environment with deployment rules allowing
+   only those release tags and no signing secret. Additional Pages reviewers are
+   optional operator policy; the required independent signing approval remains
+   in `release-signing`. Do not broaden tag creation or environment rules to make
+   a maintainer's blocked run pass.
 4. Enable GitHub Pages for this repository with **GitHub Actions** as the source,
    configure the desired domain if applicable, and enforce HTTPS. This workflow
    owns the entire Pages site; do not share that destination with another Pages
@@ -105,8 +107,8 @@ For subsequent publications leave bootstrap false. The workflow downloads the
 existing InRelease and verifies it against the configured OpenPGP key, then
 verifies the hashes of both indexes and every retained package. Missing, changed
 or untrusted content stops publication. It then indexes the old and new packages,
-requests the signing approval, and deploys the signed site after the Pages
-environment's approval. Publication runs are serialized.
+requests the signing approval, and deploys the signed site under the configured
+Pages environment policy. Publication runs are serialized.
 
 The workflow saves a signed site artifact for 90 days, but Actions retention is
 not a durable archive. Keep an independent backup of each approved signed site
