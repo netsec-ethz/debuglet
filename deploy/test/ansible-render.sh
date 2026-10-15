@@ -12,7 +12,7 @@
 #      origin and a non-UUID executor identity, and accepts a complete set,
 #   3. the playbooks apply in the documented order — deploy-certs.yml, then
 #      site.yml — and the roles create the directory skeleton, install the
-#      verified release package with its own installer, install the seed
+#      verified release package with its own installer, initialize missing
 #      databases and render both daemon configurations and both systemd units,
 #   4. the rendered configurations name the configured listener addresses and
 #      ports, carry explicit wallet-free payment settings, and put each
@@ -106,17 +106,13 @@ certs=$work/certs
 # fixture provides it the same way, so the roles install into it rather than
 # create it.
 mkdir -p "$host" "$dist" "$host/etc/systemd/system"
-# The real release package, plus stand-ins for the schema-only databases
-# `make deploy-seed-db` writes. The package is installed by its own installer,
-# which verifies it; the two database files are only copied into place.
+# The real release package, without separately generated seed databases.
+# Each installed daemon initializes its own schema on the fixture host.
 cp "$root/deploy/dist/release.json" "$root/deploy/dist/SHA256SUMS" \
 	"$root/deploy/dist/install.sh" "$dist/"
 release_version=$(tr -d ' \n' <"$dist/release.json" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
 release_archive=$(tr -d ' \n' <"$dist/release.json" | grep -o '"archive":"[^"]*"' | cut -d'"' -f4)
 cp "$root/deploy/dist/$release_archive" "$dist/"
-for artifact in dispatcher-seed.db executor-seed.db; do
-	printf 'fixture %s\n' "$artifact" >"$dist/$artifact"
-done
 
 # The preflight requires pinned host identities before anything connects. The
 # fixture host is reached over the local connection and never over SSH, but
@@ -498,6 +494,34 @@ fi
 
 dispatcher_toml=$host/etc/debuglet/dispatcher/dispatcher.toml
 executor_toml=$host/etc/debuglet/executor-prod/executor.toml
+databases=("$host/var/lib/debuglet/dispatcher/dispatcher.db" "$host/var/lib/debuglet/executor-prod/executor.db")
+if python3 - "${databases[@]}" <<'PY'
+import sqlite3, sys
+for path, table in zip(sys.argv[1:], ('transactions', 'debuglets')):
+    with sqlite3.connect('file:' + path + '?mode=rw', uri=True) as db:
+        assert db.execute('PRAGMA quick_check').fetchone() == ('ok',)
+        assert db.execute('SELECT name FROM sqlite_master WHERE name=?', (table,)).fetchone()
+        db.execute('CREATE TABLE deployment_retention_fixture(value TEXT)')
+        db.execute("INSERT INTO deployment_retention_fixture VALUES ('preserved')")
+PY
+then
+	check 'installed daemons initialize valid databases without seed files' pass
+else
+	check 'installed daemons initialize valid databases without seed files' fail
+fi
+sha256sum "${databases[@]}" >"$work/databases-before"
+if run "$work/state-redeploy.log" site.yml &&
+	sha256sum --check "$work/databases-before" >/dev/null; then
+	check 'redeployment preserves populated databases byte for byte' pass
+else
+	check 'redeployment preserves populated databases byte for byte' fail
+	tail -20 "$work/state-redeploy.log" >&2
+fi
+# The configuration/TLS checks below deliberately reach an invalid database,
+# so a successful parse cannot accidentally start a long-running daemon.
+for database in "${databases[@]}"; do
+	printf 'fixture database\n' >"$database"
+done
 for file in "$dispatcher_toml" "$executor_toml" \
 	"$host/etc/systemd/system/debuglet-dispatcher.service" \
 	"$host/etc/systemd/system/debuglet-executor-prod.service" \
@@ -978,7 +1002,8 @@ rm -f "$host/opt/debuglet/dev/bin/debuglet-executor"
 if run "$work/dev-repair.log" deploy-executors.yml --limit executors \
 	-e @vars/dev.yml -e "executor_id=$fixture_dev_executor" &&
 	[ -x "$host/opt/debuglet/dev/bin/debuglet-executor" ] &&
-	cmp -s "$dist/executor-seed.db" "$host/var/lib/debuglet/executor-dev/executor.db"; then
+	"$host/opt/debuglet/dev/bin/debuglet-executor" -check-database \
+		-config "$host/etc/debuglet/executor-dev/executor.toml" >"$work/dev-db-check.log" 2>&1; then
 	check 'dev repairs its own activation link and empty database' pass
 else
 	check 'dev repairs its own activation link and empty database' fail
@@ -1153,13 +1178,9 @@ refute 'no enrollment token is rendered by default' "$executor_toml" 'enrollment
 bind_host=$work/bind-host
 bind_certs=$work/bind-certs
 bind_dist=$work/bind-dist
-mkdir -p "$bind_host/etc/systemd/system" "$bind_dist" "$work/bind-seed"
-chmod 0700 "$work/bind-seed"
+mkdir -p "$bind_host/etc/systemd/system" "$bind_dist"
 cp -R "$certs" "$bind_certs"
 cp "$dist"/* "$bind_dist/"
-rm -f "$bind_dist/dispatcher-seed.db"
-"$host/opt/debuglet/prod/bin/debuglet-dispatcher" -init-database "$work/bind-seed/dispatcher.db" \
-	>"$work/bind-seed.log" 2>&1 && cp "$work/bind-seed/dispatcher.db" "$bind_dist/dispatcher-seed.db"
 cat >"$work/bind.yml" <<EOF
 payload_prefix: "$bind_host/opt/debuglet/{{ debuglet_env }}"
 payload_staging_dir: "$bind_host/var/tmp/debuglet-payload-{{ debuglet_env }}"

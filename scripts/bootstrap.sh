@@ -1,5 +1,5 @@
 #!/bin/sh
-# Download and install a versioned Debuglet release for Linux amd64.
+# Verify and install an exact Debuglet release or local development package.
 set +x
 set -eu
 LC_ALL=C
@@ -35,7 +35,7 @@ valid_version() (
 )
 
 version=${DEBUGLET_VERSION:-}
-valid_version "$version" || fail 'set DEBUGLET_VERSION to a published version such as v1.2.3 or v1.2.3-rc.1'
+valid_version "$version" || fail 'set DEBUGLET_VERSION to an exact package version, such as v1.2.3 or v0.0.0-dev.0123456789ab'
 prefix=${DEBUGLET_PREFIX:-${HOME:?HOME or DEBUGLET_PREFIX is required}/.local}
 carriage_return=$(printf '\r')
 case "$prefix" in ''|*'
@@ -63,6 +63,12 @@ installer_name=install$suffix.sh
 checksums_name=SHA256SUMS$suffix
 release=https://github.com/netsec-ethz/debuglet/releases/download/$version
 release_dir=${DEBUGLET_RELEASE_DIR:-}
+case "$version" in
+	v0.0.0-dev.*)
+		[ -n "$release_dir" ] || fail 'development candidates are not public releases; set DEBUGLET_RELEASE_DIR to the local package directory supplied by your operator'
+		[ "${DEBUGLET_ALLOW_UNSIGNED:-}" = 1 ] || fail 'development candidates are unsigned; set DEBUGLET_ALLOW_UNSIGNED=1 explicitly after obtaining the package through a trusted channel'
+		;;
+esac
 if [ -z "$release_dir" ]; then
 	command -v curl >/dev/null 2>&1 || fail 'required command is missing: curl'
 else
@@ -187,6 +193,10 @@ printf '\nInstalled Debuglet %s. Next commands:\n' "$version"
 printf 'export PATH='
 shell_quote "$prefix/bin"
 printf ':"$PATH"\n'
+if [ -z "$component" ] || [ "$component" = cli ]; then
+	shell_quote "$prefix/bin/dbl"
+	printf ' --output json version\n'
+fi
 if [ -n "$component" ]; then
 	printf 'Installed component: %s\n' "$component"
 	exit 0

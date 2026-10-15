@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -35,6 +37,7 @@ import (
 const executorJoinUsage = `Usage:
   dbl executor join --dispatcher URL --executor ID --state-dir DIR
       [--ca-file FILE] [--token-file FILE] [--capacity BITS_PER_SECOND] [--host-tag TAG ...]
+      [--renew]
 
 Enroll this machine using the one-time token from Console > My nodes.
 The token is read without echo from the terminal, or from standard input or
@@ -43,13 +46,19 @@ listing: home, office, datacentre, academic, cloud, dsl, cable, fibre, wifi,
 mobile, satellite or nat; it is written to [metadata] host_tags. HTTPS verifies the dispatcher using the system trust store or
 --ca-file; plain HTTP is accepted only on a literal loopback IP.
 
-DIR must not exist. The command creates private identity, configuration and
+For a new enrollment DIR must not exist. The command creates private identity, configuration and
 storage files, then prints the command to start the executor. It does not
 start a service or configure payments. Keep DIR for subsequent restarts.
 --capacity sets the bandwidth offered to the dispatcher (default 10000000 bit/s).
 Choose a sustainable limit for this host and its uplink.
 For a persistent Linux system service, follow docs/operations/executor-onboarding.md
 and enroll directly into /var/lib/debuglet/executors/NAME before service install.
+
+--renew replaces only the certificate of an existing managed executor, using a
+fresh Set up again token. First drain its service and confirm joined shutdown
+and disabled boot startup. Its key, configuration, database and native trust
+stay unchanged. Resume the service explicitly after success. See the renewal
+procedure in docs/operations/executor-onboarding.md; renewal is not automatic.
 `
 
 type executorJoinResponse struct {
@@ -61,10 +70,15 @@ type executorJoinResponse struct {
 }
 
 func executorJoinCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
+	return executorJoinCommandWith(ctx, args, options, stdout, stderr, productionServiceDependencies())
+}
+
+func executorJoinCommandWith(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer, deps serviceDependencies) int {
 	fs := newCommandFlagSet("executor join")
 	endpoint := fs.String("dispatcher", "", "dispatcher HTTPS URL, including any API prefix")
 	id := fs.String("executor", "", "executor ID shown in the console")
-	state := fs.String("state-dir", "", "new directory for this executor's identity and storage")
+	state := fs.String("state-dir", "", "directory for this executor's identity and storage")
+	renew := fs.Bool("renew", false, "renew a drained managed executor certificate using a fresh setup token")
 	caFile := fs.String("ca-file", "", "trusted dispatcher CA certificate")
 	tokenFile := fs.String("token-file", "", "file containing the enrollment token")
 	capacity := fs.Int64("capacity", 10_000_000, "bandwidth offered to the dispatcher in bits per second")
@@ -77,7 +91,14 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 		return code
 	}
 	if fs.NArg() != 0 || options.EndpointSet || options.Dispatcher != "" || strings.TrimSpace(*state) == "" {
-		return usageError("dbl executor join", executorJoinUsage, stderr, "supply --dispatcher, --executor and a new --state-dir after executor join")
+		return usageError("dbl executor join", executorJoinUsage, stderr, "supply --dispatcher, --executor and --state-dir after executor join")
+	}
+	changedSettings := false
+	fs.Visit(func(f *flag.Flag) {
+		changedSettings = changedSettings || f.Name == "capacity" || f.Name == "host-tag"
+	})
+	if *renew && changedSettings {
+		return usageError("dbl executor join", executorJoinUsage, stderr, "--renew preserves capacity and host tags; omit their flags")
 	}
 	if *capacity <= 0 {
 		return usageError("dbl executor join", executorJoinUsage, stderr, "--capacity must be positive bits per second")
@@ -108,7 +129,20 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 		transport.TLSClientConfig.RootCAs = roots
 	}
 	statePath, err := filepath.Abs(*state)
-	if err == nil {
+	var installer *service.Installer
+	var retained service.Profile
+	if err == nil && *renew {
+		var code int
+		var ok bool
+		installer, code, ok = newInstaller("dbl executor join", serviceOptions{}, deps, stderr)
+		if !ok {
+			return code
+		}
+		retained, err = installer.CheckCertificateRenewal(ctx, filepath.Base(statePath))
+		if err == nil && (retained.StateDir != statePath || retained.ExecutorID != *id) {
+			err = errors.New("--renew must name the installed executor ID and its canonical managed state directory")
+		}
+	} else if err == nil {
 		_, err = os.Lstat(statePath)
 		if err == nil {
 			err = fmt.Errorf("state directory already exists: %s; keep existing identities and choose a new directory", statePath)
@@ -138,6 +172,17 @@ func executorJoinCommand(ctx context.Context, args []string, options globalOptio
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("enrollment redirects are not followed; use the dispatcher's HTTPS API URL")
 	}}
+	if *renew {
+		if err := renewExecutorCertificate(ctx, installer, retained, client, joinURL, token); err != nil {
+			return reportFailure(ctx, "dbl executor join", stderr, err)
+		}
+		return emitReported(ctx, "dbl executor join", options.Output, stdout, stderr, map[string]string{
+			"executor_id": *id, "state_dir": statePath, "operation": "renewed",
+		}, func(w io.Writer) error {
+			_, err := fmt.Fprintf(w, "Executor %s certificate renewed. Key, configuration and stored work retained.\nThe service remains stopped and disabled. Resume explicitly:\n  sudo %s drain --role executor --name %s --resume\n", *id, roleShellWord(executable), roleShellWord(retained.Name))
+			return err
+		})
+	}
 	if err := joinExecutor(ctx, client, joinURL, *id, statePath, token, hostTags, *capacity); err != nil {
 		return reportFailure(ctx, "dbl executor join", stderr, err)
 	}
@@ -302,38 +347,51 @@ func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state,
 	if err := storagecheck.BootstrapFresh(ctx, storagecheck.Executor, filepath.Join(state, "executor.sqlite")); err != nil {
 		return err
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: id}}, key)
+	result, err := requestExecutorCertificate(ctx, client, endpoint, id, token, key, keyPEM)
 	if err != nil {
 		return err
+	}
+	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result, hostTags, capacity)}} {
+		if err := writeJoinFile(filepath.Join(state, file.name), []byte(file.data)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requestExecutorCertificate(ctx context.Context, client *http.Client, endpoint, id, token string, key crypto.Signer, keyPEM []byte) (executorJoinResponse, error) {
+	var result executorJoinResponse
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: id}}, key)
+	if err != nil {
+		return result, err
 	}
 	body, err := json.Marshal(map[string]string{"executor_id": id, "token": token, "csr": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr}))})
 	if err != nil {
-		return err
+		return result, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return result, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Debuglet-API-Version", "1.10")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("request executor enrollment: %w", err)
+		return result, fmt.Errorf("request executor enrollment: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("dispatcher refused enrollment (HTTP %d); check the dispatcher URL and replace expired or used tokens in My nodes", resp.StatusCode)
+		return result, fmt.Errorf("dispatcher refused enrollment (HTTP %d); check the dispatcher URL and replace expired or used tokens in My nodes", resp.StatusCode)
 	}
-	var result executorJoinResponse
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, 64*1024))
 	if err := decoder.Decode(&result); err != nil {
-		return fmt.Errorf("decode enrollment response: %w", err)
+		return result, fmt.Errorf("decode enrollment response: %w", err)
 	}
 	if decoder.Decode(new(any)) != io.EOF {
-		return errors.New("enrollment response contains unexpected data")
+		return result, errors.New("enrollment response contains unexpected data")
 	}
 	if err := validateEnrollmentCertificate(result, id, keyPEM); err != nil {
-		return err
+		return result, err
 	}
 	// The server can use a public certificate while issuing client identities
 	// from its own CA. Keep both authenticated trust roots for control TLS.
@@ -344,12 +402,7 @@ func joinExecutor(ctx context.Context, client *http.Client, endpoint, id, state,
 			}
 		}
 	}
-	for _, file := range []struct{ name, data string }{{"executor.crt", result.CertificatePEM}, {"ca.crt", result.CAPEM}, {"service.toml", executorJoinConfig(id, state, result, hostTags, capacity)}} {
-		if err := writeJoinFile(filepath.Join(state, file.name), []byte(file.data)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return result, nil
 }
 
 func validateEnrollmentCertificate(result executorJoinResponse, id string, keyPEM []byte) error {

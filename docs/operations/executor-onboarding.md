@@ -133,15 +133,18 @@ the running executor; retain its generated identity and database for later start
 
 ## Run persistently on Linux
 
-For a Linux amd64 machine with systemd, download the full package, `install.sh`
-and `SHA256SUMS` recommended by the service operator. Use this sequence for a
-**new enrollment**, replacing the package version, dispatcher URL and executor
-ID with the supplied values:
+For a Linux amd64 machine with systemd, first install the operator-recommended
+**full** bundle under `/usr/local` using the [installation guide](../../README-install.md).
+The CLI-only bundle cannot run an executor. Verify the exact version with
+`/usr/local/bin/dbl --output json version` before enrollment. For an unpublished
+candidate, use the guide's trusted local package directory and explicit unsigned
+candidate option; do not use an invented release URL. Package installation does
+not create a service account or enroll a node.
+
+Use this sequence for a **new enrollment**, replacing the dispatcher URL and
+executor ID with the supplied values:
 
 ```sh
-DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR
-sudo sh ./install.sh --archive "./debuglet-${DEBUGLET_VERSION}-linux-amd64.tar.gz" \
-  --checksums ./SHA256SUMS --version "$DEBUGLET_VERSION" --prefix /usr/local
 # Create this account once; omit useradd if debuglet already exists.
 sudo useradd --system --user-group --home-dir /var/lib/debuglet --shell /usr/sbin/nologin debuglet
 sudo install -d -m 0755 /var/lib/debuglet /var/lib/debuglet/executors
@@ -215,7 +218,18 @@ account; do not obtain another setup token or purge the state to upgrade.
 
 Keep the generated state directory. Restarting with the same configuration,
 private key, certificate and database preserves the machine identity and does
-not need another setup token. A stopped machine remains in My nodes.
+not need another setup token. A stopped machine remains in My nodes. For a
+managed service, perform a planned restart with:
+
+```sh
+sudo dbl --output json drain --role executor --name worker
+# Continue after joined: true and enabled: false.
+sudo dbl drain --role executor --name worker --resume
+sudo dbl service status --role executor --name worker
+```
+
+Check **Ready** in My nodes afterward. Do not use Set up again for an ordinary
+restart or package upgrade.
 
 Setup tokens expire after 24 hours and are shown only when issued. If setup did
 not finish, use **Set up again** to get a new token. Issuing it invalidates any
@@ -227,6 +241,59 @@ An existing connected status alone does not confirm a replacement machine.
 If a response was lost or writing the local state failed, obtain a fresh token
 and use a new private state directory. `join` refuses to overwrite an existing
 identity. Never put a setup token in a command argument, URL or shared log.
+
+## Renew a managed executor's certificate
+
+Enrollment certificates last at most 90 days, bounded by the issuer's expiry.
+Renewal is manual. Before expiry, use a full package with `executor join --renew`
+and keep the same managed executor ID and state directory. This operation uses
+a fresh **Set up again** token from the existing node; it retains the private key,
+configuration, database, native trust, service account and installed package.
+It replaces only `executor.crt`. Do not create another node or move its state.
+
+1. Drain the service and require `joined: true` and `enabled: false`:
+
+   ```sh
+   sudo dbl --output json drain --role executor --name worker
+   ```
+
+2. Keep other administrators, automation and foreground executors from starting
+   this instance during renewal. Take a private offline backup of its full state
+   directory. In My nodes, choose **Set up again** for this same executor, then
+   run the renewal command and paste the fresh token at the hidden prompt:
+
+   ```sh
+   sudo /usr/local/bin/dbl executor join --renew \
+     --dispatcher https://debuglet.example/api --executor YOUR-EXECUTOR-ID \
+     --state-dir /var/lib/debuglet/executors/worker
+   ```
+
+   Add `--ca-file` only if the HTTPS enrollment API needs a private CA. A private
+   `--token-file` also works; remove it after success. Do not add capacity or host
+   tag flags: renewal preserves the existing configuration.
+
+3. After the CLI reports successful certificate renewal, resume and inspect it:
+
+   ```sh
+   sudo dbl drain --role executor --name worker --resume
+   sudo dbl service status --role executor --name worker
+   ```
+
+The service stays stopped and disabled until you resume it. An expired old
+certificate can be renewed with this same procedure after a clean joined stop.
+A failed or uncertain request may already have consumed the token and replaced
+the dispatcher's binding. Keep the service stopped, get a fresh **Set up again**
+token, and repeat the exact `--renew` command. Do not restore the old certificate
+and assume its binding still works. The command preserves local state on refusal;
+a filesystem error after atomic publication can leave the new certificate in
+place, so an uncertain result still needs this retry procedure.
+
+The command refuses changed native endpoints, a new certificate outside the
+retained native trust, a changed executor ID, a modified unit, or a service that
+has not shut down cleanly. Ask the service operator for recovery if the issuer
+or endpoints changed, the key is lost, or shutdown cannot be confirmed. This
+renewal option requires an installed canonical managed service; foreground
+trial directories are not automatically converted or renewed.
 
 ## Enable enrollment on a dispatcher
 
@@ -281,9 +348,9 @@ do not copy a root CA key or a server private key into the console. The browser
 never receives an issuer key or an executor private key.
 
 Enrollment issues client authentication certificates for at most 90 days,
-bounded by issuer expiry. Renew a machine with **Set up again** before its
-certificate expires; automatic certificate renewal is not provided. Existing
-host-administered enrollment remains available.
+bounded by issuer expiry. Use the [managed renewal procedure](#renew-a-managed-executors-certificate)
+before its certificate expires; automatic certificate renewal is not provided.
+Existing host-administered enrollment remains available.
 
 The new routes require API 1.10. Each account can create at most ten executors;
 their names and inventory are scoped to that account. Existing executors enrolled

@@ -11,7 +11,7 @@ import unittest
 
 
 BOOTSTRAP = Path(__file__).resolve().parents[1] / 'scripts' / 'bootstrap.sh'
-VERSION = 'v0.0.0-dev.0123456789ab'
+VERSION = 'v1.2.3'
 ARCHIVE = f'debuglet-{VERSION}-linux-amd64.tar.gz'
 RELEASE_URL = 'https://github.com/netsec-ethz/debuglet/releases/download/'
 FAKE_CURL = r'''#!PYTHON
@@ -87,11 +87,11 @@ class BootstrapTest(unittest.TestCase):
         }.items():
             (self.assets / name).write_bytes(data)
 
-    def run_bootstrap(self, extra=None, trace=False):
+    def run_bootstrap(self, extra=None, trace=False, script=BOOTSTRAP):
         env = dict(self.env)
         if extra:
             env.update(extra)
-        args = ['/bin/sh'] + (['-x'] if trace else []) + [str(BOOTSTRAP)]
+        args = ['/bin/sh'] + (['-x'] if trace else []) + [str(script)]
         result = subprocess.run(args, cwd=self.root, env=env, capture_output=True,
                                 text=True, timeout=8, check=False)
         self.assertEqual(list(self.tmp.iterdir()), [], 'bootstrap left temporary files')
@@ -124,10 +124,45 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(args[-4:], ['--version', VERSION, '--prefix', str(self.prefix)])
         self.assertTrue((self.prefix / 'bin/dbl').is_file())
         commands = result.stdout.split('Next commands:\n', 1)[1]
+        self.assertIn(' --output json version\n', commands)
         check = subprocess.run(['/bin/sh', '-c', commands + '\nprintf "%s\\n" "$PATH"'],
                                env=self.env, text=True, capture_output=True, timeout=3, check=False)
         self.assertEqual(check.returncode, 0, check.stderr)
         self.assertTrue(check.stdout.startswith(str(self.prefix / 'bin') + ':'))
+
+    def test_standalone_development_candidate_requires_local_explicit_unsigned_install(self):
+        version = 'v0.0.0-dev.0123456789ab'
+        self.make_assets(version=version)
+        script = self.root / 'bootstrap.sh'
+        shutil.copyfile(BOOTSTRAP, script)
+        result = self.run_bootstrap({'DEBUGLET_VERSION': version}, script=script)
+        self.assert_not_installed(result)
+        self.assertIn('development candidates are not public releases', result.stderr)
+        self.assertFalse(self.curl_log.exists())
+
+        settings = {'DEBUGLET_VERSION': version, 'DEBUGLET_RELEASE_DIR': str(self.assets)}
+        result = self.run_bootstrap(dict(settings, DEBUGLET_ALLOW_UNSIGNED=''), script=script)
+        self.assert_not_installed(result)
+        self.assertIn('set DEBUGLET_ALLOW_UNSIGNED=1 explicitly', result.stderr)
+        self.assertFalse(self.curl_log.exists())
+
+        result = self.run_bootstrap(settings, script=script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('unsigned legacy/development package', result.stderr)
+        self.assertFalse(self.curl_log.exists(), 'local candidate contacted downloader')
+        args = self.install_log.read_text().splitlines()
+        self.assertEqual(args[-4:], ['--version', version, '--prefix', str(self.prefix)])
+
+    def test_local_development_candidate_checks_bytes_before_installer(self):
+        version = 'v0.0.0-dev.0123456789ab'
+        self.make_assets(version=version)
+        with (self.assets / f'debuglet-{version}-linux-amd64.tar.gz').open('ab') as asset:
+            asset.write(b'changed after checksumming')
+        result = self.run_bootstrap({'DEBUGLET_VERSION': version,
+                                     'DEBUGLET_RELEASE_DIR': str(self.assets)})
+        self.assert_not_installed(result)
+        self.assertIn('checksum verification failed', result.stderr)
+        self.assertFalse(self.curl_log.exists())
 
     def test_valid_release_versions(self):
         for version in ('v1.2.3', 'v1.2.3-rc.1'):

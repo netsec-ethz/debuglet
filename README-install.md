@@ -1,22 +1,66 @@
 # Install Debuglet
 
-Debuglet releases support Linux amd64. For the full bundle, download the archive, `install.sh`, and `SHA256SUMS` from the [latest release](https://github.com/netsec-ethz/debuglet/releases/latest), then install to your user directory:
+Use Linux amd64, a POSIX shell, GNU tar, and coreutils. Choose the operator's
+exact **full bundle** for executor enrollment, managed services, or the local
+demo. No source checkout or compiler is needed. The published unsigned v0.2.0
+package predates `dbl executor join`; the current enrollment flow requires an
+operator-supplied candidate until a compatible signed release is published.
+
+## Install a private development candidate
+
+Obtain a trusted standalone `bootstrap.sh`, the exact version and source
+revision, and the matching `debuglet-VERSION-linux-amd64.tar.gz`, `install.sh`,
+and `SHA256SUMS` through your operator's trusted channel. Keep those three
+package files together with their original names. Replace the version
+placeholder below with the supplied `v0.0.0-dev.<source-prefix>` and use your
+actual local paths. Candidates require a local directory and explicit unsigned
+opt-in; they are not public releases. Checksums are verified before the installer
+runs, but do not authenticate an unsigned publisher.
 
 ```sh
-archive=$(printf '%s\n' ./debuglet-v*-linux-amd64.tar.gz)
-version=${archive#./debuglet-}
-version=${version%-linux-amd64.tar.gz}
-sh ./install.sh --archive "$archive" --checksums ./SHA256SUMS \
-  --version "$version" --prefix "$HOME/.local"
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
+DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
+DEBUGLET_ALLOW_UNSIGNED=1 \
+DEBUGLET_PREFIX="$HOME/.local" \
+sh "$HOME/Downloads/bootstrap.sh"
 export PATH="$HOME/.local/bin:$PATH"
+dbl --output json version
 dbl demo
 ```
 
-The installer verifies the release files before writing them. It requires a POSIX shell, GNU tar, and coreutils. The demo needs no Go compiler, source checkout, service, account, wallet, or root access.
+Leave component and signature/trust settings unset for this unsigned full
+bundle; unsigned mode cannot override configured signature requirements.
+Confirm the reported version and source revision. The demo needs no service,
+account, wallet, or root access. Installation does not enroll a node, create a
+service account, or restart an existing service; follow [executor
+setup](docs/operations/executor-onboarding.md) or [managed
+services](docs/operations/services.md) next.
 
-For signed releases, provision trust and verify the installer before execution
-using [Signed releases and offline verification](docs/operations/releases.md).
-That guide also describes the explicit mode for existing unsigned packages.
+## Install a signed release
+
+Once your operator identifies an exact published version with signed assets,
+obtain the trusted standalone bootstrap and provision the signer's trust file
+independently using [Signed releases and offline
+verification](docs/operations/releases.md). Replace the version placeholder
+below and leave unsigned, component and local-directory settings unset. This
+route also requires curl, Python 3.11 or later, and OpenSSH with `ssh-keygen -Y`.
+
+```sh
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
+DEBUGLET_REQUIRE_SIGNATURE=1 \
+DEBUGLET_RELEASE_TRUST=/etc/debuglet/release-allowed-signers \
+DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch \
+DEBUGLET_PREFIX="$HOME/.local" \
+sh /path/to/trusted/bootstrap.sh
+```
+
+Signature verification precedes installer execution and never falls back to
+unsigned mode. For offline use, set `DEBUGLET_RELEASE_DIR` to the package
+directory including `release.json` and `release.json.sig`.
+
+For the older public v0.2.0 demo only, use `DEBUGLET_VERSION=v0.2.0
+DEBUGLET_ALLOW_UNSIGNED=1 sh /path/to/trusted/bootstrap.sh` with component,
+local-directory and signature/trust settings unset.
 
 ## Supported platforms
 
@@ -54,7 +98,13 @@ make ci-build
 make ci-package
 ```
 
-The full bundle is under `.cache/ci/packages/`. Use it with the same installer command above. The build also produces the component packages below.
+The full bundle is under `.cache/ci/packages/`. The build prints its exact
+archive name, including the generated `v0.0.0-dev.<source-prefix>` version. Run
+the development-candidate command above with that version,
+`DEBUGLET_RELEASE_DIR="$PWD/.cache/ci/packages"`, and `sh scripts/bootstrap.sh`.
+For another machine, copy the trusted bootstrap and the three package files;
+the source checkout stays on the build machine. The build also produces the
+component packages below.
 
 The package output includes `compatibility.json` and
 `SHA256SUMS-compatibility`. This separate record identifies the core package,
@@ -73,20 +123,16 @@ Component packages are available from current source builds and are intended for
 | Executor operators | `executor` | `.cache/ci/packages/executor/` | `debuglet-executor` |
 | Dispatcher operators | `dispatcher` | `.cache/ci/packages/dispatcher/` | `debuglet-dispatcher` |
 
-Choose a component, then run this from the source checkout after building:
-
-```sh
-component=cli # or executor or dispatcher
-cd ".cache/ci/packages/$component"
-archive=$(printf '%s\n' ./debuglet-"$component"-v*-linux-amd64.tar.gz)
-version=${archive#./debuglet-$component-}
-version=${version%-linux-amd64.tar.gz}
-sh "./install-$component.sh" --archive "$archive" \
-  --checksums "./SHA256SUMS-$component" --version "$version" --prefix "$HOME/.local"
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Each directory contains only its archive, installer and checksums. These filenames are also unique release asset names. Role installations share a prefix safely: upgrading one changes only its own command link. The daemon packages include their SQLite support and embedded migrations; they do not require `goose` or `sqlc` at runtime. Daemons still need configuration and a prepared database; see the operator guide below.
+Use either bootstrap invocation above with `DEBUGLET_COMPONENT=cli`,
+`executor`, or `dispatcher`. For local packages, point `DEBUGLET_RELEASE_DIR`
+to that component's directory containing its archive, `install-COMPONENT.sh`,
+and `SHA256SUMS-COMPONENT`. Select the same exact version as the full bundle.
+Check the installed command with `--help`; the component packages omit the
+bundled demo. Role installations share a prefix safely: upgrading one changes
+only its own command link. The daemon packages include their SQLite support
+and embedded migrations; they do not require
+`goose` or `sqlc` at runtime. Daemons still need configuration and a prepared
+database; see the operator guide below.
 
 Use the full bundle for `dbl demo`, `dbl up`, `dbl dispatcher up`, `dbl executor up`, and bundled samples. The CLI-only package is for connecting to an existing dispatcher and submitting your own WASM files.
 
