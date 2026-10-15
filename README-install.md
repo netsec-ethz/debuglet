@@ -1,10 +1,33 @@
 # Install Debuglet
 
-Use Linux amd64, a POSIX shell, GNU tar, and coreutils. Choose the operator's
+For tar installation, use Linux amd64, a POSIX shell, GNU tar, and coreutils. Choose the operator's
 exact **full bundle** for executor enrollment, managed services, or the local
 demo. No source checkout or compiler is needed. The published unsigned v0.2.0
 package predates `dbl executor join`; the current enrollment flow requires an
 operator-supplied candidate until a compatible signed release is published.
+
+## Install with apt on Ubuntu 24.04 amd64
+
+Use this route when your operator supplies a published apt repository, its
+OpenPGP key fingerprint and an exact Debian package version. Verify the key
+through an independent trusted channel, then install the operator's keyring and
+repository configuration with `Signed-By` scoped to that keyring. Follow the
+complete [apt setup procedure](docs/operations/apt-repository.md); no official
+live repository URL or production signing key is implied by this guide.
+
+```sh
+sudo apt-get update
+sudo apt-get install debuglet=DEBIAN_VERSION_PROVIDED_BY_OPERATOR
+dbl --output json version
+dbl demo
+```
+
+The `debuglet` package selects the matching full payload, including the CLI,
+executor, dispatcher and bundled samples. Installation stages software; choose
+account setup, executor enrollment and service activation explicitly. Upgrades
+retain payloads referenced by managed services. Follow the [Debian lifecycle
+procedure](docs/operations/debian.md) to drain, back up, replace and resume an
+existing service. Tar installation remains available below.
 
 ## Install a private development candidate
 
@@ -89,7 +112,8 @@ not establish support for Docker Desktop or emulation there.
 
 ## Build from source
 
-On Linux amd64 with Go 1.26.9, Git, Make, Bash, GNU tar, and coreutils:
+On Linux amd64 with Go 1.26.9, Git, Make, Bash, GNU tar, coreutils, Python 3.11
+or later, and `dpkg-deb` (the `dpkg` package):
 
 ```sh
 git clone https://github.com/netsec-ethz/debuglet.git
@@ -104,7 +128,13 @@ the development-candidate command above with that version,
 `DEBUGLET_RELEASE_DIR="$PWD/.cache/ci/packages"`, and `sh scripts/bootstrap.sh`.
 For another machine, copy the trusted bootstrap and the three package files;
 the source checkout stays on the build machine. The build also produces the
-component packages below.
+component packages below and `debuglet-VERSION-linux-amd64.deb`,
+`debuglet-payload-VERSION-linux-amd64.deb`, `deb-packages.json` and
+`SHA256SUMS-debian` under `.cache/ci/packages/debian/`. The Debian version drops
+the leading `v`, changes a prerelease hyphen to `~`, and appends `-1`; for example
+`v1.2.3-rc.1` becomes `1.2.3~rc.1-1`. Debian files wrap the same full tar payload.
+Use `make ci-debian` on an Ubuntu 24.04 amd64 Docker host to rehearse signed apt
+metadata, installation and tamper rejection with disposable test keys.
 
 The package output includes `compatibility.json` and
 `SHA256SUMS-compatibility`. This separate record identifies the core package,

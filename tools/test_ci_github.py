@@ -83,6 +83,10 @@ class LauncherTest(unittest.TestCase):
 printf '["shared-workers"]\\n' >> "$DOCKER_CALLS"
 exit "${SHARED_WORKER_RESULT:-0}"
 ''')
+        (self.root / 'scripts/ci-debian.sh').write_text('''#!/usr/bin/env bash
+printf '["debian"]\\n' >> "$DOCKER_CALLS"
+exit "${DEBIAN_RESULT:-0}"
+''')
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         subprocess.run(['git', 'add', '.'], cwd=self.root, check=True)
         subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
@@ -177,6 +181,20 @@ elif sys.argv[1:3] == ['container', 'ls'] and os.environ.get('DOCKER_REMAINING')
         self.assertNotIn('fixture-secret', json.dumps(args))
         self.assertNotIn(['shared-workers'], self.arguments())
         self.assertEqual(self.arguments()[-1][0:2], ['rm', '--force'])
+
+    def test_package_runs_debian_acceptance_after_assembly_and_preserves_failures(self):
+        for changes, expected, hook in (({}, 0, True), ({'DOCKER_RESULT': '42'}, 42, False),
+                                        ({'DEBIAN_RESULT': '44'}, 44, True)):
+            with self.subTest(changes=changes):
+                self.calls.unlink(missing_ok=True)
+                result = self.launch('package', **changes)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                calls = self.arguments()
+                self.assertEqual(['debian'] in calls, hook)
+                if hook:
+                    run_index = next(i for i, call in enumerate(calls) if call[0] == 'run')
+                    self.assertEqual(calls[run_index + 1], ['debian'])
+                self.assertEqual(calls[-1][0:2], ['rm', '--force'])
 
     def test_kernel_adds_only_required_capabilities(self):
         result = self.launch('kernel')

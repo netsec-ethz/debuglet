@@ -115,6 +115,8 @@ run the installed acceptance checks against those package bytes:
 
 ```sh
 make ci-build ci-package
+# On an Ubuntu 24.04 amd64 Docker host:
+make ci-debian
 make ci-demo ci-compatibility ci-local
 ```
 
@@ -124,6 +126,7 @@ not replace that exact-source CI run. The installed checks establish:
 
 | Check | Evidence |
 | --- | --- |
+| Signed apt repository, installed Debian payload, state retention and tamper rejection with disposable trust | `debian-prepare.jsonl`, `debian-check.jsonl`, `debian-image.txt` |
 | Full and component installation, identical rerun, installed version/source | `package-install.log`, `package-install.json`, `package-install-{cli,executor,dispatcher}.json` |
 | Account-owned enrollment through the installed `dbl executor join`, TLS registration, completed hello, both daemon restarts, retained identity/session/output and fresh work | `role-tests.json`: `TestInstalledEnrollment` |
 | Published v0.2.0 executor compatibility and a populated v0.2.0 upgrade, old-binary downgrade refusal and restoration of the saved old state | `role-tests.json`: `TestInstalledReleasedCompatibility`, `TestInstalledReleasedUpgrade` |
@@ -156,7 +159,13 @@ must succeed for that exact source, version and run attempt, including the
 vulnerability gate. Then manually dispatch **Prepare signed release** on that
 same tag and supply its completed CI run ID. Preparation checks the existing
 environment protection and exact gate results, and uses the already-built
-packages; it neither rebuilds nor executes their payloads.
+packages; it neither rebuilds nor executes their payloads. New package builds
+include the two Debian files, `deb-packages.json` and `SHA256SUMS-debian`.
+Preparation checks the exact archive and manifest identity, Debian payload
+contents, command links, control fields and maintainer-script source hashes
+using `dpkg-deb` without installing or running those files. The signed inventory
+and provenance cover all four Debian subjects. Complete historical tar-only
+signed bundles remain auditable; a partial Debian set is always rejected.
 
 After environment approval, a separate signing job receives only the prepared
 files. It checks out no source and signs `release.json` with the OpenSSH
@@ -203,10 +212,19 @@ The installation asset set is:
 - `compatibility.json`, `SHA256SUMS-compatibility`, `release.json` and
   `release.json.sig`.
 
-That is sixteen files, with `VERSION` and `COMPONENT` replaced by their exact
-values. The complete signed bundle additionally contains inventory, provenance,
+For releases containing Debian packages, also publish
+`debuglet-VERSION-linux-amd64.deb`, `debuglet-payload-VERSION-linux-amd64.deb`,
+`deb-packages.json` and `SHA256SUMS-debian`. This is twenty installation files
+for new releases and sixteen for historical tar-only releases, with `VERSION`
+and `COMPONENT` replaced by their exact values. The complete signed bundle additionally contains inventory, provenance,
 notices and acceptance evidence; retain it in the approved private archive
 below. Publishing the installation subset does not satisfy complete retention.
+
+Publish an apt repository only from the complete audited signed release using
+[the apt publication procedure](apt-repository.md). SSH release signatures bind
+the build artifacts; apt additionally requires independently provisioned
+OpenPGP trust and signed repository metadata. The package CI lane uses disposable
+keys to verify the apt path, and does not provision production signing trust.
 
 Download each component's files again from the published release and use the
 trusted bootstrap with `DEBUGLET_REQUIRE_SIGNATURE=1` and independently

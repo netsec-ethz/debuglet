@@ -93,7 +93,7 @@ jobs:
       artifact-name: ${{ format('package-{0}-{1}', github.sha, github.run_attempt) }}
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -119,6 +119,8 @@ jobs:
           path: |
             .cache/ci/package-install.*
             .cache/ci/package-install-*.json
+            .cache/ci/debian-*.jsonl
+            .cache/ci/debian-*.txt
             .cache/ci/ci-image-evidence/
           include-hidden-files: true
           if-no-files-found: error

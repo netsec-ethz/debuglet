@@ -215,6 +215,20 @@ class RetentionTests(unittest.TestCase):
         self.assertTrue(json.loads(result.stdout)['already_present'])
         self.assertFalse(any('POST' in call or 'PATCH' in call or 'upload' in call for call in self.calls()[count:]))
 
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian retention requires dpkg-deb')
+    def test_debian_promotion_preserves_complete_signed_set(self):
+        self.inventory.debian()
+        self.inventory.generate()
+        self.signed()
+        result = self.promote()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        assets = {asset['name'] for asset in self.read_state()['releases'][0]['assets']}
+        self.assertEqual(assets, {path.name for path in self.directory.iterdir()})
+        self.assertTrue(release.package_names(VERSION, debian=True) <= assets)
+        result = self.promote()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)['already_present'])
+
     def test_existing_version_conflict_refuses_without_writes(self):
         self.signed()
         result = self.promote(); self.assertEqual(result.returncode, 0, result.stderr)

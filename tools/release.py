@@ -62,29 +62,33 @@ def digest(path):
         return {'sha256': hashlib.file_digest(data, 'sha256').hexdigest(), 'bytes': path.stat().st_size}
 
 
-def package_names(version):
+def package_names(version, debian=False):
     names = {'compatibility.json', 'SHA256SUMS-compatibility'}
     for component in ('', 'cli', 'executor', 'dispatcher'):
         suffix = '-' + component if component else ''
         names.update({f'debuglet{suffix}-{version}-linux-amd64.tar.gz',
                       f'install{suffix}.sh', f'SHA256SUMS{suffix}'})
+    if debian:
+        names.update({'deb-packages.json', 'SHA256SUMS-debian',
+                      f'debuglet-{version}-linux-amd64.deb',
+                      f'debuglet-payload-{version}-linux-amd64.deb'})
     return names
 
 
 def stage(packages, directory, version):
     if not VERSION.fullmatch(version):
         raise ValueError('invalid release version')
-    expected = package_names(version)
     found = {}
     for path in packages.rglob('*'):
         if path.is_symlink():
             raise ValueError('linked package input')
         if path.is_file():
-            if path.name not in expected or path.name in found:
+            if path.name in found:
                 raise ValueError('unexpected or duplicate package input: ' + path.name)
             found[path.name] = path
+    expected = package_names(version, debian='deb-packages.json' in found)
     if set(found) != expected:
-        raise ValueError('package artifact is incomplete')
+        raise ValueError('package artifact is incomplete or contains unexpected inputs')
     directory.mkdir(mode=0o700)
     for name, source in found.items():
         shutil.copyfile(source, directory / name)
@@ -146,7 +150,7 @@ def validate_gates(gates, version, source, builder):
 
 def subject(directory, version, source, builder):
     identity(version, source, builder)
-    expected = package_names(version) | METADATA | EVIDENCE_FILES
+    expected = package_names(version, debian=(directory / 'deb-packages.json').exists()) | METADATA | EVIDENCE_FILES
     if {p.name for p in directory.iterdir()} != expected:
         raise ValueError('release subjects require the exact packages and complete metadata')
     validate_gates(read_json(directory / 'gates.json'), version, source, builder)
@@ -164,7 +168,8 @@ def load_subject(directory, version, source=None, builder=None):
     identity(result['version'], result['source_sha'], result['builder'])
     if result['version'] != version or (source and result['source_sha'] != source) or (builder and result['builder'] != builder):
         raise ValueError('release source, version or builder does not match')
-    if set(result['files']) != package_names(version) | METADATA | EVIDENCE_FILES:
+    expected = package_names(version, debian='deb-packages.json' in result['files']) | METADATA | EVIDENCE_FILES
+    if set(result['files']) != expected:
         raise ValueError('release subject set is incomplete')
     if {path.name for path in directory.iterdir()} - set(result['files']) - {SUBJECT, SUBJECT + '.sig'}:
         raise ValueError('release directory contains unsigned extra files')
@@ -283,9 +288,10 @@ def archive_release(repository, version):
 
 
 def download_release(repository, record, directory, version):
-    expected = package_names(version) | METADATA | EVIDENCE_FILES | {SUBJECT, SUBJECT + '.sig'}
     assets = record.get('assets', [])
     names = [a.get('name') for a in assets]
+    expected = (package_names(version, debian='deb-packages.json' in names) | METADATA | EVIDENCE_FILES
+                | {SUBJECT, SUBJECT + '.sig'})
     missing = sorted(expected - set(names))
     if missing:
         raise ValueError('missing release assets: ' + ', '.join(missing))

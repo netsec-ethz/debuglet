@@ -35,7 +35,7 @@ CI_RACE_TIMEOUT ?= 5m
 CI_RACE_BUDGET_SECONDS ?= 240
 CI_RACE_PACKAGE_PARALLEL ?= 2
 
-.PHONY: ci-test ci-vet ci-fmt ci-race ci-build ci-kernel ci-package ci-demo ci-compatibility ci-local
+.PHONY: ci-test ci-vet ci-fmt ci-race ci-build ci-kernel ci-package ci-debian ci-demo ci-compatibility ci-local
 
 ci-test:
 	python3 -m unittest -v tools/test_make_targets.py tools/test_ci_github.py tools/test_verify_pcap.py tools/test_release.py tools/test_release_inventory.py tools/test_release_retention.py
@@ -62,6 +62,9 @@ ci-build:
 
 ci-package:
 	GO="$(GO)" CI_DIST="$(CI_DIST)" bash scripts/ci-package.sh
+
+ci-debian:
+	bash scripts/ci-debian.sh
 
 ci-demo:
 	GO="$(GO)" bash scripts/ci-demo.sh
