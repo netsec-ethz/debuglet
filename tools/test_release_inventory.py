@@ -2,12 +2,15 @@
 import importlib.util
 import gzip
 import io
+import shutil
+import subprocess
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
 from unittest import mock
 
+ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('inventory', Path(__file__).with_name('release_inventory.py'))
 inv = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(inv)
@@ -84,6 +87,106 @@ class InventoryTests(unittest.TestCase):
             checksums = ''.join(inv.digest((self.root / name).read_bytes())['sha256'] + '  ' + name + '\n'
                                 for name in (archive_name, installer))
             (self.root / ('SHA256SUMS-' + role if role else 'SHA256SUMS')).write_text(checksums)
+
+    def debian(self):
+        spec = importlib.util.spec_from_file_location('debian_package', ROOT / 'deploy/debian/package.py')
+        package = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(package)
+        self.inputs['materials'] += [{'name': name, **inv.digest((ROOT / name).read_bytes())}
+                                    for name in inv.DEBIAN_INPUTS]
+        self.input_path.write_bytes(inv.encoded(self.inputs))
+        archive_name = f'debuglet-{VERSION}-linux-amd64.tar.gz'
+        with tarfile.open(self.root / archive_name) as archive:
+            files = {member.name: archive.extractfile(member).read() for member in archive}
+        identity = inv.digest(files[inv.MANIFEST])['sha256']
+        package_name = 'debuglet-payload-' + identity[:24]
+        payload_root = '/usr/lib/debuglet/debian/' + identity
+        deb_version = package.debian_version(VERSION)
+        for payload in (False, True):
+            name = package_name if payload else 'debuglet'
+            with tempfile.TemporaryDirectory() as temporary:
+                tree = Path(temporary)
+                if payload:
+                    for path, data in files.items():
+                        target = tree / payload_root.lstrip('/') / path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(data)
+                        target.chmod(0o755 if path.startswith('bin/') else 0o644)
+                    for target, template in (('preinst', 'payload-preinst'), ('prerm', 'payload_guard.py')):
+                        package.write(tree / 'DEBIAN' / target,
+                                      package.template(template, payload_root, package_name, deb_version), 0o755)
+                else:
+                    for command in ('dbl', 'debuglet-dispatcher', 'debuglet-executor'):
+                        target = tree / 'usr/bin' / command
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.symlink_to('../lib/debuglet/debian/' + identity + '/bin/' + command)
+                    package.write(tree / 'DEBIAN/postinst', (ROOT / 'deploy/debian/selector-postinst').read_text(), 0o755)
+                package.write(tree / 'DEBIAN/control', package.control(name, deb_version,
+                              'immutable full Debuglet payload' if payload else 'Debuglet command selector and local setup',
+                              'python3' if payload else f'{package_name} (= {deb_version}), adduser'))
+                package.write(tree / 'usr/share/doc' / name / 'copyright', self.inputs['notices']['LICENSE'])
+                package.write(tree / 'usr/share/doc' / name / 'debian.md', (ROOT / 'docs/operations/debian.md').read_text())
+                for directory in tree.rglob('*'):
+                    if directory.is_dir() and not directory.is_symlink():
+                        directory.chmod(0o755)
+                output = self.root / f"debuglet-{'payload-' if payload else ''}{VERSION}-linux-amd64.deb"
+                subprocess.run(['dpkg-deb', '--root-owner-group', '-Zgzip', '--build', str(tree), str(output)],
+                               check=True, stdout=subprocess.DEVNULL)
+        record = {'schema_version': 1, 'upstream_version': VERSION, 'debian_version': deb_version,
+                  'architecture': 'amd64', 'source_sha': SOURCE, 'payload_package': package_name,
+                  'payload_root': payload_root, 'manifest_sha256': identity,
+                  'archive': {'name': archive_name, **inv.digest((self.root / archive_name).read_bytes())}}
+        self.refresh_debian(record)
+        return record
+
+    def refresh_debian(self, record):
+        record['files'] = [{'name': path.name, **inv.digest(path.read_bytes())}
+                           for path in sorted(self.root.glob('*.deb'))]
+        metadata = self.root / 'deb-packages.json'
+        metadata.write_bytes(inv.encoded(record))
+        checksums = ''.join(item['sha256'] + '  ' + item['name'] + '\n' for item in record['files'])
+        checksums += inv.digest(metadata.read_bytes())['sha256'] + '  deb-packages.json\n'
+        (self.root / 'SHA256SUMS-debian').write_text(checksums)
+
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian inventory checks require dpkg-deb')
+    def test_debian_inventory_binds_exact_payload_source_and_provenance(self):
+        record = self.debian()
+        self.generate()
+        self.verify()
+        provenance = inv.read_json(self.root / 'provenance.json')
+        self.assertEqual(len(provenance['subject']), 19)
+        self.assertTrue({'deb-packages.json', 'SHA256SUMS-debian'} <= {s['name'] for s in provenance['subject']})
+        sbom = inv.read_json(self.root / 'sbom.cdx.json')
+        debian = [item for item in sbom['dependencies'] if item['ref'].startswith('debian:')]
+        self.assertEqual(len(debian), 2)
+        self.assertTrue(all(item['dependsOn'] == [f'archive:debuglet-{VERSION}-linux-amd64.tar.gz'] for item in debian))
+        for field, changed in (('source_sha', 'b' * 40), ('manifest_sha256', 'b' * 64),
+                               ('archive', dict(record['archive'], sha256='b' * 64))):
+            with self.subTest(field=field):
+                original = record[field]
+                record[field] = changed
+                self.refresh_debian(record)
+                with self.assertRaisesRegex(ValueError, 'Debian'):
+                    self.generate()
+                record[field] = original
+        self.refresh_debian(record)
+
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian inventory checks require dpkg-deb')
+    def test_debian_rejects_substituted_payload_and_scripts_even_with_fresh_checksums(self):
+        record = self.debian()
+        path = self.root / f'debuglet-payload-{VERSION}-linux-amd64.deb'
+        original = path.read_bytes()
+        for target in (record['payload_root'].lstrip('/') + '/bin/dbl', 'DEBIAN/prerm'):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                path.write_bytes(original)
+                subprocess.run(['dpkg-deb', '--raw-extract', str(path), temporary], check=True)
+                with (Path(temporary) / target).open('ab') as output:
+                    output.write(b'changed bytes')
+                subprocess.run(['dpkg-deb', '--root-owner-group', '-Zgzip', '--build', temporary, str(path)],
+                               check=True, stdout=subprocess.DEVNULL)
+                self.refresh_debian(record)
+                with self.assertRaisesRegex(ValueError, 'Debian (payload|maintainer script)'):
+                    self.generate()
 
     def generate(self):
         inv.generate(self.root, VERSION, SOURCE, BUILDER, self.input_path)

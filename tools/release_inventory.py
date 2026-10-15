@@ -159,7 +159,7 @@ def collect(source_directory, dist, image_evidence, out, go='go'):
             require('{path} {version} {sum}'.format(**module) in sums,
                     'binary dependency missing from committed go.sum')
         components.append({'name': name, **hashed, **info})
-    paths = set(SOURCE_INPUTS)
+    paths = set(SOURCE_INPUTS) | set(DEBIAN_INPUTS)
     for directory in ('ratelimit', 'tagger'):
         for path in (source_directory / 'internal/executor' / directory / 'ebpf').rglob('*'):
             if path.is_file() and path.suffix in ('.c', '.h', '.o', '.go'):
@@ -291,6 +291,142 @@ def payloads(directory, version, source, builder, inputs):
     return result
 
 
+# Kept separate from SOURCE_INPUTS so historical tar-only signed inventories
+# retain their original schema and remain auditable.
+DEBIAN_INPUTS = ('deploy/debian/package.py', 'deploy/debian/payload-preinst',
+                 'deploy/debian/payload_guard.py', 'deploy/debian/selector-postinst',
+                 'scripts/package-deb.sh', 'docs/operations/debian.md')
+
+
+class BoundedPipeReader:
+    def __init__(self, stream):
+        self.stream, self.position = stream, 0
+
+    def read(self, size):
+        require(0 <= size <= MAX_ARCHIVE_BYTES - self.position, 'Debian tar stream exceeds limit')
+        data = self.stream.read(size)
+        self.position += len(data)
+        return data
+
+
+def deb_members(path, control=False):
+    """Read package contents with dpkg-deb; never install or execute scripts."""
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_ARCHIVE_BYTES,
+            'Debian package must be a bounded regular file')
+    option = '--ctrl-tarfile' if control else '--fsys-tarfile'
+    result, directories = {}, set()
+    process = subprocess.Popen(['dpkg-deb', option, str(path)], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)
+    try:
+        with tarfile.open(fileobj=BoundedPipeReader(process.stdout), mode='r|') as archive:
+            count = 0
+            for member in archive:
+                count += 1
+                require(count <= 256 and member.uid == 0 and member.gid == 0,
+                        'Debian package members or ownership differ')
+                name = member.name.removeprefix('./').rstrip('/')
+                if name in ('', '.') and member.isdir():
+                    continue
+                require(name and PurePosixPath(name).as_posix() == name and not name.startswith('/')
+                        and '..' not in PurePosixPath(name).parts and name not in result
+                        and name not in directories, 'unsafe or duplicate Debian member')
+                require(member.mode == (0o755 if member.isdir() or member.issym()
+                        or name.startswith('usr/bin/') or '/bin/' in name
+                        or (control and name != 'control') else 0o644)
+                        or (member.issym() and member.mode == 0o777), 'Debian member mode differs: ' + name)
+                if member.isdir():
+                    directories.add(name)
+                elif member.issym() and not control:
+                    result[name] = {'link': member.linkname}
+                else:
+                    require(member.isfile() and member.size <= (65536 if control else 256 * 1024 * 1024),
+                            'unsupported or oversized Debian member')
+                    data = archive.extractfile(member).read()
+                    result[name] = data if control else digest(data)
+        process.stdout.close()
+        require(process.wait(timeout=10) == 0, 'cannot read Debian package')
+    finally:
+        process.stdout.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    parents = {p.as_posix() for name in result for p in PurePosixPath(name).parents if p.as_posix() != '.'}
+    require(directories <= parents, 'unexpected Debian directory')
+    return result
+
+
+def debian_payloads(directory, version, source, inputs):
+    metadata = directory / 'deb-packages.json'
+    if not metadata.exists():
+        require(not list(directory.glob('*.deb')) and not (directory / 'SHA256SUMS-debian').exists(),
+                'Debian packages require complete assembly metadata')
+        return []
+    record = read_json(metadata)
+    fields = {'schema_version', 'upstream_version', 'debian_version', 'architecture', 'source_sha',
+              'payload_package', 'payload_root', 'files', 'archive', 'manifest_sha256'}
+    require(set(record) == fields and record['schema_version'] == 1
+            and record['upstream_version'] == version and record['source_sha'] == source
+            and record['architecture'] == 'amd64'
+            and record['debian_version'] == version[1:].replace('-', '~', 1) + '-1',
+            'Debian assembly identity differs')
+    archive_name = f'debuglet-{version}-linux-amd64.tar.gz'
+    archive_path = directory / archive_name
+    require(record['archive'] == {'name': archive_name, **digest(regular(archive_path))},
+            'Debian source archive differs')
+    with gzip.open(archive_path, 'rb') as stream, tarfile.open(fileobj=BoundedTarReader(stream), mode='r:') as archive:
+        manifest_bytes = archive.extractfile(MANIFEST).read()
+    manifest = decode(manifest_bytes)
+    identity = digest(manifest_bytes)['sha256']
+    payload_package = 'debuglet-payload-' + identity[:24]
+    payload_root = 'usr/lib/debuglet/debian/' + identity
+    require(record['manifest_sha256'] == identity and record['payload_package'] == payload_package
+            and record['payload_root'] == '/' + payload_root, 'Debian payload identity differs')
+    names = {f'debuglet-{version}-linux-amd64.deb', f'debuglet-payload-{version}-linux-amd64.deb'}
+    require(isinstance(record['files'], list) and len(record['files']) == 2
+            and {item['name'] for item in record['files']} == names
+            and {p.name for p in directory.glob('*.deb')} == names, 'Debian package set differs')
+    materials = {m['name']: {k: m[k] for k in ('sha256', 'bytes')} for m in inputs['materials']}
+    require(set(DEBIAN_INPUTS) <= materials.keys(), 'missing Debian assembly source inputs')
+    expected_files = {payload_root + '/' + name: hashed for name, hashed in manifest['files'].items()}
+    expected_files[payload_root + '/' + MANIFEST] = digest(manifest_bytes)
+    for item in record['files']:
+        name = item['name']
+        path = directory / name
+        require(item == {'name': name, **digest(regular(path))}, 'Debian package checksum differs')
+        payload = name.startswith('debuglet-payload-')
+        package = payload_package if payload else 'debuglet'
+        control_files = deb_members(path, control=True)
+        require(set(control_files) == ({'control', 'preinst', 'prerm'} if payload else {'control', 'postinst'}),
+                'Debian control member set differs')
+        control = control_files['control'].decode()
+        fields = dict(line.split(': ', 1) for line in control.splitlines())
+        expected_control = {'Package': package, 'Version': record['debian_version'], 'Architecture': 'amd64',
+                            'Maintainer': 'Debuglet maintainers',
+                            'Section': 'net', 'Priority': 'optional', 'Homepage': REPOSITORY,
+                            'Depends': 'python3' if payload else f"{payload_package} (= {record['debian_version']}), adduser",
+                            'Description': 'immutable full Debuglet payload' if payload else 'Debuglet command selector and local setup'}
+        require(fields == expected_control and len(control.splitlines()) == len(fields),
+                'Debian control identity or dependencies differ')
+        for script, material in ({'preinst': 'payload-preinst', 'prerm': 'payload_guard.py'} if payload
+                                 else {'postinst': 'selector-postinst'}).items():
+            content = control_files[script].replace(('/' + payload_root).encode(), b'@PAYLOAD_ROOT@')
+            content = content.replace(payload_package.encode(), b'@PAYLOAD_PACKAGE@')
+            if payload:
+                content = content.replace(record['debian_version'].encode(), b'@DEBIAN_VERSION@')
+            require(digest(content) == materials['deploy/debian/' + material], 'Debian maintainer script source differs')
+        expected_data = dict(expected_files) if payload else {
+            'usr/bin/' + command: {'link': '../lib/debuglet/debian/' + identity + '/bin/' + command}
+            for command in ('dbl', 'debuglet-dispatcher', 'debuglet-executor')}
+        expected_data['usr/share/doc/' + package + '/copyright'] = materials['LICENSE']
+        expected_data['usr/share/doc/' + package + '/debian.md'] = materials['docs/operations/debian.md']
+        require(deb_members(path) == expected_data, 'Debian payload differs from verified full archive')
+    checksums = ''.join(item['sha256'] + '  ' + item['name'] + '\n'
+                        for item in sorted(record['files'], key=lambda item: item['name']))
+    checksums += digest(regular(metadata))['sha256'] + '  deb-packages.json\n'
+    require(regular(directory / 'SHA256SUMS-debian') == checksums.encode(), 'Debian checksum index differs')
+    return sorted(names)
+
+
 def validate_inputs(inputs, version, source, builder):
     require(inputs['schema_version'] == 1, 'unknown build inputs schema')
     record, image = inputs['build_record'], inputs['build_image']
@@ -370,6 +506,11 @@ def documents(directory, version, source, builder, inputs):
                 dependencies.append('module:' + key)
             edges.append({'ref': child, 'dependsOn': dependencies})
         edges.append({'ref': ref, 'dependsOn': children})
+    for name in debian_payloads(directory, version, source, inputs):
+        ref = 'debian:' + name
+        components.append(component(ref, 'application', name, version, digest(regular(directory / name)),
+                                    purpose='debian-installation'))
+        edges.append({'ref': ref, 'dependsOn': ['archive:' + f'debuglet-{version}-linux-amd64.tar.gz']})
     for key, module in sorted(modules.items()):
         components.append(component('module:' + key, 'library', module['path'], module['version'],
                                     module_sum=module['sum'], purpose='runtime'))
@@ -389,8 +530,8 @@ def documents(directory, version, source, builder, inputs):
                          'properties': properties(source_sha=source, builder=builder)},
             'components': components, 'dependencies': edges}
     subject_files = sorted(p for p in directory.iterdir() if p.is_file() and
-                           (p.name.endswith(('.tar.gz', '.sh')) or p.name.startswith('SHA256SUMS')
-                            or p.name == 'compatibility.json'))
+                           (p.name.endswith(('.tar.gz', '.sh', '.deb')) or p.name.startswith('SHA256SUMS')
+                            or p.name in ('compatibility.json', 'deb-packages.json')))
     subjects = [{'name': p.name, 'digest': {'sha256': digest(regular(p))['sha256']}} for p in subject_files]
     subjects.append({'name': 'sbom.cdx.json', 'digest': {'sha256': digest(encoded(sbom))['sha256']}})
     provenance = {'_type': 'https://in-toto.io/Statement/v1', 'subject': subjects,

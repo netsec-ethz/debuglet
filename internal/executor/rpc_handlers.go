@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
+	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
@@ -65,7 +66,7 @@ func (e *Executor) OnHello(ctx context.Context, req *pb.HelloRequest) (*pb.Hello
 		ExecutorId:          e.cfg.Identity.ExecutorID,
 		BandwidthVersion:    2,
 		EgressBudgetVersion: 1,
-		Version:             e.cfg.Identity.Version,
+		Version:             buildinfo.Version,
 		Capabilities:        capabilities,
 		VantagePoint:        vantage,
 		// The dispatcher records the address it observes on the control

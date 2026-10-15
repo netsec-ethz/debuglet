@@ -84,20 +84,41 @@ class ReleaseTests(unittest.TestCase):
                 release.validate_gates(gates, VERSION, SOURCE, BUILDER)
 
     def test_stage_requires_exact_component_set_and_preserves_bytes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            packages = root / 'packages'
-            packages.mkdir()
-            expected = release.package_names(VERSION)
-            for name in expected:
-                (packages / name).write_bytes(name.encode())
-            release.stage(packages, root / 'release', VERSION)
-            self.assertEqual({p.name for p in (root / 'release').iterdir()}, expected)
-            for path in (root / 'release').iterdir():
-                self.assertEqual(path.read_bytes(), path.name.encode())
-            (packages / 'unexpected').write_text('never sign')
-            with self.assertRaises(ValueError):
-                release.stage(packages, root / 'bad', VERSION)
+        for debian in (False, True):
+            with self.subTest(debian=debian), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                packages = root / 'packages'
+                packages.mkdir()
+                expected = release.package_names(VERSION, debian=debian)
+                for name in expected:
+                    (packages / name).write_bytes(name.encode())
+                release.stage(packages, root / 'release', VERSION)
+                self.assertEqual({p.name for p in (root / 'release').iterdir()}, expected)
+                for path in (root / 'release').iterdir():
+                    self.assertEqual(path.read_bytes(), path.name.encode())
+                (packages / 'unexpected').write_text('never sign')
+                with self.assertRaises(ValueError):
+                    release.stage(packages, root / 'bad', VERSION)
+
+    def test_partial_debian_sets_cannot_be_staged_or_loaded(self):
+        complete = release.package_names(VERSION, debian=True)
+        debian_files = complete - release.package_names(VERSION)
+        for missing in debian_files:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                packages = root / 'packages'
+                packages.mkdir()
+                for name in complete - {missing}:
+                    (packages / name).write_bytes(name.encode())
+                with self.assertRaises(ValueError):
+                    release.stage(packages, root / 'release', VERSION)
+                for name in release.METADATA | release.EVIDENCE_FILES:
+                    (packages / name).write_bytes(name.encode())
+                subject = {'schema_version': 1, 'version': VERSION, 'source_sha': SOURCE, 'builder': BUILDER,
+                           'files': {p.name: release.digest(p) for p in packages.iterdir()}}
+                (packages / 'release.json').write_text(json.dumps(subject))
+                with self.assertRaises(ValueError):
+                    release.load_subject(packages, VERSION, SOURCE, BUILDER)
 
     def test_subject_checksums_and_source_are_bound(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,6 +140,20 @@ class ReleaseTests(unittest.TestCase):
             (root / 'install.sh').write_text('changed')
             with self.assertRaises(ValueError):
                 release.load_subject(root, VERSION)
+
+    def test_complete_debian_subjects_are_required_and_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            expected = release.package_names(VERSION, debian=True) | release.METADATA | release.EVIDENCE_FILES
+            for name in expected:
+                (root / name).write_bytes(name.encode())
+            subject = {'schema_version': 1, 'version': VERSION, 'source_sha': SOURCE, 'builder': BUILDER,
+                       'files': {name: release.digest(root / name) for name in expected}}
+            (root / 'release.json').write_text(json.dumps(subject))
+            release.load_subject(root, VERSION, SOURCE, BUILDER)
+            (root / f'debuglet-{VERSION}-linux-amd64.deb').write_bytes(b'tampered')
+            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                release.load_subject(root, VERSION, SOURCE, BUILDER)
 
 
 class SecretRangeTests(unittest.TestCase):

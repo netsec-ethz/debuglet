@@ -10,3 +10,6 @@ for component in cli executor dispatcher; do
 done
 "${GO:-go}" run -mod=readonly ./internal/packaging compatibility \
   -dist "${CI_DIST:-.cache/ci/dist}" -out "$package_dir"
+
+# Debian packages retain the verified full payload and use the same build identity.
+bash scripts/package-deb.sh --package-dir "$package_dir"

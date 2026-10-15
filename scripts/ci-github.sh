@@ -168,3 +168,7 @@ docker run --rm --init --pull=never --name "$name" \
 if [[ $lane == kernel ]]; then
     bash scripts/ci-shared-workers.sh
 fi
+
+if [[ $lane == package ]]; then
+    bash scripts/ci-debian.sh
+fi

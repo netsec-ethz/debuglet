@@ -161,7 +161,15 @@ func TestRecoverableGuestRealTransports(t *testing.T) {
 						_, _ = c.Write([]byte("PONG"))
 					}
 				})
-			} else if mode == "reset" || mode == "connect-reset" {
+			} else if mode == "reset" {
+				addr = startTCPTarget(t, func(c net.Conn) {
+					// Reset only after the guest has completed Dial and sent its marker.
+					var marker [1]byte
+					if _, err := io.ReadFull(c, marker[:]); err == nil && marker[0] == 'R' {
+						_ = c.(*net.TCPConn).SetLinger(0)
+					}
+				})
+			} else if mode == "connect-reset" {
 				addr = startTCPTarget(t, func(c net.Conn) { _ = c.(*net.TCPConn).SetLinger(0) })
 			} else if mode == "connect-timeout" {
 				addr = startTCPTarget(t, func(c net.Conn) { _, _ = io.Copy(io.Discard, c) })

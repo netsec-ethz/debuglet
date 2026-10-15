@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+if [ "$1" != configure ]; then exit 0; fi
+# Existing identities, directory ownership and modes are operator-controlled.
+if ! getent passwd debuglet >/dev/null; then
+    if ! getent group debuglet >/dev/null; then addgroup --system debuglet; fi
+    adduser --system --ingroup debuglet --home /var/lib/debuglet \
+        --no-create-home --shell /usr/sbin/nologin debuglet
+fi
+for path in /var/lib/debuglet /var/lib/debuglet/executors; do
+    if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
+        echo "debuglet: expected a real directory at $path; existing state was preserved" >&2
+        exit 1
+    fi
+    if [ ! -d "$path" ]; then
+        mkdir -m 0755 "$path"
+        if [ "$path" = /var/lib/debuglet/executors ]; then
+            chown debuglet:"$(id -gn debuglet)" "$path"
+        fi
+    fi
+done
+echo 'Debuglet software is staged. Enrollment and service activation are explicit; existing services keep their recorded payload.'
