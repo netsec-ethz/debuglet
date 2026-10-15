@@ -78,7 +78,9 @@ func main() {
 		n, err = io.ReadFull(s, buf[:4])
 		require(n == 4 && err == nil && string(buf[:n]) == "PONG", n, err)
 	case "reset":
-		n, err := s.Read(buf)
+		n, err := s.Write([]byte("R"))
+		require(n == 1 && err == nil, n, err)
+		n, err = s.Read(buf)
 		require(n == 0 && errors.Is(err, debuglet.ErrReset), n, err)
 	default:
 		panic("unknown mode")
