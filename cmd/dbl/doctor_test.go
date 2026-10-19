@@ -3,7 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -202,5 +207,105 @@ func TestDoctorLiveSchemaRequiresOfflineSelection(t *testing.T) {
 	_, out, _ := runCLI(context.Background(), "--output", outputJSON, "doctor", "--role", "executor", "--file", path)
 	if check := doctorResult(t, out, "schema"); check.Status != "not_checked" || !strings.Contains(check.Next, "--offline") {
 		t.Fatalf("unexpected schema check: %+v", check)
+	}
+}
+
+func TestDoctorCertificateRenewalGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name, role string
+		days       int
+		status     string
+		renewal    bool
+	}{
+		{"not due", "executor", 30, "pass", false},
+		{"due soon", "executor", 13, "pass", true},
+		{"dispatcher", "dispatcher", 13, "pass", true},
+		{"expired", "executor", -1, "failure", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cert, key := doctorCertificate(t, time.Now().Add(time.Duration(tc.days)*24*time.Hour))
+			check := certificateCheck(tc.role, false, cert, key, "")
+			if check.Status != tc.status || strings.Contains(check.Detail, "renewal is due") != tc.renewal {
+				t.Fatalf("unexpected certificate result: %+v", check)
+			}
+			if strings.Contains(check.Next, "join --renew") != (tc.renewal && tc.role == "executor") {
+				t.Fatalf("incorrect role-specific renewal advice: %+v", check)
+			}
+			if tc.renewal && !strings.Contains(check.Next, "actual control handshake") {
+				t.Fatalf("renewal reminder lost trust-verification limitation: %+v", check)
+			}
+		})
+	}
+	cert, key := doctorCertificate(t, time.Now().Add(13*24*time.Hour))
+	expiredCA, _ := doctorCertificate(t, time.Now().Add(-time.Hour))
+	check := certificateCheck("executor", false, cert, key, expiredCA)
+	if check.Status != "failure" || !strings.Contains(check.Detail, "CA bundle") || strings.Contains(check.Next, "join --renew") {
+		t.Fatalf("CA failure incorrectly recommends leaf-only renewal: %+v", check)
+	}
+	if check := certificateCheck("executor", true, cert, key, expiredCA); check.Status != "not_checked" {
+		t.Fatalf("disabled TLS checked certificate: %+v", check)
+	}
+}
+
+func doctorCertificate(t *testing.T, expires time.Time) (string, string) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-30 * 24 * time.Hour), NotAfter: expires,
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, public, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, key := filepath.Join(t.TempDir(), "certificate.pem"), filepath.Join(t.TempDir(), "private.pem")
+	for path, block := range map[string]*pem.Block{cert: {Type: "CERTIFICATE", Bytes: der}, key: {Type: "PRIVATE KEY", Bytes: keyDER}} {
+		if err := os.WriteFile(path, pem.EncodeToMemory(block), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cert, key
+}
+
+func TestDoctorReportsIsolationWithoutClaimingRuntimeReadiness(t *testing.T) {
+	for _, profile := range []string{"", "trusted", "shared"} {
+		t.Run(profile, func(t *testing.T) {
+			extra := "[isolation]\nprofile='" + profile + "'\n"
+			if profile == "shared" {
+				extra += `cgroup_root='/unavailable-doctor-fixture'
+node_memory_bytes=536870912
+node_cpu_quota_us=100000
+node_pids=128
+control_memory_reserve_bytes=134217728
+control_cpu_reserve_us=25000
+compile_memory_bytes=268435456
+compile_cpu_quota_us=50000
+compile_wall_ms=10000
+compile_concurrency=1
+run_memory_bytes=268435456
+run_cpu_quota_us=50000
+run_wall_ms=30000
+worker_pids=64
+memory_pages=1024
+`
+			}
+			path := writeOperatorConfig(t, "executor", extra)
+			_, out, _ := runCLI(context.Background(), "--output", outputJSON, "doctor", "--role", "executor", "--file", path)
+			check := doctorResult(t, out, "isolation")
+			if check.Status != "not_checked" || check.Next == "" {
+				t.Fatalf("configuration was treated as proof of isolation: %+v", check)
+			}
+			if profile == "shared" && !strings.Contains(check.Detail, "runtime enforcement was not checked") {
+				t.Fatalf("shared profile lacks its runtime limitation: %+v", check)
+			}
+			if profile != "shared" && !strings.Contains(check.Detail, "without hard CPU or process-memory limits") {
+				t.Fatalf("trusted profile lacks its isolation limitation: %+v", check)
+			}
+		})
 	}
 }
