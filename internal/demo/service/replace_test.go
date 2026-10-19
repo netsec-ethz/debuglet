@@ -333,7 +333,7 @@ func TestEnrolledInstallRetriesCapabilityOnlyInterruption(t *testing.T) {
 			}
 			// Exercise the actual ordinary reinstall stage, then interrupt it
 			// before writeUnit: new capability record, previous capability unit.
-			if err := f.installer.prepareEnrolledState(t.Context(), &p, Account{UID: 4242, GID: 4343}); err != nil {
+			if err := f.installer.prepareEnrolledState(t.Context(), &p, Account{UID: 4242, GID: 4343}, &Report{}); err != nil {
 				t.Fatal(err)
 			}
 			if p.PacketCapabilities != automatic {

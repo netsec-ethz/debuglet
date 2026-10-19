@@ -49,16 +49,6 @@ func New(c Config) (result *Supervisor, resultErr error) {
 	if fs.Type != unix.CGROUP2_SUPER_MAGIC {
 		return nil, errors.New("shared isolation requires cgroup v2")
 	}
-	controls, err := os.ReadFile(filepath.Join(c.CgroupRoot, "cgroup.subtree_control"))
-	if err != nil {
-		return nil, err
-	}
-	available := " " + strings.TrimSpace(string(controls)) + " "
-	for _, name := range []string{"memory", "cpu", "pids"} {
-		if !strings.Contains(available, " "+name+" ") {
-			return nil, fmt.Errorf("delegated cgroup lacks enabled %s control", name)
-		}
-	}
 	// The supervisor must run within the same delegation as its children.
 	// This also catches an SSH/session scope which can create directories but
 	// lacks permission to migrate processes into the delegated subtree.
@@ -80,6 +70,21 @@ func New(c Config) (result *Supervisor, resultErr error) {
 	}
 	if err := checkControlCapacity(c, "/sys/fs/cgroup"); err != nil {
 		return nil, err
+	}
+	// A delegated systemd service starts in its control leaf. Enable only
+	// its configured delegation, after checking membership and finite capacity.
+	if err := write(c.CgroupRoot, "cgroup.subtree_control", "+memory +cpu +pids"); err != nil {
+		return nil, fmt.Errorf("enable shared worker controllers (the executor must run in a separate control leaf): %w", err)
+	}
+	controls, err := os.ReadFile(filepath.Join(c.CgroupRoot, "cgroup.subtree_control"))
+	if err != nil {
+		return nil, err
+	}
+	available := " " + strings.TrimSpace(string(controls)) + " "
+	for _, name := range []string{"memory", "cpu", "pids"} {
+		if !strings.Contains(available, " "+name+" ") {
+			return nil, fmt.Errorf("delegated cgroup lacks enabled %s control", name)
+		}
 	}
 	root := filepath.Join(c.CgroupRoot, "debuglet-"+uuid.NewString())
 	if err = os.Mkdir(root, 0700); err != nil {

@@ -17,8 +17,8 @@ import (
 //     working-directory lookup and no shell are involved.
 //   - It runs as an existing unprivileged account with no new privileges. Only
 //     enrolled automatic-counter executors receive the four packet capabilities.
-//     The only writable location is the role's own
-//     persistent state directory plus its runtime directory.
+//     Writes stay within persistent/runtime state and, for shared executors,
+//     the delegated cgroup subtree.
 //   - Stopping it sends SIGTERM to the daemon alone and gives it the whole
 //     stop budget to revoke admission and join its owned local work. Only
 //     after that budget does the service manager kill the remaining processes.
@@ -35,6 +35,9 @@ func Unit(p Profile) (string, error) {
 		if err := unitSafePath(p.MaintenanceFile); err != nil {
 			return "", err
 		}
+	}
+	if p.SharedIsolation && (p.Role != storagecheck.Executor || !p.Enrolled) {
+		return "", fmt.Errorf("shared isolation requires an enrolled executor")
 	}
 	description := fmt.Sprintf("Debuglet %s %s (%s)", p.Role, p.Name, p.Version)
 	var b strings.Builder
@@ -89,7 +92,13 @@ func Unit(p Profile) (string, error) {
 	fmt.Fprintf(&b, "PrivateTmp=yes\n")
 	fmt.Fprintf(&b, "ProtectSystem=strict\n")
 	fmt.Fprintf(&b, "ProtectHome=yes\n")
-	fmt.Fprintf(&b, "ProtectControlGroups=yes\n")
+	if p.SharedIsolation {
+		fmt.Fprintf(&b, "ProtectControlGroups=no\n")
+		fmt.Fprintf(&b, "Slice=system.slice\nDelegate=cpu memory pids\nDelegateSubgroup=control\n")
+		fmt.Fprintf(&b, "MemoryMax=1342177280\nMemorySwapMax=0\nCPUQuota=225%%\nTasksMax=384\n")
+	} else {
+		fmt.Fprintf(&b, "ProtectControlGroups=yes\n")
+	}
 	fmt.Fprintf(&b, "ProtectKernelModules=yes\n")
 	fmt.Fprintf(&b, "ReadWritePaths=%s\n", p.StateDir)
 	fmt.Fprintf(&b, "StandardOutput=journal\n")

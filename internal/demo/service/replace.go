@@ -28,6 +28,9 @@ func (i *Installer) ReplacePackage(ctx context.Context, request Request, target 
 	if request.Role != storagecheck.Executor || !old.Enrolled || old.ExecutorID == "" || request.EnrolledState != old.StateDir {
 		return report, errors.New("package replacement requires the existing enrolled executor and its canonical --enrolled-state")
 	}
+	if request.Isolation != "" {
+		return report, errors.New("package replacement preserves isolation; omit --isolation")
+	}
 	if (request.User != "" && request.User != old.User) || (request.Group != "" && request.Group != old.Group) {
 		return report, errors.New("package replacement cannot change the service account or group")
 	}
@@ -139,6 +142,11 @@ func (i *Installer) ReplacePackage(ctx context.Context, request Request, target 
 // marker removal. Reload also prevents the manager starting a stale definition
 // after the files were committed but a previous process was interrupted.
 func (i *Installer) prepareStart(ctx context.Context, p Profile) error {
+	if p.SharedIsolation {
+		if _, err := readEnrolledConfig(p); err != nil {
+			return err
+		}
+	}
 	if _, err := os.Lstat(p.UnitPath); err != nil {
 		return err
 	}

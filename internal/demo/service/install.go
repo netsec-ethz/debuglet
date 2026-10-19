@@ -162,6 +162,10 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 		if existing.Enrolled != p.Enrolled {
 			return report, errors.New("installation mode differs from retained state; reinstall enrolled executors with --enrolled-state and never replace their configuration")
 		}
+		if request.Isolation != "" && p.SharedIsolation != existing.SharedIsolation {
+			return report, errors.New("--isolation shared is only available on first adoption; existing services retain their isolation profile")
+		}
+		p.SharedIsolation = existing.SharedIsolation
 		if existing.Enrolled {
 			if err := i.verifyRemoval(ctx, existing); err != nil {
 				// A same-package counter-mode reinstall records its capability
@@ -185,6 +189,11 @@ func (i *Installer) Install(ctx context.Context, request Request, assets demo.As
 		if _, err := os.Lstat(p.UnitPath); err == nil {
 			return report, fmt.Errorf("refusing to replace unmanaged unit %s", p.UnitPath)
 		} else if !errors.Is(err, os.ErrNotExist) {
+			return report, err
+		}
+	}
+	if p.SharedIsolation && (i.root == "" || i.root == "/") {
+		if err := checkSharedHost(ctx); err != nil {
 			return report, err
 		}
 	}
@@ -304,7 +313,7 @@ func (i *Installer) observeReady(ctx context.Context, p Profile, state UnitState
 // account could already write to.
 func (i *Installer) prepareState(ctx context.Context, p *Profile, report *Report, account Account) error {
 	if p.Enrolled {
-		return i.prepareEnrolledState(ctx, p, account)
+		return i.prepareEnrolledState(ctx, p, account, report)
 	}
 	if err := os.MkdirAll(filepath.Dir(p.StateDir), 0755); err != nil {
 		return err
@@ -761,6 +770,7 @@ func (i *Installer) load(ctx context.Context, operation string, role storagechec
 	p.ExecutorID = record.ExecutorID
 	p.Enrolled = record.Enrolled
 	p.PacketCapabilities = record.PacketCapabilities
+	p.SharedIsolation = record.SharedIsolation
 	p.HTTPPort, p.GRPCPort = record.HTTPPort, record.GRPCPort
 	p.DispatcherGRPC, p.DispatcherHTTP = record.DispatcherGRPC, record.DispatcherHTTP
 	report.Version, report.ExecutorID = p.Version, p.ExecutorID
