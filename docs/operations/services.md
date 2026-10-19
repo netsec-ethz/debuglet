@@ -88,16 +88,44 @@ start the service or enable it at boot. Keep other administrators, automation
 and foreground executors from starting or changing this instance throughout
 maintenance; the command does not serialize concurrent administrator actions.
 
-Obtain the operator-approved full package and verify its release trust as
-described in [signed releases](releases.md). Retain the previous full package.
-Stage the candidate without changing command links, then use its CLI explicitly:
+Retain the previous full package and choose the staging method matching your
+installation. Run the remaining steps in the same shell, using the selected
+`replacement_cli` and `candidate` rather than whichever `dbl` appears on `PATH`.
+
+For **apt**, configure the [signed repository](apt-repository.md) first, then
+install the operator-approved exact Debian version. This changes the command
+links but leaves the service on its recorded package:
 
 ```sh
+set -eu
+DEBUGLET_DEBIAN_VERSION=VERSION_PROVIDED_BY_OPERATOR
+sudo apt-get update
+sudo apt-get install "debuglet=$DEBUGLET_DEBIAN_VERSION"
+test "$(dpkg-query -W -f='${Version}' debuglet)" = "$DEBUGLET_DEBIAN_VERSION"
+candidate=$(dirname "$(dirname "$(readlink -f /usr/bin/dbl)")")
+replacement_cli=/usr/bin/dbl
+```
+
+Before replacing the service, mark its previous `debuglet-payload-*` package
+manual with `sudo apt-mark manual PAYLOAD_PACKAGE_NAME` so it remains available
+for rollback after the service record changes. See [payload retention](debian.md#removal-and-repair).
+
+For a **tar installation**, obtain and verify the operator-approved full bundle
+as described in [signed releases](releases.md). Stage it without changing command
+links:
+
+```sh
+set -eu
 DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR
 sudo sh ./install.sh --archive "./debuglet-${DEBUGLET_VERSION}-linux-amd64.tar.gz" \
   --checksums ./SHA256SUMS --version "$DEBUGLET_VERSION" --prefix /usr/local --stage-only
 candidate="/usr/local/lib/debuglet/$DEBUGLET_VERSION"
 replacement_cli="$candidate/bin/dbl"
+```
+
+For either installation method, drain the existing service:
+
+```sh
 sudo "$replacement_cli" --output json drain --role executor --name worker
 ```
 
