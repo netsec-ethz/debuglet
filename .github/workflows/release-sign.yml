@@ -41,7 +41,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > .release-input/run.json
           attempt=$(python3 -c 'import json; r=json.load(open(".release-input/run.json")); n=r["run_attempt"]; assert type(n) is int and n>0; print(n)')
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/attempts/$attempt/jobs?per_page=100" \
-            --jq '[.[] | .jobs[]]' > .release-input/jobs.json
+            | python3 -c 'import json, sys; print(json.dumps([job for page in json.load(sys.stdin) for job in page["jobs"]]))' > .release-input/jobs.json
           python3 tools/release.py gates --run .release-input/run.json --jobs .release-input/jobs.json \
             --environment .release-input/environment.json \
             --version "$GITHUB_REF_NAME" --source "$GITHUB_SHA" --out .release-input/gates.json
@@ -72,7 +72,7 @@ jobs:
           python3 tools/release.py stage --packages .release-input/packages --directory .release --version "$GITHUB_REF_NAME"
           cp .release-input/gates.json .release/gates.json
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts?per_page=100" \
-            --jq '[.[] | .artifacts[]]' > .release-input/artifacts.json
+            | python3 -c 'import json, sys; print(json.dumps([artifact for page in json.load(sys.stdin) for artifact in page["artifacts"]]))' > .release-input/artifacts.json
           python3 tools/release.py evidence --directory .release --artifacts .release-input/artifacts.json
           python3 tools/release_inventory.py generate --directory .release --version "$GITHUB_REF_NAME" \
             --source "$GITHUB_SHA" --builder "$builder" --inputs .release-input/build/build-inputs.json

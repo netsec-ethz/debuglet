@@ -62,7 +62,7 @@ jobs:
           PY
           if [[ "$BOOTSTRAP" == true ]]; then
             gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/deployments?environment=github-pages&per_page=100" \
-              --jq '[.[][]]' > .apt-input/deployments.json
+              | python3 -c 'import json, sys; print(json.dumps([deployment for page in json.load(sys.stdin) for deployment in page]))' > .apt-input/deployments.json
             python3 -c 'import json; assert json.load(open(".apt-input/deployments.json")) == [], "bootstrap refused: prior Pages deployments exist"'
           fi
       - name: Download the published complete signed release
