@@ -30,6 +30,52 @@ def job_fixture():
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_workflow_api_pagination_preserves_all_pages_and_failures(self):
+        workflows = Path(__file__).resolve().parents[1] / '.github/workflows'
+        cases = [('release-sign.yml', '/jobs?', 'jobs', '.release-input/jobs.json'),
+                 ('release-sign.yml', '/artifacts?', 'artifacts', '.release-input/artifacts.json'),
+                 ('apt-publish.yml', '/deployments?', None, '.apt-input/deployments.json')]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ('.release-input', '.apt-input'):
+                (root / name).mkdir()
+            # Match gh's option contract while keeping the workflow test offline.
+            command = root / 'gh'
+            command.write_text('''#!/usr/bin/env python3
+import os, sys
+if '--slurp' not in sys.argv or '--paginate' not in sys.argv:
+    sys.exit(2)
+if '--jq' in sys.argv or '--template' in sys.argv:
+    sys.exit(2)
+sys.stdout.write(os.environ['GH_FIXTURE_PAGES'])
+sys.exit(int(os.environ.get('GH_FIXTURE_EXIT', '0')))
+''')
+            command.chmod(0o755)
+            environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                               GITHUB_REPOSITORY='example/repository', CI_RUN_ID='123', attempt='1')
+            for workflow, endpoint, field, output in cases:
+                lines = (workflows / workflow).read_text().replace('\\\n', '').splitlines()
+                commands = [line.strip() for line in lines
+                            if 'gh api --paginate' in line and endpoint in line]
+                self.assertEqual(len(commands), 1, workflow)
+                pages = [[{'id': 1}], [], [{'id': 2}]]
+                if field:
+                    pages = [{field: page} for page in pages]
+                for label, payload, exit_code, success in (
+                        ('multiple pages', json.dumps(pages), '0', True),
+                        ('no pages', '[]', '0', True),
+                        ('invalid JSON', 'invalid', '0', False),
+                        ('API failure', json.dumps(pages), '17', False)):
+                    with self.subTest(workflow=workflow, endpoint=endpoint, case=label):
+                        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', commands[0]],
+                                                cwd=root, env=dict(environment, GH_FIXTURE_PAGES=payload,
+                                                                   GH_FIXTURE_EXIT=exit_code),
+                                                capture_output=True, text=True, timeout=10)
+                        self.assertEqual(result.returncode == 0, success, result.stderr)
+                        if success:
+                            expected = [] if label == 'no pages' else [{'id': 1}, {'id': 2}]
+                            self.assertEqual(json.loads((root / output).read_text()), expected)
+
     def test_signing_environment_requires_independent_review(self):
         configured = {'name': 'release-signing', 'protection_rules': [
             {'type': 'required_reviewers', 'prevent_self_review': True,
