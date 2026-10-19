@@ -39,6 +39,7 @@ The versioned guides in [`docs/`](docs/README.md) are published at the [document
 | Need | Start here |
 | --- | --- |
 | Install and run a local demo | [Install Debuglet](README-install.md) |
+| Run a first console measurement | [HTTP check and two-executor comparison](docs/measurements.md#run-your-first-measurement) |
 | Use the CLI | [CLI reference](docs/cli.md) |
 | Write a Go application client | [Go client library](docs/client.md) |
 | Write a debuglet | [Write a debuglet](docs/debuglets.md) |
