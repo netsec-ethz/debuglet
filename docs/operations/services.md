@@ -103,7 +103,7 @@ sudo apt-get update
 sudo apt-get install "debuglet=$DEBUGLET_DEBIAN_VERSION"
 test "$(dpkg-query -W -f='${Version}' debuglet)" = "$DEBUGLET_DEBIAN_VERSION"
 candidate=$(dirname "$(dirname "$(readlink -f /usr/bin/dbl)")")
-replacement_cli=/usr/bin/dbl
+replacement_cli="$candidate/bin/dbl"
 ```
 
 Before replacing the service, mark its previous `debuglet-payload-*` package

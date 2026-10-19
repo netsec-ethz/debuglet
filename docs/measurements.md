@@ -2,7 +2,6 @@
 
 ## Run your first measurement
 
-The public rollout of the package and console version described here is pending.
 Use this walkthrough on a deployment whose operator confirms compatible console,
 dispatcher and executor versions and provides the console URL.
 
@@ -29,6 +28,10 @@ destination and port restrictions in advance.
    its `schema` is `debuglet.measurement.v1`, `template` is `http`, and `ok` and
    the check's `ok` should be `true`. Keep the run ID from **Run details**;
    **Download output** saves the received program output.
+
+TEST needs no wallet. If the dispatcher enforces TEST allowances, your account
+also needs enough operator-granted units; signing up does not grant them
+automatically. See [TEST allowances](operations/configuration.md#dispatcher-usage-allowances).
 
 The template preserves `http://` or `https://` as entered; HTTPS uses TLS. It
 makes one GET request and requires a 2xx response. It does not follow redirects.
