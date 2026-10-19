@@ -5,13 +5,18 @@ machine to a dispatcher that supports account-owned enrollment. Your existing
 account owns the machine; it does not need dispatcher administrator privileges.
 
 1. Give the machine a name. It appears as **Awaiting setup** until enrollment.
-2. Install a Debuglet package that provides `dbl executor join`. Use the package
-   recommended by the service operator. The published v0.2.0 package predates
-   this command.
-3. Copy the setup command from the console and run it on the executor machine:
+2. Install the operator's compatible **full** package using the
+   [installation guide](../../README-install.md). Set `dbl_cli=/usr/bin/dbl` for
+   apt, `dbl_cli=/usr/local/bin/dbl` for system-wide tar, or
+   `dbl_cli="$HOME/.local/bin/dbl"` for user-local tar. Confirm
+   `"$dbl_cli" --output json version` matches the supplied version and source
+   revision. The published v0.2.0 package predates `executor join`.
+3. Use the setup values from the console with that selected CLI on the executor
+   machine. For a system service, follow [persistent setup](#run-persistently-on-linux)
+   instead of this terminal trial:
 
    ```sh
-   dbl executor join --dispatcher https://debuglet.example/api \
+   "$dbl_cli" executor join --dispatcher https://debuglet.example/api \
      --executor YOUR-EXECUTOR-ID --state-dir ./debuglet-node
    ```
 
@@ -45,8 +50,9 @@ states do not certify its geographic location, measurement results or uptime.
 
 The executor needs no browser or graphical desktop. Open the console on your
 laptop, create the executor, then SSH into the Linux machine and install the
-compatible full bundle. Run its displayed `dbl executor join` command there and
-paste the token at the hidden prompt. For a system service, use the canonical
+compatible full bundle. Select `dbl_cli` in that SSH shell as above, then run
+`"$dbl_cli" executor join` with the displayed values and paste the token at the
+hidden prompt. For a system service, use the canonical
 state directory in [persistent setup](#run-persistently-on-linux) from the start.
 For a terminal trial or container, run the printed start command and keep its
 process and state directory. A container's supervisor is managed separately.
@@ -54,8 +60,9 @@ process and state directory. A container's supervisor is managed separately.
 ### Without a browser anywhere
 
 For a dispatcher that allows account-key registration, the existing CLI and
-HTTP API support the whole setup. This example needs `dbl`, `curl` and `jq` and
-uses a **publicly trusted HTTPS API**, including its `/api` prefix if present.
+HTTP API support the whole setup. Select `dbl_cli` as above; this example also
+needs `curl` and `jq` and uses a **publicly trusted HTTPS API**, including its
+`/api` prefix if present.
 It creates a new ordinary account and one executor; run it once. The private
 setup directory keeps keys, recovery data and API responses out of command
 arguments. Do not print these files or include them in shared logs.
@@ -68,8 +75,8 @@ umask 077
 api=https://debuglet.example/api
 setup_dir="$HOME/debuglet-operator"
 mkdir -m 700 "$setup_dir"  # Fails if it exists; do not overwrite saved credentials.
-dbl --config "$setup_dir/connections.toml" connect "$api" --name operator
-dbl --config "$setup_dir/connections.toml" --dispatcher operator login \
+"$dbl_cli" --config "$setup_dir/connections.toml" connect "$api" --name operator
+"$dbl_cli" --config "$setup_dir/connections.toml" --dispatcher operator login \
   --register 'Shell operator' --account-key-file "$setup_dir/account-key.txt" \
   --recovery-file "$setup_dir/recovery.txt"
 
@@ -86,7 +93,7 @@ curl --proto '=https' --fail --silent --show-error \
   --output "$setup_dir/executor.json"
 executor_id=$(jq -er '.executor.id' "$setup_dir/executor.json")
 jq -er '.token' "$setup_dir/executor.json" > "$setup_dir/setup-token.txt"
-dbl executor join --dispatcher "$api" --executor "$executor_id" \
+"$dbl_cli" executor join --dispatcher "$api" --executor "$executor_id" \
   --state-dir "$HOME/debuglet-node" --token-file "$setup_dir/setup-token.txt"
 rm "$setup_dir/setup-token.txt" "$setup_dir/executor.json" "$setup_dir/login.json"
 ```
@@ -107,7 +114,7 @@ Do not enroll into the trial directory first; the service installer does not
 move identities. Remove the setup token and response after enrollment succeeds.
 
 For an existing account, reuse its private directory and replace registration
-with `dbl --config "$setup_dir/connections.toml" --dispatcher operator login
+with `"$dbl_cli" --config "$setup_dir/connections.toml" --dispatcher operator login
 --account-key-file "$setup_dir/account-key.txt"`; skip `mkdir` and `--register`.
 Do not create another account to restart an executor. An uncertain executor-create
 response should be checked with `GET /operator/executors` before repeating it.
@@ -125,7 +132,7 @@ rm "$setup_dir/session.json" "$setup_dir/auth.header"
 The CLI's separately saved session remains available. If the service requires
 browser OAuth, use its console on another computer and the SSH flow above;
 these commands do not implement headless OAuth. For a privately certified API,
-pass its public CA file to `dbl connect --ca-file /path/to/api-ca.crt`; this
+pass its public CA file to `"$dbl_cli" connect --ca-file /path/to/api-ca.crt`; this
 trust is saved for subsequent CLI commands. The `curl --cacert` and
 `join --ca-file` options must
 trust that API certificate. No account session or recovery file is needed by
@@ -133,33 +140,41 @@ the running executor; retain its generated identity and database for later start
 
 ## Run persistently on Linux
 
-For a Linux amd64 machine with systemd, first install the operator-recommended
-**full** bundle under `/usr/local` using the [installation guide](../../README-install.md).
-The CLI-only bundle cannot run an executor. Verify the exact version with
-`/usr/local/bin/dbl --output json version` before enrollment. For an unpublished
-candidate, use the guide's trusted local package directory and explicit unsigned
-candidate option; do not use an invented release URL. Package installation does
-not create a service account or enroll a node.
+For a Linux amd64 machine with systemd, install the operator's compatible full
+package through apt or system-wide tar using the [installation guide](../../README-install.md).
+Set `dbl_cli=/usr/bin/dbl` for apt or `dbl_cli=/usr/local/bin/dbl` for tar in this
+shell, and check `"$dbl_cli" --output json version`. Use the same selection for
+the maintenance commands below; an unqualified `dbl` may select another package.
 
-Use this sequence for a **new enrollment**, replacing the dispatcher URL and
-executor ID with the supplied values:
+Apt creates the missing service account and parent directories. **For tar only**,
+prepare them before enrollment:
 
 ```sh
 # Create this account once; omit useradd if debuglet already exists.
 sudo useradd --system --user-group --home-dir /var/lib/debuglet --shell /usr/sbin/nologin debuglet
 sudo install -d -m 0755 /var/lib/debuglet /var/lib/debuglet/executors
-sudo /usr/local/bin/dbl executor join --dispatcher https://debuglet.example/api \
+```
+
+For either installation, use this sequence for a **new enrollment**, replacing
+the dispatcher URL and executor ID with the supplied values. `worker` is the
+local service name; keep it consistent in the state path and service commands.
+The new state directory must not already exist:
+
+```sh
+sudo "$dbl_cli" executor join --dispatcher https://debuglet.example/api \
   --executor YOUR-EXECUTOR-ID --state-dir /var/lib/debuglet/executors/worker
 # Paste the setup token at the hidden prompt. Do not start a foreground daemon.
-sudo /usr/local/bin/dbl service install --role executor --name worker \
-  --enrolled-state /var/lib/debuglet/executors/worker
-sudo /usr/local/bin/dbl service status --role executor --name worker
+sudo "$dbl_cli" service install --role executor --name worker \
+  --enrolled-state /var/lib/debuglet/executors/worker --start=true --enable=true
+sudo "$dbl_cli" service status --role executor --name worker
 sudo journalctl -u debuglet-executor-worker.service -n 50 --no-pager
 ```
 
-Administrator privileges are needed for these setup commands. The executor
-itself runs as `debuglet` with `NoNewPrivileges=yes`. New Linux enrollments at
-this managed path select `packet_counter = "auto"`. For an enrolled configuration
+Administrator privileges are needed for these setup commands. Service installation
+assigns the enrolled files to `debuglet`; the executor itself runs as that account
+with `NoNewPrivileges=yes`. Confirm service readiness and **Ready** in My nodes.
+New Linux enrollments at this managed path select `packet_counter = "auto"`.
+For an enrolled configuration
 that explicitly selects `auto`, the unit grants only `CAP_BPF`,
 `CAP_PERFMON`, `CAP_NET_ADMIN` and `CAP_NET_RAW`. Separate isolated worker
 processes drop those capabilities before executing code; the default trusted
@@ -200,15 +215,15 @@ administrator launches. After adoption, use service commands to run this state.
 Existing enrollments in another directory remain usable with their printed
 foreground command; this installer does not move them or rewrite their paths.
 
-For maintenance, use `sudo dbl drain --role executor --name worker` and
-`sudo dbl drain --role executor --name worker --resume`. Normal service uninstall
-keeps the identity and database for recovery. See [managed services](services.md)
+Normal service uninstall keeps the identity and database for recovery.
+See [managed services](services.md)
 for stopping, removal and package handling. Back up an enrolled executor by
 stopping it cleanly and preserving its entire private state directory; the
 foreground TEST backup command does not include enrolled credentials.
 
 To change the package of this enrolled managed executor, follow
 [controlled package replacement](services.md#replace-an-enrolled-executors-package).
+For apt, start with the [Debian update procedure](debian.md#updates-and-rollback).
 It requires a clean joined shutdown, a disabled unit, an offline private backup
 and explicit `--replace-package PATH --start=false --enable=false` using a CLI
 that supports replacement. It preserves the existing enrollment and service
@@ -219,13 +234,14 @@ account; do not obtain another setup token or purge the state to upgrade.
 Keep the generated state directory. Restarting with the same configuration,
 private key, certificate and database preserves the machine identity and does
 not need another setup token. A stopped machine remains in My nodes. For a
-managed service, perform a planned restart with:
+managed service, select `dbl_cli` as in [persistent setup](#run-persistently-on-linux)
+in this shell, then perform a planned restart with:
 
 ```sh
-sudo dbl --output json drain --role executor --name worker
+sudo "$dbl_cli" --output json drain --role executor --name worker
 # Continue after joined: true and enabled: false.
-sudo dbl drain --role executor --name worker --resume
-sudo dbl service status --role executor --name worker
+sudo "$dbl_cli" drain --role executor --name worker --resume
+sudo "$dbl_cli" service status --role executor --name worker
 ```
 
 Check **Ready** in My nodes afterward. Do not use Set up again for an ordinary
@@ -246,7 +262,8 @@ identity. Never put a setup token in a command argument, URL or shared log.
 
 Enrollment certificates last at most 90 days, bounded by the issuer's expiry.
 Renewal is manual. Before expiry, use a full package with `executor join --renew`
-and keep the same managed executor ID and state directory. This operation uses
+and select `dbl_cli` as in [persistent setup](#run-persistently-on-linux). Keep
+the same managed executor ID and state directory. This operation uses
 a fresh **Set up again** token from the existing node; it retains the private key,
 configuration, database, native trust, service account and installed package.
 It replaces only `executor.crt`. Do not create another node or move its state.
@@ -254,7 +271,7 @@ It replaces only `executor.crt`. Do not create another node or move its state.
 1. Drain the service and require `joined: true` and `enabled: false`:
 
    ```sh
-   sudo dbl --output json drain --role executor --name worker
+   sudo "$dbl_cli" --output json drain --role executor --name worker
    ```
 
 2. Keep other administrators, automation and foreground executors from starting
@@ -263,7 +280,7 @@ It replaces only `executor.crt`. Do not create another node or move its state.
    run the renewal command and paste the fresh token at the hidden prompt:
 
    ```sh
-   sudo /usr/local/bin/dbl executor join --renew \
+   sudo "$dbl_cli" executor join --renew \
      --dispatcher https://debuglet.example/api --executor YOUR-EXECUTOR-ID \
      --state-dir /var/lib/debuglet/executors/worker
    ```
@@ -275,8 +292,8 @@ It replaces only `executor.crt`. Do not create another node or move its state.
 3. After the CLI reports successful certificate renewal, resume and inspect it:
 
    ```sh
-   sudo dbl drain --role executor --name worker --resume
-   sudo dbl service status --role executor --name worker
+   sudo "$dbl_cli" drain --role executor --name worker --resume
+   sudo "$dbl_cli" service status --role executor --name worker
    ```
 
 The service stays stopped and disabled until you resume it. An expired old
