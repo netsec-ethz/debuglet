@@ -234,13 +234,19 @@ func TestDoctorCertificateRenewalGuidance(t *testing.T) {
 			if tc.renewal && !strings.Contains(check.Next, "actual control handshake") {
 				t.Fatalf("renewal reminder lost trust-verification limitation: %+v", check)
 			}
+			if tc.renewal && tc.role == "executor" && !strings.Contains(check.Next, "contact the dispatcher operator if the CA also needs renewal") {
+				t.Fatalf("renewal reminder lost issuer-expiry guidance: %+v", check)
+			}
 		})
 	}
 	cert, key := doctorCertificate(t, time.Now().Add(13*24*time.Hour))
 	expiredCA, _ := doctorCertificate(t, time.Now().Add(-time.Hour))
-	check := certificateCheck("executor", false, cert, key, expiredCA)
-	if check.Status != "failure" || !strings.Contains(check.Detail, "CA bundle") || strings.Contains(check.Next, "join --renew") {
-		t.Fatalf("CA failure incorrectly recommends leaf-only renewal: %+v", check)
+	expiredCert, expiredKey := doctorCertificate(t, time.Now().Add(-time.Hour))
+	for _, identity := range [][2]string{{cert, key}, {expiredCert, expiredKey}} {
+		check := certificateCheck("executor", false, identity[0], identity[1], expiredCA)
+		if check.Status != "failure" || !strings.Contains(check.Detail, "CA bundle") || strings.Contains(check.Next, "join --renew") {
+			t.Fatalf("CA failure incorrectly recommends leaf-only renewal: %+v", check)
+		}
 	}
 	if check := certificateCheck("executor", true, cert, key, expiredCA); check.Status != "not_checked" {
 		t.Fatalf("disabled TLS checked certificate: %+v", check)

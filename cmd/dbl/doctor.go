@@ -192,20 +192,20 @@ func certificateCheck(role string, disabled bool, cert, key, authority string) d
 		}
 	}
 	now := time.Now()
-	identity, err := tlsfiles.KeyPair("certificate", cert, "key", key, now)
-	if err != nil {
-		return doctorCheck{"tls_files", "failure", "configured TLS identity is invalid at the local time", "check the key/certificate pair, validity dates and host clock; renew an expired certificate before starting"}
-	}
 	if authority != "" {
 		if _, err := tlsfiles.TrustRoots("CA", authority, now); err != nil {
 			return doctorCheck{"tls_files", "failure", "configured CA bundle is invalid at the local time", "obtain a valid CA bundle from the dispatcher operator and check the host clock; renewing the executor certificate alone does not replace its trust roots"}
 		}
 	}
+	identity, err := tlsfiles.KeyPair("certificate", cert, "key", key, now)
+	if err != nil {
+		return doctorCheck{"tls_files", "failure", "configured TLS identity is invalid at the local time", "check the key/certificate pair, validity dates and host clock; renew an expired certificate before starting"}
+	}
 	check := doctorCheck{"tls_files", "pass", "key matches certificate; certificate and configured CA dates are valid; leaf expires " + identity.Leaf.NotAfter.UTC().Format(time.RFC3339), "peer trust and hostname verification require the actual control handshake"}
 	if identity.Leaf.NotAfter.Sub(now) <= 14*24*time.Hour {
 		check.Detail += "; renewal is due within 14 days"
 		if role == "executor" {
-			check.Next += "; for a managed executor, drain and back up its state, obtain a fresh setup token from My Nodes, then use dbl executor join --renew and resume explicitly; see docs/operations/executor-onboarding.md"
+			check.Next += "; for a managed executor, drain and back up its state, obtain a fresh setup token from My Nodes, then use dbl executor join --renew and resume explicitly; this retains its CA bundle, so contact the dispatcher operator if the CA also needs renewal; see docs/operations/executor-onboarding.md"
 		} else {
 			check.Next += "; arrange certificate renewal with the dispatcher operator before the expiry date"
 		}
