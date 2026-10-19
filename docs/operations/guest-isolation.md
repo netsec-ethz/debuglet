@@ -13,6 +13,38 @@ uses the parent’s network policy and quotas for every guest network import.
 A synchronous inherited socket carries
 fixed import calls and bounded memory transfers; there is no extra TCP listener.
 
+## Managed enrolled executor
+
+On Linux 5.14+ with cgroup v2 and systemd 254+ (including Ubuntu 24.04),
+`dbl service install --isolation shared` prepares the delegation and a bounded
+four-worker preset. After `dbl executor join --install-only` finishes, append
+`--isolation shared` to the service-install command it prints, **before the first
+service installation**. Check that the installed CLI's `service install --help`
+lists this option. The usual unprivileged service account and canonical
+`--enrolled-state` directory are still required.
+
+The preset limits the whole service to **1.25 GiB memory and 2.25 CPUs**, with
+swap disabled. Worker groups share at most 1 GiB and 2 CPUs; the remaining
+configured allowance is for the control process. This does not reserve physical
+host resources. Provision the host accordingly. Each worker has 256 MiB process
+memory, half a CPU and 64 MiB WASM memory. Compilation is serialized, with three
+queue places and a 60-second deadline including queueing. The execution ceiling
+is 24 hours; the submitted run's policy timeout still applies first. An executor
+configured for more than four concurrent runs is refused, without changing its
+admission setting. Larger programs may need a manually provisioned profile.
+
+The installer appends the preset only when the enrolled configuration has no
+`[isolation]` table. It preserves identity, credentials, network policy, pricing
+and storage. A custom isolation table is never overwritten. Reinstallation and
+package replacement retain the recorded profile; this option does not convert
+an existing trusted service. The generated unit runs the daemon in its own
+`control` leaf and delegates the sibling worker groups. Startup must validate
+the actual delegation and publish readiness; an unsupported host never falls
+back to the trusted engine. Check `dbl service status --role executor --name NAME`
+and the unit's journal if installation reports incomplete readiness.
+
+The manual setup below remains available for other budgets or service managers.
+
 ## Required host setup
 
 The shared profile requires Linux with cgroup v2, `CLONE_INTO_CGROUP` and
@@ -20,7 +52,7 @@ The shared profile requires Linux with cgroup v2, `CLONE_INTO_CGROUP` and
 `pids` controllers. Mount cgroup v2 at `/sys/fs/cgroup`. The executor must run
 inside the configured delegation, in a different leaf from its worker groups.
 Use an exclusive delegation sized within the host resources available to this
-service. Its root must already enable these controllers for its children and
+service. Its root must permit enabling these controllers for its children and
 have finite `memory.max` and `cpu.max` limits. An unlimited user service root
 is insufficient; a separately limited delegated service or scope is required.
 Startup refuses an absent, read-only or incomplete delegation; it does not fall

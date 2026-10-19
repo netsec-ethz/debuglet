@@ -31,6 +31,8 @@ identity, which may differ from the service account. No measurement is launched.
 The clock check reads the kernel's own synchronization state and error estimate
 (Linux adjtimex, read only) against the executor's clock.max_error_ms; no time
 source is queried.
+Certificates expiring within 14 days include a renewal reminder; they remain
+valid and do not make this command fail.
 
 Statuses: pass, failure, unavailable, not_checked. Exit 1 means a failure or
 unavailable check; not_checked is inconclusive. This does not certify isolation,
@@ -169,15 +171,16 @@ func localDaemonChecks(ctx context.Context, role string, cfg daemonConfig, offli
 	} else {
 		checks = append(checks, doctorCheck{"schema", "not_checked", "offline database inspection was not requested", "stop the daemon and pass --offline to inspect its schema without writing SQLite state"})
 	}
-	checks = append(checks, certificateCheck(tlsDisabled, cert, key, authority))
+	checks = append(checks, certificateCheck(role, tlsDisabled, cert, key, authority))
 	if cfg.executor != nil {
 		c := cfg.executor
+		checks = append(checks, isolationCheck(c.Isolation.Shared()))
 		checks = append(checks, executorHostChecks(c.Network.Interface, c.Network.PacketCounter)...)
 	}
 	return checks
 }
 
-func certificateCheck(disabled bool, cert, key, authority string) doctorCheck {
+func certificateCheck(role string, disabled bool, cert, key, authority string) doctorCheck {
 	if disabled {
 		return doctorCheck{"tls_files", "not_checked", "TLS is disabled in the selected configuration", ""}
 	}
@@ -189,14 +192,32 @@ func certificateCheck(disabled bool, cert, key, authority string) doctorCheck {
 		}
 	}
 	now := time.Now()
+	if authority != "" {
+		if _, err := tlsfiles.TrustRoots("CA", authority, now); err != nil {
+			return doctorCheck{"tls_files", "failure", "configured CA bundle is invalid at the local time", "obtain a valid CA bundle from the dispatcher operator and check the host clock; renewing the executor certificate alone does not replace its trust roots"}
+		}
+	}
 	identity, err := tlsfiles.KeyPair("certificate", cert, "key", key, now)
-	if err == nil && authority != "" {
-		_, err = tlsfiles.TrustRoots("CA", authority, now)
-	}
 	if err != nil {
-		return doctorCheck{"tls_files", "failure", "configured TLS identity or authority is invalid at the local time", "check the key/certificate pair, validity dates, CA bundle and host clock"}
+		return doctorCheck{"tls_files", "failure", "configured TLS identity is invalid at the local time", "check the key/certificate pair, validity dates and host clock; renew an expired certificate before starting"}
 	}
-	return doctorCheck{"tls_files", "pass", "key matches certificate; certificate and configured CA dates are valid; leaf expires " + identity.Leaf.NotAfter.UTC().Format(time.RFC3339), "peer trust and hostname verification require the actual control handshake"}
+	check := doctorCheck{"tls_files", "pass", "key matches certificate; certificate and configured CA dates are valid; leaf expires " + identity.Leaf.NotAfter.UTC().Format(time.RFC3339), "peer trust and hostname verification require the actual control handshake"}
+	if identity.Leaf.NotAfter.Sub(now) <= 14*24*time.Hour {
+		check.Detail += "; renewal is due within 14 days"
+		if role == "executor" {
+			check.Next += "; for a managed executor, drain and back up its state, obtain a fresh setup token from My Nodes, then use dbl executor join --renew and resume explicitly; this retains its CA bundle, so contact the dispatcher operator if the CA also needs renewal; see docs/operations/executor-onboarding.md"
+		} else {
+			check.Next += "; arrange certificate renewal with the dispatcher operator before the expiry date"
+		}
+	}
+	return check
+}
+
+func isolationCheck(shared bool) doctorCheck {
+	if !shared {
+		return doctorCheck{"isolation", "not_checked", "trusted profile: guests run inside the executor process without hard CPU or process-memory limits", "use only trusted guests, or configure the shared Linux profile before accepting untrusted work; see docs/operations/guest-isolation.md"}
+	}
+	return doctorCheck{"isolation", "not_checked", "shared profile selected: compiler and guest workers require cgroup v2 resource limits; runtime enforcement was not checked", "the service needs a writable memory/cpu/pids delegation with finite parent budgets and a separate control-process leaf; check service startup for delegation errors; see docs/operations/guest-isolation.md"}
 }
 
 func schemaCheck(ctx context.Context, role storagecheck.Role, path string) doctorCheck {

@@ -17,8 +17,9 @@ import (
 )
 
 // prepareEnrolledState adopts only the canonical, already enrolled directory.
-// Configuration, credentials and database are never regenerated or relocated.
-func (i *Installer) prepareEnrolledState(ctx context.Context, p *Profile, account Account) error {
+// Credentials and database are never regenerated or relocated. The explicit
+// shared preset may append isolation settings before first adoption.
+func (i *Installer) prepareEnrolledState(ctx context.Context, p *Profile, account Account, report *Report) error {
 	cfg, err := validateEnrolledState(*p)
 	if err != nil {
 		return err
@@ -41,6 +42,15 @@ func (i *Installer) prepareEnrolledState(ctx context.Context, p *Profile, accoun
 	}
 	if err := storagecheck.Check(ctx, storagecheck.Executor, p.DatabasePath); err != nil {
 		return err
+	}
+	if p.SharedIsolation {
+		changed, err := prepareSharedConfig(*p)
+		if err != nil {
+			return err
+		}
+		if changed {
+			report.Changed = append(report.Changed, "shared worker configuration")
+		}
 	}
 	if err := i.own(p.StateDir, account); err != nil {
 		return err
@@ -86,6 +96,9 @@ func readEnrolledConfig(p Profile) (*executorconfig.ExecutorConfig, error) {
 		cfg.Credentials.ClientCert != filepath.Join(p.StateDir, "executor.crt") ||
 		cfg.Credentials.ClientKey != filepath.Join(p.StateDir, "executor.key") || cfg.Credentials.EnrollmentToken != "" {
 		return nil, errors.New("enrolled configuration must retain TLS and its original credentials and database inside the managed directory")
+	}
+	if p.SharedIsolation && p.ExecutorID != "" && (cfg.Isolation != sharedPreset(p) || cfg.Resources.MaxDebuglets > 4) {
+		return nil, errors.New("managed shared isolation configuration changed; restore the installed preset before restarting or replacing it")
 	}
 	return cfg, nil
 }

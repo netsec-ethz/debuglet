@@ -18,7 +18,7 @@ const serviceUsage = `Usage:
   dbl service install (--role dispatcher|executor) [--name NAME] [--user debuglet]
       [--port 9000] [--grpc-port 9001] [--dispatcher 127.0.0.1:9001]
       [--dispatcher-http 127.0.0.1:9000] [--start=false] [--enable=false] [--root DIR]
-      [--enrolled-state /var/lib/debuglet/executors/NAME]
+      [--enrolled-state /var/lib/debuglet/executors/NAME] [--isolation shared]
       [--replace-package /absolute/path/to/installed/full-package]
   dbl service start|stop|status (--role ROLE) [--name NAME]
   dbl service uninstall (--role ROLE) [--name NAME] [--purge]
@@ -45,6 +45,11 @@ retention is configured by the host.
 database already at the named instance's managed directory. Stop its foreground
 daemon first and do not launch it concurrently with installation. See
 docs/operations/executor-onboarding.md for the system-account setup sequence.
+--isolation shared opts into a finite shared-worker preset on first enrolled
+service installation only. It needs Linux 5.14+, cgroup v2 and systemd 254+.
+The service is capped at 1.25 GiB memory and 2.25 CPUs, with up to four workers;
+these ceilings do not reserve host capacity. Existing isolation configuration
+is never replaced. See docs/operations/guest-isolation.md for the limits.
 --replace-package selects a verified full package for an already installed,
 enrolled executor. Stop and disable its unit first. Both --start=false and
 --enable=false are required; replacement never starts, enrolls or migrates it.
@@ -204,6 +209,7 @@ func serviceFlags(fs *flag.FlagSet, local *serviceOptions, subcommand string) {
 		fs.StringVar(&local.Request.DispatcherGRPC, "dispatcher", "", "executor: dispatcher control address as host:port")
 		fs.StringVar(&local.Request.DispatcherHTTP, "dispatcher-http", "", "executor: dispatcher HTTP address as host:port")
 		fs.StringVar(&local.Request.EnrolledState, "enrolled-state", "", "executor: preserve enrolled state at this instance's canonical managed path")
+		fs.StringVar(&local.Request.Isolation, "isolation", "", "executor: shared worker preset on first enrolled installation")
 		fs.StringVar(&local.ReplacePackage, "replace-package", "", "enrolled executor: select an installed full-package directory while stopped and disabled")
 		fs.BoolVar(&local.Start, "start", true, "start the unit and observe its readiness record")
 		fs.BoolVar(&local.Enable, "enable", true, "let the service manager start the unit at boot")
@@ -233,7 +239,7 @@ func serviceRole(name string, local *serviceOptions, fs *flag.FlagSet, options g
 	blank := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "name", "root", "user", "group", "dispatcher", "dispatcher-http", "enrolled-state", "replace-package":
+		case "name", "root", "user", "group", "dispatcher", "dispatcher-http", "enrolled-state", "replace-package", "isolation":
 			if strings.TrimSpace(f.Value.String()) == "" {
 				blank = true
 			}

@@ -82,6 +82,8 @@ type Profile struct {
 	// PacketCapabilities records the capability set installed for an enrolled
 	// executor. Missing in older records means the original capability-free unit.
 	PacketCapabilities bool `json:"packet_capabilities,omitempty"`
+	// SharedIsolation retains the managed shared-worker preset across replacements.
+	SharedIsolation bool `json:"shared_isolation,omitempty"`
 	// HTTPPort and GRPCPort are the dispatcher's loopback listeners.
 	HTTPPort int `json:"http_port,omitempty"`
 	GRPCPort int `json:"grpc_port,omitempty"`
@@ -118,6 +120,8 @@ type Request struct {
 	DispatcherGRPC, DispatcherHTTP string
 	// EnrolledState adopts an enrolled executor at its canonical managed path.
 	EnrolledState string
+	// Isolation selects the shared preset on first enrolled service installation.
+	Isolation string
 }
 
 // DefaultAccount is the unprivileged service account the generated units use.
@@ -164,6 +168,10 @@ func Resolve(request Request, assets demo.Assets) (Profile, error) {
 	if err := systemPayload(assets.Root); err != nil {
 		return p, err
 	}
+	if request.Isolation != "" && (request.Isolation != "shared" || request.Role != storagecheck.Executor || request.EnrolledState == "") {
+		return p, errors.New("--isolation shared requires an enrolled executor")
+	}
+	p.SharedIsolation = request.Isolation == "shared"
 	p.User, p.Group = user, group
 	p.Version, p.SourceSHA, p.PayloadRoot = assets.Manifest.Version, assets.Manifest.SourceSHA, assets.Root
 	if request.EnrolledState != "" {
