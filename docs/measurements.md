@@ -1,9 +1,74 @@
-# Reusable measurements and deliberate retries
+# Run and reuse measurements
 
-HTTP API 1.12 adds saved profiles, durable batch details, linked retries and TCP
-listener readiness. These operations use the same account ownership checks as
-run output. The companion console exposes the catalogue, profiles, measurement
-history and editable new requests.
+## Run your first measurement
+
+Use this walkthrough on a deployment whose operator confirms compatible console,
+dispatcher and executor versions and provides the console URL.
+
+Ask the operator for a health endpoint they own that returns a small **HTTP 200**
+response and is permitted from the chosen executor. For example,
+`https://service.example/health` is a placeholder: replace it with that endpoint's
+complete URL, including the correct scheme, port and path. A public website is
+not a guaranteed test target. The console cannot inspect the operator's private
+destination and port restrictions in advance.
+
+1. Sign in and open **New measurement**. Choose **HTTP timing & status** and
+   enter the approved URL in **HTTP target**. Leave **Response time threshold**
+   empty for this first check.
+2. Under **Vantage point**, select an executor marked **Available** and
+   **TEST · no wallet**. Open **Node details** to check its identity and reported
+   capabilities. Availability does not prove that your target is permitted or
+   reachable.
+3. Choose **Review measurement**. Check the executor, endpoint, **Permitted
+   destinations**, timeout and bandwidth. Keep the immediate start and default
+   limits if the deployment accepts them, then choose **Run with TEST**.
+4. On the run page, wait for **All program output received.** Inspect
+   **Measurement results** for **Checks passed**, **HTTP status** `200`,
+   **Time** and **Response body**. Check the **Raw program output** JSON too:
+   its `schema` is `debuglet.measurement.v1`, `template` is `http`, and `ok` and
+   the check's `ok` should be `true`. Keep the run ID from **Run details**;
+   **Download output** saves the received program output.
+
+TEST needs no wallet. If the dispatcher enforces TEST allowances, your account
+also needs enough operator-granted units; signing up does not grant them
+automatically. See [TEST allowances](operations/configuration.md#dispatcher-usage-allowances).
+
+The template preserves `http://` or `https://` as entered; HTTPS uses TLS. It
+makes one GET request and requires a 2xx response. It does not follow redirects.
+**Time** measures the whole HTTP check, including connection setup, TLS when
+used, request transmission and reading the response body. Service processing
+contributes to it; this is not a pure network round-trip time (RTT).
+
+An **exited** state means execution ended, not that the check passed. A parsed
+result can appear before all output arrives. Confirm the result, execution state
+and output completeness separately; **All program output received.** alone
+does not mean success.
+
+| What you see | Next step |
+| --- | --- |
+| No available executor, **Offline** or **Maintenance** | Wait for readiness or ask the operator; the list refreshes automatically. |
+| Target denied by the operator network policy | Ask for a permitted endpoint or an executor whose policy permits it. Changing HTTP to HTTPS does not grant permission; do not bypass the policy. |
+| **Checks failed** with HTTP 3xx | Use the final URL only if the operator approves it. A redirect fails the template's 2xx expectation. |
+| Output still arriving, incomplete or completeness unconfirmed | Wait while output arrives; reload if completeness is unconfirmed. Keep incomplete output marked as incomplete rather than inferring success. |
+
+## Compare two executors
+
+1. Open **Grouped measurement**, choose **Compare HTTP responses**, and enter
+   the same approved **HTTP target**. Confirm that both operators permit it.
+2. Under **Choose your nodes**, select two available TEST executors. Keep the
+   same timeout, bandwidth and response threshold for both. Choose **Review
+   group**, check both participants and their permitted destinations, then
+   **Submit group with TEST**.
+3. On **Grouped measurement**, open **Details and output** for each participant.
+   Check its complete output and result as above, then compare HTTP status,
+   response size and time alongside the executor and run IDs. **Export group
+   results** saves a snapshot; it can still contain running participants or
+   incomplete output.
+
+These are two independent HTTP probes in one submission. They do not wait for a
+synchronized start, and one sample per executor does not establish a stable
+latency difference. For coordinated programs, see
+[Coordinate a batch of debuglets](#coordinate-a-batch-of-debuglets).
 
 ## Save and apply a profile
 

@@ -8,24 +8,26 @@ operator-supplied candidate until a compatible signed release is published.
 
 ## Install with apt on Ubuntu 24.04 amd64
 
-Use this route when your operator supplies a published apt repository, its
-OpenPGP key fingerprint and an exact Debian package version. Verify the key
+The official public apt channel is not yet published. Use this route only when
+your operator supplies a published apt repository, its OpenPGP key fingerprint
+and an exact Debian package version. Verify the key
 through an independent trusted channel, then install the operator's keyring and
 repository configuration with `Signed-By` scoped to that keyring. Follow the
-complete [apt setup procedure](docs/operations/apt-repository.md); no official
-live repository URL or production signing key is implied by this guide.
+complete [apt setup procedure](docs/operations/apt-repository.md).
 
 ```sh
 sudo apt-get update
 sudo apt-get install debuglet=DEBIAN_VERSION_PROVIDED_BY_OPERATOR
-dbl --output json version
-dbl demo
+/usr/bin/dbl --output json version
+/usr/bin/dbl demo
 ```
 
 The `debuglet` package selects the matching full payload, including the CLI,
-executor, dispatcher and bundled samples. Installation stages software; choose
-account setup, executor enrollment and service activation explicitly. Upgrades
-retain payloads referenced by managed services. Follow the [Debian lifecycle
+executor, dispatcher and bundled samples. Installation creates a missing
+`debuglet` system account and the parent state directories. Account registration,
+executor enrollment and service activation remain explicit. Use `/usr/bin/dbl`
+to avoid selecting an older tar installation on `PATH`. Upgrades retain payloads
+referenced by managed services. Follow the [Debian lifecycle
 procedure](docs/operations/debian.md) to drain, back up, replace and resume an
 existing service. Tar installation remains available below.
 
@@ -58,6 +60,20 @@ account, wallet, or root access. Installation does not enroll a node, create a
 service account, or restart an existing service; follow [executor
 setup](docs/operations/executor-onboarding.md) or [managed
 services](docs/operations/services.md) next.
+
+For a system-wide candidate used by a managed service, run this command instead
+of the user-local installation above, with the same trusted inputs:
+
+```sh
+sudo env DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
+  DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
+  DEBUGLET_ALLOW_UNSIGNED=1 DEBUGLET_PREFIX=/usr/local \
+  sh "$HOME/Downloads/bootstrap.sh"
+/usr/local/bin/dbl --output json version
+```
+
+Tar installation leaves service-account creation to the
+[persistent executor setup](docs/operations/executor-onboarding.md#run-persistently-on-linux).
 
 ## Install a signed release
 

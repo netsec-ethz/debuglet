@@ -1,10 +1,10 @@
 # Debian packages
 
-The initial apt target is **Ubuntu 24.04 amd64**. Install the `debuglet` package
-from a reviewed signed repository following [repository setup](apt-repository.md).
+The initial apt target is **Ubuntu 24.04 amd64**. The official public apt channel
+is not yet published. When your operator supplies a reviewed signed repository,
+install the `debuglet` package following [repository setup](apt-repository.md).
 Use the independently supplied OpenPGP fingerprint and a dedicated `Signed-By`
-keyring; an archive checksum alone does not establish trust. No official live
-repository URL is assumed by these instructions.
+keyring; an archive checksum alone does not establish trust.
 
 `debuglet` selects the commands `/usr/bin/dbl`, `/usr/bin/debuglet-executor` and
 `/usr/bin/debuglet-dispatcher`. Its exact dependency is a separately named
@@ -26,43 +26,46 @@ read-only removal guard; it adds no background process.
 ## Enrollment and activation
 
 Use `/usr/bin/dbl` explicitly if an older tar-installed command appears earlier
-on `PATH`. Follow [executor onboarding](executor-onboarding.md) to register,
-establish trust and join using the service account. Joining creates the named
-executor's state directory under `/var/lib/debuglet/executors`. Install and
-activate that enrolled executor explicitly with the documented service command.
+on `PATH`. Follow [persistent executor onboarding](executor-onboarding.md#run-persistently-on-linux)
+with `dbl_cli=/usr/bin/dbl`; skip its tar-only account setup. Join with `sudo`
+to create the named executor's private state under `/var/lib/debuglet/executors`.
+The service installer assigns that state to the `debuglet` account. Install,
+start and check the enrolled service explicitly with the documented commands.
 Dispatcher and local demo setup remain explicit as described in
 [services](services.md).
 
 ## Updates and rollback
 
-An apt update stages a new full payload and switches the three command links.
+Installing a newer `debuglet` version stages a full payload and switches the
+three command links. `apt-get update` alone only refreshes repository metadata.
 It leaves running and stopped managed services on their previously recorded
 absolute payload paths. Even `apt upgrade` does not restart, enroll, migrate or
-replace a managed service. Inspect the selected payload with:
+replace a managed service. Select the exact operator-approved version and inspect
+its payload before maintenance:
 
 ```sh
+sudo apt-get update
+sudo apt-get install debuglet=DEBIAN_VERSION_PROVIDED_BY_OPERATOR
 dpkg-query -W -f='${Version}\n' debuglet
 candidate=$(dirname "$(dirname "$(readlink -f /usr/bin/dbl)")")
-printf '%s\n' "$candidate"
+replacement_cli="$candidate/bin/dbl"
+"$replacement_cli" --output json version
 ```
 
-For an enrolled executor, follow the [release rollout](release-rollout.md):
-drain it, create and verify an offline backup of its complete identity, keys,
-trust, configuration, database, outputs and service records, then use the
-verified replacement command while the unit is stopped and disabled:
+For an enrolled executor, use the
+[controlled replacement procedure](services.md#replace-an-enrolled-executors-package)
+with this candidate; its tar staging command is unnecessary. Use the recorded
+instance name throughout. The procedure requires a drain with `joined: true`
+and `enabled: false`, a verified private offline backup of the complete state,
+identity and service records, and retention of the previous payload. Replacement
+preserves the account, state paths and identity; it does not migrate or enroll
+again. Explicitly resume after success, check readiness and the connected version,
+then complete a permitted TEST measurement.
 
-```sh
-sudo /usr/bin/dbl service install --role executor --name worker \
-  --enrolled-state /var/lib/debuglet/executors/worker \
-  --replace-package "$candidate" --start=false --enable=false
-```
-
-Use the recorded instance name instead of `worker`. Replacement preserves its
-service account, state paths and identity. Check compatibility and explicitly
-resume using the rollout procedure. Rollback selects a retained older payload
-with the same replacement command and is subject to database compatibility;
-an apt downgrade alone does not roll back a service or a database. Existing
-dispatcher replacement limits are unchanged; see the rollout documentation.
+Rollback uses the replacement-capable CLI to select a retained older payload and
+requires compatible state; an apt downgrade alone does not roll back a service
+or database. The linked procedure covers interrupted replacement, rollback and
+unsupported dispatcher replacement.
 
 Release `v1.2.3` has Debian version `1.2.3-1`; prerelease `v1.2.3-rc.1` becomes
 `1.2.3~rc.1-1`, which sorts before the final release. Development versions such

@@ -4,6 +4,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 
 ## Use Debuglet
 
+- [Run your first measurement](measurements.md#run-your-first-measurement) — use the console to check an HTTP endpoint, read its result and compare two executors.
 - [CLI reference](cli.md) — commands, local demo, and scriptable workflows.
 - [Go client library](client.md) — submit debuglets and read results from an application.
 - [Reusable and coordinated measurements](measurements.md) — saved profiles, retries and experiments across executors.
@@ -28,6 +29,7 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Configuration reference](operations/configuration.md)
 - [Run Debuglet across hosts](operations/remote-deployment.md)
 - [Add your executor](operations/executor-onboarding.md) — console enrollment, shell-only setup and persistent installation.
+- [Debian installation and updates](operations/debian.md) — apt packages, explicit service activation and retained rollback payloads.
 - [Managed services](operations/services.md)
 - [Data retention, export and deletion](operations/data-retention.md)
 - [Chain payments](operations/payments.md) — modes, the supported Sui Testnet profile, startup validation, transfers and enablement.
