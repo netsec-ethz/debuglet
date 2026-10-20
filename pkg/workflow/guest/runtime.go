@@ -16,12 +16,12 @@ import (
 
 // Runtime holds this run's action results and emits bounded block events.
 type Runtime struct {
-	Digest string
-	Writer io.Writer
+	digest string
+	writer io.Writer
 	values map[string]map[string]any
 	steps,events,bytes int
 }
-func New(digest string)*Runtime{return &Runtime{Digest:digest,Writer:os.Stdout,values:map[string]map[string]any{}}}
+func New(digest string)*Runtime{return &Runtime{digest:digest,writer:os.Stdout,values:map[string]map[string]any{}}}
 func (r *Runtime) Step()error{r.steps++;if r.steps>1000{return fmt.Errorf("workflow exceeded 1000 action steps")};return nil}
 func (r *Runtime) Forget(ids ...string){for _,id:=range ids{delete(r.values,id)}}
 func (r *Runtime) Output(node,port string)(any,error){outputs,ok:=r.values[node];if !ok{return nil,fmt.Errorf("action %s has not executed on this control path",node)};value,ok:=outputs[port];if !ok{return nil,fmt.Errorf("node %s has no output %s",node,port)};return value,nil}
@@ -38,11 +38,11 @@ func (r *Runtime) Fail(node,block string,err error)error{
 }
 func (r *Runtime) event(node,block,status string,outputs map[string]any,message string)error{
 	if err:=checkValue(outputs,0);err!=nil{return err}
-	event:=struct{Schema string `json:"schema"`;Workflow string `json:"workflow_sha256"`;Node string `json:"node_id"`;Block string `json:"block"`;Status string `json:"status"`;Outputs map[string]any `json:"outputs"`;Error string `json:"error,omitempty"`}{"debuglet.workflow.v1",r.Digest,node,block,status,outputs,message}
+	event:=struct{Schema string `json:"schema"`;Workflow string `json:"workflow_sha256"`;Node string `json:"node_id"`;Block string `json:"block"`;Status string `json:"status"`;Outputs map[string]any `json:"outputs"`;Error string `json:"error,omitempty"`}{"debuglet.workflow.v1",r.digest,node,block,status,outputs,message}
 	b,err:=json.Marshal(event);if err!=nil{return err}
 	if len(b)>65536{return fmt.Errorf("node output exceeds 64 KiB")}
 	if r.events>=4096||r.bytes+len(b)+1>4*1024*1024{return fmt.Errorf("workflow trace exceeds its output limit")}
-	b=append(b,'\n');n,err:=r.Writer.Write(b);r.events++;r.bytes+=n
+	b=append(b,'\n');n,err:=r.writer.Write(b);r.events++;r.bytes+=n
 	if err==nil&&n!=len(b){err=io.ErrShortWrite};return err
 }
 
@@ -107,3 +107,10 @@ func Pure(block string,in map[string]any)(map[string]any,error){
 }
 func RepeatCount(v any)(int,error){n,ok:=v.(float64);if !ok||math.IsNaN(n)||n<1||n>100||math.Trunc(n)!=n{return 0,fmt.Errorf("repeat count must be an integer from 1 to 100")};return int(n),nil}
 func Wait(v any)error{n,ok:=v.(float64);if !ok||math.IsNaN(n)||n<0||n>60000{return fmt.Errorf("wait must be between 0 and 60000 ms")};time.Sleep(time.Duration(n*float64(time.Millisecond)));return nil}
+
+// RunCustom reports a returned error or panic at the calling block boundary.
+// The executor still bounds code that does not return, including infinite loops.
+func RunCustom(fn func(map[string]any)(map[string]any,error),inputs map[string]any)(out map[string]any,err error){
+	defer func(){if problem:=recover();problem!=nil{out=nil;err=fmt.Errorf("custom block panicked: %v",problem)}}()
+	out,err=fn(inputs);if err!=nil{return nil,err};return Normalize(out)
+}

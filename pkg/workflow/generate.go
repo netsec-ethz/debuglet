@@ -76,7 +76,7 @@ func Generate(w Workflow)(Program,error){
 			case "tcp_connect":out.WriteString("values,err:=guest.TCPConnect(in)\n")
 			case "ping":out.WriteString("values,err:=guest.Ping(in)\n")
 			case "emit":out.WriteString("values:=in\n")
-			default:fmt.Fprintf(&out,"values,err:=custom%d(in)\nif err==nil{values,err=guest.Normalize(values)}\n",custom[n.Block])
+			default:fmt.Fprintf(&out,"values,err:=guest.RunCustom(custom%d,in)\n",custom[n.Block])
 			}
 			fmt.Fprintf(&out,"if err!=nil{return runtime.Fail(%q,%q,err)}\nif err=guest.Check(values,%s);err!=nil{return runtime.Fail(%q,%q,err)}\nif err=runtime.Record(%q,%q,values);err!=nil{return runtime.Fail(%q,%q,err)}\n",n.ID,n.Block,typeMap(b.Outputs),n.ID,n.Block,n.ID,n.Block,n.ID,n.Block)
 			callNext("next")
@@ -106,7 +106,7 @@ func customImports(w Workflow)[]string {
 	used:=map[string]bool{}
 	for _,block:=range w.CustomBlocks{
 		file,err:=parser.ParseFile(token.NewFileSet(),"custom.go","package main\nfunc custom(inputs map[string]any)(map[string]any,error){\n"+block.Code+"\n}",0);if err!=nil{continue}
-		ast.Inspect(file,func(node ast.Node)bool{selector,ok:=node.(*ast.SelectorExpr);if !ok{return true};name,ok:=selector.X.(*ast.Ident);if ok{if path,found:=allowed[name.Name];found{used[path]=true}};return true})
+		ast.Inspect(file,func(node ast.Node)bool{selector,ok:=node.(*ast.SelectorExpr);if !ok{return true};name,ok:=selector.X.(*ast.Ident);if ok&&name.Obj==nil{if path,found:=allowed[name.Name];found{used[path]=true}};return true})
 	}
 	paths:=make([]string,0,len(used));for path:=range used{paths=append(paths,path)};slices.Sort(paths);return paths
 }

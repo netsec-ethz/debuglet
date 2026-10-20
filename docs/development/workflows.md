@@ -92,7 +92,8 @@ measurements.
 The workflow digest hashes its canonical Go JSON encoding, including layout.
 A changed graph must be rebuilt. Compiler destination hints cover literal
 network targets and directly connected Constant blocks. Computed or custom
-network targets require the submitter to supply the intended destination policy;
+network targets require the submitter to supply the intended destination policy
+and enable ICMP when their custom code uses it;
 the hints never grant network access. The normal dispatcher and executor checks
 apply to every compiled workflow just as they do to hand-written debuglets.
 

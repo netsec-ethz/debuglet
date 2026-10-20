@@ -40,7 +40,7 @@ func Validate(w Workflow) []Diagnostic {
 				if !identifier.MatchString(p.Name)||seen[p.Name] {add("","", "invalid or duplicate custom port: "+p.Name)}
 				seen[p.Name]=true
 				if !slices.Contains(valueTypes,p.Type){add("","", "unsupported port type: "+p.Type)}
-				if p.Default!=nil && !matches(p.Default,p.Type){add("","", "invalid default for custom port: "+p.Name)}
+				if p.Default!=nil {if !matches(p.Default,p.Type){add("","", "invalid default for custom port: "+p.Name)};if err:=boundedValue(p.Default,0);err!=nil{add("","", "custom default "+p.Name+": "+err.Error())}}
 			}
 		}
 		if err:=validateCustom(b.Code);err!=nil {add("","",fmt.Sprintf("custom block %s: %v",b.ID,err))}
@@ -97,7 +97,7 @@ func Validate(w Workflow) []Diagnostic {
 		for _,field:=range []string{"count","timeout_ms","duration_ms"} {
 			v,ok:=n.Inputs[field];if !ok{continue};number,isNumber:=asNumber(v);if !isNumber{continue}
 			if field=="count" && (n.Block=="repeat"||n.Block=="ping") {max:=float64(100);if n.Block=="ping"{max=10};if number<1||number>max||math.Trunc(number)!=number {add(n.ID,field,fmt.Sprintf("must be an integer from 1 to %.0f",max))}}
-			if field=="timeout_ms"&&(number<1||number>60000){add(n.ID,field,"must be between 1 and 60000 ms")}
+			if field=="timeout_ms"&&(number<1||number>60000||math.Trunc(number)!=number){add(n.ID,field,"must be an integer between 1 and 60000 ms")}
 			if field=="duration_ms"&&(number<0||number>60000){add(n.ID,field,"must be between 0 and 60000 ms")}
 		}
 	}
