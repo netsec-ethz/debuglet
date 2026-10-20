@@ -116,6 +116,82 @@ type ChainTransfer struct {
 	UpdatedAt         models.UTCTime
 }
 
+type Community struct {
+	ID          string
+	Name        string
+	Description string
+	CreatedBy   int64
+	CreatedAt   int64
+}
+
+type CommunityExperiment struct {
+	ID        string
+	ProjectID string
+	Revision  int64
+	CreatedBy int64
+}
+
+type CommunityExperimentRevision struct {
+	ExperimentID string
+	Revision     int64
+	Name         string
+	Description  string
+	Collection   string
+	Kind         string
+	Document     string
+	Bundle       sql.NullString
+	UpdatedAt    int64
+}
+
+type CommunityFunding struct {
+	TransactionID string
+	CommunityID   string
+	ProjectID     string
+	SponsorUserID int64
+	ActorUserID   int64
+	Currency      string
+	Network       string
+}
+
+type CommunityInvitation struct {
+	TokenHash   []byte
+	CommunityID string
+	ExpiresAt   int64
+}
+
+type CommunityMeasurement struct {
+	ProjectID          string
+	MeasurementID      string
+	SharedBy           int64
+	SharedAt           int64
+	ExperimentID       sql.NullString
+	ExperimentRevision sql.NullInt64
+}
+
+type CommunityMember struct {
+	CommunityID string
+	UserID      int64
+	JoinedAt    int64
+}
+
+type CommunityProject struct {
+	ID          string
+	CommunityID string
+	Name        string
+	Description string
+	CreatedBy   int64
+	CreatedAt   int64
+}
+
+type CommunityTopup struct {
+	TransactionID string
+	CommunityID   string
+	CreatedBy     int64
+	RefundAddress string
+	Network       string
+	CoinType      string
+}
+
 type Debuglet struct {
 	ID                    int64
 	Uuid                  uuid.UUID

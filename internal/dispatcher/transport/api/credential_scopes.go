@@ -21,6 +21,21 @@ var credentialScopes = []string{"account:read", "executors:read", "executors:wri
 // API credentials narrow existing account access; they grant no dispatcher
 // administration or identity-management authority.
 var credentialRouteScopes = map[string]string{
+	"GET /communities":                                            "measurements:read",
+	"GET /communities/:id":                                        "measurements:read",
+	"GET /communities/:id/projects":                               "measurements:read",
+	"GET /community-projects/:id":                                 "measurements:read",
+	"GET /community-projects/:id/experiments":                     "measurements:read",
+	"GET /community-experiments/:id":                              "measurements:read",
+	"GET /community-projects/:id/measurements":                    "measurements:read",
+	"GET /communities/:id/wallet":                                 "account:read",
+	"POST /communities/:id/projects":                              "measurements:write",
+	"PATCH /community-projects/:id":                               "measurements:write",
+	"POST /community-projects/:id/experiments":                    "measurements:write",
+	"PUT /community-experiments/:id":                              "measurements:write",
+	"DELETE /community-experiments/:id":                           "measurements:write",
+	"POST /community-projects/:id/measurements":                   "measurements:write",
+	"DELETE /community-projects/:id/measurements/:measurement_id": "measurements:write",
 	"GET /me":                                       "account:read",
 	"GET /me/orders":                                "account:read",
 	"GET /me/allowance":                             "account:read",

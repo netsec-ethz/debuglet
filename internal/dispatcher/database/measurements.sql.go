@@ -118,9 +118,12 @@ func (q *Queries) MeasurementCounts(ctx context.Context, arg MeasurementCountsPa
 }
 
 const measurementRunCount = `-- name: MeasurementRunCount :one
-SELECT COUNT(*) FROM debuglets d JOIN debuglet_users du ON du.debuglet_id = d.id
-JOIN users u ON u.id = du.user_id
-WHERE d.transaction_id = ?1 AND u.uuid = ?2
+SELECT COUNT(*) FROM debuglets d
+WHERE d.transaction_id = ?1 AND (EXISTS (SELECT 1 FROM debuglet_users du JOIN users u ON u.id = du.user_id
+ WHERE du.debuglet_id = d.id AND u.uuid = ?2) OR EXISTS (
+ SELECT 1 FROM community_measurements cm JOIN community_projects p ON p.id = cm.project_id
+ JOIN community_members member ON member.community_id = p.community_id JOIN users u ON u.id = member.user_id
+ WHERE cm.measurement_id = d.transaction_id AND u.uuid = ?2))
 `
 
 type MeasurementRunCountParams struct {
@@ -139,10 +142,13 @@ const measurementRuns = `-- name: MeasurementRuns :many
 SELECT d.uuid, d.executor_id, d.order_id, d.state,
     CAST(COALESCE(json_extract(m.document, '$.label'), '') AS TEXT) AS label,
     CAST(COALESCE(json_extract(m.document, '$.program_name'), '') AS TEXT) AS program_name
-FROM debuglets d JOIN debuglet_users du ON du.debuglet_id = d.id
-JOIN users u ON u.id = du.user_id
+FROM debuglets d
 LEFT JOIN measurement_requests m ON m.debuglet_id = d.id
-WHERE d.transaction_id = ?1 AND u.uuid = ?2
+WHERE d.transaction_id = ?1 AND (EXISTS (SELECT 1 FROM debuglet_users du JOIN users u ON u.id = du.user_id
+ WHERE du.debuglet_id = d.id AND u.uuid = ?2) OR EXISTS (
+ SELECT 1 FROM community_measurements cm JOIN community_projects p ON p.id = cm.project_id
+ JOIN community_members member ON member.community_id = p.community_id JOIN users u ON u.id = member.user_id
+ WHERE cm.measurement_id = d.transaction_id AND u.uuid = ?2))
 ORDER BY d.order_id, d.id LIMIT ?4 OFFSET ?3
 `
 

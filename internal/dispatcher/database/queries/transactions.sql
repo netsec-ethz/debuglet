@@ -96,12 +96,18 @@ LIMIT sqlc.arg(row_limit);
 -- name: ClaimDebugletOrder :execrows
 UPDATE debuglet_order
 SET debuglet_id = sqlc.narg(debuglet_id)
-WHERE transaction_id = sqlc.arg(transaction_id) AND order_id = sqlc.arg(order_id)
-  AND debuglet_id IS NULL AND state = sqlc.arg(outstanding_state)
+WHERE debuglet_order.transaction_id = sqlc.arg(transaction_id) AND debuglet_order.order_id = sqlc.arg(order_id)
+  AND debuglet_order.debuglet_id IS NULL AND debuglet_order.state = sqlc.arg(outstanding_state)
   AND EXISTS (
     SELECT 1 FROM transactions
     WHERE transactions.id = debuglet_order.transaction_id
       AND transactions.status = sqlc.arg(paid_status)
+  )
+  AND NOT EXISTS(SELECT 1 FROM community_topups d WHERE d.transaction_id=debuglet_order.transaction_id)
+  AND NOT EXISTS(
+    SELECT 1 FROM community_funding f WHERE f.transaction_id=debuglet_order.transaction_id
+      AND NOT EXISTS(SELECT 1 FROM community_members m
+        WHERE m.community_id=f.community_id AND m.user_id=f.actor_user_id)
   );
 
 -- name: GetAdmittedRuns :many

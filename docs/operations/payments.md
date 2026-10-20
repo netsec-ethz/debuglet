@@ -4,6 +4,15 @@ This page describes how a dispatcher with chain payments enabled sends money:
 executor payouts and buyer refunds. TEST payments move no funds and write no
 receipt or transfer records. While `[sui] disabled = true`, nothing here runs.
 
+For [community funding](../communities.md#pay-from-the-community-budget), the
+owner first signs a USDC deposit. Members then reserve that prepaid balance:
+their intents return `method: "COMMUNITY"` and require no individual wallet
+payment. Failed USDC orders return funds to that community balance instead of
+sending a buyer refund transfer. TEST communities share their creator's existing
+allowance. The tables below describe personal payment intents unless stated
+otherwise. Community deposits currently support Sui Testnet and have no
+withdrawal interface.
+
 ## Modes and what each records
 
 Chain payments are switched by `[sui] disabled`. Every shipped configuration

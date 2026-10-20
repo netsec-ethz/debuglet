@@ -32,7 +32,10 @@ plaintext state on their hosts, including credentials and workload data.
 
 Managed deployments use server-issued sessions, including the configured GitHub
 OAuth login. Protected routes require a valid session and enforce object
-ownership or an operator role. Cookie-authenticated changes require CSRF proof.
+ownership or an operator role. Explicitly sharing a measurement grants current
+community members read access to its configuration, output and full admission
+provenance, including private executor addresses and host observations. Sharing
+does not grant run mutation or private payment access. Cookie-authenticated changes require CSRF proof.
 A user UUID alone is not a credential. The [API reference](api.md)
 and [OpenAPI contract](../api/openapi.yaml) define the route-level decisions.
 

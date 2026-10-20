@@ -404,10 +404,9 @@ func (a *caller) owner() (uuid.UUID, bool) {
 	return a.UserUUID, true
 }
 
-// authorizeDebuglet decides whether the caller may act on one run, before the
-// run's state, output or executor is read or changed. A run owned by another
-// account, a run recorded before ownership existed and a run that does not
-// exist are answered alike, so the response is no existence oracle.
+// authorizeDebuglet permits only a run's owner to manage it. Community read
+// access does not grant this authority. A run owned by another account, a run
+// recorded before ownership existed and an unknown run are answered alike.
 func (h *Handler) authorizeDebuglet(c echo.Context, id uuid.UUID) error {
 	established, err := requireCaller(c)
 	if err != nil {

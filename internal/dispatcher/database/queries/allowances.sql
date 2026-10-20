@@ -7,13 +7,15 @@ SELECT
   CAST(COALESCE((SELECT SUM(o.price) FROM debuglet_order o
     JOIN transaction_users tu ON tu.transaction_id = o.transaction_id
     JOIN transactions t ON t.id = o.transaction_id
-    WHERE tu.user_id = u.id AND t.method = 'TEST'
+    LEFT JOIN community_funding f ON f.transaction_id = o.transaction_id
+    WHERE COALESCE(f.sponsor_user_id, tu.user_id) = u.id AND t.method = 'TEST'
       AND EXISTS (SELECT 1 FROM order_settlements s
         WHERE s.transaction_id = o.transaction_id AND s.order_id = o.order_id)), 0) AS INTEGER) AS consumed,
   CAST(COALESCE((SELECT SUM(o.price) FROM debuglet_order o
     JOIN transaction_users tu ON tu.transaction_id = o.transaction_id
     JOIN transactions t ON t.id = o.transaction_id
-    WHERE tu.user_id = u.id AND t.method = 'TEST' AND t.status = sqlc.arg(paid_status)
+    LEFT JOIN community_funding f ON f.transaction_id = o.transaction_id
+    WHERE COALESCE(f.sponsor_user_id, tu.user_id) = u.id AND t.method = 'TEST' AND t.status = sqlc.arg(paid_status)
       AND NOT EXISTS (SELECT 1 FROM order_settlements s
         WHERE s.transaction_id = o.transaction_id AND s.order_id = o.order_id)), 0) AS INTEGER) AS reserved
 FROM users u
@@ -31,7 +33,8 @@ WHERE u.uuid = sqlc.arg(user_uuid)
     - COALESCE((SELECT SUM(o.price) FROM debuglet_order o
       JOIN transaction_users tu ON tu.transaction_id = o.transaction_id
       JOIN transactions t ON t.id = o.transaction_id
-      WHERE tu.user_id = u.id AND t.method = 'TEST'
+      LEFT JOIN community_funding f ON f.transaction_id = o.transaction_id
+      WHERE COALESCE(f.sponsor_user_id, tu.user_id) = u.id AND t.method = 'TEST'
         AND (t.status = sqlc.arg(paid_status) OR EXISTS (SELECT 1 FROM order_settlements s
           WHERE s.transaction_id = o.transaction_id AND s.order_id = o.order_id))), 0)
     >= sqlc.arg(price);
@@ -44,7 +47,8 @@ UPDATE transactions
 SET status = sqlc.arg(expired_status)
 WHERE status = sqlc.arg(paid_status) AND method = 'TEST' AND expires_at < sqlc.arg(now)
   AND id IN (SELECT tu.transaction_id FROM transaction_users tu
-    JOIN users u ON u.id = tu.user_id WHERE u.uuid = sqlc.arg(user_uuid))
+    LEFT JOIN community_funding f ON f.transaction_id=tu.transaction_id
+    JOIN users u ON u.id = COALESCE(f.sponsor_user_id, tu.user_id) WHERE u.uuid = sqlc.arg(user_uuid))
   AND NOT EXISTS (
     SELECT 1 FROM debuglet_order
     WHERE debuglet_order.transaction_id = transactions.id AND debuglet_id IS NOT NULL

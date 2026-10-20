@@ -74,8 +74,8 @@ type VantagePoint struct {
 	SCIONISDAS LabelledObservation `json:"scion_isd_as"`
 	Display    ExecutorDisplay     `json:"display"`
 	// Added within schema 1 with the executor probes; absent means null.
-	// Platform is host detail, recorded here because a result is visible only
-	// to the run's owner and operators.
+	// Platform is host detail included when an owner explicitly shares the
+	// measurement with a community, along with the rest of its provenance.
 	Clock    LabelledReport[ClockReport]  `json:"clock"`
 	Platform LabelledReport[HostPlatform] `json:"platform"`
 	// Addressing is the RIPE Atlas-style addressing at admission, with the

@@ -18,13 +18,15 @@ SELECT
   CAST(COALESCE((SELECT SUM(o.price) FROM debuglet_order o
     JOIN transaction_users tu ON tu.transaction_id = o.transaction_id
     JOIN transactions t ON t.id = o.transaction_id
-    WHERE tu.user_id = u.id AND t.method = 'TEST'
+    LEFT JOIN community_funding f ON f.transaction_id = o.transaction_id
+    WHERE COALESCE(f.sponsor_user_id, tu.user_id) = u.id AND t.method = 'TEST'
       AND EXISTS (SELECT 1 FROM order_settlements s
         WHERE s.transaction_id = o.transaction_id AND s.order_id = o.order_id)), 0) AS INTEGER) AS consumed,
   CAST(COALESCE((SELECT SUM(o.price) FROM debuglet_order o
     JOIN transaction_users tu ON tu.transaction_id = o.transaction_id
     JOIN transactions t ON t.id = o.transaction_id
-    WHERE tu.user_id = u.id AND t.method = 'TEST' AND t.status = ?1
+    LEFT JOIN community_funding f ON f.transaction_id = o.transaction_id
+    WHERE COALESCE(f.sponsor_user_id, tu.user_id) = u.id AND t.method = 'TEST' AND t.status = ?1
       AND NOT EXISTS (SELECT 1 FROM order_settlements s
         WHERE s.transaction_id = o.transaction_id AND s.order_id = o.order_id)), 0) AS INTEGER) AS reserved
 FROM users u
@@ -186,7 +188,8 @@ UPDATE transactions
 SET status = ?1
 WHERE status = ?2 AND method = 'TEST' AND expires_at < ?3
   AND id IN (SELECT tu.transaction_id FROM transaction_users tu
-    JOIN users u ON u.id = tu.user_id WHERE u.uuid = ?4)
+    LEFT JOIN community_funding f ON f.transaction_id=tu.transaction_id
+    JOIN users u ON u.id = COALESCE(f.sponsor_user_id, tu.user_id) WHERE u.uuid = ?4)
   AND NOT EXISTS (
     SELECT 1 FROM debuglet_order
     WHERE debuglet_order.transaction_id = transactions.id AND debuglet_id IS NOT NULL
@@ -225,7 +228,8 @@ WHERE u.uuid = ?6
     - COALESCE((SELECT SUM(o.price) FROM debuglet_order o
       JOIN transaction_users tu ON tu.transaction_id = o.transaction_id
       JOIN transactions t ON t.id = o.transaction_id
-      WHERE tu.user_id = u.id AND t.method = 'TEST'
+      LEFT JOIN community_funding f ON f.transaction_id = o.transaction_id
+      WHERE COALESCE(f.sponsor_user_id, tu.user_id) = u.id AND t.method = 'TEST'
         AND (t.status = ?4 OR EXISTS (SELECT 1 FROM order_settlements s
           WHERE s.transaction_id = o.transaction_id AND s.order_id = o.order_id))), 0)
     >= ?2

@@ -149,7 +149,7 @@ func (p *PaymentHandler) CheckPaymentMethod(method string) error {
 	switch method {
 	case "TEST":
 		return nil
-	case "USDC", "SUI":
+	case "USDC", "SUI", "COMMUNITY":
 		if p.chainDisabled() {
 			return ErrPaymentsDisabled
 		}
@@ -306,10 +306,19 @@ func (p *PaymentHandler) settleOrder(ctx context.Context, debuglet *database.Deb
 	if err != nil {
 		return fmt.Errorf("Failed to find debuglet order of %s: %w", debuglet.Uuid.String(), err)
 	}
+	sponsored, err := communityFunded(ctx, tx, debuglet.TransactionID)
+	if err != nil {
+		return err
+	}
+	if sponsored && kind == settlementCredit {
+		if err := p.checkCommunityCurrency(ctx, tx, debuglet.TransactionID); err != nil {
+			return err
+		}
+	}
 	to := models.Credited
 	if kind == settlementRefund {
 		to = models.Refunded
-		if err := p.requireChain(order.Currency, "refund order"); err != nil {
+		if err := p.requireChain(order.Currency, "refund order"); err != nil && !sponsored {
 			return err
 		}
 		if order.Currency != "USDC" && (chainOnly || order.Currency != "TEST") {
@@ -318,7 +327,7 @@ func (p *PaymentHandler) settleOrder(ctx context.Context, debuglet *database.Deb
 	} else if err := p.requireChain(order.Currency, "credit order"); err != nil {
 		return err
 	}
-	if kind == settlementRefund && order.Currency == "USDC" && order.State == int64(models.Outstanding) {
+	if kind == settlementRefund && order.Currency == "USDC" && !sponsored && order.State == int64(models.Outstanding) {
 		// The chain refund is not sent inside this SQL transaction: the
 		// transfer lifecycle commits the decision with the reserved transfer
 		// before it calls the chain.
@@ -580,6 +589,10 @@ func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Con
 	if err != nil {
 		return RefundLocal, err
 	}
+	sponsored, err := communityFunded(ctx, tx, transactionId)
+	if err != nil {
+		return RefundLocal, err
+	}
 	// The currency and the refund address live on the order rows, so a paid
 	// transaction that has none says nothing about where the money would go.
 	// It is reported rather than indexed into.
@@ -588,7 +601,7 @@ func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Con
 	}
 	currency := orders[0].Currency
 	refundAddress := orders[0].RefundAddress
-	if err := p.requireChain(currency, "refund transaction"); err != nil {
+	if err := p.requireChain(currency, "refund transaction"); err != nil && !sponsored {
 		return RefundLocal, err
 	}
 	var outstanding []database.DebugletOrder
@@ -606,6 +619,31 @@ func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Con
 			continue
 		}
 		outstanding = append(outstanding, order)
+	}
+	if sponsored && currency == "USDC" {
+		if len(outstanding) == 0 {
+			return RefundLocal, fmt.Errorf("orders of transaction %s are already settled; nothing was refunded", transactionId)
+		}
+		var changed int64
+		if unadmittedOnly {
+			changed, err = queries.RefundUnadmittedTransaction(ctx, database.RefundUnadmittedTransactionParams{
+				RefundedStatus: int64(models.Refunded), TransactionID: transactionId, PaidStatus: int64(models.Paid),
+			})
+		} else {
+			changed, err = queries.RefundPaidTransaction(ctx, database.RefundPaidTransactionParams{
+				Refunded: int64(models.Refunded), ID: transactionId, Paid: int64(models.Paid),
+			})
+		}
+		if err != nil {
+			return RefundLocal, err
+		}
+		if changed != 1 {
+			return RefundLocal, ErrTransactionClaimed
+		}
+		if err := refundCommunityIn(ctx, queries, outstanding); err != nil {
+			return RefundLocal, err
+		}
+		return RefundLocal, tx.Commit()
 	}
 	if currency != "USDC" {
 		return RefundLocal, fmt.Errorf("Refunds are not supported for currency %s", currency)

@@ -41,6 +41,9 @@ func (h *Handler) PostPaymentQuote(c echo.Context) error {
 	if err := validateUploadBatch(req.Debuglets); err != nil {
 		return err
 	}
+	if err := h.checkCommunityFundingRequest(c, req); err != nil {
+		return err
+	}
 	if err := h.dispatcher.Payment.CheckPaymentMethod(req.PaymentMethod); err != nil {
 		return paymentMethodError(req.PaymentMethod, err)
 	}

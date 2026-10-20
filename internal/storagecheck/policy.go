@@ -31,10 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 31 stores owner-managed executor presentation labels.
-	// Schema 29 records authenticated schedule history; schema 30 / executor 9
-	// add durable aggregate egress grants.
-	MinimumDispatcherVersion int64 = 31
+	// Schemas 32 and 33 store community workspaces and their funding.
+	MinimumDispatcherVersion int64 = 33
 	MinimumExecutorVersion   int64 = 9
 )
 

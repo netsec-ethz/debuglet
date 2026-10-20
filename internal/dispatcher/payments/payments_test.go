@@ -381,6 +381,11 @@ func expectOrderRead(mock sqlmock.Sqlmock, currency string, state models.Transac
 	mock.ExpectQuery(getDebugletOrderQuery).WithArgs(testTxID, testOrderID).WillReturnRows(orderRow(currency, state))
 }
 
+func expectPersonalFunding(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM community_funding WHERE transaction_id=?)")).
+		WithArgs(testTxID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+}
+
 func expectTransactionRead(mock sqlmock.Sqlmock, method string, status models.TransactionState) {
 	mock.ExpectQuery(getTransactionByIDQuery).WithArgs(testTxID).WillReturnRows(transactionRow(method, status))
 }
@@ -736,6 +741,7 @@ func chainGuardCases() []guardCase {
 				expect: func(mock sqlmock.Sqlmock) {
 					mock.ExpectBegin()
 					expectOrderRead(mock, ccy, models.Paid)
+					expectPersonalFunding(mock)
 					mock.ExpectRollback()
 				},
 				call: func(h *PaymentHandler, ctx context.Context) error {
@@ -748,6 +754,7 @@ func chainGuardCases() []guardCase {
 					mock.ExpectBegin()
 					expectTransactionRead(mock, ccy, models.Paid)
 					expectTransactionOrdersRead(mock, ccy, 2)
+					expectPersonalFunding(mock)
 					mock.ExpectRollback()
 				},
 				call: func(h *PaymentHandler, ctx context.Context) error {
@@ -766,6 +773,7 @@ func chainGuardCases() []guardCase {
 				expect: func(mock sqlmock.Sqlmock) {
 					mock.ExpectBegin()
 					expectOrderRead(mock, ccy, models.Paid)
+					expectPersonalFunding(mock)
 					mock.ExpectRollback()
 				},
 				call: func(h *PaymentHandler, ctx context.Context) error {
@@ -824,6 +832,7 @@ func TestDisabledTESTPaths(t *testing.T) {
 		// The currency is refused before any state is written.
 		mock.ExpectBegin()
 		expectOrderRead(mock, "TEST", models.Paid)
+		expectPersonalFunding(mock)
 		mock.ExpectRollback()
 
 		err := h.RefundDebugletOrder(testDebuglet(), testRefund, context.Background())
@@ -846,6 +855,7 @@ func TestDisabledTESTPaths(t *testing.T) {
 		// is read again, found settled, and nothing is written.
 		mock.ExpectBegin()
 		expectOrderRead(mock, "TEST", models.Refunded)
+		expectPersonalFunding(mock)
 		mock.ExpectExec(transitionDebugletOrderQuery).
 			WithArgs(int64(models.Refunded), testTxID, testOrderID, int64(models.Outstanding)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
@@ -868,6 +878,7 @@ func TestDisabledTESTPaths(t *testing.T) {
 		mock.ExpectBegin()
 		expectTransactionRead(mock, "TEST", models.Paid)
 		expectTransactionOrdersRead(mock, "TEST", 1)
+		expectPersonalFunding(mock)
 		mock.ExpectRollback()
 
 		err := h.RefundTransaction(testTxID, context.Background())
@@ -1104,6 +1115,8 @@ func TestApplyPaymentReceiptModes(t *testing.T) {
 			expect: func(mock sqlmock.Sqlmock) {
 				expectBeginAndReceiptMiss(mock)
 				expectTransactionRead(mock, "USDC", models.Outstanding)
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT network,coin_type FROM community_topups WHERE transaction_id=?")).
+					WithArgs(testTxID).WillReturnError(sql.ErrNoRows)
 				mock.ExpectExec(markTransactionPaidQuery).WithArgs(int64(models.Paid), testTxID, int64(models.Outstanding)).WillReturnError(errScripted)
 				mock.ExpectRollback()
 			},

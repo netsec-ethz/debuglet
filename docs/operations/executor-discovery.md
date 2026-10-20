@@ -495,6 +495,8 @@ its own opt-out, `location_opt_out`, independent of this one; the
 Restart the executor to publish a changed preference. Executors that predate
 the setting are public. The admission snapshot records the same fields,
 including a private executor's addresses, as `provenance.vantage_point.addressing`.
+Owners who explicitly share a measurement with a community also share this
+snapshot with its current members.
 
 `dbl nodes` shows the addresses in its `ADDRESS_V4` and `ADDRESS_V6` columns
 (`private` when withheld, `-` when unknown); `--output json` carries every
@@ -607,10 +609,11 @@ changes host state or contacts a time source.
   of readiness are reported and logged but do not refuse admission. `dbl
   doctor` runs the same check locally.
 - Host platform: OS, architecture, kernel release, logical CPUs, total memory
-  and build version. This is operator-only data and never appears in
+  and build version. This data never appears in public
   `GET /executors`. There is no live operator view of it yet; it is recorded in
-  the admission snapshot `provenance.vantage_point.platform`, which only the
-  run's owner and operators can read.
+  the admission snapshot `provenance.vantage_point.platform`, readable by the
+  run's owner, operators and current members of communities with which the
+  measurement was explicitly shared.
 
 A malformed clock, platform, ICMP state or reason leaves only that field
 unknown; the executor stays listed with the rest of its report. Results record
@@ -680,6 +683,7 @@ explicit `stale` flag. Public views omit raw addresses, endpoints and the SCION
 host. Established operators can see these details; result owners receive them
 in the immutable admission snapshot. Address disagreements are reported without
 silently changing the advertised address. Names are not resolved for comparison.
+Explicit community sharing includes this snapshot.
 
 For a configured check, admission requires a fresh successful observation when
 a policy asks for the corresponding literal address family or TCP/UDP listener.

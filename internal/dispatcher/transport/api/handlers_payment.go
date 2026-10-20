@@ -211,6 +211,12 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err := validateUploadBatch(req.Debuglets); err != nil {
 		return err
 	}
+	if err := h.checkCommunityFundingRequest(c, req); err != nil {
+		return err
+	}
+	if req.CommunityProjectID != "" {
+		req.RefundAddress = ""
+	}
 	if req.Retry != nil {
 		if err := h.authorizeRetry(c, req.Retry, len(req.Debuglets)); err != nil {
 			return err
@@ -241,7 +247,7 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	// A chain refund must remain payable after the order is stored. Refuse an
 	// unusable address before pricing or creating any part of the intent, while
 	// preserving the disabled-payment response above and TEST's local behavior.
-	if req.PaymentMethod == "USDC" {
+	if req.PaymentMethod == "USDC" && req.CommunityProjectID == "" {
 		if err := sui.ValidAddress(req.RefundAddress); err != nil {
 			const message = "refund_address must be a Sui address: 0x followed by 1 to 64 hexadecimal digits"
 			return echo.NewHTTPError(http.StatusBadRequest, ErrorResponse{
@@ -289,7 +295,12 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	// if the account's remaining allowance covers its price. The local
 	// development bypass names no account and is not capped.
 	var intent payments.PaymentIntent
-	if owner, ok := established.owner(); ok && req.PaymentMethod == "TEST" && h.dispatcher.Payment.AllowancesEnabled() {
+	if req.CommunityProjectID != "" {
+		intent, err = h.dispatcher.Payment.CreateCommunityIntentIn(dbTx, established.UserUUID, req.CommunityProjectID, transactionId, price, req.PaymentMethod, hash, ctx)
+		if err != nil {
+			return communityFundingError(err)
+		}
+	} else if owner, ok := established.owner(); ok && req.PaymentMethod == "TEST" && h.dispatcher.Payment.AllowancesEnabled() {
 		intent, err = h.dispatcher.Payment.CreateAllowanceIntentIn(dbTx, owner, transactionId, price, hash, ctx)
 		var exceeded *payments.AllowanceExceededError
 		if errors.As(err, &exceeded) {
@@ -333,9 +344,19 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 			return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to record the payment order owner", err)
 		}
 	}
-	response, err := paymentIntentResponse(req.PaymentMethod, intent)
+	responseMethod := req.PaymentMethod
+	if req.CommunityProjectID != "" {
+		responseMethod = "COMMUNITY"
+		if err := shareFundedMeasurement(ctx, dbTx, established, req, transactionId); err != nil {
+			return err
+		}
+	}
+	response, err := paymentIntentResponse(responseMethod, intent)
 	if err != nil {
 		return err
+	}
+	if responseMethod == "COMMUNITY" {
+		response.Currency = req.PaymentMethod
 	}
 	// The stored prices, stated as the quote of the same batch would state
 	// them, so a client can compare the two exactly.
@@ -365,7 +386,7 @@ func paymentIntentResponse(method string, intent payments.PaymentIntent) (Intent
 			CoinType: suiIntent.CoinType, ExpiresAtS: suiIntent.ExpiresAt.Unix(),
 			RegistryAddress: suiIntent.RegistryAddress, ReceiverAddress: suiIntent.ReceiverAddress,
 		}}, nil
-	case "TEST":
+	case "TEST", "COMMUNITY":
 		dummy, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {
 			return IntentResponse{}, apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")

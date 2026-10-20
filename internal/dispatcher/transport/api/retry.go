@@ -120,7 +120,11 @@ func (h *Handler) readRetryIntent(ctx context.Context, q *database.Queries, call
 		return nil, retryStorageError(err)
 	}
 	response := &IntentResponse{Method: req.PaymentMethod, Retry: &wire.RetryReceipt{RetryLink: *req.Retry}}
-	if req.PaymentMethod == "TEST" {
+	if req.CommunityProjectID != "" {
+		response.Method = "COMMUNITY"
+		response.Currency = req.PaymentMethod
+	}
+	if req.PaymentMethod == "TEST" || req.CommunityProjectID != "" {
 		response.Intent = DummyIntent{TransactionID: tx.ID, AuthKey: tx.AuthKey}
 	} else {
 		var metadata retryPaymentMetadata

@@ -122,7 +122,8 @@ func (h *Handler) GetRunDetail(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.authorizeDebuglet(c, id); err != nil {
+	canManage, err := h.authorizeDebugletRead(c, id)
+	if err != nil {
 		return err
 	}
 	ctx := c.Request().Context()
@@ -156,6 +157,7 @@ func (h *Handler) GetRunDetail(c echo.Context) error {
 	if err != nil {
 		return measurementFailure(err)
 	}
+	detail.CanManage = canManage
 	if err := tx.Commit(); err != nil {
 		return measurementFailure(err)
 	}
@@ -203,7 +205,12 @@ func (h *Handler) GetMeasurement(c echo.Context) error {
 	if err != nil {
 		return measurementFailure(err)
 	}
-	doc := wire.Measurement{ID: c.Param("id"), Runs: make([]wire.MeasurementRun, 0, len(runs)), Total: total, Limit: limit, Offset: offset}
+	management, err := q.CanManageMeasurement(ctx, database.CanManageMeasurementParams{BatchID: c.Param("id"), UserUuid: caller.UserUUID})
+	if err != nil {
+		return measurementFailure(err)
+	}
+	canManage := management.Valid && management.Bool && (!caller.API || credentialAllows(caller.Scopes, http.MethodDelete, "/debuglet"))
+	doc := wire.Measurement{ID: c.Param("id"), CanManage: canManage, Runs: make([]wire.MeasurementRun, 0, len(runs)), Total: total, Limit: limit, Offset: offset}
 	for _, run := range runs {
 		doc.Runs = append(doc.Runs, wire.MeasurementRun{RunID: run.Uuid.String(), ExecutorID: run.ExecutorID, OrderID: run.OrderID, State: run.State.String(), Label: run.Label, ProgramName: run.ProgramName})
 	}

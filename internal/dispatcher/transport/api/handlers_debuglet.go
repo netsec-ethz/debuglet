@@ -150,6 +150,9 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 		userID = &owner
 	}
 
+	if err := h.dispatcher.Payment.CheckCommunitySubmission(c.Request().Context(), h.db, req.TransactionId, established.UserUUID); err != nil {
+		return communityFundingError(err)
+	}
 	if IDs, err := h.dispatcher.SubmitDebuglets(c.Request().Context(), specs, userID); err != nil {
 		// A refusal over orders that already carry runs keeps the payment:
 		// those runs may be executing or credited, and refunding would pay
@@ -308,7 +311,7 @@ func (h *Handler) GetDebugletLogs(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.authorizeDebuglet(c, id); err != nil {
+	if _, err := h.authorizeDebugletRead(c, id); err != nil {
 		return err
 	}
 
@@ -397,7 +400,7 @@ func (h *Handler) GetDebugletState(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.authorizeDebuglet(c, id); err != nil {
+	if _, err := h.authorizeDebugletRead(c, id); err != nil {
 		return err
 	}
 

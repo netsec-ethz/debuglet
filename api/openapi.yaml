@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.22"
-  description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Access to another account's run or payment order answers 404, so a response is no existence oracle. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
+  version: "1.23"
+  description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
     description: "Dispatcher served at the root of its origin."
@@ -689,7 +689,7 @@ paths:
     get:
       operationId: "getDebugletResult"
       summary: "Export a portable retained-run snapshot."
-      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Writes portable format 1.1 for ordinary runs and 1.2 for explicit retries, independent of the HTTP API version. Does not wait for completion."
+      description: "Added in API 1.8. Reads run, immutable admission provenance and retained output from one SQLite snapshot without contacting the executor. Writes portable format 1.1 for ordinary runs and 1.2 for explicit retries, independent of the HTTP API version. Does not wait for completion. API 1.23 also permits current members of a community with which this measurement was explicitly shared; it grants no mutation or private payment access."
       parameters:
         - name: "id"
           in: "path"
@@ -738,7 +738,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "The run does not exist or belongs to another account."
+          description: "The run does not exist or is not visible to this account."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3208,7 +3208,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable."
+          description: "No debuglet with that ID is recorded, or it is not visible to this account. The two are deliberately indistinguishable."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3244,7 +3244,7 @@ paths:
     get:
       operationId: "getDebugletCancellation"
       summary: "Inspect a durable cancellation request without retrying it."
-      description: "Added in API 1.9. Read-only: does not send Abort, select a terminal result or settle payment. Delivery attempts do not confirm receipt. Only a persisted successful Abort reply establishes acknowledgement; a local terminal result can coexist with an unknown remote outcome. Original binding never follows a replacement. No background cancellation replay occurs."
+      description: "Added in API 1.9. Read-only: does not send Abort, select a terminal result or settle payment. Delivery attempts do not confirm receipt. Only a persisted successful Abort reply establishes acknowledgement; a local terminal result can coexist with an unknown remote outcome. Original binding never follows a replacement. No background cancellation replay occurs. API 1.23 also permits current members of a community with which this measurement was explicitly shared; it grants no mutation or private payment access."
       parameters:
         - name: "id"
           in: "path"
@@ -3295,7 +3295,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "No cancellation request is recorded for that run, the run is missing, or it belongs to another account. The two are deliberately indistinguishable."
+          description: "No cancellation request is recorded for that run, the run is missing, or it is not visible to this account. The two are deliberately indistinguishable."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3331,7 +3331,7 @@ paths:
     get:
       operationId: "getDebugletRecovery"
       summary: "Inspect a known run without replaying or changing it."
-      description: "Separates stored outcome, original control availability and at most one validated, dated executor observation. A replaced observer remains historical. Missing or failed observations have null provenance; absent or filtered replies do not authorize replay. The lookup is bounded to five seconds and never retargets a replacement. See docs/operations/recovery-inspection.md."
+      description: "Separates stored outcome, original control availability and at most one validated, dated executor observation. A replaced observer remains historical. Missing or failed observations have null provenance; absent or filtered replies do not authorize replay. The lookup is bounded to five seconds and never retargets a replacement. See docs/operations/recovery-inspection.md. API 1.23 also permits current members of a community with which this measurement was explicitly shared; it grants no mutation or private payment access."
       parameters:
         - name: "id"
           in: "path"
@@ -3382,7 +3382,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable."
+          description: "No debuglet with that ID is recorded, or it is not visible to this account. The two are deliberately indistinguishable."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -3418,7 +3418,7 @@ paths:
     get:
       operationId: "getDebugletLogs"
       summary: "Read one page of a debuglet's stored output."
-      description: "Entries, workload state and output finality come from one database snapshot. A terminal workload does not imply complete output. Output metadata was added in API 1.6; older servers omit it."
+      description: "Entries, workload state and output finality come from one database snapshot. A terminal workload does not imply complete output. Output metadata was added in API 1.6; older servers omit it. API 1.23 also permits current members of a community with which this measurement was explicitly shared; it grants no mutation or private payment access."
       parameters:
         - name: "id"
           in: "path"
@@ -3486,7 +3486,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "No debuglet with that ID is recorded, or it belongs to another account. The two are deliberately indistinguishable."
+          description: "No debuglet with that ID is recorded, or it is not visible to this account. The two are deliberately indistinguishable."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4378,7 +4378,7 @@ paths:
     put:
       operationId: "createPaymentIntent"
       summary: "Create a payment intent for a batch of debuglets."
-      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits the methods TEST and USDC; TEST is the local alpha's bookkeeping-only method. The encoded request body must not exceed 33554432 bytes. Explicit retries require API 1.12 and preserve one parent/request identity across intent and submission; reusing that identity with the same frozen request recovers the existing attempt."
+      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits request methods TEST and USDC; TEST is bookkeeping only. API 1.23 optionally selects community_project_id, reserves that shared budget and returns method COMMUNITY without a new external-wallet payment. Community experiment ID/revision may link the run to saved source. The encoded request body must not exceed 33554432 bytes. Explicit retries require API 1.12 and preserve one parent/request identity across intent and submission; reusing that identity with the same frozen request recovers the existing attempt."
       requestBody:
         required: true
         content:
@@ -4449,7 +4449,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "503":
-          description: "A chain payment method was requested while blockchain payments are disabled (payments_disabled), or an operator has stopped the admission of new submissions on this dispatcher (service_unavailable). No intent is created and nothing is priced in either case."
+          description: "A chain payment method was requested while blockchain payments are disabled (payments_disabled), the community uses TEST while usage allowances are disabled, or an operator has stopped the admission of new submissions on this dispatcher (service_unavailable). No intent is created and nothing is priced in either case."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4475,7 +4475,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "Retry parent missing or not owned (not_found)."
+          description: "Retry parent missing or not owned, or the community project is not visible to this account (not_found)."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4486,7 +4486,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: "Request identity is bound to a different parent or frozen payload (intent_mismatch), or, while usage allowances are enabled, the account's allowance history cannot be represented in signed 64-bit integers (allowance_out_of_range); nothing of the intent is written."
+          description: "The community budget cannot cover the reservation (invalid_request), request identity is bound to a different parent or frozen payload (intent_mismatch), or, while usage allowances are enabled, the account's allowance history cannot be represented in signed 64-bit integers (allowance_out_of_range); nothing of the intent is written."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -4500,7 +4500,7 @@ paths:
     post:
       operationId: "quotePayment"
       summary: "Price a batch of debuglets without creating an intent."
-      description: "Added in API 1.15. Takes the body of PUT /payment/intent and prices it with the same rule, without writing anything: no transaction, no auth key, no order and no run. A batch the intent would refuse (an empty batch, an unknown executor, an invalid policy, a start_time outside its range, a policy the executor cannot currently serve such as require_icmp without ICMP, a repeated order_id or a price that does not fit a signed 64-bit integer) is answered 200 with every problem in the quote's errors and total empty. retry is not evaluated. Each quote counts against the account request quota like an intent. The intent prices the batch again when it is created and returns its own quote. See docs/api.md for the pricing rule."
+      description: "Added in API 1.15. Takes the body of PUT /payment/intent and prices it with the same rule, without writing anything: no transaction, no auth key, no order and no run. A batch the intent would refuse (an empty batch, an unknown executor, an invalid policy, a start_time outside its range, a policy the executor cannot currently serve such as require_icmp without ICMP, a repeated order_id or a price that does not fit a signed 64-bit integer) is answered 200 with every problem in the quote's errors and total empty. retry is not evaluated. Each quote counts against the account request quota like an intent. The intent prices the batch again when it is created and returns its own quote. API 1.23 community_project_id also checks current membership and experiment field pairing without reserving funds. Exact saved revision and program consistency are checked during intent creation. See docs/api.md for the pricing rule."
       requestBody:
         required: true
         content:
@@ -4539,6 +4539,17 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: "The request presented no credential, or one that is unknown, expired or revoked (unauthorized). A dispatcher serving the local development profile also serves this route without a credential."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: "The selected community project is not visible to this account."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -5791,7 +5802,7 @@ paths:
     "get":
       "operationId": "getMeasurement"
       "summary": "Page measurement children"
-      "description": "Page the owner’s batch using its durable transaction ID. The response contains lightweight child references in stable order, without arguments, policies, provenance or output. Read each child’s configuration through its detail endpoint. Limit defaults to 25 (1–100); offset is 0–1000000."
+      "description": "Page an owned or explicitly shared batch using its durable transaction ID. Current community membership grants read access only; can_manage reports mutation authority. The response contains lightweight child references in stable order, without arguments, policies, provenance or output. Read each child’s configuration through its detail endpoint. Limit defaults to 25 (1–100); offset is 0–1000000. API 1.23 also permits current members of a community with which this measurement was explicitly shared; it grants no mutation or private payment access."
       "parameters":
         - "name": "Debuglet-API-Version"
           "in": "header"
@@ -5861,7 +5872,7 @@ paths:
               "schema":
                 "$ref": "#/components/schemas/Error"
         "404":
-          "description": "Measurement absent or belongs to another account."
+          "description": "Measurement absent or is not visible to this account."
           "headers":
             "Debuglet-API-Version":
               "schema":
@@ -5897,7 +5908,7 @@ paths:
     get:
       operationId: "getRunDetail"
       summary: "Read retained run configuration"
-      description: "Read retained configuration without loading output, bounded to 32 MiB independently of profile limits. Requested arguments, policy and start are preserved before normalization. Historical configuration may be null. Actual execution timestamps remain null when unobserved. Cost strings use exact native base units; charged is null until credited or refunded."
+      description: "Read retained configuration without loading output, bounded to 32 MiB independently of profile limits. Requested arguments, policy and start are preserved before normalization. Historical configuration may be null. Actual execution timestamps remain null when unobserved. Cost strings use exact native base units; charged is null until credited or refunded. API 1.23 also permits current members of a community with which this measurement was explicitly shared; it grants no mutation or private payment access."
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
@@ -5955,7 +5966,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: "Measurement absent or belongs to another account."
+          description: "Measurement absent or is not visible to this account."
           headers:
             Debuglet-API-Version:
               schema:
@@ -6107,6 +6118,2310 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  "/communities":
+    "get":
+      "operationId": "listCommunities"
+      "summary": "List communities you belong to."
+      "description": "Added in API 1.23. Requires measurements:read for a scoped credential. Each result reports the caller's role; it grants no dispatcher-wide operator authority."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityList"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "createCommunity"
+      "summary": "Create a community owned by your account."
+      "description": "Added in API 1.23. Requires a browser session. Creates the owner membership. At most 16 communities may be owned by one account. Creating a community creates no funds or TEST grants."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CommunityNameRequest"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Community"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}":
+    "get":
+      "operationId": "getCommunity"
+      "summary": "Read a community you belong to."
+      "description": "Added in API 1.23. Requires measurements:read and current membership."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Community"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "patch":
+      "operationId": "updateCommunity"
+      "summary": "Change a community's name and description."
+      "description": "Added in API 1.23. Requires a browser session and the community owner. Sends the complete name and description; an empty description clears it."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CommunityNameRequest"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Community"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}/members":
+    "get":
+      "operationId": "listCommunityMembers"
+      "summary": "List community members."
+      "description": "Added in API 1.23. Requires a browser session and current membership. At most 128 members belong to a community."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityMemberList"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}/invitations":
+    "post":
+      "operationId": "createCommunityInvitation"
+      "summary": "Create a one-use membership invitation."
+      "description": "Added in API 1.23. Requires a browser session and the community owner. The token is shown once, expires after seven days and can be accepted by one authenticated account. At most eight unexpired invitations may be outstanding. Treat the token as a credential and send it privately."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityInvitation"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/community-invitations/accept":
+    "post":
+      "operationId": "acceptCommunityInvitation"
+      "summary": "Join a community using an invitation."
+      "description": "Added in API 1.23. Requires a browser session. Accepts the token for the signed-in account; the token cannot be used again. An invalid, expired or consumed invitation returns 404. Joining is also refused at 128 members per community or 128 memberships per account."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CommunityInvitationAcceptance"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Community"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}/members/{user_id}":
+    "delete":
+      "operationId": "removeCommunityMember"
+      "summary": "Remove a member from a community."
+      "description": "Added in API 1.23. Requires a browser session and the community owner. The creator cannot be removed. Revocation applies to subsequent reads and new spending; it cannot retract already downloaded results."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        - "name": "user_id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "204":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}/projects":
+    "get":
+      "operationId": "listCommunityProjects"
+      "summary": "List projects in a community."
+      "description": "Added in API 1.23. Requires measurements:read and current membership. Returns at most 64 projects."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityProjectList"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "createCommunityProject"
+      "summary": "Create a shared project."
+      "description": "Added in API 1.23. Requires measurements:write and current membership. At most 64 projects may belong to one community."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CommunityNameRequest"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityProject"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/community-projects/{id}":
+    "get":
+      "operationId": "getCommunityProject"
+      "summary": "Read a shared project."
+      "description": "Added in API 1.23. Requires measurements:read and current community membership."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityProject"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "patch":
+      "operationId": "updateCommunityProject"
+      "summary": "Change a shared project's name and description."
+      "description": "Added in API 1.23. Requires measurements:write and current community membership. Sends the complete name and description; an empty description clears it."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CommunityNameRequest"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityProject"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/community-projects/{id}/experiments":
+    "get":
+      "operationId": "listCommunityExperiments"
+      "summary": "List the latest saved experiment revisions."
+      "description": "Added in API 1.23. Requires measurements:read and current community membership. Returns metadata for at most 128 experiments, without document or bundle; fetch an experiment to open its source."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityExperimentList"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "createCommunityExperiment"
+      "summary": "Save a workflow or coordinated experiment."
+      "description": "Added in API 1.23. Requires measurements:write and current community membership. Stores revision 1. Retained revision source and bundles are limited to 256 MiB per community. The whole request is limited to 24 MiB, workflow source to 1 MiB and coordinated experiment source to 4 MiB. The optional bundle must match the source and its recorded hashes. Consistency checks do not certify that arbitrary uploaded WASM implements its claimed source."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CreateCommunityExperiment"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityExperiment"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/community-experiments/{id}":
+    "get":
+      "operationId": "getCommunityExperiment"
+      "summary": "Open a saved experiment revision."
+      "description": "Added in API 1.23. Requires measurements:read and current community membership. Without revision, returns the latest saved source and optional bundle. A specific historical revision stays immutable."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        - "name": "revision"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+            "minimum": 1
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityExperiment"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "put":
+      "operationId": "updateCommunityExperiment"
+      "summary": "Save the next experiment revision."
+      "description": "Added in API 1.23. Requires measurements:write and current community membership. The revision in the body must equal the current revision; otherwise 409, without overwriting another edit. Stores a new immutable revision, up to 32 revisions per experiment and 256 MiB of retained revision bytes per community. Omitted or null bundle removes the compiled artifact from the new revision; a replacement must match the supplied source. The same size and validation rules as creation apply."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/UpdateCommunityExperiment"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityExperiment"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "delete":
+      "operationId": "deleteCommunityExperiment"
+      "summary": "Delete an unused saved experiment and its revisions."
+      "description": "Added in API 1.23. Requires measurements:write, current community membership and either authorship of the experiment or ownership of its community. Refused with 409 while any measurement reference names a revision; those retained sources are preserved. Otherwise deletes the experiment and all its revisions, releasing their community storage usage. It does not delete measurements or their output."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "204":
+          "description": "The experiment and its unused revisions were deleted."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The caller lacks measurements:write or is a member who is neither the experiment's creator nor the community owner."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The experiment is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "A measurement reference names this experiment; retained experiment revisions cannot be deleted."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request body exceeds the allowed limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/community-projects/{id}/measurements":
+    "get":
+      "operationId": "listCommunityMeasurements"
+      "summary": "List measurements shared with a project."
+      "description": "Added in API 1.23. Requires measurements:read and current community membership. Returns at most 1024 references. Read a reference through the existing measurement and run detail/output APIs; sharing does not copy or extend retained output."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityMeasurementList"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "shareCommunityMeasurement"
+      "summary": "Share one of your measurements with a project."
+      "description": "Added in API 1.23. Requires measurements:write, current community membership and ownership of the measurement. Sharing exposes retained configuration, output, provenance, private executor addressing, host platform observations and per-run cost to every current member. Optional experiment_id and experiment_revision must identify a saved revision in this project."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/ShareCommunityMeasurement"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityMeasurement"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/community-projects/{id}/measurements/{measurement_id}":
+    "delete":
+      "operationId": "unshareCommunityMeasurement"
+      "summary": "Remove a project's measurement reference."
+      "description": "Added in API 1.23. Requires measurements:write and current membership, then either the account that shared it or the community owner. Personally funded measurements can be unshared. A community-funded measurement stays in its funding project's history and returns 409 instead; expired reservations that admitted no run are cleaned up automatically. Does not delete the underlying measurement or retract copies; another community reference may still authorize reads."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        - "name": "measurement_id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+      "responses":
+        "204":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}/wallet":
+    "get":
+      "operationId": "getCommunityWallet"
+      "summary": "Read the community's shared measurement budget."
+      "description": "Added in API 1.23. Requires account:read for a scoped credential and current membership. USDC is prepaid money held by the dispatcher after an owner-signed deposit. TEST is bookkeeping against the creator's existing allowance, not money or a new grant. Amounts are exact decimal strings of base units. No private wallet key is returned or stored for the community."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/CommunityWallet"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "The configured payment or allowance mode is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/communities/{id}/wallet/top-ups":
+    "post":
+      "operationId": "createCommunityTopUp"
+      "summary": "Create an owner-approved USDC deposit intent."
+      "description": "Added in API 1.23. Requires a browser session and the community owner. Available only while chain payments are enabled. The owner must sign the returned normal Sui payment intent with their external wallet; creation alone adds no funds. A confirmed receipt credits the community once. The returned intent is for a deposit and cannot authorize a run. TEST mode cannot be topped up. The supported chain profile is Sui Testnet; unused deposits have no withdrawal endpoint."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CommunityTopUpRequest"
+      "responses":
+        "201":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/IntentResponse"
+        "400":
+          "description": "The request or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required, including in the local development profile."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or community role does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or is not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The current revision, membership or resource quota conflicts with the request."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds its size limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "429":
+          description: "The account request quota is reached. Retry-After gives seconds to wait."
+          headers:
+            Debuglet-API-Version:
+              description: "Contract version this dispatcher implements."
+              schema:
+                type: "string"
+            Retry-After:
+              description: "Integer seconds before another request."
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          "description": "The request could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "The configured payment or allowance mode is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
 components:
   securitySchemes:
     bearerAuth:
@@ -7872,7 +10187,7 @@ components:
           nullable: true
         address_observations:
           $ref: "#/components/schemas/AddressObservations"
-      description: "The listing's RIPE Atlas-style addressing fields (see ExecutorResponse) as known at admission. The addresses are recorded for a private executor too, since a result is visible only to the run's owner and operators."
+      description: "The listing's RIPE Atlas-style addressing fields (see ExecutorResponse) as known at admission. Private executor addresses are retained too. Owners, operators and current members of communities with which the measurement was explicitly shared can read this snapshot."
     ExecutorList:
       type: array
       description: "An empty array when no executor is registered."
@@ -8398,7 +10713,20 @@ components:
           description: "TEST for the local alpha's bookkeeping-only method, or USDC."
         refund_address:
           type: "string"
-          description: "Required when creating a USDC intent: a Sui address, 0x followed by 1 to 64 hexadecimal digits (short addresses are accepted). Missing or invalid values answer 400 invalid_request with field_errors naming refund_address and code invalid_address, before intent or order writes. Disabled chain payments still answer 503 payments_disabled first. TEST does not validate this field and it may be omitted or empty. The quote endpoint does not evaluate this field."
+          description: "Required when creating a personal USDC intent: a Sui address, 0x followed by 1 to 64 hexadecimal digits (short addresses are accepted). Missing or invalid values answer 400 invalid_request with field_errors naming refund_address and code invalid_address, before intent or order writes. Disabled chain payments still answer 503 payments_disabled first. TEST does not validate this field and it may be omitted or empty. The quote endpoint does not evaluate this field. Community-funded intents ignore it; funds return to the shared budget."
+        community_project_id:
+          type: "string"
+          format: "uuid"
+          description: "API 1.23. Select a project whose community funds this measurement. Requires current membership. A quote checks membership without reserving funds; an intent atomically reserves the community budget and returns method COMMUNITY. TEST uses the creator allowance and USDC uses confirmed community deposits. The submitting account still owns the run."
+        community_experiment_id:
+          type: "string"
+          format: "uuid"
+          description: "API 1.23. Optional saved experiment associated with the community-funded measurement; requires community_project_id and community_experiment_revision."
+        community_experiment_revision:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          description: "The immutable saved revision in the selected community project."
         retry:
           $ref: "#/components/schemas/RetryLink"
     IntentResponse:
@@ -8410,7 +10738,10 @@ components:
       properties:
         method:
           type: "string"
-          description: "The payment method the intent was created for."
+          description: "TEST, USDC or COMMUNITY. COMMUNITY is already funded by a shared budget and requires no new external-wallet payment."
+        currency:
+          type: "string"
+          description: "Present for COMMUNITY intents; the budget currency (TEST or USDC)."
         intent:
           description: "Method-specific intent."
           oneOf:
@@ -8422,7 +10753,7 @@ components:
           $ref: "#/components/schemas/Quote"
     DummyIntent:
       type: object
-      description: "Intent of the TEST method. It records bookkeeping only and moves no funds."
+      description: "Submission authorization for TEST or a funded COMMUNITY intent. TEST is bookkeeping only; COMMUNITY has already reserved its declared currency."
       additionalProperties: false
       required:
         - transaction_id
@@ -8433,7 +10764,7 @@ components:
           description: "16 random bytes, hex-encoded."
         auth_key:
           type: string
-          description: "Empty for TEST transactions."
+          description: "Authorization returned for subsequent submission. It may be empty for an already funded intent; do not log a non-empty value."
     SuiIntent:
       type: object
       additionalProperties: false
@@ -9169,7 +11500,7 @@ components:
           type: "boolean"
           nullable: true
           description: "True when the report had outlived its 90 s lifetime at admission."
-      description: "Added within vantage_point schema 1 (API 1.9). Operator-only host platform detail, recorded here because a result is readable only by the run's owner and operators; GET /executors never lists it. A file written before it omits the field, which reads as null. All fields are null together."
+      description: "Added within vantage_point schema 1 (API 1.9). Host platform detail retained in admission provenance. The run owner and operators can read it, and explicitly sharing the measurement also exposes it to current community members; GET /executors never lists it. A file written before it omits the field, which reads as null. All fields are null together."
     HostPlatform:
       type: "object"
       nullable: true
@@ -9632,6 +11963,9 @@ components:
         - "cost"
         - "execution"
       properties:
+        can_manage:
+          type: "boolean"
+          description: "API 1.23. Whether this caller may perform owner-authorized run mutations. False for a community reader. Older servers omit the field."
         run_id:
           type: "string"
           format: "uuid"
@@ -9735,6 +12069,9 @@ components:
         - "limit"
         - "offset"
       "properties":
+        can_manage:
+          type: "boolean"
+          description: "API 1.23. Whether this caller may perform owner-authorized run mutations. False for a community reader. Older servers omit the field."
         "id":
           "type": "string"
         "runs":
@@ -9954,3 +12291,361 @@ components:
         listener_ready:
           type: "boolean"
       description: "Dispatcher receipt times of authenticated, bound executor reports. These are not exact executor execution times. Reported exit code is the executor report. TCP endpoint is stored only after actual listener installation and checked against the admission public host/policy; listener_ready requires the latest retained started state before the reserved end, and does not prove external reachability. Retention deletion removes the endpoint. Historical runs without reports have null execution."
+
+    "CommunityNameRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "name"
+      "properties":
+        "name":
+          "type": "string"
+          "description": "Trimmed name of 1 to 120 UTF-8 bytes."
+        "description":
+          "type": "string"
+          "description": "At most 2000 UTF-8 bytes; an empty string clears the description."
+    "Community":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "name"
+        - "description"
+        - "role"
+        - "created_by"
+        - "created_at"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "description":
+          "type": "string"
+        "role":
+          "type": "string"
+          "enum":
+            - "owner"
+            - "member"
+        "created_by":
+          "type": "string"
+          "format": "uuid"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+          "description": "UTC RFC3339 timestamp."
+    "CommunityList":
+      "type": "array"
+      "description": "Communities the caller currently belongs to."
+      "items":
+        "$ref": "#/components/schemas/Community"
+    "CommunityMember":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "user_id"
+        - "name"
+        - "role"
+        - "joined_at"
+      "properties":
+        "user_id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "role":
+          "type": "string"
+          "enum":
+            - "owner"
+            - "member"
+        "joined_at":
+          "type": "string"
+          "format": "date-time"
+          "description": "UTC RFC3339 timestamp."
+    "CommunityMemberList":
+      "type": "array"
+      "description": "At most 128 members."
+      "items":
+        "$ref": "#/components/schemas/CommunityMember"
+    "CommunityInvitation":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "token"
+        - "expires_at"
+      "properties":
+        "token":
+          "type": "string"
+          "description": "Secret one-use token; never log it or place it in a public URL."
+        "expires_at":
+          "type": "string"
+          "format": "date-time"
+          "description": "UTC RFC3339 timestamp."
+    "CommunityInvitationAcceptance":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "token"
+      "properties":
+        "token":
+          "type": "string"
+    "CommunityProject":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "community_id"
+        - "name"
+        - "description"
+        - "created_by"
+        - "created_at"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "community_id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "description":
+          "type": "string"
+        "created_by":
+          "type": "string"
+          "format": "uuid"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+          "description": "UTC RFC3339 timestamp."
+    "CommunityProjectList":
+      "type": "array"
+      "description": "At most 64 projects."
+      "items":
+        "$ref": "#/components/schemas/CommunityProject"
+    "CreateCommunityExperiment":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "name"
+        - "kind"
+        - "document"
+      "properties":
+        description:
+          type: "string"
+          description: "Optional experiment notes, at most 4000 UTF-8 bytes."
+        collection:
+          type: "string"
+          description: "Optional trimmed grouping label within the project, at most 120 UTF-8 bytes."
+        "name":
+          "type": "string"
+          "description": "Trimmed name of 1 to 120 UTF-8 bytes."
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "document":
+          "type": "object"
+          "additionalProperties": true
+          "description": "Editable version 1 source in the existing workflow or experiment format, selected by kind. The dispatcher validates its blocks, ports, links and participant contract; this schema does not duplicate the authoring format."
+        "bundle":
+          "type": "object"
+          "additionalProperties": true
+          "nullable": true
+          "description": "Optional matching compiled Studio bundle. Includes generated source, WASM and digests; omitted or null means no compiled artifact. A saved bundle avoids requiring a compiler to reuse unchanged source."
+    "UpdateCommunityExperiment":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "name"
+        - "kind"
+        - "document"
+        - "revision"
+      "properties":
+        description:
+          type: "string"
+          description: "Optional experiment notes, at most 4000 UTF-8 bytes."
+        collection:
+          type: "string"
+          description: "Optional trimmed grouping label within the project, at most 120 UTF-8 bytes."
+        "name":
+          "type": "string"
+          "description": "Trimmed name of 1 to 120 UTF-8 bytes."
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "document":
+          "type": "object"
+          "additionalProperties": true
+          "description": "Editable version 1 source in the existing workflow or experiment format, selected by kind. The dispatcher validates its blocks, ports, links and participant contract; this schema does not duplicate the authoring format."
+        "bundle":
+          "type": "object"
+          "additionalProperties": true
+          "nullable": true
+          "description": "Optional matching compiled Studio bundle. Includes generated source, WASM and digests; omitted or null means no compiled artifact. A saved bundle avoids requiring a compiler to reuse unchanged source."
+        "revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+          "description": "The current saved revision, for an atomic edit conflict check."
+    "CommunityExperiment":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "project_id"
+        - "name"
+        - "kind"
+        - "revision"
+        - "created_by"
+        - "updated_at"
+      "description": "Metadata in list responses; GET, POST and PUT also return document and an optional bundle."
+      "properties":
+        description:
+          type: "string"
+          description: "Optional experiment notes, at most 4000 UTF-8 bytes."
+        collection:
+          type: "string"
+          description: "Optional trimmed grouping label within the project, at most 120 UTF-8 bytes."
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "project_id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "created_by":
+          "type": "string"
+          "format": "uuid"
+        "updated_at":
+          "type": "string"
+          "format": "date-time"
+          "description": "UTC RFC3339 timestamp."
+        "document":
+          "type": "object"
+          "additionalProperties": true
+          "description": "Editable version 1 source in the existing workflow or experiment format, selected by kind. The dispatcher validates its blocks, ports, links and participant contract; this schema does not duplicate the authoring format."
+        "bundle":
+          "type": "object"
+          "additionalProperties": true
+          "nullable": true
+          "description": "Optional matching compiled Studio bundle. Includes generated source, WASM and digests; omitted or null means no compiled artifact. A saved bundle avoids requiring a compiler to reuse unchanged source."
+    "CommunityExperimentList":
+      "type": "array"
+      "description": "At most 128 latest revisions; document and bundle are omitted."
+      "items":
+        "$ref": "#/components/schemas/CommunityExperiment"
+    "ShareCommunityMeasurement":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "measurement_id"
+      "properties":
+        "measurement_id":
+          "type": "string"
+          "description": "Existing measurement transaction ID."
+        "experiment_id":
+          "type": "string"
+          "format": "uuid"
+        "experiment_revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+    "CommunityMeasurement":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "measurement_id"
+        - "project_id"
+        - "shared_by"
+        - "shared_at"
+      "properties":
+        "measurement_id":
+          "type": "string"
+        "project_id":
+          "type": "string"
+          "format": "uuid"
+        "shared_by":
+          "type": "string"
+          "format": "uuid"
+        "shared_at":
+          "type": "string"
+          "format": "date-time"
+          "description": "UTC RFC3339 timestamp."
+        "experiment_id":
+          "type": "string"
+          "format": "uuid"
+        "experiment_revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+    "CommunityMeasurementList":
+      "type": "array"
+      "description": "At most 1024 shared references."
+      "items":
+        "$ref": "#/components/schemas/CommunityMeasurement"
+    "CommunityWallet":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "enabled"
+        - "mode"
+        - "currency"
+        - "unit"
+        - "network"
+        - "funded"
+        - "reserved"
+        - "spent"
+        - "available"
+      "properties":
+        "enabled":
+          "type": "boolean"
+        "mode":
+          "type": "string"
+          "enum":
+            - "USDC"
+            - "TEST"
+        "currency":
+          "type": "string"
+        "unit":
+          "type": "string"
+        "network":
+          "type": "string"
+          "description": "Configured chain network; empty for TEST."
+        "funded":
+          "type": "string"
+          "description": "Exact decimal string of integer base units."
+        "reserved":
+          "type": "string"
+          "description": "Exact decimal string of integer base units."
+        "spent":
+          "type": "string"
+          "description": "Exact decimal string of integer base units."
+        "available":
+          "type": "string"
+          "description": "Exact decimal string of integer base units."
+    "CommunityTopUpRequest":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "amount"
+        - "refund_address"
+      "properties":
+        "amount":
+          "type": "string"
+          "description": "Positive decimal string of micro-USDC, from 1 to 9007199254740991."
+        "refund_address":
+          "type": "string"
+          "description": "Sui address controlled by the owner; 0x followed by 1 to 64 hexadecimal digits."

@@ -401,6 +401,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			oaRawWith(t, &http.Client{Transport: recorder, Timeout: ccRequestBound}, http.MethodDelete,
 				deployment.url+"/debuglet/"+owned.IDs[0]+"/payload", nil,
 				map[string]string{"Authorization": "Bearer " + session.Token})
+			oaCommunityExchanges(t, ctx, sdk, recorder, deployment.url, session.Token, owned)
 			if err := authenticated.Logout(ctx); err != nil {
 				t.Fatalf("Logout: %v", err)
 			}
