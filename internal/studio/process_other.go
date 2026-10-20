@@ -6,8 +6,8 @@
 package studio
 
 import (
- "os/exec"
- "time"
+	"os/exec"
+	"time"
 )
 
-func configureBuildProcess(command *exec.Cmd){command.WaitDelay=5*time.Second}
+func configureBuildProcess(command *exec.Cmd) { command.WaitDelay = 5 * time.Second }
