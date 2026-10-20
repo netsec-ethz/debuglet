@@ -1,24 +1,34 @@
-# Visual workflows and AI authoring
+# Build workflows and experiments
 
-`dbl-studio` compiles a visual workflow into an ordinary Debuglet WASI program.
-The editor, command line and MCP tools share the same versioned graph and block
-catalog. Conditions, calculations and repeats execute inside that program on the
-executor. The dispatcher does not compile source or orchestrate individual blocks.
+Choose **Workflow builder** to write one executor's program. Choose
+**Experiment builder** to connect two or three participants, each with its own
+workflow. The same graph can be edited visually, authored by an MCP client or
+compiled from the command line with `dbl-studio`.
 
-The first version provides a local authoring service. A statically hosted console
-can edit and export graphs and import compiled bundles; it cannot compile Go by
-itself. To compile and submit from the visual editor, run the local service with a
-built console and a trusted checkout of the matching Debuglet SDK.
+Conditions, calculations and repeats execute inside the compiled WASI program.
+The dispatcher coordinates experiment readiness and stores results; it does not
+compile source or orchestrate individual blocks. See the
+[workflow guide](workflows.md) for HTTP bodies, processing blocks, reusable
+visual groups and custom Go blocks.
+
+`dbl-studio` is currently built from source; it is not part of the release or apt
+packages. A hosted console can edit and export graphs and import compiled bundles.
+Compilation needs Go and a trusted checkout of the matching SDK on the authoring
+machine. The local service can combine editing and compilation in one browser tab.
 
 ## Start the editor
 
-Install Go 1.26.9, clone Debuglet, then build the authoring tool:
+On Linux, install Go 1.26.9, clone this version of Debuglet, and build the
+authoring tool from the repository root:
 
 ```sh
 go build -o dbl-studio ./cmd/dbl-studio
 ```
 
-In the dashboard repository, build with the console path explicitly set:
+In the [dashboard repository](https://gitlab.inf.ethz.ch/OU-PERRIG/yimin/debuglet/debuglet-dashboard),
+follow its **Run locally** prerequisites first: Node.js 24.14.0, `npm ci`, and
+both template builds with their pinned Go versions. Then build the console with
+its path explicitly set:
 
 ```sh
 VITE_BASE_PATH=/console npm run build
@@ -54,12 +64,13 @@ submission are unavailable. `--ui` must contain the dashboard's built `index.htm
 
 ## Build and review a bundle
 
-Inspect the compiler's exact block catalog with `dbl-studio catalog`.
+Inspect the compiler's exact block catalog with `./dbl-studio catalog`. For
+example, from the core repository:
 
 ```sh
-./dbl-studio validate --input experiment.workflow.json
+./dbl-studio validate --input examples/workflows/http-status.json
 ./dbl-studio build --sdk /path/to/debuglet \
-  --input experiment.workflow.json --output experiment.bundle.json
+  --input examples/workflows/http-status.json --output http-status.bundle.json
 ```
 
 A bundle contains the editable graph, its canonical JSON, generated Go, compiled
@@ -87,10 +98,19 @@ For a multi-executor experiment, use the experiment editor or these commands:
 
 The bundle includes the editable experiment, generated source and ordinary
 WASM bundle for each participant. Import it into the experiment editor, bind
-participants to reachable executors, then review the existing grouped
-measurement form. Compilation and import do not submit a measurement.
+participants to distinct reachable executors, then choose **Review and run**.
+Review the grouped measurement's policies, timing and TEST quote before
+submitting. Compilation and import do not submit a measurement.
 See [experiment communication](workflows.md#experiments-with-several-executors)
 for listener requirements, message limits and request/reply semantics.
+
+The resulting **Measurement group** page shows a participant map. Select a node
+to see its reported values; connection details and raw traces remain expandable.
+New experiment programs include a connection manifest in their output, so the
+map can load after a page reload. It describes declared communication, not
+observed message delivery. For older runs, **More → Load experiment map** accepts
+the compiled experiment bundle when every participant's program hash matches
+the retained run. That imported map is kept only for the current page visit.
 
 ## Connect an MCP client
 

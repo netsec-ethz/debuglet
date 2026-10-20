@@ -5,6 +5,12 @@ an authoring tool. It compiles to one Go WASI debuglet. Network operations,
 processing, branches and bounded repetition execute on the selected executor;
 they do not require a round trip through an AI client or dispatcher.
 
+An experiment connects several of these workflows. In the console,
+**Workflow builder** edits one program; **Experiment builder** selects a
+participant, edits its program and connects it to the others. Start with the
+[authoring guide](workflow-authoring.md) to build the local editor, compile
+bundles or connect an MCP client.
+
 Start with [HTTP status branching](../../examples/workflows/http-status.json),
 [Ping and RTT analysis](../../examples/workflows/ping-branch.json),
 [posting JSON](../../examples/workflows/http-json-post.json), or
@@ -79,8 +85,10 @@ underlying program.
 An experiment contains two or three ordinary participant workflows and named,
 directed channels. Participant names are labels, not fixed roles. Choose a
 different executor for each participant when reviewing the grouped submission.
-Every executor must advertise a reachable TCP listener and permit the other
-participants' addresses in its measurement policy.
+Every executor must advertise a directly reachable IPv4 TCP listener and permit
+the other participants' addresses in its measurement policy. Channel names are
+chosen by the author to identify messages, such as `reading` or `reply`; they
+are not built-in operations.
 
 The [three-node example](../../examples/workflows/experiments/three-node.json)
 sends 21 from A to B, doubles it on B, adds one on C and returns 43 to A.
@@ -173,7 +181,9 @@ An experiment program first emits one `debuglet.experiment.v1` JSON line,
 before joining its peers. This bounded manifest contains its workflow and
 experiment digests, participant ID, ordered membership and declared channels.
 The console uses agreeing manifests from the group to restore its connection
-map. These are program declarations, not evidence that messages were delivered.
+map. If output is missing or the manifests disagree, the automatic map is
+unavailable. These are program declarations, not evidence that messages were
+delivered.
 Consumers of block events should filter by the `debuglet.workflow.v1` schema.
 
 Individual strings are limited to 16 KiB and lists to 1,024 entries. Each event
@@ -189,6 +199,3 @@ network targets require the submitter to supply the intended destination policy
 and enable ICMP when their custom code uses it;
 the hints never grant network access. The normal dispatcher and executor checks
 apply to every compiled workflow just as they do to hand-written debuglets.
-
-See [authoring and building workflows](workflow-authoring.md) for the CLI,
-local visual editor and MCP interface.

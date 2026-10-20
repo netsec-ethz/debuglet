@@ -43,6 +43,7 @@ The versioned guides in [`docs/`](docs/README.md) are published at the [document
 | Use the CLI | [CLI reference](docs/cli.md) |
 | Write a Go application client | [Go client library](docs/client.md) |
 | Write a debuglet | [Write a debuglet](docs/debuglets.md) |
+| Build visually or with an MCP client | [Workflow and experiment authoring](docs/development/workflow-authoring.md) |
 | Integrate with the HTTP API | [OpenAPI contract](api/openapi.yaml) and [API guide](docs/api.md) |
 | Understand the code and protocol | [Architecture](docs/architecture.md) |
 | Operate a service | [Managed services](docs/operations/services.md) |
