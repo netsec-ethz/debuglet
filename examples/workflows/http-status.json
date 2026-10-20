@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "HTTP status branch",
+  "entry": "request",
+  "nodes": [
+    {"id":"request","block":"http","inputs":{"url":"http://127.0.0.1:8088/","timeout_ms":2000},"position":{"x":80,"y":120}},
+    {"id":"status","block":"greater_than","inputs":{"b":299},"position":{"x":360,"y":340}},
+    {"id":"branch","block":"if","position":{"x":630,"y":120}},
+    {"id":"problem","block":"emit","inputs":{"name":"http_problem"},"position":{"x":900,"y":40}},
+    {"id":"response","block":"emit","inputs":{"name":"http_status"},"position":{"x":900,"y":280}},
+    {"id":"transport","block":"if","position":{"x":350,"y":100}},
+    {"id":"failed","block":"emit","inputs":{"name":"transport_error"},"position":{"x":630,"y":560}}
+  ],
+  "edges": [
+    {"kind":"control","from":{"node":"request","port":"next"},"to":{"node":"transport","port":"in"}},
+    {"kind":"data","from":{"node":"request","port":"status"},"to":{"node":"status","port":"a"}},
+    {"kind":"data","from":{"node":"status","port":"value"},"to":{"node":"branch","port":"condition"}},
+    {"kind":"control","from":{"node":"branch","port":"true"},"to":{"node":"problem","port":"in"}},
+    {"kind":"control","from":{"node":"branch","port":"false"},"to":{"node":"response","port":"in"}},
+    {"kind":"data","from":{"node":"request","port":"status"},"to":{"node":"problem","port":"value"}},
+    {"kind":"data","from":{"node":"request","port":"status"},"to":{"node":"response","port":"value"}},
+    {"kind":"data","from":{"node":"request","port":"ok"},"to":{"node":"transport","port":"condition"}},
+    {"kind":"control","from":{"node":"transport","port":"true"},"to":{"node":"branch","port":"in"}},
+    {"kind":"control","from":{"node":"transport","port":"false"},"to":{"node":"failed","port":"in"}},
+    {"kind":"data","from":{"node":"request","port":"error"},"to":{"node":"failed","port":"value"}}
+  ]
+}

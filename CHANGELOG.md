@@ -50,6 +50,14 @@ changes; the linked API and deployment documentation contains operational detail
     already signed with. See `docs/tag-spec.md` §10.
 
 ### Added
+- Source-built `dbl-studio` authoring tool with a typed workflow compiler,
+  local visual editor integration and MCP tools. Workflows support network
+  actions, processing, conditions, bounded repetition and custom Go blocks.
+  See [workflow authoring](docs/development/workflow-authoring.md).
+- Coordinated workflow experiments for two or three executors, with typed
+  send/await channels and retained connection manifests for the console's
+  measurement map. Peer messaging requires directly reachable IPv4 TCP
+  listeners and is plaintext; see [execution limits](docs/development/workflows.md).
 - The executor answers pre-disclosure tag verification queries over the
   control session (`VerifyTags`): for one group of captured packets of one
   epoch it reports which candidate run, if any, reproduces every tag, without

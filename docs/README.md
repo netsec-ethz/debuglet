@@ -11,6 +11,8 @@ This directory is the versioned source for the [Debuglet documentation site](htt
 - [Portable results](results.md) — export retained output and admission facts for offline analysis.
 - [Controlled latency experiment](research/latency-evaluation.md) — compare native and WASM probes under known local network faults.
 - [Write a debuglet](debuglets.md) — execution model and Go authoring interface.
+- [Build workflows and experiments](development/workflow-authoring.md) — visual editing, local compilation and MCP authoring.
+- [Workflow blocks and execution](development/workflows.md) — typed connections, reusable blocks and communication between executors.
 - [HTTP API](api.md) — public contract, authentication, compatibility, and deprecation.
 - [Versions and compatibility](versions.md) — tested combinations, support policy, and breaking changes.
 - [Linux client container](operations/client-container.md) — remote client with persistent credentials.

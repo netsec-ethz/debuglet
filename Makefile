@@ -30,7 +30,9 @@ CI_RACE_PACKAGES = \
 	./internal/executor/ratelimit/fallback \
 	./internal/executor/scheduler/memory \
 	./internal/executor/transport/rpc \
-	./internal/readiness
+	./internal/readiness \
+	./internal/studio \
+	./pkg/workflow/guest
 CI_RACE_TIMEOUT ?= 5m
 CI_RACE_BUDGET_SECONDS ?= 240
 CI_RACE_PACKAGE_PARALLEL ?= 2
