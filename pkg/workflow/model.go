@@ -12,6 +12,15 @@ type Workflow struct {
 	Nodes        []Node        `json:"nodes"`
 	Edges        []Edge        `json:"edges"`
 	CustomBlocks []CustomBlock `json:"custom_blocks,omitempty"`
+	Groups       []Group       `json:"groups,omitempty"`
+}
+
+// Group folds ordinary nodes in the editor without changing their execution.
+type Group struct {
+	ID       string    `json:"id"`
+	Label    string    `json:"label"`
+	NodeIDs  []string  `json:"node_ids"`
+	Position *Position `json:"position,omitempty"`
 }
 
 type Node struct {

@@ -59,6 +59,23 @@ from 0 to 100 and linearly interpolates sorted samples at `p/100 × (n−1)`; th
 not the nearest-rank convention. Add, Subtract, Multiply and Divide use finite
 numbers; division by zero and nonfinite results fail explicitly.
 
+## Reusable visual groups
+
+The editor can fold a selection into one named block. Its interface comes from
+connections crossing the selection and its unconnected ports. Double-click
+the group to edit its members, then close it to return to the compact view.
+Saved groups are templates: inserting one copies its nodes, internal wires and
+custom block definitions, so editing an instance does not change other instances.
+
+The portable workflow keeps these ordinary nodes and wires, plus optional
+`groups` metadata containing `id`, `label`, `node_ids` and `position`. Grouping
+does not introduce a function call or change execution order. Metadata is retained
+in compiled bundles and included in the workflow checksum. Groups currently
+contain at least two nodes and cannot overlap or nest; ungrouping preserves the
+underlying program.
+
+## Repetition
+
 Repeat has a `body` and a `done` output. The body runs sequentially until its
 control path ends, then starts again. Its action outputs are cleared between
 iterations. Repeat's `iteration` output starts at 1. After the requested count,
