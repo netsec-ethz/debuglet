@@ -1,0 +1,14 @@
+{
+  "version":1,
+  "name":"Custom processing block",
+  "entry":"transform",
+  "nodes":[
+    {"id":"transform","block":"spread","inputs":{"samples":[12,15,18]},"position":{"x":100,"y":100}},
+    {"id":"result","block":"emit","inputs":{"name":"spread_ms"},"position":{"x":420,"y":100}}
+  ],
+  "edges":[
+    {"kind":"control","from":{"node":"transform","port":"next"},"to":{"node":"result","port":"in"}},
+    {"kind":"data","from":{"node":"transform","port":"spread"},"to":{"node":"result","port":"value"}}
+  ],
+  "custom_blocks":[{"id":"spread","label":"Sample spread","inputs":[{"name":"samples","type":"numbers","required":true}],"outputs":[{"name":"spread","type":"number"}],"code":"samples := inputs[\"samples\"].([]any)\nif len(samples) == 0 { return nil, fmt.Errorf(\"need at least one sample\") }\nlo, hi := samples[0].(float64), samples[0].(float64)\nfor _, sample := range samples {\n  n := sample.(float64)\n  if n < lo { lo = n }; if n > hi { hi = n }\n}\nreturn map[string]any{\"spread\": hi-lo}, nil"}]
+}

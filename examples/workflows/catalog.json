@@ -1,0 +1,588 @@
+[
+  {
+    "id": "http",
+    "label": "HTTP request",
+    "category": "Network",
+    "description": "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Redirects are returned, not followed.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "url",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "method",
+        "type": "string",
+        "default": "GET"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "status",
+        "type": "number"
+      },
+      {
+        "name": "body",
+        "type": "string"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "tcp_connect",
+    "label": "TCP connect",
+    "category": "Network",
+    "description": "Measure one TCP connection to host:port.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "target",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "ping",
+    "label": "Ping",
+    "category": "Network",
+    "description": "Send up to ten ICMPv4 echo requests. rtts_ms contains successful replies; loss is a percentage.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "target",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "count",
+        "type": "number",
+        "default": 3
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "rtts_ms",
+        "type": "numbers"
+      },
+      {
+        "name": "sent",
+        "type": "number"
+      },
+      {
+        "name": "received",
+        "type": "number"
+      },
+      {
+        "name": "loss",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "constant",
+    "label": "Constant",
+    "category": "Data",
+    "description": "Provide a JSON value.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "field",
+    "label": "Get field",
+    "category": "Data",
+    "description": "Read one named field from an object; missing fields are errors.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "object",
+        "type": "object",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "parse_json",
+    "label": "Parse JSON",
+    "category": "Data",
+    "description": "Parse a JSON string into a value.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "text",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "mean",
+    "label": "Mean",
+    "category": "Analysis",
+    "description": "Arithmetic mean of a nonempty number list.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "min",
+    "label": "Minimum",
+    "category": "Analysis",
+    "description": "Smallest value in a nonempty number list.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "max",
+    "label": "Maximum",
+    "category": "Analysis",
+    "description": "Largest value in a nonempty number list.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "count",
+    "label": "Count",
+    "category": "Analysis",
+    "description": "Number of items in a JSON list.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "add",
+    "label": "Add",
+    "category": "Math",
+    "description": "Add two numbers.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "subtract",
+    "label": "Subtract",
+    "category": "Math",
+    "description": "Subtract b from a.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "greater_than",
+    "label": "Greater than",
+    "category": "Logic",
+    "description": "Whether a is greater than b.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "less_than",
+    "label": "Less than",
+    "category": "Logic",
+    "description": "Whether a is less than b.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "equals",
+    "label": "Equals",
+    "category": "Logic",
+    "description": "Compare JSON values without coercion.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "and",
+    "label": "And",
+    "category": "Logic",
+    "description": "Both conditions are true.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "boolean",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "boolean",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "or",
+    "label": "Or",
+    "category": "Logic",
+    "description": "At least one condition is true.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "boolean",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "boolean",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "not",
+    "label": "Not",
+    "category": "Logic",
+    "description": "Invert a condition.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "value",
+        "type": "boolean",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "if",
+    "label": "If",
+    "category": "Control",
+    "description": "Run exactly the selected branch.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "condition",
+        "type": "boolean",
+        "required": true
+      }
+    ],
+    "outputs": [],
+    "control_outputs": [
+      "true",
+      "false"
+    ]
+  },
+  {
+    "id": "repeat",
+    "label": "Repeat",
+    "category": "Control",
+    "description": "Run the body sequentially up to 100 times, then continue on done. The body ends at an unconnected control output.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "count",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "iteration",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "body",
+      "done"
+    ]
+  },
+  {
+    "id": "wait",
+    "label": "Wait",
+    "category": "Control",
+    "description": "Wait between actions, at most 60 seconds per call.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "duration_ms",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "emit",
+    "label": "Emit result",
+    "category": "Results",
+    "description": "Publish a named JSON result.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "name": "value",
+        "type": "any"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  }
+]
