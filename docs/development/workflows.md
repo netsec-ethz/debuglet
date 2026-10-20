@@ -169,8 +169,16 @@ The guest emits JSON lines with schema `debuglet.workflow.v1`,
 `outputs.ok: false`. A fatal graph/type/custom-code error emits a `failed` event
 and ends the run. An Emit block publishes `name` and `value` in its outputs.
 
+An experiment program first emits one `debuglet.experiment.v1` JSON line,
+before joining its peers. This bounded manifest contains its workflow and
+experiment digests, participant ID, ordered membership and declared channels.
+The console uses agreeing manifests from the group to restore its connection
+map. These are program declarations, not evidence that messages were delivered.
+Consumers of block events should filter by the `debuglet.workflow.v1` schema.
+
 Individual strings are limited to 16 KiB and lists to 1,024 entries. Each event
 is at most 64 KiB; a run emits at most 4,096 events and 4 MiB of trace output.
+The experiment manifest is an additional record of at most 64 KiB.
 Large responses fail explicitly rather than silently producing complete-looking
 measurements.
 

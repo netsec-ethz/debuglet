@@ -84,8 +84,23 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	if experimentConfig == "" {
 		fmt.Fprintf(&out, "func main(){if err:=run%d();err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", indexes[w.Entry])
 	} else {
+		manifest, err := json.Marshal(struct {
+			Schema           string    `json:"schema"`
+			WorkflowSHA256   string    `json:"workflow_sha256"`
+			ExperimentSHA256 string    `json:"experiment_sha256"`
+			Participant      string    `json:"participant"`
+			Participants     []string  `json:"participants"`
+			Channels         []Channel `json:"channels"`
+		}{"debuglet.experiment.v1", digest, w.Experiment.Fingerprint, w.Experiment.Participant, w.Experiment.Participants, w.Experiment.Channels})
+		if err != nil {
+			return Program{}, err
+		}
+		if len(manifest) > 65536 {
+			return Program{}, fmt.Errorf("experiment manifest exceeds 64 KiB")
+		}
 		out.WriteString("var experiment *guest.Experiment\n")
-		fmt.Fprintf(&out, "func main(){var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=run%d()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", experimentConfig, indexes[w.Entry])
+		// Retain the declared graph even if readiness fails before the first block.
+		fmt.Fprintf(&out, "func main(){if _,err:=fmt.Fprintln(os.Stdout,%q);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=run%d()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", string(manifest), experimentConfig, indexes[w.Entry])
 	}
 	for i, c := range w.CustomBlocks {
 		fmt.Fprintf(&out, "// Custom block %s\nfunc custom%d(inputs map[string]any)(map[string]any,error){\n%s\n}\n", c.ID, i, c.Code)
