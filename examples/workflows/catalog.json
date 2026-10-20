@@ -152,6 +152,111 @@
     ]
   },
   {
+    "id": "send_message",
+    "label": "Send message",
+    "category": "Experiment",
+    "description": "Send a bounded plaintext JSON message to a participant. Success means the socket write completed, not that the peer processed it. Requires an experiment.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "destination",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "channel",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "request_id",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "request_id",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "await_message",
+    "label": "Await message",
+    "category": "Experiment",
+    "description": "Wait for one selected incoming message or reply until its deadline. Test ok before using value. Requires an experiment.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "source",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "channel",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "request_id",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "value",
+        "type": "any"
+      },
+      {
+        "name": "request_id",
+        "type": "string"
+      },
+      {
+        "name": "source",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
     "id": "constant",
     "label": "Constant",
     "category": "Data",

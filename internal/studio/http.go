@@ -48,7 +48,7 @@ func Serve(ctx context.Context, builder *Builder, config ServerConfig, ready fun
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 3 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 7 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -81,6 +81,7 @@ func NewHandler(builder *Builder, config ServerConfig, origin string) (http.Hand
 	}
 	token := hex.EncodeToString(tokenBytes)
 	mux := http.NewServeMux()
+	experimentRoutes(mux, builder, token)
 	mux.HandleFunc("GET /studio/api/session", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"token": token}) })
 	mux.HandleFunc("GET /studio/api/catalog", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, workflow.Catalog()) })
 	mutate := func(fn func(http.ResponseWriter, *http.Request, workflow.Workflow)) http.HandlerFunc {
@@ -276,6 +277,10 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	var invalid *ValidationError
 	if errors.As(err, &invalid) {
 		body["diagnostics"] = invalid.Diagnostics
+	}
+	var experimentInvalid *ExperimentValidationError
+	if errors.As(err, &experimentInvalid) {
+		body["diagnostics"] = experimentInvalid.Diagnostics
 	}
 	writeJSON(w, status, body)
 }

@@ -89,6 +89,10 @@ func (b *Builder) Build(ctx context.Context, wf workflow.Workflow) (*Bundle, err
 	if err != nil {
 		return nil, err
 	}
+	return b.buildProgram(ctx, wf, raw, program)
+}
+
+func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []byte, program workflow.Program) (*Bundle, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	select {

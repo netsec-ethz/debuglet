@@ -74,6 +74,49 @@ in compiled bundles and included in the workflow checksum. Groups currently
 contain at least two nodes and cannot overlap or nest; ungrouping preserves the
 underlying program.
 
+## Experiments with several executors
+
+An experiment contains two or three ordinary participant workflows and named,
+directed channels. Participant names are labels, not fixed roles. Choose a
+different executor for each participant when reviewing the grouped submission.
+Every executor must advertise a reachable TCP listener and permit the other
+participants' addresses in its measurement policy.
+
+The [three-node example](../../examples/workflows/experiments/three-node.json)
+sends 21 from A to B, doubles it on B, adds one on C and returns 43 to A.
+Each participant first publishes its listener through the existing readiness
+exchange and waits for the common requested start. This is a clock-dependent
+start time, not atomic simultaneous execution. The dispatcher coordinates setup;
+the messages then travel directly between executors.
+
+Send message selects a destination and channel, and supplies a typed JSON value.
+Await message selects the source and channel. Both accept a bounded `timeout_ms`
+and return `ok` and `error`. Test `ok` before using an Await's `value`; failure
+returns `null`, not a successful zero or empty result. Send success means the
+socket write completed, not that the receiver processed it.
+
+A channel with `response_type` permits one reply per request. The
+[request/reply example](../../examples/workflows/experiments/request-reply.json)
+wires the initial Send's `request_id` into the sender's Await, and the receiver's
+Await `request_id` into its replying Send. A late reply cannot satisfy a different
+request. One-way channels leave `request_id` empty. There are no automatic
+retries, participant replacement or repeated global barriers.
+
+Messages are plaintext TCP, limited to 8 KiB including framing fields; the inbox
+is limited to 64 KiB and 128 messages. Group identifiers and request correlation
+prevent accidental mixing, but do not authenticate a peer socket or encrypt its
+data. Use controlled experiments without confidential payloads. A participant
+only receives while executing Await: long-running blocks can delay its peers,
+and cyclic waits can time out. Normal executor lifetime and traffic limits remain
+authoritative.
+
+The experiment source is at most 4 MiB, with at most 64 channels. Compilation
+injects the participant ID, whole-experiment fingerprint and channel manifest
+into each program's canonical workflow and digest. Build the whole experiment
+after editing any participant; individual compiled programs cannot be rebuilt
+as standalone workflows. Bundles are limited to 32 MiB, and the console checks
+the final grouped request against the API's 32 MiB limit before submission.
+
 ## Repetition
 
 Repeat has a `body` and a `done` output. The body runs sequentially until its

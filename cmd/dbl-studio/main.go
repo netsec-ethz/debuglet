@@ -30,11 +30,11 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: dbl-studio catalog|validate|build|serve|mcp [options]")
+		return errors.New("usage: dbl-studio catalog|validate|build|validate-experiment|build-experiment|serve|mcp [options]")
 	}
 	command := args[0]
 	if command == "--help" || command == "-h" || command == "help" {
-		_, err := fmt.Fprintln(stdout, "usage: dbl-studio catalog|validate|build|serve|mcp [options]\nUse <command> -h for options.")
+		_, err := fmt.Fprintln(stdout, "usage: dbl-studio catalog|validate|build|validate-experiment|build-experiment|serve|mcp [options]\nUse <command> -h for options.")
 		return err
 	}
 	flags := flag.NewFlagSet("dbl-studio "+command, flag.ContinueOnError)
@@ -74,7 +74,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("mcp requires --workspace for editable workflows and build bundles")
 		}
 		return studio.MCP(ctx, builder, *workspace)
-	case "validate", "build":
+	case "validate", "build", "validate-experiment", "build-experiment":
 		var reader io.Reader = os.Stdin
 		if *input != "-" {
 			file, err := os.Open(*input)
@@ -84,28 +84,53 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			defer file.Close()
 			reader = file
 		}
-		wf, err := studio.DecodeWorkflow(reader)
-		if err != nil {
-			return err
-		}
 		var result any
-		if command == "validate" {
-			diagnostics := workflow.Validate(wf)
-			if diagnostics == nil {
-				diagnostics = []workflow.Diagnostic{}
+		var err error
+		if command == "validate-experiment" || command == "build-experiment" {
+			experiment, decodeErr := studio.DecodeExperiment(reader)
+			if decodeErr != nil {
+				return decodeErr
 			}
-			if err := json.NewEncoder(stdout).Encode(map[string]any{"diagnostics": diagnostics}); err != nil {
-				return err
+			if command == "validate-experiment" {
+				diagnostics := workflow.ValidateExperiment(experiment)
+				if diagnostics == nil {
+					diagnostics = []workflow.ExperimentDiagnostic{}
+				}
+				if err := json.NewEncoder(stdout).Encode(map[string]any{"diagnostics": diagnostics}); err != nil {
+					return err
+				}
+				if len(diagnostics) > 0 {
+					return errors.New("experiment is invalid")
+				}
+				return nil
 			}
-			if len(diagnostics) != 0 {
-				return errors.New("workflow is invalid")
+			if builder == nil {
+				return errors.New("build-experiment requires --sdk")
 			}
-			return nil
+			result, err = builder.BuildExperiment(ctx, experiment)
+		} else {
+			wf, decodeErr := studio.DecodeWorkflow(reader)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if command == "validate" {
+				diagnostics := workflow.Validate(wf)
+				if diagnostics == nil {
+					diagnostics = []workflow.Diagnostic{}
+				}
+				if err := json.NewEncoder(stdout).Encode(map[string]any{"diagnostics": diagnostics}); err != nil {
+					return err
+				}
+				if len(diagnostics) > 0 {
+					return errors.New("workflow is invalid")
+				}
+				return nil
+			}
+			if builder == nil {
+				return errors.New("build requires --sdk pointing to the matching Debuglet checkout")
+			}
+			result, err = builder.Build(ctx, wf)
 		}
-		if builder == nil {
-			return errors.New("build requires --sdk pointing to the matching Debuglet checkout")
-		}
-		result, err = builder.Build(ctx, wf)
 		if err != nil {
 			return err
 		}
@@ -120,6 +145,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return json.NewEncoder(writer).Encode(result)
 	default:
-		return fmt.Errorf("unknown command %q (use catalog, validate, build, serve or mcp)", command)
+		return fmt.Errorf("unknown command %q (use --help for commands)", command)
 	}
 }

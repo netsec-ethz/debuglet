@@ -75,6 +75,23 @@ build flags, fetch a dependency or run a generation command. One build runs at a
 time. Workflows are limited to 1 MiB and bundles to 24 MiB. Install the toolchain
 and prepare the trusted SDK before starting an offline authoring session.
 
+For a multi-executor experiment, use the experiment editor or these commands:
+
+```sh
+./dbl-studio validate-experiment \
+  --input examples/workflows/experiments/three-node.json
+./dbl-studio build-experiment --sdk /path/to/debuglet \
+  --input examples/workflows/experiments/three-node.json \
+  --output three-node.experiment-bundle.json
+```
+
+The bundle includes the editable experiment, generated source and ordinary
+WASM bundle for each participant. Import it into the experiment editor, bind
+participants to reachable executors, then review the existing grouped
+measurement form. Compilation and import do not submit a measurement.
+See [experiment communication](workflows.md#experiments-with-several-executors)
+for listener requirements, message limits and request/reply semantics.
+
 ## Connect an MCP client
 
 Configure a stdio MCP server in your client's settings:
@@ -102,6 +119,8 @@ Available tools:
 | `save_workflow` | Save the editable graph under a simple name in the workspace. |
 | `get_workflow` | Read that named graph for further editing. |
 | `build` | Compile the graph and return a bundle path and artifact metadata. |
+| `validate_experiment` | Check participant graphs and their directed message channels. |
+| `build_experiment` | Compile the whole experiment and return a portable bundle path. |
 | `read_artifact` | Inspect a bundle created in the current session without returning WASM bytes. |
 
 Ask the client to compose a graph, validate it and save it. Open the saved workflow

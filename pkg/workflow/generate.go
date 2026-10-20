@@ -22,6 +22,13 @@ import (
 // Generate produces ordinary Go source for one WASI guest. Destination metadata
 // contains static hints only; the normal submission policy remains authoritative.
 func Generate(w Workflow) (Program, error) {
+	if w.Experiment != nil {
+		return Program{}, fmt.Errorf("build experiment context through the whole experiment")
+	}
+	return generate(w, "")
+}
+
+func generate(w Workflow, experimentConfig string) (Program, error) {
 	encoded, err := json.Marshal(w)
 	if err != nil {
 		return Program{}, err
@@ -37,6 +44,13 @@ func Generate(w Workflow) (Program, error) {
 	}
 	if ds := Validate(w); len(ds) > 0 {
 		return Program{}, fmt.Errorf("invalid workflow: %s", ds[0].Message)
+	}
+	if experimentConfig == "" {
+		for _, n := range w.Nodes {
+			if n.Block == "send_message" || n.Block == "await_message" {
+				return Program{}, fmt.Errorf("%s requires building the whole experiment", n.Block)
+			}
+		}
 	}
 	catalog := catalogFor(w)
 	indexes := map[string]int{}
@@ -67,7 +81,12 @@ func Generate(w Workflow) (Program, error) {
 	}
 	fmt.Fprintf(&out, ")\nvar runtime=guest.New(%q)\n", digest)
 	out.WriteString("func literal(s string)any{var v any;if err:=json.Unmarshal([]byte(s),&v);err!=nil{panic(err)};return v}\n")
-	fmt.Fprintf(&out, "func main(){if err:=run%d();err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", indexes[w.Entry])
+	if experimentConfig == "" {
+		fmt.Fprintf(&out, "func main(){if err:=run%d();err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", indexes[w.Entry])
+	} else {
+		out.WriteString("var experiment *guest.Experiment\n")
+		fmt.Fprintf(&out, "func main(){var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=run%d()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", experimentConfig, indexes[w.Entry])
+	}
 	for i, c := range w.CustomBlocks {
 		fmt.Fprintf(&out, "// Custom block %s\nfunc custom%d(inputs map[string]any)(map[string]any,error){\n%s\n}\n", c.ID, i, c.Code)
 	}
@@ -136,6 +155,10 @@ func Generate(w Workflow) (Program, error) {
 			callNext("next")
 		default:
 			switch n.Block {
+			case "send_message":
+				out.WriteString("values,err:=experiment.Send(in)\n")
+			case "await_message":
+				out.WriteString("values,err:=experiment.Await(in)\n")
 			case "http":
 				out.WriteString("values,err:=guest.HTTP(in)\n")
 			case "tcp_connect":

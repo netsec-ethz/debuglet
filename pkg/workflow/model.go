@@ -6,13 +6,14 @@ package workflow
 
 // Workflow is the portable source shared by visual and programmatic authors.
 type Workflow struct {
-	Version      int           `json:"version"`
-	Name         string        `json:"name"`
-	Entry        string        `json:"entry"`
-	Nodes        []Node        `json:"nodes"`
-	Edges        []Edge        `json:"edges"`
-	CustomBlocks []CustomBlock `json:"custom_blocks,omitempty"`
-	Groups       []Group       `json:"groups,omitempty"`
+	Version      int                `json:"version"`
+	Experiment   *ExperimentContext `json:"experiment,omitempty"`
+	Name         string             `json:"name"`
+	Entry        string             `json:"entry"`
+	Nodes        []Node             `json:"nodes"`
+	Edges        []Edge             `json:"edges"`
+	CustomBlocks []CustomBlock      `json:"custom_blocks,omitempty"`
+	Groups       []Group            `json:"groups,omitempty"`
 }
 
 // Group folds ordinary nodes in the editor without changing their execution.

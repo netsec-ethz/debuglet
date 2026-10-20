@@ -32,13 +32,15 @@ type artifactInput struct {
 	ArtifactID string `json:"artifact_id"`
 }
 type metadata struct {
-	ArtifactID     string   `json:"artifact_id"`
-	BundlePath     string   `json:"bundle_path"`
-	WorkflowSHA256 string   `json:"workflow_sha256"`
-	WasmSHA256     string   `json:"wasm_sha256"`
-	BundleSHA256   string   `json:"bundle_sha256"`
-	Destinations   []string `json:"destinations"`
-	RequireICMP    bool     `json:"require_icmp"`
+	Kind             string   `json:"kind,omitempty"`
+	ExperimentSHA256 string   `json:"experiment_sha256,omitempty"`
+	ArtifactID       string   `json:"artifact_id"`
+	BundlePath       string   `json:"bundle_path"`
+	WorkflowSHA256   string   `json:"workflow_sha256"`
+	WasmSHA256       string   `json:"wasm_sha256"`
+	BundleSHA256     string   `json:"bundle_sha256"`
+	Destinations     []string `json:"destinations"`
+	RequireICMP      bool     `json:"require_icmp"`
 }
 type store struct {
 	root      *os.Root
@@ -138,6 +140,7 @@ func MCPServer(builder *Builder, directory string) (*mcp.Server, func(), error) 
 		files.artifacts[id] = meta
 		return nil, meta, nil
 	})
+	experimentTools(server, builder, files)
 	mcp.AddTool(server, &mcp.Tool{Name: "read_artifact", Description: "Inspect the graph, generated Go and metadata of a bundle created in this session. WASM bytes remain in the bundle file."}, func(ctx context.Context, req *mcp.CallToolRequest, input artifactInput) (*mcp.CallToolResult, map[string]any, error) {
 		files.mu.Lock()
 		meta, ok := files.artifacts[input.ArtifactID]
@@ -150,15 +153,19 @@ func MCPServer(builder *Builder, directory string) (*mcp.Server, func(), error) 
 			return nil, nil, err
 		}
 		defer file.Close()
-		data, err := io.ReadAll(io.LimitReader(file, MaxBundleBytes+1))
+		data, err := io.ReadAll(io.LimitReader(file, MaxExperimentBundleBytes+1))
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(data) > MaxBundleBytes {
+		if len(data) > MaxExperimentBundleBytes {
 			return nil, nil, errors.New("bundle exceeds size limit")
 		}
 		if digest(data) != meta.BundleSHA256 {
 			return nil, nil, errors.New("artifact content changed since build")
+		}
+		if meta.Kind == "experiment_bundle" {
+			result, err := inspectExperimentArtifact(data, meta)
+			return nil, result, err
 		}
 		var bundle Bundle
 		if err := json.Unmarshal(data, &bundle); err != nil {
