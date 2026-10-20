@@ -18,8 +18,15 @@ Install Go 1.26.9, clone Debuglet, then build the authoring tool:
 go build -o dbl-studio ./cmd/dbl-studio
 ```
 
-Build the dashboard repository with its documented build command and base path
-`/console/`. Point the service at that build and your dispatcher origin:
+In the dashboard repository, build with the console path explicitly set:
+
+```sh
+VITE_BASE_PATH=/console npm run build
+```
+
+This sets both the application router and its asset URLs. A build for `/` will
+not work under the studio's `/console/` route. Point the service at that build
+and your owned development dispatcher origin:
 
 ```sh
 ./dbl-studio serve \
