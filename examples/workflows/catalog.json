@@ -3,7 +3,7 @@
     "id": "http",
     "label": "HTTP request",
     "category": "Network",
-    "description": "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Redirects are returned, not followed.",
+    "description": "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body is text; request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.",
     "pure": false,
     "inputs": [
       {
@@ -15,6 +15,16 @@
         "name": "method",
         "type": "string",
         "default": "GET"
+      },
+      {
+        "name": "body",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "headers",
+        "type": "object",
+        "default": {}
       },
       {
         "name": "timeout_ms",
@@ -38,6 +48,10 @@
       {
         "name": "body",
         "type": "string"
+      },
+      {
+        "name": "headers",
+        "type": "object"
       },
       {
         "name": "duration_ms",
@@ -206,6 +220,261 @@
     "control_outputs": []
   },
   {
+    "id": "stringify_json",
+    "label": "Stringify JSON",
+    "category": "Data",
+    "description": "Encode a JSON value as text, for example an HTTP request body.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "string"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "set_field",
+    "label": "Set field",
+    "category": "Data",
+    "description": "Return a copy of an object with one field added or replaced.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "object",
+        "type": "object",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "object"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "list_item",
+    "label": "List item",
+    "category": "Data",
+    "description": "Read one list item at a zero-based integer index. An out-of-range index is an error.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "index",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "append",
+    "label": "Append item",
+    "category": "Data",
+    "description": "Return a new list with one item appended.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "concat",
+    "label": "Concatenate",
+    "category": "Text",
+    "description": "Join two strings without adding a separator.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "string"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "contains",
+    "label": "Contains",
+    "category": "Text",
+    "description": "Case-sensitive substring search. An empty substring matches every string.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "text",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "substring",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "split",
+    "label": "Split",
+    "category": "Text",
+    "description": "Split text at each occurrence of a nonempty separator, keeping empty pieces.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "text",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "separator",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "strings"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "join",
+    "label": "Join",
+    "category": "Text",
+    "description": "Join a list of strings with a separator. An empty list produces empty text.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "strings",
+        "required": true
+      },
+      {
+        "name": "separator",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "string"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "median",
+    "label": "Median",
+    "category": "Analysis",
+    "description": "Median of a nonempty number list; an even-sized list uses the mean of its middle pair.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "percentile",
+    "label": "Percentile",
+    "category": "Analysis",
+    "description": "Percentile from 0 to 100 of a nonempty number list, with linear interpolation at rank p/100 × (n−1).",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      },
+      {
+        "name": "percentile",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
     "id": "mean",
     "label": "Mean",
     "category": "Analysis",
@@ -320,6 +589,58 @@
     "label": "Subtract",
     "category": "Math",
     "description": "Subtract b from a.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "multiply",
+    "label": "Multiply",
+    "category": "Math",
+    "description": "Multiply two numbers. Nonfinite results are errors.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "divide",
+    "label": "Divide",
+    "category": "Math",
+    "description": "Divide a by b. Division by zero and nonfinite results are errors.",
     "pure": true,
     "inputs": [
       {

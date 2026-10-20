@@ -11,6 +11,8 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -230,6 +232,70 @@ func Pure(block string, in map[string]any) (map[string]any, error) {
 		if err := json.Unmarshal([]byte(in["text"].(string)), &value); err != nil {
 			return nil, fmt.Errorf("invalid JSON: %w", err)
 		}
+	case "stringify_json":
+		encoded, err := json.Marshal(in["value"])
+		if err != nil {
+			return nil, fmt.Errorf("cannot encode JSON: %w", err)
+		}
+		value = string(encoded)
+	case "set_field":
+		object := in["object"].(map[string]any)
+		updated := make(map[string]any, len(object)+1)
+		for key, item := range object {
+			updated[key] = item
+		}
+		updated[in["name"].(string)] = in["value"]
+		value = updated
+	case "list_item":
+		items, ok := in["values"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("list_item requires a list")
+		}
+		index := in["index"].(float64)
+		if math.IsNaN(index) || index < 0 || index >= float64(len(items)) || math.Trunc(index) != index {
+			return nil, fmt.Errorf("list index must be a non-negative integer smaller than the list length")
+		}
+		value = items[int(index)]
+	case "append":
+		items, ok := in["values"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("append requires a list")
+		}
+		updated := make([]any, len(items)+1)
+		copy(updated, items)
+		updated[len(items)] = in["value"]
+		value = updated
+	case "concat":
+		value = in["a"].(string) + in["b"].(string)
+	case "contains":
+		value = strings.Contains(in["text"].(string), in["substring"].(string))
+	case "split":
+		separator := in["separator"].(string)
+		if separator == "" {
+			return nil, fmt.Errorf("split requires a non-empty separator")
+		}
+		parts := strings.SplitN(in["text"].(string), separator, 1025)
+		items := make([]any, len(parts))
+		for i, part := range parts {
+			items[i] = part
+		}
+		value = items
+	case "join":
+		items := in["values"].([]any)
+		separator := in["separator"].(string)
+		parts := make([]string, len(items))
+		size := 0
+		for i, item := range items {
+			parts[i] = item.(string)
+			size += len(parts[i])
+			if i > 0 {
+				size += len(separator)
+			}
+			if size > 16384 {
+				return nil, fmt.Errorf("string exceeds 16 KiB")
+			}
+		}
+		value = strings.Join(parts, separator)
 	case "mean", "min", "max":
 		items := in["values"].([]any)
 		if len(items) == 0 {
@@ -254,6 +320,27 @@ func Pure(block string, in map[string]any) (map[string]any, error) {
 			n /= float64(len(items))
 		}
 		value = n
+	case "median", "percentile":
+		items := in["values"].([]any)
+		if len(items) == 0 {
+			return nil, fmt.Errorf("%s requires at least one sample", block)
+		}
+		percentile := float64(50)
+		if block == "percentile" {
+			percentile = in["percentile"].(float64)
+		}
+		if math.IsNaN(percentile) || percentile < 0 || percentile > 100 {
+			return nil, fmt.Errorf("percentile must be between 0 and 100")
+		}
+		samples := make([]float64, len(items))
+		for i, item := range items {
+			samples[i] = item.(float64)
+		}
+		sort.Float64s(samples)
+		rank := percentile / 100 * float64(len(samples)-1)
+		lower, upper := int(math.Floor(rank)), int(math.Ceil(rank))
+		fraction := rank - float64(lower)
+		value = (1-fraction)*samples[lower] + fraction*samples[upper]
 	case "count":
 		items, ok := in["values"].([]any)
 		if !ok {
@@ -264,6 +351,14 @@ func Pure(block string, in map[string]any) (map[string]any, error) {
 		value = in["a"].(float64) + in["b"].(float64)
 	case "subtract":
 		value = in["a"].(float64) - in["b"].(float64)
+	case "multiply":
+		value = in["a"].(float64) * in["b"].(float64)
+	case "divide":
+		divisor := in["b"].(float64)
+		if divisor == 0 {
+			return nil, fmt.Errorf("cannot divide by zero")
+		}
+		value = in["a"].(float64) / divisor
 	case "greater_than":
 		value = in["a"].(float64) > in["b"].(float64)
 	case "less_than":

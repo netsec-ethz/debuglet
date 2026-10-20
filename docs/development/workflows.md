@@ -6,10 +6,12 @@ processing, branches and bounded repetition execute on the selected executor;
 they do not require a round trip through an AI client or dispatcher.
 
 Start with [HTTP status branching](../../examples/workflows/http-status.json),
-[Ping and RTT analysis](../../examples/workflows/ping-branch.json), or
+[Ping and RTT analysis](../../examples/workflows/ping-branch.json),
+[posting JSON](../../examples/workflows/http-json-post.json), or
 [a custom processing block](../../examples/workflows/custom-transform.json).
 The network examples use loopback placeholders: choose an endpoint you control
-and permit its address in the normal submission policy. On a remote executor,
+and permit its address in the normal submission policy. The JSON POST example
+expects its `/echo` target to return JSON. On a remote executor,
 loopback refers to that executor. Ping also requires its ICMP capability.
 
 ## Blocks and connections
@@ -29,10 +31,33 @@ runs its `true` or `false` control branch. A second target uses another ordinary
 network block with different inputs.
 
 HTTP's `ok` indicates a completed response, including 3xx, 4xx and 5xx statuses.
-Redirects are not followed. Check `ok` for transport errors and compare `status`
+Redirects are not followed. The optional `body` is text, and `headers` is an
+object whose values are strings: for example `{"Content-Type":"application/json"}`.
+Connect Stringify JSON to `body` to send a structured value. The HTTP block sets
+Content-Length from the body's byte length and keeps the URL's host as the
+request authority. Host, framing, connection, compression and upgrade headers
+cannot be overridden. Request bodies are at most 16 KiB; caller-supplied request headers and received
+response headers are limited to 16 KiB and 64 names. Response `headers` uses lowercase
+names and lists of strings, preserving repeated values such as Set-Cookie.
+
+Check `ok` for transport errors and compare `status`
 to express the status policy you need. Ping's `rtts_ms` contains only successful
 replies and `loss` is a percentage. Check `received` before calculating a mean;
 analysis of an empty sample set fails rather than reporting a misleading zero.
+
+Data blocks support Parse JSON and Stringify JSON, Get field and Set field,
+List item and Append item. Set field and Append item return new values without
+changing their inputs. List item uses a zero-based integer index and fails when
+the item is absent. Text blocks offer Concatenate, Contains, Split and Join.
+Contains is case-sensitive; an empty substring matches. Split requires a
+nonempty separator and preserves empty pieces. Join of an empty list is empty
+text. All produced values retain the normal string and list limits.
+
+Mean, Minimum, Maximum, Median and Percentile require a nonempty number list.
+Median averages the middle pair for even-sized lists. Percentile accepts a value
+from 0 to 100 and linearly interpolates sorted samples at `p/100 × (n−1)`; this is
+not the nearest-rank convention. Add, Subtract, Multiply and Divide use finite
+numbers; division by zero and nonfinite results fail explicitly.
 
 Repeat has a `body` and a `done` output. The body runs sequentially until its
 control path ends, then starts again. Its action outputs are cleared between

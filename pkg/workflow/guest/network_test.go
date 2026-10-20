@@ -88,7 +88,7 @@ func TestNetworkHTTPResponse(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodGet, "http://example.test/", nil)
-			status, body, err := networkReadHTTP(strings.NewReader(test.wire), req)
+			status, body, _, err := networkReadHTTP(strings.NewReader(test.wire), req)
 			if status != test.status || body != test.body {
 				t.Fatalf("response = (%d, %d body bytes), want (%d, %d body bytes)", status, len(body), test.status, len(test.body))
 			}

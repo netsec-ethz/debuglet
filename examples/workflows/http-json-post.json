@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "name": "Post JSON and read the response",
+  "entry": "request",
+  "nodes": [
+    {
+      "id": "payload",
+      "block": "stringify_json",
+      "inputs": {
+        "value": {
+          "samples": [
+            10,
+            20,
+            30
+          ],
+          "source": "debuglet-workflow"
+        }
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "request",
+      "block": "http",
+      "inputs": {
+        "url": "http://127.0.0.1:8080/echo",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Experiment": "workflow-post"
+        },
+        "timeout_ms": 2000
+      },
+      "position": {
+        "x": 320,
+        "y": 0
+      }
+    },
+    {
+      "id": "transport",
+      "block": "if",
+      "position": {
+        "x": 640,
+        "y": 0
+      }
+    },
+    {
+      "id": "response",
+      "block": "parse_json",
+      "position": {
+        "x": 640,
+        "y": 300
+      }
+    },
+    {
+      "id": "result",
+      "block": "emit",
+      "inputs": {
+        "name": "response"
+      },
+      "position": {
+        "x": 960,
+        "y": 0
+      }
+    },
+    {
+      "id": "error",
+      "block": "emit",
+      "inputs": {
+        "name": "transport_error"
+      },
+      "position": {
+        "x": 960,
+        "y": 300
+      }
+    }
+  ],
+  "edges": [
+    {
+      "kind": "data",
+      "from": {
+        "node": "payload",
+        "port": "value"
+      },
+      "to": {
+        "node": "request",
+        "port": "body"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "request",
+        "port": "next"
+      },
+      "to": {
+        "node": "transport",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "request",
+        "port": "ok"
+      },
+      "to": {
+        "node": "transport",
+        "port": "condition"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "transport",
+        "port": "true"
+      },
+      "to": {
+        "node": "result",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "transport",
+        "port": "false"
+      },
+      "to": {
+        "node": "error",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "request",
+        "port": "body"
+      },
+      "to": {
+        "node": "response",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "response",
+        "port": "value"
+      },
+      "to": {
+        "node": "result",
+        "port": "value"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "request",
+        "port": "error"
+      },
+      "to": {
+        "node": "error",
+        "port": "value"
+      }
+    }
+  ]
+}

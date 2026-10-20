@@ -27,32 +27,12 @@ const networkBodyLimit = 16 * 1024
 // HTTP performs one request without following redirects. A received response,
 // including a non-2xx status, is successful; status checks belong in the graph.
 func HTTP(inputs map[string]any) (map[string]any, error) {
-	raw, err := networkString(inputs, "url", "")
+	req, timeout, err := networkHTTPRequest(inputs)
 	if err != nil {
 		return nil, err
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") ||
-		!networkHost(u.Hostname()) || u.User != nil || u.Opaque != "" || strings.Contains(raw, "#") ||
-		strings.HasSuffix(u.Host, ":") || (u.Port() != "" && !networkPort(u.Port())) {
-		return nil, fmt.Errorf("url must be an HTTP(S) URL without credentials or a fragment")
-	}
-	method, err := networkString(inputs, "method", http.MethodGet)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(method, u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request: %w", err)
-	}
-	timeout, err := networkTimeout(inputs)
-	if err != nil {
-		return nil, err
-	}
-	req.Close = true
-	req.Header.Set("Accept-Encoding", "identity")
-	req.Header.Set("User-Agent", "debuglet-workflow/1")
-	out := map[string]any{"ok": false, "error": "", "status": float64(0), "body": "", "duration_ms": float64(0)}
+	u := req.URL
+	out := map[string]any{"ok": false, "error": "", "status": float64(0), "body": "", "headers": map[string]any{}, "duration_ms": float64(0)}
 	start := time.Now()
 	defer networkDuration(out, start)
 	port, transport := u.Port(), "tcp"
@@ -81,14 +61,101 @@ func HTTP(inputs map[string]any) (map[string]any, error) {
 	if err == nil {
 		var status int
 		var body string
-		status, body, err = networkReadHTTP(conn, req)
-		out["status"], out["body"] = float64(status), body
+		var headers map[string]any
+		status, body, headers, err = networkReadHTTP(conn, req)
+		out["status"], out["body"], out["headers"] = float64(status), body, headers
 	}
 	out["ok"] = err == nil
 	if err != nil {
 		out["error"] = err.Error()
 	}
 	return out, nil
+}
+
+// networkHTTPRequest constructs the exact request before any network access.
+func networkHTTPRequest(inputs map[string]any) (*http.Request, time.Duration, error) {
+	raw, err := networkString(inputs, "url", "")
+	if err != nil {
+		return nil, 0, err
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") ||
+		!networkHost(u.Hostname()) || u.User != nil || u.Opaque != "" || strings.Contains(raw, "#") ||
+		strings.HasSuffix(u.Host, ":") || (u.Port() != "" && !networkPort(u.Port())) {
+		return nil, 0, fmt.Errorf("url must be an HTTP(S) URL without credentials or a fragment")
+	}
+	method, err := networkString(inputs, "method", http.MethodGet)
+	if err != nil {
+		return nil, 0, err
+	}
+	body, ok := inputs["body"].(string)
+	if _, exists := inputs["body"]; exists && !ok {
+		return nil, 0, fmt.Errorf("body must be a string")
+	}
+	if len(body) > networkBodyLimit {
+		return nil, 0, fmt.Errorf("HTTP request body exceeds 16 KiB")
+	}
+	req, err := http.NewRequest(method, u.String(), strings.NewReader(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("HTTP request: %w", err)
+	}
+	timeout, err := networkTimeout(inputs)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Close = true
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("User-Agent", "debuglet-workflow/1")
+	if value, exists := inputs["headers"]; exists {
+		headers, ok := value.(map[string]any)
+		if !ok || len(headers) > 64 {
+			return nil, 0, fmt.Errorf("headers must be an object with at most 64 fields")
+		}
+		seen := map[string]bool{}
+		size := 0
+		for name, raw := range headers {
+			value, ok := raw.(string)
+			if !ok || !networkHeaderName(name) || !networkHeaderValue(value) {
+				return nil, 0, fmt.Errorf("HTTP headers require valid names and string values without control characters")
+			}
+			key := strings.ToLower(name)
+			switch key {
+			case "host", "content-length", "transfer-encoding", "connection", "proxy-connection", "keep-alive", "te", "trailer", "upgrade", "expect", "accept-encoding":
+				return nil, 0, fmt.Errorf("HTTP header %q is managed by the HTTP block", name)
+			}
+			if seen[key] {
+				return nil, 0, fmt.Errorf("HTTP header %q is specified more than once", name)
+			}
+			seen[key] = true
+			size += len(name) + len(value) + 4
+			if size > networkBodyLimit {
+				return nil, 0, fmt.Errorf("HTTP request headers exceed 16 KiB")
+			}
+			req.Header.Set(name, value)
+		}
+	}
+	return req, timeout, nil
+}
+
+func networkHeaderName(name string) bool {
+	if name == "" || len(name) > 256 {
+		return false
+	}
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c)) {
+			return false
+		}
+	}
+	return true
+}
+
+func networkHeaderValue(value string) bool {
+	for _, c := range value {
+		if c < 32 && c != '\t' || c == 127 {
+			return false
+		}
+	}
+	return true
 }
 
 // TCPConnect measures resolution and connection establishment, then closes.
@@ -204,20 +271,33 @@ func Ping(inputs map[string]any) (map[string]any, error) {
 	return out, nil
 }
 
-func networkReadHTTP(source io.Reader, req *http.Request) (int, string, error) {
+func networkReadHTTP(source io.Reader, req *http.Request) (int, string, map[string]any, error) {
 	// Bound status lines and headers as well as the body.
 	limited := &io.LimitedReader{R: source, N: 64*1024 + 1}
 	reader := bufio.NewReader(limited)
 	for n := 0; n < 8; n++ {
 		response, err := http.ReadResponse(reader, req)
 		if err != nil {
-			return 0, "", fmt.Errorf("read HTTP response: %w", err)
+			return 0, "", map[string]any{}, fmt.Errorf("read HTTP response: %w", err)
 		}
 		if response.StatusCode == http.StatusSwitchingProtocols {
-			return response.StatusCode, "", fmt.Errorf("HTTP protocol upgrades are unsupported")
+			return response.StatusCode, "", map[string]any{}, fmt.Errorf("HTTP protocol upgrades are unsupported")
 		}
 		if response.StatusCode < 200 {
 			continue
+		}
+		headers := map[string]any{}
+		headerSize := 0
+		for name, values := range response.Header {
+			items := make([]any, len(values))
+			for i, value := range values {
+				headerSize += len(name) + len(value) + 4
+				items[i] = value
+			}
+			headers[strings.ToLower(name)] = items
+		}
+		if len(headers) > 64 || headerSize > networkBodyLimit || checkValue(headers, 0) != nil {
+			return response.StatusCode, "", map[string]any{}, fmt.Errorf("HTTP response headers exceed 16 KiB or 64 fields")
 		}
 		body, err := io.ReadAll(io.LimitReader(response.Body, networkBodyLimit+1))
 		// The owner closes the underlying socket. Closing Body here could drain
@@ -228,9 +308,9 @@ func networkReadHTTP(source io.Reader, req *http.Request) (int, string, error) {
 		} else if limited.N == 0 {
 			err = fmt.Errorf("HTTP response exceeds 64 KiB including headers")
 		}
-		return response.StatusCode, string(body), err
+		return response.StatusCode, string(body), headers, err
 	}
-	return 0, "", fmt.Errorf("too many informational HTTP responses")
+	return 0, "", map[string]any{}, fmt.Errorf("too many informational HTTP responses")
 }
 
 func networkEcho(id, seq uint16, payload []byte) []byte {
