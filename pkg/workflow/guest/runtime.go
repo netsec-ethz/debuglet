@@ -223,6 +223,14 @@ func Normalize(values map[string]any) (map[string]any, error) {
 func Pure(block string, in map[string]any) (map[string]any, error) {
 	var value any
 	switch block {
+	case "distinct", "set_union", "set_intersection", "set_difference":
+		return setValues(block, in)
+	case "group_by":
+		return groupRows(in)
+	case "join_rows":
+		return joinRows(in)
+	case "endpoint":
+		return addressEndpoint(in)
 	case "standard_deviation":
 		return standardDeviation(in)
 	case "histogram":

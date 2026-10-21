@@ -36,7 +36,7 @@ func DNSQuery(inputs map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"ok": false, "error": "", "rcode": "", "flags": map[string]any{}, "answers": []any{}, "authorities": []any{}, "additionals": []any{}, "response_base64": "", "duration_ms": float64(0), "truncated": false}
+	out := map[string]any{"ok": false, "error": "", "rcode": "", "flags": map[string]any{}, "answers": []any{}, "authorities": []any{}, "additionals": []any{}, "addresses": []any{}, "names": []any{}, "nsid_base64": "", "nsid_present": false, "response_base64": "", "duration_ms": float64(0), "truncated": false}
 	start := time.Now()
 	defer networkDuration(out, start)
 	deadline := start.Add(query.timeout)
@@ -232,11 +232,51 @@ func networkDNSResponse(wire []byte, query dnsmessage.Message) (map[string]any, 
 		rcode = names[code]
 	}
 	out := map[string]any{"rcode": rcode, "truncated": response.Truncated, "flags": map[string]any{"authoritative": response.Authoritative, "truncated": response.Truncated, "recursion_desired": response.RecursionDesired, "recursion_available": response.RecursionAvailable, "authenticated_data": response.AuthenticData, "checking_disabled": response.CheckingDisabled}, "answers": dnsResources(response.Answers), "authorities": dnsResources(response.Authorities), "additionals": dnsResources(response.Additionals)}
+	out["addresses"], out["names"] = dnsAnswerValues(out["answers"].([]any))
+	out["nsid_base64"], out["nsid_present"] = dnsNSID(response.Additionals)
 	encoded, err := json.Marshal(out)
 	if err != nil || len(encoded) > 48*1024 {
 		return nil, fmt.Errorf("decoded DNS response exceeds 48 KiB")
 	}
 	return out, nil
+}
+
+func dnsAnswerValues(answers []any) (addresses, names []any) {
+	addresses, names = []any{}, []any{}
+	seen := map[string]bool{}
+	for _, answer := range answers {
+		row := answer.(map[string]any)
+		var values *[]any
+		switch row["type"] {
+		case "A", "AAAA":
+			values = &addresses
+		case "NS", "CNAME", "PTR":
+			values = &names
+		default:
+			continue
+		}
+		value := row["data"].(string)
+		if !seen[value] {
+			*values = append(*values, value)
+			seen[value] = true
+		}
+	}
+	return addresses, names
+}
+
+// NSID is opaque bytes. Presence distinguishes an empty identifier from a
+// response without the option; neither identifies a physical server or site.
+func dnsNSID(additionals []dnsmessage.Resource) (string, bool) {
+	for _, record := range additionals {
+		if opt, ok := record.Body.(*dnsmessage.OPTResource); ok {
+			for _, option := range opt.Options {
+				if option.Code == 3 {
+					return base64.StdEncoding.EncodeToString(option.Data), true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func dnsResources(records []dnsmessage.Resource) []any {
