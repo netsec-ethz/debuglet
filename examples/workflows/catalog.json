@@ -1701,5 +1701,181 @@
     "control_outputs": [
       "next"
     ]
+  },
+  {
+    "id": "select_field",
+    "label": "Select field",
+    "category": "Data",
+    "description": "Read one named field from every object in a list, preserving order. Missing fields and non-object rows are errors. Connect a number field to existing statistics blocks.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "field",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "values",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "filter_rows",
+    "label": "Filter rows",
+    "category": "Data",
+    "description": "Keep rows whose named field matches a value. Operators: equals, not_equals, greater_than, less_than, at_least, at_most. Equality compares JSON without coercion; ordering requires numbers. Missing fields and non-object rows are errors.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "rows",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "field",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "operator",
+        "type": "string",
+        "default": "equals"
+      },
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rows",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "report_metric",
+    "label": "Report metric",
+    "category": "Results",
+    "description": "Publish a titled finite number and optional unit in the run's report. Uses the ordinary workflow output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "default": ""
+      }
+    ],
+    "outputs": [
+      {
+        "name": "title",
+        "type": "string"
+      },
+      {
+        "name": "value",
+        "type": "number"
+      },
+      {
+        "name": "unit",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "report_table",
+    "label": "Report table",
+    "category": "Results",
+    "description": "Publish a titled list of objects as a report table. Choose 1–32 distinct field names in columns; every row must contain them. All rows remain in the output, including fields not displayed. Uses the ordinary workflow output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "rows",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "columns",
+        "type": "strings",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "title",
+        "type": "string"
+      },
+      {
+        "name": "rows",
+        "type": "any"
+      },
+      {
+        "name": "columns",
+        "type": "strings"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "report_text",
+    "label": "Report text",
+    "category": "Results",
+    "description": "Publish titled plain text in the run's report. Text is displayed literally, without HTML or Markdown interpretation. Uses the ordinary workflow output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "title",
+        "type": "string"
+      },
+      {
+        "name": "text",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
   }
 ]

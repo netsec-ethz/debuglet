@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Sample measurement report",
+  "entry": "metric",
+  "nodes": [
+    {"id":"samples","block":"constant","inputs":{"value":[{"target":"alpha","ok":true,"duration_ms":12},{"target":"beta","ok":false,"duration_ms":0},{"target":"gamma","ok":true,"duration_ms":18}]},"position":{"x":60,"y":120}},
+    {"id":"successful","block":"filter_rows","inputs":{"field":"ok","value":true},"position":{"x":320,"y":120}},
+    {"id":"durations","block":"select_field","inputs":{"field":"duration_ms"},"position":{"x":580,"y":120}},
+    {"id":"average","block":"mean","position":{"x":840,"y":120}},
+    {"id":"metric","block":"report_metric","inputs":{"title":"Mean response time","unit":"ms"},"position":{"x":1100,"y":120}},
+    {"id":"table","block":"report_table","inputs":{"title":"Successful samples","columns":["target","duration_ms"]},"position":{"x":1100,"y":380}},
+    {"id":"note","block":"report_text","inputs":{"title":"How to read this report","text":"Two of three fixed example samples succeeded. The mean uses successful samples only. Replace the fixed data with Read samples to report measurements from a run."},"position":{"x":1380,"y":380}}
+  ],
+  "edges": [
+    {"kind":"data","from":{"node":"samples","port":"value"},"to":{"node":"successful","port":"rows"}},
+    {"kind":"data","from":{"node":"successful","port":"rows"},"to":{"node":"durations","port":"values"}},
+    {"kind":"data","from":{"node":"durations","port":"values"},"to":{"node":"average","port":"values"}},
+    {"kind":"data","from":{"node":"average","port":"value"},"to":{"node":"metric","port":"value"}},
+    {"kind":"control","from":{"node":"metric","port":"next"},"to":{"node":"table","port":"in"}},
+    {"kind":"data","from":{"node":"successful","port":"rows"},"to":{"node":"table","port":"rows"}},
+    {"kind":"control","from":{"node":"table","port":"next"},"to":{"node":"note","port":"in"}}
+  ]
+}

@@ -119,6 +119,35 @@ from 0 to 100 and linearly interpolates sorted samples at `p/100 × (n−1)`; th
 not the nearest-rank convention. Add, Subtract, Multiply and Divide use finite
 numbers; division by zero and nonfinite results fail explicitly.
 
+### Processing rows and reporting results
+
+**Filter rows** keeps matching objects from a list in their original order.
+Choose a field and `equals` (the default), `not_equals`, `greater_than`,
+`less_than`, `at_least` or `at_most`. Equality compares JSON values without
+coercion; ordering requires numbers on both sides. **Select field** extracts
+one field from every row into a list. For example, filter collected measurements
+where `ok` equals `true`, select `duration_ms`, then connect the result to Mean
+or Percentile. Missing fields and non-object rows fail explicitly. Empty lists
+are valid for these row operations and Count; check the count before using
+statistics that require at least one sample.
+
+**Report metric** publishes `title`, a finite numeric `value` and an optional
+`unit`. **Report table** publishes `title`, object `rows` and 1–32 distinct
+`columns`, each naming a field present in every row. Columns control display
+order; the output still contains every original row field. **Report text**
+publishes a `title` and plain `text`, displayed literally without interpreting
+HTML or Markdown. All three are actions with a `next` connection and return
+their report fields as outputs, so they can feed later actions.
+
+Reports use the ordinary `debuglet.workflow.v1` events and run output. They
+share the existing string, list, depth, per-event and total trace limits; they
+do not create separate files or storage. A table can have up to 1,024 rows,
+but the 64 KiB event limit can require fewer rows when cells are large. Report
+titles and text are ordinary bounded strings. A report emitted inside Repeat
+appears once per executed iteration. The [sample report](../../examples/workflows/sample-report.json)
+shows filtering, field selection, a mean, a metric, a table and explanatory text
+using fixed sample data, with no network access needed.
+
 ## Reusable visual groups
 
 The editor can fold a selection into one named block. Its interface comes from

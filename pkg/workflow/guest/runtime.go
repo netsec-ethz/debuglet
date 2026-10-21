@@ -223,6 +223,10 @@ func Normalize(values map[string]any) (map[string]any, error) {
 func Pure(block string, in map[string]any) (map[string]any, error) {
 	var value any
 	switch block {
+	case "select_field":
+		return selectField(in)
+	case "filter_rows":
+		return filterRows(in)
 	case "constant":
 		value = in["value"]
 	case "field":

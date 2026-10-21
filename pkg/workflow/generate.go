@@ -212,6 +212,8 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				out.WriteString("values,err:=guest.Ping(in)\n")
 			case "emit":
 				out.WriteString("values:=in\n")
+			case "report_metric", "report_table", "report_text":
+				fmt.Fprintf(&out, "values,err:=guest.Report(%q,in)\n", n.Block)
 			default:
 				fmt.Fprintf(&out, "values,err:=guest.RunCustom(custom%d,in)\n", custom[n.Block])
 			}
