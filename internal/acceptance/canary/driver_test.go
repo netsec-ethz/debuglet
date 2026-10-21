@@ -461,12 +461,23 @@ func TestLogPageOutputDocumentKeepsExactFields(t *testing.T) {
 func TestNodeCapabilitiesDocumentKeepsExactFields(t *testing.T) {
 	const observation = `{"schema_version":1,"observed_at":1790598500,"protocols":["tcp","udp"],"enforcement_mode":"fallback","advertised_capacity_bps":1000000}`
 	field := func(value string) string { return `,"capabilities":` + value }
+	hostFunctions := func(value string) string {
+		return field(strings.TrimSuffix(observation, "}") + `,"supported_host_functions":` + value + "}")
+	}
 	for _, tc := range []struct {
 		name, fields string
 		valid        bool
 	}{
 		{"omitted", "", true},
 		{"observed", field(observation), true},
+		{"supported host functions", hostFunctions(`["debuglet_io_v1.tls_inspect"]`), true},
+		{"empty host functions", hostFunctions(`[]`), true},
+		{"null host functions", hostFunctions(`null`), false},
+		{"wrong host functions type", hostFunctions(`{}`), false},
+		{"null host function item", hostFunctions(`[null]`), false},
+		{"wrong host function item", hostFunctions(`[1]`), false},
+		{"case host functions", field(strings.TrimSuffix(observation, "}") + `,"Supported_host_functions":[]}`), false},
+		{"duplicate host functions", field(strings.TrimSuffix(observation, "}") + `,"supported_host_functions":[],"supported_host_functions":[]}`), false},
 		{"unknown capacity", field(`{"schema_version":1,"observed_at":1790598500,"protocols":[],"enforcement_mode":"","advertised_capacity_bps":null}`), true},
 		{"null object", field(`null`), false},
 		{"wrong object type", field(`[]`), false},
