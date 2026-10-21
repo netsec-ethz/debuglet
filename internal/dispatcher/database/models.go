@@ -369,6 +369,15 @@ type MeasurementRequest struct {
 	Document   string
 }
 
+type MeasurementSource struct {
+	MeasurementID  string
+	UserID         int64
+	Kind           string
+	Document       string
+	DocumentSha256 string
+	Programs       string
+}
+
 type MeasurementSummary struct {
 	ID       string
 	Sequence interface{}
@@ -481,6 +490,41 @@ type ProbeStatus struct {
 	IsPublic       int64
 	HostTags       string
 	Version        string
+}
+
+type ResultHighlight struct {
+	ID          string
+	UserID      int64
+	ProjectID   sql.NullString
+	DebugletID  int64
+	EventIndex  int64
+	EventSha256 string
+	NodeID      string
+	Block       string
+	Name        string
+	Note        string
+	Collection  string
+	CreatedAt   int64
+}
+
+type ResultHighlightReader struct {
+	ID            string
+	UserID        int64
+	ProjectID     sql.NullString
+	DebugletID    int64
+	EventIndex    int64
+	EventSha256   string
+	NodeID        string
+	Block         string
+	Name          string
+	Note          string
+	Collection    string
+	CreatedAt     int64
+	RunUuid       []byte
+	MeasurementID string
+	CreatorUuid   []byte
+	ReaderUuid    []byte
+	CanManage     int64
 }
 
 type RetryRequest struct {

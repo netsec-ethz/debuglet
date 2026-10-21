@@ -1,4 +1,46 @@
-# Portable results
+# Keep and revisit results
+
+## Save a result highlight
+
+Choose **Save result** on a completed metric, table, chart, text report or emitted
+workflow value. Give it a title, an optional note and a collection label, then
+find it under **Results library** without searching every run. Personal
+highlights are private; a project highlight is visible to current members of
+that community.
+
+Choose **Preview** to open the exact output occurrence, **Original measurement**
+for its run or **Measurement group** for the other participants. Repeated
+executions of the same block remain separate results. Search and collection filters organize saved references; changing their
+titles or notes does not modify measured output.
+
+For a project highlight, first share the measurement into that project. Saving a
+highlight does not grant additional access to the run. Removing a member or a
+measurement share removes the corresponding access, and deleted or expired run
+payloads disappear from the library. The library keeps references, not a second
+archive of output. Use the export below when you need a standalone copy under
+your own retention policy.
+
+## Inspect the experiment and edit a copy
+
+New builder submissions can retain their exact workflow or experiment document
+alongside the run's program identities. Open the source from a saved highlight
+or its run, then choose **Edit a copy** in the matching builder. Community
+measurements can also link to an immutable saved experiment revision. A later edit to the
+community experiment does not replace that recorded revision.
+
+The copy is a new editable document. Rebuild it, choose executors, review its
+policy and quote, then explicitly submit. Opening or editing source never starts
+a measurement, charges a wallet or changes the original result. Old runs and
+custom WASM without a saved document show source as unavailable; their logs and
+ordinary configuration reuse remain available while retained.
+
+The source association records the document supplied by the submitting account
+and the admitted program hashes. It does not prove that arbitrary WASM was
+compiled from that document. Deleting a participant's payload also removes a
+personal source attachment for its group. Independently saved community
+experiment revisions retain their existing lifetime and access rules.
+
+## Export portable results
 
 Save a retained run without keeping access to its dispatcher:
 
@@ -135,3 +177,5 @@ saved files according to your own retention requirements.
 Export does not delete the server's record, and cancellation does not erase it.
 See [data retention and deletion](operations/data-retention.md) for the current
 cleanup behavior and policy limits.
+
+The results library requires valid UTF-8 output and a complete JSONL event. Runs with malformed UTF-8 remain readable through raw logs, but cannot be bookmarked because their browser-decoded event positions can differ.

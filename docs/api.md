@@ -202,6 +202,63 @@ with a new schedule and payment intent. Template references name an immutable
 version and matching program digest. Existing runs are independent of later
 profile edits or deletion. See OpenAPI for field and account limits.
 
+## Results library and source (API 1.27)
+
+| Routes | Purpose |
+| --- | --- |
+| `GET/POST /result-highlights` | Search a personal or project library, or save one retained workflow event |
+| `GET/PATCH/DELETE /result-highlights/{id}` | Read a highlight, edit its metadata or remove its reference |
+| `POST /measurements/{id}/source` | Attach an immutable builder document after submission |
+| `GET /runs/{id}/source` | Read that document or an accessible exact community revision |
+
+These routes require an authenticated account. API credentials need
+`measurements:read` for reads and `measurements:write` for mutations; cookie
+mutations require the usual CSRF header. Source and run access are checked on
+each read. Hidden resources return 404; deleted run payloads return
+`410 payload_deleted`. No library operation submits or pays for a measurement.
+
+Create a highlight with `{run_id, event_index, name, note?, collection?, project_id?}`.
+Only completed `report_metric`, `report_table`, `report_chart`, `report_text` and
+`emit` events can be saved. Failed events and intermediate outputs remain in the
+original trace.
+The zero-based index counts valid, complete `debuglet.workflow.v1` JSONL records
+in retained output, up to 1000, including non-report blocks and repeated node
+executions. It is not the node ID or an index into a filtered list of reports.
+The server derives the selected event and its SHA-256; clients cannot submit
+arbitrary JSON as measured output. Detail reads derive that event again from
+retained output and check the saved digest.
+
+Omit `project_id` for a private highlight. A project save requires current
+membership and the measurement already shared into that project. Only the
+creator or community owner may edit or remove a project highlight. Personal
+highlights belong to their creator. Lists accept `project_id`, `search`,
+`collection`, `limit` (default 25, maximum 100) and `offset`, and return
+`{highlights, total, limit, offset}` without copying output into each summary.
+`can_manage` reports whether this caller may edit or delete a returned highlight.
+Revoked or purged source references are omitted. Each personal library or
+project holds at most 1024 highlights; names use 1–120 trimmed UTF-8 bytes,
+notes at most 2000 bytes and collection labels at most 120 bytes.
+
+Attach source with `{kind, document, programs: [{run_id, sha256}]}`, where kind is
+`workflow` or `experiment`. The caller must own every run in the measurement,
+and every run must have exactly one program mapping matching retained admission
+provenance. The request is bounded to 4 MiB; existing workflow/experiment source
+validation also applies. One attachment contains 1–1024 program mappings, and an
+account can retain up to 1024 attachments totaling 256 MiB. A new attachment
+returns 201; an identical attachment returns 200. A different document or program
+mapping returns 409. The response
+includes `document_sha256`, the measurement ID and exact program identities;
+source reads also identify a community experiment ID and revision when used.
+The digest identifies the canonical document, not proof that arbitrary WASM
+was compiled from it. No program bytes or payment credentials are duplicated.
+
+Deleting a participant's payload removes the attached personal group source.
+Independently saved community revisions follow their existing access and
+retention rules. Historical or custom WASM runs without saved source return 404;
+clients must show source unavailable instead of reconstructing a graph. Editing
+a copy uses the ordinary builder, compilation, policy, quote and explicit
+submission flow. See [results](results.md) for the user-facing workflow.
+
 ## Communities (API 1.23)
 
 Communities group individually authenticated accounts. They own projects,

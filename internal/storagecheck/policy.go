@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schemas 32 and 33 store community workspaces and their funding.
-	MinimumDispatcherVersion int64 = 33
+	// Schema 34 adds saved result references and immutable measurement sources.
+	MinimumDispatcherVersion int64 = 34
 	MinimumExecutorVersion   int64 = 9
 )
 
@@ -83,6 +83,8 @@ func PolicyFor(role Role) (Policy, error) {
 			"probe_addresses":            {"executor_id", "family", "address", "via", "first_observed", "last_observed"},
 			"payment_receipts":           {"tx_digest", "event_seq", "nonce", "disposition", "amount", "checkpoint", "observed_at"},
 			"chain_transfers":            {"id", "kind", "transaction_id", "amount", "state", "digest", "signed_transaction", "signature", "updated_at"},
+			"result_highlights":          {"id", "user_id", "project_id", "debuglet_id", "event_index", "event_sha256"},
+			"measurement_sources":        {"measurement_id", "user_id", "document", "document_sha256", "programs"},
 			"measurement_profiles":       {"id", "user_id", "document"},
 			"measurement_requests":       {"debuglet_id", "document"},
 			"measurement_execution":      {"debuglet_id", "started_observed_ns", "terminal_observed_ns", "exit_code", "tcp_endpoint"},
