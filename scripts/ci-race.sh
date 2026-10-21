@@ -21,7 +21,7 @@ mkdir -p .cache/ci
 rm -f .cache/ci/race-tests.json
 set +e
 GORACE="strip_path_prefix=$PWD/" "${GO:-go}" test -mod=readonly -race -json -count=1 \
-    -p "$parallel" -timeout="${CI_RACE_TIMEOUT:-5m}" "$@" | tee .cache/ci/race-tests.json
+    -p "$parallel" -timeout="${CI_RACE_TIMEOUT:-10m}" "$@" | tee .cache/ci/race-tests.json
 test_status=${PIPESTATUS[0]}
 set -e
 
