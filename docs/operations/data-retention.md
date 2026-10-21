@@ -74,3 +74,17 @@ Acknowledged output payloads are released while finality metadata remains.
 Unacknowledged reports and prior-binding work remain inspectable without replay.
 Sessions expire after 12 hours; issuing a session prunes expired session rows
 older than a further 12 hours. Session expiry does not delete accounts or runs.
+
+## Console activity
+
+The console's active-user count represents signed-in accounts that sent a
+heartbeat during the previous two minutes. Visible pages send one every
+30 seconds; multiple tabs and sessions for the same account count once.
+Anonymous visitors are not counted. Closing, hiding or signing out of a page
+does not immediately remove the account: it ages out of the window.
+
+The dispatcher keeps only account IDs and last-heartbeat times in memory, with
+a maximum of 10,000 entries. Expired entries are removed on the next heartbeat;
+restarting the dispatcher clears the count. The response contains only a count
+and its time window, never account identities or a visit history. The counter
+is specific to that dispatcher process and is not a count of HTTP connections.

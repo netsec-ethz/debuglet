@@ -53,8 +53,9 @@ type Handler struct {
 	onboarding            config.ExecutorOnboardingConfig
 	issuer                *enrollment.Signer
 	// health holds the last health observation. See handlers_health.go.
-	health  healthMemo
-	metrics metricsMemo
+	health   healthMemo
+	metrics  metricsMemo
+	presence presenceMemo
 	// attributionLimiter bounds the public attribution routes per client
 	// address. See handlers_attribution.go.
 	attributionLimiter *addressLimiter
@@ -196,6 +197,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/payment/:transaction_id/status", h.GetPaymentStatus)
 	// user
 	e.GET("/me", h.GetMe)
+	e.POST("/me/presence", h.PostPresence)
 	e.GET("/me/orders", h.GetMyOrders)
 	e.GET("/me/allowance", h.GetMyAllowance)
 	e.GET("/user-ids", h.ListUserIDs)

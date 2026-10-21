@@ -803,6 +803,7 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"GET /payment/:transaction_id/status":                         {anonymous: http.StatusUnauthorized, target: "/payment/none/status"},
 	"POST /payment/quote":                                         {anonymous: http.StatusUnauthorized, target: "/payment/quote", body: []byte(`{"debuglets":[],"payment_method":"TEST","refund_address":""}`)},
 	"GET /me":                                                     {anonymous: http.StatusUnauthorized, target: "/me"},
+	"POST /me/presence":                                           {anonymous: http.StatusUnauthorized, target: "/me/presence"},
 	"GET /me/orders":                                              {anonymous: http.StatusUnauthorized, target: "/me/orders"},
 	"GET /me/allowance":                                           {anonymous: http.StatusUnauthorized, target: "/me/allowance"},
 	"GET /user-ids":                                               {anonymous: http.StatusUnauthorized, target: "/user-ids"},
