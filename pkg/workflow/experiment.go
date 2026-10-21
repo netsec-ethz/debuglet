@@ -86,6 +86,26 @@ func ValidateExperiment(e Experiment) []ExperimentDiagnostic {
 		add("", "", "", "experiment has more than 64 channels")
 		return ds
 	}
+	phases := map[string]map[string]bool{}
+	for _, p := range e.Participants {
+		for _, n := range p.Workflow.Nodes {
+			if n.Block != "phase_barrier" {
+				continue
+			}
+			phase, _ := n.Inputs["phase"].(string)
+			if phase == "" || len(phase) > 64 || strings.TrimSpace(phase) != phase {
+				add(p.ID, n.ID, "phase", "phase must contain 1–64 characters without surrounding whitespace")
+				continue
+			}
+			if phases[phase] == nil {
+				phases[phase] = map[string]bool{}
+			}
+			phases[phase][p.ID] = true
+		}
+	}
+	if len(phases) > 64 {
+		add("", "", "", "experiment has more than 64 named barrier phases")
+	}
 	channels := map[string]Channel{}
 	for _, c := range e.Channels {
 		if !identifier.MatchString(c.ID) || channels[c.ID].ID != "" {
@@ -107,6 +127,16 @@ func ValidateExperiment(e Experiment) []ExperimentDiagnostic {
 			}
 		}
 		for _, n := range p.Workflow.Nodes {
+			if n.Block == "phase_barrier" {
+				phase, _ := n.Inputs["phase"].(string)
+				if wired[Endpoint{n.ID, "phase"}] {
+					add(p.ID, n.ID, "phase", "enter the phase name directly; it cannot be wired")
+				}
+				if phase != "" && len(phases[phase]) != len(e.Participants) {
+					add(p.ID, n.ID, "phase", "every participant must contain this barrier phase")
+				}
+				continue
+			}
 			if n.Block != "send_message" && n.Block != "await_message" {
 				continue
 			}
