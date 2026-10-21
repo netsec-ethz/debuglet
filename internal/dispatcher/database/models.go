@@ -471,6 +471,18 @@ type PendingIdentityLink struct {
 	ExpiresAt       models.UTCTime
 }
 
+type PersonalTemplate struct {
+	ID          string
+	UserID      int64
+	Name        string
+	Description string
+	Collection  string
+	Kind        string
+	Document    string
+	Revision    int64
+	UpdatedAt   int64
+}
+
 type ProbeAddress struct {
 	ExecutorID    string
 	Family        int64
