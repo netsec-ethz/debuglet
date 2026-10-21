@@ -8,6 +8,18 @@ compiled from the command line with `dbl-studio`.
 Use [communities](../communities.md) to save editable source and compiled bundles
 in a shared project, retain revisions and collect the resulting measurements.
 
+The console's **Template library** provides categorized, configurable starting
+points alongside personal and community templates. **Save as template** stores
+source under your account or shares a copy in a community project. Opening a
+template creates a separate draft. Literal inputs and custom code remain part of
+the source; compiled programs and executor bindings are not saved in personal
+templates. Existing community experiments retain their revision/bundle support.
+
+For independent observations from many vantage points, compile one workflow and
+select several executors during submission. This uses ordinary grouped admission
+and results, without requiring participants to listen for peer connections. Use
+the experiment builder when programs actually need to exchange messages.
+
 Conditions, calculations and repeats execute inside the compiled WASI program.
 The dispatcher coordinates experiment readiness and stores results; it does not
 compile source or orchestrate individual blocks. See the
@@ -97,6 +109,24 @@ inspection, consecutive hop probes and timers. Replace documentation addresses
 with permitted targets before running. Experiment starters include repeated
 phases and a UDP server/client/collector flow. Both editors expose the same
 primitive blocks, so an MCP-authored graph remains editable visually.
+
+**For each item** runs a body for each value in a list of at most 100 items.
+It exposes `item` and zero-based `index`; an empty list goes directly to `done`.
+Body outputs are scoped to that body. Collect observations into a collection and
+read it after `done` to report a combined result. The normal workflow step budget
+still applies, including to nested loops.
+
+Collection operations include distinct values, set union/intersection/difference,
+grouping rows by a field and joining tables. Comparisons preserve JSON types;
+there is no string/number coercion. Joins are inner joins returning `{left,right}`
+pairs, including every duplicate-key match, with at most 1024 result rows. Missing
+group/join fields are errors; outputs larger than 64 KiB are rejected.
+
+DNS queries also expose address and name lists for simple wiring. Feed an address
+through **Address and port** before a TCP action; IPv6 brackets are handled for you.
+NSID has separate presence and Base64 outputs because it is optional binary data.
+Matching identifiers or answers are observations, not proof of shared physical
+infrastructure or independent failure domains.
 
 Bundles also carry `require_udp_listener` and `required_host_functions` when
 needed. The console checks these against fresh executor reports; editing or
