@@ -27,6 +27,11 @@ Use `make ci-race` for concurrency changes. `make ci-local` exercises an install
 The race lane includes the local workflow authoring service and the guest
 experiment transport, alongside the dispatcher and executor lifecycle packages.
 
+The race lane allows ten minutes per package (`CI_RACE_TIMEOUT`). This is the
+whole package's deadline, including fixture setup; the dispatcher suite takes
+about five minutes on hosted runners. Individual test deadlines, package
+parallelism and the advisory runtime budget remain separate.
+
 CI checks generated code, formatting, tests, race-sensitive code, package installation, local roles, and kernel integration. A passing workflow validates the checked revision on its test platform; it does not establish production readiness or remote deployment compatibility.
 
 The workflow uses GitHub-hosted runners, read-only permissions, and no deployment secrets. See [CI images](ci-images.md) when changing the build environment.

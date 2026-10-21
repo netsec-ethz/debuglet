@@ -33,7 +33,7 @@ CI_RACE_PACKAGES = \
 	./internal/readiness \
 	./internal/studio \
 	./pkg/workflow/guest
-CI_RACE_TIMEOUT ?= 5m
+CI_RACE_TIMEOUT ?= 10m
 CI_RACE_BUDGET_SECONDS ?= 240
 CI_RACE_PACKAGE_PARALLEL ?= 2
 
