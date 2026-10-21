@@ -82,6 +82,17 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request body exceeds the dispatcher limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
         "500":
           "description": "Storage operation failed."
           "headers":
@@ -276,6 +287,17 @@ paths:
                 "$ref": "#/components/schemas/Error"
         "404":
           "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request body exceeds the dispatcher limit."
           "headers":
             "Debuglet-API-Version":
               "description": "Contract version this dispatcher implements."
@@ -481,6 +503,17 @@ paths:
                 "$ref": "#/components/schemas/Error"
         "404":
           "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request body exceeds the dispatcher limit."
           "headers":
             "Debuglet-API-Version":
               "description": "Contract version this dispatcher implements."
