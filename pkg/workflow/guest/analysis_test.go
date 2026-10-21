@@ -68,6 +68,16 @@ func TestHistogramEdgesAndTailAccounting(t *testing.T) {
 	if err != nil || out["count"] != float64(0) || out["rows"].([]any)[0].(map[string]any)["midpoint"] != float64(0) {
 		t.Fatalf("empty/extreme histogram = %v, %v", out, err)
 	}
+	for _, edges := range [][2]float64{{math.SmallestNonzeroFloat64, 2 * math.SmallestNonzeroFloat64}, {1e308, 1.4e308}} {
+		out, err := Pure("histogram", map[string]any{"values": []any{}, "edges": []any{edges[0], edges[1]}})
+		want := 2 * math.SmallestNonzeroFloat64
+		if edges[0] == 1e308 {
+			want = 1.2e308
+		}
+		if err != nil || out["rows"].([]any)[0].(map[string]any)["midpoint"] != want {
+			t.Fatalf("midpoint for %v: %v, %v; want %g", edges, out, err, want)
+		}
+	}
 }
 
 func TestSortRowsIsStableAndDoesNotChangeInput(t *testing.T) {

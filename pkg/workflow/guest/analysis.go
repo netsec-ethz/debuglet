@@ -31,7 +31,7 @@ func standardDeviation(in map[string]any) (map[string]any, error) {
 	}
 	// Center before scaling to preserve small differences in large-offset data.
 	// Scaling keeps squared deviations finite even near the float64 limits.
-	center := lo/2 + hi/2
+	center := midpoint(lo, hi)
 	scale := math.Max(math.Abs(lo-center), math.Abs(hi-center))
 	deviation := float64(0)
 	if scale != 0 {
@@ -84,10 +84,17 @@ func histogram(in map[string]any) (map[string]any, error) {
 	}
 	rows := make([]any, len(counts))
 	for i, count := range counts {
-		rows[i] = map[string]any{"lower": edges[i], "upper": edges[i+1], "midpoint": edges[i]/2 + edges[i+1]/2, "count": count}
+		rows[i] = map[string]any{"lower": edges[i], "upper": edges[i+1], "midpoint": midpoint(edges[i], edges[i+1]), "count": count}
 	}
 	out := map[string]any{"rows": rows, "underflow": underflow, "overflow": overflow, "count": float64(len(values))}
 	return out, checkValue(out, 0)
+}
+
+func midpoint(a, b float64) float64 {
+	if sum := a + b; !math.IsInf(sum, 0) {
+		return sum / 2
+	}
+	return a/2 + b/2
 }
 
 func sortRows(in map[string]any) (map[string]any, error) {
