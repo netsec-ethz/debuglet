@@ -201,6 +201,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.PUT("/user", h.CreateUser)
 	e.GET("/list-debuglets", h.ListUserDebuglets)
 	h.registerMeasurementRoutes(e)
+	h.registerCommunityRoutes(e)
+	h.registerCommunityFundingRoutes(e)
 }
 
 // bodyLimitMiddleware refuses a request body above maxRequestBodyBytes before

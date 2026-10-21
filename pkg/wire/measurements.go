@@ -93,6 +93,7 @@ const MaxRunDetailBytes = MaxResultBytes
 // RunDetail is independent of output size. Unknown actual times and exit codes
 // remain null; a reservation is never described as observed execution.
 type RunDetail struct {
+	CanManage  bool                    `json:"can_manage"`
 	Execution  *RunExecution           `json:"execution"`
 	RunID      string                  `json:"run_id"`
 	ExecutorID string                  `json:"executor_id"`
@@ -130,11 +131,12 @@ type MeasurementPage struct {
 }
 
 type Measurement struct {
-	ID     string           `json:"id"`
-	Runs   []MeasurementRun `json:"runs"`
-	Total  int64            `json:"total"`
-	Limit  int64            `json:"limit"`
-	Offset int64            `json:"offset"`
+	CanManage bool             `json:"can_manage"`
+	ID        string           `json:"id"`
+	Runs      []MeasurementRun `json:"runs"`
+	Total     int64            `json:"total"`
+	Limit     int64            `json:"limit"`
+	Offset    int64            `json:"offset"`
 }
 
 // MeasurementRun is a bounded reference. Load RunDetail for its configuration.

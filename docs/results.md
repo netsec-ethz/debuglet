@@ -20,7 +20,9 @@ result, err = client.ReadResult(file)
 ```
 
 `GET /debuglet/{id}/result` is available from HTTP API 1.8. Access follows the
-same ownership rules as logs. The standalone file identifies itself with
+same read rules as logs: the owner, an operator, or a current community member
+when the measurement was explicitly [shared](communities.md#share-measurements-deliberately).
+The standalone file identifies itself with
 `"format":"debuglet-result"` and `"version":"1.1"`; this file version is
 independent of the HTTP API version. The reader accepts versions 1.0, 1.1 and 1.2 and
 rejects other versions, malformed records and inconsistent run, node or attempt
@@ -76,8 +78,8 @@ claim it. Older readers reject 1.2 rather than discarding the relationship.
   `error_bound_ns`, `readiness` and `reason`; and `platform`, the host's `os`,
   `arch`, `kernel_release`, `cpus`, `memory_bytes` and `build_version`. `clock`
   and `platform` carry `source`, `observed_at` and `stale` like `scion_isd_as`.
-  Platform detail is operator-only elsewhere and appears here because a result
-  is readable only by its owner and operators. Earlier files omit these fields,
+  Platform detail is withheld from public discovery. Explicitly sharing a
+  measurement exposes this retained detail to community members too. Earlier files omit these fields,
   which reads as `null` (or an empty reason).
 - Also within schema 1, `addressing`: the [probe addresses](operations/executor-discovery.md#probe-addresses)
   of the listing at admission, `is_public`, the dispatcher-observed

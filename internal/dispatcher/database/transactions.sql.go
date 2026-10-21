@@ -34,12 +34,18 @@ func (q *Queries) AddEarnings(ctx context.Context, arg AddEarningsParams) error 
 const claimDebugletOrder = `-- name: ClaimDebugletOrder :execrows
 UPDATE debuglet_order
 SET debuglet_id = ?1
-WHERE transaction_id = ?2 AND order_id = ?3
-  AND debuglet_id IS NULL AND state = ?4
+WHERE debuglet_order.transaction_id = ?2 AND debuglet_order.order_id = ?3
+  AND debuglet_order.debuglet_id IS NULL AND debuglet_order.state = ?4
   AND EXISTS (
     SELECT 1 FROM transactions
     WHERE transactions.id = debuglet_order.transaction_id
       AND transactions.status = ?5
+  )
+  AND NOT EXISTS(SELECT 1 FROM community_topups d WHERE d.transaction_id=debuglet_order.transaction_id)
+  AND NOT EXISTS(
+    SELECT 1 FROM community_funding f WHERE f.transaction_id=debuglet_order.transaction_id
+      AND NOT EXISTS(SELECT 1 FROM community_members m
+        WHERE m.community_id=f.community_id AND m.user_id=f.actor_user_id)
   )
 `
 

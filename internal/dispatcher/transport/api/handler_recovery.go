@@ -17,7 +17,7 @@ func (h *Handler) GetDebugletRecovery(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.authorizeDebuglet(c, id); err != nil {
+	if _, err := h.authorizeDebugletRead(c, id); err != nil {
 		return err
 	}
 	document, err := h.dispatcher.Recovery(c.Request().Context(), id)

@@ -283,6 +283,7 @@ func TestAdmissionRejectsAWindowThatDoesNotFit(t *testing.T) {
 			f.mock.ExpectQuery(modeGetTransactionOrdersQuery).
 				WithArgs(modeChainTxID).
 				WillReturnRows(modeOrderRows(modeChainTxID, "TEST", models.Outstanding))
+			modeExpectPersonalFunding(f.mock)
 			f.mock.ExpectRollback()
 
 			rec := f.do(http.MethodPut, "/debuglet", modeSubmitBody(modeChainTxID, "", debuglets))

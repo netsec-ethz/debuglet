@@ -149,9 +149,10 @@ type BalanceResponse struct {
 }
 
 type IntentResponse struct {
-	Retry  *wire.RetryReceipt `json:"retry,omitempty"`
-	Method string             `json:"method"`
-	Intent any                `json:"intent"`
+	Currency string             `json:"currency,omitempty"`
+	Retry    *wire.RetryReceipt `json:"retry,omitempty"`
+	Method   string             `json:"method"`
+	Intent   any                `json:"intent"`
 	// Quote states the prices the intent stored. It is absent when a retry
 	// recovers an intent created earlier.
 	Quote *wire.Quote `json:"quote,omitempty"`
@@ -173,10 +174,13 @@ type DummyIntent struct {
 }
 
 type PaymentIntentRequest struct {
-	Retry         *wire.RetryLink   `json:"retry,omitempty"`
-	Debuglets     []DebugletRequest `json:"debuglets"`
-	PaymentMethod string            `json:"payment_method"`
-	RefundAddress string            `json:"refund_address"`
+	CommunityProjectID          string            `json:"community_project_id,omitempty"`
+	CommunityExperimentID       string            `json:"community_experiment_id,omitempty"`
+	CommunityExperimentRevision *int64            `json:"community_experiment_revision,omitempty"`
+	Retry                       *wire.RetryLink   `json:"retry,omitempty"`
+	Debuglets                   []DebugletRequest `json:"debuglets"`
+	PaymentMethod               string            `json:"payment_method"`
+	RefundAddress               string            `json:"refund_address"`
 }
 
 type UserResponse = wire.User

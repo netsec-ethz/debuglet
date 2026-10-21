@@ -55,7 +55,7 @@ func (p *PaymentHandler) ApplyPaymentReceipt(ctx context.Context, r sui.PaymentR
 		return "", fmt.Errorf("read payment receipt: %w", err)
 	}
 
-	disposition, detail, err := p.settleReceipt(ctx, queries, r)
+	disposition, detail, err := p.settleReceipt(ctx, tx, r)
 	if err != nil || disposition == "" {
 		return "", err
 	}
@@ -86,7 +86,8 @@ func (p *PaymentHandler) ApplyPaymentReceipt(ctx context.Context, r sui.PaymentR
 // settleReceipt decides a receipt that has not been recorded and, when it pays
 // its transaction, marks the transaction paid through queries. detail names
 // the field that did not match.
-func (p *PaymentHandler) settleReceipt(ctx context.Context, queries *database.Queries, r sui.PaymentReceipt) (sui.ReceiptDisposition, string, error) {
+func (p *PaymentHandler) settleReceipt(ctx context.Context, db database.DBTX, r sui.PaymentReceipt) (sui.ReceiptDisposition, string, error) {
+	queries := database.New(db)
 	toUs := sameSuiAddress(r.Receiver, p.cfg.Sui.Address)
 	transaction, err := queries.GetTransactionByID(ctx, r.Nonce)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -97,6 +98,17 @@ func (p *PaymentHandler) settleReceipt(ctx context.Context, queries *database.Qu
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("read transaction: %w", err)
+	}
+	// A deposit's chain identity is fixed when the owner signs its intent.
+	// Reconfiguring the dispatcher cannot turn another network's funds into
+	// spendable credit in this wallet.
+	var network, coinType string
+	depositErr := db.QueryRowContext(ctx, `SELECT network,coin_type FROM community_topups WHERE transaction_id=?`, transaction.ID).Scan(&network, &coinType)
+	if depositErr != nil && !errors.Is(depositErr, sql.ErrNoRows) {
+		return "", "", depositErr
+	}
+	if depositErr == nil && (network != p.cfg.Sui.Network || !sameCoinType(coinType, r.CoinType)) {
+		return sui.ReceiptMismatch, "community deposit network or coin type", nil
 	}
 	switch {
 	case !isChainCurrency(transaction.Method):

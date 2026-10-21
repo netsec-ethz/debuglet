@@ -24,7 +24,7 @@ establish compatibility for later changes.
 | --- | --- | --- |
 | Platform | Linux amd64 on the `ubuntu-24.04` CI runner and the pinned CI tools image | [CI definition](../.github/workflows/ci.yml), [CI images](development/ci-images.md). Other host/architecture combinations have no native package support. |
 | Packages | Same-candidate full bundle and separate CLI, dispatcher and executor packages | Package lane installs twice, verifies each role inventory and runs `--help`; full-bundle runtime checks run in the demo/local lanes. Split packages exist in source/CI; published v0.2.0 contains only the full bundle. |
-| CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.22 | Test, demo and local lanes. Use `dbl version --server` to inspect the selected server's contract; a displayed binary version does not negotiate API features. |
+| CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.23 | Test, demo and local lanes. Use `dbl version --server` to inspect the selected server's contract; a displayed binary version does not negotiate API features. |
 | Dispatcher and executor | Same-package peers; control protocol 3 with binding and lease enforcement. Published v0.2.0 executor against the candidate dispatcher in the loopback TEST fixture | Local and compatibility lanes. The released-peer fixture checks registration, work and reconnect; it does not establish mixed-release TLS/enrollment or new optional features. |
 | Guests | `debuglet-go-wasi-imports-v1`, frozen compatibility guest and packaged Go samples | [Guest compatibility gate](debuglets.md#compatibility), compatibility lane. C/Rust guest packages remain experimental. |
 | State | State created by the same package; recognized historical SQLite schemas upgraded explicitly | [State reference](operations/configuration.md#stored-state), storagecheck tests. This is not a cross-package foreground-state migration promise. |
@@ -110,6 +110,15 @@ API 1.17 adds RIPE Atlas-style `status`, `status_since`, `first_connected`, `las
 Dispatcher schema 24 stores the executor status history in `probe_status` and `probe_addresses`, filling `probe_status` from the recorded TESLA chains. The executor listing reads it, so this build requires schema 24; upgrade explicitly (`make deploy-upgrade-db`, or `-upgrade-database`) before starting it.
 
 API 1.19 adds recorded destination policies: `PATCH /destination` accepts `denied`, `reason` and `expires_at`, and `GET /destinations` lists the current policy of each destination. Dispatcher schema 26 stores their append-only history; upgrade explicitly before starting this build. The control protocol gains the optional `DestinationLimit.denied` field without a version change; an executor that does not know it still applies the zero limit sent with it, and an executor that knows it closes the active sockets to the destination.
+
+API 1.23 adds [communities](communities.md), shared projects and experiment
+revisions, explicit measurement sharing and a community-funded submission option.
+Current membership grants read access to shared measurement details and output;
+mutation ownership and private payment access are unchanged. `can_manage` on
+measurement and run details lets clients hide owner-only actions. Older servers
+omit it. Dispatcher schemas 32 and 33 store collaboration and shared funding;
+upgrade explicitly before starting this build. Executor schema and the control
+protocol are unchanged by this feature.
 
 API 1.20 adds `admission` and `drain_status` to account-owned executor inventory.
 Admission reports the current control readiness and dispatcher maintenance.

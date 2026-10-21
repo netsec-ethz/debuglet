@@ -23,7 +23,7 @@ func (h *Handler) GetDebugletResult(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.authorizeDebuglet(c, id); err != nil {
+	if _, err := h.authorizeDebugletRead(c, id); err != nil {
 		return err
 	}
 	ctx := c.Request().Context()

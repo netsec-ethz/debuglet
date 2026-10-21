@@ -34,7 +34,7 @@ A `TEST` intent has no payment backend: its transaction row is the intent, writt
 
 Every intent records the name of the rule that priced it in the `pricing_rule` column of its transaction; the rule above is `bw-s-ceil-ms-v1`, and a transaction written before the column existed carries an empty name and was priced by the rule of the release that wrote it. A `USDC` intent is a local record of the price, the auth key and the addresses the payer uses, created without any chain call, so an intent that fails leaves nothing external to reconcile.
 
-Creating a `USDC` intent requires `refund_address` to be a Sui address: `0x` followed by one to 64 hexadecimal digits; short addresses such as `0x1` are accepted. An omitted, empty or malformed address returns HTTP 400 `invalid_request`, with `field_errors` naming `refund_address` and code `invalid_address`, before the intent or any order is written. While blockchain payments are disabled, the method still returns HTTP 503 `payments_disabled` first. `TEST` does not validate this field and accepts an omitted, empty or arbitrary value. `POST /payment/quote` does not evaluate `refund_address`.
+Creating a personal `USDC` intent requires `refund_address` to be a Sui address: `0x` followed by one to 64 hexadecimal digits; short addresses such as `0x1` are accepted. An omitted, empty or malformed address returns HTTP 400 `invalid_request`, with `field_errors` naming `refund_address` and code `invalid_address`, before the intent or any order is written. While blockchain payments are disabled, the method still returns HTTP 503 `payments_disabled` first. `TEST` does not validate this field and accepts an omitted, empty or arbitrary value. `POST /payment/quote` does not evaluate `refund_address`. A community-funded intent ignores it: refunds return to that community's prepaid budget.
 
 ## Quotes and economics (API 1.15)
 
@@ -170,6 +170,90 @@ arguments, executor choice and policy; applying it creates an editable request
 with a new schedule and payment intent. Template references name an immutable
 version and matching program digest. Existing runs are independent of later
 profile edits or deletion. See OpenAPI for field and account limits.
+
+## Communities (API 1.23)
+
+Communities group individually authenticated accounts. They own projects,
+versioned workflow or experiment source, and references to shared measurements.
+They do not create a shared login or give members dispatcher operator authority.
+See the [community guide](communities.md) for the console flow, funding model and
+disclosure before sharing.
+
+| Routes | Purpose |
+| --- | --- |
+| `GET/POST /communities`, `GET/PATCH /communities/{id}` | List, create, read or rename a community |
+| `GET /communities/{id}/members` | List current members |
+| `POST /communities/{id}/invitations`, `POST /community-invitations/accept` | Create and accept a one-use, seven-day invitation |
+| `DELETE /communities/{id}/members/{user_id}` | Owner removes a member; the creator cannot be removed |
+| `GET/POST /communities/{id}/projects`, `GET/PATCH /community-projects/{id}` | Read, create or rename shared projects |
+| `GET/POST /community-projects/{id}/experiments` | List experiment metadata or save source and an optional matching bundle |
+| `GET/PUT/DELETE /community-experiments/{id}` | Read source, save an immutable next revision, or delete an unused experiment |
+| `GET/POST /community-projects/{id}/measurements` | List references or explicitly share an owned measurement |
+| `DELETE /community-projects/{id}/measurements/{measurement_id}` | Sharer or community owner removes the reference |
+| `GET /communities/{id}/wallet`, `POST /communities/{id}/wallet/top-ups` | Read the shared budget or create an owner-signed USDC deposit intent |
+
+All routes require an authenticated account, even in the local development
+profile. Membership is checked on each request; hidden resources return 404.
+Community creation and renaming, membership management and top-ups require a
+browser session. Scoped API credentials can read community work with
+`measurements:read`, read the wallet with `account:read`, and change projects,
+experiments and measurement references with `measurements:write`. Cookie
+mutations require the normal CSRF proof.
+
+Lists are JSON arrays bounded by the resource quotas in the community guide.
+Community IDs are UUIDs; measurement IDs retain their existing transaction ID
+format. Community timestamps are UTC RFC3339 strings. Names use 1–120 trimmed
+UTF-8 bytes and descriptions at most 2000 bytes.
+
+Experiment creation takes `{name, kind, document, bundle?, description?, collection?}`, where `kind` is
+`workflow` or `experiment` and the document uses the existing authoring format.
+Responses include the saved `revision`. Updates additionally supply the current
+revision; a stale value returns 409 without changing the record.
+`GET /community-experiments/{id}?revision=N` reads an immutable historical
+revision. Lists omit the document and bundle. Omitting the bundle on an update
+removes it from the new revision. The entire save request is limited to 24 MiB;
+workflow source remains limited to 1 MiB and experiment source to 4 MiB.
+Experiment descriptions use at most 4000 UTF-8 bytes and trimmed collection
+labels at most 120 bytes.
+`DELETE /community-experiments/{id}` requires current membership and either the
+experiment's creator or the community owner. It returns 204 after deleting the
+experiment and all its revisions, freeing their storage usage. A measurement
+reference to any revision prevents deletion with 409; another member receives
+403 and a non-member receives 404. Measurement records and output are unchanged.
+
+Sharing takes `{measurement_id, experiment_id?, experiment_revision?}`. The
+optional experiment fields must name a revision in that project. It grants
+current members read access through `GET /measurements/{id}` and
+`GET /debuglet/{id}/detail`, `/state`, `/logs`, `/result`, `/recovery` and
+`/cancellation`. Reads include the original configuration, retained output,
+provenance and per-run costs, including private executor addressing and host
+platform observations when recorded. They do not expose payment authorization
+keys, refund wallets or private payment history. Sharing never grants run
+mutation authority: `can_manage` on measurement and run details is false for a
+community reader. Existing limits, output finality and payload tombstones apply.
+
+For a new community-funded run, send `community_project_id` in the normal
+payment quote and intent request. The quote checks membership and prices the
+request without reserving funds. Creating an intent atomically reserves the
+community's budget and returns `method: "COMMUNITY"`, its `currency`, a
+submission `intent` and the confirmed `quote`. An already-recorded retry may
+omit the quote, as in the personal retry flow. Submit with the returned
+authorization using the normal debuglet API; no additional external-wallet
+payment is required for that run. The submitting member remains the run owner.
+Insufficient funds returns 409, without creating the intent. Personal payment
+requests that omit the project retain their existing behavior.
+Optional `community_experiment_id` and `community_experiment_revision` associate
+the new measurement with a saved revision in that project.
+
+USDC top-ups take `{amount, refund_address}`, where `amount` is an exact positive
+decimal string of micro-USDC, at most 9007199254740991. Only the community owner creates and signs the
+returned Sui payment intent. A deposit intent cannot authorize a measurement;
+only a confirmed receipt adds the deposit once. Deposits are funds held by the
+dispatcher, not permission to debit the owner's external wallet. In TEST mode,
+the community uses the creator's existing allowance; there is no top-up or
+automatic grant, and disabled allowances disable community spending.
+The supported chain profile is Sui Testnet; there is no endpoint to withdraw
+unused community deposits.
 
 ## Measurement history
 

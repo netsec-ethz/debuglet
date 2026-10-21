@@ -259,12 +259,21 @@ func modeOrderRows(transactionID, currency string, state models.TransactionState
 	)
 }
 
-// modeExpectNoAdmittedRuns answers the submission's lookup of the runs
-// already admitted for the transaction: there are none.
+// modeExpectNoAdmittedRuns answers the personal submission's funding check
+// and lookup of previously admitted runs: there are none.
 func modeExpectNoAdmittedRuns(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM community_topups WHERE transaction_id=?)")).
+		WithArgs(modeChainTxID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM community_funding f WHERE f.transaction_id=?")).
+		WithArgs("00000000-0000-0000-0000-000000000000", modeChainTxID).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(modeGetAdmittedRunsQuery).
 		WithArgs(modeChainTxID).
 		WillReturnRows(sqlmock.NewRows([]string{"order_id", "uuid"}))
+}
+
+func modeExpectPersonalFunding(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM community_funding WHERE transaction_id=?)")).
+		WithArgs(modeChainTxID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 }
 
 func modeAssertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {

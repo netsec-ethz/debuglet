@@ -5,6 +5,9 @@ Choose **Workflow builder** to write one executor's program. Choose
 workflow. The same graph can be edited visually, authored by an MCP client or
 compiled from the command line with `dbl-studio`.
 
+Use [communities](../communities.md) to save editable source and compiled bundles
+in a shared project, retain revisions and collect the resulting measurements.
+
 Conditions, calculations and repeats execute inside the compiled WASI program.
 The dispatcher coordinates experiment readiness and stores results; it does not
 compile source or orchestrate individual blocks. See the
