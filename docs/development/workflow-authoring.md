@@ -15,9 +15,10 @@ compile source or orchestrate individual blocks. See the
 visual groups and custom Go blocks.
 
 `dbl-studio` is currently built from source; it is not part of the release or apt
-packages. A hosted console can edit and export graphs and import compiled bundles.
-Compilation needs Go and a trusted checkout of the matching SDK on the authoring
-machine. The local service can combine editing and compilation in one browser tab.
+packages. When an operator enables the [hosted compiler](../operations/hosted-studio.md),
+the console can build workflows and experiments directly. Otherwise, use the
+local service with Go and a trusted checkout of the matching SDK to compile a
+bundle, then import it into the console.
 
 ## Start the editor
 
@@ -87,7 +88,20 @@ Compilation uses a disposable module, the explicitly configured SDK checkout,
 Go 1.26.10 and an offline build with a two-minute deadline. No graph can choose
 build flags, fetch a dependency or run a generation command. One build runs at a
 time. Workflows are limited to 1 MiB and bundles to 24 MiB. Install the toolchain
-and prepare the trusted SDK before starting an offline authoring session.
+and cache the trusted SDK's dependencies before starting an offline authoring
+session. Generated builds use the SDK's pinned versions and checksums, including
+the DNS codec. Hosted compiler bundles carry their required offline modules.
+
+The starter menu includes DNS sampling, UDP and TCP exchanges, verified TLS
+inspection, consecutive hop probes and timers. Replace documentation addresses
+with permitted targets before running. Experiment starters include repeated
+phases and a UDP server/client/collector flow. Both editors expose the same
+primitive blocks, so an MCP-authored graph remains editable visually.
+
+Bundles also carry `require_udp_listener` and `required_host_functions` when
+needed. The console checks these against fresh executor reports; editing or
+importing a graph does not upgrade the executor. An incompatible node remains
+visible in its operator's inventory with update guidance.
 
 For a multi-executor experiment, use the experiment editor or these commands:
 

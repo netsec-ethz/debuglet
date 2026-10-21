@@ -40,6 +40,7 @@ func communityTestBundle(t *testing.T, wf workflow.Workflow, program workflow.Pr
 		Source: program.Source, WorkflowSHA256: program.WorkflowSHA256,
 		Wasm: wasm, WasmSHA256: communityDocumentDigest(wasm),
 		Destinations: program.Destinations, RequireICMP: program.RequireICMP,
+		RequireUDPListener: program.RequireUDPListener, RequiredHostFunctions: program.RequiredHostFunctions,
 	}
 }
 
@@ -99,13 +100,15 @@ func TestCommunityWorkflowBundleRejectsMismatchedFields(t *testing.T) {
 		"embedded graph": func(b *studio.Bundle) {
 			b.Workflow.Name = "Another workflow"
 		},
-		"raw graph":    func(b *studio.Bundle) { b.WorkflowJSON += "\n" },
-		"destination":  func(b *studio.Bundle) { b.Destinations = []string{"other.test"} },
-		"icmp":         func(b *studio.Bundle) { b.RequireICMP = true },
-		"wasm hash":    func(b *studio.Bundle) { b.WasmSHA256 = strings.Repeat("0", 64) },
-		"wasm magic":   func(b *studio.Bundle) { b.Wasm[0] = 1; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },
-		"wasm version": func(b *studio.Bundle) { b.Wasm[4] = 2; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },
-		"short wasm":   func(b *studio.Bundle) { b.Wasm = b.Wasm[:4]; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },
+		"raw graph":      func(b *studio.Bundle) { b.WorkflowJSON += "\n" },
+		"destination":    func(b *studio.Bundle) { b.Destinations = []string{"other.test"} },
+		"icmp":           func(b *studio.Bundle) { b.RequireICMP = true },
+		"UDP listener":   func(b *studio.Bundle) { b.RequireUDPListener = true },
+		"host functions": func(b *studio.Bundle) { b.RequiredHostFunctions = []string{"debuglet_io_v1.hop_probe"} },
+		"wasm hash":      func(b *studio.Bundle) { b.WasmSHA256 = strings.Repeat("0", 64) },
+		"wasm magic":     func(b *studio.Bundle) { b.Wasm[0] = 1; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },
+		"wasm version":   func(b *studio.Bundle) { b.Wasm[4] = 2; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },
+		"short wasm":     func(b *studio.Bundle) { b.Wasm = b.Wasm[:4]; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			wf := communityTestWorkflow()

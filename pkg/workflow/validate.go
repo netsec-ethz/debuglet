@@ -231,6 +231,7 @@ func Validate(w Workflow) []Diagnostic {
 				add(n.ID, field, "must be between 0 and 60000 ms")
 			}
 		}
+		validateMeasurementInputs(n, add)
 	}
 	if hasCycle(dataAdj) {
 		add("", "", "data connections contain a cycle")

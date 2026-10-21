@@ -14,6 +14,7 @@ import (
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
+	"github.com/netsec-ethz/debuglet/internal/guestio"
 	"github.com/scionproto/scion/pkg/addr"
 	sdpb "github.com/scionproto/scion/pkg/proto/daemon"
 	"google.golang.org/grpc"
@@ -97,6 +98,10 @@ func TestCapabilityReportsUseLocalRuntimeObservations(t *testing.T) {
 	scion := newFixtureExecutor(t, scionConfig, nil, newFixtureMemoryStorage(t))
 	p, _ := plain.OnHello(t.Context(), nil)
 	s, _ := scion.OnHello(t.Context(), nil)
+	if !slices.Equal(p.GetCapabilities().GetSupportedHostFunctions(), guestio.SupportedHostFunctions()) ||
+		!slices.Equal(s.GetCapabilities().GetSupportedHostFunctions(), guestio.SupportedHostFunctions()) {
+		t.Fatal("runtime exports must be reported independently of transport permissions")
+	}
 	if p.GetCapabilities().GetEnforcementMode() != "fallback" || s.GetCapabilities().GetEnforcementMode() != "fallback" {
 		t.Fatal("actual fallback counter missing")
 	}

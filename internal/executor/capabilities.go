@@ -19,6 +19,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/ratelimit"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/internal/guestio"
 	"github.com/netsec-ethz/debuglet/internal/hostprobe"
 	"github.com/netsec-ethz/debuglet/internal/observability"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -61,7 +62,8 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	e.capabilityMu.Unlock()
 
 	report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: attribution, Icmp: icmp,
-		Tagging: &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
+		SupportedHostFunctions: guestio.SupportedHostFunctions(),
+		Tagging:                &pb.TaggingMode{Ipv4: tagging.IPv4, Ipv6: tagging.IPv6, Scion: tagging.SCION, TagSpec: tesla.TagSpec}}
 	vantage := &pb.VantagePointReport{SchemaVersion: 1, LocationOptOut: e.cfg.Metadata.LocationOptOut, AddressOptOut: e.cfg.Metadata.AddressOptOut, HostTags: e.cfg.Metadata.HostTags, Clock: e.clockReport(), Platform: platformReport(hostprobe.ReadPlatform())}
 	stateDir := ""
 	if e.cfg.Database.Path != "" {

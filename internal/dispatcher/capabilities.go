@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ import (
 )
 
 const capabilityLifetime = 90 * time.Second
+
+var hostFunctionName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Unknown or malformed reports clear the observation. The schema has five
 // protocol names; accepting arbitrary strings would make filters misleading.
@@ -39,7 +42,8 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 		protocols = append(protocols, protocol)
 	}
 	out := &wire.ExecutorCapabilities{SchemaVersion: 1, ObservedAt: observed.Unix(),
-		Protocols: protocols, EnforcementMode: report.GetEnforcementMode()}
+		Protocols: protocols, EnforcementMode: report.GetEnforcementMode(),
+		SupportedHostFunctions: hostFunctionsFromReport(report.GetSupportedHostFunctions())}
 	if report.Attribution != nil {
 		out.Attribution = attributionFromReport(report.Attribution, observed)
 	}
@@ -56,6 +60,22 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 				out.Attribution = &wire.AttributionState{}
 			}
 			out.Attribution.State, out.Attribution.Reason = "unavailable", "untagged"
+		}
+	}
+	return out
+}
+
+// Keep well-formed future exports. Malformed declarations leave only this
+// optional observation unknown, without discarding protocol readiness.
+func hostFunctionsFromReport(functions []string) []string {
+	if len(functions) > 64 {
+		return nil
+	}
+	out := slices.Clone(functions)
+	slices.Sort(out)
+	for i, name := range out {
+		if len(name) > 128 || !hostFunctionName.MatchString(name) || i > 0 && name == out[i-1] {
+			return nil
 		}
 	}
 	return out
@@ -241,6 +261,7 @@ func capabilitySnapshot(entry *executorEntry, now time.Time) *wire.ExecutorCapab
 	}
 	out := *entry.Capabilities
 	out.Protocols = slices.Clone(out.Protocols)
+	out.SupportedHostFunctions = slices.Clone(out.SupportedHostFunctions)
 	if out.Attribution != nil {
 		attribution := *out.Attribution
 		out.Attribution = &attribution

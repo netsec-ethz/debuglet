@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/netsec-ethz/debuglet/pkg/workflow"
@@ -56,6 +57,13 @@ func experimentTools(server *mcp.Server, builder *Builder, files *store) {
 			return nil, metadata{}, err
 		}
 		meta := metadata{Kind: "experiment_bundle", ArtifactID: id, BundlePath: filepath.Join(files.directory, filename), ExperimentSHA256: bundle.ExperimentSHA256, BundleSHA256: hash}
+		for _, participant := range bundle.Participants {
+			meta.RequireUDPListener = meta.RequireUDPListener || participant.Bundle.RequireUDPListener
+			meta.RequireICMP = meta.RequireICMP || participant.Bundle.RequireICMP
+			meta.RequiredHostFunctions = append(meta.RequiredHostFunctions, participant.Bundle.RequiredHostFunctions...)
+		}
+		slices.Sort(meta.RequiredHostFunctions)
+		meta.RequiredHostFunctions = slices.Compact(meta.RequiredHostFunctions)
 		files.artifacts[id] = meta
 		return nil, meta, nil
 	})

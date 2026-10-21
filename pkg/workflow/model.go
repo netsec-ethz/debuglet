@@ -76,8 +76,10 @@ type Diagnostic struct {
 	Message string `json:"message"`
 }
 type Program struct {
-	Source         string   `json:"source"`
-	WorkflowSHA256 string   `json:"workflow_sha256"`
-	Destinations   []string `json:"destinations"`
-	RequireICMP    bool     `json:"require_icmp"`
+	Source                string   `json:"source"`
+	WorkflowSHA256        string   `json:"workflow_sha256"`
+	Destinations          []string `json:"destinations"`
+	RequireICMP           bool     `json:"require_icmp"`
+	RequireUDPListener    bool     `json:"require_udp_listener,omitempty"`
+	RequiredHostFunctions []string `json:"required_host_functions,omitempty"`
 }

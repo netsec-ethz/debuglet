@@ -349,6 +349,12 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 			if _, err := authenticated.Whoami(ctx); err != nil {
 				t.Fatalf("Whoami: %v", err)
 			}
+			oaRawWith(t, &http.Client{Transport: recorder, Timeout: ccRequestBound}, http.MethodPost,
+				deployment.url+"/me/presence", nil, map[string]string{"Authorization": "Bearer " + session.Token})
+			presenceExchanges := recorder.recorded()
+			if got := presenceExchanges[len(presenceExchanges)-1].status; got != http.StatusOK {
+				t.Fatalf("Presence status: got %d, want %d", got, http.StatusOK)
+			}
 			if _, err := authenticated.MeasurementTemplates(ctx); err != nil {
 				t.Fatalf("MeasurementTemplates: %v", err)
 			}

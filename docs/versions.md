@@ -24,7 +24,7 @@ establish compatibility for later changes.
 | --- | --- | --- |
 | Platform | Linux amd64 on the `ubuntu-24.04` CI runner and the pinned CI tools image | [CI definition](../.github/workflows/ci.yml), [CI images](development/ci-images.md). Other host/architecture combinations have no native package support. |
 | Packages | Same-candidate full bundle and separate CLI, dispatcher and executor packages | Package lane installs twice, verifies each role inventory and runs `--help`; full-bundle runtime checks run in the demo/local lanes. Split packages exist in source/CI; published v0.2.0 contains only the full bundle. |
-| CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.25 | Test, demo and local lanes. Use `dbl version --server` to inspect the selected server's contract; a displayed binary version does not negotiate API features. |
+| CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.26 | Test, demo and local lanes. Use `dbl version --server` to inspect the selected server's contract; a displayed binary version does not negotiate API features. |
 | Dispatcher and executor | Same-package peers; control protocol 3 with binding and lease enforcement. Published v0.2.0 executor against the candidate dispatcher in the loopback TEST fixture | Local and compatibility lanes. The released-peer fixture checks registration, work and reconnect; it does not establish mixed-release TLS/enrollment or new optional features. |
 | Guests | `debuglet-go-wasi-imports-v1`, frozen compatibility guest and packaged Go samples | [Guest compatibility gate](debuglets.md#compatibility), compatibility lane. C/Rust guest packages remain experimental. |
 | State | State created by the same package; recognized historical SQLite schemas upgraded explicitly | [State reference](operations/configuration.md#stored-state), storagecheck tests. This is not a cross-package foreground-state migration promise. |
@@ -141,3 +141,18 @@ work, used-key disclosures and result delivery finish; new admission pauses
 until then. Renewal requires the dispatcher's durable disclosure receipts and
 fails closed if an older dispatcher does not provide them. No database schema
 or control-protocol field changes are required.
+
+API 1.26 adds optional `supported_host_functions` to executor capabilities.
+The list identifies optional runtime exports such as
+`debuglet_io_v1.hop_probe`; missing or expired reports do not establish support.
+Builders compare their compiled bundle's requirements with a fresh report
+before selecting an executor. The binary version remains separately visible;
+version strings alone do not establish runtime compatibility. Transport policy,
+listener readiness and destination admission still apply even when an export
+is present. Older guests keep their existing imports and behavior. This is an
+additive control-protocol field within capability schema 1; no database change
+is required.
+
+API 1.26 also adds authenticated `POST /me/presence`, reporting the number of
+unique signed-in accounts active during the last 120 seconds. The observation
+resets when the dispatcher restarts and does not disclose account identities.

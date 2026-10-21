@@ -22,10 +22,13 @@ type Runtime struct {
 	writer               io.Writer
 	values               map[string]map[string]any
 	steps, events, bytes int
+	timers               map[string]time.Time
+	collections          map[string]*collection
+	collectionBytes      int
 }
 
 func New(digest string) *Runtime {
-	return &Runtime{digest: digest, writer: os.Stdout, values: map[string]map[string]any{}}
+	return &Runtime{digest: digest, writer: os.Stdout, values: map[string]map[string]any{}, timers: map[string]time.Time{}, collections: map[string]*collection{}}
 }
 func (r *Runtime) Step() error {
 	r.steps++
@@ -220,6 +223,10 @@ func Normalize(values map[string]any) (map[string]any, error) {
 func Pure(block string, in map[string]any) (map[string]any, error) {
 	var value any
 	switch block {
+	case "select_field":
+		return selectField(in)
+	case "filter_rows":
+		return filterRows(in)
 	case "constant":
 		value = in["value"]
 	case "field":

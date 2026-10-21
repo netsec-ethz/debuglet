@@ -3001,8 +3001,11 @@ type ExecutorCapabilities struct {
 	// unsupported or attach_failed. Empty when enforcement_mode is ebpf.
 	EnforcementReason string      `protobuf:"bytes,6,opt,name=enforcement_reason,json=enforcementReason,proto3" json:"enforcement_reason,omitempty"`
 	Icmp              *ProbeState `protobuf:"bytes,7,opt,name=icmp,proto3" json:"icmp,omitempty"` // Raw ICMPv4 socket probe of this process.
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Optional exports, as module.function; absent on older executors.
+	// This describes the runtime interface, not permission to use a transport.
+	SupportedHostFunctions []string `protobuf:"bytes,8,rep,name=supported_host_functions,json=supportedHostFunctions,proto3" json:"supported_host_functions,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ExecutorCapabilities) Reset() {
@@ -3080,6 +3083,13 @@ func (x *ExecutorCapabilities) GetEnforcementReason() string {
 func (x *ExecutorCapabilities) GetIcmp() *ProbeState {
 	if x != nil {
 		return x.Icmp
+	}
+	return nil
+}
+
+func (x *ExecutorCapabilities) GetSupportedHostFunctions() []string {
+	if x != nil {
+		return x.SupportedHostFunctions
 	}
 	return nil
 }
@@ -4585,7 +4595,7 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\x17ExperimentReadyResponse\x12#\n" +
 	"\rexperiment_id\x18\x01 \x01(\tR\fexperimentId\x12\"\n" +
 	"\rstart_time_ns\x18\x02 \x01(\x03R\vstartTimeNs\x12L\n" +
-	"\fparticipants\x18\x03 \x03(\v2(.debuglet.protocol.ExperimentParticipantR\fparticipants\"\xe9\x02\n" +
+	"\fparticipants\x18\x03 \x03(\v2(.debuglet.protocol.ExperimentParticipantR\fparticipants\"\xa3\x03\n" +
 	"\x14ExecutorCapabilities\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x1c\n" +
 	"\tprotocols\x18\x02 \x03(\tR\tprotocols\x12)\n" +
@@ -4593,7 +4603,8 @@ const file_protocol_protocol_proto_rawDesc = "" +
 	"\vattribution\x18\x04 \x01(\v2#.debuglet.protocol.AttributionStateR\vattribution\x128\n" +
 	"\atagging\x18\x05 \x01(\v2\x1e.debuglet.protocol.TaggingModeR\atagging\x12-\n" +
 	"\x12enforcement_reason\x18\x06 \x01(\tR\x11enforcementReason\x121\n" +
-	"\x04icmp\x18\a \x01(\v2\x1d.debuglet.protocol.ProbeStateR\x04icmp\":\n" +
+	"\x04icmp\x18\a \x01(\v2\x1d.debuglet.protocol.ProbeStateR\x04icmp\x128\n" +
+	"\x18supported_host_functions\x18\b \x03(\tR\x16supportedHostFunctions\":\n" +
 	"\n" +
 	"ProbeState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +

@@ -5,6 +5,8 @@ package dispatcher
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,7 +78,8 @@ func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 	d.now = func() time.Time { return now }
 	owner := registryOwner(t, "capability")
 	hello := registryHello("capability")
-	hello.Capabilities = &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp", "icmp"}, EnforcementMode: "fallback"}
+	hello.Capabilities = &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp", "icmp"}, EnforcementMode: "fallback",
+		SupportedHostFunctions: []string{"debuglet_io_v1.tls_inspect"}}
 	if err := registryRegisterWithSetup(t.Context(), d, owner, hello, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +98,13 @@ func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 	}
 	hello.Capabilities.Protocols[0] = "changed"
 	snapshot.Capabilities.Protocols[0] = "changed-output"
+	hello.Capabilities.SupportedHostFunctions[0] = "changed.input"
+	snapshot.Capabilities.SupportedHostFunctions[0] = "changed.output"
 	if get().Capabilities.Protocols[0] != "tcp" {
 		t.Fatal("capability snapshot aliases a caller")
+	}
+	if !slices.Equal(get().Capabilities.SupportedHostFunctions, []string{"debuglet_io_v1.tls_inspect"}) {
+		t.Fatal("host-function snapshot aliases a caller")
 	}
 	d.mu.Lock()
 	d.executors["capability"].capacity = 123
@@ -137,8 +145,8 @@ func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 		}
 	}
 	heartbeat(&pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"udp"}})
-	if get().Capabilities == nil {
-		t.Fatal("new observation did not restore discovery")
+	if get().Capabilities == nil || len(get().Capabilities.SupportedHostFunctions) != 0 {
+		t.Fatal("new observation did not restore discovery or inherited old host-function support")
 	}
 	heartbeat(&pb.ExecutorCapabilities{SchemaVersion: 99})
 	if get().Capabilities != nil {
@@ -157,6 +165,32 @@ func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 	replacement.Retire()
 	if _, ok := d.GetExecutor("capability"); ok {
 		t.Fatal("retired binding visible")
+	}
+}
+
+func TestHostFunctionDiscoveryIsBoundedAndForwardCompatible(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	for _, tc := range []struct {
+		name      string
+		functions []string
+		want      []string
+	}{
+		{"legacy", nil, nil},
+		{"known", []string{"debuglet_io_v1.tls_inspect", "debuglet_io_v1.hop_probe"}, []string{"debuglet_io_v1.hop_probe", "debuglet_io_v1.tls_inspect"}},
+		{"future", []string{"debuglet_io_v2.future_probe"}, []string{"debuglet_io_v2.future_probe"}},
+		{"duplicate", []string{"debuglet_io_v1.hop_probe", "debuglet_io_v1.hop_probe"}, nil},
+		{"unqualified", []string{"hop_probe"}, nil},
+		{"empty", []string{""}, nil},
+		{"whitespace", []string{"debuglet_io_v1.hop_probe\n"}, nil},
+		{"too long", []string{"m." + strings.Repeat("x", 127)}, nil},
+		{"too many", make([]string, 65), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := capabilitiesFromReport(&pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp"}, SupportedHostFunctions: tc.functions}, now)
+			if got == nil || !slices.Equal(got.Protocols, []string{"tcp"}) || !slices.Equal(got.SupportedHostFunctions, tc.want) {
+				t.Fatalf("unexpected discovery: %+v", got)
+			}
+		})
 	}
 }
 

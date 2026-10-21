@@ -51,16 +51,17 @@ type experimentPeer struct {
 }
 
 type experimentFrame struct {
-	ExperimentID string `json:"experiment_id"`
-	Fingerprint  string `json:"fingerprint"`
-	From         string `json:"from"`
-	FromRunID    string `json:"from_run_id"`
-	To           string `json:"to"`
-	ToRunID      string `json:"to_run_id"`
-	Channel      string `json:"channel"`
-	RequestID    string `json:"request_id"`
-	Sequence     uint64 `json:"sequence"`
-	Value        any    `json:"value"`
+	ExperimentID string                    `json:"experiment_id"`
+	Fingerprint  string                    `json:"fingerprint"`
+	From         string                    `json:"from"`
+	FromRunID    string                    `json:"from_run_id"`
+	To           string                    `json:"to"`
+	ToRunID      string                    `json:"to_run_id"`
+	Channel      string                    `json:"channel"`
+	RequestID    string                    `json:"request_id"`
+	Sequence     uint64                    `json:"sequence"`
+	Value        any                       `json:"value"`
+	Barrier      *experimentBarrierArrival `json:"barrier,omitempty"`
 }
 
 type experimentMessage struct {
@@ -90,6 +91,7 @@ type Experiment struct {
 	pending, requests            map[string]experimentRequest
 	inbox                        []experimentMessage
 	inboxBytes                   int
+	barriers                     map[string]*experimentBarrierState
 }
 
 // JoinExperiment publishes this run's listener, checks the admitted membership,
@@ -139,6 +141,7 @@ func newExperiment(config experimentConfig) (*Experiment, error) {
 		peers: map[string]experimentPeer{}, channels: map[string]experimentChannel{},
 		received: map[string]experimentSequence{}, pending: map[string]experimentRequest{},
 		requests: map[string]experimentRequest{},
+		barriers: map[string]*experimentBarrierState{},
 	}
 	for _, participant := range config.Participants {
 		if participant == "" || len(participant) > 128 {
@@ -231,20 +234,11 @@ func (e *Experiment) Send(inputs map[string]any) (map[string]any, error) {
 		FromRunID: e.peers[e.participant].runID, To: peer, ToRunID: e.peers[peer].runID,
 		Channel: channel.ID, RequestID: requestID, Sequence: e.sequence, Value: value,
 	}
-	data, err := experimentEncode(frame)
-	if err != nil {
+	if _, err := experimentEncode(frame); err != nil {
 		return nil, err
 	}
 	out := map[string]any{"ok": false, "error": "", "request_id": requestID}
-	deadline := time.Now().Add(timeout)
-	conn, err := debuglet.DialTimeout("tcp", e.peers[peer].address, timeout)
-	if err == nil {
-		defer conn.Close()
-		err = conn.SetWriteDeadline(deadline)
-		if err == nil {
-			err = experimentWrite(conn, data)
-		}
-	}
+	err = e.writeFrame(frame, time.Now().Add(timeout))
 	if err != nil {
 		out["error"] = err.Error()
 		return out, nil
@@ -293,20 +287,7 @@ func (e *Experiment) Await(inputs map[string]any) (map[string]any, error) {
 			out["error"] = "experiment await timed out"
 			return out, nil
 		}
-		conn, err := debuglet.AcceptTCPTimeout(time.Until(deadline))
-		if err == nil {
-			err = conn.SetReadDeadline(deadline)
-			if err == nil {
-				var frame experimentFrame
-				var size int
-				frame, size, err = experimentRead(conn)
-				if err == nil {
-					err = e.enqueue(frame, size)
-				}
-			}
-			conn.Close()
-		}
-		if err != nil {
+		if err := e.receiveFrame(deadline); err != nil {
 			out["error"] = err.Error()
 			return out, nil
 		}
@@ -360,12 +341,18 @@ func (e *Experiment) operation(inputs map[string]any, send bool) (experimentChan
 }
 
 func (e *Experiment) enqueue(frame experimentFrame, size int) error {
-	channel, known := e.channels[frame.Channel]
 	peer, member := e.peers[frame.From]
-	if !known || !member || frame.From == e.participant || frame.ExperimentID != e.id ||
+	if !member || frame.From == e.participant || frame.ExperimentID != e.id ||
 		frame.Fingerprint != e.fingerprint || frame.FromRunID != peer.runID ||
 		frame.To != e.participant || frame.ToRunID != e.peers[e.participant].runID {
 		return fmt.Errorf("message does not belong to this experiment participant")
+	}
+	if frame.Barrier != nil {
+		return e.enqueueBarrier(frame, size)
+	}
+	channel, known := e.channels[frame.Channel]
+	if !known {
+		return fmt.Errorf("message does not belong to this experiment channel")
 	}
 	response := frame.From == channel.To && frame.To == channel.From && channel.ResponseType != ""
 	if !response && (frame.From != channel.From || frame.To != channel.To) {

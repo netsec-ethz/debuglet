@@ -32,15 +32,17 @@ type artifactInput struct {
 	ArtifactID string `json:"artifact_id"`
 }
 type metadata struct {
-	Kind             string   `json:"kind,omitempty"`
-	ExperimentSHA256 string   `json:"experiment_sha256,omitempty"`
-	ArtifactID       string   `json:"artifact_id"`
-	BundlePath       string   `json:"bundle_path"`
-	WorkflowSHA256   string   `json:"workflow_sha256"`
-	WasmSHA256       string   `json:"wasm_sha256"`
-	BundleSHA256     string   `json:"bundle_sha256"`
-	Destinations     []string `json:"destinations"`
-	RequireICMP      bool     `json:"require_icmp"`
+	Kind                  string   `json:"kind,omitempty"`
+	ExperimentSHA256      string   `json:"experiment_sha256,omitempty"`
+	ArtifactID            string   `json:"artifact_id"`
+	BundlePath            string   `json:"bundle_path"`
+	WorkflowSHA256        string   `json:"workflow_sha256"`
+	WasmSHA256            string   `json:"wasm_sha256"`
+	BundleSHA256          string   `json:"bundle_sha256"`
+	Destinations          []string `json:"destinations"`
+	RequireICMP           bool     `json:"require_icmp"`
+	RequireUDPListener    bool     `json:"require_udp_listener,omitempty"`
+	RequiredHostFunctions []string `json:"required_host_functions,omitempty"`
 }
 type store struct {
 	root      *os.Root
@@ -136,7 +138,7 @@ func MCPServer(builder *Builder, directory string) (*mcp.Server, func(), error) 
 		if err := files.write(filename, encoded); err != nil {
 			return nil, metadata{}, err
 		}
-		meta := metadata{ArtifactID: id, BundlePath: filepath.Join(directory, filename), WorkflowSHA256: bundle.WorkflowSHA256, WasmSHA256: bundle.WasmSHA256, BundleSHA256: digest(encoded), Destinations: bundle.Destinations, RequireICMP: bundle.RequireICMP}
+		meta := metadata{ArtifactID: id, BundlePath: filepath.Join(directory, filename), WorkflowSHA256: bundle.WorkflowSHA256, WasmSHA256: bundle.WasmSHA256, BundleSHA256: digest(encoded), Destinations: bundle.Destinations, RequireICMP: bundle.RequireICMP, RequireUDPListener: bundle.RequireUDPListener, RequiredHostFunctions: bundle.RequiredHostFunctions}
 		files.artifacts[id] = meta
 		return nil, meta, nil
 	})

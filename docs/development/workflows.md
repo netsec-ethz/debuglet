@@ -51,6 +51,60 @@ to express the status policy you need. Ping's `rtts_ms` contains only successful
 replies and `loss` is a percentage. Check `received` before calculating a mean;
 analysis of an empty sample set fails rather than reporting a misleading zero.
 
+### DNS, application exchanges and path probes
+
+**DNS query** takes an explicit resolver IP and port, query name, record type
+and UDP or TCP transport. It returns answer, authority and additional records
+with TTLs, flags, response code, raw bytes as base64 and elapsed time. `ok`
+means a matching DNS response was decoded: NXDOMAIN and SERVFAIL still require
+checking `rcode`. Recursion, checking-disabled, DNSSEC OK and NSID request flags
+are configurable. Requesting DNSSEC records does not validate their signatures.
+UDP truncation is reported; the block does not retry over TCP automatically.
+Replies are bounded to 8,191 bytes and 128 records. Permit the resolver address
+in the run's destination policy, rather than the name being queried.
+
+**UDP exchange** sends one datagram and receives one reply. **TCP exchange**
+connects, writes one payload, and reads to an explicit boundary: a delimiter
+(included in the response), exactly `max_bytes`, or end of stream. Payloads use
+text or padded base64 and are at most 8 KiB. `response_base64` preserves exact
+bytes; `response` is a UTF-8 display string. Check `ok`, `complete` and
+`truncated` before interpreting a reply. One timeout bounds the entire exchange,
+including connection setup. Neither block retries writes. UDP response limits
+are 1–8,191 bytes; TCP limits are 1–8,192 bytes.
+
+**TLS handshake** makes a normally verified TLS connection and returns protocol,
+cipher, negotiated ALPN, peer address and certificate summaries. It never
+disables certificate verification. Its duration includes DNS resolution and TCP
+connection setup, so it is not a separate TLS-only timing measurement.
+
+**Hop probe** sends one IPv4 ICMP echo with a chosen TTL from 1 to 255. It reports
+a matching echo reply or an ICMP error quoting the probe, with the responding
+address, ICMP type/code, elapsed time and `reached`. Combine Repeat's iteration
+with TTL and Collect sample to inspect successive hops. A timeout means no
+matching reply was observed; it does not prove that a router is down. Results
+are correlated network observations, not authenticated router identities or a
+guarantee that load-balanced probes followed one path. ICMP permission and raw
+socket support are required.
+
+### Receiving UDP
+
+**UDP listener address** exposes the endpoint allocated to this run. In an
+experiment, send this value to another participant before it starts an exchange.
+**Receive UDP** waits on that listener with a deadline and reports the admitted
+source, payload, original byte count and truncation. Its base64 output preserves
+the received bytes. **Reply UDP** sends from the same listener port to the last
+successfully received source; connect Receive's `source` to its `destination`.
+Receiving another datagram replaces that source. A reply without a successful
+receive is refused. Current destination policy, attribution and traffic limits
+apply in both directions.
+
+The compiled bundle requests a UDP listener automatically. The selected executor
+must advertise a reachable UDP listener, and each run's policy must permit its
+peers. TLS handshake, Hop probe and UDP receive/reply also require the new host
+functions advertised by updated executors. The console shows actual executor
+versions and excludes nodes without current compatible runtime support from
+normal selection; operators can still see their nodes and update them.
+
 Data blocks support Parse JSON and Stringify JSON, Get field and Set field,
 List item and Append item. Set field and Append item return new values without
 changing their inputs. List item uses a zero-based integer index and fails when
@@ -64,6 +118,35 @@ Median averages the middle pair for even-sized lists. Percentile accepts a value
 from 0 to 100 and linearly interpolates sorted samples at `p/100 × (n−1)`; this is
 not the nearest-rank convention. Add, Subtract, Multiply and Divide use finite
 numbers; division by zero and nonfinite results fail explicitly.
+
+### Processing rows and reporting results
+
+**Filter rows** keeps matching objects from a list in their original order.
+Choose a field and `equals` (the default), `not_equals`, `greater_than`,
+`less_than`, `at_least` or `at_most`. Equality compares JSON values without
+coercion; ordering requires numbers on both sides. **Select field** extracts
+one field from every row into a list. For example, filter collected measurements
+where `ok` equals `true`, select `duration_ms`, then connect the result to Mean
+or Percentile. Missing fields and non-object rows fail explicitly. Empty lists
+are valid for these row operations and Count; check the count before using
+statistics that require at least one sample.
+
+**Report metric** publishes `title`, a finite numeric `value` and an optional
+`unit`. **Report table** publishes `title`, object `rows` and 1–32 distinct
+`columns`, each naming a field present in every row. Columns control display
+order; the output still contains every original row field. **Report text**
+publishes a `title` and plain `text`, displayed literally without interpreting
+HTML or Markdown. All three are actions with a `next` connection and return
+their report fields as outputs, so they can feed later actions.
+
+Reports use the ordinary `debuglet.workflow.v1` events and run output. They
+share the existing string, list, depth, per-event and total trace limits; they
+do not create separate files or storage. A table can have up to 1,024 rows,
+but the 64 KiB event limit can require fewer rows when cells are large. Report
+titles and text are ordinary bounded strings. A report emitted inside Repeat
+appears once per executed iteration. The [sample report](../../examples/workflows/sample-report.json)
+shows filtering, field selection, a mean, a metric, a table and explanatory text
+using fixed sample data, with no network access needed.
 
 ## Reusable visual groups
 
@@ -108,13 +191,23 @@ A channel with `response_type` permits one reply per request. The
 wires the initial Send's `request_id` into the sender's Await, and the receiver's
 Await `request_id` into its replying Send. A late reply cannot satisfy a different
 request. One-way channels leave `request_id` empty. There are no automatic
-retries, participant replacement or repeated global barriers.
+retries or participant replacement.
+
+**Wait for phase** announces arrival at a literal named phase and waits for all
+other participants to reach that phase's current repetition. Include the phase
+in every participant's workflow and invoke repeated phases in matching order.
+The result includes `ok`, `error`, `generation`, `missing` and elapsed time.
+Timeouts and late messages remain separate from later generations; ordinary
+application messages received during the wait remain available to Await.
+Success means this participant observed every arrival, not that every peer also
+returned successfully. It does not synchronize clocks or provide an atomic
+distributed commit. Handle failure before proceeding with dependent work.
 
 Messages are plaintext TCP, limited to 8 KiB including framing fields; the inbox
 is limited to 64 KiB and 128 messages. Group identifiers and request correlation
 prevent accidental mixing, but do not authenticate a peer socket or encrypt its
 data. Use controlled experiments without confidential payloads. A participant
-only receives while executing Await: long-running blocks can delay its peers,
+only receives while executing Await or Wait for phase: long-running blocks can delay its peers,
 and cyclic waits can time out. Normal executor lifetime and traffic limits remain
 authoritative.
 
@@ -136,6 +229,19 @@ or be entered by another control path. Arbitrary cycles are rejected.
 Programs support up to 128 nodes, 100 repeat iterations and 1,000 action steps.
 A single wait or network timeout is at most 60 seconds. Graph control limits
 complement the ordinary executor's runtime, traffic and destination limits.
+
+Create a **sample collection** before Repeat, wire its handle to **Collect
+sample** inside the body, then **Read samples** after `done`. Unlike ordinary
+action outputs, explicitly collected samples survive iteration boundaries.
+Collect and Read copy their values; **Clear samples** empties the collection
+without invalidating its handle. A run has at most 32 collections, 1,024 samples
+and 48 KiB per collection, and 256 KiB across all collections. The returned list
+can feed Mean, Percentile or Emit result.
+
+**Start timer** creates a run-local handle; **Elapsed time** reads milliseconds
+since that start without resetting it. The clock is monotonic within the run.
+Do not send timer handles to another executor or compare their values as
+synchronized timestamps. At most 128 timers may be created in one run.
 
 ## Custom blocks
 

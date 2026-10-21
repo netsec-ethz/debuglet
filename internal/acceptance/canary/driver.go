@@ -440,19 +440,25 @@ func strictCLIDocument(data []byte, out any) error {
 				return err
 			}
 			if observation, present := fields["capabilities"]; present {
-				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, []string{"attribution", "tagging", "enforcement_reason", "icmp"}, map[string]bool{"advertised_capacity_bps": true, "attribution": true, "tagging": true, "icmp": true})
+				capability, err := strictFields(observation, []string{"schema_version", "observed_at", "protocols", "enforcement_mode", "advertised_capacity_bps"}, []string{"attribution", "tagging", "enforcement_reason", "icmp", "supported_host_functions"}, map[string]bool{"advertised_capacity_bps": true, "attribution": true, "tagging": true, "icmp": true})
 				if err != nil {
 					return err
 				}
 				// Go decodes a null array item into an empty string; the CLI
 				// emits only string items, or an empty array if none were reported.
-				var protocols []*string
-				if json.Unmarshal(capability["protocols"], &protocols) != nil {
-					return errors.New("invalid capability protocols")
-				}
-				for _, protocol := range protocols {
-					if protocol == nil {
-						return errors.New("invalid capability protocols")
+				for _, name := range []string{"protocols", "supported_host_functions"} {
+					raw, present := capability[name]
+					if !present {
+						continue
+					}
+					var items []*string
+					if json.Unmarshal(raw, &items) != nil {
+						return errors.New("invalid capability " + name)
+					}
+					for _, item := range items {
+						if item == nil {
+							return errors.New("invalid capability " + name)
+						}
 					}
 				}
 			}

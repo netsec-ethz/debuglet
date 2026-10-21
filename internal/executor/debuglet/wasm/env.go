@@ -16,6 +16,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 	"net"
+	"net/netip"
 	"sync"
 	"syscall"
 
@@ -63,6 +64,7 @@ type WasmEnv struct {
 	UdpServer     *net.UDPConn
 	UdpServerPort int
 	UdpServerAddr string
+	udpReplyPeer  netip.AddrPort // last admitted receive; protected by mu
 
 	ScionServer pan.ListenConn
 

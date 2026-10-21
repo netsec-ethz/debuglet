@@ -6,6 +6,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/pkg/client"
@@ -20,7 +21,8 @@ func TestCapabilitiesCrossBoundControlHTTPAndSDK(t *testing.T) {
 		t.Fatal("legacy peer matched unknown capabilities")
 	}
 	_, err := f.peer.direct.Heartbeat(f.ctx, &pb.HeartbeatRequest{ExecutorId: ccExecutorID,
-		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp", "icmp"}, EnforcementMode: "fallback"}})
+		Capabilities: &pb.ExecutorCapabilities{SchemaVersion: 1, Protocols: []string{"tcp", "icmp"}, EnforcementMode: "fallback",
+			SupportedHostFunctions: []string{"debuglet_io_v1.hop_probe", "debuglet_io_v1.tls_inspect"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,6 +32,9 @@ func TestCapabilitiesCrossBoundControlHTTPAndSDK(t *testing.T) {
 	}
 	if selected.Capabilities.Attribution != nil {
 		t.Fatal("report without attribution state claimed one")
+	}
+	if !slices.Equal(selected.Capabilities.SupportedHostFunctions, []string{"debuglet_io_v1.hop_probe", "debuglet_io_v1.tls_inspect"}) {
+		t.Fatal("host-function support did not reach HTTP/SDK discovery")
 	}
 	rec := httptest.NewRecorder()
 	f.root.Config.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/executors", nil).WithContext(f.ctx))

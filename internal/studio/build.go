@@ -31,15 +31,17 @@ const (
 )
 
 type Bundle struct {
-	Version        int               `json:"version"`
-	Workflow       workflow.Workflow `json:"workflow"`
-	WorkflowJSON   string            `json:"workflow_json"`
-	Source         string            `json:"source"`
-	WorkflowSHA256 string            `json:"workflow_sha256"`
-	WasmSHA256     string            `json:"wasm_sha256"`
-	Wasm           []byte            `json:"wasm"`
-	Destinations   []string          `json:"destinations"`
-	RequireICMP    bool              `json:"require_icmp"`
+	Version               int               `json:"version"`
+	Workflow              workflow.Workflow `json:"workflow"`
+	WorkflowJSON          string            `json:"workflow_json"`
+	Source                string            `json:"source"`
+	WorkflowSHA256        string            `json:"workflow_sha256"`
+	WasmSHA256            string            `json:"wasm_sha256"`
+	Wasm                  []byte            `json:"wasm"`
+	Destinations          []string          `json:"destinations"`
+	RequireICMP           bool              `json:"require_icmp"`
+	RequireUDPListener    bool              `json:"require_udp_listener,omitempty"`
+	RequiredHostFunctions []string          `json:"required_host_functions,omitempty"`
 }
 
 type ValidationError struct {
@@ -51,6 +53,8 @@ func (e *ValidationError) Error() string { return "workflow has validation error
 type Builder struct {
 	sdk       string
 	goCommand string
+	module    []byte
+	sums      []byte
 	slot      chan struct{}
 	hosted    bool
 }
@@ -68,6 +72,10 @@ func NewBuilder(sdk string) (*Builder, error) {
 	if !strings.HasPrefix(string(module), "module github.com/netsec-ethz/debuglet\n") {
 		return nil, errors.New("--sdk must name a Debuglet SDK checkout")
 	}
+	sums, err := os.ReadFile(filepath.Join(path, "go.sum"))
+	if err != nil {
+		return nil, fmt.Errorf("read SDK dependency checksums: %w", err)
+	}
 	if _, err := os.Stat(filepath.Join(path, "pkg", "workflow", "guest")); err != nil {
 		return nil, errors.New("SDK checkout lacks pkg/workflow/guest; use the same version as dbl-studio")
 	}
@@ -75,7 +83,11 @@ func NewBuilder(sdk string) (*Builder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("install Go %s to compile workflows: %w", strings.TrimPrefix(toolchain, "go"), err)
 	}
-	return &Builder{sdk: path, goCommand: goCommand, slot: make(chan struct{}, 1)}, nil
+	// Keep the trusted SDK's dependency versions and checksums. Guest blocks may
+	// use its libraries, but a graph cannot choose dependencies or download them.
+	module = []byte(strings.Replace(string(module), "module github.com/netsec-ethz/debuglet\n", "module debuglet.workflow.build\n", 1) +
+		"\nrequire github.com/netsec-ethz/debuglet v0.0.0\nreplace github.com/netsec-ethz/debuglet => " + strconv.Quote(filepath.ToSlash(path)) + "\n")
+	return &Builder{sdk: path, goCommand: goCommand, module: module, sums: sums, slot: make(chan struct{}, 1)}, nil
 }
 
 func (b *Builder) Build(ctx context.Context, wf workflow.Workflow) (*Bundle, error) {
@@ -124,8 +136,7 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	if err != nil || strings.TrimSpace(string(actual)) != toolchain {
 		return nil, fmt.Errorf("workflow builds require %s installed locally (automatic toolchain downloads are disabled)", toolchain)
 	}
-	module := "module debuglet.workflow.build\n\ngo 1.26.10\n\nrequire github.com/netsec-ethz/debuglet v0.0.0\nreplace github.com/netsec-ethz/debuglet => " + strconv.Quote(filepath.ToSlash(b.sdk)) + "\n"
-	for name, data := range map[string][]byte{"go.mod": []byte(module), "main.go": []byte(program.Source)} {
+	for name, data := range map[string][]byte{"go.mod": b.module, "go.sum": b.sums, "main.go": []byte(program.Source)} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			return nil, err
 		}
@@ -162,7 +173,7 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	if len(wasm) > maxWasmBytes {
 		return nil, errors.New("compiled workflow exceeds the 16 MiB module limit")
 	}
-	bundle := &Bundle{Version: 1, Workflow: wf, WorkflowJSON: string(raw), Source: program.Source, WorkflowSHA256: program.WorkflowSHA256, WasmSHA256: digest(wasm), Wasm: wasm, Destinations: program.Destinations, RequireICMP: program.RequireICMP}
+	bundle := &Bundle{Version: 1, Workflow: wf, WorkflowJSON: string(raw), Source: program.Source, WorkflowSHA256: program.WorkflowSHA256, WasmSHA256: digest(wasm), Wasm: wasm, Destinations: program.Destinations, RequireICMP: program.RequireICMP, RequireUDPListener: program.RequireUDPListener, RequiredHostFunctions: program.RequiredHostFunctions}
 	encoded, err := json.Marshal(bundle)
 	if err != nil {
 		return nil, err
@@ -177,7 +188,7 @@ func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeT
 
 func buildEnv() []string {
 	env := []string{"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOWORK=off", "GOENV=off", "GOFLAGS="}
-	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE"} {
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOPATH", "GOCACHE", "GOMODCACHE"} {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}

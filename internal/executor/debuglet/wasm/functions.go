@@ -123,6 +123,10 @@ func Functions(env *WasmEnv) []Function {
 		function(guestio.Module, "write", hostIOWrite(env)),
 		function(guestio.Module, "close", HostIOClose(env)),
 		function(guestio.Module, "deadline", HostIODeadline(env)),
+		function(guestio.Module, guestio.TLSInspect, hostTLSInspect(env)),
+		function(guestio.Module, guestio.HopProbe, hostHopProbe(env)),
+		function(guestio.Module, guestio.ReceiveUDP, HostIOReceiveUDP(env)),
+		function(guestio.Module, guestio.ReplyUDP, HostIOReplyUDP(env)),
 		function(ExperimentModule, "ready", hostExperimentReady(env)),
 	}
 }
