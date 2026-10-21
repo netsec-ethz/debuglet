@@ -5,6 +5,7 @@ package hostconn
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -29,6 +30,7 @@ type HostConn struct {
 	connCtx    context.Context
 	socketID   uint32
 	socketType socket.SocketType
+	tlsState   *tls.ConnectionState
 
 	closeOnce sync.Once
 	closeErr  error
@@ -72,7 +74,21 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 	if err := pc.SetLimit(opts.ConnAddr, id, opts.MaximumBandwidth); err != nil {
 		return nil, fmt.Errorf("failed to set limit: %w", err)
 	}
-	return &HostConn{pc: pc, id: id, limit: opts.MaximumBandwidth, connCtx: ctx, socketType: opts.SocketType, conn: opts.Egress.Wrap(attached)}, nil
+	var state *tls.ConnectionState
+	if secured, ok := conn.(*tls.Conn); ok {
+		value := secured.ConnectionState()
+		state = &value
+	}
+	return &HostConn{pc: pc, id: id, limit: opts.MaximumBandwidth, connCtx: ctx, socketType: opts.SocketType, tlsState: state, conn: opts.Egress.Wrap(attached)}, nil
+}
+
+// TLSState returns the connection state captured before accounting
+// wrappers hide the underlying TLS connection.
+func (h *HostConn) TLSState() (tls.ConnectionState, bool) {
+	if h.tlsState == nil {
+		return tls.ConnectionState{}, false
+	}
+	return *h.tlsState, true
 }
 
 func (h *HostConn) Close() error {

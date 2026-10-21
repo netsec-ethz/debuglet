@@ -78,6 +78,7 @@ type taggedDatagramConn struct {
 	protocol         uint8
 	src, dst         net.IP
 	srcPort, dstPort uint16
+	ttl              uint8
 
 	closeOnce sync.Once
 	closeErr  error
@@ -89,6 +90,9 @@ func (c *taggedDatagramConn) Write(b []byte) (int, error) {
 		pkt = buildUDPPacket(c.src, c.dst, c.srcPort, c.dstPort, b)
 	} else {
 		pkt = buildICMPPacket(c.src, c.dst, b)
+	}
+	if c.ttl != 0 {
+		pkt[8] = c.ttl
 	}
 	tagged, err := c.tagger.TagPacket(pkt)
 	if err != nil {
@@ -104,6 +108,16 @@ func (c *taggedDatagramConn) Write(b []byte) (int, error) {
 		return 0, err
 	}
 	return len(b), nil
+}
+
+// SetTTL changes the IPv4 header emitted by this wrapper. The underlying
+// connected socket's TTL is set separately by the caller for fallback sends.
+func (c *taggedDatagramConn) SetTTL(ttl int) error {
+	if ttl < 1 || ttl > 255 {
+		return fmt.Errorf("TTL must be from 1 to 255")
+	}
+	c.ttl = uint8(ttl)
+	return nil
 }
 
 func (c *taggedDatagramConn) SetDeadline(t time.Time) error {
