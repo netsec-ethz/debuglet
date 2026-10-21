@@ -376,6 +376,9 @@ message ExecutorCapabilities {
   // unsupported or attach_failed. Empty when enforcement_mode is ebpf.
   string enforcement_reason = 6;
   ProbeState icmp = 7; // Raw ICMPv4 socket probe of this process.
+  // Optional exports, as module.function; absent on older executors.
+  // This describes the runtime interface, not permission to use a transport.
+  repeated string supported_host_functions = 8;
 }
 
 // A local probe outcome. Opening a socket sends nothing.

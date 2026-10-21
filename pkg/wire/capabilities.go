@@ -27,6 +27,10 @@ type ExecutorCapabilities struct {
 	EnforcementReason string `json:"enforcement_reason"`
 	// ICMP is the executor's raw ICMPv4 socket probe; null unknown.
 	ICMP *ProbeState `json:"icmp"`
+	// SupportedHostFunctions lists optional module.function exports of the
+	// current runtime. Absent means unknown, including older executors.
+	// Transport policy and readiness remain separate requirements.
+	SupportedHostFunctions []string `json:"supported_host_functions,omitempty"`
 }
 
 // ProbeState is an executor-reported local probe outcome.
