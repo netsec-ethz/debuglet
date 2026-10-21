@@ -110,6 +110,17 @@ func TestUploadKeepsUnitsAtTheBoundaries(t *testing.T) {
 
 			req := boundsUploadRequest()
 			req.Policy.FloorBw, req.Policy.CeilBw, req.Policy.TimeoutMs = tc.floor, tc.ceiling, tc.timeout
+			if tc.timeout == maxPolicyTimeoutMS {
+				// The number is representable, but no finite active chain can
+				// accept a reservation of this duration.
+				if err := validatePolicyNumbers(req.Policy); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := e.OnUpload(ctx, operationBinding(), req); status.Code(err) != codes.FailedPrecondition || len(storage.inserted) != 0 {
+					t.Fatalf("overlong chain reservation=%v, inserted=%d", err, len(storage.inserted))
+				}
+				return
+			}
 			if _, err := e.OnUpload(ctx, operationBinding(), req); err != nil {
 				t.Fatalf("boundary upload rejected: %v", err)
 			}

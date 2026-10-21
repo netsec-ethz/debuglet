@@ -16,11 +16,12 @@ import (
 // disclosureDelivery belongs to one in-process schedule, across reconnects.
 // No wall timestamp from another host or a recovered generation enters it.
 type disclosureDelivery struct {
-	mu        sync.Mutex
-	invalid   bool
-	through   int64
-	sampled   bool
-	bound, at time.Duration
+	mu            sync.Mutex
+	invalid       bool
+	through       int64
+	storedThrough int64
+	sampled       bool
+	bound, at     time.Duration
 }
 
 const maxDisclosureReceipts = pb.MaxDisclosureReceipts
@@ -77,7 +78,17 @@ func (d *disclosureDelivery) acknowledge(schedule *tesla.KeySchedule, receipts [
 	elapsed, _ := cfg.Clock.Elapsed(cfg.Epoch, now)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.invalid || through <= 0 || through >= cfg.ChainLength {
+	if through <= 0 || through >= cfg.ChainLength || cfg.EpochLength <= 0 || cfg.DisclosureDelay < 0 ||
+		through > math.MaxInt64-cfg.DisclosureDelay || through+cfg.DisclosureDelay > math.MaxInt64/int64(cfg.EpochLength) {
+		d.sampled = false
+		return
+	}
+	// A lost timing bound does not erase a durable receipt for a due key.
+	// Retirement uses coverage; metrics continue to require the valid clock.
+	if elapsed >= time.Duration(through+cfg.DisclosureDelay)*cfg.EpochLength {
+		d.storedThrough = max(d.storedThrough, through)
+	}
+	if d.invalid {
 		d.sampled = false
 		return
 	}

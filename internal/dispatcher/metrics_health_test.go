@@ -177,6 +177,7 @@ func TestMetricsAttributionBucketsPartitionExecutors(t *testing.T) {
 		{State: "available", Epoch: 2},
 		{State: "unavailable", Reason: "epoch_zero"},
 		{State: "unavailable", Reason: "chain_exhausted", Epoch: 9},
+		{State: "unavailable", Reason: "chain_renewing", Epoch: 9},
 		{State: "unavailable", Reason: "refresh_failing", Epoch: 2, RefreshError: "put failed"},
 		{State: "unavailable", Reason: "disclosure_held", Epoch: 2, DisclosureHeldMs: &held},
 		{State: "unavailable", Reason: "clock_unready", Epoch: 2},
@@ -203,7 +204,7 @@ func TestMetricsAttributionBucketsPartitionExecutors(t *testing.T) {
 }
 
 func attributionBuckets(h ExecutorHealthMetrics) int {
-	return h.AttributionAvailable + h.EpochZero + h.ChainExhausted + h.RefreshFailing + h.DisclosureHeld + h.ClockUnready + h.ClockDrift + h.Untagged + h.AttributionUnknown
+	return h.AttributionAvailable + h.EpochZero + h.ChainExhausted + h.ChainRenewing + h.RefreshFailing + h.DisclosureHeld + h.ClockUnready + h.ClockDrift + h.Untagged + h.AttributionUnknown
 }
 
 // TestMetricsDisclosureLagFollowsVerifiedKeys drives a real key store with a

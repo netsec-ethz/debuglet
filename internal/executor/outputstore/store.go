@@ -220,6 +220,13 @@ func (s *Store) Pending(ctx context.Context, afterRunID string, limit int) ([]Ru
 	return out, nil
 }
 
+// PendingForBinding excludes historical sessions from an intentional drain.
+func (s *Store) PendingForBinding(ctx context.Context, binding controlsession.Binding) (bool, error) {
+	return database.New(s.db).HasPendingOutputForBinding(ctx, database.HasPendingOutputForBindingParams{
+		DispatcherIncarnation: binding.Incarnation, SessionID: binding.SessionID,
+	})
+}
+
 func (s *Store) Frames(ctx context.Context, id uuid.UUID, after int64, limit int) ([]Frame, error) {
 	if after < 0 || limit < 1 || limit > 64 {
 		return nil, errors.New("invalid output frame page")

@@ -51,7 +51,7 @@ func capabilitiesFromReport(report *pb.ExecutorCapabilities, observed time.Time)
 		out.Tagging = taggingFromReport(report.Tagging)
 		// Older executors reported only key readiness, even when no packets
 		// could be tagged. Keep discovery truthful while they are upgraded.
-		if out.Tagging != nil && out.Tagging.IPv4 == wire.TaggingNone && out.Tagging.IPv6 == wire.TaggingNone {
+		if out.Tagging != nil && out.Tagging.IPv4 == wire.TaggingNone && out.Tagging.IPv6 == wire.TaggingNone && (out.Attribution == nil || out.Attribution.Reason != "chain_renewing") {
 			if out.Attribution == nil {
 				out.Attribution = &wire.AttributionState{}
 			}
@@ -160,7 +160,7 @@ func attributionFromReport(report *pb.AttributionState, observed time.Time) *wir
 		}
 	case "unavailable":
 		switch report.GetReason() {
-		case "epoch_zero", "chain_exhausted", "refresh_failing", "disclosure_held", "clock_unready", "clock_drift", "untagged":
+		case "epoch_zero", "chain_exhausted", "chain_renewing", "refresh_failing", "disclosure_held", "clock_unready", "clock_drift", "untagged":
 		default:
 			return nil
 		}

@@ -208,6 +208,24 @@ func (q *Queries) GetOutputUsage(ctx context.Context) (int64, error) {
 	return charged_bytes, err
 }
 
+const hasPendingOutputForBinding = `-- name: HasPendingOutputForBinding :one
+SELECT EXISTS(SELECT 1 FROM output_runs
+WHERE dispatcher_incarnation = ? AND session_id = ? AND NOT end_acknowledged
+AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id))
+`
+
+type HasPendingOutputForBindingParams struct {
+	DispatcherIncarnation string
+	SessionID             string
+}
+
+func (q *Queries) HasPendingOutputForBinding(ctx context.Context, arg HasPendingOutputForBindingParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasPendingOutputForBinding, arg.DispatcherIncarnation, arg.SessionID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const interruptOpenOutputRuns = `-- name: InterruptOpenOutputRuns :exec
 UPDATE output_runs SET status = 'truncated', reason = 'executor_interrupted' WHERE status = 'open'
 AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id)

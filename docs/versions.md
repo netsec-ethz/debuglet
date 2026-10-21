@@ -24,7 +24,7 @@ establish compatibility for later changes.
 | --- | --- | --- |
 | Platform | Linux amd64 on the `ubuntu-24.04` CI runner and the pinned CI tools image | [CI definition](../.github/workflows/ci.yml), [CI images](development/ci-images.md). Other host/architecture combinations have no native package support. |
 | Packages | Same-candidate full bundle and separate CLI, dispatcher and executor packages | Package lane installs twice, verifies each role inventory and runs `--help`; full-bundle runtime checks run in the demo/local lanes. Split packages exist in source/CI; published v0.2.0 contains only the full bundle. |
-| CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.24 | Test, demo and local lanes. Use `dbl version --server` to inspect the selected server's contract; a displayed binary version does not negotiate API features. |
+| CLI and Go client | Same-source clients and dispatcher; HTTP contract 1.25 | Test, demo and local lanes. Use `dbl version --server` to inspect the selected server's contract; a displayed binary version does not negotiate API features. |
 | Dispatcher and executor | Same-package peers; control protocol 3 with binding and lease enforcement. Published v0.2.0 executor against the candidate dispatcher in the loopback TEST fixture | Local and compatibility lanes. The released-peer fixture checks registration, work and reconnect; it does not establish mixed-release TLS/enrollment or new optional features. |
 | Guests | `debuglet-go-wasi-imports-v1`, frozen compatibility guest and packaged Go samples | [Guest compatibility gate](debuglets.md#compatibility), compatibility lane. C/Rust guest packages remain experimental. |
 | State | State created by the same package; recognized historical SQLite schemas upgraded explicitly | [State reference](operations/configuration.md#stored-state), storagecheck tests. This is not a cross-package foreground-state migration promise. |
@@ -133,3 +133,11 @@ worker; compilation is unavailable until the operator enables it. Builds return
 portable bundles without submitting or executing them. Request admission and
 compiler capacity are bounded, with prompt 429 responses when busy. No database
 schema or control-protocol change is required by hosted compilation.
+
+API 1.25 adds `chain_renewing` to executor attribution discovery. Upgrade the
+dispatcher and console before executors so that discovery recognizes the reason.
+Executors renew automatically through their normal registration after accepted
+work, used-key disclosures and result delivery finish; new admission pauses
+until then. Renewal requires the dispatcher's durable disclosure receipts and
+fails closed if an older dispatcher does not provide them. No database schema
+or control-protocol field changes are required.

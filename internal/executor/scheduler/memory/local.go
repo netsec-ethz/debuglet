@@ -52,6 +52,7 @@ type MemoryStorage struct {
 	inspect     absentInspector
 	admission   scheduler.Admission
 	closed      bool
+	draining    bool
 	stop        chan struct{}
 	changed     chan struct{}
 	busy        int // admissions, callbacks/finalizers, deletions and restore
@@ -82,6 +83,28 @@ func NewStorage(admission scheduler.Admission) (*MemoryStorage, error) {
 // cannot turn it into an error or retract the accepted work.
 func (m *MemoryStorage) Insert(ctx context.Context, u scheduler.Spec) error {
 	return m.insert(ctx, u)
+}
+
+func (m *MemoryStorage) BeginDrain() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.draining = true
+}
+
+func (m *MemoryStorage) TryDrain() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || len(m.owners) != 0 || m.busy != 0 {
+		return false
+	}
+	m.draining = true
+	return true
+}
+
+func (m *MemoryStorage) IsDrained() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.draining && !m.closed && len(m.owners) == 0 && m.busy == 0
 }
 
 // A notification means recheck the authoritative queue, not dispatch one item.

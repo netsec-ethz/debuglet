@@ -85,11 +85,12 @@ It is an executor claim, not a verification, and it is not a discovery filter.
 | --- | --- |
 | `untagged` | Neither IPv4 nor IPv6 traffic is tagged on this executor. A ready key schedule alone cannot make its packets attributable. |
 | `epoch_zero` | The chain anchor k_0 is public and never signs, so nothing sent during epoch 0 (the first `tesla.epoch_seconds` after startup) is attributable. |
-| `chain_exhausted` | The key chain has ended; nothing is tagged until the executor restarts. |
+| `chain_exhausted` | The key chain has ended. Current executors automatically begin renewal; older versions require a restart. Nothing is tagged with an exhausted chain. |
+| `chain_renewing` | New admission is paused while accepted work, used-key disclosure and output delivery finish, followed by registration of a fresh chain. It resumes automatically when those steps succeed; see [key renewal](configuration.md#executor-tesla-key-schedule). |
 | `refresh_failing` | A kernel tagger's latest key refresh failed. Its slot is empty or may still hold the previous epoch's key; `refresh_error` gives a short error of at most 128 bytes. |
 | `disclosure_held` | An installed key has held disclosure back for longer than one epoch, so the keys of new tags are not published. This is the case of a tagger whose slot could not be cleared. |
-| `clock_unready` | The host clock readiness (see [host probes](#host-probes)) was not `ready` when the key chain started, so the announced chain origin may be wrong. It holds for the chain's life: nothing is tagged until the executor restarts with a ready clock, which starts a new chain. |
-| `clock_drift` | Since the chain started, the wall clock has moved away from the monotonic clock the epochs advance on by more than the drift bound: the wall clock was stepped, or the host was suspended. Nothing is tagged while it holds. A drift that returns within the bound resumes tagging by itself; a persistent one, such as after a suspend, needs a restart with a ready clock. |
+| `clock_unready` | The host clock readiness (see [host probes](#host-probes)) was not `ready` when the key chain started, so the announced chain origin may be wrong. It holds for the chain's life: nothing is tagged until a fresh chain starts with a ready clock, through automatic renewal or an earlier manual restart. |
+| `clock_drift` | Since the chain started, the wall clock has moved away from the monotonic clock the epochs advance on by more than the drift bound: the wall clock was stepped, or the host was suspended. Nothing is tagged while it holds. A drift that returns within the bound resumes tagging by itself; a persistent one, such as after a suspend, needs a fresh chain with a ready clock, through automatic renewal or an earlier manual restart. |
 
 Epochs advance on the executor's monotonic clock from the announced origin.
 The drift is the wall time elapsed since the origin less the monotonic time

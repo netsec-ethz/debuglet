@@ -38,10 +38,13 @@ var (
 // Node retains the resource identity which must survive network reconnects.
 // Its one session reservation is lifecycle ownership, never lease authority.
 type Node struct {
+	db            *sql.DB
 	cfg           config.ExecutorConfig
 	logger        *zap.Logger
 	schedule      *tesla.KeySchedule
 	scheduleProof []byte
+	nextSchedule  *tesla.KeySchedule
+	nextProof     []byte
 	packetCount   ratelimit.PacketCount
 	socketBudget  *socket.DescriptorBudget
 	supervisor    *isolation.Supervisor
@@ -161,7 +164,7 @@ func newNode(cfg *config.ExecutorConfig, logger *zap.Logger, db *sql.DB, counter
 	if pc == nil {
 		return nil, sessionEnd(controlsession.LocalFailure, errors.New("packet counter constructor returned nil"))
 	}
-	n := &Node{supervisor: supervisor, socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, scheduleProof: scheduleProof, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
+	n := &Node{db: db, supervisor: supervisor, socketBudget: socket.NewDescriptorBudget(socket.DefaultNodeDescriptors), cfg: *cfg, logger: logger, output: output, schedule: schedule, scheduleProof: scheduleProof, packetCount: pc, iface: iface, newBidi: rpc.NewBidiClient,
 		opts: rpc.BidiOptions{Logger: logger, Address: cfg.Dispatcher.Addr, YamuxAddress: cfg.Dispatcher.YamuxAddr, TLSCreds: creds, TLSConfig: tlsConfig}}
 	n.retired.schedule, n.retired.logger = retired, logger
 	logger.Info("Initialized daemon resources", zap.String("packet_counter", pc.Type()), zap.Time("TESLA_expiry", schedule.Expiry()),
@@ -369,6 +372,12 @@ func (n *Node) reserve() (*Session, error) {
 	}
 	if n.active != nil {
 		return nil, ErrNodeBusy
+	}
+	if n.nextSchedule != nil {
+		n.schedule, n.scheduleProof = n.nextSchedule, n.nextProof
+		n.nextSchedule, n.nextProof = nil, nil
+		n.chainReport = chainReport{}
+		n.disclosureDelivery = disclosureDelivery{}
 	}
 	s := &Session{node: n, runDone: make(chan struct{}), cleanupDone: make(chan struct{})}
 	n.active = s

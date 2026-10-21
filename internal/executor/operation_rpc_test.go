@@ -60,7 +60,7 @@ func fixtureConfig() *config.ExecutorConfig {
 		Identity:  config.IdentityConfig{ExecutorID: uuid.NewString()},
 		TLS:       config.TLSConfig{Disable: true},
 		Resources: config.ResourcesConfig{MaxDebuglets: 8},
-		Tesla:     config.TeslaConfig{Seed: "local executor fixture", Delay: 2, ChainLength: 64},
+		Tesla:     config.TeslaConfig{Seed: "local executor fixture", Delay: 2, ChainLength: 4096},
 		Network:   config.NetworkConfig{PacketCounter: "fallback", DisableSCIONEnvironment: true},
 	}
 }

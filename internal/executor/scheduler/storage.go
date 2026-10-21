@@ -47,6 +47,12 @@ const CleanupTimeout = 5 * time.Second
 // their own tests.
 type Scheduler interface {
 	Insert(context.Context, Spec) error
+	// BeginDrain refuses new insertions while accepted work finishes normally.
+	BeginDrain()
+	// TryDrain begins a drain only if no accepted operation remains.
+	TryDrain() bool
+	// IsDrained confirms that no accepted work, callback or finalizer remains.
+	IsDrained() bool
 	// CancelBound compares immutable run ownership atomically before cancellation.
 	// It never cancels a later admission after observing an absent owner.
 	CancelBound(context.Context, uuid.UUID, controlsession.Binding, error) (bool, error)
@@ -90,6 +96,7 @@ type Spec struct {
 
 var (
 	ErrClosed          = errors.New("scheduler is shut down")
+	ErrDraining        = errors.New("scheduler is draining")
 	ErrBindingMismatch = errors.New("debuglet belongs to another control session")
 	// ErrDebugletAlreadyStarted is returned when a debuglet has already started, but the executor was restarted before it could finish.
 	ErrDebugletAlreadyStarted = errors.New("debuglet has already started. won't restart")

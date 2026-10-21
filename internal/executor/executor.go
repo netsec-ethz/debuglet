@@ -74,6 +74,7 @@ type Executor struct {
 	capabilityTagging tagger.Mode
 	// clockReason is the clock readiness reason last logged.
 	clockReason   string
+	renewing      atomic.Bool
 	cfg           config.ExecutorConfig
 	teslaSchedule *tesla.KeySchedule
 	scheduleProof []byte
@@ -343,7 +344,7 @@ func (r *chainReport) observe(schedule *tesla.KeySchedule, now time.Time) (level
 	case schedule.Exhausted(now):
 		if !r.exhausted {
 			r.exhausted = true
-			return zapcore.ErrorLevel, "TESLA key chain exhausted: packets are no longer tagged and new runs are refused; raise tesla.chain_length and restart the executor after final_disclosure_at, since without tesla.seed a restart before then never discloses the keys of the chain's last epochs",
+			return zapcore.ErrorLevel, "TESLA key chain exhausted: new runs wait for automatic renewal after accepted work and key disclosures finish",
 				[]zap.Field{zap.Time("expired_at", expiry), zap.Time("final_disclosure_at", schedule.FinalDisclosure())}
 		}
 	case expiry.Sub(now) < time.Hour:
@@ -370,6 +371,7 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			return
 		case <-ticker.C:
 			now := time.Now()
+			e.beginChainRenewal(now)
 			if level, msg, fields := e.chainReport.observe(e.teslaSchedule, now); msg != "" {
 				e.logger.Log(level, msg, fields...)
 			}
@@ -411,6 +413,9 @@ func (e *Executor) startHeartbeatLoop(ctx context.Context, binding controlsessio
 			}
 			finishConnectivity()
 			e.kickReconcile()
+			if err == nil && e.tryChainRenewal(ctx, binding) {
+				return
+			}
 		}
 	}
 }

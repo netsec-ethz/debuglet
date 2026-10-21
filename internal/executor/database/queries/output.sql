@@ -10,6 +10,11 @@ SELECT * FROM output_runs WHERE NOT end_acknowledged AND output_runs.run_id > ?
 AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id)
 ORDER BY output_runs.run_id LIMIT ?;
 
+-- name: HasPendingOutputForBinding :one
+SELECT EXISTS(SELECT 1 FROM output_runs
+WHERE dispatcher_incarnation = ? AND session_id = ? AND NOT end_acknowledged
+AND NOT EXISTS (SELECT 1 FROM operator_dispositions d WHERE d.run_id = output_runs.run_id));
+
 -- name: CountOutputRuns :one
 -- A run whose end the dispatcher acknowledged holds no further spool capacity.
 SELECT COUNT(*) FROM output_runs WHERE NOT end_acknowledged;

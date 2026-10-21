@@ -267,6 +267,11 @@ type KeySchedule struct {
 	keys []byte
 }
 
+// HighestSigningEpoch is the highest epoch whose key a signer has obtained.
+// A caller retiring this chain must join all signers before using this value
+// to decide that their keys have been durably disclosed.
+func (ks *KeySchedule) HighestSigningEpoch() int64 { return ks.signed.Load() }
+
 // NewKeySchedule creates a KeySchedule from cfg.
 //
 // The chain direction is backward (k_i = H(k_{i+1})). The private seed k_L is
